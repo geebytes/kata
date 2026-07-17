@@ -58,13 +58,13 @@ Kata separates goal management from workflow control:
 
 ```mermaid
 flowchart TD
-    P["Project Git branch"] --> C["Change<br/>goal + scope"]
-    C --> T["Task<br/>workflow control unit"]
-    T --> A["Artifacts<br/>handoff / evidence / review / judge / wiki"]
-    RG["Relation Graph<br/>task/change/artifact edges"] --> C
+    P["Project Git branch"] --> C["Change / goal + scope"]
+    C --> T["Task / workflow control unit"]
+    T --> A["Artifacts / handoff / evidence / review / judge / wiki"]
+    RG["Relation Graph / task/change/artifact edges"] --> C
     RG --> T
-    W[".llmwiki<br/>project memory"] --> T
-    Q["Project checks + CI<br/>Reviewer + Judge"] --> T
+    W[".llmwiki / project memory"] --> T
+    Q["Project checks + CI / Reviewer + Judge"] --> T
     T --> RG
 ```
 
@@ -88,17 +88,17 @@ Tasks move through 8 phases: `intake → plan → implement → hardVerify → r
 
 ```mermaid
 flowchart TD
-    U["User idea / bug / delegated request"] --> O["/kata-open<br/>intake"]
-    O --> D["/kata-design<br/>acceptance + constraints"]
-    D --> B["/kata-build<br/>TDD implementation"]
-    B -- "--seal" --> HV["hardVerify<br/>evidence written"]
-    HV --> V["/kata-verify<br/>freshness + acceptance"]
-    V -- "PASS + review_gate" --> RG["User chooses Reviewer<br/>platform / model"]
-    RG --> R["/kata-review<br/>findings"]
-    R -- "judge_gate" --> JG["User chooses Judge<br/>platform / model"]
-    JG --> J["/kata-judge<br/>PASS / FAIL"]
-    J -- "PASS + archive_gate" --> AG["User confirms archive<br/>Wiki / release evidence"]
-    AG --> AR["/kata-archive<br/>distill + archive"]
+    U["User idea / bug / delegated request"] --> O["/kata-open / intake"]
+    O --> D["/kata-design / acceptance + constraints"]
+    D --> B["/kata-build / TDD implementation"]
+    B -- seal --> HV["hardVerify / evidence written"]
+    HV --> V["/kata-verify / freshness + acceptance"]
+    V -- "PASS + review_gate" --> RG["User chooses Reviewer / platform / model"]
+    RG --> R["/kata-review / findings"]
+    R -- "judge_gate" --> JG["User chooses Judge / platform / model"]
+    JG --> J["/kata-judge / PASS / FAIL"]
+    J -- "PASS + archive_gate" --> AG["User confirms archive / Wiki / release evidence"]
+    AG --> AR["/kata-archive / distill + archive"]
     V -- "FAIL" --> REPAIR["Repair (back to build)"]
     R -- "blocking findings" --> REPAIR
     J -- "FAIL" --> REPAIR
@@ -128,9 +128,9 @@ The Relation Graph prevents workflow drift across platforms. Terminal control re
 
 ```mermaid
 flowchart LR
-    CH["Change<br/>goal / scope"] -->|contains| T["Task<br/>control unit"]
+    CH["Change / goal / scope"] -->|contains| T["Task / control unit"]
     T -->|implements / repairs| CH
-    T -->|emits| ART["Artifacts<br/>evidence / review / judge / wiki"]
+    T -->|emits| ART["Artifacts / evidence / review / judge / wiki"]
     OLD["Old or placeholder task"] -->|covered_by / superseded_by| T
     T2["Related task"] -. "related_to / spawned_from" .-> T
 ```
@@ -149,10 +149,10 @@ Kata connects coding platforms through Context Fabric packets. A packet anchors 
 
 ```mermaid
 sequenceDiagram
-    participant H as High-tier agent<br/>designer/reviewer
-    participant R as Repository<br/>.kata task artifacts
-    participant L as Low-tier agent<br/>implementer
-    participant Q as Quality gates<br/>tests/review/judge
+    participant H as High-tier agent / designer/reviewer
+    participant R as Repository / .kata task artifacts
+    participant L as Low-tier agent / implementer
+    participant Q as Quality gates / tests/review/judge
 
     H->>R: kata handoff create
     R-->>H: packet id + requiredReads + allowedWrites
@@ -203,7 +203,7 @@ kata wiki closure --task <task-id> --decision not_applicable --reason "Typo fix 
 flowchart TD
     A[Conversation / implementation / docs] --> B{Stable knowledge?}
     B -- no --> C[Do not capture]
-    B -- yes, explicit user intent<br/>or task outcome --> D[Write source note<br/>task-owned or docs/conventions]
+    B -- "yes" --> D["Write source note / task-owned or docs/conventions"]
     D --> E[kata wiki ingest / register]
     E --> F[Wiki candidate]
     F --> G{Review / promote?}
@@ -218,13 +218,13 @@ Skills follow the conversation-capture covenant. Trigger when the user says thin
 ```mermaid
 flowchart TB
     subgraph Task lifecycle
-        T1[task.json<br/>acceptance]
-        T2[current-state.json<br/>phase]
-        T3[handoffs/*.json<br/>Context Fabric]
-        T4[evidence/*.json<br/>checks]
-        T5[review.json<br/>findings]
-        T6[judge.json<br/>PASS / FAIL]
-        T7[wiki candidates<br/>distilled knowledge]
+        T1[task.json / acceptance]
+        T2[current-state.json / phase]
+        T3[handoffs/*.json / Context Fabric]
+        T4[evidence/*.json / checks]
+        T5[review.json / findings]
+        T6[judge.json / PASS / FAIL]
+        T7[wiki candidates / distilled knowledge]
     end
 
     T1 --> T2
