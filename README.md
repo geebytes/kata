@@ -1,5 +1,7 @@
 # Kata
 
+[English](README.md) · [中文](README_ZH.md)
+
 Kata is a cross-platform AI coding workflow governance framework. It provides a governed task lifecycle, evidence-based quality gates, and a provenance-aware project Wiki for Codex, Claude Code, OpenCode, and other AI coding platforms.
 
 The platform-neutral handoff protocol is documented in [Context Fabric](./docs/context-fabric.md).
@@ -257,7 +259,3 @@ Tasks may include an `acceptanceMatrix` that maps each acceptance criterion to c
 - [Platform adapters](./docs/platform-adapters.md) — per-platform adapter implementation
 - [Operations](./docs/operations.md) — CLI reference, eval, release gates
 - [Troubleshooting](./docs/troubleshooting.md) — common issues and recovery
-
----
-
-*中文文档见 [README_ZH.md](./README_ZH.md)*

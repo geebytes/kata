@@ -1,5 +1,7 @@
 # Kata
 
+[English](README.md) · [中文](README_ZH.md)
+
 Kata 是一个跨平台 AI 编码工作流治理框架。通过受控的任务生命周期、基于证据的质量门禁和带来源治理的项目 Wiki，为 Codex、Claude Code、OpenCode 等 AI coding 平台提供统一的流程与质量保障。
 
 平台无关的上下文交接协议见 [Context Fabric](./docs/context-fabric.md)。
