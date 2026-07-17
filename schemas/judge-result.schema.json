@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/judge-result.schema.json",
+  "title": "Kata Judge Result",
+  "type": "object",
+  "required": ["taskId", "result", "acceptance"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "result": { "type": "string", "enum": ["PASS", "FAIL"] },
+    "diffHash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "revisionId": { "type": "string", "minLength": 1 },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+          "result": { "type": "string", "enum": ["PASS", "FAIL"] },
+          "evidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "repairScope": { "type": "string" }
+        }
+      }
+    },
+    "evidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

@@ -1,0 +1,37 @@
+# Strata dogfood evaluation manifest
+# Evaluates Strata's own workflow against the /app monorepo
+
+name: app-dogfood-2026-07-11
+root: /app
+
+taskFixtures:
+  - id: df-open
+    description: Open a change with acceptance criteria
+    expectedAcceptances: 2
+    expectedRepairs: 0
+    expectedEscalations: 0
+
+  - id: df-implement
+    description: Implement with hard checks
+    expectedAcceptances: 2
+    expectedRepairs: 1
+    expectedEscalations: 0
+
+  - id: df-verify
+    description: Full verify pipeline
+    expectedAcceptances: 2
+    expectedRepairs: 0
+    expectedEscalations: 0
+
+  - id: df-repair
+    description: Bounded repair cycle
+    expectedAcceptances: 1
+    expectedRepairs: 1
+    expectedEscalations: 1
+
+releaseGates:
+  minAcceptancePassRate: 0.7
+  maxRepairRate: 1.0
+  maxEscalationRate: 1.0
+  minWikiCount: 0
+  maxWikiRejectionRate: 0.5

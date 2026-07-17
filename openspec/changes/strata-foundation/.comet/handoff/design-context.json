@@ -1,0 +1,18 @@
+{
+  "change": "kata-foundation",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "cc3abc171787ba1153109dd32dba7b1bc0f3a000411db5064744f4eb985a9a9d",
+  "files": [
+    { "path": "openspec/changes/kata-foundation/proposal.md", "sha256": "9bea03021716690a227e1b584f5ee8f5ba856cfe5018de9f14e1b9700e79d053" },
+    { "path": "openspec/changes/kata-foundation/design.md", "sha256": "9eb55c7432d36399d11ac4c6556aa29611dd7e8cea60cbcf2ef9907a2b9acf03" },
+    { "path": "openspec/changes/kata-foundation/tasks.md", "sha256": "744dd724ad02858773dba1e5587dbe8ed2dfeb270449ae7658ee50274fe54730" },
+    { "path": "openspec/changes/kata-foundation/specs/evaluation-and-release/spec.md", "sha256": "b496394a13be150271a38465d42d3f165cd1e8e48c45c430eaf6e0c504792672" },
+    { "path": "openspec/changes/kata-foundation/specs/governed-wiki/spec.md", "sha256": "9419e3aca8d61e12a619c45bd33a234ca18dc58b9809a66fae9bc71697efc22a" },
+    { "path": "openspec/changes/kata-foundation/specs/model-policy-and-evidence/spec.md", "sha256": "63f0589cef1a0fc49b82433dafebe463b8c8029edd37b343fe92c1940c83bbe1" },
+    { "path": "openspec/changes/kata-foundation/specs/platform-skills/spec.md", "sha256": "6f96f238abb4b324ff59954f376a873737c5aabc98da227e776553c8816c7509" },
+    { "path": "openspec/changes/kata-foundation/specs/workflow-runtime/spec.md", "sha256": "b7532670d3b536f9c04da40b86979eea0f822fedba63ad9b0f6353a62168079d" }
+  ]
+}

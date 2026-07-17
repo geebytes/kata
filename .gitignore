@@ -1,0 +1,5 @@
+.strata/
+.kata/
+.llmwiki/
+node_modules/
+dist/

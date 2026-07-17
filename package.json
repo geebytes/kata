@@ -1,0 +1,24 @@
+{
+  "name": "@kata-dev/kata",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kata": "dist/cli.js"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "pack": "npm pack"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.5.2"
+  }
+}

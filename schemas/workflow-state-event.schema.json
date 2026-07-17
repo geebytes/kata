@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/workflow-state-event.schema.json",
+  "title": "Kata Workflow State Event",
+  "type": "object",
+  "required": ["taskId", "from", "to", "actor", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "from": {
+      "enum": [null, "intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]
+    },
+    "to": {
+      "type": "string",
+      "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]
+    },
+    "actor": {
+      "type": "object",
+      "required": ["id", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 }
+      }
+    },
+    "activeSession": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "minLength": 1 }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-finding.schema.json",
+  "title": "Kata Review Finding",
+  "type": "object",
+  "required": ["id", "taskId", "severity", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "taskId": { "type": "string", "minLength": 1 },
+    "acceptanceId": { "type": "string", "pattern": "^AC-[0-9]+$" },
+    "severity": { "type": "string", "enum": ["blocking", "major", "minor", "note"] },
+    "message": { "type": "string", "minLength": 1 },
+    "path": { "type": "string", "minLength": 1 }
+  }
+}

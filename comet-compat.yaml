@@ -1,0 +1,11 @@
+version: 1
+comet:
+  minVersion: 1.2.0
+  maxVersion: 2.0.0
+  capabilities:
+    init: true
+    status: true
+    next: true
+boundary:
+  invocation: public-cli
+  jsonOutput: true

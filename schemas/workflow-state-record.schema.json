@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/workflow-state-record.schema.json",
+  "title": "Kata Workflow State Record",
+  "type": "object",
+  "required": ["taskId", "phase", "actor", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "phase": {
+      "type": "string",
+      "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]
+    },
+    "actor": {
+      "type": "object",
+      "required": ["id", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 }
+      }
+    },
+    "activeSession": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}
