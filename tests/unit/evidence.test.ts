@@ -347,20 +347,29 @@ describe('quality evidence collection', () => {
     await expect(findOwnershipConflicts(root, 'current-task', ['shared.ts'])).resolves.toEqual([]);
   });
 
-  it('ignores ownership claims terminally merged into the sealing task', async () => {
-    const root = await tempRoot();
-    await mkdir(join(root, '.kata/tasks/merged-task'), { recursive: true });
-    await writeFile(join(root, '.kata/tasks/merged-task/task.json'), `${JSON.stringify({ ownedPaths: ['shared.ts'] })}\n`);
-    await writeFile(
-      join(root, '.kata/tasks/merged-task/task-relations.json'),
-      `${JSON.stringify({
-        taskId: 'merged-task',
-        relations: [{ type: 'merged_into', targetTaskId: 'current-task', createdAt: '2026-07-16T00:00:00.000Z' }],
-      })}\n`,
-    );
+  it.each(['superseded_by', 'covered_by', 'duplicate_of', 'merged_into'] as const)(
+    'ignores ownership claims terminally redirected through %s even when its target remains active',
+    async (relationType) => {
+      const root = await tempRoot();
+      await mkdir(join(root, '.kata/tasks/terminal-owner'), { recursive: true });
+      await mkdir(join(root, '.kata/tasks/active-target'), { recursive: true });
+      await writeFile(join(root, '.kata/tasks/terminal-owner/task.json'), `${JSON.stringify({ ownedPaths: ['shared.ts'] })}\n`);
+      await writeFile(
+        join(root, '.kata/tasks/terminal-owner/task-relations.json'),
+        `${JSON.stringify({
+          taskId: 'terminal-owner',
+          relations: [{ type: relationType, targetTaskId: 'active-target', createdAt: '2026-07-16T00:00:00.000Z' }],
+        })}\n`,
+      );
+      await writeFile(join(root, '.kata/tasks/active-target/task.json'), `${JSON.stringify({ ownedPaths: [] })}\n`);
+      await writeFile(
+        join(root, '.kata/tasks/active-target/current-state.json'),
+        `${JSON.stringify({ taskId: 'active-target', phase: 'build', actor: { id: 'tester', role: 'tester' }, updatedAt: '2026-07-16T00:00:00.000Z' })}\n`,
+      );
 
-    await expect(findOwnershipConflicts(root, 'current-task', ['shared.ts'])).resolves.toEqual([]);
-  });
+      await expect(findOwnershipConflicts(root, 'current-task', ['shared.ts'])).resolves.toEqual([]);
+    },
+  );
 
   it('ignores ownership claims terminally merged into an archived task', async () => {
     const root = await tempRoot();
