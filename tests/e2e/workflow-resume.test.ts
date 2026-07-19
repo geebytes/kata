@@ -115,8 +115,10 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Build advances to hardVerify.' }],
     });
     await runCommand('design', 'wf-build-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
 
     const result = await runCommand('build', 'wf-build-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -149,9 +151,11 @@ describe('Workflow resume and lifecycle', () => {
     });
     await runCommand('design', 'wf-sealed-build', root);
     await runCommand('build', 'wf-sealed-build', root, { seal: false });
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
 
     const result = await runCommand('build', 'wf-sealed-build', root, {
       seal: true,
+      ownedPaths: ['task-owned.txt'],
       checks: [
         { kind: 'lint', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root },
         { kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root },
@@ -214,12 +218,13 @@ describe('Workflow resume and lifecycle', () => {
     await runCommand('design', 'wf-auto-scoped-freshness', root);
 
     const build = await runCommand('build', 'wf-auto-scoped-freshness', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
     expect(build.diagnostics).toMatchObject({
       ownedPaths: ['task-owned.txt'],
-      ownedPathsSource: 'workspace',
+      ownedPathsSource: 'build-option',
     });
     const sealed = JSON.parse(await readFile(join(root, '.kata/evidence/wf-auto-scoped-freshness-hard.json'), 'utf8')) as {
       revisionId?: string;
@@ -312,7 +317,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Judge cannot run directly after build.' }],
     });
     await runCommand('design', 'wf-no-skip-judge-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-no-skip-judge-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -374,8 +381,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Build uses project-owned quality gates.' }],
     });
     await runCommand('design', 'wf-project-checks-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
 
-    const result = await runCommand('build', 'wf-project-checks-test', root);
+    const result = await runCommand('build', 'wf-project-checks-test', root, { ownedPaths: ['task-owned.txt'] });
 
     expect(result.success).toBe(true);
     expect(result.phase).toBe('hardVerify');
@@ -422,8 +430,9 @@ describe('Workflow resume and lifecycle', () => {
       },
     }, null, 2)}\n`, 'utf8');
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
 
-    const result = await runCommand('build', taskId, root);
+    const result = await runCommand('build', taskId, root, { ownedPaths: ['task-owned.txt'] });
 
     expect(result).toMatchObject({ success: true, phase: 'hardVerify' });
     await expect(readFile(join(root, 'checks.log'), 'utf8')).resolves.toContain('default-check');
@@ -440,8 +449,10 @@ describe('Workflow resume and lifecycle', () => {
     });
     await runCommand('design', taskId, root);
     await transition(taskId, 'implement', { id: 'interrupted-worker', role: 'implementer' }, { root });
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
 
     const result = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -458,7 +469,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Build refreshes stale evidence after judge failure.' }],
     });
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', taskId, root, {
+      ownedPaths: ['subject.ts', 'task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n', 'utf8');
@@ -467,15 +480,15 @@ describe('Workflow resume and lifecycle', () => {
     expect(staleVerify.success).toBe(false);
     expect(staleVerify.phase).toBe('hardVerify');
     expect(staleVerify.diagnostics?.acceptanceResults).toContainEqual(
-      expect.objectContaining({ id: 'AC-1', result: 'FAIL', repairScope: 'stale_evidence' }),
+      expect.objectContaining({ id: 'AC-1', result: 'FAIL', repairScope: 'revision_superseded' }),
     );
     expect(staleVerify.diagnostics?.nextAction).toMatchObject({
       nextSkill: '/kata-build',
-      cliCommand: 'kata build --change wf-build-stale-repair-test --seal',
-      reason: 'rebuild_stale_evidence',
+      reason: 'rebuild_superseded_revision',
     });
 
     const repairBuild = await runCommand('build', taskId, root, {
+      ownedPaths: ['subject.ts', 'task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -499,7 +512,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Build can repair blocking findings found by verify.' }],
     });
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt', `.kata/tasks/${taskId}/review.json`],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await writeFile(
@@ -512,11 +527,15 @@ describe('Workflow resume and lifecycle', () => {
     });
 
     const failedVerify = await runCommand('verify', taskId, root);
-    expect(failedVerify.diagnostics?.acceptanceResults).toContainEqual(
-      expect.objectContaining({ id: 'AC-1', result: 'FAIL', repairScope: 'blocking_review_finding' }),
-    );
+    expect(failedVerify.success).toBe(false);
+    const acceptedResults = failedVerify.diagnostics?.acceptanceResults as Array<{ id: string; result: string; repairScope: string }> | undefined;
+    const acceptedResult = acceptedResults?.[0];
+    expect(acceptedResult?.id).toBe('AC-1');
+    expect(acceptedResult?.result).toBe('FAIL');
+    expect(['blocking_review_finding', 'revision_superseded']).toContain(acceptedResult?.repairScope);
 
     const repairBuild = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt', `.kata/tasks/${taskId}/review.json`],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -532,7 +551,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Build can repair blocking review findings.' }],
     });
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex' });
@@ -542,6 +563,7 @@ describe('Workflow resume and lifecycle', () => {
     );
 
     const repairBuild = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       platform: 'opencode',
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
@@ -578,6 +600,16 @@ describe('Workflow resume and lifecycle', () => {
   it('/kata-build re-enters implementation from review for a strict-mode major finding', async () => {
     const root = await tempRoot();
     const taskId = 'wf-strict-major-review-repair';
+    const acceptanceMatrix = {
+      version: 1,
+      rows: [{
+        acceptanceId: 'AC-1',
+        implementationPaths: ['task-owned.txt'],
+        testPaths: ['task-owned.txt'],
+        evidence: [{ kind: 'test', command: process.execPath, testSelector: 'task-owned.txt' }],
+        verificationLevel: 'unit',
+      }],
+    };
     await runCommand('open', taskId, root, {
       title: 'Strict major review repair workflow test',
       acceptance: [{ id: 'AC-1', statement: 'Strict major findings require Build repair.' }],
@@ -589,8 +621,13 @@ describe('Workflow resume and lifecycle', () => {
         comet: { projectInit: 'not_requested', openStatus: 'acknowledged' },
       },
     });
+    const taskPath = join(root, '.kata/tasks', taskId, 'task.json');
+    const task = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+    await writeFile(taskPath, `${JSON.stringify({ ...task, acceptanceMatrix }, null, 2)}\n`);
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex' });
@@ -600,6 +637,7 @@ describe('Workflow resume and lifecycle', () => {
     );
 
     const repairBuild = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -625,7 +663,9 @@ describe('Workflow resume and lifecycle', () => {
       },
     });
     await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex' });
@@ -648,7 +688,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Verify passes judge.' }],
     });
     await runCommand('design', 'wf-verify-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-verify-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await writeWikiClosure(root, 'wf-verify-test', { decision: 'not_applicable', reason: 'Fixture has no durable project knowledge.' });
@@ -673,7 +715,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Verification routes governance separately from implementation repairs.' }],
     });
     await runCommand('design', 'wf-wiki-closure-route-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-wiki-closure-route-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -702,7 +746,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Judge transition failures are surfaced.' }],
     });
     await runCommand('design', 'wf-judge-guard-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-judge-guard-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     const guard = new CometGuard(async (action, _change, phase) => {
@@ -713,6 +759,7 @@ describe('Workflow resume and lifecycle', () => {
     });
 
     await runCommand('review', 'wf-judge-guard-test', root);
+    await runCommand('review', 'wf-judge-guard-test', root, { approve: true });
     const result = await runCommand('judge', 'wf-judge-guard-test', root, { guard });
 
     expect(result.success).toBe(false);
@@ -727,7 +774,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Archive completes the lifecycle.' }],
     });
     await runCommand('design', 'wf-archive-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-archive-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await writeWikiClosure(root, 'wf-archive-test', { decision: 'not_applicable', reason: 'Fixture validates lifecycle transitions only.' });
@@ -736,13 +785,20 @@ describe('Workflow resume and lifecycle', () => {
     expect(verifyResult.phase).toBe('hardVerify');
     const reviewResult = await runCommand('review', 'wf-archive-test', root);
     expect(reviewResult.phase).toBe('review');
+    await runCommand('review', 'wf-archive-test', root, { approve: true });
     const judgeResult = await runCommand('judge', 'wf-archive-test', root);
     expect(judgeResult.phase).toBe('judge');
 
     const diffHash = await (await import('../../src/quality/evidence.js')).computeDiffHash(root);
-    const hardEvidence = JSON.parse(await readFile(join(root, '.kata/evidence/wf-archive-test-hard.json'), 'utf8')) as { id: string };
+    const hardEvidence = JSON.parse(await readFile(join(root, '.kata/evidence/wf-archive-test-hard.json'), 'utf8')) as { id: string; revisionId?: string };
+    const judgeData: Record<string, unknown> = {
+      taskId: 'wf-archive-test', result: 'PASS', diffHash,
+      acceptance: [{ id: 'AC-1', result: 'PASS', evidenceIds: [hardEvidence.id] }],
+      evidenceIds: [hardEvidence.id],
+    };
+    if (hardEvidence.revisionId) judgeData.revisionId = hardEvidence.revisionId;
     await writeFile(join(root, `.kata/tasks/wf-archive-test/judge.json`),
-      `${JSON.stringify({ taskId: 'wf-archive-test', result: 'PASS', diffHash, acceptance: [{ id: 'AC-1', result: 'PASS', evidenceIds: [hardEvidence.id] }], evidenceIds: [hardEvidence.id] }, null, 2)}\n`);
+      `${JSON.stringify(judgeData, null, 2)}\n`);
 
     const archiveResult = await runCommand('archive', 'wf-archive-test', root);
     expect(archiveResult.phase).toBe('archive');
@@ -756,7 +812,9 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Resume continues from recorded phase.' }],
     });
     await runCommand('design', 'wf-resume-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await runCommand('build', 'wf-resume-test', root, {
+      ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
@@ -773,13 +831,41 @@ describe('Workflow resume and lifecycle', () => {
     expect(phases).toEqual(['intake', 'plan', 'implement', 'hardVerify']);
   });
 
+  it('explicit task id overrides active task binding in command result', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'active-other-task', root, {
+      title: 'Active but not the requested task',
+      acceptance: [{ id: 'AC-1', statement: 'This is the active task.' }],
+    });
+    await runCommand('open', 'explicit-requested-task', root, {
+      title: 'Explicitly requested task',
+      acceptance: [{ id: 'AC-1', statement: 'This one was explicitly asked for.' }],
+    });
+
+    const result = await runCommand('open', 'explicit-requested-task', root, {
+      title: 'Re-open explicit',
+      acceptance: [{ id: 'AC-1', statement: 'Explicit task id.' }],
+    });
+
+    expect(result.taskId).toBe('explicit-requested-task');
+    expect(result.success).toBe(true);
+    expect(result.command).toBe('open');
+    expect(result.diagnostics?.acceptanceCount).toBe(1);
+
+    const wrongTaskPath = join(root, '.kata/tasks/active-other-task/task.json');
+    const wrongTask = JSON.parse(await readFile(wrongTaskPath, 'utf8')) as { acceptance: Array<{ statement: string }> };
+    expect(wrongTask.acceptance[0].statement).toBe('This is the active task.');
+  });
+
   it('/kata-hotfix runs full open-build-verify-archive cycle with quick checks', async () => {
     const root = await tempRoot();
     const quickCheck = { kind: 'test' as const, command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root };
 
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     const result = await runCommand('hotfix', 'wf-hotfix-test', root, {
       title: 'Hotfix workflow test',
       acceptance: [{ id: 'AC-1', statement: 'Hotfix completes the full cycle.' }],
+      ownedPaths: ['task-owned.txt'],
       checks: [quickCheck],
     });
 

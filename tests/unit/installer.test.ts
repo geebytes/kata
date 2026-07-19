@@ -103,6 +103,14 @@ describe('Kata platform installer', () => {
     expect(renderInitBanner()).toContain('STRATA');
   });
 
+  it('rejects bare non-interactive init without writing the generic installation', async () => {
+    const root = await tempRoot();
+
+    await expect(main(['init', '--root', root])).rejects.toThrow('requires explicit --platform and --scope');
+    await expect(stat(join(root, '.kata-config.json'))).rejects.toThrow();
+    await expect(stat(join(root, 'AGENTS.md'))).rejects.toThrow();
+  });
+
   it('CLI init --yes installs all detected project platforms and reports a wizard plan', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'AGENTS.md'), '# repo instructions\n');
@@ -723,7 +731,7 @@ describe('Kata platform installer', () => {
 
   it('routes installer commands without change ids to platform installer', async () => {
     const root = await tempRoot();
-    const installOptions = ['--platform', 'generic', '--root', root, '--dry-run'];
+    const installOptions = ['--platform', 'generic', '--scope', 'project', '--root', root, '--dry-run'];
 
     const initResult = await captureJsonOutput(() => main(['init', '--json', ...installOptions]));
     expect(initResult).toEqual(
@@ -736,7 +744,7 @@ describe('Kata platform installer', () => {
     const previousCwd = process.cwd();
     process.chdir(root);
     try {
-      const openResult = await captureJsonOutput(() => main(['open', '--change', 'change-abc']));
+      const openResult = await captureJsonOutput(() => main(['open', '--change', 'change-abc', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std']));
       expect(openResult).toMatchObject({
         command: 'open',
         taskId: 'change-abc',
@@ -754,7 +762,7 @@ describe('Kata platform installer', () => {
     const previousCwd = process.cwd();
     process.chdir(root);
     try {
-      const open = await captureJsonOutput(() => main(['open', '--change', 'status-task']));
+      const open = await captureJsonOutput(() => main(['open', '--change', 'status-task', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std']));
       expect(open).toMatchObject({
         nextAction: {
           nextSkill: '/kata-design',
@@ -832,7 +840,7 @@ describe('Kata platform installer', () => {
     const previousCwd = process.cwd();
     process.chdir(root);
     try {
-      await captureJsonOutput(() => main(['open', '--change', 'orient-comet-task']));
+      await captureJsonOutput(() => main(['open', '--change', 'orient-comet-task', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std']));
 
       const orient = await captureJsonOutput(() =>
         main(['orient', '--change', 'orient-comet-task', '--role', 'designer', '--platform', 'codex']),
@@ -1589,7 +1597,7 @@ describe('Kata platform installer', () => {
       'utf8',
     );
 
-    await captureJsonOutput(() => main(['open', 'cli-next-action-test', '--root', root, '--json']));
+    await captureJsonOutput(() => main(['open', 'cli-next-action-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-next-action-test', '--root', root, '--json']));
     const build = await captureJsonOutput(() => main(['build', 'cli-next-action-test', '--root', root, '--json']));
 
@@ -1619,7 +1627,8 @@ describe('Kata platform installer', () => {
       ]),
     });
 
-    const sealed = await captureJsonOutput(() => main(['build', 'cli-next-action-test', '--seal', '--root', root, '--json']));
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    const sealed = await captureJsonOutput(() => main(['build', 'cli-next-action-test', '--seal', '--owned-path', 'task-owned.txt', '--root', root, '--json']));
     expect(sealed).toMatchObject({
       phase: 'hardVerify',
       success: true,
@@ -1653,7 +1662,7 @@ describe('Kata platform installer', () => {
       'utf8',
     );
     await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
-    await captureJsonOutput(() => main(['open', 'cli-build-owned-path-test', '--root', root, '--json']));
+    await captureJsonOutput(() => main(['open', 'cli-build-owned-path-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-build-owned-path-test', '--root', root, '--json']));
 
     const sealed = await captureJsonOutput(() =>
@@ -1689,7 +1698,7 @@ describe('Kata platform installer', () => {
       quality: { buildChecks: [{ name: 'unit', kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'] }] },
     })}\n`);
     await writeFile(join(root, 'invalid-waivers.json'), '{ invalid json }\n', 'utf8');
-    await captureJsonOutput(() => main(['open', 'cli-waivers-file-test', '--root', root, '--json']));
+    await captureJsonOutput(() => main(['open', 'cli-waivers-file-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-waivers-file-test', '--root', root, '--json']));
 
     await expect(main([

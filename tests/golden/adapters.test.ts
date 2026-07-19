@@ -134,6 +134,17 @@ describe('platform adapter golden output', () => {
     expect(commandManifest.map((command) => String(command.id))).not.toContain('kata-delegate');
   });
 
+  it('requires workflow-profile confirmation in every task-opening skill', () => {
+    for (const id of ['kata-open', 'kata-hotfix', 'kata-tweak']) {
+      const command = skillCommands.find((candidate) => candidate.id === id)!;
+      const rendered = renderCodexSkill(command, 'codex');
+
+      expect(command.cli).toContain('--isolation <mode> --development <mode> --review <mode>');
+      expect(rendered).toContain('## Skill-level workflow profile decision');
+      expect(rendered).toContain('Never let non-interactive CLI defaults silently choose the workflow profile.');
+    }
+  });
+
   it('routes hard verification to verify and reviewer phase to judge in dispatch skills', () => {
     const rendered = renderCodexSkill(skillCommands.find((command) => command.id === 'kata')!, 'codex');
 
@@ -144,6 +155,9 @@ describe('platform adapter golden output', () => {
     expect(rendered).toContain('kata relations add --from change:<change-id> --to task:<task-id>');
     expect(rendered).toContain('relationRedirects');
     expect(rendered).toContain('kata <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>');
+    expect(rendered).toContain('当前分支没有活跃的 Kata 任务。你想开启什么工作？');
+    expect(rendered).toContain('请用一句话描述目标');
+    expect(rendered).toContain('收到自然语言目标后，进入 /kata-open');
   });
 
   it('can render skills with a mandatory Chinese response language contract', () => {

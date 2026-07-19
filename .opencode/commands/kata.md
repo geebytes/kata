@@ -20,7 +20,7 @@ Use this skill to inspect the Kata dispatch workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata` Skill as the human-facing interface. Use `kata status` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata` Skill as the human-facing interface. Use `kata status` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -136,6 +136,8 @@ kata status --change <change-id>
 ```
 
 With one active or same-branch task, the output includes a `nextSkill` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, `kata status` returns `candidates` and a `recommended` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
+
+When `phase === "dispatch" && candidates.length === 0 && recommended === null`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: “当前分支没有活跃的 Kata 任务。你想开启什么工作？请用一句话描述目标，例如‘修复登录超时’或‘新增导出功能’。” Wait for their answer. 收到自然语言目标后，进入 /kata-open；由该 Skill 解释并确认隔离、开发和审查方式，然后使用显式参数调用 `kata open`。
 
 Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say `/kata-build 修复代码规范` or `继续`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run `kata build --change ...` unless the host platform cannot execute shell commands.
 

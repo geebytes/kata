@@ -10,6 +10,8 @@ export interface TaskRevision {
   ownedPaths: string[];
   manifestHash: string;
   createdAt: string;
+  ownershipConflicts?: Array<{ taskId: string; path: string }>;
+  ownershipConflictsAcknowledged?: boolean;
 }
 
 export type RevisionStatus =
@@ -20,6 +22,8 @@ export async function createTaskRevision(input: {
   root: string;
   taskId: string;
   ownedPaths: string[];
+  ownershipConflicts?: Array<{ taskId: string; path: string }>;
+  ownershipConflictsAcknowledged?: boolean;
 }): Promise<TaskRevision> {
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
@@ -30,6 +34,8 @@ export async function createTaskRevision(input: {
     ownedPaths,
     manifestHash,
     createdAt: new Date().toISOString(),
+    ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
+    ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
   };
   const directory = join(input.root, '.kata/tasks', input.taskId, 'revisions');
   await mkdir(directory, { recursive: true });

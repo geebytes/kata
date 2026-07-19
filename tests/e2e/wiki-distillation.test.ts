@@ -42,6 +42,7 @@ describe('Archive Wiki distillation', () => {
     });
     await runCommand('verify', taskId, root);
     await runCommand('review', taskId, root);
+    await runCommand('review', taskId, root, { approve: true });
     await runCommand('judge', taskId, root);
 
     const result = await runCommand('archive', taskId, root);

@@ -190,7 +190,7 @@ export const skillCommands = [
   {
     id: 'kata-hotfix',
     slashCommand: '/kata-hotfix',
-    cli: 'kata hotfix --change <change-id>',
+    cli: 'kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>',
     phase: 'hotfix',
     summary: 'Runs the constrained hotfix path for behavior fixes without new capability design. Use when the user asks for a focused bug fix or urgent repair.',
     triggerScenarios: [
@@ -199,12 +199,12 @@ export const skillCommands = [
       'Agent should skip expansive brainstorming and preserve repair scope.',
     ],
     inputSignals: ['hotfix', 'bug', 'regression', 'broken', 'fix', '修复', '紧急', '问题'],
-    outputGoals: ['Reproduce or identify the failure.', 'Apply a minimal fix.', 'Verify with regression evidence and archive when gates pass.'],
+    outputGoals: ['Decide isolation, development, and review workflow choices before starting the repair.', 'Reproduce or identify the failure.', 'Apply a minimal fix.', 'Verify with regression evidence and archive when gates pass.'],
   },
   {
     id: 'kata-tweak',
     slashCommand: '/kata-tweak',
-    cli: 'kata tweak --change <change-id>',
+    cli: 'kata tweak --change <change-id> --isolation <mode> --development <mode> --review <mode>',
     phase: 'tweak',
     summary: 'Runs the lightweight tweak path for local docs, prompt, copy, or configuration changes. Use when the user asks for a small non-bug adjustment.',
     triggerScenarios: [
@@ -213,7 +213,7 @@ export const skillCommands = [
       'Full feature design would be disproportionate.',
     ],
     inputSignals: ['tweak', 'small change', 'docs', 'prompt', 'copy', 'config', '微调', '文档', '配置'],
-    outputGoals: ['Apply a bounded lightweight change.', 'Run proportional verification.', 'Avoid expanding into unrelated implementation work.'],
+    outputGoals: ['Decide isolation, development, and review workflow choices before starting the change.', 'Apply a bounded lightweight change.', 'Run proportional verification.', 'Avoid expanding into unrelated implementation work.'],
   },
   {
     id: 'kata-wiki-enrich',
@@ -288,6 +288,8 @@ kata status --change <change-id>
 
 With one active or same-branch task, the output includes a \`nextSkill\` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, \`kata status\` returns \`candidates\` and a \`recommended\` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
 
+When \`phase === "dispatch" && candidates.length === 0 && recommended === null\`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: “当前分支没有活跃的 Kata 任务。你想开启什么工作？请用一句话描述目标，例如‘修复登录超时’或‘新增导出功能’。” Wait for their answer. 收到自然语言目标后，进入 /kata-open；由该 Skill 解释并确认隔离、开发和审查方式，然后使用显式参数调用 \`kata open\`。
+
 Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say \`/kata-build 修复代码规范\` or \`继续\`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run \`kata build --change ...\` unless the host platform cannot execute shell commands.
 
 Workflow control is task-scoped: Change is the target/scope container, Task is the smallest governed control unit, Artifact is evidence, and Step is agent-local execution detail. Do not drive build/review/judge from a Change directly; resolve the canonical Task first.
@@ -357,12 +359,12 @@ Fix reported issues: broken wikilinks, orphaned pages, missing frontmatter. Re-r
 - If the user says “记住这个”, “沉淀到 wiki”, “以后都按这个”, “record this rule”, “add to wiki”, or gives an equivalent durable-knowledge instruction, do **not** treat the chat transcript itself as authoritative. Create a concise source note under the task-owned path or docs/conventions, then ingest/register it as a governed Wiki candidate. Ask a short confirmation only when the instruction is ambiguous.
 - Do not promote conversation-derived knowledge directly. It must remain a candidate until reviewed/promoted; stale ideas and temporary discussion should not pollute authoritative Wiki.
 - Before starting a new task, run \`kata wiki orient\` to refresh context.`
-    : command.id === 'kata-open'
+    : (command.id === 'kata-open' || command.id === 'kata-hotfix' || command.id === 'kata-tweak')
       ? `## Skill-level workflow profile decision
 
-\`/kata-open\` owns the user-facing decision flow. Do **not** rely on CLI TTY prompts for isolation, development, or review mode; many host platforms invoke the CLI non-interactively.
+\`${command.slashCommand}\` owns the user-facing decision flow. Do **not** rely on CLI TTY prompts for isolation, development, or review mode; many host platforms invoke the CLI non-interactively.
 
-Before running \`kata open\`, resolve these three choices in the agent conversation:
+Before running \`kata ${command.phase}\`, resolve these three choices in the agent conversation:
 
 1. Isolation mode:
    - \`current_worktree\` — use the current checkout; fastest, least isolated.
@@ -377,21 +379,19 @@ Before running \`kata open\`, resolve these three choices in the agent conversat
    - \`strict\` — stricter architecture/regression review.
    - \`security\` — security-focused review.
 
-If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before opening the task. A terse user confirmation such as “确认” may accept the recommended triple.
+If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before starting the task. A terse user confirmation such as “确认” may accept the recommended triple.
 
 Then invoke the deterministic layer with explicit flags:
 
 \`\`\`bash
-kata open --change <change-id> --isolation <mode> --development <mode> --review <mode>
+${command.cli}
 \`\`\`
 
 Never let non-interactive CLI defaults silently choose the workflow profile.
 
-## Comet open handoff
+## After profile confirmation
 
-Do not ask the user to run \`/comet-open\` manually after \`/kata-open\`.
-When \`workflowProfile.comet.openStatus\` is \`required\`, \`/kata-design <task>\` performs the required Comet-open acknowledgement inside Kata before entering \`plan\`.
-The next user-facing step after a successful open is therefore \`/kata-design <task>\`.`
+Do not ask the user to run \`/comet-open\` manually after \`/kata-open\`. When \`workflowProfile.comet.openStatus\` is \`required\`, \`/kata-design <task>\` performs the required acknowledgement before entering \`plan\`. Follow the returned next action after \`${command.slashCommand}\` completes.`
     : command.id === 'kata-design'
       ? `## Knowledge capture during design
 
@@ -653,7 +653,7 @@ Use this skill to inspect the Kata ${command.phase} workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the \`${command.slashCommand}\` Skill as the human-facing interface. Use \`${command.cli}\` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with \`kata status\`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the \`${command.slashCommand}\` Skill as the human-facing interface. Use \`${command.cli}\` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via \`kata status\` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with \`kata status\`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 

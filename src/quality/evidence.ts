@@ -4,6 +4,16 @@ import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
 
+export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
+
+export interface CheckProgressEvent {
+  type: 'quality_check_progress';
+  check: string;
+  state: CheckProgressState;
+  timeoutMs: number;
+  exitCode?: number | null;
+}
+
 export type EvidenceKind = 'lint' | 'typecheck' | 'test' | 'ci' | 'review' | 'judge' | 'security' | 'integration' | 'entrypoint';
 
 export interface ImportedCheckResult {
@@ -27,6 +37,8 @@ export interface CheckCommand {
 export interface EvidenceCollectionOptions {
   scopePaths?: string[];
   revision?: TaskRevision;
+  signal?: AbortSignal;
+  onProgress?: (event: CheckProgressEvent) => void;
 }
 
 export interface EvidenceEnvelope {
@@ -80,11 +92,25 @@ export async function collectEvidence(
   }
 
   for (const check of commands) {
+    if (options.signal?.aborted) break;
+    const checkName = check.name ?? check.command;
+    const timeoutMs = check.timeoutMs ?? 120_000;
+    options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: 'started', timeoutMs });
+
     const startedAt = new Date().toISOString();
     const redactions = collectRedactions(check);
     const command = redact(renderCommand(check.command, check.args ?? []), redactions);
-    const result = check.importResult ?? (await runBoundedCommand(check));
+    const result = check.importResult ?? (await runBoundedCommand(check, { onProgress: options.onProgress, signal: options.signal }));
     const finishedAt = new Date().toISOString();
+
+    const finalState: CheckProgressState = options.signal?.aborted
+      ? 'cancelled'
+      : result.exitCode === 0
+        ? 'passed'
+        : result.exitCode === 124
+          ? 'timed_out'
+          : 'failed';
+    options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: finalState, timeoutMs, exitCode: result.exitCode });
 
     evidence.push({
       id: `evidence-${randomUUID()}`,
@@ -212,31 +238,68 @@ export async function computeDiffHash(root: string = process.cwd()): Promise<str
   return hash.digest('hex');
 }
 
-async function runBoundedCommand(check: CheckCommand): Promise<ImportedCheckResult> {
+const graceMs = 5_000;
+
+async function runBoundedCommand(
+  check: CheckCommand,
+  options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal },
+): Promise<ImportedCheckResult> {
   const cwd = check.cwd ?? process.cwd();
   const timeoutMs = check.timeoutMs ?? 120_000;
+  const checkName = check.name ?? check.command;
+
+  const child = spawn(check.command, check.args ?? [], {
+    cwd,
+    env: { ...process.env, ...(check.env ?? {}) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: false,
+    detached: true,
+  });
+
+  const exitPromise = new Promise<number | null>((exitResolve) => {
+    child.on('close', (code) => exitResolve(code));
+  });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(check.command, check.args ?? [], {
-      cwd,
-      env: { ...process.env, ...(check.env ?? {}) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
     let settled = false;
     let output = '';
+    let terminating = false;
 
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+    async function terminateAndWait(exitCode: number, logNote: string): Promise<void> {
+      const pid = child.pid;
+      if (pid === undefined) return;
+      terminating = true;
+      try { process.kill(-pid, 'SIGTERM'); } catch { /* already gone */ }
+      const grace = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+      }, graceMs);
+      await exitPromise;
+      clearTimeout(grace);
       if (!settled) {
         settled = true;
         resolve({
-          exitCode: 124,
-          log: `${truncate(output)}\n[TIMEOUT after ${timeoutMs}ms]`,
+          exitCode,
+          log: `${truncate(output)}\n[${logNote}]`,
           environment: environmentSummary(cwd),
         });
       }
+    }
+
+    const timer = setTimeout(() => {
+      terminateAndWait(124, `TIMEOUT after ${timeoutMs}ms`);
     }, timeoutMs);
+
+    function onAbort(): void {
+      clearTimeout(timer);
+      terminateAndWait(1, 'CANCELLED');
+    }
+
+    const abortSignal = options?.signal;
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    abortSignal?.addEventListener('abort', onAbort, { once: true });
 
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -248,14 +311,16 @@ async function runBoundedCommand(check: CheckCommand): Promise<ImportedCheckResu
     });
     child.on('error', (error) => {
       clearTimeout(timer);
+      abortSignal?.removeEventListener('abort', onAbort);
       if (!settled) {
         settled = true;
         reject(error);
       }
     });
-    child.on('close', (code) => {
+    exitPromise.then((code) => {
       clearTimeout(timer);
-      if (!settled) {
+      abortSignal?.removeEventListener('abort', onAbort);
+      if (!terminating && !settled) {
         settled = true;
         resolve({
           exitCode: code ?? 1,

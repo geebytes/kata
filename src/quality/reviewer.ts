@@ -36,16 +36,18 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
   const reviewPath = join(root, '.kata/tasks', input.taskId, 'review.json');
   let findings: ReviewFinding[] = [];
   let revisionId: string | undefined;
+  let status: string | undefined;
   try {
-    const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: ReviewFinding[]; revisionId?: string };
+    const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: ReviewFinding[]; revisionId?: string; status?: string };
     findings = parsed.findings ?? [];
     revisionId = parsed.revisionId;
+    status = parsed.status;
   } catch (error) {
     if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
   }
 
   await mkdir(join(root, '.kata/tasks', input.taskId), { recursive: true });
-  await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [...findings, finding] }, null, 2)}\n`, 'utf8');
+  await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`, 'utf8');
 
   if (finding.severity === 'blocking') {
     const { persistBlockingFindings } = await import('./repair-obligations.js');

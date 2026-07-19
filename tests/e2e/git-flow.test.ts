@@ -13,7 +13,7 @@ describe('Git Flow CLI', () => {
   const roots: string[] = [];
   afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-  it('uses the native Git fallback when an explicit apply command is requested', async () => {
+  it('requires explicit confirmation before creating the Git Flow branch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kata-git-flow-cli-'));
     roots.push(root);
     execFileSync('git', ['init', '-b', 'develop'], { cwd: root, stdio: 'ignore' });
@@ -42,8 +42,14 @@ describe('Git Flow CLI', () => {
     expect(plan).toMatchObject({ status: 'pending_confirmation', strategy: 'manual' });
     await main(['git-flow', 'apply', '--change', 'cli-feature', '--root', root, '--quiet']);
 
-    const task = JSON.parse(await readFile(join(root, '.kata/tasks/cli-feature/task.json'), 'utf8'));
-    expect(task.workflowProfile.gitFlow.status).toBe('active');
+    const pending = JSON.parse(await readFile(join(root, '.kata/tasks/cli-feature/task.json'), 'utf8'));
+    expect(pending.workflowProfile.gitFlow.status).toBe('pending_confirmation');
+    expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe('develop');
+
+    await main(['git-flow', 'apply', '--change', 'cli-feature', '--confirm', '--root', root, '--quiet']);
+
+    const active = JSON.parse(await readFile(join(root, '.kata/tasks/cli-feature/task.json'), 'utf8'));
+    expect(active.workflowProfile.gitFlow.status).toBe('active');
     expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe('feature/cli-feature');
   });
 });

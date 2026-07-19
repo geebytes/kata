@@ -23,7 +23,7 @@ import {
   type PlatformInstallState,
 } from './adapters/discovery.js';
 import { mergeInstallReports, optionsForWizardInstall, planDetectedInit, promptInitPlan } from './init-wizard.js';
-import { confirmDestructive, select } from './cli/prompt.js';
+import { confirmDestructive } from './cli/prompt.js';
 import { runCommand, type KataCommand } from './workflow/orchestrator.js';
 import { type Waiver, validateWaivers } from './quality/acceptance-matrix.js';
 import { createWorkflowHandoff, renderDelegationPrompt } from './workflow/delegation-prompt.js';
@@ -104,6 +104,11 @@ async function runMain(argv: string[]): Promise<void> {
     const result = await runInitWizardCommand(argv.slice(1), workspaceRoot);
     outputResult(result);
     return;
+  }
+
+  if (command === 'init' && !process.stdin.isTTY && !argv.includes('--yes')
+    && (!argv.includes('--platform') || !argv.includes('--scope'))) {
+    throw new Error('kata init requires explicit --platform and --scope choices in non-interactive mode; use the installation Skill to collect user confirmation first.');
   }
 
   if (isInstallerCommand(command) && (maybeChange === undefined || maybeChange.startsWith('--'))) {
@@ -422,25 +427,38 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
 }
 
 async function runWorkflowCommand(command: KataCommand, change: string, root: string, platform?: string, argv: string[] = []): Promise<Record<string, unknown>> {
-  let workflowProfile = command === 'open' ? await resolveOpenProfile(argv) : undefined;
+  const explicitChange = parseChangeArg(argv.slice(1));
+  let workflowProfile = requiresWorkflowProfile(command) ? await resolveWorkflowProfile(command, argv) : undefined;
   const waivers = command === 'build' ? await readWaiversFile(argv) : undefined;
+  const abortController = command === 'build' ? new AbortController() : undefined;
+  const onProgress = command === 'build' && argv.includes('--seal')
+    ? (event: { type: string; check: string; state: string; timeoutMs: number; exitCode?: number | null }) => {
+        process.stderr.write(`${JSON.stringify(event)}\n`);
+      }
+    : undefined;
+  if (abortController) {
+    const onSignal = () => { abortController.abort(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); };
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+  }
   const result = await runCommand(command, change, root, {
     title: `Change ${change}`,
     acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }],
     ...(platform ? { platform } : {}),
     ...(command === 'build' ? { seal: argv.includes('--seal') } : {}),
+    ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
+    ...((command === 'open' || command === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
     ...(waivers ? { waivers } : {}),
     ...((command === 'open' || command === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
     ...(workflowProfile ? { workflowProfile } : {}),
+    ...(onProgress ? { onProgress, signal: abortController?.signal } : {}),
   });
+  if (explicitChange && result.taskId !== change) {
+    return { command, taskId: change, phase: 'intake', success: false, error: `Task ID mismatch: requested ${change} but result returned ${result.taskId}.` };
+  }
   if (result.success && workflowProfile?.isolationMode === 'git_flow') {
     const plan = inspectGitFlow(root, result.taskId);
-    const state = plan.status === 'pending_confirmation' && process.stdin.isTTY
-      ? (await confirmDestructive(`Create feature branch ${plan.branch}?`, [`Will run: git ${plan.command.join(' ')}`, `Base branch: ${plan.baseBranch}`])
-          ? applyGitFlowPlan(root, plan)
-          : plan)
-      : plan;
-    workflowProfile = await updateGitFlowProfile(root, result.taskId, state);
+    workflowProfile = await updateGitFlowProfile(root, result.taskId, plan);
   }
   const upstream = await readUpstreamSummary(root, result.taskId).catch(() => null);
   const suggestion = workflowProfile ? null : upstream ? suggestCandidateAction(result.phase, upstream) : null;
@@ -451,7 +469,7 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     : null;
   const workflowNextAction = workflowProfile
     ? gitFlowPending
-      ? { taskId: result.taskId, nextSkill: '/kata', slashCommand: '/kata', cliCommand: `kata git-flow apply --change ${result.taskId}`, role: 'implementer', reason: 'git_flow_confirmation_required', requiresUserConfirmation: false }
+      ? { taskId: result.taskId, nextSkill: '/kata', slashCommand: '/kata', cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`, role: 'implementer', reason: 'git_flow_confirmation_required', requiresUserConfirmation: true }
       : nextActionForTask(result.taskId, phaseNextSkill, roleForPhase(result.phase), workflowNextReason(result.phase))
     : null;
   const completion = result.success
@@ -608,39 +626,42 @@ async function runGitFlowCommand(argv: string[], root: string): Promise<Record<s
     throw new Error(`Task ${taskId} does not use Git Flow isolation`);
   }
   const inspected = inspectGitFlow(root, taskId);
+  if (inspected.status === 'pending_confirmation' && !argv.includes('--confirm')) {
+    return {
+      command: 'git-flow apply', taskId, workflowProfile: task.workflowProfile,
+      nextAction: {
+        slashCommand: '/kata',
+        cliCommand: `kata git-flow apply --change ${taskId} --confirm`,
+        reason: 'git_flow_confirmation_required',
+        requiresUserConfirmation: true,
+      },
+    };
+  }
   const state = inspected.status === 'pending_confirmation' ? applyGitFlowPlan(root, inspected) : inspected;
   const workflowProfile = await updateGitFlowProfile(root, taskId, state);
   return {
     command: 'git-flow apply', taskId, workflowProfile,
     nextAction: state.status === 'active'
       ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata design --change ${taskId}` }
-      : { cliCommand: `kata git-flow apply --change ${taskId}`, reason: (inspected as GitFlowPlan).reason ?? 'git_flow_setup_failed' },
+      : { cliCommand: `kata git-flow apply --change ${taskId} --confirm`, reason: (inspected as GitFlowPlan).reason ?? 'git_flow_setup_failed' },
   };
 }
 
-async function resolveOpenProfile(argv: string[] = []): Promise<WorkflowProfile> {
-  const profile = defaultWorkflowProfile();
+function requiresWorkflowProfile(command: KataCommand): command is 'open' | 'hotfix' | 'tweak' {
+  return command === 'open' || command === 'hotfix' || command === 'tweak';
+}
+
+async function resolveWorkflowProfile(command: 'open' | 'hotfix' | 'tweak', argv: string[] = []): Promise<WorkflowProfile> {
   const explicit = parseWorkflowProfileArgs(argv);
-  if (explicit.isolationMode) profile.isolationMode = explicit.isolationMode;
-  if (explicit.developmentMode) profile.developmentMode = explicit.developmentMode;
-  if (explicit.reviewMode) profile.reviewMode = explicit.reviewMode;
-  if (explicit.isolationMode && explicit.developmentMode && explicit.reviewMode) return profile;
-  if (!process.stdin.isTTY) return profile;
-  if (!explicit.isolationMode) {
-    profile.isolationMode = await select('Isolation mode', [
-      { value: 'current_worktree', label: 'Current worktree' },
-      { value: 'isolated_worktree', label: 'Isolated worktree' },
-      { value: 'git_flow', label: 'Git Flow feature branch' },
-      { value: 'user_decides', label: 'Ask before implementation' },
-    ]);
+  if (!explicit.isolationMode || !explicit.developmentMode || !explicit.reviewMode) {
+    throw new Error(`kata ${command} requires explicit --isolation, --development, and --review choices; use /kata-${command} to collect user confirmation first.`);
   }
-  if (!explicit.developmentMode) {
-    profile.developmentMode = await select('Development mode', [{ value: 'tdd', label: 'TDD' }, { value: 'standard', label: 'Standard' }]);
-  }
-  if (!explicit.reviewMode) {
-    profile.reviewMode = await select('Review mode', [{ value: 'std', label: 'Standard' }, { value: 'strict', label: 'Strict' }, { value: 'security', label: 'Security' }]);
-  }
-  return profile;
+  return {
+    ...defaultWorkflowProfile(),
+    isolationMode: explicit.isolationMode,
+    developmentMode: explicit.developmentMode,
+    reviewMode: explicit.reviewMode,
+  };
 }
 
 function parseWorkflowProfileArgs(argv: string[]): Partial<Pick<WorkflowProfile, 'isolationMode' | 'developmentMode' | 'reviewMode'>> {

@@ -37,8 +37,8 @@ export interface Waiver {
   createdAt: string;
 }
 
-export function requiresMatrix(workflowProfile?: { strictClosure?: boolean }): boolean {
-  return workflowProfile?.strictClosure === true;
+export function requiresMatrix(workflowProfile?: { strictClosure?: boolean; reviewMode?: string }): boolean {
+  return workflowProfile?.strictClosure === true || workflowProfile?.reviewMode === 'strict';
 }
 
 export function validateMatrix(
@@ -172,6 +172,13 @@ export function hasRequiredEvidenceLevel(
   return true;
 }
 
+function selectorMatches(evidenceCommand: string, testSelector: string): boolean {
+  if (evidenceCommand.includes(testSelector)) return true;
+  const withoutCommonPrefix = testSelector.replace(/^(?:kata\/|packages\/[^/]+\/)?/, '');
+  if (withoutCommonPrefix !== testSelector && evidenceCommand.includes(withoutCommonPrefix)) return true;
+  return false;
+}
+
 export function evidenceMatchesRow(
   row: AcceptanceMatrixRow,
   evidenceCommand: string,
@@ -182,7 +189,7 @@ export function evidenceMatchesRow(
     const commandMatch = evidenceCommand.includes(decl.command)
       || (decl.command.startsWith('vitest ') && /(?:^|\/)vitest(?:\.mjs)?\s+run\b/.test(evidenceCommand))
       || (decl.command.startsWith('tsc ') && /(?:^|\/)tsc\s+/.test(evidenceCommand));
-    const selectorMatch = !decl.testSelector || evidenceCommand.includes(decl.testSelector);
+    const selectorMatch = !decl.testSelector || selectorMatches(evidenceCommand, decl.testSelector);
     if (kindMatch && commandMatch && selectorMatch) return true;
   }
   return false;

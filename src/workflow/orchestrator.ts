@@ -18,6 +18,7 @@ import { nextActionForTask } from './navigation.js';
 import { createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateWaivers, writeWaivers, requiresMatrix, getMatrixRowForAc, evidenceMatchesRow, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
+import type { CheckProgressEvent } from '../quality/evidence.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
 
@@ -41,9 +42,13 @@ export interface CommandOptions {
   guard?: CometGuard;
   platform?: string;
   seal?: boolean;
+  approve?: boolean;
+  allowOwnershipConflicts?: boolean;
   workflowProfile?: WorkflowProfile;
   ownedPaths?: string[];
   waivers?: Waiver[];
+  signal?: AbortSignal;
+  onProgress?: (event: CheckProgressEvent) => void;
 }
 
 function actorFor(actor: Actor, platform?: string): Actor {
@@ -116,6 +121,14 @@ async function cmdOpen(
     context = { taskId, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], warnings: [] };
   }
 
+  const ownershipConflicts = options.ownedPaths?.length
+    ? await findOwnershipConflicts(root, taskId, options.ownedPaths)
+    : [];
+  const warnings = [
+    ...context.warnings,
+    ...(ownershipConflicts.length > 0 ? [`Ownership conflicts detected: ${ownershipConflicts.map((c) => `${c.taskId}:${c.path}`).join(', ')}`] : []),
+  ];
+
   return {
     command: 'open',
     taskId: task.id,
@@ -124,7 +137,8 @@ async function cmdOpen(
     diagnostics: {
       acceptanceCount: task.acceptance.length,
       authoritativeWikiCount: context.authoritativeWiki.length,
-      warnings: context.warnings,
+      warnings,
+      ...(ownershipConflicts.length > 0 ? { ownershipConflicts } : {}),
     },
   };
 }
@@ -212,6 +226,21 @@ async function cmdBuild(
   }
 
   if (!(options.seal ?? true)) {
+    let buildOwnedPaths: string[] = [];
+    try {
+      const currentTask = JSON.parse(
+        await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8'),
+      ) as { ownedPaths?: string[] };
+      if (currentTask.ownedPaths?.length) {
+        buildOwnedPaths = currentTask.ownedPaths;
+      }
+    } catch { /* task may not exist yet */ }
+    if (buildOwnedPaths.length === 0 && options.ownedPaths?.length) {
+      buildOwnedPaths = options.ownedPaths;
+    }
+    const ownershipConflicts = buildOwnedPaths.length
+      ? await findOwnershipConflicts(root, taskId, buildOwnedPaths)
+      : [];
     return {
       command: 'build',
       taskId,
@@ -221,6 +250,7 @@ async function cmdBuild(
         mode: 'implement',
         implementationPrompt: '先写聚焦的失败测试（RED），再最小实现并运行聚焦 GREEN；不要在编码前封存 build 证据。',
         sealCommand: `kata build --change ${taskId} --seal`,
+        ...(ownershipConflicts.length > 0 ? { ownershipConflicts } : {}),
       },
     };
   }
@@ -274,16 +304,25 @@ async function cmdBuild(
     }
   }
 
-  const ownedPaths = await resolveSealOwnedPaths(root, taskId, task, options);
+  let ownedPaths: string[];
+  try {
+    ownedPaths = await resolveSealOwnedPaths(root, taskId, task, options);
+  } catch (error) {
+    return {
+      command: 'build', taskId, phase: 'implement', success: false,
+      error: error instanceof Error ? error.message : String(error),
+      diagnostics: { missingOwnedPaths: true },
+    };
+  }
   let codeGraphCandidates: CodeGraphCandidate[] = [];
   let codeGraphDisposition: CodeGraphCandidateDisposition | undefined;
   const ownershipConflicts = ownedPaths.length
     ? await findOwnershipConflicts(root, taskId, ownedPaths)
     : [];
-  if (ownershipConflicts.length > 0) {
+  if (ownershipConflicts.length > 0 && !options.allowOwnershipConflicts) {
     return {
       command: 'build', taskId, phase: 'implement', success: false,
-      error: 'Cannot seal while declared task ownership overlaps another task.',
+      error: 'Cannot seal while declared task ownership overlaps another task. Use --allow-ownership-conflicts to confirm and proceed.',
       diagnostics: { ownershipConflicts },
     };
   }
@@ -296,12 +335,14 @@ async function cmdBuild(
     if (waiverErrors.length > 0) {
       return { command: 'build', taskId, phase: 'implement', success: false, error: 'Invalid recorded waiver.', diagnostics: { waiverErrors } };
     }
-    codeGraphCandidates = await discoverCodeGraphCandidates(root, task.acceptanceMatrix!, ownedPaths);
+    if (task.workflowProfile?.strictClosure) {
+      codeGraphCandidates = await discoverCodeGraphCandidates(root, task.acceptanceMatrix!, ownedPaths);
+      codeGraphDisposition = classifyCodeGraphCandidates(task.acceptanceMatrix!, ownedPaths, waivers, codeGraphCandidates);
+    }
     const waivedPaths = new Set(waivers.map((w) => w.path));
     const unwaivedMissingImpl = coverage.missingImplementationPaths.filter((p) => !waivedPaths.has(p));
     const unwaivedMissingTest = coverage.missingTestPaths.filter((p) => !waivedPaths.has(p));
-    codeGraphDisposition = classifyCodeGraphCandidates(task.acceptanceMatrix!, ownedPaths, waivers, codeGraphCandidates);
-    if (unwaivedMissingImpl.length > 0 || unwaivedMissingTest.length > 0 || codeGraphDisposition.unresolvedCandidates.length > 0) {
+    if (unwaivedMissingImpl.length > 0 || unwaivedMissingTest.length > 0 || (codeGraphDisposition?.unresolvedCandidates.length ?? 0) > 0) {
       return {
         command: 'build', taskId, phase: 'implement', success: false,
         error: 'Owned path coverage incomplete: matrix implementation and test paths must be covered by owned paths or waived.',
@@ -310,8 +351,7 @@ async function cmdBuild(
           missingTestPaths: unwaivedMissingTest,
           waivedImplementationPaths: coverage.missingImplementationPaths.filter((p) => waivedPaths.has(p)),
           waivedTestPaths: coverage.missingTestPaths.filter((p) => waivedPaths.has(p)),
-          codeGraphCandidates,
-          ...codeGraphDisposition,
+          ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
           waivers,
         },
       };
@@ -319,11 +359,20 @@ async function cmdBuild(
     await writeWaivers(root, taskId, waivers);
   }
   const revision = ownedPaths.length
-    ? await createTaskRevision({ root, taskId, ownedPaths })
+    ? await createTaskRevision({
+        root,
+        taskId,
+        ownedPaths,
+        ...(ownershipConflicts.length > 0 && options.allowOwnershipConflicts
+          ? { ownershipConflicts, ownershipConflictsAcknowledged: true }
+          : {}),
+      })
     : undefined;
 
   const evidence = await collectEvidence(taskId, checks, {
     ...(revision ? { revision } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
   });
   await writeEvidence(root, taskId, evidence);
   if (evidence.some((item) => item.exitCode !== 0)) {
@@ -367,10 +416,10 @@ async function cmdBuild(
       passing: evidence.filter((e) => e.exitCode === 0).length,
       failing: evidence.filter((e) => e.exitCode !== 0).length,
       wikiClosure,
-      ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : options.ownedPaths?.length ? 'build-option' : 'workspace' } : {}),
-      ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates } : {}),
-      ...(codeGraphDisposition ?? {}),
+      ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : 'build-option' } : {}),
+      ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
       ...(revision ? { revisionId: revision.id } : {}),
+      ...(ownershipConflicts.length > 0 ? { ownershipConflicts } : {}),
     },
   };
 }
@@ -415,10 +464,10 @@ async function resolveSealOwnedPaths(
   options: CommandOptions,
 ): Promise<string[]> {
   if (task.ownedPaths?.length) return task.ownedPaths;
-  const ownedPaths = options.ownedPaths?.length
-    ? [...new Set(options.ownedPaths)].sort()
-    : await inferOwnedPathsFromWorkspace(root);
-  if (ownedPaths.length === 0) return [];
+  if (!options.ownedPaths?.length) {
+    throw new Error('seal requires at least one --owned-path when the task has no ownedPaths');
+  }
+  const ownedPaths = [...new Set(options.ownedPaths)].sort();
   await persistTaskOwnedPaths(root, taskId, task, ownedPaths);
   return ownedPaths;
 }
@@ -746,6 +795,21 @@ async function cmdVerify(
 
 async function cmdReview(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
   try {
+    const isApprove = options.approve === true;
+    if (isApprove) {
+      const reviewPath = join(root, '.kata/tasks', taskId, 'review.json');
+      const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+      const existing = await readReview(root, taskId);
+      if (existing.findings.some((f) => f.severity === 'blocking' || f.severity === 'major')) {
+        return {
+          command: 'review', taskId, phase: 'review', success: false,
+          error: 'Cannot approve review with blocking or major findings; resolve findings first.',
+        };
+      }
+      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: existing.findings, status: 'approved' }, null, 2)}\n`, 'utf8');
+      return { command: 'review', taskId, phase: 'review', success: true, diagnostics: { role: 'reviewer', approval: true, ...(revisionId ? { revisionId } : {}) } };
+    }
+
     await guardTransition(options.guard, 'check', taskId, 'review');
     const state = await transition(taskId, 'review', actorFor(reviewerActor, options.platform), { root });
     await guardTransition(options.guard, 'apply', taskId, 'review');
@@ -757,10 +821,10 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         findings?: ReviewFinding[];
       };
       if (revisionId && previous.revisionId !== revisionId) {
-        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [] }, null, 2)}\n`, 'utf8');
+        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
       }
     } catch {
-      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [] }, null, 2)}\n`, 'utf8');
+      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
     }
     return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
   } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
@@ -789,9 +853,18 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
     workflowProfile?: { reviewMode?: string };
   };
+  const review = await readReview(root, taskId);
+  if (review.status !== 'approved') {
+    return {
+      command: 'judge', taskId, phase: 'review', success: false,
+      error: review.status === 'pending'
+        ? 'Review has no explicit conclusion. Approve review with /kata-review --approve or record findings before judge.'
+        : 'Review has no explicit conclusion. Run /kata-review first.',
+    };
+  }
   const currentDiffHash = await computeDiffHash(root);
   const evidence = await readTaskEvidence(root, taskId, options);
-  const findings = await readReviewFindings(root, taskId);
+  const findings = review.findings;
   const evidenceRevisionId = revisionIdForEvidence(evidence);
   const reviewRevisionId = await readReviewRevisionId(root, taskId);
   if (evidenceRevisionId && reviewRevisionId !== evidenceRevisionId) {
@@ -877,11 +950,11 @@ async function readReviewFindings(root: string, taskId: string): Promise<ReviewF
   return (await readReview(root, taskId)).findings;
 }
 
-async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; findings: ReviewFinding[] }> {
+async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; findings: ReviewFinding[] }> {
   try {
     const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
-    const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; findings?: ReviewFinding[] };
-    return { revisionId: reviewParsed.revisionId, findings: reviewParsed.findings ?? [] };
+    const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; status?: string; findings?: ReviewFinding[] };
+    return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, findings: reviewParsed.findings ?? [] };
   } catch {
     return { findings: [] };
   }
@@ -1032,6 +1105,27 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     archivePhase = 'distill';
   }
 
+  let codegraphRefresh: { ok: boolean; output?: string } | undefined;
+  if (archivePhase === 'archive') {
+    try {
+      const { stat } = await import('node:fs/promises');
+      await stat(join(root, '.codegraph/index.db'));
+      const { execFileSync } = await import('node:child_process');
+      const output = execFileSync('codegraph', ['index'], {
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000,
+      });
+      codegraphRefresh = { ok: true, output: output.trim() };
+    } catch (error) {
+      const nodeError = error as { code?: string };
+      if (nodeError?.code === 'ENOENT') {
+        codegraphRefresh = { ok: false, output: 'CodeGraph not initialized; skip index refresh.' };
+      } else {
+        const detail = error instanceof Error ? error.message : String(error);
+        codegraphRefresh = { ok: false, output: detail };
+      }
+    }
+  }
+
   return {
     command: 'archive',
     taskId,
@@ -1046,6 +1140,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
       hasReviewResult: reviewRaw !== null,
       distillation,
       distillationHint: 'Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata wiki ingest.',
+      ...(codegraphRefresh ? { codegraphRefresh } : {}),
     },
   };
 }
@@ -1059,6 +1154,7 @@ async function cmdHotfix(
     title: options.title ?? `Hotfix ${taskId}`,
     acceptance: options.acceptance ?? [{ id: 'AC-1', statement: 'Fix is correct.' }],
     guard: options.guard,
+    workflowProfile: options.workflowProfile,
   });
   if (!openResult.success) return openResult;
 
@@ -1089,6 +1185,7 @@ async function cmdTweak(
     title: options.title ?? `Tweak ${taskId}`,
     acceptance: options.acceptance ?? [{ id: 'AC-1', statement: 'Tweak is correct.' }],
     guard: options.guard,
+    workflowProfile: options.workflowProfile,
   });
   if (!openResult.success) return openResult;
 
