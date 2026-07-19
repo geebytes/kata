@@ -265,12 +265,21 @@ async function cmdBuild(
   const projectChecks = options.checks?.length
     ? options.checks
     : await resolveBuildChecks(root, await loadConfig(root));
+  let matrixDerivedChecks: CheckCommand[] = [];
+  if (!options.checks?.length && task.acceptanceMatrix) {
+    try {
+      matrixDerivedChecks = matrixChecks(root, task.acceptanceMatrix);
+    } catch (error) {
+      return {
+        command: 'build', taskId, phase: 'implement', success: false,
+        error: error instanceof Error ? error.message : String(error),
+        diagnostics: { matrixError: true },
+      };
+    }
+  }
   const checks = dedupeCheckCommands([
     ...projectChecks,
-    // Programmatic checks are an explicit evidence fixture/override.  In that
-    // mode their caller owns matrix evidence selection; normal Build execution
-    // still adds every declared matrix check to the project quality suite.
-    ...(!options.checks?.length && task.acceptanceMatrix ? matrixChecks(root, task.acceptanceMatrix) : []),
+    ...matrixDerivedChecks,
   ]);
 
   if (requiresMatrix(task.workflowProfile) && !task.acceptanceMatrix) {
@@ -424,9 +433,20 @@ async function cmdBuild(
   };
 }
 
-function matrixChecks(root: string, matrix: import('../core/task.js').AcceptanceMatrix): CheckCommand[] {
-  const checks = matrix.rows.flatMap((row) => row.evidence.map((evidence) => {
-    const [rawCommand, ...args] = evidence.command.trim().split(/\s+/);
+const selectorCapableRunners = new Set(['vitest', 'pytest', 'uv']);
+
+function resolveCheckForRow(
+  row: import('../core/task.js').AcceptanceMatrixRow,
+  evidence: import('../core/task.js').MatrixEvidenceItem,
+  root: string,
+): CheckCommand | Error {
+  const hasSelector = typeof evidence.testSelector === 'string' && evidence.testSelector.length > 0;
+  const template = evidence.command.trim();
+  const hasPlaceholder = template.includes('{{selector}}');
+
+  if (hasSelector && hasPlaceholder) {
+    const filled = template.replace('{{selector}}', evidence.testSelector!);
+    const [rawCommand, ...args] = filled.split(/\s+/);
     const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
     const runtimeEntry = rawCommand === 'vitest'
       ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
@@ -438,13 +458,70 @@ function matrixChecks(root: string, matrix: import('../core/task.js').Acceptance
       name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
       kind: evidence.kind,
       command,
-      args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
+      args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
       cwd: root,
       timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
     } satisfies CheckCommand;
-  }));
+  }
+
+  if (hasSelector) {
+    const knownRunners = ['vitest', 'pytest', 'uv run pytest'];
+    const isKnownRunner = knownRunners.some((runner) => template === runner || template.startsWith(runner + ' '));
+    if (isKnownRunner) {
+      const [rawCommand, ...args] = template.split(/\s+/);
+      const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+      const runtimeEntry = rawCommand === 'vitest'
+        ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
+        : rawCommand === 'pytest'
+          ? rawCommand
+          : undefined;
+      const command = runtimeEntry === undefined && rawCommand === 'uv' ? template : (runtimeEntry ? process.execPath : rawCommand);
+      return {
+        name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
+        kind: evidence.kind,
+        command: runtimeEntry ? process.execPath : rawCommand,
+        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
+        cwd: root,
+        timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
+      } satisfies CheckCommand;
+    }
+    return new Error(`Matrix row ${row.acceptanceId} declares a testSelector but command "${template}" does not support selectors. Use vitest, pytest, uv run pytest, or a command template with {{selector}} placeholder.`);
+  }
+
+  const [rawCommand, ...args] = template.split(/\s+/);
+  const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+  const runtimeEntry = rawCommand === 'vitest'
+    ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
+    : rawCommand === 'tsc'
+      ? join(runtimeProjectDir, 'node_modules', 'typescript', 'bin', 'tsc')
+      : undefined;
+  const command = runtimeEntry ? process.execPath : rawCommand;
+  return {
+    name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
+    kind: evidence.kind,
+    command,
+    args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
+    cwd: root,
+    timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
+  } satisfies CheckCommand;
+}
+
+function matrixChecks(root: string, matrix: import('../core/task.js').AcceptanceMatrix): CheckCommand[] {
+  const checks: CheckCommand[] = [];
+  for (const row of matrix.rows) {
+    for (const evidence of row.evidence) {
+      const result = resolveCheckForRow(row, evidence, root);
+      if (result instanceof Error) {
+        throw result;
+      }
+      checks.push(result);
+    }
+  }
   return checks.filter((check, index) => checks.findIndex((candidate) =>
-    candidate.kind === check.kind && candidate.command === check.command && candidate.args.join('\0') === check.args.join('\0') && candidate.cwd === check.cwd,
+    candidate.kind === check.kind
+      && candidate.command === check.command
+      && (candidate.args ?? []).join('\0') === (check.args ?? []).join('\0')
+      && candidate.cwd === check.cwd,
   ) === index);
 }
 

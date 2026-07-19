@@ -423,7 +423,6 @@ describe('Workflow resume and lifecycle', () => {
           evidence: [{
             kind: 'test',
             command: `${process.execPath} -e process.exit(0)`,
-            testSelector: 'subject.test.ts',
           }],
           verificationLevel: 'unit',
         }],
@@ -437,7 +436,9 @@ describe('Workflow resume and lifecycle', () => {
     expect(result).toMatchObject({ success: true, phase: 'hardVerify' });
     await expect(readFile(join(root, 'checks.log'), 'utf8')).resolves.toContain('default-check');
     await expect(readFile(join(root, `.kata/evidence/${taskId}-default-check.json`), 'utf8')).resolves.toContain('"name": "default-check"');
-    await expect(readdir(join(root, '.kata/evidence'))).resolves.toContain(`${taskId}-AC-1-test-subject.test.ts.json`);
+    const evidenceFiles = await readdir(join(root, '.kata/evidence'));
+    const matrixEvidence = evidenceFiles.find((f) => f.startsWith(`${taskId}-AC-1-test-`));
+    expect(matrixEvidence).toBeDefined();
   });
 
   it('/kata-build resumes evidence collection from an interrupted implement phase', async () => {
