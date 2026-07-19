@@ -9,7 +9,7 @@ import { codeGraphExecutionEnv } from './codegraph/runtime.js';
 import { resolveWorkspaceRoot } from './core/layout.js';
 import { CometClient } from './comet/client.js';
 import { loadCometCompatibility, type CometCompatibility } from './comet/compat.js';
-import { installComet, updateComet, verifyComet, resolveCometPath, getCometVersion, readCometCompatibility } from './comet/install.js';
+import { installComet, updateComet, verifyComet, resolveCometPath, getCometVersion, readCometCompatibility, initCometProject } from './comet/install.js';
 import {
   discoverPlatforms,
   identifyPlatformInstallState,
@@ -386,15 +386,12 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
         return planDetectedInit(platforms, { scope: 'project', language: 'zh' });
       })()
     : await promptInitPlan(platforms);
-  const cometInit = {
-    command: 'comet init' as const,
-    status: 'deferred' as const,
-    path: null,
+  const cometInit = await initCometProject({
     root,
     scope: plan.scope,
     language: plan.language,
-    nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}${useAuto ? ' --yes --json' : ''}`,
-  };
+    yes: useAuto,
+  });
   const reports = [];
   const preStates: PlatformInstallState[] = [];
   for (const platform of plan.selected) {
@@ -410,12 +407,26 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     );
   }
 
-  const codegraphResult = {
-    codegraph: {
-      status: 'deferred',
-      nextCommand: 'kata codegraph install --yes',
-    },
+  let codegraphResult: { codegraph: { status: string; error?: string } } = {
+    codegraph: { status: 'skipped' },
   };
+  try {
+    const output = execFileSync('codegraph', ['index', '--yes'], {
+      encoding: 'utf-8',
+      cwd: root,
+      env: codeGraphExecutionEnv(),
+    }).trim();
+    codegraphResult = {
+      codegraph: { status: 'initialized', ...(output ? { error: undefined } : {}) },
+    };
+  } catch (error: unknown) {
+    codegraphResult = {
+      codegraph: {
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 
   const result = mergeInstallReports({
     command: 'init',

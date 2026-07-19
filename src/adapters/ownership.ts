@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, writeConfigPatch } from '../core/config.js';
 import { initLlmWiki, buildLlmWikiTask } from '../wiki/llmwiki.js';
+import { initCometProject } from '../comet/install.js';
 import {
   commandManifest,
   renderSkill,
@@ -151,6 +152,12 @@ async function writeSkills(
   if (scope === 'project') {
     await writeProjectContractFiles(platform, scope, effectiveOptions, baseRoot, manifest, report);
     await manageProjectWiki(effectiveOptions, baseRoot, report);
+    await initCometProject({ root: baseRoot, scope, language: options.language, yes: options.dryRun ? undefined : true });
+    try {
+      const { execFileSync } = await import('node:child_process');
+      const { codeGraphExecutionEnv } = await import('../codegraph/runtime.js');
+      execFileSync('codegraph', ['index', '--yes'], { cwd: baseRoot, encoding: 'utf-8', env: codeGraphExecutionEnv() });
+    } catch { /* codegraph may not be installed */ }
   }
 
   if (!effectiveOptions.dryRun) await writeManifest(manifestRoot, manifest);
