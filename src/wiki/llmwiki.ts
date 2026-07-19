@@ -116,13 +116,25 @@ export async function initLlmWiki(input: InitLlmWikiInput): Promise<LlmWikiInitR
   const sourceFiles = await collectSourceFiles(fromRoot);
   const importedSources: string[] = [];
 
+  // Include root-level agent guidance files (AGENTS.md etc.) even when
+  // --from defaults to docs/.
+  for (const name of ['AGENTS.md']) {
+    const rootPath = join(root, name);
+    try {
+      await stat(rootPath);
+      if (!sourceFiles.includes(rootPath)) sourceFiles.push(rootPath);
+    } catch { /* file doesn't exist */ }
+  }
+
   await mkdir(wikiRoot, { recursive: true });
   for (const directory of requiredDirectories) {
     await mkdir(join(wikiRoot, directory), { recursive: true });
   }
 
   for (const sourceFile of sourceFiles) {
-    const relativeToSourceRoot = relative(fromRoot, sourceFile).replaceAll('\\', '/');
+    const relativeToSourceRoot = sourceFile.startsWith(fromRoot)
+      ? relative(fromRoot, sourceFile).replaceAll('\\', '/')
+      : relative(root, sourceFile).replaceAll('\\', '/');
     const destination = `raw/docs/${relativeToSourceRoot}`;
     const body = await readFile(sourceFile, 'utf8');
     const sourcePath = normalizeSourcePath(root, sourceFile);
