@@ -1,8 +1,28 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src"
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "types": ["node"],
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "noEmit": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["tests/**/*.ts", "vitest.config.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests/**/*.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "vitest.config.ts"
+  ]
 }

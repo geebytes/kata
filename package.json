@@ -1,18 +1,26 @@
 {
   "name": "@kata-dev/kata",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "bin": {
-    "kata": "dist/cli.js"
+    "kata": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
-    "pack": "npm pack"
+        "prepare": "npm run build",
+
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -21,5 +29,8 @@
   },
   "dependencies": {
     "@inquirer/prompts": "^8.5.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
