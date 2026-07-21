@@ -1,0 +1,1 @@
+{"version":3,"file":"ids.js","sourceRoot":"","sources":["../../src/core/ids.ts"],"names":[],"mappings":"AAAA,MAAM,aAAa,GAAG,8BAA8B,CAAC;AAErD,MAAM,UAAU,iBAAiB,CAAC,MAAc;IAC9C,IAAI,CAAC,aAAa,CAAC,IAAI,CAAC,MAAM,CAAC,EAAE,CAAC;QAChC,MAAM,IAAI,KAAK,CAAC,oBAAoB,MAAM,EAAE,CAAC,CAAC;IAChD,CAAC;AACH,CAAC"}
