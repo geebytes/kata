@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

@@ -4,6 +4,27 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cwd } from 'node:process';
 import { accessSync } from 'node:fs';
 import { loadConfig } from './config.js';
+import taskSchema from 'kata-asset:schemas/task.schema.json';
+import workflowStateRecordSchema from 'kata-asset:schemas/workflow-state-record.schema.json';
+import workflowStateEventSchema from 'kata-asset:schemas/workflow-state-event.schema.json';
+import evidenceSchema from 'kata-asset:schemas/evidence.schema.json';
+import reviewFindingSchema from 'kata-asset:schemas/review-finding.schema.json';
+import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
+import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
+import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
+import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+
+const schemaContents: Record<string, string> = {
+  'task.schema.json': taskSchema,
+  'workflow-state-record.schema.json': workflowStateRecordSchema,
+  'workflow-state-event.schema.json': workflowStateEventSchema,
+  'evidence.schema.json': evidenceSchema,
+  'review-finding.schema.json': reviewFindingSchema,
+  'judge-result.schema.json': judgeResultSchema,
+  'wiki-record.schema.json': wikiRecordSchema,
+  'handoff-packet.schema.json': handoffPacketSchema,
+  'handoff-receipt.schema.json': handoffReceiptSchema,
+};
 
 export type LayoutResult = {
   created: string[];
@@ -100,9 +121,8 @@ async function installSchemaCopies(root: string, result: LayoutResult): Promise<
 
   let manifestChanged = false;
   for (const schemaFile of schemaFiles) {
-    const sourceUrl = new URL(`../../schemas/${schemaFile}`, import.meta.url);
     const target = join(targetDirectory, schemaFile);
-    const content = await readFile(sourceUrl, 'utf8');
+    const content = schemaContents[schemaFile];
     const generatedHash = sha256(content);
     const recordedHash = manifest.files[schemaFile]?.sha256;
 

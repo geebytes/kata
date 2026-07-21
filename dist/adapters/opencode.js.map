@@ -1,1 +1,0 @@
-{"version":3,"file":"opencode.js","sourceRoot":"","sources":["../../src/adapters/opencode.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,WAAW,IAAI,qBAAqB,EAAE,MAAM,eAAe,CAAC;AAGrE,MAAM,UAAU,WAAW,CAAC,OAAqB,EAAE,WAAqB,UAAU;IAChF,OAAO,qBAAqB,CAAC,OAAO,EAAE,QAAQ,CAAC,CAAC;AAClD,CAAC"}

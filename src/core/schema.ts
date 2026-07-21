@@ -1,4 +1,24 @@
-import { readFileSync } from 'node:fs';
+import taskSchema from 'kata-asset:schemas/task.schema.json';
+import workflowStateRecordSchema from 'kata-asset:schemas/workflow-state-record.schema.json';
+import workflowStateEventSchema from 'kata-asset:schemas/workflow-state-event.schema.json';
+import evidenceSchema from 'kata-asset:schemas/evidence.schema.json';
+import reviewFindingSchema from 'kata-asset:schemas/review-finding.schema.json';
+import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
+import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
+import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
+import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+
+const schemaText: Record<string, string> = {
+  task: taskSchema,
+  'workflow-state-record': workflowStateRecordSchema,
+  'workflow-state-event': workflowStateEventSchema,
+  evidence: evidenceSchema,
+  'review-finding': reviewFindingSchema,
+  'judge-result': judgeResultSchema,
+  'wiki-record': wikiRecordSchema,
+  'handoff-packet': handoffPacketSchema,
+  'handoff-receipt': handoffReceiptSchema,
+};
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
@@ -30,8 +50,11 @@ function loadSchema(schemaName: string): Schema {
   const cached = schemas.get(schemaName);
   if (cached) return cached;
 
-  const schemaUrl = new URL(`../../schemas/${schemaName}.schema.json`, import.meta.url);
-  const parsed = JSON.parse(readFileSync(schemaUrl, 'utf8')) as Schema;
+  const text = schemaText[schemaName];
+  if (text === undefined) {
+    throw new Error(`Unknown schema: ${schemaName}`);
+  }
+  const parsed = JSON.parse(text) as Schema;
   schemas.set(schemaName, parsed);
   return parsed;
 }
