@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { chmodSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import esbuild from 'esbuild';
@@ -29,13 +29,15 @@ const assetPlugin = {
   },
 };
 
+const outfile = resolve(root, 'dist/cli.js');
+
 await esbuild.build({
   entryPoints: [resolve(root, 'src/cli.ts')],
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node20',
-  outfile: resolve(root, 'dist/cli.js'),
+  outfile,
   banner: { js: '#!/usr/bin/env node' },
   sourcemap: true,
   legalComments: 'none',
@@ -47,5 +49,7 @@ await esbuild.build({
   // contained cli.js for our own code.
   packages: 'external',
 });
+
+chmodSync(outfile, 0o755);
 
 console.log('build: dist/cli.js (single-file bundle)');

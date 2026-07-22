@@ -156,7 +156,7 @@ async function writeSkills(
     try {
       const { execFileSync } = await import('node:child_process');
       const { codeGraphExecutionEnv } = await import('../codegraph/runtime.js');
-      execFileSync('codegraph', ['index', '--yes'], { cwd: baseRoot, encoding: 'utf-8', env: codeGraphExecutionEnv() });
+      execFileSync('codegraph', ['index'], { cwd: baseRoot, encoding: 'utf-8', env: codeGraphExecutionEnv() });
     } catch { /* codegraph may not be installed */ }
   }
 
