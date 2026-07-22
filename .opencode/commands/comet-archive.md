@@ -150,4 +150,3 @@ Comet workflow complete. To start new work, invoke `/comet` or `/comet-open`.
 ## Context Compression Recovery
 
 Follow `comet/reference/context-recovery.md` with phase set to `archive`. If `archived: true` and archive directory exists, archival is complete — do not re-execute archive operations.
-

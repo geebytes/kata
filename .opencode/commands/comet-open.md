@@ -265,4 +265,3 @@ comet state next <change-name>
 - `NEXT: done` → workflow is complete, no further action needed
 
 hotfix/tweak presets are controlled by their corresponding preset skill (phase goes directly to build); their `next` returns the corresponding preset skill.
-

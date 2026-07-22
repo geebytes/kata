@@ -299,4 +299,3 @@ comet state transition <change-name> <event>          # open-complete | design-c
 comet state next <change-name>                        # NEXT: auto|manual|done + SKILL: <skill-name>
 comet archive <change-name>                           # full archive in one command
 ```
-

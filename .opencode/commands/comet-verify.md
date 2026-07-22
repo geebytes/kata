@@ -221,4 +221,3 @@ comet state next <change-name>
 - `NEXT: done` → workflow is complete, no further action needed
 
 Note: after `comet-archive` starts, it must first execute the final archive confirmation blocking point and wait for the user to explicitly choose "Confirm archive" before running the archive script. Must not automatically archive just because verification passed.
-

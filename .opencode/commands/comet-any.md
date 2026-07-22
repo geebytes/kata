@@ -124,4 +124,3 @@ Component-library and whitebox-review requirements should produce a plan like:
 - `comet-any/reference/bundle-authoring.md`
 - `comet-any/reference/authoring-subagents.md`
 - `comet-any/reference/eval-provider.md`
-

@@ -267,4 +267,3 @@ comet state next <change-name>
 - `NEXT: auto` → invoke the skill pointed to by `SKILL` to enter the next phase
 - `NEXT: manual` → do not invoke the next skill; return control with `HINT`, end the invocation, and do not create another confirmation point
 - `NEXT: done` → workflow is complete, no further action needed
-
