@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { transition } from '../../src/core/state.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { CometGuard } from '../../src/comet/guard.js';
 import { writeWikiClosure } from '../../src/wiki/closure.js';
 
@@ -30,7 +31,7 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'Open creates intake task.' }],
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true });
     expect(result.phase).toBe('intake');
     expect(result.taskId).toBe('wf-open-test');
 
@@ -340,6 +341,129 @@ describe('Workflow resume and lifecycle', () => {
     expect(result.error).toContain('Run /kata-review first');
   });
 
+  it('requires explicit confirmation before entering the review trust boundary', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'wf-review-confirmation-test', root, {
+      title: 'Review confirmation workflow test',
+      acceptance: [{ id: 'AC-1', statement: 'Review cannot start without confirmation.' }],
+    });
+    await runCommand('design', 'wf-review-confirmation-test', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', 'wf-review-confirmation-test', root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+
+    const result = await runCommand('review', 'wf-review-confirmation-test', root);
+
+    expect(result).toMatchObject({
+      command: 'review',
+      phase: 'hardVerify',
+      success: false,
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: 'review_gate' },
+    });
+    expect(result.error).toContain('explicit user confirmation');
+  });
+
+  it('rejects approval that bypasses an evidence-backed review conclusion', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'wf-review-approval-proof', root, {
+      acceptance: [{ id: 'AC-1', statement: 'Review approval requires review evidence.' }],
+    });
+    await runCommand('design', 'wf-review-approval-proof', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', 'wf-review-approval-proof', root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+
+    const bypass = await runCommand('review', 'wf-review-approval-proof', root, { approve: true });
+
+    expect(bypass.success).toBe(false);
+    expect(bypass.error).toContain('review phase');
+
+    await runCommand('review', 'wf-review-approval-proof', root, { confirmHostModel: true });
+    const missingEvidence = await runCommand('review', 'wf-review-approval-proof', root, { approve: true });
+
+    expect(missingEvidence.success).toBe(false);
+    expect(missingEvidence.error).toContain('review evidence');
+  });
+
+  it('rejects approval that would reuse review findings from another revision', async () => {
+    const root = await tempRoot();
+    const taskId = 'wf-review-approval-revision-binding';
+    await runCommand('open', taskId, root, {
+      acceptance: [{ id: 'AC-1', statement: 'Review approval is revision-bound.' }],
+    });
+    await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    await runCommand('review', taskId, root, { confirmHostModel: true });
+    await writeFile(
+      join(root, `.kata/tasks/${taskId}/review.json`),
+      `${JSON.stringify({ revisionId: 'revision-old', status: 'pending', findings: [] }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const result = await runCommand('review', taskId, root, {
+      approve: true,
+      reviewEvidence: 'This must not relabel an old review as current.',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('same sealed revision');
+  });
+
+  it('keeps a pending review at the review gate instead of recommending Judge', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'wf-pending-review-navigation', root, {
+      acceptance: [{ id: 'AC-1', statement: 'Pending review cannot be treated as reviewed.' }],
+    });
+    await runCommand('design', 'wf-pending-review-navigation', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', 'wf-pending-review-navigation', root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    await runCommand('review', 'wf-pending-review-navigation', root, { confirmHostModel: true });
+
+    const upstream = await readUpstreamSummary(root, 'wf-pending-review-navigation');
+    const suggestion = suggestCandidateAction('review', upstream);
+
+    expect(suggestion).toMatchObject({ nextSkill: '/kata-review', reason: 'complete_review_conclusion' });
+  });
+
+  it('ignores evidence whose file name shares a task-id prefix but envelope belongs to another task', async () => {
+    const root = await tempRoot();
+    const taskId = 'wf-evidence-prefix';
+    await runCommand('open', taskId, root, {
+      acceptance: [{ id: 'AC-1', statement: 'Evidence belongs to exactly one task.' }],
+    });
+    await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    const evidenceFiles = await readdir(join(root, '.kata/evidence'));
+    const sourceFile = evidenceFiles.find((file) => file.startsWith(`${taskId}-`));
+    const source = JSON.parse(await readFile(join(root, `.kata/evidence/${sourceFile}`), 'utf8'));
+    await writeFile(
+      join(root, `.kata/evidence/${taskId}-other-task-failure.json`),
+      `${JSON.stringify({ ...source, id: 'foreign-evidence', taskId: `${taskId}-other-task`, exitCode: 1 }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const upstream = await readUpstreamSummary(root, taskId);
+    const result = await runCommand('verify', taskId, root);
+
+    expect(upstream.failingEvidence).toBe(0);
+    expect(result.diagnostics).toMatchObject({ implementationReady: true, evidenceCount: 2 });
+  });
+
   it('/kata-build discovers project-owned acceptance gate checks from local skills', async () => {
     const root = await tempRoot();
     await mkdir(join(root, '.agents/skills/project-quality'), { recursive: true });
@@ -544,7 +668,7 @@ describe('Workflow resume and lifecycle', () => {
     expect(repairBuild.phase).toBe('hardVerify');
   });
 
-  it('/kata-build re-enters implementation from review when blocking findings exist', async () => {
+  it('/kata-build requires a changed manifest before sealing a review repair', async () => {
     const root = await tempRoot();
     const taskId = 'wf-review-repair-test';
     await runCommand('open', taskId, root, {
@@ -557,7 +681,7 @@ describe('Workflow resume and lifecycle', () => {
       ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
-    await runCommand('review', taskId, root, { platform: 'codex' });
+    await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
     await writeFile(
       join(root, `.kata/tasks/${taskId}/review.json`),
       `${JSON.stringify({ findings: [{ severity: 'blocking', title: 'Must repair' }] }, null, 2)}\n`,
@@ -570,13 +694,13 @@ describe('Workflow resume and lifecycle', () => {
     });
 
     expect(repairBuild.success).toBe(true);
-    expect(repairBuild.phase).toBe('hardVerify');
+    expect(repairBuild.phase).toBe('implement');
 
     const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as {
       phase: string;
       actor: { role: string; platform?: string };
     };
-    expect(state).toMatchObject({ phase: 'hardVerify', actor: { role: 'implementer', platform: 'opencode' } });
+    expect(state).toMatchObject({ phase: 'implement', actor: { role: 'implementer', platform: 'opencode' } });
 
     const repair = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/repair.json`), 'utf8')) as {
       fromPhase: string;
@@ -588,6 +712,23 @@ describe('Workflow resume and lifecycle', () => {
       toPhase: 'implement',
       reason: 'review_findings',
     });
+
+    const emptySeal = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    expect(emptySeal).toMatchObject({
+      success: false,
+      phase: 'implement',
+      error: expect.stringMatching(/review repair.*changed/i),
+    });
+
+    await writeFile(join(root, 'task-owned.txt'), 'repaired implementation\n', 'utf8');
+    const sealedRepair = await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    expect(sealedRepair).toMatchObject({ success: true, phase: 'hardVerify' });
 
     const events = (await readFile(join(root, `.kata/tasks/${taskId}/state-events.jsonl`), 'utf8'))
       .trim()
@@ -631,7 +772,7 @@ describe('Workflow resume and lifecycle', () => {
       ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
-    await runCommand('review', taskId, root, { platform: 'codex' });
+    await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
     await writeFile(
       join(root, `.kata/tasks/${taskId}/review.json`),
       `${JSON.stringify({ findings: [{ severity: 'major', title: 'Must repair in strict mode' }] }, null, 2)}\n`,
@@ -642,7 +783,7 @@ describe('Workflow resume and lifecycle', () => {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
 
-    expect(repairBuild).toMatchObject({ success: true, phase: 'hardVerify' });
+    expect(repairBuild).toMatchObject({ success: true, phase: 'implement' });
     const repair = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/repair.json`), 'utf8')) as {
       findings: Array<{ title?: string }>;
     };
@@ -669,7 +810,7 @@ describe('Workflow resume and lifecycle', () => {
       ownedPaths: ['task-owned.txt'],
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
-    await runCommand('review', taskId, root, { platform: 'codex' });
+    await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
     await writeFile(
       join(root, `.kata/tasks/${taskId}/review.json`),
       `${JSON.stringify({ findings: [{ severity: 'major', title: 'Does not require standard repair' }] }, null, 2)}\n`,
@@ -759,9 +900,9 @@ describe('Workflow resume and lifecycle', () => {
       return { passed: true, phase };
     });
 
-    await runCommand('review', 'wf-judge-guard-test', root);
-    await runCommand('review', 'wf-judge-guard-test', root, { approve: true });
-    const result = await runCommand('judge', 'wf-judge-guard-test', root, { guard });
+    await runCommand('review', 'wf-judge-guard-test', root, { confirmHostModel: true });
+    await runCommand('review', 'wf-judge-guard-test', root, { approve: true, reviewEvidence: 'Reviewed guarded judge transition.' });
+    const result = await runCommand('judge', 'wf-judge-guard-test', root, { guard, confirmHostModel: true });
 
     expect(result.success).toBe(false);
     expect(result.phase).toBe('review');
@@ -784,10 +925,16 @@ describe('Workflow resume and lifecycle', () => {
 
     const verifyResult = await runCommand('verify', 'wf-archive-test', root);
     expect(verifyResult.phase).toBe('hardVerify');
-    const reviewResult = await runCommand('review', 'wf-archive-test', root);
+    const reviewResult = await runCommand('review', 'wf-archive-test', root, { confirmHostModel: true });
     expect(reviewResult.phase).toBe('review');
-    await runCommand('review', 'wf-archive-test', root, { approve: true });
-    const judgeResult = await runCommand('judge', 'wf-archive-test', root);
+    await runCommand('review', 'wf-archive-test', root, { approve: true, reviewEvidence: 'Reviewed archive lifecycle fixture.' });
+    const unconfirmedJudge = await runCommand('judge', 'wf-archive-test', root);
+    expect(unconfirmedJudge).toMatchObject({
+      phase: 'review',
+      success: false,
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: 'judge_gate' },
+    });
+    const judgeResult = await runCommand('judge', 'wf-archive-test', root, { confirmHostModel: true });
     expect(judgeResult.phase).toBe('judge');
 
     const diffHash = await (await import('../../src/quality/evidence.js')).computeDiffHash(root);
@@ -801,7 +948,13 @@ describe('Workflow resume and lifecycle', () => {
     await writeFile(join(root, `.kata/tasks/wf-archive-test/judge.json`),
       `${JSON.stringify(judgeData, null, 2)}\n`);
 
-    const archiveResult = await runCommand('archive', 'wf-archive-test', root);
+    const unconfirmedArchive = await runCommand('archive', 'wf-archive-test', root);
+    expect(unconfirmedArchive).toMatchObject({
+      phase: 'judge',
+      success: false,
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: 'archive_gate' },
+    });
+    const archiveResult = await runCommand('archive', 'wf-archive-test', root, { confirmHostModel: true });
     expect(archiveResult.phase).toBe('archive');
     expect(archiveResult.success).toBe(true);
   });

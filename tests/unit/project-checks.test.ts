@@ -32,7 +32,23 @@ describe('project quality check discovery', () => {
       name: 'test',
       command: 'make',
       args: ['test'],
-      timeoutMs: 300_000,
+      timeoutMs: 900_000,
     }));
+  });
+
+  it('does not inherit root Makefile gates for a Kata-only task', async () => {
+    const root = await tempRoot();
+    await writeFile(
+      join(root, 'AGENTS.md'),
+      ['# Project', '', '## Acceptance Gate', '', '```bash', 'make test', '```', ''].join('\n'),
+      'utf8',
+    );
+
+    const checks = await resolveBuildChecks(root, {}, [
+      'kata/src/workflow/orchestrator.ts',
+      'docs/changelog/2026-07-22-kata-review-trust-evidence.md',
+    ]);
+
+    expect(checks).not.toContainEqual(expect.objectContaining({ command: 'make', args: ['test'] }));
   });
 });

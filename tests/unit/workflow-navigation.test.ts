@@ -337,6 +337,7 @@ describe('workflow guidance', () => {
     const upstream: UpstreamSummary = {
       ...emptyUpstream,
       reviewMode: 'std',
+      reviewReady: true,
       majorFindings: 2,
       blockingFindings: 0,
     };

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { KataConfig } from '../core/config.js';
 import type { CheckCommand, EvidenceKind } from './evidence.js';
 
-export async function resolveBuildChecks(root: string, config: KataConfig): Promise<CheckCommand[]> {
+export async function resolveBuildChecks(root: string, config: KataConfig, ownedPaths: string[] = []): Promise<CheckCommand[]> {
   const configured = config.quality?.buildChecks?.map((check) => ({
     name: check.name ?? inferCheckName(check.command, check.args ?? []),
     kind: check.kind ?? inferEvidenceKind(check.name ?? check.args?.[0] ?? check.command),
@@ -13,19 +13,27 @@ export async function resolveBuildChecks(root: string, config: KataConfig): Prom
     timeoutMs: check.timeoutMs ?? defaultTimeoutMs(check.name ?? check.args?.[0] ?? check.command),
   })) ?? [];
 
-  const discovered = await discoverProjectQualityChecks(root);
+  // Root instructions describe the host project. They are not an implicit
+  // quality contract for changes confined to Kata itself (or its supporting
+  // documentation); those changes have their own explicit matrix evidence.
+  const kataScopedTask = ownedPaths.length > 0 && ownedPaths.every(isKataScopedPath);
+  const discovered = kataScopedTask ? [] : await discoverProjectQualityChecks(root);
 
   // Explicit project configuration or discovered project gates already define
   // the baseline suite. Generic TypeScript/Vitest fallbacks apply only when a
   // project declares neither, otherwise a configured Python/Go/etc. project
   // would receive unrelated failing checks.
-  const defaults: CheckCommand[] = configured.length > 0 || discovered.length > 0 ? [] : [
+  const defaults: CheckCommand[] = kataScopedTask || configured.length > 0 || discovered.length > 0 ? [] : [
     { name: 'typecheck', kind: 'typecheck', command: process.execPath, args: ['node_modules/typescript/lib/tsc.js', '--noEmit'], cwd: root, timeoutMs: 60_000 },
     { name: 'test', kind: 'test', command: process.execPath, args: ['node_modules/vitest/dist/cli.js', 'run'], cwd: root, timeoutMs: 120_000 },
   ];
 
   const merged = [...configured, ...discovered, ...defaults];
   return dedupeChecks(merged);
+}
+
+function isKataScopedPath(path: string): boolean {
+  return path === 'kata' || path.startsWith('kata/') || path === 'docs' || path.startsWith('docs/');
 }
 
 async function discoverProjectQualityChecks(root: string): Promise<CheckCommand[]> {
@@ -112,9 +120,11 @@ function inferEvidenceKind(name: string): EvidenceKind {
 
 function defaultTimeoutMs(name: string): number {
   const normalized = name.toLowerCase();
-  if (normalized === 'test' || normalized.startsWith('test-')) return 300_000;
-  if (normalized.includes('test') || normalized.includes('cov')) return 120_000;
-  return 60_000;
+  if (normalized === 'test' || normalized.startsWith('test-')) return 900_000;
+  if (normalized.includes('test') || normalized.includes('cov')) return 600_000;
+  if (normalized.includes('type') || normalized.includes('pyright') || normalized.includes('mypy')) return 180_000;
+  if (normalized.includes('lint')) return 180_000;
+  return 120_000;
 }
 
 function dedupe(values: string[]): string[] {

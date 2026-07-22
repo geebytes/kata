@@ -10,6 +10,7 @@ export type UpstreamSummary = {
   blockingFindings: number;
   majorFindings: number;
   reviewMode?: string;
+  reviewReady?: boolean;
   judgeResult?: string;
   verifyResult?: string;
   failedAcceptance: number;
@@ -54,8 +55,8 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : undefined;
   const review = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')), currentRevisionId)
-    : !mixedRevision ? await readJsonFile<{ findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')) : null;
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')), currentRevisionId)
+    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')) : null;
   const findings = review?.findings ?? [];
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'judge.json')), currentRevisionId)
@@ -76,6 +77,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     blockingFindings: findings.filter((finding) => finding.severity === 'blocking').length,
     majorFindings: findings.filter((finding) => finding.severity === 'major').length,
     ...(reviewMode ? { reviewMode } : {}),
+    reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
@@ -145,6 +147,14 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: 'implementer',
       reason: 'repair_strict_major_findings',
       priority: 980 + upstream.majorFindings,
+    };
+  }
+  if (phase === 'review' && !upstream.reviewReady) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'complete_review_conclusion',
+      priority: 970,
     };
   }
   if (phase === 'judge' && upstream.judgeResult === 'FAIL') {
@@ -273,6 +283,9 @@ export function statusActionPrompts(suggestion: { nextSkill: string; reason: str
   if (suggestion.reason === 'repair_strict_major_findings') {
     return ['检测到 strict 模式的 major review finding；strict 任务必须修复方可进入 Judge，请执行 /kata-build。'];
   }
+  if (suggestion.reason === 'complete_review_conclusion') {
+    return ['Review 尚未形成绑定当前 revision 的显式结论和审查证据；请完成实际代码审查后，以 /kata-review --approve --review-evidence <summary> 记录结论，或写入 findings。'];
+  }
   if (suggestion.reason === 'repair_failed_judge') {
     return ['检测到 Judge FAIL；建议先执行 /kata-build 修复 failed acceptance。'];
   }
@@ -348,8 +361,17 @@ async function readJsonFile<T>(path: string): Promise<T | null> {
 
 async function listEvidenceFiles(root: string, taskId: string): Promise<string[]> {
   try {
-    const files = await readdir(join(root, '.kata/evidence'));
-    return files.filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json')).sort();
+    const evidenceDir = join(root, '.kata/evidence');
+    const candidates = (await readdir(evidenceDir))
+      .filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
+    const matches = await Promise.all(candidates.map(async (file) => ({
+      file,
+      evidence: await readJsonFile<{ taskId?: string }>(join(evidenceDir, file)),
+    })));
+    return matches
+      .filter(({ evidence }) => evidence?.taskId === taskId)
+      .map(({ file }) => file)
+      .sort();
   } catch {
     return [];
   }

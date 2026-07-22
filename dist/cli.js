@@ -370,7 +370,7 @@ async function collectEvidence(taskId, commands, options = {}) {
   for (const check of commands) {
     if (options.signal?.aborted) break;
     const checkName = check.name ?? check.command;
-    const timeoutMs = check.timeoutMs ?? 12e4;
+    const timeoutMs = check.timeoutMs ?? 6e5;
     options.onProgress?.({ type: "quality_check_progress", check: checkName, state: "started", timeoutMs });
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const redactions = collectRedactions(check);
@@ -491,7 +491,7 @@ async function computeDiffHash(root = process.cwd()) {
 }
 async function runBoundedCommand(check, options) {
   const cwd2 = check.cwd ?? process.cwd();
-  const timeoutMs = check.timeoutMs ?? 12e4;
+  const timeoutMs = check.timeoutMs ?? 6e5;
   const checkName = check.name ?? check.command;
   const child = spawn2(check.command, check.args ?? [], {
     cwd: cwd2,
@@ -2722,7 +2722,7 @@ async function writeSkills(platform, scope, options) {
     try {
       const { execFileSync: execFileSync6 } = await import("node:child_process");
       const { codeGraphExecutionEnv: codeGraphExecutionEnv2 } = await Promise.resolve().then(() => (init_runtime(), runtime_exports));
-      execFileSync6("codegraph", ["index", "--yes"], { cwd: baseRoot, encoding: "utf-8", env: codeGraphExecutionEnv2() });
+      execFileSync6("codegraph", ["index"], { cwd: baseRoot, encoding: "utf-8", env: codeGraphExecutionEnv2() });
     } catch {
     }
   }
@@ -4641,7 +4641,7 @@ function buildGuardInstructions(phase, nextRole) {
 // src/quality/project-checks.ts
 import { readdir as readdir6, readFile as readFile11 } from "node:fs/promises";
 import { join as join15 } from "node:path";
-async function resolveBuildChecks(root, config) {
+async function resolveBuildChecks(root, config, ownedPaths2 = []) {
   const configured = config.quality?.buildChecks?.map((check) => ({
     name: check.name ?? inferCheckName(check.command, check.args ?? []),
     kind: check.kind ?? inferEvidenceKind(check.name ?? check.args?.[0] ?? check.command),
@@ -4650,13 +4650,17 @@ async function resolveBuildChecks(root, config) {
     cwd: root,
     timeoutMs: check.timeoutMs ?? defaultTimeoutMs(check.name ?? check.args?.[0] ?? check.command)
   })) ?? [];
-  const discovered = await discoverProjectQualityChecks(root);
-  const defaults = configured.length > 0 || discovered.length > 0 ? [] : [
+  const kataScopedTask = ownedPaths2.length > 0 && ownedPaths2.every(isKataScopedPath);
+  const discovered = kataScopedTask ? [] : await discoverProjectQualityChecks(root);
+  const defaults = kataScopedTask || configured.length > 0 || discovered.length > 0 ? [] : [
     { name: "typecheck", kind: "typecheck", command: process.execPath, args: ["node_modules/typescript/lib/tsc.js", "--noEmit"], cwd: root, timeoutMs: 6e4 },
     { name: "test", kind: "test", command: process.execPath, args: ["node_modules/vitest/dist/cli.js", "run"], cwd: root, timeoutMs: 12e4 }
   ];
   const merged = [...configured, ...discovered, ...defaults];
   return dedupeChecks(merged);
+}
+function isKataScopedPath(path) {
+  return path === "kata" || path.startsWith("kata/") || path === "docs" || path.startsWith("docs/");
 }
 async function discoverProjectQualityChecks(root) {
   const files = await candidateConstraintFiles(root);
@@ -4735,9 +4739,11 @@ function inferEvidenceKind(name) {
 }
 function defaultTimeoutMs(name) {
   const normalized = name.toLowerCase();
-  if (normalized === "test" || normalized.startsWith("test-")) return 3e5;
-  if (normalized.includes("test") || normalized.includes("cov")) return 12e4;
-  return 6e4;
+  if (normalized === "test" || normalized.startsWith("test-")) return 9e5;
+  if (normalized.includes("test") || normalized.includes("cov")) return 6e5;
+  if (normalized.includes("type") || normalized.includes("pyright") || normalized.includes("mypy")) return 18e4;
+  if (normalized.includes("lint")) return 18e4;
+  return 12e4;
 }
 function dedupe2(values) {
   return [...new Set(values)];
@@ -5070,6 +5076,7 @@ async function readUpstreamSummary(root, taskId) {
     blockingFindings: findings.filter((finding) => finding.severity === "blocking").length,
     majorFindings: findings.filter((finding) => finding.severity === "major").length,
     ...reviewMode ? { reviewMode } : {},
+    reviewReady: review?.status === "approved" && Boolean(review.reviewEvidence?.trim()),
     ...judge2?.result ? { judgeResult: judge2.result } : {},
     ...verify?.result ? { verifyResult: verify.result } : {},
     failedAcceptance: failedAcceptance.length,
@@ -5132,6 +5139,14 @@ function suggestCandidateAction(phase, upstream) {
       role: "implementer",
       reason: "repair_strict_major_findings",
       priority: 980 + upstream.majorFindings
+    };
+  }
+  if (phase === "review" && !upstream.reviewReady) {
+    return {
+      nextSkill: "/kata-review",
+      role: "reviewer",
+      reason: "complete_review_conclusion",
+      priority: 970
     };
   }
   if (phase === "judge" && upstream.judgeResult === "FAIL") {
@@ -5255,6 +5270,9 @@ function statusActionPrompts(suggestion) {
   if (suggestion.reason === "repair_strict_major_findings") {
     return ["\u68C0\u6D4B\u5230 strict \u6A21\u5F0F\u7684 major review finding\uFF1Bstrict \u4EFB\u52A1\u5FC5\u987B\u4FEE\u590D\u65B9\u53EF\u8FDB\u5165 Judge\uFF0C\u8BF7\u6267\u884C /kata-build\u3002"];
   }
+  if (suggestion.reason === "complete_review_conclusion") {
+    return ["Review \u5C1A\u672A\u5F62\u6210\u7ED1\u5B9A\u5F53\u524D revision \u7684\u663E\u5F0F\u7ED3\u8BBA\u548C\u5BA1\u67E5\u8BC1\u636E\uFF1B\u8BF7\u5B8C\u6210\u5B9E\u9645\u4EE3\u7801\u5BA1\u67E5\u540E\uFF0C\u4EE5 /kata-review --approve --review-evidence <summary> \u8BB0\u5F55\u7ED3\u8BBA\uFF0C\u6216\u5199\u5165 findings\u3002"];
+  }
   if (suggestion.reason === "repair_failed_judge") {
     return ["\u68C0\u6D4B\u5230 Judge FAIL\uFF1B\u5EFA\u8BAE\u5148\u6267\u884C /kata-build \u4FEE\u590D failed acceptance\u3002"];
   }
@@ -5325,8 +5343,13 @@ async function readJsonFile(path) {
 }
 async function listEvidenceFiles(root, taskId) {
   try {
-    const files = await readdir8(join19(root, ".kata/evidence"));
-    return files.filter((file) => file.startsWith(`${taskId}-`) && file.endsWith(".json")).sort();
+    const evidenceDir = join19(root, ".kata/evidence");
+    const candidates = (await readdir8(evidenceDir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith(".json"));
+    const matches = await Promise.all(candidates.map(async (file) => ({
+      file,
+      evidence: await readJsonFile(join19(evidenceDir, file))
+    })));
+    return matches.filter(({ evidence }) => evidence?.taskId === taskId).map(({ file }) => file).sort();
   } catch {
     return [];
   }
@@ -5469,6 +5492,7 @@ async function cmdBuild(taskId, root, options = {}) {
   const current = JSON.parse(
     await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8")
   );
+  let enteredReviewRepair = false;
   if (current.phase === "plan") {
     await guardTransition(options.guard, "check", taskId, "implement");
     await transition(taskId, "implement", actorFor(defaultActor, options.platform), { root });
@@ -5477,10 +5501,24 @@ async function cmdBuild(taskId, root, options = {}) {
     await reenterImplementForVerifyRepair(taskId, root, actorFor(defaultActor, options.platform));
   } else if (current.phase === "review") {
     await reenterImplementForReviewRepair(taskId, root, actorFor(defaultActor, options.platform));
+    enteredReviewRepair = true;
   } else if (current.phase === "judge") {
     await reenterImplementForRepair(taskId, root, actorFor(defaultActor, options.platform));
   } else if (current.phase !== "implement") {
     throw new Error(`Build cannot run from ${current.phase}`);
+  }
+  if (enteredReviewRepair) {
+    return {
+      command: "build",
+      taskId,
+      phase: "implement",
+      success: true,
+      diagnostics: {
+        mode: "implement",
+        implementationPrompt: "Review repair \u5DF2\u8FDB\u5165 implement\u3002\u5148\u4FEE\u590D repair.json \u4E2D\u7684 findings\u3001\u5199\u805A\u7126 RED/GREEN \u6D4B\u8BD5\uFF1B\u672C\u6B21\u4E0D\u4F1A seal \u6216\u521B\u5EFA revision\u3002",
+        sealCommand: `kata build --change ${taskId} --seal`
+      }
+    };
   }
   if (!(options.seal ?? true)) {
     let buildOwnedPaths = [];
@@ -5512,7 +5550,7 @@ async function cmdBuild(taskId, root, options = {}) {
   }
   const taskPath = join20(root, ".kata/tasks", taskId, "task.json");
   const task = JSON.parse(await readFile16(taskPath, "utf8"));
-  const projectChecks = options.checks?.length ? options.checks : await resolveBuildChecks(root, await loadConfig(root));
+  const projectChecks = options.checks?.length ? options.checks : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
   let matrixDerivedChecks = [];
   if (!options.checks?.length && task.acceptanceMatrix) {
     try {
@@ -5582,6 +5620,20 @@ async function cmdBuild(taskId, root, options = {}) {
       error: error instanceof Error ? error.message : String(error),
       diagnostics: { missingOwnedPaths: true }
     };
+  }
+  const reviewRepairBaseline = await readActiveReviewRepairBaseline(root, taskId);
+  if (reviewRepairBaseline) {
+    const manifestHash = await computeManifestHash(root, ownedPaths2);
+    if (manifestHash === reviewRepairBaseline) {
+      return {
+        command: "build",
+        taskId,
+        phase: "implement",
+        success: false,
+        error: "Cannot seal review repair without a changed task manifest; fix the recorded findings and tests before retrying --seal.",
+        diagnostics: { mode: "implement", repairRequired: true }
+      };
+    }
   }
   let codeGraphCandidates = [];
   let codeGraphDisposition;
@@ -5668,6 +5720,9 @@ async function cmdBuild(taskId, root, options = {}) {
       task.acceptanceMatrix,
       evidence
     );
+  }
+  if (revision && reviewRepairBaseline) {
+    await resolveReviewRepair(root, taskId, revision.id);
   }
   const wikiClosure = await ensureWikiClosure(root, taskId);
   await guardTransition(options.guard, "check", taskId, "hardVerify");
@@ -5762,7 +5817,14 @@ function dedupeCheckCommands(checks) {
   ) === index);
 }
 async function resolveSealOwnedPaths(root, taskId, task, options) {
-  if (task.ownedPaths?.length) return task.ownedPaths;
+  if (task.ownedPaths?.length) {
+    const cliPaths = options.ownedPaths?.length ? options.ownedPaths : [];
+    const merged = cliPaths.length ? [.../* @__PURE__ */ new Set([...task.ownedPaths, ...cliPaths])].sort() : task.ownedPaths;
+    if (merged.length > task.ownedPaths.length) {
+      await persistTaskOwnedPaths(root, taskId, task, merged);
+    }
+    return merged;
+  }
   if (!options.ownedPaths?.length) {
     throw new Error("seal requires at least one --owned-path when the task has no ownedPaths");
   }
@@ -5825,6 +5887,7 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
     throw new Error("Build cannot run from review without blocking (or strict-mode major) review findings");
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const revision = await readCurrentTaskRevision(root, taskId);
   await appendStateEvent(root, {
     taskId,
     from: "review",
@@ -5846,6 +5909,7 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
       toPhase: "implement",
       actor,
       reason: "review_findings",
+      ...revision ? { baselineRevisionId: revision.id, baselineManifestHash: revision.manifestHash } : {},
       findings: [...blockingFindings, ...majorFindings].map((finding) => ({
         title: finding.title,
         message: finding.message,
@@ -5856,6 +5920,26 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
 `,
     "utf8"
   );
+}
+async function readActiveReviewRepairBaseline(root, taskId) {
+  try {
+    const repair = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "repair.json"), "utf8"));
+    if (repair.reason !== "review_findings" || repair.resolvedAt || !repair.baselineManifestHash) return void 0;
+    return repair.baselineManifestHash;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return void 0;
+    throw error;
+  }
+}
+async function resolveReviewRepair(root, taskId, revisionId) {
+  const repairPath = join20(root, ".kata/tasks", taskId, "repair.json");
+  const repair = JSON.parse(await readFile16(repairPath, "utf8"));
+  await writeFile13(repairPath, `${JSON.stringify({
+    ...repair,
+    resolvedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    resolvedRevisionId: revisionId
+  }, null, 2)}
+`, "utf8");
 }
 async function reenterImplementForVerifyRepair(taskId, root, actor) {
   let verifyRaw;
@@ -6034,9 +6118,38 @@ async function cmdReview(taskId, root, options = {}) {
   try {
     const isApprove = options.approve === true;
     if (isApprove) {
+      const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+      if (current.phase !== "review") {
+        return {
+          command: "review",
+          taskId,
+          phase: current.phase,
+          success: false,
+          error: `Review approval requires review phase; current phase is ${current.phase}.`
+        };
+      }
+      const reviewEvidence = options.reviewEvidence?.trim();
+      if (!reviewEvidence) {
+        return {
+          command: "review",
+          taskId,
+          phase: "review",
+          success: false,
+          error: "Review approval requires non-empty review evidence."
+        };
+      }
       const reviewPath2 = join20(root, ".kata/tasks", taskId, "review.json");
       const revisionId2 = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
       const existing = await readReview(root, taskId);
+      if (revisionId2 && existing.revisionId !== revisionId2) {
+        return {
+          command: "review",
+          taskId,
+          phase: "review",
+          success: false,
+          error: "Review approval requires findings recorded for the same sealed revision as current evidence. Re-run /kata-review before approving."
+        };
+      }
       if (existing.findings.some((f) => f.severity === "blocking" || f.severity === "major")) {
         return {
           command: "review",
@@ -6046,9 +6159,19 @@ async function cmdReview(taskId, root, options = {}) {
           error: "Cannot approve review with blocking or major findings; resolve findings first."
         };
       }
-      await writeFile13(reviewPath2, `${JSON.stringify({ ...revisionId2 ? { revisionId: revisionId2 } : {}, findings: existing.findings, status: "approved" }, null, 2)}
+      await writeFile13(reviewPath2, `${JSON.stringify({ ...revisionId2 ? { revisionId: revisionId2 } : {}, findings: existing.findings, status: "approved", reviewEvidence, approvedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
 `, "utf8");
-      return { command: "review", taskId, phase: "review", success: true, diagnostics: { role: "reviewer", approval: true, ...revisionId2 ? { revisionId: revisionId2 } : {} } };
+      return { command: "review", taskId, phase: "review", success: true, diagnostics: { role: "reviewer", approval: true, reviewEvidence, ...revisionId2 ? { revisionId: revisionId2 } : {} } };
+    }
+    if (!options.confirmHostModel) {
+      return {
+        command: "review",
+        taskId,
+        phase: "hardVerify",
+        success: false,
+        error: "Review requires explicit user confirmation at the review trust boundary.",
+        diagnostics: { requiresUserConfirmation: true, trustBoundary: "review_gate" }
+      };
     }
     await guardTransition(options.guard, "check", taskId, "review");
     const state = await transition(taskId, "review", actorFor(reviewerActor, options.platform), { root });
@@ -6087,16 +6210,26 @@ async function cmdJudge(taskId, root, options = {}) {
       }
     };
   }
-  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
-  const task = JSON.parse(taskRaw);
-  const review = await readReview(root, taskId);
-  if (review.status !== "approved") {
+  if (!options.confirmHostModel) {
     return {
       command: "judge",
       taskId,
       phase: "review",
       success: false,
-      error: review.status === "pending" ? "Review has no explicit conclusion. Approve review with /kata-review --approve or record findings before judge." : "Review has no explicit conclusion. Run /kata-review first."
+      error: "Judge requires explicit user confirmation at the judge trust boundary.",
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: "judge_gate" }
+    };
+  }
+  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const task = JSON.parse(taskRaw);
+  const review = await readReview(root, taskId);
+  if (review.status !== "approved" || !review.reviewEvidence?.trim()) {
+    return {
+      command: "judge",
+      taskId,
+      phase: "review",
+      success: false,
+      error: review.status === "pending" ? "Review has no explicit evidence-backed conclusion. Approve review with /kata-review --approve --review-evidence <summary> or record findings before judge." : "Review has no explicit conclusion. Run /kata-review first."
     };
   }
   const currentDiffHash = await computeDiffHash(root);
@@ -6169,10 +6302,11 @@ async function readTaskEvidence(root, taskId, options = {}) {
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
     const files = await readdir11(evidenceDir);
-    const taskFiles = files.filter((f) => f.startsWith(`${taskId}-`));
-    for (const file of taskFiles) {
+    const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
+    for (const file of candidateFiles) {
       const raw = await readFile16(join20(evidenceDir, file), "utf8");
-      evidence.push(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      if (parsed.taskId === taskId) evidence.push(parsed);
     }
   } catch {
     evidence = options.checks ? await collectEvidence(taskId, options.checks) : [];
@@ -6183,7 +6317,7 @@ async function readReview(root, taskId) {
   try {
     const reviewRaw = await readFile16(join20(root, ".kata/tasks", taskId, "review.json"), "utf8");
     const reviewParsed = JSON.parse(reviewRaw);
-    return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, findings: reviewParsed.findings ?? [] };
+    return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
   } catch {
     return { findings: [] };
   }
@@ -6254,6 +6388,16 @@ async function currentScopeHashes(root, evidence) {
 async function cmdArchive(taskId, root, options = {}) {
   let archivePhase = "distill";
   const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  if (!options.confirmHostModel) {
+    return {
+      command: "archive",
+      taskId,
+      phase: current.phase,
+      success: false,
+      error: "Archive requires explicit user confirmation at the archive trust boundary.",
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: "archive_gate" }
+    };
+  }
   if (current.phase === "judge") {
     await guardTransition(options.guard, "check", taskId, "distill");
     await transition(taskId, "distill", actorFor(defaultActor, options.platform), { root });
@@ -6355,11 +6499,7 @@ async function cmdHotfix(taskId, root, options) {
   if (!buildResult.success) return buildResult;
   const verifyResult = await cmdVerify(taskId, root, options);
   if (!verifyResult.success) return verifyResult;
-  const reviewResult = await cmdReview(taskId, root, options);
-  if (!reviewResult.success) return reviewResult;
-  const judgeResult = await cmdJudge(taskId, root, options);
-  if (!judgeResult.success) return judgeResult;
-  return cmdArchive(taskId, root, options);
+  return verifyResult;
 }
 async function cmdTweak(taskId, root, options) {
   const openResult = await cmdOpen(taskId, root, {
@@ -7214,7 +7354,7 @@ async function runInitWizardCommand(argv, defaultRoot) {
     codegraph: { status: "skipped" }
   };
   try {
-    const output = execFileSync5("codegraph", ["index", "--yes"], {
+    const output = execFileSync5("codegraph", ["index"], {
       encoding: "utf-8",
       cwd: root,
       env: codeGraphExecutionEnv()
@@ -7262,6 +7402,8 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     ...platform ? { platform } : {},
     ...command === "build" ? { seal: argv.includes("--seal") } : {},
     ...command === "review" ? { approve: argv.includes("--approve") } : {},
+    ...command === "review" && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {},
+    ...command === "review" || command === "judge" || command === "archive" ? { confirmHostModel: argv.includes("--confirm-host-model") } : {},
     ...command === "open" || command === "build" ? { allowOwnershipConflicts: argv.includes("--allow-ownership-conflicts") } : {},
     ...waivers ? { waivers } : {},
     ...(command === "open" || command === "build") && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {},
@@ -7339,6 +7481,11 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     ...result.diagnostics ? { diagnostics: result.diagnostics } : {},
     ...result.error ? { error: result.error } : {}
   };
+}
+function reviewEvidenceArg(argv) {
+  const index = argv.indexOf("--review-evidence");
+  const value = index >= 0 ? argv[index + 1] : void 0;
+  return value?.trim() || void 0;
 }
 function roleForCompletedCommand(command) {
   if (command === "design") return "designer";

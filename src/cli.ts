@@ -410,7 +410,7 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     codegraph: { status: 'skipped' },
   };
   try {
-    const output = execFileSync('codegraph', ['index', '--yes'], {
+    const output = execFileSync('codegraph', ['index'], {
       encoding: 'utf-8',
       cwd: root,
       env: codeGraphExecutionEnv(),
@@ -457,6 +457,10 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     ...(platform ? { platform } : {}),
     ...(command === 'build' ? { seal: argv.includes('--seal') } : {}),
     ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
+    ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
+    ...((command === 'review' || command === 'judge' || command === 'archive')
+      ? { confirmHostModel: argv.includes('--confirm-host-model') }
+      : {}),
     ...((command === 'open' || command === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
     ...(waivers ? { waivers } : {}),
     ...((command === 'open' || command === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
@@ -552,6 +556,12 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
+}
+
+function reviewEvidenceArg(argv: string[]): string | undefined {
+  const index = argv.indexOf('--review-evidence');
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  return value?.trim() || undefined;
 }
 
 type WorkflowHandoffRole = 'designer' | 'implementer' | 'reviewer' | 'judge' | 'distiller';
