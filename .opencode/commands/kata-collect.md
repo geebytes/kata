@@ -130,10 +130,5 @@ Do not ask the user for CLI parameters first. Discover the likely returned task,
 3. If the recommendation says `review_fresh_implementation`, ask the user to confirm review and then run reviewer flow.
 4. If the recommendation says `judge_reviewed_change`, ask the user to confirm Judge and then run judge flow.
 5. Read task state, review/judge/evidence files, and relevant handoff receipts before editing or judging.
-6. If evidence is ready and user confirms higher-trust gates, run:
-   ```bash
-   kata review --change <task-id>
-   kata judge --change <task-id>
-   ```
-7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
-8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.
+6. Return only the recommended next slash command or handoff prompt. Never run review, judge, archive, or any other next phase from collection.
+7. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.

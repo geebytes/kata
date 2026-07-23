@@ -5,7 +5,8 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { codeGraphExecutionEnv } from './codegraph/runtime.js';
-import { resolveWorkspaceRoot } from './core/layout.js';
+import { resolveWorkspaceRoot, resolveWorkspaceRootForTask } from './core/layout.js';
+import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
 import { loadCometCompatibility, type CometCompatibility } from './comet/compat.js';
 import { installComet, updateComet, verifyComet, resolveCometPath, getCometVersion, readCometCompatibility, initCometProject } from './comet/install.js';
@@ -27,7 +28,8 @@ import { runCommand, type KataCommand } from './workflow/orchestrator.js';
 import { type Waiver, validateWaivers } from './quality/acceptance-matrix.js';
 import { createWorkflowHandoff, renderDelegationPrompt } from './workflow/delegation-prompt.js';
 import { createHandoff, type Role as HandoffRole } from './workflow/handoff.js';
-import { acknowledgeContextPacket, createContextPacket, readContextPacket, verifyContextPacket } from './workflow/context-fabric.js';
+import { acknowledgeContextPacket, createContextPacket, readContextPacket, requireAcknowledgedContextPacket, verifyContextPacket } from './workflow/context-fabric.js';
+import { approveUserChoiceGate, consumeUserChoiceGate, createUserChoiceGate, requireUserChoiceGate, type UserChoiceBoundary } from './workflow/user-choice-gate.js';
 import {
   nextActionForTask,
   nextSkillForPhase,
@@ -57,7 +59,7 @@ import {
   updateGitFlowProfile,
   type WorkflowProfile,
 } from './core/workflow-profile.js';
-import { applyGitFlowPlan, inspectGitFlow, type GitFlowPlan } from './core/git-flow.js';
+import { applyGitFlowPlan, initializeGitFlowProject, inspectGitFlow, type GitFlowBranchKind, type GitFlowPlan } from './core/git-flow.js';
 import {
   addKataRelation,
   addTaskRelation,
@@ -73,23 +75,31 @@ export function getRuntimeCompatibility(manifestPath?: string): CometCompatibili
 }
 
 let quietOutput = false;
+let jsonOutput = false;
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const previousQuiet = quietOutput;
+  const previousJson = jsonOutput;
+  jsonOutput = previousJson || isJsonOutput(argv);
   quietOutput = previousQuiet || isQuietOutput(argv) || isDefaultSilentInstallerCommand(argv);
   try {
     await runMain(stripOutputModeArgs(argv));
   } finally {
     quietOutput = previousQuiet;
+    jsonOutput = previousJson;
   }
 }
 
 async function runMain(argv: string[]): Promise<void> {
   const [command, maybeChange] = argv;
-  const workspaceRoot = parseRootArg(argv) ?? resolveWorkspaceRoot();
   if (!command) {
     throw new Error('Usage: kata <init|update|uninstall|discover|comet|codegraph|tasks> [--platform name] [--scope project|global] [--root path]');
   }
+  const requestedChange = parseChangeArg(argv.slice(1));
+  const workspaceRoot = parseRootArg(argv)
+    ?? (requestedChange && command !== 'open' && (isWorkflowCommand(command) || command === 'status')
+      ? resolveWorkspaceRootForTask(requestedChange)
+      : resolveWorkspaceRoot());
   if (isWorkflowCommand(command) && (argv.includes('--help') || argv.includes('-h'))) {
     outputResult({
       command,
@@ -134,7 +144,19 @@ async function runMain(argv: string[]): Promise<void> {
         : command === 'update'
           ? await update(args.platform, args.scope, args.options)
           : await uninstall(args.platform, args.scope, args.options);
-    outputResult(report as unknown as Record<string, unknown>);
+    const runtimeRefresh = command === 'update'
+      ? await runRuntimeRefresh(args.options.root!)
+      : undefined;
+    const gitFlowInit = command === 'init'
+      ? args.options.dryRun
+        ? { status: 'skipped' as const, reason: 'dry_run' }
+        : await initializeGitFlowProject(args.options.root!, { interactive: process.stdin.isTTY && !args.yes })
+      : undefined;
+    outputResult({
+      ...(report as unknown as Record<string, unknown>),
+      ...(runtimeRefresh ? { runtimeRefresh } : {}),
+      ...(gitFlowInit ? { gitFlowInit } : {}),
+    });
     return;
   }
 
@@ -148,6 +170,13 @@ async function runMain(argv: string[]): Promise<void> {
   if (command === 'doctor') {
     const result = await runDoctorCommand(argv.slice(1));
     outputResult(result);
+    return;
+  }
+
+  if (command === 'recover') {
+    const taskId = parseChangeArg(argv.slice(1)) ?? maybeChange;
+    if (!taskId || taskId.startsWith('--')) throw new Error('Usage: kata recover --change <task-id>');
+    outputResult({ command: 'recover', ...(await recover(taskId, { root: workspaceRoot })) });
     return;
   }
 
@@ -183,6 +212,10 @@ async function runMain(argv: string[]): Promise<void> {
 
   if (command === 'handoff') {
     outputResult(await runHandoffCommand(argv.slice(1)));
+    return;
+  }
+  if (command === 'gate') {
+    outputResult(await runGateCommand(argv.slice(1), workspaceRoot));
     return;
   }
 
@@ -238,6 +271,10 @@ async function runMain(argv: string[]): Promise<void> {
         ])
       : 'zh';
     await client.init(change, { language: initLanguage });
+    outputResult({
+      command: 'init',
+      gitFlowInit: await initializeGitFlowProject(workspaceRoot, { interactive: process.stdin.isTTY }),
+    });
   }
   else if (command === 'next') outputResult(await client.next(change) as unknown as Record<string, unknown>);
   else if (isWorkflowCommand(command)) {
@@ -259,8 +296,58 @@ async function runAggregateUpdate(
     .sort();
   const targets: Platform[] = [...realPlatforms];
   if (targets.length === 0 || managed.includes('generic')) targets.push('generic');
-  const reports = await Promise.all(targets.map((platform) => update(platform, scope, options)));
-  return mergeInstallReports({ command: 'update', mode: 'auto', scope, reports });
+  writeUpdateProgress(`Kata update · ${scope === 'project' ? '当前项目' : '全局安装'}\n`);
+  const reports = [];
+  for (const platform of targets) {
+    writeUpdateProgress(`\n→ 更新 ${platform}\n`);
+    const report = await update(platform, scope, options);
+    reports.push(report);
+    writeUpdateProgress(formatUpdateReport(report));
+  }
+  const runtimeRefresh = await runRuntimeRefresh(options.root!);
+  writeUpdateProgress(formatRuntimeRefresh(runtimeRefresh));
+  return { ...mergeInstallReports({ command: 'update', mode: 'auto', scope, reports }), runtimeRefresh };
+}
+
+type RuntimeRefreshResult = {
+  comet: { success: boolean; previousVersion?: string | null; installedVersion?: string | null; error?: string };
+  codegraphSync: { success: boolean; output?: string; error?: string };
+  codegraphIndex: { success: boolean; output?: string; error?: string };
+};
+
+async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshResult> {
+  const timeoutMs = runtimeRefreshTimeoutMs();
+  const comet = await withTimeout(updateComet(), timeoutMs, `Comet update timed out after ${timeoutMs}ms`)
+    .then((result) => ({ success: true, previousVersion: result.previousVersion, installedVersion: result.installedVersion }))
+    .catch((error: unknown) => ({ success: false, error: error instanceof Error ? error.message : String(error) }));
+  const runCodegraph = (subcommand: 'sync' | 'index') => {
+    try {
+      const output = execFileSync('codegraph', [subcommand], {
+        encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, cwd: root, env: codeGraphExecutionEnv(), stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      return { success: true, ...(output ? { output } : {}) };
+    } catch (error: unknown) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  return { comet, codegraphSync: runCodegraph('sync'), codegraphIndex: runCodegraph('index') };
+}
+
+function runtimeRefreshTimeoutMs(): number {
+  const configured = Number.parseInt(process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS ?? '', 10);
+  return Number.isSafeInteger(configured) && configured >= 1_000 && configured <= 120_000 ? configured : 30_000;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function isQuietOutput(argv: string[]): boolean {
@@ -273,7 +360,7 @@ function isJsonOutput(argv: string[]): boolean {
 
 function isDefaultSilentInstallerCommand(argv: string[]): boolean {
   const command = argv[0];
-  return (command === 'init' || command === 'update' || command === 'uninstall') && !isJsonOutput(argv);
+  return (command === 'init' || command === 'uninstall') && !isJsonOutput(argv);
 }
 
 function stripOutputModeArgs(argv: string[]): string[] {
@@ -385,12 +472,24 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
         return planDetectedInit(platforms, { scope: 'project', language: 'zh' });
       })()
     : await promptInitPlan(platforms);
-  const cometInit = await initCometProject({
-    root,
-    scope: plan.scope,
-    language: plan.language,
-    yes: useAuto,
-  });
+  const cometInit = useAuto
+    ? {
+        command: 'comet init',
+        status: 'deferred' as const,
+        path: null,
+        root,
+        scope: plan.scope,
+        language: plan.language,
+        nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}`,
+      }
+    : await initCometProject({
+        root,
+        scope: plan.scope,
+        language: plan.language,
+      });
+  const gitFlowInit = args.options.dryRun
+    ? { status: 'skipped' as const, reason: 'dry_run' }
+    : await initializeGitFlowProject(root, { interactive: !useAuto && process.stdin.isTTY });
   const reports = [];
   const preStates: PlatformInstallState[] = [];
   for (const platform of plan.selected) {
@@ -406,26 +505,20 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     );
   }
 
-  let codegraphResult: { codegraph: { status: string; error?: string } } = {
-    codegraph: { status: 'skipped' },
-  };
-  try {
-    const output = execFileSync('codegraph', ['index'], {
-      encoding: 'utf-8',
-      cwd: root,
-      env: codeGraphExecutionEnv(),
-    }).trim();
-    codegraphResult = {
-      codegraph: { status: 'initialized', ...(output ? { error: undefined } : {}) },
-    };
-  } catch (error: unknown) {
-    codegraphResult = {
-      codegraph: {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      },
-    };
-  }
+  const codegraphResult = useAuto
+    ? { codegraph: { status: 'deferred', nextCommand: 'kata codegraph install --yes' } }
+    : (() => {
+        try {
+          const output = execFileSync('codegraph', ['index'], {
+            encoding: 'utf-8',
+            cwd: root,
+            env: codeGraphExecutionEnv(),
+          }).trim();
+          return { codegraph: { status: 'initialized', ...(output ? { error: undefined } : {}) } };
+        } catch (error: unknown) {
+          return { codegraph: { status: 'failed', error: error instanceof Error ? error.message : String(error) } };
+        }
+      })();
 
   const result = mergeInstallReports({
     command: 'init',
@@ -433,13 +526,23 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     scope: plan.scope,
     reports,
   });
-  return { ...result, cometInit, ...codegraphResult };
+  return { ...result, cometInit, gitFlowInit, ...codegraphResult };
 }
 
 async function runWorkflowCommand(command: KataCommand, change: string, root: string, platform?: string, argv: string[] = []): Promise<Record<string, unknown>> {
+  const waivers = command === 'build' ? await readWaiversFile(argv) : undefined;
+  const inputPhase = await readWorkflowPhase(root, change);
+  const boundary = boundaryForCommand(command, inputPhase);
+  if (boundary) await requireUserChoiceGate({ root, taskId: change, boundary });
+  // hotfix/tweak and Git-Flow preparation can create or inspect an intake task
+  // before an implementer handoff exists. They do not mutate an established
+  // implementation phase, so receipt enforcement begins once a task has
+  // crossed intake.
+  if (command !== 'open' && inputPhase !== null && inputPhase !== 'intake') {
+    await requireWorkflowReceipt(root, change, roleForCommand(command));
+  }
   const explicitChange = parseChangeArg(argv.slice(1));
   let workflowProfile = requiresWorkflowProfile(command) ? await resolveWorkflowProfile(command, argv) : undefined;
-  const waivers = command === 'build' ? await readWaiversFile(argv) : undefined;
   const abortController = command === 'build' ? new AbortController() : undefined;
   const onProgress = command === 'build' && argv.includes('--seal')
     ? (event: { type: string; check: string; state: string; timeoutMs: number; exitCode?: number | null }) => {
@@ -451,39 +554,63 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
   }
-  const result = await runCommand(command, change, root, {
-    title: `Change ${change}`,
+  // A hotfix/tweak aggregate would otherwise modify code before its Git Flow
+  // branch exists. Establish the task and wait for the explicit branch action
+  // first; the following phase is then selected from the persisted task state.
+  const branchPreparationOnly = workflowProfile?.isolationMode === 'git_flow' && command !== 'open';
+  const commandToRun: KataCommand = branchPreparationOnly ? 'open' : command;
+  const result = await runCommand(commandToRun, change, root, {
+    title: command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`,
     acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }],
     ...(platform ? { platform } : {}),
-    ...(command === 'build' ? { seal: argv.includes('--seal') } : {}),
+    ...(commandToRun === 'build' ? { seal: argv.includes('--seal') } : {}),
     ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
     ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
-    ...((command === 'review' || command === 'judge' || command === 'archive')
-      ? { confirmHostModel: argv.includes('--confirm-host-model') }
-      : {}),
-    ...((command === 'open' || command === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
+    ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
+    ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
     ...(waivers ? { waivers } : {}),
-    ...((command === 'open' || command === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
+    ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
     ...(workflowProfile ? { workflowProfile } : {}),
     ...(onProgress ? { onProgress, signal: abortController?.signal } : {}),
   });
   if (explicitChange && result.taskId !== change) {
     return { command, taskId: change, phase: 'intake', success: false, error: `Task ID mismatch: requested ${change} but result returned ${result.taskId}.` };
   }
+  if (boundary && result.success) await consumeUserChoiceGate({ root, taskId: change, boundary });
+  const nextBoundary = result.success
+    ? result.phase === 'plan' ? 'implementation_gate'
+      : result.phase === 'hardVerify' && command === 'verify' ? 'review_gate'
+      : result.phase === 'review' && command === 'review' && argv.includes('--approve') ? 'judge_gate'
+      : result.phase === 'judge' && command === 'judge' ? 'archive_gate'
+      : null
+    : null;
+  if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
   if (result.success && workflowProfile?.isolationMode === 'git_flow') {
-    const plan = inspectGitFlow(root, result.taskId);
+    const plan = inspectGitFlow(root, result.taskId, undefined, gitFlowBranchKindForCommand(command));
     workflowProfile = await updateGitFlowProfile(root, result.taskId, plan);
   }
   const upstream = await readUpstreamSummary(root, result.taskId).catch(() => null);
   const suggestion = workflowProfile ? null : upstream ? suggestCandidateAction(result.phase, upstream) : null;
   const gitFlowPending = workflowProfile?.gitFlow?.status === 'pending_confirmation';
+  const gitFlowManualCommand = workflowProfile?.gitFlow?.installation?.status !== 'installed'
+    ? workflowProfile?.gitFlow?.installation?.manualCommand
+    : undefined;
   const phaseNextSkill = gitFlowPending ? '/kata' : nextSkillForPhase(result.phase);
   const nextAction = suggestion
     ? nextActionForTask(result.taskId, suggestion.nextSkill, suggestion.role, suggestion.reason)
     : null;
   const workflowNextAction = workflowProfile
     ? gitFlowPending
-      ? { taskId: result.taskId, nextSkill: '/kata', slashCommand: '/kata', cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`, role: 'implementer', reason: 'git_flow_confirmation_required', requiresUserConfirmation: true }
+      ? {
+          taskId: result.taskId,
+          nextSkill: '/kata',
+          slashCommand: '/kata',
+          cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`,
+          role: 'implementer',
+          reason: 'git_flow_confirmation_required',
+          requiresUserConfirmation: true,
+          ...(gitFlowManualCommand ? { pauseInstruction: `Git Flow 自动安装未完成；请先手动执行：${gitFlowManualCommand}` } : {}),
+        }
       : nextActionForTask(result.taskId, phaseNextSkill, roleForPhase(result.phase), workflowNextReason(result.phase))
     : null;
   const completion = result.success
@@ -510,6 +637,15 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     taskId: result.taskId,
     phase: result.phase,
     success: result.success,
+    execution: {
+      workspaceRoot: realpathSync(root),
+      executable: process.argv[1] ?? process.execPath,
+      runtimeVersion: process.version,
+      inputPhase,
+      outputPhase: result.phase,
+      ...(upstream?.currentRevisionId ? { revisionId: upstream.currentRevisionId } : {}),
+      handoffValidated: command === 'open' ? false : true,
+    },
     phaseNextSkill,
     ...(completion ? { completion } : {}),
     ...(handoff ? {
@@ -556,6 +692,70 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
+}
+
+async function readWorkflowPhase(root: string, taskId: string): Promise<string | null> {
+  try {
+    const state = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase?: unknown };
+    return typeof state.phase === 'string' ? state.phase : null;
+  } catch {
+    return null;
+  }
+}
+
+function roleForCommand(command: KataCommand): HandoffRole {
+  if (command === 'review' || command === 'verify') return 'reviewer';
+  if (command === 'judge') return 'judge';
+  if (command === 'archive') return 'distiller';
+  return 'implementer';
+}
+
+function boundaryForCommand(command: KataCommand, phase: string | null): UserChoiceBoundary | null {
+  if (command === 'build' && phase === 'plan') return 'implementation_gate';
+  if (command === 'review' && phase === 'hardVerify') return 'review_gate';
+  if (command === 'judge' && phase === 'review') return 'judge_gate';
+  if (command === 'archive' && (phase === 'judge' || phase === 'distill')) return 'archive_gate';
+  return null;
+}
+
+async function runGateCommand(argv: string[], root: string): Promise<Record<string, unknown>> {
+  if (argv[0] !== 'approve') throw new Error('Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>');
+  const task = valueAfter(argv, '--task');
+  const boundary = valueAfter(argv, '--boundary') as UserChoiceBoundary | undefined;
+  const choice = valueAfter(argv, '--choice') as 'continue_current' | 'switched' | 'delegated' | undefined;
+  if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
+  await approveUserChoiceGate({ root, taskId: task, boundary, choice });
+  return { command: 'gate approve', taskId: task, boundary, choice, approved: true };
+}
+
+function valueAfter(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : undefined;
+}
+
+async function requireWorkflowReceipt(root: string, taskId: string, role: HandoffRole): Promise<void> {
+  const handoffDirectory = join(root, '.kata/tasks', taskId, 'handoffs');
+  let entries: string[];
+  try {
+    entries = await readdir(handoffDirectory);
+  } catch {
+    throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
+  }
+  const ids = entries
+    .filter((entry) => entry.startsWith('handoff-') && entry.endsWith('.receipt.json'))
+    .map((entry) => entry.slice(0, -'.receipt.json'.length))
+    .sort()
+    .reverse();
+  for (const id of ids) {
+    try {
+      await requireAcknowledgedContextPacket({ root, taskId, id, role });
+      return;
+    } catch {
+      // An older or stale receipt cannot authorize this command; try only
+      // another receipt for the same task before rejecting the mutation.
+    }
+  }
+  throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
 }
 
 function reviewEvidenceArg(argv: string[]): string | undefined {
@@ -645,7 +845,7 @@ async function runGitFlowCommand(argv: string[], root: string): Promise<Record<s
   if (!isWorkflowProfile(task.workflowProfile) || task.workflowProfile.isolationMode !== 'git_flow') {
     throw new Error(`Task ${taskId} does not use Git Flow isolation`);
   }
-  const inspected = inspectGitFlow(root, taskId);
+  const inspected = inspectGitFlow(root, taskId, undefined, gitFlowBranchKindForProfile(task.workflowProfile));
   if (inspected.status === 'pending_confirmation' && !argv.includes('--confirm')) {
     return {
       command: 'git-flow apply', taskId, workflowProfile: task.workflowProfile,
@@ -665,6 +865,14 @@ async function runGitFlowCommand(argv: string[], root: string): Promise<Record<s
       ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata design --change ${taskId}` }
       : { cliCommand: `kata git-flow apply --change ${taskId} --confirm`, reason: (inspected as GitFlowPlan).reason ?? 'git_flow_setup_failed' },
   };
+}
+
+function gitFlowBranchKindForCommand(command: KataCommand): GitFlowBranchKind {
+  return command === 'hotfix' ? 'hotfix' : 'feature';
+}
+
+function gitFlowBranchKindForProfile(profile: WorkflowProfile): GitFlowBranchKind {
+  return profile.gitFlow?.branch.startsWith('hotfix/') ? 'hotfix' : 'feature';
 }
 
 function requiresWorkflowProfile(command: KataCommand): command is 'open' | 'hotfix' | 'tweak' {
@@ -792,6 +1000,9 @@ async function runLocalStatusCommand(change: string, resolved?: ResolvedTask | n
       ],
     };
   }
+  // Status is the cross-platform resume entrypoint. Rebuild the mutable
+  // projection from the append-only legal event chain before reporting it.
+  if (await requiresRecovery(change, { root }).catch(() => false)) await recover(change, { root });
   const state = JSON.parse(await readFile(join(root, '.kata/tasks', change, 'current-state.json'), 'utf8')) as {
     phase: Phase;
     updatedAt?: string;
@@ -1201,7 +1412,7 @@ async function runRelationsCommand(argv: string[]): Promise<Record<string, unkno
 async function runHandoffCommand(argv: string[]): Promise<Record<string, unknown>> {
   const [subcommand, ...rest] = argv;
   const args = parseHandoffArgs(rest);
-  const root = args.root ?? resolveWorkspaceRoot();
+  const root = args.root ?? (args.task ? resolveWorkspaceRootForTask(args.task) : resolveWorkspaceRoot());
   if (!args.task) throw new Error('Usage: kata handoff <create|show|verify|acknowledge> --task <id>');
   if (subcommand === 'create') {
     if (!args.from || !args.to) throw new Error('Usage: kata handoff create --task <id> --from <role> --to <role>');
@@ -1220,11 +1431,14 @@ async function runHandoffCommand(argv: string[]): Promise<Record<string, unknown
       role: args.role,
       platform: args.platform,
       origin: 'handoff',
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message.includes('does not match current phase')) return null;
+      throw error;
     });
     return {
       command: 'handoff acknowledge',
       receipt,
-      activeTask: {
+      ...(active ? { activeTask: {
         taskId: active.taskId,
         role: active.role,
         phase: active.phase,
@@ -1232,7 +1446,7 @@ async function runHandoffCommand(argv: string[]): Promise<Record<string, unknown
         ...(active.branch ? { branch: active.branch } : {}),
         ...(active.origin ? { origin: active.origin } : {}),
         active: true,
-      },
+      } } : {}),
     };
   }
   throw new Error(`Unknown handoff command: ${subcommand ?? ''}`);
@@ -2041,7 +2255,59 @@ function isCliEntrypoint(): boolean {
 
 function outputResult(result: Record<string, unknown>): void {
   if (quietOutput) return;
+  if (!jsonOutput && isUpdateResult(result)) {
+    process.stdout.write(renderUpdateSummary(result));
+    return;
+  }
   process.stdout.write(JSON.stringify(result) + '\n');
+}
+
+function writeUpdateProgress(message: string): void {
+  if (!quietOutput && !jsonOutput) process.stdout.write(message);
+}
+
+function isUpdateResult(result: Record<string, unknown>): boolean {
+  return result.command === 'update' || (typeof result.platform === 'string' && 'written' in result && 'unchanged' in result);
+}
+
+function formatUpdateReport(report: { platform: string; written: string[]; unchanged: string[]; conflicts: string[]; removed: string[]; dryRun: boolean }): string {
+  const changes = [
+    `写入 ${report.written.length}`,
+    `保持 ${report.unchanged.length}`,
+    `冲突 ${report.conflicts.length}`,
+    `移除 ${report.removed.length}`,
+  ].join(' · ');
+  return `  ${report.dryRun ? '预览完成' : '完成'}：${changes}\n`;
+}
+
+function renderUpdateSummary(result: Record<string, unknown>): string {
+  const reports = Array.isArray(result.reports)
+    ? result.reports as Array<{ platform: string; summary: { written: number; unchanged: number; conflicts: number; removed: number; dryRun: boolean } }>
+    : [{
+        platform: String(result.platform),
+        summary: {
+          written: Array.isArray(result.written) ? result.written.length : 0,
+          unchanged: Array.isArray(result.unchanged) ? result.unchanged.length : 0,
+          conflicts: Array.isArray(result.conflicts) ? result.conflicts.length : 0,
+          removed: Array.isArray(result.removed) ? result.removed.length : 0,
+          dryRun: result.dryRun === true,
+        },
+      }];
+  const total = reports.reduce((sum, report) => ({
+    written: sum.written + report.summary.written,
+    unchanged: sum.unchanged + report.summary.unchanged,
+    conflicts: sum.conflicts + report.summary.conflicts,
+    removed: sum.removed + report.summary.removed,
+  }), { written: 0, unchanged: 0, conflicts: 0, removed: 0 });
+  const status = total.conflicts > 0 ? '完成（存在需人工处理的冲突）' : '完成';
+  const runtimeRefresh = result.runtimeRefresh as RuntimeRefreshResult | undefined;
+  return `\n${status}\n平台：${reports.map((report) => report.platform).join('、')}\n变更：写入 ${total.written} · 保持 ${total.unchanged} · 冲突 ${total.conflicts} · 移除 ${total.removed}\n${runtimeRefresh ? formatRuntimeRefresh(runtimeRefresh) : ''}${jsonOutput ? '' : '提示：使用 --json 获取机器可读报告，使用 --quiet 静默执行。\n'}`;
+}
+
+function formatRuntimeRefresh(result: RuntimeRefreshResult): string {
+  const status = (value: { success: boolean }) => value.success ? '完成' : '失败';
+  const cometVersion = result.comet.success && result.comet.installedVersion ? ` (${result.comet.installedVersion})` : '';
+  return `运行时：Comet 更新 ${status(result.comet)}${cometVersion} · CodeGraph sync ${status(result.codegraphSync)} · CodeGraph index ${status(result.codegraphIndex)}\n`;
 }
 
 if (isCliEntrypoint()) {

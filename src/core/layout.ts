@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { cwd } from 'node:process';
-import { accessSync } from 'node:fs';
+import { accessSync, readdirSync, type Dirent } from 'node:fs';
 import { loadConfig } from './config.js';
 import taskSchema from 'kata-asset:schemas/task.schema.json';
 import workflowStateRecordSchema from 'kata-asset:schemas/workflow-state-record.schema.json';
@@ -72,6 +72,21 @@ function hasFileOrDir(dir: string, name: string): boolean {
 
 const workspaceMarkers = ['.git', '.opencode', 'opencode.json', 'package.json', 'Cargo.toml', 'go.mod'];
 
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'target',
+  'dist',
+  'build',
+  '.kata',
+  'coverage',
+  '__pycache__',
+  '.venv',
+  'venv',
+  '.env',
+  '.opencode',
+]);
+
 export function resolveWorkspaceRoot(from?: string): string {
   let dir = resolve(from ?? cwd());
   while (true) {
@@ -82,6 +97,77 @@ export function resolveWorkspaceRoot(from?: string): string {
     if (parent === dir) return from ?? cwd();
     dir = parent;
   }
+}
+
+/**
+ * Resolve the repository that owns an explicitly named Kata task.
+ *
+ * A generic workspace marker (especially a nested `.git`) is insufficient for
+ * workflow mutation: it can silently select a different `.kata` state tree.
+ * Task-addressed commands therefore search ancestor directories for the task
+ * itself and reject ambiguous ownership rather than guessing.
+ *
+ * Resolution order:
+ * 1. Search ancestor directories from the starting path upward.
+ * 2. If no ancestor owns the task, search descendant directories beneath the
+ *    workspace root, skipping dependency, metadata, and Kata-internal dirs.
+ * 3. A single result wins; multiple results fail closed.
+ */
+export function resolveWorkspaceRootForTask(taskId: string, from?: string): string {
+  const start = resolve(from ?? cwd());
+  const candidates: string[] = [];
+  let directory = start;
+  while (true) {
+    if (hasFileOrDir(directory, join('.kata', 'tasks', taskId, 'current-state.json'))) {
+      candidates.push(directory);
+    }
+    const parent = resolve(directory, '..');
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length > 1) {
+    throw new Error(`Ambiguous Kata task root for ${taskId}: ${candidates.join(', ')}. Pass --root explicitly.`);
+  }
+
+  const workspaceRoot = resolveWorkspaceRoot(start);
+  const descendants = findDescendantTaskRoots(taskId, workspaceRoot);
+
+  if (descendants.length === 1) return descendants[0]!;
+  if (descendants.length > 1) {
+    throw new Error(
+      `Multiple descendant worktrees own task ${taskId}: ${descendants.join(', ')}. Pass --root explicitly to select one.`,
+    );
+  }
+
+  throw new Error(
+    `No Kata workspace owns task ${taskId}. Neither the current/ancestor workspace nor any eligible nested worktree contains this task. Pass --root explicitly or run the command from that workspace.`,
+  );
+}
+
+function findDescendantTaskRoots(taskId: string, root: string): string[] {
+  const candidates: string[] = [];
+
+  function scan(dir: string): void {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true }) as unknown as Dirent[];
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const fullPath = join(dir, entry.name);
+      if (hasFileOrDir(fullPath, join('.kata', 'tasks', taskId, 'current-state.json'))) {
+        candidates.push(fullPath);
+      }
+      scan(fullPath);
+    }
+  }
+
+  scan(root);
+  return candidates;
 }
 
 export async function initLayout(root: string): Promise<LayoutResult> {

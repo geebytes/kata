@@ -12,15 +12,39 @@ describe('policy permissions', () => {
     updatedAt: '2026-07-11T00:00:00.000Z',
   };
 
-  it('lets implementers write task code and tests but not protected rules', () => {
+  it('lets implementers write task code, tests, and ordinary documentation but not protected rules', () => {
     const actor: Actor = { id: 'agent-1', role: 'implementer' };
 
     expect(validateWrite(actor, 'src/policy/model-policy.ts', task)).toEqual({ allowed: true });
+    expect(validateWrite(actor, 'packages/kata/src/policy/model-policy.ts', task)).toEqual({ allowed: true });
     expect(validateWrite(actor, 'tests/unit/model-policy.test.ts', task)).toEqual({ allowed: true });
+    expect(validateWrite(actor, 'docs/audit/state-boundary.md', task)).toEqual({ allowed: true });
     expect(validateWrite(actor, 'docs/superpowers/rules/verified.md', task)).toEqual({
       allowed: false,
       reason: 'protected_rules_or_verified_wiki',
     });
+  });
+
+  it('denies implementers every workflow gate artifact', () => {
+    const actor: Actor = { id: 'agent-1', role: 'implementer' };
+    const taskPaths = [
+      'task.json',
+      'current-state.json',
+      'current-revision.json',
+      'review.json',
+      'judge.json',
+      'verify.json',
+      'repair.json',
+      'revisions/revision-1.json',
+      'handoffs/handoff-1.json',
+    ];
+
+    for (const file of taskPaths) {
+      expect(validateWrite(actor, `.kata/tasks/task-5/${file}`, task)).toEqual({
+        allowed: false,
+        reason: 'role_scope_violation',
+      });
+    }
   });
 
   it('keeps verified Wiki promotion behind explicit authority', () => {

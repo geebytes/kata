@@ -1,4 +1,4 @@
-import { appendFile, readFile, rename, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { checkFreshness, computeDiffHash } from '../quality/evidence.js';
@@ -63,34 +63,55 @@ export async function transition(
 ): Promise<StateRecord> {
   const root = options.root ?? process.cwd();
   assertValidTaskId(taskId);
-  const current = await readCurrentState(root, taskId);
+  return withTaskLock(root, taskId, async () => {
+    const current = await readCurrentState(root, taskId);
 
-  if (!isLegalPhaseTransition(current.phase, to)) {
-    throw new Error(`Illegal transition from ${current.phase} to ${to}`);
-  }
-  if (to === 'implement') await assertAcceptanceIds(root, taskId);
-  if (to === 'distill') await assertDistillGates(root, taskId);
+    if (!isLegalPhaseTransition(current.phase, to)) {
+      throw new Error(`Illegal transition from ${current.phase} to ${to}`);
+    }
+    if (to === 'implement') await assertAcceptanceIds(root, taskId);
+    if (to === 'distill') await assertDistillGates(root, taskId);
 
-  const now = new Date().toISOString();
-  const next: StateRecord = {
-    taskId,
-    phase: to,
-    actor,
-    updatedAt: now,
-    ...(options.activeSession ? { activeSession: options.activeSession } : {}),
-  };
+    const now = new Date().toISOString();
+    const next: StateRecord = {
+      taskId,
+      phase: to,
+      actor,
+      updatedAt: now,
+      ...(options.activeSession ? { activeSession: options.activeSession } : {}),
+    };
 
-  await appendStateEvent(root, {
-    taskId,
-    from: current.phase,
-    to,
-    actor,
-    at: now,
-    ...(options.activeSession ? { activeSession: options.activeSession } : {}),
+    await appendStateEvent(root, {
+      taskId,
+      from: current.phase,
+      to,
+      actor,
+      at: now,
+      ...(options.activeSession ? { activeSession: options.activeSession } : {}),
+    });
+    await writeCurrentState(root, next);
+
+    return next;
   });
-  await writeCurrentState(root, next);
+}
 
-  return next;
+/** Serialize a task mutation across local processes; a conflicting command fails closed. */
+export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {
+  assertValidTaskId(taskId);
+  const lockPath = join(root, '.kata/tasks', taskId, '.transition.lock');
+  try {
+    await mkdir(lockPath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'EEXIST') {
+      throw new Error(`Task ${taskId} already has a state transition in progress`);
+    }
+    throw error;
+  }
+  try {
+    return await action();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
 }
 
 export async function appendStateEvent(root: string, event: StateEvent): Promise<void> {

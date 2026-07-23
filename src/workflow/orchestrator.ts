@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
-import { appendStateEvent, transition, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
@@ -480,9 +480,10 @@ function resolveCheckForRow(
   const hasPlaceholder = template.includes('{{selector}}');
 
   if (hasSelector && hasPlaceholder) {
-    const filled = template.replace('{{selector}}', evidence.testSelector!);
-    const [rawCommand, ...args] = filled.split(/\s+/);
     const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+    const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
+    const filled = template.replace('{{selector}}', selector);
+    const [rawCommand, ...args] = filled.split(/\s+/);
     const runtimeEntry = rawCommand === 'vitest'
       ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
       : rawCommand === 'tsc'
@@ -494,7 +495,7 @@ function resolveCheckForRow(
       kind: evidence.kind,
       command,
       args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
-      cwd: root,
+      cwd: runtimeProjectDir,
       timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
     } satisfies CheckCommand;
   }
@@ -505,6 +506,7 @@ function resolveCheckForRow(
     if (isKnownRunner) {
       const [rawCommand, ...args] = template.split(/\s+/);
       const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+      const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
       const runtimeEntry = rawCommand === 'vitest'
         ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
         : rawCommand === 'pytest'
@@ -515,8 +517,8 @@ function resolveCheckForRow(
         name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
         kind: evidence.kind,
         command: runtimeEntry ? process.execPath : rawCommand,
-        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
-        cwd: root,
+        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
+        cwd: runtimeProjectDir,
         timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
       } satisfies CheckCommand;
     }
@@ -525,6 +527,7 @@ function resolveCheckForRow(
 
   const [rawCommand, ...args] = template.split(/\s+/);
   const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+  const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : undefined;
   const runtimeEntry = rawCommand === 'vitest'
     ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
     : rawCommand === 'tsc'
@@ -535,10 +538,18 @@ function resolveCheckForRow(
     name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
     kind: evidence.kind,
     command,
-    args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
-    cwd: root,
+    args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
+    cwd: runtimeProjectDir,
     timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
   } satisfies CheckCommand;
+}
+
+function testSelectorForRuntime(selector: string, runtimeProjectDir: string, root: string): string {
+  return runtimeProjectDir !== root && selector.startsWith('kata/') ? selector.slice('kata/'.length) : selector;
+}
+
+function selectorArgs(selector: string): string[] {
+  return selector.split(/\s+/);
 }
 
 function matrixChecks(root: string, matrix: import('../core/task.js').AcceptanceMatrix): CheckCommand[] {
@@ -645,21 +656,26 @@ function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
 async function reenterImplementForReviewRepair(taskId: string, root: string, actor: Actor): Promise<void> {
   const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
   const review = JSON.parse(reviewRaw) as {
+    revisionId?: string;
     findings?: Array<{ severity?: string; title?: string; message?: string; fix?: string }>;
   };
   const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
   const task = JSON.parse(taskRaw) as { workflowProfile?: { reviewMode?: string } };
   const isStrict = task.workflowProfile?.reviewMode === 'strict';
+  const revision = await readCurrentTaskRevision(root, taskId);
+  if (review.revisionId !== revision?.id) {
+    throw new Error('Build cannot run from review because its findings are not bound to the current sealed revision. Re-run /kata-review.');
+  }
   const blockingFindings = (review.findings ?? []).filter((finding) => finding.severity === 'blocking');
   const majorFindings = isStrict
     ? (review.findings ?? []).filter((finding) => finding.severity === 'major')
     : [];
   if (blockingFindings.length === 0 && majorFindings.length === 0) {
-    throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings');
+    throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
   }
 
   const now = new Date().toISOString();
-  const revision = await readCurrentTaskRevision(root, taskId);
+  await withTaskLock(root, taskId, async () => {
   await appendStateEvent(root, {
     taskId,
     from: 'review',
@@ -672,6 +688,7 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
     phase: 'implement',
     actor,
     updatedAt: now,
+  });
   });
   await writeFile(
     join(root, '.kata/tasks', taskId, 'repair.json'),
@@ -995,8 +1012,19 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
       const previous = JSON.parse(await readFile(reviewPath, 'utf8')) as {
         revisionId?: string;
         findings?: ReviewFinding[];
+        status?: string;
       };
       if (revisionId && previous.revisionId !== revisionId) {
+        if (previous.findings?.length) {
+          const historyPath = join(root, '.kata/tasks', taskId, 'review-history.jsonl');
+          const historyEntry = JSON.stringify({
+            revisionId: previous.revisionId,
+            findings: previous.findings,
+            status: previous.status ?? 'pending',
+            archivedAt: new Date().toISOString(),
+          }) + '\n';
+          await appendFile(historyPath, historyEntry, 'utf8');
+        }
         await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
       }
     } catch {
@@ -1243,10 +1271,28 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     };
   }
 
+  // Archive is a security boundary: a forged Judge PASS must not be enough to
+  // cross it. Revalidate the Review artifact before changing state so that a
+  // direct write of judge.json cannot bypass the evidence-backed Review gate.
+  const review = await readReview(root, taskId);
+  if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
+    return {
+      command: 'archive', taskId, phase: current.phase, success: false,
+      error: 'Archive requires an evidence-backed Review approval before a Judge result can be archived.',
+    };
+  }
+
   if (current.phase === 'judge') {
-    await guardTransition(options.guard, 'check', taskId, 'distill');
-    await transition(taskId, 'distill', actorFor(defaultActor, options.platform), { root });
-    await guardTransition(options.guard, 'apply', taskId, 'distill');
+    try {
+      await guardTransition(options.guard, 'check', taskId, 'distill');
+      await transition(taskId, 'distill', actorFor(defaultActor, options.platform), { root });
+      await guardTransition(options.guard, 'apply', taskId, 'distill');
+    } catch (error) {
+      return {
+        command: 'archive', taskId, phase: current.phase, success: false,
+        error: `Archive requires a current-revision Judge PASS before transition: ${(error as Error).message}`,
+      };
+    }
   } else if (current.phase !== 'distill' && current.phase !== 'archive') {
     return { command: 'archive', taskId, phase: current.phase, success: false, error: `Archive cannot run from ${current.phase}` };
   }
@@ -1356,9 +1402,7 @@ async function cmdHotfix(
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
 
-  const verifyResult = await cmdVerify(taskId, root, options);
-  if (!verifyResult.success) return verifyResult;
-  return verifyResult;
+  return buildResult;
 }
 
 async function cmdTweak(
@@ -1378,6 +1422,5 @@ async function cmdTweak(
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
 
-  const verifyResult = await cmdVerify(taskId, root, options);
-  return verifyResult;
+  return buildResult;
 }

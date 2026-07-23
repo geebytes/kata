@@ -9,31 +9,11 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/codegraph/runtime.ts
-var runtime_exports = {};
-__export(runtime_exports, {
-  codeGraphExecutionEnv: () => codeGraphExecutionEnv
-});
-import { dirname } from "node:path";
-function codeGraphExecutionEnv(inherited = process.env, nodeExecutable = process.execPath) {
-  const runtimeBin = dirname(nodeExecutable);
-  const inheritedPath = inherited.PATH ?? "";
-  return {
-    ...inherited,
-    PATH: inheritedPath ? `${runtimeBin}:${inheritedPath}` : runtimeBin
-  };
-}
-var init_runtime = __esm({
-  "src/codegraph/runtime.ts"() {
-    "use strict";
-  }
-});
-
 // kata-asset:/app/kata/schemas/task.schema.json
 var task_schema_default;
 var init_task_schema = __esm({
   "kata-asset:/app/kata/schemas/task.schema.json"() {
-    task_schema_default = '{\n  "$schema": "https://json-schema.org/draft/2020-12/schema",\n  "$id": "https://kata.dev/schemas/task.schema.json",\n  "title": "Kata Task",\n  "type": "object",\n  "required": ["id", "title", "phase", "acceptance", "createdAt", "updatedAt"],\n  "additionalProperties": false,\n  "properties": {\n    "id": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },\n    "title": { "type": "string", "minLength": 1 },\n    "phase": {\n      "type": "string",\n      "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]\n    },\n    "acceptance": {\n      "type": "array",\n      "minItems": 1,\n      "items": {\n        "type": "object",\n        "required": ["statement"],\n        "additionalProperties": false,\n        "properties": {\n          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },\n          "statement": { "type": "string", "minLength": 1 }\n        }\n      }\n    },\n    "relations": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "required": ["type", "targetTaskId", "createdAt"],\n        "additionalProperties": false,\n        "properties": {\n          "type": {\n            "type": "string",\n            "enum": ["superseded_by", "covered_by", "duplicate_of", "merged_into", "parent_of", "spawned_from", "related_to"]\n          },\n          "targetTaskId": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },\n          "reason": { "type": "string", "minLength": 1 },\n          "createdAt": { "type": "string", "minLength": 1 },\n          "createdBy": { "type": "string", "minLength": 1 }\n        }\n      }\n    },\n    "createdAt": { "type": "string", "minLength": 1 },\n    "updatedAt": { "type": "string", "minLength": 1 },\n    "workflowProfile": {\n      "type": "object",\n      "required": ["version", "isolationMode", "developmentMode", "reviewMode", "comet"],\n      "properties": {\n        "version": { "const": 1 },\n        "isolationMode": { "enum": ["current_worktree", "isolated_worktree", "git_flow", "user_decides"] },\n        "developmentMode": { "enum": ["tdd", "standard"] },\n        "reviewMode": { "enum": ["std", "strict", "security"] },\n        "gitFlow": {\n          "type": "object",\n          "required": ["strategy", "branch", "baseBranch", "status"],\n          "properties": {\n            "strategy": { "enum": ["git-flow", "manual"] },\n            "branch": { "type": "string" },\n            "baseBranch": { "type": "string" },\n            "status": { "enum": ["active", "pending_confirmation", "failed"] }\n          },\n          "additionalProperties": false\n        },\n        "comet": {\n          "type": "object",\n          "required": ["projectInit", "openStatus"],\n          "properties": {\n            "projectInit": { "enum": ["not_requested", "initialized", "skipped", "failed"] },\n            "openStatus": { "enum": ["required", "acknowledged"] }\n          },\n          "additionalProperties": false\n        },\n        "strictClosure": { "type": "boolean" }\n      },\n      "additionalProperties": false\n    },\n    "ownedPaths": {\n      "type": "array",\n      "minItems": 1,\n      "uniqueItems": true,\n      "items": { "type": "string", "minLength": 1 }\n    },\n    "acceptanceMatrix": {\n      "type": "object",\n      "required": ["version", "rows"],\n      "additionalProperties": false,\n      "properties": {\n        "version": { "type": "integer", "minimum": 1 },\n        "rows": {\n          "type": "array",\n          "minItems": 1,\n          "items": {\n            "type": "object",\n            "required": ["acceptanceId", "implementationPaths", "testPaths", "evidence", "verificationLevel"],\n            "additionalProperties": false,\n            "properties": {\n              "acceptanceId": { "type": "string", "pattern": "^AC-[0-9]+$" },\n              "designRefs": {\n                "type": "array",\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "implementationPaths": {\n                "type": "array",\n                "minItems": 1,\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "testPaths": {\n                "type": "array",\n                "minItems": 1,\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "evidence": {\n                "type": "array",\n                "minItems": 1,\n                "items": {\n                  "type": "object",\n                  "required": ["kind", "command"],\n                  "additionalProperties": false,\n                  "properties": {\n                    "kind": {\n                      "type": "string",\n                      "enum": ["test", "lint", "typecheck", "integration", "entrypoint"]\n                    },\n                    "command": { "type": "string", "minLength": 1 },\n                    "testSelector": { "type": "string", "minLength": 1 }\n                  }\n                }\n              },\n              "verificationLevel": {\n                "type": "string",\n                "enum": ["unit", "integration", "entrypoint"]\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n';
+    task_schema_default = '{\n  "$schema": "https://json-schema.org/draft/2020-12/schema",\n  "$id": "https://kata.dev/schemas/task.schema.json",\n  "title": "Kata Task",\n  "type": "object",\n  "required": ["id", "title", "phase", "acceptance", "createdAt", "updatedAt"],\n  "additionalProperties": false,\n  "properties": {\n    "id": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },\n    "title": { "type": "string", "minLength": 1 },\n    "phase": {\n      "type": "string",\n      "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]\n    },\n    "acceptance": {\n      "type": "array",\n      "minItems": 1,\n      "items": {\n        "type": "object",\n        "required": ["statement"],\n        "additionalProperties": false,\n        "properties": {\n          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },\n          "statement": { "type": "string", "minLength": 1 }\n        }\n      }\n    },\n    "relations": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "required": ["type", "targetTaskId", "createdAt"],\n        "additionalProperties": false,\n        "properties": {\n          "type": {\n            "type": "string",\n            "enum": ["superseded_by", "covered_by", "duplicate_of", "merged_into", "parent_of", "spawned_from", "related_to"]\n          },\n          "targetTaskId": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },\n          "reason": { "type": "string", "minLength": 1 },\n          "createdAt": { "type": "string", "minLength": 1 },\n          "createdBy": { "type": "string", "minLength": 1 }\n        }\n      }\n    },\n    "createdAt": { "type": "string", "minLength": 1 },\n    "updatedAt": { "type": "string", "minLength": 1 },\n    "workflowProfile": {\n      "type": "object",\n      "required": ["version", "isolationMode", "developmentMode", "reviewMode", "comet"],\n      "properties": {\n        "version": { "const": 1 },\n        "isolationMode": { "enum": ["current_worktree", "isolated_worktree", "git_flow", "user_decides"] },\n        "developmentMode": { "enum": ["tdd", "standard"] },\n        "reviewMode": { "enum": ["std", "strict", "security"] },\n        "gitFlow": {\n          "type": "object",\n          "required": ["strategy", "branch", "baseBranch", "status"],\n          "properties": {\n            "strategy": { "enum": ["git-flow", "manual"] },\n            "branch": { "type": "string" },\n            "baseBranch": { "type": "string" },\n            "status": { "enum": ["active", "pending_confirmation", "failed"] },\n            "installation": {\n              "type": "object",\n              "required": ["status"],\n              "properties": {\n                "status": { "enum": ["installed", "failed", "unsupported"] },\n                "command": {\n                  "type": "array",\n                  "items": { "type": "string" }\n                },\n                "manualCommand": { "type": "string" }\n              },\n              "additionalProperties": false\n            }\n          },\n          "additionalProperties": false\n        },\n        "comet": {\n          "type": "object",\n          "required": ["projectInit", "openStatus"],\n          "properties": {\n            "projectInit": { "enum": ["not_requested", "initialized", "skipped", "failed"] },\n            "openStatus": { "enum": ["required", "acknowledged"] }\n          },\n          "additionalProperties": false\n        },\n        "strictClosure": { "type": "boolean" }\n      },\n      "additionalProperties": false\n    },\n    "ownedPaths": {\n      "type": "array",\n      "minItems": 1,\n      "uniqueItems": true,\n      "items": { "type": "string", "minLength": 1 }\n    },\n    "acceptanceMatrix": {\n      "type": "object",\n      "required": ["version", "rows"],\n      "additionalProperties": false,\n      "properties": {\n        "version": { "type": "integer", "minimum": 1 },\n        "rows": {\n          "type": "array",\n          "minItems": 1,\n          "items": {\n            "type": "object",\n            "required": ["acceptanceId", "implementationPaths", "testPaths", "evidence", "verificationLevel"],\n            "additionalProperties": false,\n            "properties": {\n              "acceptanceId": { "type": "string", "pattern": "^AC-[0-9]+$" },\n              "designRefs": {\n                "type": "array",\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "implementationPaths": {\n                "type": "array",\n                "minItems": 1,\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "testPaths": {\n                "type": "array",\n                "minItems": 1,\n                "items": { "type": "string", "minLength": 1 }\n              },\n              "evidence": {\n                "type": "array",\n                "minItems": 1,\n                "items": {\n                  "type": "object",\n                  "required": ["kind", "command"],\n                  "additionalProperties": false,\n                  "properties": {\n                    "kind": {\n                      "type": "string",\n                      "enum": ["test", "lint", "typecheck", "integration", "entrypoint"]\n                    },\n                    "command": { "type": "string", "minLength": 1 },\n                    "testSelector": { "type": "string", "minLength": 1 }\n                  }\n                }\n              },\n              "verificationLevel": {\n                "type": "string",\n                "enum": ["unit", "integration", "entrypoint"]\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n';
   }
 });
 
@@ -98,6 +78,302 @@ var handoff_receipt_schema_default;
 var init_handoff_receipt_schema = __esm({
   "kata-asset:/app/kata/schemas/handoff-receipt.schema.json"() {
     handoff_receipt_schema_default = '{\n  "type": "object",\n  "required": ["protocolVersion", "taskId", "handoffId", "platform", "role", "packetSha256", "acknowledgedAt"],\n  "properties": {\n    "protocolVersion": { "type": "integer", "minimum": 1 },\n    "taskId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },\n    "handoffId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },\n    "platform": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },\n    "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },\n    "packetSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },\n    "acknowledgedAt": { "type": "string", "minLength": 1 }\n  }\n}\n';
+  }
+});
+
+// src/quality/evidence.ts
+var evidence_exports = {};
+__export(evidence_exports, {
+  checkFreshness: () => checkFreshness,
+  collectEvidence: () => collectEvidence,
+  computeDiffHash: () => computeDiffHash,
+  computeScopeHash: () => computeScopeHash
+});
+import { createHash, randomUUID } from "node:crypto";
+import { readdir, readFile as readFile2, stat } from "node:fs/promises";
+import { join as join3, relative, resolve as resolve2 } from "node:path";
+import { spawn } from "node:child_process";
+async function collectEvidence(taskId, commands, options = {}) {
+  const evidence = [];
+  const cwd2 = commands[0]?.cwd ?? process.cwd();
+  if (commands.some((check) => (check.cwd ?? process.cwd()) !== cwd2)) {
+    throw new Error("All evidence checks in one collection must use the same cwd");
+  }
+  for (const check of commands) {
+    if (options.signal?.aborted) break;
+    const checkName = check.name ?? check.command;
+    const timeoutMs = check.timeoutMs ?? 6e5;
+    options.onProgress?.({ type: "quality_check_progress", check: checkName, state: "started", timeoutMs });
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const redactions = collectRedactions(check);
+    const command = redact(renderCommand(check.command, check.args ?? []), redactions);
+    const result = check.importResult ?? await runBoundedCommand(check, { onProgress: options.onProgress, signal: options.signal });
+    const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const finalState = options.signal?.aborted ? "cancelled" : result.exitCode === 0 ? "passed" : result.exitCode === 124 ? "timed_out" : "failed";
+    options.onProgress?.({ type: "quality_check_progress", check: checkName, state: finalState, timeoutMs, exitCode: result.exitCode });
+    evidence.push({
+      id: `evidence-${randomUUID()}`,
+      taskId,
+      ...check.name ? { name: check.name } : {},
+      kind: check.kind,
+      command,
+      environment: redact(result.environment ?? environmentSummary(cwd2), redactions),
+      exitCode: result.exitCode,
+      startedAt,
+      finishedAt,
+      diffHash: "",
+      ...result.log ? { log: redact(truncate(result.log), redactions) } : {}
+    });
+  }
+  if (evidence.length === 0) return evidence;
+  const finalDiffHash = await computeDiffHash(cwd2);
+  const scopePaths = options.revision?.ownedPaths ?? options.scopePaths;
+  const scope = options.revision ? { paths: options.revision.ownedPaths, hash: options.revision.manifestHash } : scopePaths?.length ? { paths: [...new Set(scopePaths.map((path) => normalizeScopePath(cwd2, path)))].sort(), hash: await computeScopeHash(cwd2, scopePaths) } : void 0;
+  return evidence.map((item) => ({
+    ...item,
+    diffHash: finalDiffHash,
+    ...options.revision ? { revisionId: options.revision.id } : {},
+    ...scope ? { scope } : {}
+  }));
+}
+function checkFreshness(evidence, diffHash, scopeHash) {
+  if (evidence.scope) {
+    if (scopeHash === evidence.scope.hash) return { fresh: true };
+    return {
+      fresh: false,
+      reason: "scope_hash_mismatch",
+      expectedScopeHash: scopeHash ?? "",
+      evidenceScopeHash: evidence.scope.hash
+    };
+  }
+  if (evidence.diffHash === diffHash) return { fresh: true };
+  return {
+    fresh: false,
+    reason: "diff_hash_mismatch",
+    expectedDiffHash: diffHash,
+    evidenceDiffHash: evidence.diffHash
+  };
+}
+async function computeScopeHash(root, paths) {
+  const normalizedPaths = [...new Set(paths.map((path) => normalizeScopePath(root, path)))].sort();
+  const hash2 = createHash("sha256");
+  for (const path of normalizedPaths) {
+    hash2.update(path);
+    hash2.update("\0");
+    const fullPath = join3(root, path);
+    try {
+      const entryStat = await stat(fullPath);
+      if (entryStat.isDirectory()) {
+        await hashDirectoryRecursive(fullPath, root, hash2);
+      } else {
+        hash2.update(await readFile2(fullPath));
+      }
+    } catch {
+      hash2.update("[missing]");
+    }
+    hash2.update("\0");
+  }
+  return hash2.digest("hex");
+}
+async function hashDirectoryRecursive(dirPath, root, hash2) {
+  let entries;
+  try {
+    entries = await readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (shouldIgnore(entry.name)) continue;
+    const absolutePath = join3(dirPath, entry.name);
+    const relativePath = relative(root, absolutePath).replaceAll("\\", "/");
+    if (shouldIgnorePath(relativePath)) continue;
+    if (entry.isDirectory()) {
+      await hashDirectoryRecursive(absolutePath, root, hash2);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    hash2.update(relativePath);
+    hash2.update("\0");
+    try {
+      hash2.update(await readFile2(absolutePath));
+    } catch {
+      hash2.update("[missing]");
+    }
+    hash2.update("\0");
+  }
+}
+function normalizeScopePath(root, path) {
+  const absolute = resolve2(root, path);
+  const normalized = relative(root, absolute).replaceAll("\\", "/");
+  if (!normalized || normalized === ".." || normalized.startsWith("../")) {
+    throw new Error(`Evidence scope path must be inside the repository: ${path}`);
+  }
+  return normalized;
+}
+async function computeDiffHash(root = process.cwd()) {
+  const entries = await collectFileSnapshot(root);
+  const hash2 = createHash("sha256");
+  for (const entry of entries) {
+    hash2.update(entry.path);
+    hash2.update("\0");
+    hash2.update(entry.content);
+    hash2.update("\0");
+  }
+  return hash2.digest("hex");
+}
+async function runBoundedCommand(check, options) {
+  const cwd2 = check.cwd ?? process.cwd();
+  const timeoutMs = check.timeoutMs ?? 6e5;
+  const checkName = check.name ?? check.command;
+  const child = spawn(check.command, check.args ?? [], {
+    cwd: cwd2,
+    env: { ...process.env, ...check.env ?? {} },
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+    detached: true
+  });
+  const exitPromise = new Promise((exitResolve) => {
+    child.on("close", (code) => exitResolve(code));
+  });
+  return new Promise((resolve6, reject) => {
+    let settled = false;
+    let output = "";
+    let terminating = false;
+    async function terminateAndWait(exitCode, logNote) {
+      const pid = child.pid;
+      if (pid === void 0) return;
+      terminating = true;
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+      }
+      const grace = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+        }
+      }, graceMs);
+      await exitPromise;
+      clearTimeout(grace);
+      if (!settled) {
+        settled = true;
+        resolve6({
+          exitCode,
+          log: `${truncate(output)}
+[${logNote}]`,
+          environment: environmentSummary(cwd2)
+        });
+      }
+    }
+    const timer = setTimeout(() => {
+      terminateAndWait(124, `TIMEOUT after ${timeoutMs}ms`);
+    }, timeoutMs);
+    function onAbort() {
+      clearTimeout(timer);
+      terminateAndWait(1, "CANCELLED");
+    }
+    const abortSignal = options?.signal;
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      output = truncate(output + chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      output = truncate(output + chunk);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    exitPromise.then((code) => {
+      clearTimeout(timer);
+      abortSignal?.removeEventListener("abort", onAbort);
+      if (!terminating && !settled) {
+        settled = true;
+        resolve6({
+          exitCode: code ?? 1,
+          log: output,
+          environment: environmentSummary(cwd2)
+        });
+      }
+    });
+  });
+}
+async function collectFileSnapshot(root) {
+  const files = [];
+  async function visit(directory) {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (shouldIgnore(entry.name)) continue;
+      const absolutePath = join3(directory, entry.name);
+      const relativePath = relative(root, absolutePath).replaceAll("\\", "/");
+      if (shouldIgnorePath(relativePath)) continue;
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const info = await stat(absolutePath);
+      if (info.size > 2e6) continue;
+      files.push({ path: relativePath, content: await readFile2(absolutePath) });
+    }
+  }
+  await visit(root);
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+function shouldIgnore(name) {
+  return name === ".git" || name === ".kata" || name === ".llmwiki" || name === ".pytest_cache" || name === ".mypy_cache" || name === ".ruff_cache" || name === ".coverage" || name === "__pycache__" || name === "node_modules" || name === "dist" || name === ".codex" || name === ".claude" || name === ".opencode";
+}
+function shouldIgnorePath(path) {
+  return path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/");
+}
+function collectRedactions(check) {
+  return [
+    ...check.redact ?? [],
+    ...sensitiveEnvironmentValues(process.env),
+    ...Object.entries(check.env ?? {}).filter(([key]) => /secret|token|password|key/i.test(key)).map(([, value]) => value)
+  ].filter((value) => value.length > 0);
+}
+function sensitiveEnvironmentValues(env) {
+  return Object.entries(env).filter(([key]) => /secret|token|password|key/i.test(key)).map(([, value]) => value ?? "").filter((value) => value.length > 0);
+}
+function environmentSummary(cwd2) {
+  return `node=${process.version} platform=${process.platform} cwd=${cwd2}`;
+}
+function renderCommand(command, args) {
+  return [command, ...args].join(" ");
+}
+function redact(value, secrets) {
+  let redacted = value;
+  for (const secret of secrets) {
+    redacted = redacted.split(secret).join("[REDACTED]");
+  }
+  return redacted;
+}
+function truncate(value) {
+  if (value.length <= maxLogLength) return value;
+  return value.slice(0, maxLogLength);
+}
+var maxLogLength, graceMs;
+var init_evidence = __esm({
+  "src/quality/evidence.ts"() {
+    "use strict";
+    maxLogLength = 2e4;
+    graceMs = 5e3;
   }
 });
 
@@ -212,9 +488,9 @@ var init_schema = __esm({
 });
 
 // src/wiki/record.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 function computeFileHash(content) {
-  return createHash("sha256").update(content).digest("hex");
+  return createHash3("sha256").update(content).digest("hex");
 }
 function validateWikiRecord(value) {
   return validate("wiki-record", value);
@@ -235,22 +511,22 @@ __export(store_exports, {
   updateWikiRecord: () => updateWikiRecord,
   writeWikiRecord: () => writeWikiRecord
 });
-import { mkdir, readFile as readFile2, readdir, writeFile as writeFile2 } from "node:fs/promises";
-import { join as join3 } from "node:path";
+import { mkdir as mkdir5, readFile as readFile7, readdir as readdir3, writeFile as writeFile5 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function normalizeId(id) {
   return id.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 async function readWikiRecords(root) {
-  const wikiDir = join3(root, ".kata/wiki");
+  const wikiDir = join8(root, ".kata/wiki");
   let files;
   try {
-    files = await readdir(wikiDir);
+    files = await readdir3(wikiDir);
   } catch {
     return [];
   }
   const records = await Promise.all(
     files.filter((f) => f.endsWith(".json")).sort().map(async (file) => {
-      const raw = await readFile2(join3(wikiDir, file), "utf8");
+      const raw = await readFile7(join8(wikiDir, file), "utf8");
       return JSON.parse(raw);
     })
   );
@@ -258,18 +534,18 @@ async function readWikiRecords(root) {
 }
 async function writeWikiRecord(root, record) {
   const id = normalizeId(record.id);
-  const wikiDir = join3(root, ".kata/wiki");
-  await mkdir(wikiDir, { recursive: true });
+  const wikiDir = join8(root, ".kata/wiki");
+  await mkdir5(wikiDir, { recursive: true });
   const validated = validateWikiRecord(record);
   const validatedWithId = { ...validated, id };
-  await writeFile2(join3(wikiDir, `${id}.json`), `${JSON.stringify(validatedWithId, null, 2)}
+  await writeFile5(join8(wikiDir, `${id}.json`), `${JSON.stringify(validatedWithId, null, 2)}
 `, "utf8");
 }
 async function updateWikiRecord(root, id, update2) {
   const normalizedId = normalizeId(id);
-  const wikiDir = join3(root, ".kata/wiki");
-  const filePath = join3(wikiDir, `${normalizedId}.json`);
-  const raw = await readFile2(filePath, "utf8");
+  const wikiDir = join8(root, ".kata/wiki");
+  const filePath = join8(wikiDir, `${normalizedId}.json`);
+  const raw = await readFile7(filePath, "utf8");
   const existing = JSON.parse(raw);
   const updated = {
     ...existing,
@@ -277,15 +553,15 @@ async function updateWikiRecord(root, id, update2) {
     id: existing.id,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await writeFile2(filePath, `${JSON.stringify(updated, null, 2)}
+  await writeFile5(filePath, `${JSON.stringify(updated, null, 2)}
 `, "utf8");
   return updated;
 }
 async function deleteWikiRecord(root, id) {
   const normalizedId = normalizeId(id);
-  const filePath = join3(root, ".kata/wiki", `${normalizedId}.json`);
-  const { rm: rm4 } = await import("node:fs/promises");
-  await rm4(filePath);
+  const filePath = join8(root, ".kata/wiki", `${normalizedId}.json`);
+  const { rm: rm5 } = await import("node:fs/promises");
+  await rm5(filePath);
 }
 async function findWikiRecord(root, id) {
   const records = await readWikiRecords(root);
@@ -349,315 +625,29 @@ var init_prompt = __esm({
   }
 });
 
-// src/quality/evidence.ts
-var evidence_exports = {};
-__export(evidence_exports, {
-  checkFreshness: () => checkFreshness,
-  collectEvidence: () => collectEvidence,
-  computeDiffHash: () => computeDiffHash,
-  computeScopeHash: () => computeScopeHash
-});
-import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
-import { readdir as readdir3, readFile as readFile5, stat as stat3 } from "node:fs/promises";
-import { join as join7, relative as relative2, resolve as resolve3 } from "node:path";
-import { spawn as spawn2 } from "node:child_process";
-async function collectEvidence(taskId, commands, options = {}) {
-  const evidence = [];
-  const cwd2 = commands[0]?.cwd ?? process.cwd();
-  if (commands.some((check) => (check.cwd ?? process.cwd()) !== cwd2)) {
-    throw new Error("All evidence checks in one collection must use the same cwd");
-  }
-  for (const check of commands) {
-    if (options.signal?.aborted) break;
-    const checkName = check.name ?? check.command;
-    const timeoutMs = check.timeoutMs ?? 6e5;
-    options.onProgress?.({ type: "quality_check_progress", check: checkName, state: "started", timeoutMs });
-    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const redactions = collectRedactions(check);
-    const command = redact(renderCommand(check.command, check.args ?? []), redactions);
-    const result = check.importResult ?? await runBoundedCommand(check, { onProgress: options.onProgress, signal: options.signal });
-    const finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const finalState = options.signal?.aborted ? "cancelled" : result.exitCode === 0 ? "passed" : result.exitCode === 124 ? "timed_out" : "failed";
-    options.onProgress?.({ type: "quality_check_progress", check: checkName, state: finalState, timeoutMs, exitCode: result.exitCode });
-    evidence.push({
-      id: `evidence-${randomUUID2()}`,
-      taskId,
-      ...check.name ? { name: check.name } : {},
-      kind: check.kind,
-      command,
-      environment: redact(result.environment ?? environmentSummary(cwd2), redactions),
-      exitCode: result.exitCode,
-      startedAt,
-      finishedAt,
-      diffHash: "",
-      ...result.log ? { log: redact(truncate(result.log), redactions) } : {}
-    });
-  }
-  if (evidence.length === 0) return evidence;
-  const finalDiffHash = await computeDiffHash(cwd2);
-  const scopePaths = options.revision?.ownedPaths ?? options.scopePaths;
-  const scope = options.revision ? { paths: options.revision.ownedPaths, hash: options.revision.manifestHash } : scopePaths?.length ? { paths: [...new Set(scopePaths.map((path) => normalizeScopePath(cwd2, path)))].sort(), hash: await computeScopeHash(cwd2, scopePaths) } : void 0;
-  return evidence.map((item) => ({
-    ...item,
-    diffHash: finalDiffHash,
-    ...options.revision ? { revisionId: options.revision.id } : {},
-    ...scope ? { scope } : {}
-  }));
-}
-function checkFreshness(evidence, diffHash, scopeHash) {
-  if (evidence.scope) {
-    if (scopeHash === evidence.scope.hash) return { fresh: true };
-    return {
-      fresh: false,
-      reason: "scope_hash_mismatch",
-      expectedScopeHash: scopeHash ?? "",
-      evidenceScopeHash: evidence.scope.hash
-    };
-  }
-  if (evidence.diffHash === diffHash) return { fresh: true };
-  return {
-    fresh: false,
-    reason: "diff_hash_mismatch",
-    expectedDiffHash: diffHash,
-    evidenceDiffHash: evidence.diffHash
-  };
-}
-async function computeScopeHash(root, paths) {
-  const normalizedPaths = [...new Set(paths.map((path) => normalizeScopePath(root, path)))].sort();
-  const hash2 = createHash4("sha256");
-  for (const path of normalizedPaths) {
-    hash2.update(path);
-    hash2.update("\0");
-    const fullPath = join7(root, path);
-    try {
-      const entryStat = await stat3(fullPath);
-      if (entryStat.isDirectory()) {
-        await hashDirectoryRecursive(fullPath, root, hash2);
-      } else {
-        hash2.update(await readFile5(fullPath));
-      }
-    } catch {
-      hash2.update("[missing]");
-    }
-    hash2.update("\0");
-  }
-  return hash2.digest("hex");
-}
-async function hashDirectoryRecursive(dirPath, root, hash2) {
-  let entries;
-  try {
-    entries = await readdir3(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (shouldIgnore(entry.name)) continue;
-    const absolutePath = join7(dirPath, entry.name);
-    const relativePath = relative2(root, absolutePath).replaceAll("\\", "/");
-    if (shouldIgnorePath(relativePath)) continue;
-    if (entry.isDirectory()) {
-      await hashDirectoryRecursive(absolutePath, root, hash2);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    hash2.update(relativePath);
-    hash2.update("\0");
-    try {
-      hash2.update(await readFile5(absolutePath));
-    } catch {
-      hash2.update("[missing]");
-    }
-    hash2.update("\0");
-  }
-}
-function normalizeScopePath(root, path) {
-  const absolute = resolve3(root, path);
-  const normalized = relative2(root, absolute).replaceAll("\\", "/");
-  if (!normalized || normalized === ".." || normalized.startsWith("../")) {
-    throw new Error(`Evidence scope path must be inside the repository: ${path}`);
-  }
-  return normalized;
-}
-async function computeDiffHash(root = process.cwd()) {
-  const entries = await collectFileSnapshot(root);
-  const hash2 = createHash4("sha256");
-  for (const entry of entries) {
-    hash2.update(entry.path);
-    hash2.update("\0");
-    hash2.update(entry.content);
-    hash2.update("\0");
-  }
-  return hash2.digest("hex");
-}
-async function runBoundedCommand(check, options) {
-  const cwd2 = check.cwd ?? process.cwd();
-  const timeoutMs = check.timeoutMs ?? 6e5;
-  const checkName = check.name ?? check.command;
-  const child = spawn2(check.command, check.args ?? [], {
-    cwd: cwd2,
-    env: { ...process.env, ...check.env ?? {} },
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: false,
-    detached: true
-  });
-  const exitPromise = new Promise((exitResolve) => {
-    child.on("close", (code) => exitResolve(code));
-  });
-  return new Promise((resolve6, reject) => {
-    let settled = false;
-    let output = "";
-    let terminating = false;
-    async function terminateAndWait(exitCode, logNote) {
-      const pid = child.pid;
-      if (pid === void 0) return;
-      terminating = true;
-      try {
-        process.kill(-pid, "SIGTERM");
-      } catch {
-      }
-      const grace = setTimeout(() => {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch {
-        }
-      }, graceMs);
-      await exitPromise;
-      clearTimeout(grace);
-      if (!settled) {
-        settled = true;
-        resolve6({
-          exitCode,
-          log: `${truncate(output)}
-[${logNote}]`,
-          environment: environmentSummary(cwd2)
-        });
-      }
-    }
-    const timer = setTimeout(() => {
-      terminateAndWait(124, `TIMEOUT after ${timeoutMs}ms`);
-    }, timeoutMs);
-    function onAbort() {
-      clearTimeout(timer);
-      terminateAndWait(1, "CANCELLED");
-    }
-    const abortSignal = options?.signal;
-    if (abortSignal?.aborted) {
-      onAbort();
-      return;
-    }
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      output = truncate(output + chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      output = truncate(output + chunk);
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener("abort", onAbort);
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-    exitPromise.then((code) => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener("abort", onAbort);
-      if (!terminating && !settled) {
-        settled = true;
-        resolve6({
-          exitCode: code ?? 1,
-          log: output,
-          environment: environmentSummary(cwd2)
-        });
-      }
-    });
-  });
-}
-async function collectFileSnapshot(root) {
-  const files = [];
-  async function visit(directory) {
-    let entries;
-    try {
-      entries = await readdir3(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (shouldIgnore(entry.name)) continue;
-      const absolutePath = join7(directory, entry.name);
-      const relativePath = relative2(root, absolutePath).replaceAll("\\", "/");
-      if (shouldIgnorePath(relativePath)) continue;
-      if (entry.isDirectory()) {
-        await visit(absolutePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const info = await stat3(absolutePath);
-      if (info.size > 2e6) continue;
-      files.push({ path: relativePath, content: await readFile5(absolutePath) });
-    }
-  }
-  await visit(root);
-  return files.sort((left, right) => left.path.localeCompare(right.path));
-}
-function shouldIgnore(name) {
-  return name === ".git" || name === ".kata" || name === ".llmwiki" || name === ".pytest_cache" || name === ".mypy_cache" || name === ".ruff_cache" || name === ".coverage" || name === "__pycache__" || name === "node_modules" || name === "dist" || name === ".codex" || name === ".claude" || name === ".opencode";
-}
-function shouldIgnorePath(path) {
-  return path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/");
-}
-function collectRedactions(check) {
-  return [
-    ...check.redact ?? [],
-    ...sensitiveEnvironmentValues(process.env),
-    ...Object.entries(check.env ?? {}).filter(([key]) => /secret|token|password|key/i.test(key)).map(([, value]) => value)
-  ].filter((value) => value.length > 0);
-}
-function sensitiveEnvironmentValues(env) {
-  return Object.entries(env).filter(([key]) => /secret|token|password|key/i.test(key)).map(([, value]) => value ?? "").filter((value) => value.length > 0);
-}
-function environmentSummary(cwd2) {
-  return `node=${process.version} platform=${process.platform} cwd=${cwd2}`;
-}
-function renderCommand(command, args) {
-  return [command, ...args].join(" ");
-}
-function redact(value, secrets) {
-  let redacted = value;
-  for (const secret of secrets) {
-    redacted = redacted.split(secret).join("[REDACTED]");
-  }
-  return redacted;
-}
-function truncate(value) {
-  if (value.length <= maxLogLength) return value;
-  return value.slice(0, maxLogLength);
-}
-var maxLogLength, graceMs;
-var init_evidence = __esm({
-  "src/quality/evidence.ts"() {
-    "use strict";
-    maxLogLength = 2e4;
-    graceMs = 5e3;
-  }
-});
-
 // src/cli.ts
-init_runtime();
-import { readdir as readdir10, readFile as readFile22 } from "node:fs/promises";
+import { readdir as readdir10, readFile as readFile24 } from "node:fs/promises";
 import { createHash as createHash7 } from "node:crypto";
 import { execFileSync as execFileSync5 } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join as join26 } from "node:path";
+import { join as join28 } from "node:path";
+
+// src/codegraph/runtime.ts
+import { dirname } from "node:path";
+function codeGraphExecutionEnv(inherited = process.env, nodeExecutable = process.execPath) {
+  const runtimeBin = dirname(nodeExecutable);
+  const inheritedPath = inherited.PATH ?? "";
+  return {
+    ...inherited,
+    PATH: inheritedPath ? `${runtimeBin}:${inheritedPath}` : runtimeBin
+  };
+}
 
 // src/core/layout.ts
 import { basename, dirname as dirname2, join as join2, resolve } from "node:path";
 import { cwd } from "node:process";
-import { accessSync } from "node:fs";
+import { accessSync, readdirSync } from "node:fs";
 
 // src/core/config.ts
 import { readFile, writeFile } from "node:fs/promises";
@@ -756,6 +746,20 @@ function hasFileOrDir(dir, name) {
   }
 }
 var workspaceMarkers = [".git", ".opencode", "opencode.json", "package.json", "Cargo.toml", "go.mod"];
+var SKIP_DIRS = /* @__PURE__ */ new Set([
+  "node_modules",
+  ".git",
+  "target",
+  "dist",
+  "build",
+  ".kata",
+  "coverage",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".env",
+  ".opencode"
+]);
 function resolveWorkspaceRoot(from) {
   let dir = resolve(from ?? cwd());
   while (true) {
@@ -766,6 +770,685 @@ function resolveWorkspaceRoot(from) {
     if (parent === dir) return from ?? cwd();
     dir = parent;
   }
+}
+function resolveWorkspaceRootForTask(taskId, from) {
+  const start = resolve(from ?? cwd());
+  const candidates = [];
+  let directory = start;
+  while (true) {
+    if (hasFileOrDir(directory, join2(".kata", "tasks", taskId, "current-state.json"))) {
+      candidates.push(directory);
+    }
+    const parent = resolve(directory, "..");
+    if (parent === directory) break;
+    directory = parent;
+  }
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    throw new Error(`Ambiguous Kata task root for ${taskId}: ${candidates.join(", ")}. Pass --root explicitly.`);
+  }
+  const workspaceRoot = resolveWorkspaceRoot(start);
+  const descendants = findDescendantTaskRoots(taskId, workspaceRoot);
+  if (descendants.length === 1) return descendants[0];
+  if (descendants.length > 1) {
+    throw new Error(
+      `Multiple descendant worktrees own task ${taskId}: ${descendants.join(", ")}. Pass --root explicitly to select one.`
+    );
+  }
+  throw new Error(
+    `No Kata workspace owns task ${taskId}. Neither the current/ancestor workspace nor any eligible nested worktree contains this task. Pass --root explicitly or run the command from that workspace.`
+  );
+}
+function findDescendantTaskRoots(taskId, root) {
+  const candidates = [];
+  function scan(dir) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const fullPath = join2(dir, entry.name);
+      if (hasFileOrDir(fullPath, join2(".kata", "tasks", taskId, "current-state.json"))) {
+        candidates.push(fullPath);
+      }
+      scan(fullPath);
+    }
+  }
+  scan(root);
+  return candidates;
+}
+
+// src/core/recovery.ts
+import { mkdir as mkdir4, readFile as readFile6 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+
+// src/core/state.ts
+init_evidence();
+import { appendFile, mkdir as mkdir3, readFile as readFile5, rename, rm, writeFile as writeFile4 } from "node:fs/promises";
+import { basename as basename2, dirname as dirname4, join as join6 } from "node:path";
+import { randomUUID as randomUUID3 } from "node:crypto";
+
+// src/workflow/revision.ts
+import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdir as mkdir2, readdir as readdir2, readFile as readFile4, stat as stat2, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join5, relative as relative2, resolve as resolve3 } from "node:path";
+
+// src/core/relations.ts
+import { mkdir, readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname3, join as join4 } from "node:path";
+
+// src/core/ids.ts
+var taskIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+function assertValidTaskId(taskId) {
+  if (!taskIdPattern.test(taskId)) {
+    throw new Error(`Invalid task id: ${taskId}`);
+  }
+}
+
+// src/core/relations.ts
+var terminalRelationTypes = [
+  "superseded_by",
+  "covered_by",
+  "duplicate_of",
+  "merged_into"
+];
+function isTerminalRelation(type) {
+  return terminalRelationTypes.includes(type);
+}
+async function addTaskRelation(input) {
+  assertValidTaskId(input.fromTaskId);
+  assertValidTaskId(input.toTaskId);
+  if (input.fromTaskId === input.toTaskId) throw new Error("Task relation cannot point to itself");
+  await assertTaskExists(input.root, input.fromTaskId);
+  await assertTaskExists(input.root, input.toTaskId);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await addKataRelation({
+    root: input.root,
+    from: { type: "task", id: input.fromTaskId },
+    to: { type: "task", id: input.toTaskId },
+    type: input.type,
+    ...input.reason ? { reason: input.reason } : {},
+    ...input.createdBy ? { createdBy: input.createdBy } : {},
+    createdAt: now
+  });
+  const current = await readTaskRelations(input.root, input.fromTaskId);
+  const relation = {
+    type: input.type,
+    targetTaskId: input.toTaskId,
+    ...input.reason ? { reason: input.reason } : {},
+    createdAt: now,
+    ...input.createdBy ? { createdBy: input.createdBy } : {}
+  };
+  const next = {
+    taskId: input.fromTaskId,
+    relations: [
+      ...current.relations.filter((item) => !(item.type === relation.type && item.targetTaskId === relation.targetTaskId)),
+      relation
+    ],
+    updatedAt: now
+  };
+  await writeTaskRelations(input.root, input.fromTaskId, next);
+  await mirrorRelationIntoTask(input.root, input.fromTaskId, next);
+  return next;
+}
+async function addKataRelation(input) {
+  validateEndpoint(input.from);
+  validateEndpoint(input.to);
+  if (input.from.type === input.to.type && input.from.id === input.to.id) throw new Error("Relation cannot point to itself");
+  if (input.from.type === "task") await assertTaskExists(input.root, input.from.id);
+  if (input.to.type === "task") await assertTaskExists(input.root, input.to.id);
+  const now = input.createdAt ?? (/* @__PURE__ */ new Date()).toISOString();
+  const current = await readKataRelations(input.root);
+  const relation = {
+    kind: input.kind ?? inferRelationKind(input.type),
+    type: input.type,
+    from: input.from,
+    to: input.to,
+    ...input.reason ? { reason: input.reason } : {},
+    createdAt: now,
+    ...input.createdBy ? { createdBy: input.createdBy } : {}
+  };
+  const next = {
+    version: 1,
+    relations: [
+      ...current.relations.filter((item) => !sameEndpoint(item.from, relation.from) || !sameEndpoint(item.to, relation.to) || item.type !== relation.type),
+      relation
+    ],
+    updatedAt: now
+  };
+  await writeKataRelations(input.root, next);
+  return next;
+}
+async function readKataRelations(root) {
+  try {
+    const parsed = JSON.parse(await readFile3(graphPath(root), "utf8"));
+    return {
+      version: 1,
+      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isKataRelation) : [],
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : ""
+    };
+  } catch {
+    return { version: 1, relations: [], updatedAt: "" };
+  }
+}
+async function findKataRelations(root, endpoint) {
+  validateEndpoint(endpoint);
+  const graph = await readKataRelations(root);
+  return {
+    endpoint,
+    outgoing: graph.relations.filter((relation) => sameEndpoint(relation.from, endpoint)),
+    incoming: graph.relations.filter((relation) => sameEndpoint(relation.to, endpoint))
+  };
+}
+async function readTaskRelations(root, taskId) {
+  assertValidTaskId(taskId);
+  const path = relationPath(root, taskId);
+  try {
+    const parsed = JSON.parse(await readFile3(path, "utf8"));
+    return {
+      taskId,
+      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isTaskRelation) : [],
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : ""
+    };
+  } catch {
+    const task = await readTask(root, taskId).catch(() => null);
+    const taskRelations = Array.isArray(task?.relations) ? task.relations.filter(isTaskRelation) : [];
+    return { taskId, relations: taskRelations, updatedAt: typeof task?.updatedAt === "string" ? task.updatedAt : "" };
+  }
+}
+async function readTerminalTaskRelation(root, taskId) {
+  const record = await readTaskRelations(root, taskId);
+  return record.relations.find((relation) => isTerminalRelation(relation.type)) ?? null;
+}
+async function resolveTerminalTask(root, taskId) {
+  assertValidTaskId(taskId);
+  const seen = /* @__PURE__ */ new Set();
+  const redirects = [];
+  let current = taskId;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (seen.has(current)) throw new Error(`Task relation cycle detected at ${current}`);
+    seen.add(current);
+    const relation = await readTerminalTaskRelation(root, current);
+    if (!relation) return { taskId: current, redirects };
+    redirects.push({
+      fromTaskId: current,
+      toTaskId: relation.targetTaskId,
+      type: relation.type,
+      ...relation.reason ? { reason: relation.reason } : {}
+    });
+    current = relation.targetTaskId;
+  }
+  throw new Error(`Task relation chain is too deep starting at ${taskId}`);
+}
+function isTaskRelation(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value;
+  return typeof record.type === "string" && typeof record.targetTaskId === "string" && typeof record.createdAt === "string";
+}
+function isKataRelation(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value;
+  return typeof record.kind === "string" && typeof record.type === "string" && isEndpoint(record.from) && isEndpoint(record.to) && typeof record.createdAt === "string";
+}
+function isEndpoint(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value;
+  return (record.type === "task" || record.type === "change") && typeof record.id === "string";
+}
+function validateEndpoint(endpoint) {
+  if (endpoint.type !== "task" && endpoint.type !== "change") throw new Error(`Invalid relation endpoint type: ${endpoint.type}`);
+  assertValidTaskId(endpoint.id);
+}
+function sameEndpoint(left, right) {
+  return left.type === right.type && left.id === right.id;
+}
+function inferRelationKind(type) {
+  if (type === "contains" || type === "implements") return "ownership";
+  if (type === "parent_of" || type === "spawned_from" || type === "repairs") return "lineage";
+  if (isTerminalRelation(type) || type === "depends_on" || type === "blocked_by") return "control";
+  return "context";
+}
+async function assertTaskExists(root, taskId) {
+  await readTask(root, taskId);
+}
+async function readTask(root, taskId) {
+  return JSON.parse(await readFile3(join4(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+}
+async function writeTaskRelations(root, taskId, record) {
+  const path = relationPath(root, taskId);
+  await mkdir(dirname3(path), { recursive: true });
+  await writeFile2(path, `${JSON.stringify(record, null, 2)}
+`, "utf8");
+}
+async function mirrorRelationIntoTask(root, taskId, record) {
+  const path = join4(root, ".kata/tasks", taskId, "task.json");
+  const task = await readTask(root, taskId);
+  task.relations = record.relations;
+  task.updatedAt = record.updatedAt;
+  await writeFile2(path, `${JSON.stringify(task, null, 2)}
+`, "utf8");
+}
+function relationPath(root, taskId) {
+  return join4(root, ".kata/tasks", taskId, "task-relations.json");
+}
+async function writeKataRelations(root, graph) {
+  const path = graphPath(root);
+  await mkdir(dirname3(path), { recursive: true });
+  await writeFile2(path, `${JSON.stringify(graph, null, 2)}
+`, "utf8");
+}
+function graphPath(root) {
+  return join4(root, ".kata/relations.json");
+}
+
+// src/workflow/revision.ts
+async function createTaskRevision(input) {
+  const ownedPaths2 = normalizeOwnedPaths(input.root, input.ownedPaths);
+  if (ownedPaths2.length === 0) throw new Error("A revision requires at least one declared owned path");
+  const manifestHash = await computeManifestHash(input.root, ownedPaths2);
+  const revision = {
+    id: `revision-${randomUUID2()}`,
+    taskId: input.taskId,
+    ownedPaths: ownedPaths2,
+    manifestHash,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {},
+    ...input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}
+  };
+  const directory = join5(input.root, ".kata/tasks", input.taskId, "revisions");
+  await mkdir2(directory, { recursive: true });
+  await writeFile3(join5(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}
+`, "utf8");
+  await writeFile3(join5(input.root, ".kata/tasks", input.taskId, "current-revision.json"), `${JSON.stringify(revision, null, 2)}
+`, "utf8");
+  return revision;
+}
+async function readTaskRevision(root, taskId, revisionId) {
+  return JSON.parse(await readFile4(join5(root, ".kata/tasks", taskId, "revisions", `${revisionId}.json`), "utf8"));
+}
+async function readCurrentTaskRevision(root, taskId) {
+  try {
+    return JSON.parse(await readFile4(join5(root, ".kata/tasks", taskId, "current-revision.json"), "utf8"));
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
+  }
+}
+async function revisionStatus(root, revision) {
+  const manifestHash = await computeManifestHash(root, revision.ownedPaths);
+  return manifestHash === revision.manifestHash ? { status: "current" } : { status: "superseded", expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
+}
+async function computeManifestHash(root, ownedPaths2) {
+  const hash2 = createHash2("sha256");
+  for (const path of normalizeOwnedPaths(root, ownedPaths2)) {
+    hash2.update(path);
+    hash2.update("\0");
+    try {
+      const fullPath = join5(root, path);
+      const entry = await stat2(fullPath);
+      if (entry.isDirectory()) {
+        await hashDirectoryRecursive2(fullPath, root, hash2);
+      } else if (entry.isFile()) {
+        hash2.update(await readFile4(fullPath));
+      } else {
+        hash2.update("[unsupported]");
+      }
+    } catch {
+      hash2.update("[missing]");
+    }
+    hash2.update("\0");
+  }
+  return hash2.digest("hex");
+}
+async function hashDirectoryRecursive2(dirPath, root, hash2) {
+  let entries;
+  try {
+    entries = await readdir2(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (shouldIgnore2(entry.name)) continue;
+    const absolutePath = join5(dirPath, entry.name);
+    const relativePath = relative2(root, absolutePath).replaceAll("\\", "/");
+    if (shouldIgnorePath2(relativePath)) continue;
+    if (entry.isDirectory()) {
+      await hashDirectoryRecursive2(absolutePath, root, hash2);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    hash2.update(relativePath);
+    hash2.update("\0");
+    try {
+      hash2.update(await readFile4(absolutePath));
+    } catch {
+      hash2.update("[missing]");
+    }
+    hash2.update("\0");
+  }
+}
+function shouldIgnore2(name) {
+  return name === ".git" || name === ".kata" || name === ".llmwiki" || name === ".pytest_cache" || name === ".mypy_cache" || name === ".ruff_cache" || name === ".coverage" || name === "__pycache__" || name === "node_modules" || name === "dist" || name === ".codex" || name === ".claude" || name === ".opencode";
+}
+function shouldIgnorePath2(path) {
+  return path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/");
+}
+async function findOwnershipConflicts(root, taskId, ownedPaths2) {
+  const tasksRoot = join5(root, ".kata/tasks");
+  let entries = [];
+  try {
+    entries = await readdir2(tasksRoot);
+  } catch {
+    return [];
+  }
+  const normalized = normalizeOwnedPaths(root, ownedPaths2);
+  const conflicts2 = [];
+  for (const otherTaskId of entries.filter((id) => id !== taskId)) {
+    try {
+      const terminal = await resolveTerminalTask(root, otherTaskId);
+      if (terminal.taskId === taskId) continue;
+      if (terminal.redirects.length > 0) continue;
+      try {
+        const state = JSON.parse(await readFile4(join5(tasksRoot, terminal.taskId, "current-state.json"), "utf8"));
+        if (state.phase === "archive") continue;
+      } catch {
+      }
+      const task = JSON.parse(await readFile4(join5(tasksRoot, otherTaskId, "task.json"), "utf8"));
+      for (const path of normalizeOwnedPaths(root, task.ownedPaths ?? [])) {
+        if (normalized.some((owned) => pathsOverlap(owned, path))) conflicts2.push({ taskId: otherTaskId, path });
+      }
+    } catch {
+    }
+  }
+  return conflicts2;
+}
+async function workspaceDrift(root, ownedPaths2) {
+  const owned = normalizeOwnedPaths(root, ownedPaths2);
+  return changedRepositoryPaths(root).filter((path) => !isIgnoredWorkspacePath(path)).filter((path) => !owned.some((ownedPath) => pathsOverlap(ownedPath, path))).sort();
+}
+function changedRepositoryPaths(root) {
+  let output;
+  try {
+    output = execFileSync("git", ["status", "--porcelain=v1", "-z"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    });
+  } catch {
+    return [];
+  }
+  const tokens = output.split("\0").filter(Boolean);
+  const paths = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const status = token.slice(0, 2);
+    const path = token.slice(3);
+    if (path) paths.push(path.replaceAll("\\", "/"));
+    if (status.includes("R") || status.includes("C")) {
+      index += 1;
+      const originalPath = tokens[index];
+      if (originalPath) paths.push(originalPath.replaceAll("\\", "/"));
+    }
+  }
+  return [...new Set(paths)];
+}
+function isIgnoredWorkspacePath(path) {
+  return path === ".kata" || path.startsWith(".kata/") || path === ".llmwiki" || path.startsWith(".llmwiki/") || path === ".codex" || path.startsWith(".codex/") || path === ".claude" || path.startsWith(".claude/") || path === ".opencode" || path.startsWith(".opencode/") || path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/") || path === "node_modules" || path.startsWith("node_modules/") || path === "dist" || path.startsWith("dist/");
+}
+function pathsOverlap(left, right) {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+function normalizeOwnedPaths(root, paths) {
+  return [...new Set(paths.map((path) => {
+    const normalized = relative2(root, resolve3(root, path)).replaceAll("\\", "/");
+    if (!normalized || normalized === ".." || normalized.startsWith("../")) {
+      throw new Error(`Task-owned path must be inside the repository: ${path}`);
+    }
+    return normalized;
+  }))].sort();
+}
+function isMissingFile(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+// src/core/state.ts
+var orderedPhases = [
+  "intake",
+  "plan",
+  "implement",
+  "hardVerify",
+  "review",
+  "judge",
+  "distill",
+  "archive"
+];
+function isLegalPhaseTransition(from, to) {
+  return orderedPhases.indexOf(to) === orderedPhases.indexOf(from) + 1;
+}
+async function transition(taskId, to, actor, options = {}) {
+  const root = options.root ?? process.cwd();
+  assertValidTaskId(taskId);
+  return withTaskLock(root, taskId, async () => {
+    const current = await readCurrentState(root, taskId);
+    if (!isLegalPhaseTransition(current.phase, to)) {
+      throw new Error(`Illegal transition from ${current.phase} to ${to}`);
+    }
+    if (to === "implement") await assertAcceptanceIds(root, taskId);
+    if (to === "distill") await assertDistillGates(root, taskId);
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const next = {
+      taskId,
+      phase: to,
+      actor,
+      updatedAt: now,
+      ...options.activeSession ? { activeSession: options.activeSession } : {}
+    };
+    await appendStateEvent(root, {
+      taskId,
+      from: current.phase,
+      to,
+      actor,
+      at: now,
+      ...options.activeSession ? { activeSession: options.activeSession } : {}
+    });
+    await writeCurrentState(root, next);
+    return next;
+  });
+}
+async function withTaskLock(root, taskId, action) {
+  assertValidTaskId(taskId);
+  const lockPath = join6(root, ".kata/tasks", taskId, ".transition.lock");
+  try {
+    await mkdir3(lockPath);
+  } catch (error) {
+    if (isNodeError2(error) && error.code === "EEXIST") {
+      throw new Error(`Task ${taskId} already has a state transition in progress`);
+    }
+    throw error;
+  }
+  try {
+    return await action();
+  } finally {
+    await rm(lockPath, { recursive: true, force: true });
+  }
+}
+async function appendStateEvent(root, event) {
+  await appendFile(stateEventsPath(root, event.taskId), `${JSON.stringify(event)}
+`, "utf8");
+}
+async function writeCurrentState(root, state) {
+  await writeFileAtomic(currentStatePath(root, state.taskId), `${JSON.stringify(state, null, 2)}
+`);
+}
+async function readStateEvents(root, taskId) {
+  const raw = await readFile5(stateEventsPath(root, taskId), "utf8");
+  return raw.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+}
+async function readCurrentState(root, taskId) {
+  return JSON.parse(await readFile5(currentStatePath(root, taskId), "utf8"));
+}
+async function assertAcceptanceIds(root, taskId) {
+  const task = JSON.parse(await readFile5(join6(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  if (!task.acceptance?.length || task.acceptance.some((criterion) => !/^AC-[0-9]+$/.test(criterion.id ?? ""))) {
+    throw new Error("Cannot enter implement until every acceptance criterion has a stable acceptance id");
+  }
+}
+async function assertDistillGates(root, taskId) {
+  const currentDiffHash = await computeDiffHash(root);
+  const freshEvidence = await getFreshPassingEvidence(root, taskId, currentDiffHash);
+  const gates = await Promise.all([
+    Promise.resolve(freshEvidence !== null),
+    hasReviewerClearance(root, taskId, freshEvidence?.revisionId),
+    hasJudgePass(root, taskId, currentDiffHash, freshEvidence)
+  ]);
+  if (!gates.every(Boolean)) {
+    throw new Error("Cannot enter distill until fresh evidence, reviewer clearance, and judge PASS are present");
+  }
+}
+async function getFreshPassingEvidence(root, taskId, currentDiffHash) {
+  try {
+    const evidence = JSON.parse(await readFile5(join6(root, `.kata/evidence/${taskId}-hard.json`), "utf8"));
+    if (evidence.taskId !== taskId || evidence.exitCode !== 0 || !evidence.diffHash) return null;
+    if (evidence.revisionId) {
+      const revision = await readTaskRevision(root, taskId, evidence.revisionId);
+      if ((await revisionStatus(root, revision)).status !== "current") return null;
+      return evidence;
+    }
+    const freshness = checkFreshness(
+      {
+        id: evidence.id ?? `${taskId}-hard`,
+        taskId,
+        kind: "test",
+        command: evidence.command ?? "hard verification",
+        exitCode: evidence.exitCode,
+        startedAt: evidence.startedAt ?? "",
+        finishedAt: evidence.finishedAt ?? "",
+        diffHash: evidence.diffHash
+      },
+      currentDiffHash
+    );
+    return freshness.fresh ? evidence : null;
+  } catch (error) {
+    if (isNodeError2(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+async function hasReviewerClearance(root, taskId, revisionId) {
+  try {
+    const review = JSON.parse(await readFile5(join6(root, ".kata/tasks", taskId, "review.json"), "utf8"));
+    return Array.isArray(review.findings) && review.findings.every((finding) => finding.severity !== "blocking") && (!revisionId || review.revisionId === revisionId);
+  } catch (error) {
+    if (isNodeError2(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+async function hasJudgePass(root, taskId, currentDiffHash, freshEvidence) {
+  try {
+    const judge2 = JSON.parse(await readFile5(join6(root, ".kata/tasks", taskId, "judge.json"), "utf8"));
+    if (judge2.taskId !== taskId || judge2.result !== "PASS") return false;
+    if (freshEvidence?.revisionId) {
+      if (judge2.revisionId !== freshEvidence.revisionId) return false;
+    } else if (judge2.diffHash !== currentDiffHash) return false;
+    if (!freshEvidence?.id) return false;
+    if (!Array.isArray(judge2.acceptance) || judge2.acceptance.length === 0) return false;
+    if (judge2.acceptance.some((criterion) => criterion.result !== "PASS")) return false;
+    const acceptedEvidenceIds = /* @__PURE__ */ new Set([...judge2.evidenceIds ?? [], ...judge2.acceptance.flatMap((criterion) => criterion.evidenceIds ?? [])]);
+    return acceptedEvidenceIds.has(freshEvidence.id);
+  } catch (error) {
+    if (isNodeError2(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+function currentStatePath(root, taskId) {
+  assertValidTaskId(taskId);
+  return join6(root, ".kata/tasks", taskId, "current-state.json");
+}
+function stateEventsPath(root, taskId) {
+  assertValidTaskId(taskId);
+  return join6(root, ".kata/tasks", taskId, "state-events.jsonl");
+}
+async function writeFileAtomic(path, content) {
+  const temporaryPath = join6(dirname4(path), `.${basename2(path)}.${process.pid}.${randomUUID3()}.tmp`);
+  await writeFile4(temporaryPath, content, "utf8");
+  await rename(temporaryPath, path);
+}
+function isNodeError2(error) {
+  return error instanceof Error && "code" in error;
+}
+
+// src/core/recovery.ts
+async function recover(taskId, options = {}) {
+  const root = options.root ?? process.cwd();
+  const events = await readStateEvents(root, taskId);
+  if (events.length === 0) throw new Error(`No state events found for task ${taskId}`);
+  const validEvents = replayValidEvents(events);
+  if (validEvents.length === 0) throw new Error(`No legal state events found for task ${taskId}`);
+  const latest = validEvents[validEvents.length - 1];
+  const latestSession = [...validEvents].reverse().find((event) => event.activeSession)?.activeSession;
+  const current = {
+    taskId,
+    phase: latest.to,
+    actor: latest.actor,
+    updatedAt: latest.at,
+    ...latestSession ? { activeSession: latestSession } : {}
+  };
+  const actions = [];
+  if (validEvents.length !== events.length) actions.push(`ignored-${events.length - validEvents.length}-invalid-state-events`);
+  let pointerMatches = false;
+  if (latestSession) {
+    try {
+      const pointer = JSON.parse(await readFile6(activeSessionPath(root), "utf8"));
+      pointerMatches = pointer.taskId === taskId && pointer.activeSession === latestSession;
+    } catch (error) {
+      if (!isNodeError3(error) || error.code !== "ENOENT") throw error;
+    }
+  }
+  await writeCurrentState(root, current);
+  actions.push("rewrote-current-state");
+  if (latestSession && !pointerMatches) {
+    await mkdir4(join7(root, ".kata/runtime"), { recursive: true });
+    await writeCurrentStatePointer(root, taskId, latestSession);
+    actions.push("rewrote-active-session-pointer");
+  }
+  return {
+    taskId,
+    phase: latest.to,
+    ...latestSession ? { recoveredActiveSession: latestSession } : {},
+    actions
+  };
+}
+async function requiresRecovery(taskId, options = {}) {
+  const root = options.root ?? process.cwd();
+  const events = await readStateEvents(root, taskId);
+  return replayValidEvents(events).length !== events.length;
+}
+function replayValidEvents(events) {
+  const valid = [];
+  for (const event of events) {
+    const previous = valid.at(-1);
+    if (!previous) {
+      if (event.from === null && event.to === "intake") valid.push(event);
+      continue;
+    }
+    if (event.from === previous.to && isLegalPhaseTransition(previous.to, event.to)) valid.push(event);
+  }
+  return valid;
+}
+async function writeCurrentStatePointer(root, taskId, activeSession) {
+  const { writeFile: writeFile19 } = await import("node:fs/promises");
+  await writeFile19(activeSessionPath(root), `${JSON.stringify({ taskId, activeSession }, null, 2)}
+`, "utf8");
+}
+function activeSessionPath(root) {
+  return join7(root, ".kata/runtime/active-session.json");
+}
+function isNodeError3(error) {
+  return error instanceof Error && "code" in error;
 }
 
 // src/comet/client.ts
@@ -896,7 +1579,7 @@ var CometClient = class {
 };
 
 // src/comet/install.ts
-import { execFile as execFile2, spawn } from "node:child_process";
+import { execFile as execFile2, spawn as spawn2 } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import { promisify as promisify2 } from "node:util";
 var execFileAsync2 = promisify2(execFile2);
@@ -992,7 +1675,7 @@ async function initCometProject(input) {
   }
   try {
     await new Promise((resolvePromise, reject) => {
-      const child = spawn(binaryPath, invocation.args, {
+      const child = spawn2(binaryPath, invocation.args, {
         stdio: "inherit",
         env: { ...process.env }
       });
@@ -1148,7 +1831,7 @@ function updateCometCompatibility(version) {
 }
 
 // src/adapters/discovery.ts
-import { join as join6 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/adapters/manifest.ts
 var skillCommands = [
@@ -1431,7 +2114,7 @@ Before running \`kata ${command.phase}\`, resolve these three choices in the age
 1. Isolation mode:
    - \`current_worktree\` \u2014 use the current checkout; fastest, least isolated.
    - \`isolated_worktree\` \u2014 use/create an isolated worktree; preferred for larger implementation work.
-   - \`git_flow\` \u2014 use a Git Flow feature branch.
+   - \`git_flow\` \u2014 use a Git Flow branch: ordinary tasks use a feature branch; hotfix tasks use a hotfix branch.
    - \`user_decides\` \u2014 defer the isolation decision until implementation.
 2. Development mode:
    - \`tdd\` \u2014 write focused failing tests first, then implement.
@@ -1655,13 +2338,8 @@ Do not ask the user for CLI parameters first. Discover the likely returned task,
 3. If the recommendation says \`review_fresh_implementation\`, ask the user to confirm review and then run reviewer flow.
 4. If the recommendation says \`judge_reviewed_change\`, ask the user to confirm Judge and then run judge flow.
 5. Read task state, review/judge/evidence files, and relevant handoff receipts before editing or judging.
-6. If evidence is ready and user confirms higher-trust gates, run:
-   \`\`\`bash
-   kata review --change <task-id>
-   kata judge --change <task-id>
-   \`\`\`
-7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
-8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.` : "";
+6. Return only the recommended next slash command or handoff prompt. Never run review, judge, archive, or any other next phase from collection.
+7. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.` : "";
   const automationContent = ["kata-build", "kata-review", "kata-judge", "kata-verify", "kata-archive"].includes(command.id) ? `## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
@@ -1677,7 +2355,7 @@ Skill-first means the slash command is the agent interface and the CLI is the in
 7. Run kata handoff acknowledge with platform ${platform} and the current role.
 8. ${command.id === "kata-build" ? "For build, first complete TDD and focused tests (\u5148\u5B8C\u6210 TDD \u4E0E\u805A\u7126\u6D4B\u8BD5). Do not seal evidence before coding (\u4E0D\u8981\u5728\u7F16\u7801\u524D\u5C01\u5B58\u8BC1\u636E). For current_worktree tasks, declare task-owned files with `--owned-path <path>` before sealing. `--seal` creates one immutable revision; `revision_superseded` means an owned file changed and requires Build for a new revision, while workspace drift outside ownership does not invalidate the sealed revision." : "Run this Skill's phase command and collect normal evidence. The next phase creates a fresh packet."}
 9. After the phase command returns, read \`completion.userMessage\` first, then \`nextAction.slashCommand\`, \`nextAction.cliCommand\`, \`recommended.reason\`, and \`askUser\` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command\u2014especially \`/kata-build <task> --seal\`\u2014the final user-facing response MUST end with \`completion.userMessage\` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask \u201Cwhat next\u201D. If \`completion\` is absent, explicitly render the current phase and \`nextAction.slashCommand\`. Prefer the slash command, for example \`/kata-verify <change-id>\`; show the CLI command only as fallback.
-10. Stop after this Skill's own phase command. If the returned \`nextAction.requiresUserConfirmation=true\`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
+10. Stop after this Skill's own phase command. A Skill invocation has exactly one phase-command authority: Build may invoke only \`kata build\`; it MUST NOT invoke verify, review, judge, archive, or any other \`/kata-*\` command after Build returns. The same rule applies to every phase Skill: render its next action for the user, then end the invocation. If the returned \`nextAction.requiresUserConfirmation=true\`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
 
 Do not create a receipt for read-only search, explanation, or orientation-only work.` : "";
   return `---
@@ -1800,16 +2478,16 @@ All user-facing natural-language responses must be written in English. Code, com
 }
 
 // src/adapters/ownership.ts
-import { createHash as createHash3, randomUUID } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile4, rename, rm as rm2, stat as stat2, writeFile as writeFile4 } from "node:fs/promises";
-import { basename as basename2, dirname as dirname4, join as join5 } from "node:path";
+import { createHash as createHash5, randomUUID as randomUUID4 } from "node:crypto";
+import { mkdir as mkdir7, readFile as readFile9, rename as rename2, rm as rm3, stat as stat4, writeFile as writeFile7 } from "node:fs/promises";
+import { basename as basename3, dirname as dirname6, join as join10 } from "node:path";
 
 // src/wiki/llmwiki.ts
 init_store();
 init_record();
-import { createHash as createHash2 } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile3, readdir as readdir2, rm, stat, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, extname, isAbsolute, join as join4, relative, resolve as resolve2 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { mkdir as mkdir6, readFile as readFile8, readdir as readdir4, rm as rm2, stat as stat3, writeFile as writeFile6 } from "node:fs/promises";
+import { dirname as dirname5, extname, isAbsolute, join as join9, relative as relative3, resolve as resolve4 } from "node:path";
 var defaultWikiPath = ".llmwiki";
 var sourceExtensions = /* @__PURE__ */ new Set([".md", ".mdx", ".txt"]);
 var requiredDirectories = [
@@ -1823,38 +2501,38 @@ var requiredDirectories = [
   "queries"
 ];
 async function initLlmWiki(input) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
-  const fromRoot = resolve2(root, input.from);
+  const fromRoot = resolve4(root, input.from);
   const sourceFiles = await collectSourceFiles(fromRoot);
   const importedSources = [];
   for (const name of ["AGENTS.md"]) {
-    const rootPath = join4(root, name);
+    const rootPath = join9(root, name);
     try {
-      await stat(rootPath);
+      await stat3(rootPath);
       if (!sourceFiles.includes(rootPath)) sourceFiles.push(rootPath);
     } catch {
     }
   }
-  await mkdir2(wikiRoot, { recursive: true });
+  await mkdir6(wikiRoot, { recursive: true });
   for (const directory of requiredDirectories) {
-    await mkdir2(join4(wikiRoot, directory), { recursive: true });
+    await mkdir6(join9(wikiRoot, directory), { recursive: true });
   }
   for (const sourceFile of sourceFiles) {
-    const relativeToSourceRoot = sourceFile.startsWith(fromRoot) ? relative(fromRoot, sourceFile).replaceAll("\\", "/") : relative(root, sourceFile).replaceAll("\\", "/");
+    const relativeToSourceRoot = sourceFile.startsWith(fromRoot) ? relative3(fromRoot, sourceFile).replaceAll("\\", "/") : relative3(root, sourceFile).replaceAll("\\", "/");
     const destination = `raw/docs/${relativeToSourceRoot}`;
-    const body = await readFile3(sourceFile, "utf8");
+    const body = await readFile8(sourceFile, "utf8");
     const sourcePath = normalizeSourcePath(root, sourceFile);
     const rawContent = renderRawSource(sourcePath, body);
-    await mkdir2(dirname3(join4(wikiRoot, destination)), { recursive: true });
-    await writeFile3(join4(wikiRoot, destination), rawContent, "utf8");
+    await mkdir6(dirname5(join9(wikiRoot, destination)), { recursive: true });
+    await writeFile6(join9(wikiRoot, destination), rawContent, "utf8");
     importedSources.push(destination);
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  await writeFile3(join4(wikiRoot, "SCHEMA.md"), renderSchema(now), "utf8");
-  await writeFile3(join4(wikiRoot, "index.md"), renderIndex(importedSources, now), "utf8");
-  await writeFile3(join4(wikiRoot, "log.md"), renderLog(importedSources, now), "utf8");
+  await writeFile6(join9(wikiRoot, "SCHEMA.md"), renderSchema(now), "utf8");
+  await writeFile6(join9(wikiRoot, "index.md"), renderIndex(importedSources, now), "utf8");
+  await writeFile6(join9(wikiRoot, "log.md"), renderLog(importedSources, now), "utf8");
   return {
     wikiPath,
     importedSources,
@@ -1864,20 +2542,20 @@ async function initLlmWiki(input) {
   };
 }
 async function orientLlmWiki(input = {}) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
-  const schema = await readFile3(join4(wikiRoot, "SCHEMA.md"), "utf8");
-  const index = await readFile3(join4(wikiRoot, "index.md"), "utf8");
-  const log = await readFile3(join4(wikiRoot, "log.md"), "utf8");
+  const schema = await readFile8(join9(wikiRoot, "SCHEMA.md"), "utf8");
+  const index = await readFile8(join9(wikiRoot, "index.md"), "utf8");
+  const log = await readFile8(join9(wikiRoot, "log.md"), "utf8");
   const recentLog = log.trim().split("\n").slice(-30).join("\n");
   return { wikiPath, schema, index, recentLog };
 }
 async function ingestLlmWiki(input) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
-  const fromPath = resolve2(root, input.from);
+  const fromPath = resolve4(root, input.from);
   const sourceFiles = await collectSourceFiles(fromPath);
   const importedSources = [];
   const pagesWritten = [];
@@ -1885,9 +2563,9 @@ async function ingestLlmWiki(input) {
   for (const sourceFile of sourceFiles) {
     const slug = slugify(sourceFile.replace(/\.[^.]+$/, "").split(/[\\/]/).pop() ?? "source");
     const destination = `raw/docs/${slug}${extname(sourceFile).toLowerCase() || ".md"}`;
-    const body = await readFile3(sourceFile, "utf8");
-    await mkdir2(dirname3(join4(wikiRoot, destination)), { recursive: true });
-    await writeFile3(join4(wikiRoot, destination), renderRawSource(normalizeSourcePath(root, sourceFile), body), "utf8");
+    const body = await readFile8(sourceFile, "utf8");
+    await mkdir6(dirname5(join9(wikiRoot, destination)), { recursive: true });
+    await writeFile6(join9(wikiRoot, destination), renderRawSource(normalizeSourcePath(root, sourceFile), body), "utf8");
     importedSources.push(destination);
     const pagePath = `concepts/${slug}.md`;
     const recordId = `llmwiki-${slug}`;
@@ -1898,8 +2576,8 @@ async function ingestLlmWiki(input) {
       rawSource: destination,
       body
     });
-    await mkdir2(dirname3(join4(wikiRoot, pagePath)), { recursive: true });
-    await writeFile3(join4(wikiRoot, pagePath), page, "utf8");
+    await mkdir6(dirname5(join9(wikiRoot, pagePath)), { recursive: true });
+    await writeFile6(join9(wikiRoot, pagePath), page, "utf8");
     pagesWritten.push(pagePath);
     await upsertIndexEntry(wikiRoot, "Concepts", pagePath, oneLineSummary(body));
     await appendLog(wikiRoot, `ingest | ${slug}${extname(sourceFile).toLowerCase() || ".md"}`, [
@@ -1907,8 +2585,8 @@ async function ingestLlmWiki(input) {
       `- Updated: ${pagePath}`,
       `- Governed record: ${recordId}`
     ]);
-    const rawContent = await readFile3(join4(wikiRoot, destination), "utf8");
-    const pageContent = await readFile3(join4(wikiRoot, pagePath), "utf8");
+    const rawContent = await readFile8(join9(wikiRoot, destination), "utf8");
+    const pageContent = await readFile8(join9(wikiRoot, pagePath), "utf8");
     await writeWikiRecord(root, {
       id: recordId,
       statement: oneLineSummary(body),
@@ -1931,14 +2609,14 @@ async function ingestLlmWiki(input) {
   return { wikiPath, importedSources, pagesWritten, governedRecords };
 }
 async function queryLlmWiki(input) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
   await orientLlmWiki({ root, wikiPath });
   const pages = await collectWikiPages(wikiRoot);
   const scored = await Promise.all(
     pages.map(async (page) => {
-      const content = await readFile3(join4(wikiRoot, page), "utf8");
+      const content = await readFile8(join9(wikiRoot, page), "utf8");
       return { page, content, score: scoreContent(input.query, content, page) };
     })
   );
@@ -1948,8 +2626,8 @@ async function queryLlmWiki(input) {
   let filedPath;
   if (input.file) {
     filedPath = `queries/${slugify(input.query)}.md`;
-    await mkdir2(dirname3(join4(wikiRoot, filedPath)), { recursive: true });
-    await writeFile3(join4(wikiRoot, filedPath), renderQueryPage(input.query, answer, citations), "utf8");
+    await mkdir6(dirname5(join9(wikiRoot, filedPath)), { recursive: true });
+    await writeFile6(join9(wikiRoot, filedPath), renderQueryPage(input.query, answer, citations), "utf8");
     await upsertIndexEntry(wikiRoot, "Queries", filedPath, `Filed answer for: ${input.query}`);
   }
   await appendLog(wikiRoot, `query | ${input.query}`, [
@@ -1959,12 +2637,12 @@ async function queryLlmWiki(input) {
   return { wikiPath, query: input.query, answer, citations, ...filedPath ? { filedPath } : {} };
 }
 async function buildLlmWikiTask(input) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
-  const wikiRawDocsRoot = join4(wikiRoot, "raw/docs");
+  const wikiRawDocsRoot = join9(wikiRoot, "raw/docs");
   const wikiSourceFiles = await collectSourceFiles(wikiRawDocsRoot);
-  const sourceFiles = wikiSourceFiles.length > 0 ? wikiSourceFiles : input.from ? await collectSourceFiles(resolve2(root, input.from)) : [];
+  const sourceFiles = wikiSourceFiles.length > 0 ? wikiSourceFiles : input.from ? await collectSourceFiles(resolve4(root, input.from)) : [];
   const rawReads = sourceFiles.map((sourceFile) => normalizeTaskRead(root, wikiRoot, wikiPath, sourceFile)).filter((path) => path.startsWith(`${wikiPath}/`) || path.startsWith(".llmwiki/")).sort((left, right) => left.localeCompare(right));
   return {
     command: "wiki task",
@@ -1993,23 +2671,23 @@ async function buildLlmWikiTask(input) {
 }
 var wikiPageDirectories = ["concepts", "entities", "comparisons", "queries"];
 async function registerWikiPages(input = {}) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
   const existing = new Set(await collectExistingRecordIds(root));
   const registered = [];
   let skipped = 0;
   for (const dir of wikiPageDirectories) {
-    const dirPath = join4(wikiRoot, dir);
+    const dirPath = join9(wikiRoot, dir);
     const files = await collectSourceFiles(dirPath);
     for (const file of files) {
-      const relativePath = relative(wikiRoot, file).replaceAll("\\", "/");
+      const relativePath = relative3(wikiRoot, file).replaceAll("\\", "/");
       const recordId = `llmwiki-${relativePath.replace(/[/\\]/g, "-").replace(/\.[^.]+$/, "")}`;
       if (existing.has(recordId)) {
         skipped += 1;
         continue;
       }
-      const content = await readFile3(file, "utf8");
+      const content = await readFile8(file, "utf8");
       const frontmatter = parsePageFrontmatter(content);
       const statement = frontmatter ? Object.values(frontmatter).join("; ") : oneLineSummary(content);
       await writeWikiRecord(root, {
@@ -2033,47 +2711,47 @@ async function registerWikiPages(input = {}) {
   return { command: "wiki register", wikiPath, registered: registered.length, skipped, pages: registered };
 }
 async function collectExistingRecordIds(root) {
-  const wikiDir = join4(root, ".kata/wiki");
+  const wikiDir = join9(root, ".kata/wiki");
   try {
-    const entries = await readdir2(wikiDir);
+    const entries = await readdir4(wikiDir);
     return entries.filter((e) => e.endsWith(".json")).map((e) => e.replace(/\.json$/, ""));
   } catch {
     return [];
   }
 }
 async function rebuildLlmWiki(input = {}) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
   let cleanedPages = 0;
   let cleanedRecords = 0;
   for (const dir of wikiPageDirectories) {
-    const dirPath = join4(wikiRoot, dir);
+    const dirPath = join9(wikiRoot, dir);
     try {
-      const files = await readdir2(dirPath);
+      const files = await readdir4(dirPath);
       for (const file of files) {
-        await rm(join4(dirPath, file), { force: true });
+        await rm2(join9(dirPath, file), { force: true });
         cleanedPages += 1;
       }
     } catch {
     }
   }
-  const wikiDir = join4(root, ".kata/wiki");
+  const wikiDir = join9(root, ".kata/wiki");
   try {
-    const files = await readdir2(wikiDir);
+    const files = await readdir4(wikiDir);
     for (const file of files) {
       if (file.endsWith(".json")) {
-        await rm(join4(wikiDir, file), { force: true });
+        await rm2(join9(wikiDir, file), { force: true });
         cleanedRecords += 1;
       }
     }
   } catch {
   }
-  const taskPacketPath = join4(root, ".kata/tasks/wiki-enrich/task-packet.json");
-  const wrapDir = join4(root, ".kata/tasks/wiki-enrich");
-  await mkdir2(wrapDir, { recursive: true });
+  const taskPacketPath = join9(root, ".kata/tasks/wiki-enrich/task-packet.json");
+  const wrapDir = join9(root, ".kata/tasks/wiki-enrich");
+  await mkdir6(wrapDir, { recursive: true });
   const enrichTask = await buildLlmWikiTask({ root, kind: "enrich" });
-  await writeFile3(taskPacketPath, `${JSON.stringify(enrichTask, null, 2)}
+  await writeFile6(taskPacketPath, `${JSON.stringify(enrichTask, null, 2)}
 `);
   await appendLog(wikiRoot, "rebuild | wiki cleaned and task-packet regenerated", [
     `- Pages removed: ${cleanedPages}`,
@@ -2083,13 +2761,13 @@ async function rebuildLlmWiki(input = {}) {
   return { command: "wiki rebuild", wikiPath, cleaned: { pages: cleanedPages, records: cleanedRecords }, taskPacketPath };
 }
 async function lintLlmWiki(input = {}) {
-  const root = resolve2(input.root ?? process.cwd());
+  const root = resolve4(input.root ?? process.cwd());
   const wikiPath = normalizeWikiPath(input.wikiPath);
   const wikiRoot = resolveWikiRoot(root, wikiPath);
   const issues = [];
   for (const path of ["SCHEMA.md", "index.md", "log.md", ...requiredDirectories]) {
     try {
-      await stat(join4(wikiRoot, path));
+      await stat3(join9(wikiRoot, path));
     } catch {
       issues.push({
         severity: path.includes(".") ? "critical" : "high",
@@ -2099,10 +2777,10 @@ async function lintLlmWiki(input = {}) {
       });
     }
   }
-  const rawSources = await collectSourceFiles(join4(wikiRoot, "raw"));
+  const rawSources = await collectSourceFiles(join9(wikiRoot, "raw"));
   for (const rawSource of rawSources) {
-    const rawRelative = relative(wikiRoot, rawSource).replaceAll("\\", "/");
-    const content = await readFile3(rawSource, "utf8");
+    const rawRelative = relative3(wikiRoot, rawSource).replaceAll("\\", "/");
+    const content = await readFile8(rawSource, "utf8");
     const frontmatter = parseFrontmatter(content);
     if (!frontmatter) {
       issues.push({
@@ -2124,14 +2802,14 @@ async function lintLlmWiki(input = {}) {
       });
     }
   }
-  const index = await safeRead(join4(wikiRoot, "index.md"));
+  const index = await safeRead(join9(wikiRoot, "index.md"));
   const wikiPages = await collectWikiPages(wikiRoot);
-  const existingPageSet = /* @__PURE__ */ new Set([...wikiPages, ...rawSources.map((source) => relative(wikiRoot, source).replaceAll("\\", "/"))]);
+  const existingPageSet = /* @__PURE__ */ new Set([...wikiPages, ...rawSources.map((source) => relative3(wikiRoot, source).replaceAll("\\", "/"))]);
   const inbound = /* @__PURE__ */ new Map();
   for (const page of wikiPages) inbound.set(page, index.includes(`[[${page}]]`) ? 1 : 0);
   for (const page of wikiPages) {
-    const fullPath = join4(wikiRoot, page);
-    const content = await readFile3(fullPath, "utf8");
+    const fullPath = join9(wikiRoot, page);
+    const content = await readFile8(fullPath, "utf8");
     const metadata = parsePageFrontmatter(content);
     if (!metadata) {
       issues.push({
@@ -2178,7 +2856,7 @@ async function lintLlmWiki(input = {}) {
 async function collectSourceFiles(root) {
   const files = [];
   try {
-    const rootStat = await stat(root);
+    const rootStat = await stat3(root);
     if (rootStat.isFile()) return sourceExtensions.has(extname(root).toLowerCase()) ? [root] : [];
   } catch {
     return [];
@@ -2186,12 +2864,12 @@ async function collectSourceFiles(root) {
   async function visit(directory) {
     let entries;
     try {
-      entries = await readdir2(directory, { withFileTypes: true });
+      entries = await readdir4(directory, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
-      const path = join4(directory, entry.name);
+      const path = join9(directory, entry.name);
       if (entry.isDirectory()) {
         await visit(path);
         continue;
@@ -2212,21 +2890,21 @@ function normalizeWikiPath(path) {
   return wikiPath;
 }
 function resolveWikiRoot(root, wikiPath) {
-  return resolve2(root, wikiPath);
+  return resolve4(root, wikiPath);
 }
 function normalizeSourcePath(root, sourceFile) {
-  const sourcePath = relative(root, sourceFile).replaceAll("\\", "/");
+  const sourcePath = relative3(root, sourceFile).replaceAll("\\", "/");
   return sourcePath.startsWith("..") ? sourceFile : sourcePath;
 }
 function normalizeTaskRead(root, wikiRoot, wikiPath, sourceFile) {
   const sourcePath = normalizeSourcePath(root, sourceFile);
   if (!sourcePath.startsWith("..") && !isAbsolute(sourcePath)) {
     if (sourcePath.startsWith(`${wikiPath}/`)) return sourcePath;
-    const wikiRelative2 = relative(wikiRoot, sourceFile).replaceAll("\\", "/");
+    const wikiRelative2 = relative3(wikiRoot, sourceFile).replaceAll("\\", "/");
     if (!wikiRelative2.startsWith("..")) return `${wikiPath}/${wikiRelative2}`;
     return sourcePath;
   }
-  const wikiRelative = relative(wikiRoot, sourceFile).replaceAll("\\", "/");
+  const wikiRelative = relative3(wikiRoot, sourceFile).replaceAll("\\", "/");
   return wikiRelative.startsWith("..") ? sourcePath : `${wikiPath}/${wikiRelative}`;
 }
 function instructionsForWikiTask(kind) {
@@ -2391,14 +3069,14 @@ function parsePageFrontmatter(content) {
 async function collectWikiPages(wikiRoot) {
   const pages = [];
   for (const directory of ["entities", "concepts", "comparisons", "queries"]) {
-    const files = await collectSourceFiles(join4(wikiRoot, directory));
-    pages.push(...files.map((file) => relative(wikiRoot, file).replaceAll("\\", "/")));
+    const files = await collectSourceFiles(join9(wikiRoot, directory));
+    pages.push(...files.map((file) => relative3(wikiRoot, file).replaceAll("\\", "/")));
   }
   return pages.sort();
 }
 async function upsertIndexEntry(wikiRoot, section, pagePath, summary) {
-  const indexPath = join4(wikiRoot, "index.md");
-  let index = await readFile3(indexPath, "utf8");
+  const indexPath = join9(wikiRoot, "index.md");
+  let index = await readFile8(indexPath, "utf8");
   const entry = `- [[${pagePath}]] \u2014 ${summary}`;
   if (index.includes(`[[${pagePath}]]`)) return;
   const heading = `## ${section}`;
@@ -2418,13 +3096,13 @@ ${entry}
 ${entry}
 ${suffix}`;
   }
-  await writeFile3(indexPath, index, "utf8");
+  await writeFile6(indexPath, index, "utf8");
 }
 async function appendLog(wikiRoot, subject, lines) {
-  const logPath = join4(wikiRoot, "log.md");
-  const existing = await readFile3(logPath, "utf8");
+  const logPath = join9(wikiRoot, "log.md");
+  const existing = await readFile8(logPath, "utf8");
   const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  await writeFile3(logPath, `${existing.trimEnd()}
+  await writeFile6(logPath, `${existing.trimEnd()}
 
 ## [${date}] ${subject}
 
@@ -2433,7 +3111,7 @@ ${lines.join("\n")}
 }
 async function safeRead(path) {
   try {
-    return await readFile3(path, "utf8");
+    return await readFile8(path, "utf8");
   } catch {
     return "";
   }
@@ -2478,7 +3156,7 @@ ${content}`.toLowerCase();
   return terms.reduce((score2, term) => score2 + (haystack.includes(term) ? 1 : 0), 0);
 }
 function sha256(content) {
-  return createHash2("sha256").update(content).digest("hex");
+  return createHash4("sha256").update(content).digest("hex");
 }
 
 // src/adapters/platforms.ts
@@ -2639,7 +3317,7 @@ async function uninstall(platform, scope, options = {}) {
   const entries = Object.values(manifest.files).filter((file) => file.platform === platform && file.scope === scope);
   for (const entry of entries) {
     report.planned.push(entry.path);
-    const absolutePath = join5(baseRoot, entry.path);
+    const absolutePath = join10(baseRoot, entry.path);
     const current = await readOptional(absolutePath);
     if (current === void 0) {
       delete manifest.files[entry.path];
@@ -2654,19 +3332,19 @@ async function uninstall(platform, scope, options = {}) {
       if (entry.commandId === "project-contract" && entry.path === "AGENTS.md") {
         const nextContent = removeAgentsContract(current);
         if (nextContent.trim().length > 0) {
-          await writeFileAtomic(absolutePath, nextContent);
+          await writeFileAtomic2(absolutePath, nextContent);
         } else {
-          await rm2(absolutePath);
+          await rm3(absolutePath);
         }
       } else if (entry.commandId.startsWith("hook-config:")) {
         const nextContent = removeManagedHookConfig(current, entry.commandId);
         if (nextContent.trim().length > 0) {
-          await writeFileAtomic(absolutePath, nextContent);
+          await writeFileAtomic2(absolutePath, nextContent);
         } else {
-          await rm2(absolutePath);
+          await rm3(absolutePath);
         }
       } else {
-        await rm2(absolutePath);
+        await rm3(absolutePath);
       }
       delete manifest.files[entry.path];
     }
@@ -2683,7 +3361,7 @@ async function writeSkills(platform, scope, options) {
   const report = createReport(platform, scope, effectiveOptions.dryRun === true);
   for (const command of skillCommands) {
     const relativePath = platformSkillPath(platform, scope, command.id);
-    const absolutePath = join5(baseRoot, relativePath);
+    const absolutePath = join10(baseRoot, relativePath);
     const content = renderSkill(command, platform, { language: effectiveOptions.language });
     const nextHash = sha2562(content);
     const previous = manifest.files[relativePath];
@@ -2706,8 +3384,8 @@ async function writeSkills(platform, scope, options) {
       }
     }
     if (!effectiveOptions.dryRun) {
-      await mkdir3(dirname4(absolutePath), { recursive: true });
-      await writeFileAtomic(absolutePath, content);
+      await mkdir7(dirname6(absolutePath), { recursive: true });
+      await writeFileAtomic2(absolutePath, content);
       manifest.files[relativePath] = ownedFile(platform, scope, command.id, relativePath, nextHash);
       report.written.push(relativePath);
     }
@@ -2718,13 +3396,6 @@ async function writeSkills(platform, scope, options) {
   if (scope === "project") {
     await writeProjectContractFiles(platform, scope, effectiveOptions, baseRoot, manifest, report);
     await manageProjectWiki(effectiveOptions, baseRoot, report);
-    await initCometProject({ root: baseRoot, scope, language: options.language, yes: options.dryRun ? void 0 : true });
-    try {
-      const { execFileSync: execFileSync6 } = await import("node:child_process");
-      const { codeGraphExecutionEnv: codeGraphExecutionEnv2 } = await Promise.resolve().then(() => (init_runtime(), runtime_exports));
-      execFileSync6("codegraph", ["index"], { cwd: baseRoot, encoding: "utf-8", env: codeGraphExecutionEnv2() });
-    } catch {
-    }
   }
   if (!effectiveOptions.dryRun) await writeManifest(manifestRoot, manifest);
   return report;
@@ -2738,14 +3409,14 @@ async function removeObsoleteCommandFiles(platform, scope, options, baseRoot, ma
     return isCommandArtifact && !activeCommands.has(commandId);
   });
   for (const file of obsolete) {
-    const path = join5(baseRoot, file.path);
+    const path = join10(baseRoot, file.path);
     const current = await readOptional(path);
     if (current !== void 0 && sha2562(current) !== file.sha256 && !options.force) {
       report.conflicts.push(file.path);
       continue;
     }
     report.planned.push(file.path);
-    if (!options.dryRun && current !== void 0) await rm2(path);
+    if (!options.dryRun && current !== void 0) await rm3(path);
     if (!options.dryRun) delete manifest.files[file.path];
     report.removed.push(file.path);
   }
@@ -2854,12 +3525,12 @@ async function manageProjectWiki(options, root, report) {
     report.wiki = { status: "skipped", reason: "disabled" };
     return;
   }
-  const wikiExists = await pathExists(join5(root, ".llmwiki"));
+  const wikiExists = await pathExists(join10(root, ".llmwiki"));
   if (wikiExists) {
     report.wiki = { status: "existing", path: ".llmwiki" };
   } else {
     const from = options.wikiFrom ?? "docs";
-    const fromPath = join5(root, from);
+    const fromPath = join10(root, from);
     if (!await pathExists(fromPath)) {
       report.wiki = { status: "skipped", reason: "source_not_found", from };
       return;
@@ -2877,9 +3548,9 @@ async function manageProjectWiki(options, root, report) {
     };
   }
   const enrichTask = await buildLlmWikiTask({ root, kind: "enrich" });
-  const taskDir = join5(root, ".kata/tasks/wiki-enrich");
-  await mkdir3(taskDir, { recursive: true });
-  await writeFile4(join5(taskDir, "task-packet.json"), `${JSON.stringify(enrichTask, null, 2)}
+  const taskDir = join10(root, ".kata/tasks/wiki-enrich");
+  await mkdir7(taskDir, { recursive: true });
+  await writeFile7(join10(taskDir, "task-packet.json"), `${JSON.stringify(enrichTask, null, 2)}
 `);
 }
 async function writeProjectContractFiles(platform, scope, options, baseRoot, manifest, report) {
@@ -2908,7 +3579,7 @@ async function writeProjectContractFiles(platform, scope, options, baseRoot, man
   });
 }
 async function writeSupportFile(input) {
-  const absolutePath = join5(input.baseRoot, input.relativePath);
+  const absolutePath = join10(input.baseRoot, input.relativePath);
   const existing = await readOptional(absolutePath);
   const content = existing !== void 0 && input.mergeExisting ? input.mergeExisting(existing, input.content) : input.content;
   const nextHash = sha2562(content);
@@ -2927,8 +3598,8 @@ async function writeSupportFile(input) {
     }
   }
   if (!input.options.dryRun) {
-    await mkdir3(dirname4(absolutePath), { recursive: true });
-    await writeFileAtomic(absolutePath, content);
+    await mkdir7(dirname6(absolutePath), { recursive: true });
+    await writeFileAtomic2(absolutePath, content);
     input.manifest.files[input.relativePath] = ownedFile(input.platform, input.scope, input.commandId, input.relativePath, nextHash);
     input.report.written.push(input.relativePath);
   }
@@ -3136,8 +3807,7 @@ function evaluateWrite(actor, normalizedPath, task) {
     return actor.role === 'approver' ? null : 'protected_rules_or_verified_wiki';
   }
   if (actor.role === 'implementer') {
-    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('tests/')) return null;
-    if (normalizedPath.startsWith('.kata/tasks/' + task.id + '/')) return null;
+    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('packages/') || normalizedPath.startsWith('tests/') || normalizedPath.startsWith('docs/')) return null;
     return 'role_scope_violation';
   }
   if (actor.role === 'reviewer') {
@@ -3383,12 +4053,12 @@ async function readManifest(root) {
 }
 async function writeManifest(root, manifest) {
   const path = manifestPath(root);
-  await mkdir3(dirname4(path), { recursive: true });
-  await writeFileAtomic(path, `${JSON.stringify(manifest, null, 2)}
+  await mkdir7(dirname6(path), { recursive: true });
+  await writeFileAtomic2(path, `${JSON.stringify(manifest, null, 2)}
 `);
 }
 function manifestPath(root) {
-  return join5(root, ".kata/adapters/manifest.json");
+  return join10(root, ".kata/adapters/manifest.json");
 }
 function isOwnershipManifest(value) {
   if (typeof value !== "object" || value === null) return false;
@@ -3397,39 +4067,39 @@ function isOwnershipManifest(value) {
 }
 async function readOptional(path) {
   try {
-    return await readFile4(path, "utf8");
+    return await readFile9(path, "utf8");
   } catch (error) {
-    if (isNodeError2(error) && error.code === "ENOENT") return void 0;
+    if (isNodeError4(error) && error.code === "ENOENT") return void 0;
     throw error;
   }
 }
 async function pathExists(path) {
   try {
-    await stat2(path);
+    await stat4(path);
     return true;
   } catch (error) {
-    if (isNodeError2(error) && error.code === "ENOENT") return false;
+    if (isNodeError4(error) && error.code === "ENOENT") return false;
     throw error;
   }
 }
-async function writeFileAtomic(path, content) {
-  const temporaryPath = join5(dirname4(path), `.${basename2(path)}.${process.pid}.${randomUUID()}.tmp`);
-  await writeFile4(temporaryPath, content, "utf8");
-  await rename(temporaryPath, path);
+async function writeFileAtomic2(path, content) {
+  const temporaryPath = join10(dirname6(path), `.${basename3(path)}.${process.pid}.${randomUUID4()}.tmp`);
+  await writeFile7(temporaryPath, content, "utf8");
+  await rename2(temporaryPath, path);
 }
 function sha2562(content) {
-  return createHash3("sha256").update(content).digest("hex");
+  return createHash5("sha256").update(content).digest("hex");
 }
 async function exists(path) {
   try {
-    await stat2(path);
+    await stat4(path);
     return true;
   } catch (error) {
-    if (isNodeError2(error) && error.code === "ENOENT") return false;
+    if (isNodeError4(error) && error.code === "ENOENT") return false;
     throw error;
   }
 }
-function isNodeError2(error) {
+function isNodeError4(error) {
   return error instanceof Error && "code" in error;
 }
 
@@ -3452,7 +4122,7 @@ async function isDetected(platform, scope, root) {
   if (platform === "codex" && scope === "project") paths.push("AGENTS.md");
   if (platform === "claude-code" && scope === "global") paths.push(".claude.json");
   for (const relativePath of paths) {
-    if (await exists(join6(root, relativePath))) return true;
+    if (await exists(join11(root, relativePath))) return true;
   }
   return false;
 }
@@ -3476,12 +4146,12 @@ async function identifyPlatformInstallState(platform, options = {}) {
   const root = options.root ?? platform.root;
   const definition = platformDefinitionById[platform.platform];
   const skillPath = platformSkillPath(platform.platform, platform.scope, skillCommands[0]?.id ?? "");
-  const skillExists = skillPath ? await exists(join6(root, skillPath)) : false;
+  const skillExists = skillPath ? await exists(join11(root, skillPath)) : false;
   const rulesDir = definition.rulesDir ?? "";
-  const rulesExist = rulesDir ? await exists(join6(root, platformSkillsDir(platform.platform, platform.scope), rulesDir)) : false;
+  const rulesExist = rulesDir ? await exists(join11(root, platformSkillsDir(platform.platform, platform.scope), rulesDir)) : false;
   const hooksConfigPath = hookConfigPathFor(platform.platform, platform.scope);
-  const hooksExist = hooksConfigPath ? await exists(join6(root, hooksConfigPath)) : false;
-  const contractExists = await exists(join6(root, "AGENTS.md"));
+  const hooksExist = hooksConfigPath ? await exists(join11(root, hooksConfigPath)) : false;
+  const contractExists = await exists(join11(root, "AGENTS.md"));
   return {
     platform,
     components: {
@@ -3588,545 +4258,13 @@ function optionsForWizardInstall(base, scope, platformRoot, language) {
 init_prompt();
 
 // src/workflow/orchestrator.ts
-import { mkdir as mkdir11, readFile as readFile16, writeFile as writeFile13 } from "node:fs/promises";
-import { join as join20 } from "node:path";
+import { appendFile as appendFile2, mkdir as mkdir13, readFile as readFile17, writeFile as writeFile13 } from "node:fs/promises";
+import { join as join21 } from "node:path";
 
 // src/core/task.ts
-import { mkdir as mkdir6, writeFile as writeFile8 } from "node:fs/promises";
-import { join as join11 } from "node:path";
+import { mkdir as mkdir8, writeFile as writeFile8 } from "node:fs/promises";
+import { join as join12 } from "node:path";
 import { randomUUID as randomUUID5 } from "node:crypto";
-
-// src/core/state.ts
-init_evidence();
-import { appendFile, readFile as readFile8, rename as rename2, writeFile as writeFile7 } from "node:fs/promises";
-import { basename as basename3, dirname as dirname6, join as join10 } from "node:path";
-import { randomUUID as randomUUID4 } from "node:crypto";
-
-// src/workflow/revision.ts
-import { createHash as createHash5, randomUUID as randomUUID3 } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdir as mkdir5, readdir as readdir4, readFile as readFile7, stat as stat4, writeFile as writeFile6 } from "node:fs/promises";
-import { join as join9, relative as relative3, resolve as resolve4 } from "node:path";
-
-// src/core/relations.ts
-import { mkdir as mkdir4, readFile as readFile6, writeFile as writeFile5 } from "node:fs/promises";
-import { dirname as dirname5, join as join8 } from "node:path";
-
-// src/core/ids.ts
-var taskIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-function assertValidTaskId(taskId) {
-  if (!taskIdPattern.test(taskId)) {
-    throw new Error(`Invalid task id: ${taskId}`);
-  }
-}
-
-// src/core/relations.ts
-var terminalRelationTypes = [
-  "superseded_by",
-  "covered_by",
-  "duplicate_of",
-  "merged_into"
-];
-function isTerminalRelation(type) {
-  return terminalRelationTypes.includes(type);
-}
-async function addTaskRelation(input) {
-  assertValidTaskId(input.fromTaskId);
-  assertValidTaskId(input.toTaskId);
-  if (input.fromTaskId === input.toTaskId) throw new Error("Task relation cannot point to itself");
-  await assertTaskExists(input.root, input.fromTaskId);
-  await assertTaskExists(input.root, input.toTaskId);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  await addKataRelation({
-    root: input.root,
-    from: { type: "task", id: input.fromTaskId },
-    to: { type: "task", id: input.toTaskId },
-    type: input.type,
-    ...input.reason ? { reason: input.reason } : {},
-    ...input.createdBy ? { createdBy: input.createdBy } : {},
-    createdAt: now
-  });
-  const current = await readTaskRelations(input.root, input.fromTaskId);
-  const relation = {
-    type: input.type,
-    targetTaskId: input.toTaskId,
-    ...input.reason ? { reason: input.reason } : {},
-    createdAt: now,
-    ...input.createdBy ? { createdBy: input.createdBy } : {}
-  };
-  const next = {
-    taskId: input.fromTaskId,
-    relations: [
-      ...current.relations.filter((item) => !(item.type === relation.type && item.targetTaskId === relation.targetTaskId)),
-      relation
-    ],
-    updatedAt: now
-  };
-  await writeTaskRelations(input.root, input.fromTaskId, next);
-  await mirrorRelationIntoTask(input.root, input.fromTaskId, next);
-  return next;
-}
-async function addKataRelation(input) {
-  validateEndpoint(input.from);
-  validateEndpoint(input.to);
-  if (input.from.type === input.to.type && input.from.id === input.to.id) throw new Error("Relation cannot point to itself");
-  if (input.from.type === "task") await assertTaskExists(input.root, input.from.id);
-  if (input.to.type === "task") await assertTaskExists(input.root, input.to.id);
-  const now = input.createdAt ?? (/* @__PURE__ */ new Date()).toISOString();
-  const current = await readKataRelations(input.root);
-  const relation = {
-    kind: input.kind ?? inferRelationKind(input.type),
-    type: input.type,
-    from: input.from,
-    to: input.to,
-    ...input.reason ? { reason: input.reason } : {},
-    createdAt: now,
-    ...input.createdBy ? { createdBy: input.createdBy } : {}
-  };
-  const next = {
-    version: 1,
-    relations: [
-      ...current.relations.filter((item) => !sameEndpoint(item.from, relation.from) || !sameEndpoint(item.to, relation.to) || item.type !== relation.type),
-      relation
-    ],
-    updatedAt: now
-  };
-  await writeKataRelations(input.root, next);
-  return next;
-}
-async function readKataRelations(root) {
-  try {
-    const parsed = JSON.parse(await readFile6(graphPath(root), "utf8"));
-    return {
-      version: 1,
-      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isKataRelation) : [],
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : ""
-    };
-  } catch {
-    return { version: 1, relations: [], updatedAt: "" };
-  }
-}
-async function findKataRelations(root, endpoint) {
-  validateEndpoint(endpoint);
-  const graph = await readKataRelations(root);
-  return {
-    endpoint,
-    outgoing: graph.relations.filter((relation) => sameEndpoint(relation.from, endpoint)),
-    incoming: graph.relations.filter((relation) => sameEndpoint(relation.to, endpoint))
-  };
-}
-async function readTaskRelations(root, taskId) {
-  assertValidTaskId(taskId);
-  const path = relationPath(root, taskId);
-  try {
-    const parsed = JSON.parse(await readFile6(path, "utf8"));
-    return {
-      taskId,
-      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isTaskRelation) : [],
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : ""
-    };
-  } catch {
-    const task = await readTask(root, taskId).catch(() => null);
-    const taskRelations = Array.isArray(task?.relations) ? task.relations.filter(isTaskRelation) : [];
-    return { taskId, relations: taskRelations, updatedAt: typeof task?.updatedAt === "string" ? task.updatedAt : "" };
-  }
-}
-async function readTerminalTaskRelation(root, taskId) {
-  const record = await readTaskRelations(root, taskId);
-  return record.relations.find((relation) => isTerminalRelation(relation.type)) ?? null;
-}
-async function resolveTerminalTask(root, taskId) {
-  assertValidTaskId(taskId);
-  const seen = /* @__PURE__ */ new Set();
-  const redirects = [];
-  let current = taskId;
-  for (let depth = 0; depth < 16; depth += 1) {
-    if (seen.has(current)) throw new Error(`Task relation cycle detected at ${current}`);
-    seen.add(current);
-    const relation = await readTerminalTaskRelation(root, current);
-    if (!relation) return { taskId: current, redirects };
-    redirects.push({
-      fromTaskId: current,
-      toTaskId: relation.targetTaskId,
-      type: relation.type,
-      ...relation.reason ? { reason: relation.reason } : {}
-    });
-    current = relation.targetTaskId;
-  }
-  throw new Error(`Task relation chain is too deep starting at ${taskId}`);
-}
-function isTaskRelation(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value;
-  return typeof record.type === "string" && typeof record.targetTaskId === "string" && typeof record.createdAt === "string";
-}
-function isKataRelation(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value;
-  return typeof record.kind === "string" && typeof record.type === "string" && isEndpoint(record.from) && isEndpoint(record.to) && typeof record.createdAt === "string";
-}
-function isEndpoint(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value;
-  return (record.type === "task" || record.type === "change") && typeof record.id === "string";
-}
-function validateEndpoint(endpoint) {
-  if (endpoint.type !== "task" && endpoint.type !== "change") throw new Error(`Invalid relation endpoint type: ${endpoint.type}`);
-  assertValidTaskId(endpoint.id);
-}
-function sameEndpoint(left, right) {
-  return left.type === right.type && left.id === right.id;
-}
-function inferRelationKind(type) {
-  if (type === "contains" || type === "implements") return "ownership";
-  if (type === "parent_of" || type === "spawned_from" || type === "repairs") return "lineage";
-  if (isTerminalRelation(type) || type === "depends_on" || type === "blocked_by") return "control";
-  return "context";
-}
-async function assertTaskExists(root, taskId) {
-  await readTask(root, taskId);
-}
-async function readTask(root, taskId) {
-  return JSON.parse(await readFile6(join8(root, ".kata/tasks", taskId, "task.json"), "utf8"));
-}
-async function writeTaskRelations(root, taskId, record) {
-  const path = relationPath(root, taskId);
-  await mkdir4(dirname5(path), { recursive: true });
-  await writeFile5(path, `${JSON.stringify(record, null, 2)}
-`, "utf8");
-}
-async function mirrorRelationIntoTask(root, taskId, record) {
-  const path = join8(root, ".kata/tasks", taskId, "task.json");
-  const task = await readTask(root, taskId);
-  task.relations = record.relations;
-  task.updatedAt = record.updatedAt;
-  await writeFile5(path, `${JSON.stringify(task, null, 2)}
-`, "utf8");
-}
-function relationPath(root, taskId) {
-  return join8(root, ".kata/tasks", taskId, "task-relations.json");
-}
-async function writeKataRelations(root, graph) {
-  const path = graphPath(root);
-  await mkdir4(dirname5(path), { recursive: true });
-  await writeFile5(path, `${JSON.stringify(graph, null, 2)}
-`, "utf8");
-}
-function graphPath(root) {
-  return join8(root, ".kata/relations.json");
-}
-
-// src/workflow/revision.ts
-async function createTaskRevision(input) {
-  const ownedPaths2 = normalizeOwnedPaths(input.root, input.ownedPaths);
-  if (ownedPaths2.length === 0) throw new Error("A revision requires at least one declared owned path");
-  const manifestHash = await computeManifestHash(input.root, ownedPaths2);
-  const revision = {
-    id: `revision-${randomUUID3()}`,
-    taskId: input.taskId,
-    ownedPaths: ownedPaths2,
-    manifestHash,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    ...input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {},
-    ...input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}
-  };
-  const directory = join9(input.root, ".kata/tasks", input.taskId, "revisions");
-  await mkdir5(directory, { recursive: true });
-  await writeFile6(join9(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}
-`, "utf8");
-  await writeFile6(join9(input.root, ".kata/tasks", input.taskId, "current-revision.json"), `${JSON.stringify(revision, null, 2)}
-`, "utf8");
-  return revision;
-}
-async function readTaskRevision(root, taskId, revisionId) {
-  return JSON.parse(await readFile7(join9(root, ".kata/tasks", taskId, "revisions", `${revisionId}.json`), "utf8"));
-}
-async function readCurrentTaskRevision(root, taskId) {
-  try {
-    return JSON.parse(await readFile7(join9(root, ".kata/tasks", taskId, "current-revision.json"), "utf8"));
-  } catch (error) {
-    if (isMissingFile(error)) return null;
-    throw error;
-  }
-}
-async function revisionStatus(root, revision) {
-  const manifestHash = await computeManifestHash(root, revision.ownedPaths);
-  return manifestHash === revision.manifestHash ? { status: "current" } : { status: "superseded", expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
-}
-async function computeManifestHash(root, ownedPaths2) {
-  const hash2 = createHash5("sha256");
-  for (const path of normalizeOwnedPaths(root, ownedPaths2)) {
-    hash2.update(path);
-    hash2.update("\0");
-    try {
-      const fullPath = join9(root, path);
-      const entry = await stat4(fullPath);
-      if (entry.isDirectory()) {
-        await hashDirectoryRecursive2(fullPath, root, hash2);
-      } else if (entry.isFile()) {
-        hash2.update(await readFile7(fullPath));
-      } else {
-        hash2.update("[unsupported]");
-      }
-    } catch {
-      hash2.update("[missing]");
-    }
-    hash2.update("\0");
-  }
-  return hash2.digest("hex");
-}
-async function hashDirectoryRecursive2(dirPath, root, hash2) {
-  let entries;
-  try {
-    entries = await readdir4(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (shouldIgnore2(entry.name)) continue;
-    const absolutePath = join9(dirPath, entry.name);
-    const relativePath = relative3(root, absolutePath).replaceAll("\\", "/");
-    if (shouldIgnorePath2(relativePath)) continue;
-    if (entry.isDirectory()) {
-      await hashDirectoryRecursive2(absolutePath, root, hash2);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    hash2.update(relativePath);
-    hash2.update("\0");
-    try {
-      hash2.update(await readFile7(absolutePath));
-    } catch {
-      hash2.update("[missing]");
-    }
-    hash2.update("\0");
-  }
-}
-function shouldIgnore2(name) {
-  return name === ".git" || name === ".kata" || name === ".llmwiki" || name === ".pytest_cache" || name === ".mypy_cache" || name === ".ruff_cache" || name === ".coverage" || name === "__pycache__" || name === "node_modules" || name === "dist" || name === ".codex" || name === ".claude" || name === ".opencode";
-}
-function shouldIgnorePath2(path) {
-  return path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/");
-}
-async function findOwnershipConflicts(root, taskId, ownedPaths2) {
-  const tasksRoot = join9(root, ".kata/tasks");
-  let entries = [];
-  try {
-    entries = await readdir4(tasksRoot);
-  } catch {
-    return [];
-  }
-  const normalized = normalizeOwnedPaths(root, ownedPaths2);
-  const conflicts2 = [];
-  for (const otherTaskId of entries.filter((id) => id !== taskId)) {
-    try {
-      const terminal = await resolveTerminalTask(root, otherTaskId);
-      if (terminal.taskId === taskId) continue;
-      if (terminal.redirects.length > 0) continue;
-      try {
-        const state = JSON.parse(await readFile7(join9(tasksRoot, terminal.taskId, "current-state.json"), "utf8"));
-        if (state.phase === "archive") continue;
-      } catch {
-      }
-      const task = JSON.parse(await readFile7(join9(tasksRoot, otherTaskId, "task.json"), "utf8"));
-      for (const path of normalizeOwnedPaths(root, task.ownedPaths ?? [])) {
-        if (normalized.some((owned) => pathsOverlap(owned, path))) conflicts2.push({ taskId: otherTaskId, path });
-      }
-    } catch {
-    }
-  }
-  return conflicts2;
-}
-async function workspaceDrift(root, ownedPaths2) {
-  const owned = normalizeOwnedPaths(root, ownedPaths2);
-  return changedRepositoryPaths(root).filter((path) => !isIgnoredWorkspacePath(path)).filter((path) => !owned.some((ownedPath) => pathsOverlap(ownedPath, path))).sort();
-}
-function changedRepositoryPaths(root) {
-  let output;
-  try {
-    output = execFileSync("git", ["status", "--porcelain=v1", "-z"], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-  } catch {
-    return [];
-  }
-  const tokens = output.split("\0").filter(Boolean);
-  const paths = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    const status = token.slice(0, 2);
-    const path = token.slice(3);
-    if (path) paths.push(path.replaceAll("\\", "/"));
-    if (status.includes("R") || status.includes("C")) {
-      index += 1;
-      const originalPath = tokens[index];
-      if (originalPath) paths.push(originalPath.replaceAll("\\", "/"));
-    }
-  }
-  return [...new Set(paths)];
-}
-function isIgnoredWorkspacePath(path) {
-  return path === ".kata" || path.startsWith(".kata/") || path === ".llmwiki" || path.startsWith(".llmwiki/") || path === ".codex" || path.startsWith(".codex/") || path === ".claude" || path.startsWith(".claude/") || path === ".opencode" || path.startsWith(".opencode/") || path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/") || path === "node_modules" || path.startsWith("node_modules/") || path === "dist" || path.startsWith("dist/");
-}
-function pathsOverlap(left, right) {
-  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-}
-function normalizeOwnedPaths(root, paths) {
-  return [...new Set(paths.map((path) => {
-    const normalized = relative3(root, resolve4(root, path)).replaceAll("\\", "/");
-    if (!normalized || normalized === ".." || normalized.startsWith("../")) {
-      throw new Error(`Task-owned path must be inside the repository: ${path}`);
-    }
-    return normalized;
-  }))].sort();
-}
-function isMissingFile(error) {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-
-// src/core/state.ts
-var orderedPhases = [
-  "intake",
-  "plan",
-  "implement",
-  "hardVerify",
-  "review",
-  "judge",
-  "distill",
-  "archive"
-];
-function isLegalPhaseTransition(from, to) {
-  return orderedPhases.indexOf(to) === orderedPhases.indexOf(from) + 1;
-}
-async function transition(taskId, to, actor, options = {}) {
-  const root = options.root ?? process.cwd();
-  assertValidTaskId(taskId);
-  const current = await readCurrentState(root, taskId);
-  if (!isLegalPhaseTransition(current.phase, to)) {
-    throw new Error(`Illegal transition from ${current.phase} to ${to}`);
-  }
-  if (to === "implement") await assertAcceptanceIds(root, taskId);
-  if (to === "distill") await assertDistillGates(root, taskId);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const next = {
-    taskId,
-    phase: to,
-    actor,
-    updatedAt: now,
-    ...options.activeSession ? { activeSession: options.activeSession } : {}
-  };
-  await appendStateEvent(root, {
-    taskId,
-    from: current.phase,
-    to,
-    actor,
-    at: now,
-    ...options.activeSession ? { activeSession: options.activeSession } : {}
-  });
-  await writeCurrentState(root, next);
-  return next;
-}
-async function appendStateEvent(root, event) {
-  await appendFile(stateEventsPath(root, event.taskId), `${JSON.stringify(event)}
-`, "utf8");
-}
-async function writeCurrentState(root, state) {
-  await writeFileAtomic2(currentStatePath(root, state.taskId), `${JSON.stringify(state, null, 2)}
-`);
-}
-async function readCurrentState(root, taskId) {
-  return JSON.parse(await readFile8(currentStatePath(root, taskId), "utf8"));
-}
-async function assertAcceptanceIds(root, taskId) {
-  const task = JSON.parse(await readFile8(join10(root, ".kata/tasks", taskId, "task.json"), "utf8"));
-  if (!task.acceptance?.length || task.acceptance.some((criterion) => !/^AC-[0-9]+$/.test(criterion.id ?? ""))) {
-    throw new Error("Cannot enter implement until every acceptance criterion has a stable acceptance id");
-  }
-}
-async function assertDistillGates(root, taskId) {
-  const currentDiffHash = await computeDiffHash(root);
-  const freshEvidence = await getFreshPassingEvidence(root, taskId, currentDiffHash);
-  const gates = await Promise.all([
-    Promise.resolve(freshEvidence !== null),
-    hasReviewerClearance(root, taskId, freshEvidence?.revisionId),
-    hasJudgePass(root, taskId, currentDiffHash, freshEvidence)
-  ]);
-  if (!gates.every(Boolean)) {
-    throw new Error("Cannot enter distill until fresh evidence, reviewer clearance, and judge PASS are present");
-  }
-}
-async function getFreshPassingEvidence(root, taskId, currentDiffHash) {
-  try {
-    const evidence = JSON.parse(await readFile8(join10(root, `.kata/evidence/${taskId}-hard.json`), "utf8"));
-    if (evidence.taskId !== taskId || evidence.exitCode !== 0 || !evidence.diffHash) return null;
-    if (evidence.revisionId) {
-      const revision = await readTaskRevision(root, taskId, evidence.revisionId);
-      if ((await revisionStatus(root, revision)).status !== "current") return null;
-      return evidence;
-    }
-    const freshness = checkFreshness(
-      {
-        id: evidence.id ?? `${taskId}-hard`,
-        taskId,
-        kind: "test",
-        command: evidence.command ?? "hard verification",
-        exitCode: evidence.exitCode,
-        startedAt: evidence.startedAt ?? "",
-        finishedAt: evidence.finishedAt ?? "",
-        diffHash: evidence.diffHash
-      },
-      currentDiffHash
-    );
-    return freshness.fresh ? evidence : null;
-  } catch (error) {
-    if (isNodeError3(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-async function hasReviewerClearance(root, taskId, revisionId) {
-  try {
-    const review = JSON.parse(await readFile8(join10(root, ".kata/tasks", taskId, "review.json"), "utf8"));
-    return Array.isArray(review.findings) && review.findings.every((finding) => finding.severity !== "blocking") && (!revisionId || review.revisionId === revisionId);
-  } catch (error) {
-    if (isNodeError3(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-async function hasJudgePass(root, taskId, currentDiffHash, freshEvidence) {
-  try {
-    const judge2 = JSON.parse(await readFile8(join10(root, ".kata/tasks", taskId, "judge.json"), "utf8"));
-    if (judge2.taskId !== taskId || judge2.result !== "PASS") return false;
-    if (freshEvidence?.revisionId) {
-      if (judge2.revisionId !== freshEvidence.revisionId) return false;
-    } else if (judge2.diffHash !== currentDiffHash) return false;
-    if (!freshEvidence?.id) return false;
-    if (!Array.isArray(judge2.acceptance) || judge2.acceptance.length === 0) return false;
-    if (judge2.acceptance.some((criterion) => criterion.result !== "PASS")) return false;
-    const acceptedEvidenceIds = /* @__PURE__ */ new Set([...judge2.evidenceIds ?? [], ...judge2.acceptance.flatMap((criterion) => criterion.evidenceIds ?? [])]);
-    return acceptedEvidenceIds.has(freshEvidence.id);
-  } catch (error) {
-    if (isNodeError3(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-function currentStatePath(root, taskId) {
-  assertValidTaskId(taskId);
-  return join10(root, ".kata/tasks", taskId, "current-state.json");
-}
-function stateEventsPath(root, taskId) {
-  assertValidTaskId(taskId);
-  return join10(root, ".kata/tasks", taskId, "state-events.jsonl");
-}
-async function writeFileAtomic2(path, content) {
-  const temporaryPath = join10(dirname6(path), `.${basename3(path)}.${process.pid}.${randomUUID4()}.tmp`);
-  await writeFile7(temporaryPath, content, "utf8");
-  await rename2(temporaryPath, path);
-}
-function isNodeError3(error) {
-  return error instanceof Error && "code" in error;
-}
 
 // src/core/git.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
@@ -4161,9 +4299,17 @@ async function createTask(input) {
     ...input.ownedPaths?.length ? { ownedPaths: [...new Set(input.ownedPaths)].sort() } : {},
     ...input.acceptanceMatrix ? { acceptanceMatrix: input.acceptanceMatrix } : {}
   };
-  const taskDirectory = join11(root, ".kata/tasks", task.id);
-  await mkdir6(taskDirectory, { recursive: true });
-  await writeFile8(join11(taskDirectory, "task.json"), `${JSON.stringify(task, null, 2)}
+  const taskDirectory = join12(root, ".kata/tasks", task.id);
+  await mkdir8(join12(root, ".kata/tasks"), { recursive: true });
+  try {
+    await mkdir8(taskDirectory);
+  } catch (error) {
+    if (isNodeError5(error) && error.code === "EEXIST") {
+      throw new Error(`Task ${task.id} already exists; use kata status --change ${task.id} to resume it instead of kata open.`);
+    }
+    throw error;
+  }
+  await writeFile8(join12(taskDirectory, "task.json"), `${JSON.stringify(task, null, 2)}
 `, "utf8");
   const state = {
     taskId: task.id,
@@ -4181,10 +4327,13 @@ async function createTask(input) {
   await writeCurrentState(root, state);
   return task;
 }
+function isNodeError5(error) {
+  return typeof error === "object" && error !== null && "code" in error;
+}
 
 // src/core/context.ts
-import { readdir as readdir5, readFile as readFile9 } from "node:fs/promises";
-import { join as join12 } from "node:path";
+import { readdir as readdir5, readFile as readFile10 } from "node:fs/promises";
+import { join as join13 } from "node:path";
 async function buildContextManifest(input) {
   const root = input.root ?? process.cwd();
   const records = await readWikiRecords2(root);
@@ -4210,20 +4359,20 @@ function isRelevantWikiRecord(record, requestedSourceRefs) {
   return record.sourceRefs.some((sourceRef) => requestedSourceRefs.has(sourceRef)) || record.scope.some((scopeRef) => requestedSourceRefs.has(scopeRef));
 }
 async function readWikiRecords2(root) {
-  const wikiDirectory = join12(root, ".kata/wiki");
+  const wikiDirectory = join13(root, ".kata/wiki");
   let files;
   try {
     files = await readdir5(wikiDirectory);
   } catch (error) {
-    if (isNodeError4(error) && error.code === "ENOENT") return [];
+    if (isNodeError6(error) && error.code === "ENOENT") return [];
     throw error;
   }
   const records = await Promise.all(
-    files.filter((file) => file.endsWith(".json")).sort().map(async (file) => JSON.parse(await readFile9(join12(wikiDirectory, file), "utf8")))
+    files.filter((file) => file.endsWith(".json")).sort().map(async (file) => JSON.parse(await readFile10(join13(wikiDirectory, file), "utf8")))
   );
   return records;
 }
-function isNodeError4(error) {
+function isNodeError6(error) {
   return error instanceof Error && "code" in error;
 }
 
@@ -4232,11 +4381,10 @@ init_evidence();
 
 // src/quality/judge.ts
 init_evidence();
-import { mkdir as mkdir7, writeFile as writeFile9 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { mkdir as mkdir9, writeFile as writeFile9 } from "node:fs/promises";
+import { join as join14 } from "node:path";
 
 // src/quality/acceptance-matrix.ts
-init_runtime();
 import { execFile as execFile3 } from "node:child_process";
 import { promisify as promisify3 } from "node:util";
 var execFileAsync3 = promisify3(execFile3);
@@ -4413,20 +4561,20 @@ function isRepositoryRelativeTestPath(value) {
 }
 async function readWaivers(root, taskId) {
   try {
-    const { readFile: readFile23 } = await import("node:fs/promises");
-    const { join: join27 } = await import("node:path");
-    const raw = await readFile23(join27(root, ".kata/tasks", taskId, "waivers.json"), "utf8");
+    const { readFile: readFile25 } = await import("node:fs/promises");
+    const { join: join29 } = await import("node:path");
+    const raw = await readFile25(join29(root, ".kata/tasks", taskId, "waivers.json"), "utf8");
     return JSON.parse(raw).waivers;
   } catch {
     return [];
   }
 }
 async function writeWaivers(root, taskId, waivers) {
-  const { mkdir: mkdir15, writeFile: writeFile18 } = await import("node:fs/promises");
-  const { join: join27 } = await import("node:path");
-  await mkdir15(join27(root, ".kata/tasks", taskId), { recursive: true });
-  await writeFile18(
-    join27(root, ".kata/tasks", taskId, "waivers.json"),
+  const { mkdir: mkdir18, writeFile: writeFile19 } = await import("node:fs/promises");
+  const { join: join29 } = await import("node:path");
+  await mkdir18(join29(root, ".kata/tasks", taskId), { recursive: true });
+  await writeFile19(
+    join29(root, ".kata/tasks", taskId, "waivers.json"),
     `${JSON.stringify({ waivers, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
 `,
     "utf8"
@@ -4459,8 +4607,8 @@ async function judge(input) {
       }))
     };
     const root2 = input.root ?? process.cwd();
-    await mkdir7(join13(root2, ".kata/tasks", input.taskId), { recursive: true });
-    await writeFile9(join13(root2, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result2, null, 2)}
+    await mkdir9(join14(root2, ".kata/tasks", input.taskId), { recursive: true });
+    await writeFile9(join14(root2, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result2, null, 2)}
 `, "utf8");
     return result2;
   }
@@ -4505,15 +4653,15 @@ async function judge(input) {
     evidenceIds: freshPassingTestEvidence.map((evidence) => evidence.id)
   };
   const root = input.root ?? process.cwd();
-  await mkdir7(join13(root, ".kata/tasks", input.taskId), { recursive: true });
-  await writeFile9(join13(root, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result, null, 2)}
+  await mkdir9(join14(root, ".kata/tasks", input.taskId), { recursive: true });
+  await writeFile9(join14(root, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result, null, 2)}
 `, "utf8");
   return result;
 }
 
 // src/workflow/handoff.ts
-import { readFile as readFile10 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { readFile as readFile11 } from "node:fs/promises";
+import { join as join15 } from "node:path";
 
 // src/core/workflow-profile.ts
 var isolationModes = ["current_worktree", "isolated_worktree", "git_flow", "user_decides"];
@@ -4542,42 +4690,47 @@ function profileGuardInstructions(profile, role) {
   return instructions;
 }
 async function acknowledgeCometOpen(root, taskId) {
-  const { readFile: readFile23, writeFile: writeFile18 } = await import("node:fs/promises");
-  const { join: join27 } = await import("node:path");
-  const path = join27(root, ".kata/tasks", taskId, "task.json");
-  const task = JSON.parse(await readFile23(path, "utf8"));
+  const { readFile: readFile25, writeFile: writeFile19 } = await import("node:fs/promises");
+  const { join: join29 } = await import("node:path");
+  const path = join29(root, ".kata/tasks", taskId, "task.json");
+  const task = JSON.parse(await readFile25(path, "utf8"));
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next = { ...profile, comet: { ...profile.comet, openStatus: "acknowledged" } };
   task.workflowProfile = next;
-  await writeFile18(path, `${JSON.stringify(task, null, 2)}
+  await writeFile19(path, `${JSON.stringify(task, null, 2)}
 `, "utf8");
   return next;
 }
 async function updateGitFlowProfile(root, taskId, gitFlow) {
-  const { readFile: readFile23, writeFile: writeFile18 } = await import("node:fs/promises");
-  const { join: join27 } = await import("node:path");
-  const path = join27(root, ".kata/tasks", taskId, "task.json");
-  const task = JSON.parse(await readFile23(path, "utf8"));
+  const { readFile: readFile25, writeFile: writeFile19 } = await import("node:fs/promises");
+  const { join: join29 } = await import("node:path");
+  const path = join29(root, ".kata/tasks", taskId, "task.json");
+  const task = JSON.parse(await readFile25(path, "utf8"));
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next = { ...profile, gitFlow };
   task.workflowProfile = next;
-  await writeFile18(path, `${JSON.stringify(task, null, 2)}
+  await writeFile19(path, `${JSON.stringify(task, null, 2)}
 `, "utf8");
   return next;
 }
 function isGitFlowState(value) {
   if (typeof value !== "object" || value === null) return false;
   const state = value;
-  return (state.strategy === "git-flow" || state.strategy === "manual") && typeof state.branch === "string" && typeof state.baseBranch === "string" && (state.status === "active" || state.status === "pending_confirmation" || state.status === "failed");
+  return (state.strategy === "git-flow" || state.strategy === "manual") && typeof state.branch === "string" && typeof state.baseBranch === "string" && (state.status === "active" || state.status === "pending_confirmation" || state.status === "failed") && (state.installation === void 0 || isGitFlowInstallation(state.installation));
+}
+function isGitFlowInstallation(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const installation = value;
+  return (installation.status === "installed" || installation.status === "failed" || installation.status === "unsupported") && (installation.command === void 0 || Array.isArray(installation.command) && installation.command.every((part) => typeof part === "string")) && (installation.manualCommand === void 0 || typeof installation.manualCommand === "string" && installation.manualCommand.length <= 500 && !/[\r\n]/.test(installation.manualCommand));
 }
 
 // src/workflow/handoff.ts
 async function createHandoff(root, taskId, nextRole) {
-  const taskRaw = await readFile10(join14(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile11(join15(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
-  const stateRaw = await readFile10(join14(root, ".kata/tasks", taskId, "current-state.json"), "utf8");
+  const stateRaw = await readFile11(join15(root, ".kata/tasks", taskId, "current-state.json"), "utf8");
   const state = JSON.parse(stateRaw);
-  const evidenceDir = join14(root, ".kata/evidence");
+  const evidenceDir = join15(root, ".kata/evidence");
   let evidenceIds = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
@@ -4639,8 +4792,8 @@ function buildGuardInstructions(phase, nextRole) {
 }
 
 // src/quality/project-checks.ts
-import { readdir as readdir6, readFile as readFile11 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { readdir as readdir6, readFile as readFile12 } from "node:fs/promises";
+import { join as join16 } from "node:path";
 async function resolveBuildChecks(root, config, ownedPaths2 = []) {
   const configured = config.quality?.buildChecks?.map((check) => ({
     name: check.name ?? inferCheckName(check.command, check.args ?? []),
@@ -4666,14 +4819,14 @@ async function discoverProjectQualityChecks(root) {
   const files = await candidateConstraintFiles(root);
   const commands = [];
   for (const file of files) {
-    const content = await readFile11(file, "utf8").catch(() => "");
+    const content = await readFile12(file, "utf8").catch(() => "");
     commands.push(...extractAcceptanceGateCommands(content));
   }
   return dedupe2(commands).map((command) => commandLineToCheck(root, command)).filter((check) => Boolean(check));
 }
 async function candidateConstraintFiles(root) {
-  const files = [join15(root, "AGENTS.md")];
-  const skillsRoot = join15(root, ".agents/skills");
+  const files = [join16(root, "AGENTS.md")];
+  const skillsRoot = join16(root, ".agents/skills");
   let skillNames = [];
   try {
     skillNames = await readdir6(skillsRoot);
@@ -4681,7 +4834,7 @@ async function candidateConstraintFiles(root) {
     skillNames = [];
   }
   for (const skillName of skillNames.sort()) {
-    files.push(join15(skillsRoot, skillName, "SKILL.md"));
+    files.push(join16(skillsRoot, skillName, "SKILL.md"));
   }
   return files;
 }
@@ -4760,8 +4913,8 @@ function dedupeChecks(checks) {
 
 // src/wiki/closure.ts
 init_store();
-import { mkdir as mkdir9, readFile as readFile12, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { mkdir as mkdir11, readFile as readFile13, writeFile as writeFile11 } from "node:fs/promises";
+import { join as join17 } from "node:path";
 async function ensureWikiClosure(root, taskId) {
   const existing = await readWikiClosure(root, taskId);
   if (existing) return existing;
@@ -4771,7 +4924,7 @@ async function ensureWikiClosure(root, taskId) {
 }
 async function readWikiClosure(root, taskId) {
   try {
-    const parsed = JSON.parse(await readFile12(pathFor(root, taskId), "utf8"));
+    const parsed = JSON.parse(await readFile13(pathFor(root, taskId), "utf8"));
     return isWikiClosure(parsed) ? parsed : null;
   } catch {
     return null;
@@ -4801,10 +4954,10 @@ async function evaluateWikiClosure(root, taskId) {
   return { valid: true, decision: "captured", closure };
 }
 function pathFor(root, taskId) {
-  return join16(root, ".kata/tasks", taskId, "wiki-closure.json");
+  return join17(root, ".kata/tasks", taskId, "wiki-closure.json");
 }
 async function persist(root, closure) {
-  await mkdir9(join16(root, ".kata/tasks", closure.taskId), { recursive: true });
+  await mkdir11(join17(root, ".kata/tasks", closure.taskId), { recursive: true });
   await writeFile11(pathFor(root, closure.taskId), `${JSON.stringify(closure, null, 2)}
 `, "utf8");
 }
@@ -4817,34 +4970,34 @@ function isWikiClosure(value) {
 // src/wiki/provenance.ts
 init_store();
 init_record();
-import { readFile as readFile13, readdir as readdir7 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { readFile as readFile14, readdir as readdir7 } from "node:fs/promises";
+import { join as join18 } from "node:path";
 async function proposeFromPassedTask(root, taskId, input) {
-  const judgePath = join17(root, ".kata/tasks", taskId, "judge.json");
-  const judgeRaw = await readFile13(judgePath, "utf8");
+  const judgePath = join18(root, ".kata/tasks", taskId, "judge.json");
+  const judgeRaw = await readFile14(judgePath, "utf8");
   const judge2 = JSON.parse(judgeRaw);
   if (judge2.taskId !== taskId || judge2.result !== "PASS") {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} has not passed Judge (result: ${judge2.result})`);
   }
-  const statePath = join17(root, ".kata/tasks", taskId, "current-state.json");
-  const stateRaw = await readFile13(statePath, "utf8");
+  const statePath = join18(root, ".kata/tasks", taskId, "current-state.json");
+  const stateRaw = await readFile14(statePath, "utf8");
   const state = JSON.parse(stateRaw);
   if (state.phase !== "distill" && state.phase !== "archive") {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} must be in distill or archive phase (current: ${state.phase})`);
   }
-  const evidencePath = join17(root, `.kata/evidence/${taskId}-hard.json`);
+  const evidencePath = join18(root, `.kata/evidence/${taskId}-hard.json`);
   let evidenceIds = [];
   try {
-    const evidenceRaw = await readFile13(evidencePath, "utf8");
+    const evidenceRaw = await readFile14(evidencePath, "utf8");
     const parsed = JSON.parse(evidenceRaw);
     if (parsed.id) evidenceIds = [parsed.id];
   } catch {
     const { readdir: readdir11 } = await import("node:fs/promises");
-    const evidenceDir = join17(root, ".kata/evidence");
+    const evidenceDir = join18(root, ".kata/evidence");
     const files = await readdir11(evidenceDir);
     const taskEvidenceFiles = files.filter((f) => f.startsWith(`${taskId}-`));
     for (const file of taskEvidenceFiles) {
-      const raw = await readFile13(join17(evidenceDir, file), "utf8");
+      const raw = await readFile14(join18(evidenceDir, file), "utf8");
       const parsed = JSON.parse(raw);
       if (parsed.id) evidenceIds.push(parsed.id);
     }
@@ -4913,11 +5066,11 @@ async function readTask2(root, taskId) {
   return readJson(root, `.kata/tasks/${taskId}/task.json`);
 }
 async function readJson(root, path) {
-  return JSON.parse(await readFile13(join17(root, path), "utf8"));
+  return JSON.parse(await readFile14(join18(root, path), "utf8"));
 }
 async function readText(root, path) {
   try {
-    return await readFile13(join17(root, path), "utf8");
+    return await readFile14(join18(root, path), "utf8");
   } catch {
     return "";
   }
@@ -4931,14 +5084,14 @@ async function sourceRefsForTask(root, taskId, ownedPaths2) {
     ...ownedPaths2
   ];
   try {
-    const evidenceFiles = await readdir7(join17(root, ".kata/evidence"));
+    const evidenceFiles = await readdir7(join18(root, ".kata/evidence"));
     refs.push(...evidenceFiles.filter((file) => file.startsWith(`${taskId}-`)).map((file) => `.kata/evidence/${file}`));
   } catch {
   }
   const existing = [];
   for (const ref of refs) {
     try {
-      await readFile13(join17(root, ref), "utf8");
+      await readFile14(join18(root, ref), "utf8");
       existing.push(ref);
     } catch {
     }
@@ -4948,7 +5101,7 @@ async function sourceRefsForTask(root, taskId, ownedPaths2) {
 async function hashSources(root, refs) {
   const hashes = {};
   for (const ref of refs) {
-    hashes[ref] = computeFileHash(await readFile13(join17(root, ref), "utf8"));
+    hashes[ref] = computeFileHash(await readFile14(join18(root, ref), "utf8"));
   }
   return hashes;
 }
@@ -4979,15 +5132,15 @@ function statementFor(taskId, task, design) {
 }
 
 // src/workflow/navigation.ts
-import { readdir as readdir8, readFile as readFile15 } from "node:fs/promises";
-import { join as join19 } from "node:path";
+import { readdir as readdir8, readFile as readFile16 } from "node:fs/promises";
+import { join as join20 } from "node:path";
 
 // src/quality/repair-obligations.ts
-import { mkdir as mkdir10, readFile as readFile14, writeFile as writeFile12 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { mkdir as mkdir12, readFile as readFile15, writeFile as writeFile12 } from "node:fs/promises";
+import { join as join19 } from "node:path";
 async function readObligations(root, taskId) {
   try {
-    const raw = await readFile14(obligationsPath(root, taskId), "utf8");
+    const raw = await readFile15(obligationsPath(root, taskId), "utf8");
     return JSON.parse(raw).obligations;
   } catch {
     return [];
@@ -5040,10 +5193,10 @@ async function resolveObligationsForRevision(root, taskId, revisionId, resolvedA
   return existing;
 }
 function obligationsPath(root, taskId) {
-  return join18(root, ".kata/tasks", taskId, "repair-obligations.json");
+  return join19(root, ".kata/tasks", taskId, "repair-obligations.json");
 }
 async function writeObligations(root, taskId, obligations) {
-  await mkdir10(join18(root, ".kata/tasks", taskId), { recursive: true });
+  await mkdir12(join19(root, ".kata/tasks", taskId), { recursive: true });
   const record = {
     obligations,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -5055,20 +5208,21 @@ async function writeObligations(root, taskId, obligations) {
 // src/workflow/navigation.ts
 async function readUpstreamSummary(root, taskId) {
   const evidenceFiles = await listEvidenceFiles(root, taskId);
-  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile(join19(root, ".kata/evidence", file))));
+  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile(join20(root, ".kata/evidence", file))));
   const revisionIds = [...new Set(evidence.map((item) => item?.revisionId).filter((id) => Boolean(id)))];
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : void 0;
-  const review = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join19(root, ".kata/tasks", taskId, "review.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join19(root, ".kata/tasks", taskId, "review.json")) : null;
+  const review = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join20(root, ".kata/tasks", taskId, "review.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join20(root, ".kata/tasks", taskId, "review.json")) : null;
   const findings = review?.findings ?? [];
-  const judge2 = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join19(root, ".kata/tasks", taskId, "judge.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join19(root, ".kata/tasks", taskId, "judge.json")) : null;
+  const invalidReviewApproval = review?.status === "approved" && !review.reviewEvidence?.trim();
+  const judge2 = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join20(root, ".kata/tasks", taskId, "judge.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join20(root, ".kata/tasks", taskId, "judge.json")) : null;
   const failedAcceptance = judge2?.acceptance?.filter((item) => item.result === "FAIL") ?? [];
-  const verify = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join19(root, ".kata/tasks", taskId, "verify.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join19(root, ".kata/tasks", taskId, "verify.json")) : null;
+  const verify = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join20(root, ".kata/tasks", taskId, "verify.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join20(root, ".kata/tasks", taskId, "verify.json")) : null;
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === "FAIL") ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   const obligations = await readObligations(root, taskId);
   const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
-  const task = await readJsonFile(join19(root, ".kata/tasks", taskId, "task.json"));
+  const task = await readJsonFile(join20(root, ".kata/tasks", taskId, "task.json"));
   const reviewMode = task?.workflowProfile?.reviewMode;
   return {
     ...currentRevisionId ? { currentRevisionId } : {},
@@ -5077,6 +5231,7 @@ async function readUpstreamSummary(root, taskId) {
     majorFindings: findings.filter((finding) => finding.severity === "major").length,
     ...reviewMode ? { reviewMode } : {},
     reviewReady: review?.status === "approved" && Boolean(review.reviewEvidence?.trim()),
+    ...invalidReviewApproval ? { invalidReviewApproval: true } : {},
     ...judge2?.result ? { judgeResult: judge2.result } : {},
     ...verify?.result ? { verifyResult: verify.result } : {},
     failedAcceptance: failedAcceptance.length,
@@ -5139,6 +5294,14 @@ function suggestCandidateAction(phase, upstream) {
       role: "implementer",
       reason: "repair_strict_major_findings",
       priority: 980 + upstream.majorFindings
+    };
+  }
+  if (phase === "review" && upstream.invalidReviewApproval) {
+    return {
+      nextSkill: "/kata-review",
+      role: "reviewer",
+      reason: "invalid_review_approval",
+      priority: 975
     };
   }
   if (phase === "review" && !upstream.reviewReady) {
@@ -5273,6 +5436,9 @@ function statusActionPrompts(suggestion) {
   if (suggestion.reason === "complete_review_conclusion") {
     return ["Review \u5C1A\u672A\u5F62\u6210\u7ED1\u5B9A\u5F53\u524D revision \u7684\u663E\u5F0F\u7ED3\u8BBA\u548C\u5BA1\u67E5\u8BC1\u636E\uFF1B\u8BF7\u5B8C\u6210\u5B9E\u9645\u4EE3\u7801\u5BA1\u67E5\u540E\uFF0C\u4EE5 /kata-review --approve --review-evidence <summary> \u8BB0\u5F55\u7ED3\u8BBA\uFF0C\u6216\u5199\u5165 findings\u3002"];
   }
+  if (suggestion.reason === "invalid_review_approval") {
+    return ["\u68C0\u6D4B\u5230\u65E0\u6548 Review approval\uFF1A\u7F3A\u5C11\u7ED1\u5B9A\u5F53\u524D revision \u7684 reviewEvidence\u3002\u8BE5\u4EA7\u7269\u4E0D\u80FD\u8FDB\u5165 Judge\uFF1B\u8BF7\u91CD\u65B0\u6267\u884C /kata-review \u5E76\u8BB0\u5F55\u771F\u5B9E\u5BA1\u67E5\u7ED3\u8BBA\u3002"];
+  }
   if (suggestion.reason === "repair_failed_judge") {
     return ["\u68C0\u6D4B\u5230 Judge FAIL\uFF1B\u5EFA\u8BAE\u5148\u6267\u884C /kata-build \u4FEE\u590D failed acceptance\u3002"];
   }
@@ -5336,18 +5502,18 @@ function skillToCliVerb(nextSkill) {
 }
 async function readJsonFile(path) {
   try {
-    return JSON.parse(await readFile15(path, "utf8"));
+    return JSON.parse(await readFile16(path, "utf8"));
   } catch {
     return null;
   }
 }
 async function listEvidenceFiles(root, taskId) {
   try {
-    const evidenceDir = join19(root, ".kata/evidence");
+    const evidenceDir = join20(root, ".kata/evidence");
     const candidates = (await readdir8(evidenceDir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith(".json"));
     const matches = await Promise.all(candidates.map(async (file) => ({
       file,
-      evidence: await readJsonFile(join19(evidenceDir, file))
+      evidence: await readJsonFile(join20(evidenceDir, file))
     })));
     return matches.filter(({ evidence }) => evidence?.taskId === taskId).map(({ file }) => file).sort();
   } catch {
@@ -5431,9 +5597,9 @@ async function cmdOpen(taskId, root, options = {}) {
 async function cmdDesign(taskId, root, options) {
   const actor = actorFor({ id: "kata-designer", role: "designer" }, options?.platform);
   const workflowProfile = await acknowledgeCometOpenIfRequired(root, taskId);
-  const taskPath = join20(root, ".kata/tasks", taskId, "task.json");
-  const task = JSON.parse(await readFile16(taskPath, "utf8"));
-  const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const taskPath = join21(root, ".kata/tasks", taskId, "task.json");
+  const task = JSON.parse(await readFile17(taskPath, "utf8"));
+  const current = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (!task.acceptanceMatrix && (current.phase === "implement" || current.phase === "hardVerify")) {
     const handoff2 = await createHandoff(root, taskId, "designer");
     return {
@@ -5483,14 +5649,14 @@ async function cmdDesign(taskId, root, options) {
   };
 }
 async function acknowledgeCometOpenIfRequired(root, taskId) {
-  const task = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   if (!isWorkflowProfile(task.workflowProfile)) return void 0;
   if (task.workflowProfile.comet.openStatus !== "required") return task.workflowProfile;
   return acknowledgeCometOpen(root, taskId);
 }
 async function cmdBuild(taskId, root, options = {}) {
   const current = JSON.parse(
-    await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8")
+    await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8")
   );
   let enteredReviewRepair = false;
   if (current.phase === "plan") {
@@ -5524,7 +5690,7 @@ async function cmdBuild(taskId, root, options = {}) {
     let buildOwnedPaths = [];
     try {
       const currentTask = JSON.parse(
-        await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8")
+        await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8")
       );
       if (currentTask.ownedPaths?.length) {
         buildOwnedPaths = currentTask.ownedPaths;
@@ -5548,8 +5714,8 @@ async function cmdBuild(taskId, root, options = {}) {
       }
     };
   }
-  const taskPath = join20(root, ".kata/tasks", taskId, "task.json");
-  const task = JSON.parse(await readFile16(taskPath, "utf8"));
+  const taskPath = join21(root, ".kata/tasks", taskId, "task.json");
+  const task = JSON.parse(await readFile17(taskPath, "utf8"));
   const projectChecks = options.checks?.length ? options.checks : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
   let matrixDerivedChecks = [];
   if (!options.checks?.length && task.acceptanceMatrix) {
@@ -5750,17 +5916,18 @@ function resolveCheckForRow(row, evidence, root) {
   const template = evidence.command.trim();
   const hasPlaceholder = template.includes("{{selector}}");
   if (hasSelector && hasPlaceholder) {
-    const filled = template.replace("{{selector}}", evidence.testSelector);
+    const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join21(root, "kata") : root;
+    const selector2 = testSelectorForRuntime(evidence.testSelector, runtimeProjectDir2, root);
+    const filled = template.replace("{{selector}}", selector2);
     const [rawCommand2, ...args2] = filled.split(/\s+/);
-    const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join20(root, "kata") : root;
-    const runtimeEntry2 = rawCommand2 === "vitest" ? join20(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "tsc" ? join20(runtimeProjectDir2, "node_modules", "typescript", "bin", "tsc") : void 0;
+    const runtimeEntry2 = rawCommand2 === "vitest" ? join21(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "tsc" ? join21(runtimeProjectDir2, "node_modules", "typescript", "bin", "tsc") : void 0;
     const command2 = runtimeEntry2 ? process.execPath : rawCommand2;
     return {
       name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
       kind: evidence.kind,
       command: command2,
       args: [...runtimeEntry2 ? [runtimeEntry2] : [], ...args2],
-      cwd: root,
+      cwd: runtimeProjectDir2,
       timeoutMs: evidence.kind === "test" || evidence.kind === "integration" || evidence.kind === "entrypoint" ? 12e4 : 6e4
     };
   }
@@ -5769,32 +5936,40 @@ function resolveCheckForRow(row, evidence, root) {
     const isKnownRunner = knownRunners.some((runner) => template === runner || template.startsWith(runner + " "));
     if (isKnownRunner) {
       const [rawCommand2, ...args2] = template.split(/\s+/);
-      const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join20(root, "kata") : root;
-      const runtimeEntry2 = rawCommand2 === "vitest" ? join20(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "pytest" ? rawCommand2 : void 0;
+      const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join21(root, "kata") : root;
+      const selector2 = testSelectorForRuntime(evidence.testSelector, runtimeProjectDir2, root);
+      const runtimeEntry2 = rawCommand2 === "vitest" ? join21(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "pytest" ? rawCommand2 : void 0;
       const command2 = runtimeEntry2 === void 0 && rawCommand2 === "uv" ? template : runtimeEntry2 ? process.execPath : rawCommand2;
       return {
         name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
         kind: evidence.kind,
         command: runtimeEntry2 ? process.execPath : rawCommand2,
-        args: [...runtimeEntry2 ? [runtimeEntry2] : [], ...args2, ...evidence.testSelector ? [evidence.testSelector] : []],
-        cwd: root,
+        args: [...runtimeEntry2 ? [runtimeEntry2] : [], ...args2, ...selectorArgs(selector2)],
+        cwd: runtimeProjectDir2,
         timeoutMs: evidence.kind === "test" || evidence.kind === "integration" || evidence.kind === "entrypoint" ? 12e4 : 6e4
       };
     }
     return new Error(`Matrix row ${row.acceptanceId} declares a testSelector but command "${template}" does not support selectors. Use vitest, pytest, uv run pytest, or a command template with {{selector}} placeholder.`);
   }
   const [rawCommand, ...args] = template.split(/\s+/);
-  const runtimeProjectDir = row.testPaths.every((path) => path.startsWith("kata/")) ? join20(root, "kata") : root;
-  const runtimeEntry = rawCommand === "vitest" ? join20(runtimeProjectDir, "node_modules", "vitest", "vitest.mjs") : rawCommand === "tsc" ? join20(runtimeProjectDir, "node_modules", "typescript", "bin", "tsc") : void 0;
+  const runtimeProjectDir = row.testPaths.every((path) => path.startsWith("kata/")) ? join21(root, "kata") : root;
+  const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : void 0;
+  const runtimeEntry = rawCommand === "vitest" ? join21(runtimeProjectDir, "node_modules", "vitest", "vitest.mjs") : rawCommand === "tsc" ? join21(runtimeProjectDir, "node_modules", "typescript", "bin", "tsc") : void 0;
   const command = runtimeEntry ? process.execPath : rawCommand;
   return {
     name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
     kind: evidence.kind,
     command,
-    args: [...runtimeEntry ? [runtimeEntry] : [], ...args, ...evidence.testSelector ? [evidence.testSelector] : []],
-    cwd: root,
+    args: [...runtimeEntry ? [runtimeEntry] : [], ...args, ...selector ? selectorArgs(selector) : []],
+    cwd: runtimeProjectDir,
     timeoutMs: evidence.kind === "test" || evidence.kind === "integration" || evidence.kind === "entrypoint" ? 12e4 : 6e4
   };
+}
+function testSelectorForRuntime(selector, runtimeProjectDir, root) {
+  return runtimeProjectDir !== root && selector.startsWith("kata/") ? selector.slice("kata/".length) : selector;
+}
+function selectorArgs(selector) {
+  return selector.split(/\s+/);
 }
 function matrixChecks(root, matrix) {
   const checks = [];
@@ -5834,21 +6009,21 @@ async function resolveSealOwnedPaths(root, taskId, task, options) {
 }
 async function persistTaskOwnedPaths(root, taskId, task, ownedPaths2) {
   await writeFile13(
-    join20(root, ".kata/tasks", taskId, "task.json"),
+    join21(root, ".kata/tasks", taskId, "task.json"),
     `${JSON.stringify({ ...task, ownedPaths: ownedPaths2 }, null, 2)}
 `,
     "utf8"
   );
 }
 async function writeEvidence(root, taskId, evidence) {
-  const evidenceDir = join20(root, ".kata/evidence");
-  await mkdir11(evidenceDir, { recursive: true });
+  const evidenceDir = join21(root, ".kata/evidence");
+  await mkdir13(evidenceDir, { recursive: true });
   const { readdir: readdir11, unlink } = await import("node:fs/promises");
   try {
     const files = await readdir11(evidenceDir);
     for (const file of files) {
       if (file.startsWith(`${taskId}-`) && file.endsWith(".json")) {
-        await unlink(join20(evidenceDir, file)).catch(() => {
+        await unlink(join21(evidenceDir, file)).catch(() => {
         });
       }
     }
@@ -5856,7 +6031,7 @@ async function writeEvidence(root, taskId, evidence) {
   }
   for (const envelope of evidence) {
     await writeFile13(
-      join20(evidenceDir, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
+      join21(evidenceDir, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
       `${JSON.stringify(envelope, null, 2)}
 `,
       "utf8"
@@ -5865,7 +6040,7 @@ async function writeEvidence(root, taskId, evidence) {
   const testEvidence = evidence.find((item) => item.kind === "test");
   if (testEvidence) {
     await writeFile13(
-      join20(evidenceDir, `${taskId}-hard.json`),
+      join21(evidenceDir, `${taskId}-hard.json`),
       `${JSON.stringify(testEvidence, null, 2)}
 `,
       "utf8"
@@ -5876,33 +6051,38 @@ function evidenceFileSuffix(envelope) {
   return (envelope.name ?? envelope.kind).replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || envelope.kind;
 }
 async function reenterImplementForReviewRepair(taskId, root, actor) {
-  const reviewRaw = await readFile16(join20(root, ".kata/tasks", taskId, "review.json"), "utf8");
+  const reviewRaw = await readFile17(join21(root, ".kata/tasks", taskId, "review.json"), "utf8");
   const review = JSON.parse(reviewRaw);
-  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   const isStrict = task.workflowProfile?.reviewMode === "strict";
+  const revision = await readCurrentTaskRevision(root, taskId);
+  if (review.revisionId !== revision?.id) {
+    throw new Error("Build cannot run from review because its findings are not bound to the current sealed revision. Re-run /kata-review.");
+  }
   const blockingFindings = (review.findings ?? []).filter((finding) => finding.severity === "blocking");
   const majorFindings = isStrict ? (review.findings ?? []).filter((finding) => finding.severity === "major") : [];
   if (blockingFindings.length === 0 && majorFindings.length === 0) {
-    throw new Error("Build cannot run from review without blocking (or strict-mode major) review findings");
+    throw new Error("Build cannot run from review without blocking (or strict-mode major) review findings. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.");
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  const revision = await readCurrentTaskRevision(root, taskId);
-  await appendStateEvent(root, {
-    taskId,
-    from: "review",
-    to: "implement",
-    actor,
-    at: now
-  });
-  await writeCurrentState(root, {
-    taskId,
-    phase: "implement",
-    actor,
-    updatedAt: now
+  await withTaskLock(root, taskId, async () => {
+    await appendStateEvent(root, {
+      taskId,
+      from: "review",
+      to: "implement",
+      actor,
+      at: now
+    });
+    await writeCurrentState(root, {
+      taskId,
+      phase: "implement",
+      actor,
+      updatedAt: now
+    });
   });
   await writeFile13(
-    join20(root, ".kata/tasks", taskId, "repair.json"),
+    join21(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "review",
@@ -5923,7 +6103,7 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
 }
 async function readActiveReviewRepairBaseline(root, taskId) {
   try {
-    const repair = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "repair.json"), "utf8"));
+    const repair = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "repair.json"), "utf8"));
     if (repair.reason !== "review_findings" || repair.resolvedAt || !repair.baselineManifestHash) return void 0;
     return repair.baselineManifestHash;
   } catch (error) {
@@ -5932,8 +6112,8 @@ async function readActiveReviewRepairBaseline(root, taskId) {
   }
 }
 async function resolveReviewRepair(root, taskId, revisionId) {
-  const repairPath = join20(root, ".kata/tasks", taskId, "repair.json");
-  const repair = JSON.parse(await readFile16(repairPath, "utf8"));
+  const repairPath = join21(root, ".kata/tasks", taskId, "repair.json");
+  const repair = JSON.parse(await readFile17(repairPath, "utf8"));
   await writeFile13(repairPath, `${JSON.stringify({
     ...repair,
     resolvedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -5944,7 +6124,7 @@ async function resolveReviewRepair(root, taskId, revisionId) {
 async function reenterImplementForVerifyRepair(taskId, root, actor) {
   let verifyRaw;
   try {
-    verifyRaw = await readFile16(join20(root, ".kata/tasks", taskId, "verify.json"), "utf8");
+    verifyRaw = await readFile17(join21(root, ".kata/tasks", taskId, "verify.json"), "utf8");
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
@@ -5984,7 +6164,7 @@ async function reenterImplementForVerifyRepair(taskId, root, actor) {
     updatedAt: now
   });
   await writeFile13(
-    join20(root, ".kata/tasks", taskId, "repair.json"),
+    join21(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "hardVerify",
@@ -6002,7 +6182,7 @@ async function reenterImplementForVerifyRepair(taskId, root, actor) {
   );
 }
 async function reenterImplementForRepair(taskId, root, actor) {
-  const judgeRaw = await readFile16(join20(root, ".kata/tasks", taskId, "judge.json"), "utf8");
+  const judgeRaw = await readFile17(join21(root, ".kata/tasks", taskId, "judge.json"), "utf8");
   const judgeResult = JSON.parse(judgeRaw);
   const repairableScopes = /* @__PURE__ */ new Set([
     "missing_test_evidence",
@@ -6032,7 +6212,7 @@ async function reenterImplementForRepair(taskId, root, actor) {
     updatedAt: now
   });
   await writeFile13(
-    join20(root, ".kata/tasks", taskId, "repair.json"),
+    join21(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "judge",
@@ -6050,9 +6230,9 @@ async function reenterImplementForRepair(taskId, root, actor) {
   );
 }
 async function cmdVerify(taskId, root, options = {}) {
-  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
-  const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   const currentDiffHash = await computeDiffHash(root);
   const evidence = await readTaskEvidence(root, taskId, options);
   const scopeHashes = await currentScopeHashes(root, evidence);
@@ -6071,7 +6251,7 @@ async function cmdVerify(taskId, root, options = {}) {
   const implementationReady = verifyResult.result === "PASS";
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   if (!wikiClosure.valid) verifyResult.result = "FAIL";
-  await writeFile13(join20(root, ".kata/tasks", taskId, "verify.json"), `${JSON.stringify(verifyResult, null, 2)}
+  await writeFile13(join21(root, ".kata/tasks", taskId, "verify.json"), `${JSON.stringify(verifyResult, null, 2)}
 `, "utf8");
   const failedScopes = verifyResult.acceptance.filter((acceptance) => acceptance.result === "FAIL").map((acceptance) => acceptance.repairScope).filter((scope) => scope !== void 0);
   const repairReason = failedScopes.length > 0 && failedScopes.every((scope) => scope === "revision_superseded") ? "rebuild_superseded_revision" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "stale_evidence") ? "rebuild_stale_evidence" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "insufficient_evidence_level") ? "add_entrypoint_evidence" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "unresolved_repair_obligation") ? "resolve_repair_obligations" : "repair_failed_verify";
@@ -6118,7 +6298,7 @@ async function cmdReview(taskId, root, options = {}) {
   try {
     const isApprove = options.approve === true;
     if (isApprove) {
-      const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+      const current = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
       if (current.phase !== "review") {
         return {
           command: "review",
@@ -6138,7 +6318,7 @@ async function cmdReview(taskId, root, options = {}) {
           error: "Review approval requires non-empty review evidence."
         };
       }
-      const reviewPath2 = join20(root, ".kata/tasks", taskId, "review.json");
+      const reviewPath2 = join21(root, ".kata/tasks", taskId, "review.json");
       const revisionId2 = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
       const existing = await readReview(root, taskId);
       if (revisionId2 && existing.revisionId !== revisionId2) {
@@ -6176,11 +6356,21 @@ async function cmdReview(taskId, root, options = {}) {
     await guardTransition(options.guard, "check", taskId, "review");
     const state = await transition(taskId, "review", actorFor(reviewerActor, options.platform), { root });
     await guardTransition(options.guard, "apply", taskId, "review");
-    const reviewPath = join20(root, ".kata/tasks", taskId, "review.json");
+    const reviewPath = join21(root, ".kata/tasks", taskId, "review.json");
     const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
     try {
-      const previous = JSON.parse(await readFile16(reviewPath, "utf8"));
+      const previous = JSON.parse(await readFile17(reviewPath, "utf8"));
       if (revisionId && previous.revisionId !== revisionId) {
+        if (previous.findings?.length) {
+          const historyPath = join21(root, ".kata/tasks", taskId, "review-history.jsonl");
+          const historyEntry = JSON.stringify({
+            revisionId: previous.revisionId,
+            findings: previous.findings,
+            status: previous.status ?? "pending",
+            archivedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }) + "\n";
+          await appendFile2(historyPath, historyEntry, "utf8");
+        }
         await writeFile13(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: "pending" }, null, 2)}
 `, "utf8");
       }
@@ -6194,7 +6384,7 @@ async function cmdReview(taskId, root, options = {}) {
   }
 }
 async function cmdJudge(taskId, root, options = {}) {
-  const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (current.phase !== "review") {
     return {
       command: "judge",
@@ -6220,7 +6410,7 @@ async function cmdJudge(taskId, root, options = {}) {
       diagnostics: { requiresUserConfirmation: true, trustBoundary: "judge_gate" }
     };
   }
-  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   const review = await readReview(root, taskId);
   if (review.status !== "approved" || !review.reviewEvidence?.trim()) {
@@ -6297,14 +6487,14 @@ async function cmdJudge(taskId, root, options = {}) {
   };
 }
 async function readTaskEvidence(root, taskId, options = {}) {
-  const evidenceDir = join20(root, ".kata/evidence");
+  const evidenceDir = join21(root, ".kata/evidence");
   let evidence = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
     const files = await readdir11(evidenceDir);
     const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
     for (const file of candidateFiles) {
-      const raw = await readFile16(join20(evidenceDir, file), "utf8");
+      const raw = await readFile17(join21(evidenceDir, file), "utf8");
       const parsed = JSON.parse(raw);
       if (parsed.taskId === taskId) evidence.push(parsed);
     }
@@ -6315,7 +6505,7 @@ async function readTaskEvidence(root, taskId, options = {}) {
 }
 async function readReview(root, taskId) {
   try {
-    const reviewRaw = await readFile16(join20(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    const reviewRaw = await readFile17(join21(root, ".kata/tasks", taskId, "review.json"), "utf8");
     const reviewParsed = JSON.parse(reviewRaw);
     return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
   } catch {
@@ -6324,7 +6514,7 @@ async function readReview(root, taskId) {
 }
 async function readReviewRevisionId(root, taskId) {
   try {
-    const raw = await readFile16(join20(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    const raw = await readFile17(join21(root, ".kata/tasks", taskId, "review.json"), "utf8");
     return JSON.parse(raw).revisionId;
   } catch {
     return void 0;
@@ -6387,7 +6577,7 @@ async function currentScopeHashes(root, evidence) {
 }
 async function cmdArchive(taskId, root, options = {}) {
   let archivePhase = "distill";
-  const current = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (!options.confirmHostModel) {
     return {
       command: "archive",
@@ -6398,17 +6588,37 @@ async function cmdArchive(taskId, root, options = {}) {
       diagnostics: { requiresUserConfirmation: true, trustBoundary: "archive_gate" }
     };
   }
+  const review = await readReview(root, taskId);
+  if (review.status !== "approved" || !review.reviewEvidence?.trim()) {
+    return {
+      command: "archive",
+      taskId,
+      phase: current.phase,
+      success: false,
+      error: "Archive requires an evidence-backed Review approval before a Judge result can be archived."
+    };
+  }
   if (current.phase === "judge") {
-    await guardTransition(options.guard, "check", taskId, "distill");
-    await transition(taskId, "distill", actorFor(defaultActor, options.platform), { root });
-    await guardTransition(options.guard, "apply", taskId, "distill");
+    try {
+      await guardTransition(options.guard, "check", taskId, "distill");
+      await transition(taskId, "distill", actorFor(defaultActor, options.platform), { root });
+      await guardTransition(options.guard, "apply", taskId, "distill");
+    } catch (error) {
+      return {
+        command: "archive",
+        taskId,
+        phase: current.phase,
+        success: false,
+        error: `Archive requires a current-revision Judge PASS before transition: ${error.message}`
+      };
+    }
   } else if (current.phase !== "distill" && current.phase !== "archive") {
     return { command: "archive", taskId, phase: current.phase, success: false, error: `Archive cannot run from ${current.phase}` };
   }
   const distillation = await distillPassedTaskKnowledge(root, taskId);
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   if (!wikiClosure.valid) {
-    const latest = JSON.parse(await readFile16(join20(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+    const latest = JSON.parse(await readFile17(join21(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
     return {
       command: "archive",
       taskId,
@@ -6418,22 +6628,22 @@ async function cmdArchive(taskId, root, options = {}) {
       diagnostics: { wikiClosure, distillation }
     };
   }
-  const taskRaw = await readFile16(join20(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join21(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   let judgeRaw = null;
   try {
-    judgeRaw = await readFile16(join20(root, ".kata/tasks", taskId, "judge.json"), "utf8");
+    judgeRaw = await readFile17(join21(root, ".kata/tasks", taskId, "judge.json"), "utf8");
   } catch {
   }
   let reviewRaw = null;
   try {
-    reviewRaw = await readFile16(join20(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    reviewRaw = await readFile17(join21(root, ".kata/tasks", taskId, "review.json"), "utf8");
   } catch {
   }
   let evidenceIds = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
-    const files = await readdir11(join20(root, ".kata/evidence"));
+    const files = await readdir11(join21(root, ".kata/evidence"));
     evidenceIds = files.filter((f) => f.startsWith(`${taskId}-`));
   } catch {
   }
@@ -6449,7 +6659,7 @@ async function cmdArchive(taskId, root, options = {}) {
   if (archivePhase === "archive") {
     try {
       const { stat: stat6 } = await import("node:fs/promises");
-      await stat6(join20(root, ".codegraph/index.db"));
+      await stat6(join21(root, ".codegraph/index.db"));
       const { execFileSync: execFileSync6 } = await import("node:child_process");
       const output = execFileSync6("codegraph", ["index"], {
         encoding: "utf8",
@@ -6497,9 +6707,7 @@ async function cmdHotfix(taskId, root, options) {
   if (!designResult.success) return designResult;
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
-  const verifyResult = await cmdVerify(taskId, root, options);
-  if (!verifyResult.success) return verifyResult;
-  return verifyResult;
+  return buildResult;
 }
 async function cmdTweak(taskId, root, options) {
   const openResult = await cmdOpen(taskId, root, {
@@ -6512,22 +6720,21 @@ async function cmdTweak(taskId, root, options) {
   await cmdDesign(taskId, root, options);
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
-  const verifyResult = await cmdVerify(taskId, root, options);
-  return verifyResult;
+  return buildResult;
 }
 
 // src/workflow/context-fabric.ts
 import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { mkdir as mkdir12, readFile as readFile17, writeFile as writeFile14 } from "node:fs/promises";
-import { join as join21, resolve as resolve5 } from "node:path";
+import { mkdir as mkdir14, readFile as readFile18, writeFile as writeFile14 } from "node:fs/promises";
+import { join as join22, resolve as resolve5 } from "node:path";
 import { existsSync as existsSync2 } from "node:fs";
 async function createContextPacket(input) {
   assertValidTaskId(input.taskId);
   assertRole(input.fromRole);
   assertRole(input.toRole);
   const handoff = await createHandoff(input.root, input.taskId, input.toRole);
-  const task = JSON.parse(await readFile17(join21(input.root, ".kata/tasks", input.taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile18(join22(input.root, ".kata/tasks", input.taskId, "task.json"), "utf8"));
   const context = await buildContextManifest({ root: input.root, taskId: input.taskId, sourceRefs: handoff.context.sourceRefs });
   const designRefs = designRefsFor(input.root, input.taskId, input.toRole);
   const packet = { protocolVersion: 1, id: `handoff-${randomUUID6().slice(0, 12)}`, taskId: input.taskId, createdAt: (/* @__PURE__ */ new Date()).toISOString(), from: { role: input.fromRole, ...input.platform ? { platform: safePlatform(input.platform) } : {} }, to: { role: input.toRole }, phase: handoff.fromPhase, repository: await anchor(input.root, input.taskId), task, context: { requiredReads: existingReads(input.root, input.taskId, designRefs), designRefs, sourceRefs: [...handoff.context.sourceRefs].sort(), authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })), excludedWiki: context.excludedWiki.map((record) => ({ id: record.id, reason: record.reason })), evidencePaths: handoff.context.evidenceIds.map((id) => `.kata/evidence/${id}`), priorArtifacts: roleArtifacts(input.root, input.taskId) }, permissions: { allowedWrites: allowedWrites(input.toRole, input.taskId, input.root), guardInstructions: handoff.guardInstructions }, nextAction: `Perform ${input.toRole} work after verifying this handoff.` };
@@ -6537,16 +6744,36 @@ async function createContextPacket(input) {
 async function readContextPacket(root, taskId, id) {
   assertValidTaskId(taskId);
   safeId(id);
-  return JSON.parse(await readFile17(packetPath(root, taskId, id), "utf8"));
+  return JSON.parse(await readFile18(packetPath(root, taskId, id), "utf8"));
 }
 async function acknowledgeContextPacket(input) {
   const packet = await readContextPacket(input.root, input.taskId, input.id);
   assertRole(input.role);
+  if (packet.to.role !== input.role) throw new Error(`Handoff role ${input.role} does not match packet recipient ${packet.to.role}.`);
   const verification = await verifyContextPacket({ root: input.root, taskId: input.taskId, id: input.id });
   if (!verification.valid) throw new Error(`Cannot acknowledge invalid handoff packet: ${verification.reason}`);
   const receipt = { protocolVersion: 1, taskId: input.taskId, handoffId: input.id, platform: safePlatform(input.platform), role: input.role, packetSha256: hash(JSON.stringify(packet)), acknowledgedAt: (/* @__PURE__ */ new Date()).toISOString(), repository: await anchor(input.root, input.taskId) };
   await writeFile14(receiptPath(input.root, input.taskId, input.id), `${JSON.stringify(receipt, null, 2)}
 `);
+  return receipt;
+}
+async function requireAcknowledgedContextPacket(input) {
+  const packet = await readContextPacket(input.root, input.taskId, input.id);
+  if (packet.to.role !== input.role) throw new Error(`Handoff role ${input.role} does not match packet recipient ${packet.to.role}.`);
+  const verification = await verifyContextPacket({ root: input.root, taskId: input.taskId, id: input.id });
+  if (!verification.valid) throw new Error(`Cannot use invalid handoff packet: ${verification.reason}`);
+  let receipt;
+  try {
+    receipt = JSON.parse(await readFile18(receiptPath(input.root, input.taskId, input.id), "utf8"));
+  } catch {
+    throw new Error(`Workflow mutation requires an acknowledged receipt for handoff ${input.id}.`);
+  }
+  if (receipt.taskId !== input.taskId || receipt.handoffId !== input.id || receipt.role !== input.role) {
+    throw new Error(`Workflow mutation requires an acknowledged receipt for the expected ${input.role} role.`);
+  }
+  if (receipt.packetSha256 !== hash(JSON.stringify(packet))) {
+    throw new Error(`Workflow mutation requires a current acknowledged receipt for handoff ${input.id}.`);
+  }
   return receipt;
 }
 async function verifyContextPacket(input) {
@@ -6557,7 +6784,7 @@ async function verifyContextPacket(input) {
   if (packet.repository.scope && !sameScopeIdentity(packet.repository.scope, current.scope)) return { valid: false, reason: "diff_mismatch" };
   if (packet.repository.diffHash !== current.diffHash) return { valid: false, reason: "diff_mismatch" };
   try {
-    const receipt = JSON.parse(await readFile17(receiptPath(input.root, input.taskId, input.id), "utf8"));
+    const receipt = JSON.parse(await readFile18(receiptPath(input.root, input.taskId, input.id), "utf8"));
     if (receipt.packetSha256 !== hash(JSON.stringify(packet))) return { valid: false, reason: "packet_hash_mismatch" };
   } catch {
   }
@@ -6587,11 +6814,11 @@ function existingReads(root, taskId, designRefs) {
 }
 function designRefsFor(root, taskId, role) {
   const designPath = `.kata/tasks/${taskId}/design.md`;
-  return role === "implementer" && existsSync2(join21(root, designPath)) ? [designPath] : [];
+  return role === "implementer" && existsSync2(join22(root, designPath)) ? [designPath] : [];
 }
 function taskContextPaths(root, taskId) {
   const base = `.kata/tasks/${taskId}`;
-  return [`${base}/task.json`, `${base}/current-state.json`, ...existsSync2(join21(root, base, "design.md")) ? [`${base}/design.md`] : []];
+  return [`${base}/task.json`, `${base}/current-state.json`, ...existsSync2(join22(root, base, "design.md")) ? [`${base}/design.md`] : []];
 }
 function sameScopeIdentity(left, right) {
   if (left.kind !== right.kind || left.paths.length !== right.paths.length) return false;
@@ -6604,20 +6831,20 @@ function roleArtifacts(root, taskId) {
 }
 function allowedWrites(role, taskId, root = process.cwd()) {
   if (role === "designer") return ["docs/", `.kata/tasks/${taskId}/`];
-  if (role === "implementer") return [existsSync2(join21(root, "packages")) ? "packages/" : "src/", "tests/", "docs/", `.kata/tasks/${taskId}/`];
+  if (role === "implementer") return [existsSync2(join22(root, "packages")) ? "packages/" : "src/", "tests/", "docs/"];
   return [`.kata/tasks/${taskId}/${role === "reviewer" ? "review.json" : role === "judge" ? "judge.json" : "wiki/"}`];
 }
 async function writePacket(root, packet) {
-  const directory = join21(root, ".kata/tasks", packet.taskId, "handoffs");
-  await mkdir12(directory, { recursive: true });
+  const directory = join22(root, ".kata/tasks", packet.taskId, "handoffs");
+  await mkdir14(directory, { recursive: true });
   await writeFile14(packetPath(root, packet.taskId, packet.id), `${JSON.stringify(packet, null, 2)}
 `);
 }
 function packetPath(root, taskId, id) {
-  return join21(root, ".kata/tasks", taskId, "handoffs", `${id}.json`);
+  return join22(root, ".kata/tasks", taskId, "handoffs", `${id}.json`);
 }
 function receiptPath(root, taskId, id) {
-  return join21(root, ".kata/tasks", taskId, "handoffs", `${id}.receipt.json`);
+  return join22(root, ".kata/tasks", taskId, "handoffs", `${id}.receipt.json`);
 }
 function hash(value) {
   return createHash6("sha256").update(value).digest("hex");
@@ -6674,11 +6901,53 @@ function renderDelegationPrompt(taskId, handoffId, platform, role, designRefs = 
   ].join("\n");
 }
 
+// src/workflow/user-choice-gate.ts
+import { mkdir as mkdir15, readFile as readFile19, writeFile as writeFile15 } from "node:fs/promises";
+import { join as join23 } from "node:path";
+async function createUserChoiceGate(input) {
+  assertValidTaskId(input.taskId);
+  const gate = { taskId: input.taskId, boundary: input.boundary, ...input.revisionId ? { revisionId: input.revisionId } : {}, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+  await mkdir15(join23(input.root, ".kata/tasks", input.taskId), { recursive: true });
+  await writeFile15(pathFor2(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}
+`);
+}
+async function approveUserChoiceGate(input) {
+  const gate = await readGate(input.root, input.taskId, input.boundary);
+  assertRevision(gate, input.revisionId);
+  if (gate.consumedAt) throw new Error(`User choice gate ${input.boundary} has already been consumed.`);
+  gate.choice = input.choice;
+  gate.approvedAt = (/* @__PURE__ */ new Date()).toISOString();
+  await writeFile15(pathFor2(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}
+`);
+}
+async function requireUserChoiceGate(input) {
+  const gate = await readGate(input.root, input.taskId, input.boundary).catch(() => void 0);
+  if (!gate || !gate.choice || gate.consumedAt) throw new Error(`${input.boundary} requires an explicit user choice before continuing.`);
+  assertRevision(gate, input.revisionId);
+  return gate;
+}
+async function consumeUserChoiceGate(input) {
+  const gate = await requireUserChoiceGate(input);
+  gate.consumedAt = (/* @__PURE__ */ new Date()).toISOString();
+  await writeFile15(pathFor2(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}
+`);
+}
+async function readGate(root, taskId, boundary) {
+  assertValidTaskId(taskId);
+  return JSON.parse(await readFile19(pathFor2(root, taskId, boundary), "utf8"));
+}
+function assertRevision(gate, revisionId) {
+  if (gate.revisionId !== revisionId) throw new Error(`User choice gate ${gate.boundary} is not bound to the current revision.`);
+}
+function pathFor2(root, taskId, boundary) {
+  return join23(root, ".kata/tasks", taskId, `user-choice-${boundary}.json`);
+}
+
 // src/wiki/drift.ts
 init_record();
 init_store();
-import { readFile as readFile18 } from "node:fs/promises";
-import { join as join22 } from "node:path";
+import { readFile as readFile20 } from "node:fs/promises";
+import { join as join24 } from "node:path";
 async function verifySources(root) {
   const records = await readWikiRecords(root);
   const intact = [];
@@ -6699,8 +6968,8 @@ async function verifySources(root) {
     }
     for (const [sourcePath, expectedHash] of sourceHashEntries) {
       try {
-        const absolutePath = join22(root, sourcePath);
-        const content = await readFile18(absolutePath, "utf8");
+        const absolutePath = join24(root, sourcePath);
+        const content = await readFile20(absolutePath, "utf8");
         const currentHash = computeFileHash(content);
         if (currentHash !== expectedHash) {
           changedSources.push(sourcePath);
@@ -6774,8 +7043,8 @@ async function retireWikiRecord(root, id, rejection) {
 init_store();
 
 // src/wiki/lifecycle.ts
-import { mkdir as mkdir13, readFile as readFile19, readdir as readdir9, writeFile as writeFile15 } from "node:fs/promises";
-import { join as join23 } from "node:path";
+import { mkdir as mkdir16, readFile as readFile21, readdir as readdir9, writeFile as writeFile16 } from "node:fs/promises";
+import { join as join25 } from "node:path";
 init_store();
 var reviewAfterDays = 90;
 var maxCandidatesPerTask = 2;
@@ -6793,7 +7062,7 @@ async function auditWiki(root) {
   }
   const candidatesByTask = /* @__PURE__ */ new Map();
   for (const record of recordsBeforeDrift.filter((item) => item.status === "candidate")) candidatesByTask.set(record.validationTaskId, (candidatesByTask.get(record.validationTaskId) ?? 0) + 1);
-  const pages = await countPages(join23(root, ".llmwiki"));
+  const pages = await countPages(join25(root, ".llmwiki"));
   const duplicateGroups = [...duplicates.values()].filter((group) => group.length > 1).sort((a, b) => a[0].localeCompare(b[0]));
   const overBudgetTasks = [...candidatesByTask.entries()].filter(([, count]) => count > maxCandidatesPerTask).map(([taskId, candidates]) => ({ taskId, candidates, limit: maxCandidatesPerTask })).sort((a, b) => a.taskId.localeCompare(b.taskId));
   const recommendedActions = lifecycleActions(records, {
@@ -6807,14 +7076,14 @@ async function auditWiki(root) {
 }
 async function createRefreshPacket(root, taskId) {
   const audit = await auditWiki(root);
-  const path = join23(root, ".kata/tasks", taskId, "wiki-refresh.json");
-  await mkdir13(join23(root, ".kata/tasks", taskId), { recursive: true });
-  await writeFile15(path, `${JSON.stringify({ taskId, generatedAt: audit.generatedAt, staleIds: audit.staleIds, reviewDueIds: audit.reviewDueIds, duplicateGroups: audit.duplicateGroups, instructions: ["Revalidate code/document anchors before editing.", "Update, merge, mark stale, or reject records; do not promote automatically."] }, null, 2)}
+  const path = join25(root, ".kata/tasks", taskId, "wiki-refresh.json");
+  await mkdir16(join25(root, ".kata/tasks", taskId), { recursive: true });
+  await writeFile16(path, `${JSON.stringify({ taskId, generatedAt: audit.generatedAt, staleIds: audit.staleIds, reviewDueIds: audit.reviewDueIds, duplicateGroups: audit.duplicateGroups, instructions: ["Revalidate code/document anchors before editing.", "Update, merge, mark stale, or reject records; do not promote automatically."] }, null, 2)}
 `);
   return { path: `.kata/tasks/${taskId}/wiki-refresh.json`, audit };
 }
 async function relevantWiki(root, taskId, limit = 8) {
-  const task = JSON.parse(await readFile19(join23(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile21(join25(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   const terms = new Set(`${task.title ?? ""} ${(task.acceptance ?? []).map((item) => item.statement ?? "").join(" ")}`.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? []);
   return (await readWikiRecords(root)).filter((record) => record.status === "verified").map((record) => ({ record, score: score(record, terms) })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id)).slice(0, limit).map((item) => item.record);
 }
@@ -6825,7 +7094,7 @@ function score(record, terms) {
 async function countPages(root) {
   try {
     const entries = await readdir9(root, { withFileTypes: true });
-    const counts = await Promise.all(entries.map((entry) => entry.isDirectory() ? countPages(join23(root, entry.name)) : entry.name.endsWith(".md") ? 1 : 0));
+    const counts = await Promise.all(entries.map((entry) => entry.isDirectory() ? countPages(join25(root, entry.name)) : entry.name.endsWith(".md") ? 1 : 0));
     return counts.reduce((a, b) => a + b, 0);
   } catch {
     return 0;
@@ -6909,11 +7178,15 @@ ${b}`.toLowerCase();
 }
 
 // src/hooks/runtime.ts
-import { mkdir as mkdir14, readFile as readFile20, rm as rm3, writeFile as writeFile16 } from "node:fs/promises";
-import { dirname as dirname7, join as join24 } from "node:path";
+import { mkdir as mkdir17, readFile as readFile22, rm as rm4, writeFile as writeFile17 } from "node:fs/promises";
+import { dirname as dirname7, join as join26 } from "node:path";
 async function activateHookTask(input) {
   assertValidTaskId(input.taskId);
   const phase = await readTaskPhase(input.root, input.taskId);
+  const expectedRole = roleForPhase(phase);
+  if (input.role !== expectedRole) {
+    throw new Error(`Hook role ${input.role} does not match current phase ${phase}; expected ${expectedRole}.`);
+  }
   const branch = currentGitBranch(input.root);
   const active = {
     taskId: input.taskId,
@@ -6925,36 +7198,44 @@ async function activateHookTask(input) {
     activatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const path = activeHookTaskPath(input.root);
-  await mkdir14(dirname7(path), { recursive: true });
-  await writeFile16(path, `${JSON.stringify(active, null, 2)}
+  await mkdir17(dirname7(path), { recursive: true });
+  await writeFile17(path, `${JSON.stringify(active, null, 2)}
 `, "utf8");
   return active;
 }
+function roleForPhase(phase) {
+  if (phase === "intake" || phase === "plan") return "designer";
+  if (phase === "implement") return "implementer";
+  if (phase === "hardVerify" || phase === "review") return "reviewer";
+  if (phase === "judge") return "judge";
+  if (phase === "distill") return "distiller";
+  return "approver";
+}
 async function deactivateHookTask(root) {
-  await rm3(activeHookTaskPath(root), { force: true });
+  await rm4(activeHookTaskPath(root), { force: true });
 }
 async function readActiveHookTask(root) {
   try {
-    return JSON.parse(await readFile20(activeHookTaskPath(root), "utf8"));
+    return JSON.parse(await readFile22(activeHookTaskPath(root), "utf8"));
   } catch (error) {
-    if (isNodeError5(error) && error.code === "ENOENT") return null;
+    if (isNodeError7(error) && error.code === "ENOENT") return null;
     throw error;
   }
 }
 async function readTaskPhase(root, taskId) {
-  const state = JSON.parse(await readFile20(join24(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile22(join26(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   return state.phase;
 }
 function activeHookTaskPath(root) {
-  return join24(root, ".kata/runtime/active-task.json");
+  return join26(root, ".kata/runtime/active-task.json");
 }
-function isNodeError5(error) {
+function isNodeError7(error) {
   return error instanceof Error && "code" in error;
 }
 
 // src/adapters/doctor.ts
-import { readFile as readFile21, stat as stat5 } from "node:fs/promises";
-import { join as join25 } from "node:path";
+import { readFile as readFile23, stat as stat5 } from "node:fs/promises";
+import { join as join27 } from "node:path";
 async function doctor(platform, scope, options = {}) {
   const root = installationRoot(scope, options);
   const manifest = await readOwnershipManifest(root);
@@ -6999,7 +7280,7 @@ function hookConfigPathFor2(platform, scope) {
   return null;
 }
 async function checkPath(root, manifest, relativePath, kind) {
-  const content = await readOptional2(join25(root, relativePath));
+  const content = await readOptional2(join27(root, relativePath));
   if (content === void 0) return { path: relativePath, kind, status: "missing" };
   const owned = manifest.files?.[relativePath];
   if (owned?.sha256 && owned.sha256 !== sha2562(content)) {
@@ -7009,15 +7290,15 @@ async function checkPath(root, manifest, relativePath, kind) {
 }
 async function checkExists(root, relativePath, kind) {
   try {
-    await stat5(join25(root, relativePath));
+    await stat5(join27(root, relativePath));
     return { path: relativePath, kind, status: "ok" };
   } catch (error) {
-    if (isNodeError6(error) && error.code === "ENOENT") return { path: relativePath, kind, status: "missing" };
+    if (isNodeError8(error) && error.code === "ENOENT") return { path: relativePath, kind, status: "missing" };
     throw error;
   }
 }
 async function readOwnershipManifest(root) {
-  const content = await readOptional2(join25(root, ".kata/adapters/manifest.json"));
+  const content = await readOptional2(join27(root, ".kata/adapters/manifest.json"));
   if (!content) return {};
   try {
     return JSON.parse(content);
@@ -7027,9 +7308,9 @@ async function readOwnershipManifest(root) {
 }
 async function readOptional2(path) {
   try {
-    return await readFile21(path, "utf8");
+    return await readFile23(path, "utf8");
   } catch (error) {
-    if (isNodeError6(error) && error.code === "ENOENT") return void 0;
+    if (isNodeError8(error) && error.code === "ENOENT") return void 0;
     throw error;
   }
 }
@@ -7041,12 +7322,12 @@ function summarize(checks) {
   }
   return summary;
 }
-function isNodeError6(error) {
+function isNodeError8(error) {
   return error instanceof Error && "code" in error;
 }
 
 // src/core/git-flow.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
+import { execFileSync as execFileSync4, spawn as spawn3 } from "node:child_process";
 var runGit = (root, args) => {
   try {
     return { ok: true, stdout: execFileSync4("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() };
@@ -7054,35 +7335,134 @@ var runGit = (root, args) => {
     return { ok: false, stdout: "" };
   }
 };
-function inspectGitFlow(root, taskId, run = runGit) {
+function inspectGitFlow(root, taskId, run = runGit, branchKind = "feature", install2 = installGitFlow) {
   const dirty = run(root, ["status", "--porcelain"]);
   if (!dirty.ok) return failed("repository_unavailable");
   const unmanagedChanges = (dirty.stdout ?? "").split("\n").filter((line) => line.trim() && !line.slice(3).startsWith(".kata/"));
   if (unmanagedChanges.length > 0) return failed("worktree_dirty");
   const currentBranch = run(root, ["branch", "--show-current"]);
-  const configuredBase = run(root, ["config", "--get", "gitflow.branch.develop"]);
-  const baseBranch = configuredBase.ok && configuredBase.stdout ? configuredBase.stdout : run(root, ["rev-parse", "--verify", "--quiet", "develop"]).ok ? "develop" : currentBranch.ok && currentBranch.stdout ? currentBranch.stdout : "";
+  const configuredBase = run(root, ["config", "--get", baseConfigKey(branchKind)]);
+  const fallbackBase = branchKind === "hotfix" ? "master" : "develop";
+  const baseBranch = configuredBase.ok && configuredBase.stdout ? configuredBase.stdout : run(root, ["rev-parse", "--verify", "--quiet", fallbackBase]).ok ? fallbackBase : currentBranch.ok && currentBranch.stdout ? currentBranch.stdout : "";
   if (!baseBranch) return failed("base_branch_unresolved");
-  const branch = `feature/${taskId}`;
+  const branch = `${branchKind}/${taskId}`;
   const existing = run(root, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]).ok;
-  const gitFlowAvailable = configuredBase.ok && run(root, ["flow", "version"]).ok;
+  let flowVersion = configuredBase.ok ? run(root, ["flow", "version"]) : { ok: false, stdout: "" };
+  let installation = configuredBase.ok && !flowVersion.ok ? install2(root) : void 0;
+  if (installation?.status === "installed") {
+    flowVersion = run(root, ["flow", "version"]);
+    if (!flowVersion.ok) installation = { ...installation, status: "failed" };
+  }
+  const gitFlowAvailable = configuredBase.ok && flowVersion.ok;
   const strategy = gitFlowAvailable ? "git-flow" : "manual";
   if (existing) {
-    if (currentBranch.stdout === branch) return { strategy, branch, baseBranch, status: "active", command: [] };
-    return { strategy, branch, baseBranch, status: "failed", command: [], reason: "target_branch_exists" };
+    if (currentBranch.stdout === branch) return { strategy, branch, baseBranch, status: "active", command: [], ...installation ? { installation } : {} };
+    return { strategy, branch, baseBranch, status: "failed", command: [], reason: "target_branch_exists", ...installation ? { installation } : {} };
   }
   return {
     strategy,
     branch,
     baseBranch,
     status: "pending_confirmation",
-    command: strategy === "git-flow" ? ["flow", "feature", "start", taskId] : ["switch", "-c", branch, baseBranch]
+    command: strategy === "git-flow" ? ["flow", branchKind, "start", taskId] : ["switch", "-c", branch, baseBranch],
+    ...installation ? { installation } : {}
   };
+}
+function baseConfigKey(branchKind) {
+  return branchKind === "hotfix" ? "gitflow.branch.master" : "gitflow.branch.develop";
+}
+var installAttemptConfigKey = "kata.gitflow-install-attempted";
+var packageManagers = {
+  darwin: [{ binary: "brew", args: ["install", "git-flow-avh"], manualCommand: "brew install git-flow-avh" }],
+  linux: [
+    { binary: "apt-get", args: ["install", "-y", "git-flow"], manualCommand: "sudo apt-get install -y git-flow" },
+    { binary: "dnf", args: ["install", "-y", "gitflow"], manualCommand: "sudo dnf install -y gitflow" },
+    { binary: "pacman", args: ["-S", "--noconfirm", "gitflow"], manualCommand: "sudo pacman -S --noconfirm gitflow" },
+    { binary: "apk", args: ["add", "git-flow"], manualCommand: "sudo apk add git-flow" }
+  ]
+};
+var commandExists = (command) => {
+  try {
+    execFileSync4(command, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+var installGitFlow = (root) => {
+  const candidate = packageManagers[process.platform]?.find(({ binary }) => commandExists(binary));
+  if (!candidate) {
+    return {
+      status: "unsupported",
+      manualCommand: process.platform === "win32" ? "Install Git Flow for Windows, then rerun the Kata command." : "Install git-flow with your system package manager, then rerun the Kata command."
+    };
+  }
+  if (runGit(root, ["config", "--local", "--get", installAttemptConfigKey]).ok) {
+    return { status: "failed", command: [candidate.binary, ...candidate.args], manualCommand: candidate.manualCommand };
+  }
+  try {
+    execFileSync4(candidate.binary, candidate.args, { stdio: "ignore", timeout: 12e4 });
+    runGit(root, ["config", "--local", "--unset-all", installAttemptConfigKey]);
+    return { status: "installed", command: [candidate.binary, ...candidate.args], manualCommand: candidate.manualCommand };
+  } catch {
+    runGit(root, ["config", "--local", installAttemptConfigKey, (/* @__PURE__ */ new Date()).toISOString()]);
+    return { status: "failed", command: [candidate.binary, ...candidate.args], manualCommand: candidate.manualCommand };
+  }
+};
+async function initializeGitFlowProject(root, options) {
+  const run = options.run ?? runGit;
+  const install2 = options.install ?? installGitFlow;
+  const execute = options.execute ?? ((cwd2, args) => {
+    execFileSync4("git", args, { cwd: cwd2, stdio: "ignore", timeout: 12e4 });
+  });
+  const executeInteractive = options.executeInteractive ?? runInteractiveGitFlow;
+  const repository = run(root, ["rev-parse", "--is-inside-work-tree"]);
+  if (!repository.ok || repository.stdout !== "true") return { status: "skipped", reason: "not_a_git_repository" };
+  const master = run(root, ["config", "--get", "gitflow.branch.master"]);
+  const develop = run(root, ["config", "--get", "gitflow.branch.develop"]);
+  if (master.ok && develop.ok) return { status: "already_initialized" };
+  if (master.ok || develop.ok) return { status: "skipped", reason: "git_flow_partially_initialized" };
+  let flowVersion = run(root, ["flow", "version"]);
+  const installation = flowVersion.ok ? void 0 : install2(root);
+  if (installation?.status === "installed") flowVersion = run(root, ["flow", "version"]);
+  if (!flowVersion.ok) {
+    return {
+      status: "failed",
+      ...installation ? { installation } : {},
+      reason: installation?.status === "failed" ? "git_flow_install_failed" : "git_flow_unavailable"
+    };
+  }
+  const command = ["flow", "init", ...options.interactive ? [] : ["-d"]];
+  try {
+    if (options.interactive) await executeInteractive(root, command);
+    else execute(root, command);
+    return { status: "initialized", command, ...installation ? { installation } : {} };
+  } catch (error) {
+    return {
+      status: "failed",
+      command,
+      ...installation ? { installation } : {},
+      reason: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+function runInteractiveGitFlow(root, args) {
+  return new Promise((resolve6, reject) => {
+    const child = spawn3("git", args, { cwd: root, stdio: "inherit", env: { ...process.env } });
+    child.once("error", reject);
+    child.once("exit", (code) => code === 0 ? resolve6() : reject(new Error(`git ${args.join(" ")} exited with code ${code}`)));
+  });
 }
 function applyGitFlowPlan(root, plan, run = runGit) {
   if (plan.status !== "pending_confirmation" || plan.command.length === 0) return { ...plan, status: "failed" };
   const result = run(root, plan.command);
-  return { strategy: plan.strategy, branch: plan.branch, baseBranch: plan.baseBranch, status: result.ok ? "active" : "failed" };
+  return {
+    strategy: plan.strategy,
+    branch: plan.branch,
+    baseBranch: plan.baseBranch,
+    status: result.ok ? "active" : "failed",
+    ...plan.installation ? { installation: plan.installation } : {}
+  };
 }
 function failed(reason) {
   return { strategy: "manual", branch: "", baseBranch: "", status: "failed", command: [], reason };
@@ -7093,21 +7473,26 @@ function getRuntimeCompatibility(manifestPath2) {
   return loadCometCompatibility(manifestPath2);
 }
 var quietOutput = false;
+var jsonOutput = false;
 async function main(argv = process.argv.slice(2)) {
   const previousQuiet = quietOutput;
+  const previousJson = jsonOutput;
+  jsonOutput = previousJson || isJsonOutput(argv);
   quietOutput = previousQuiet || isQuietOutput(argv) || isDefaultSilentInstallerCommand(argv);
   try {
     await runMain(stripOutputModeArgs(argv));
   } finally {
     quietOutput = previousQuiet;
+    jsonOutput = previousJson;
   }
 }
 async function runMain(argv) {
   const [command, maybeChange] = argv;
-  const workspaceRoot = parseRootArg(argv) ?? resolveWorkspaceRoot();
   if (!command) {
     throw new Error("Usage: kata <init|update|uninstall|discover|comet|codegraph|tasks> [--platform name] [--scope project|global] [--root path]");
   }
+  const requestedChange = parseChangeArg(argv.slice(1));
+  const workspaceRoot = parseRootArg(argv) ?? (requestedChange && command !== "open" && (isWorkflowCommand(command) || command === "status") ? resolveWorkspaceRootForTask(requestedChange) : resolveWorkspaceRoot());
   if (isWorkflowCommand(command) && (argv.includes("--help") || argv.includes("-h"))) {
     outputResult({
       command,
@@ -7143,7 +7528,13 @@ async function runMain(argv) {
       return;
     }
     const report = command === "init" ? await install(args.platform, args.scope, args.options) : command === "update" ? await update(args.platform, args.scope, args.options) : await uninstall(args.platform, args.scope, args.options);
-    outputResult(report);
+    const runtimeRefresh = command === "update" ? await runRuntimeRefresh(args.options.root) : void 0;
+    const gitFlowInit = command === "init" ? args.options.dryRun ? { status: "skipped", reason: "dry_run" } : await initializeGitFlowProject(args.options.root, { interactive: process.stdin.isTTY && !args.yes }) : void 0;
+    outputResult({
+      ...report,
+      ...runtimeRefresh ? { runtimeRefresh } : {},
+      ...gitFlowInit ? { gitFlowInit } : {}
+    });
     return;
   }
   if (command === "discover") {
@@ -7155,6 +7546,12 @@ async function runMain(argv) {
   if (command === "doctor") {
     const result = await runDoctorCommand(argv.slice(1));
     outputResult(result);
+    return;
+  }
+  if (command === "recover") {
+    const taskId = parseChangeArg(argv.slice(1)) ?? maybeChange;
+    if (!taskId || taskId.startsWith("--")) throw new Error("Usage: kata recover --change <task-id>");
+    outputResult({ command: "recover", ...await recover(taskId, { root: workspaceRoot }) });
     return;
   }
   if (command === "wiki") {
@@ -7184,6 +7581,10 @@ async function runMain(argv) {
   }
   if (command === "handoff") {
     outputResult(await runHandoffCommand(argv.slice(1)));
+    return;
+  }
+  if (command === "gate") {
+    outputResult(await runGateCommand(argv.slice(1), workspaceRoot));
     return;
   }
   if (command === "collect") {
@@ -7230,6 +7631,10 @@ async function runMain(argv) {
       { value: "zh", label: "\u4E2D\u6587" }
     ]) : "zh";
     await client.init(change, { language: initLanguage });
+    outputResult({
+      command: "init",
+      gitFlowInit: await initializeGitFlowProject(workspaceRoot, { interactive: process.stdin.isTTY })
+    });
   } else if (command === "next") outputResult(await client.next(change));
   else if (isWorkflowCommand(command)) {
     const result = await runWorkflowCommand(command, change, workspaceRoot, workflowPlatform(argv.slice(1)) ?? resolved?.platform, argv.slice(1));
@@ -7242,8 +7647,56 @@ async function runAggregateUpdate(scope, options) {
   const realPlatforms = [.../* @__PURE__ */ new Set([...managed, ...detected])].filter((platform) => platform !== "generic").sort();
   const targets = [...realPlatforms];
   if (targets.length === 0 || managed.includes("generic")) targets.push("generic");
-  const reports = await Promise.all(targets.map((platform) => update(platform, scope, options)));
-  return mergeInstallReports({ command: "update", mode: "auto", scope, reports });
+  writeUpdateProgress(`Kata update \xB7 ${scope === "project" ? "\u5F53\u524D\u9879\u76EE" : "\u5168\u5C40\u5B89\u88C5"}
+`);
+  const reports = [];
+  for (const platform of targets) {
+    writeUpdateProgress(`
+\u2192 \u66F4\u65B0 ${platform}
+`);
+    const report = await update(platform, scope, options);
+    reports.push(report);
+    writeUpdateProgress(formatUpdateReport(report));
+  }
+  const runtimeRefresh = await runRuntimeRefresh(options.root);
+  writeUpdateProgress(formatRuntimeRefresh(runtimeRefresh));
+  return { ...mergeInstallReports({ command: "update", mode: "auto", scope, reports }), runtimeRefresh };
+}
+async function runRuntimeRefresh(root) {
+  const timeoutMs = runtimeRefreshTimeoutMs();
+  const comet = await withTimeout(updateComet(), timeoutMs, `Comet update timed out after ${timeoutMs}ms`).then((result) => ({ success: true, previousVersion: result.previousVersion, installedVersion: result.installedVersion })).catch((error) => ({ success: false, error: error instanceof Error ? error.message : String(error) }));
+  const runCodegraph = (subcommand) => {
+    try {
+      const output = execFileSync5("codegraph", [subcommand], {
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+        cwd: root,
+        env: codeGraphExecutionEnv(),
+        stdio: ["ignore", "pipe", "pipe"]
+      }).trim();
+      return { success: true, ...output ? { output } : {} };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  return { comet, codegraphSync: runCodegraph("sync"), codegraphIndex: runCodegraph("index") };
+}
+function runtimeRefreshTimeoutMs() {
+  const configured = Number.parseInt(process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS ?? "", 10);
+  return Number.isSafeInteger(configured) && configured >= 1e3 && configured <= 12e4 ? configured : 3e4;
+}
+async function withTimeout(operation, timeoutMs, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 function isQuietOutput(argv) {
   return process.env.STRATA_QUIET === "1" || process.env.STRATA_QUIET === "true" || argv.includes("--quiet");
@@ -7253,7 +7706,7 @@ function isJsonOutput(argv) {
 }
 function isDefaultSilentInstallerCommand(argv) {
   const command = argv[0];
-  return (command === "init" || command === "update" || command === "uninstall") && !isJsonOutput(argv);
+  return (command === "init" || command === "uninstall") && !isJsonOutput(argv);
 }
 function stripOutputModeArgs(argv) {
   return argv.filter((arg) => arg !== "--quiet" && arg !== "--json");
@@ -7330,12 +7783,20 @@ async function runInitWizardCommand(argv, defaultRoot) {
     platforms = await discoverPlatforms({ ...args.options, root });
     return planDetectedInit(platforms, { scope: "project", language: "zh" });
   })() : await promptInitPlan(platforms);
-  const cometInit = await initCometProject({
+  const cometInit = useAuto ? {
+    command: "comet init",
+    status: "deferred",
+    path: null,
     root,
     scope: plan.scope,
     language: plan.language,
-    yes: useAuto
+    nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}`
+  } : await initCometProject({
+    root,
+    scope: plan.scope,
+    language: plan.language
   });
+  const gitFlowInit = args.options.dryRun ? { status: "skipped", reason: "dry_run" } : await initializeGitFlowProject(root, { interactive: !useAuto && process.stdin.isTTY });
   const reports = [];
   const preStates = [];
   for (const platform of plan.selected) {
@@ -7350,38 +7811,36 @@ async function runInitWizardCommand(argv, defaultRoot) {
       )
     );
   }
-  let codegraphResult = {
-    codegraph: { status: "skipped" }
-  };
-  try {
-    const output = execFileSync5("codegraph", ["index"], {
-      encoding: "utf-8",
-      cwd: root,
-      env: codeGraphExecutionEnv()
-    }).trim();
-    codegraphResult = {
-      codegraph: { status: "initialized", ...output ? { error: void 0 } : {} }
-    };
-  } catch (error) {
-    codegraphResult = {
-      codegraph: {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error)
-      }
-    };
-  }
+  const codegraphResult = useAuto ? { codegraph: { status: "deferred", nextCommand: "kata codegraph install --yes" } } : (() => {
+    try {
+      const output = execFileSync5("codegraph", ["index"], {
+        encoding: "utf-8",
+        cwd: root,
+        env: codeGraphExecutionEnv()
+      }).trim();
+      return { codegraph: { status: "initialized", ...output ? { error: void 0 } : {} } };
+    } catch (error) {
+      return { codegraph: { status: "failed", error: error instanceof Error ? error.message : String(error) } };
+    }
+  })();
   const result = mergeInstallReports({
     command: "init",
     mode: useAuto ? "auto" : "interactive",
     scope: plan.scope,
     reports
   });
-  return { ...result, cometInit, ...codegraphResult };
+  return { ...result, cometInit, gitFlowInit, ...codegraphResult };
 }
 async function runWorkflowCommand(command, change, root, platform, argv = []) {
+  const waivers = command === "build" ? await readWaiversFile(argv) : void 0;
+  const inputPhase = await readWorkflowPhase(root, change);
+  const boundary = boundaryForCommand(command, inputPhase);
+  if (boundary) await requireUserChoiceGate({ root, taskId: change, boundary });
+  if (command !== "open" && inputPhase !== null && inputPhase !== "intake") {
+    await requireWorkflowReceipt(root, change, roleForCommand(command));
+  }
   const explicitChange = parseChangeArg(argv.slice(1));
   let workflowProfile = requiresWorkflowProfile(command) ? await resolveWorkflowProfile(command, argv) : void 0;
-  const waivers = command === "build" ? await readWaiversFile(argv) : void 0;
   const abortController = command === "build" ? new AbortController() : void 0;
   const onProgress = command === "build" && argv.includes("--seal") ? (event) => {
     process.stderr.write(`${JSON.stringify(event)}
@@ -7396,33 +7855,48 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
   }
-  const result = await runCommand(command, change, root, {
-    title: `Change ${change}`,
+  const branchPreparationOnly = workflowProfile?.isolationMode === "git_flow" && command !== "open";
+  const commandToRun = branchPreparationOnly ? "open" : command;
+  const result = await runCommand(commandToRun, change, root, {
+    title: command === "hotfix" ? `Hotfix ${change}` : command === "tweak" ? `Tweak ${change}` : `Change ${change}`,
     acceptance: [{ id: "AC-1", statement: "Implement the change." }],
     ...platform ? { platform } : {},
-    ...command === "build" ? { seal: argv.includes("--seal") } : {},
+    ...commandToRun === "build" ? { seal: argv.includes("--seal") } : {},
     ...command === "review" ? { approve: argv.includes("--approve") } : {},
     ...command === "review" && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {},
-    ...command === "review" || command === "judge" || command === "archive" ? { confirmHostModel: argv.includes("--confirm-host-model") } : {},
-    ...command === "open" || command === "build" ? { allowOwnershipConflicts: argv.includes("--allow-ownership-conflicts") } : {},
+    ...command === "review" || command === "judge" || command === "archive" ? { confirmHostModel: boundary !== null } : {},
+    ...commandToRun === "open" || commandToRun === "build" ? { allowOwnershipConflicts: argv.includes("--allow-ownership-conflicts") } : {},
     ...waivers ? { waivers } : {},
-    ...(command === "open" || command === "build") && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {},
+    ...(commandToRun === "open" || commandToRun === "build") && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {},
     ...workflowProfile ? { workflowProfile } : {},
     ...onProgress ? { onProgress, signal: abortController?.signal } : {}
   });
   if (explicitChange && result.taskId !== change) {
     return { command, taskId: change, phase: "intake", success: false, error: `Task ID mismatch: requested ${change} but result returned ${result.taskId}.` };
   }
+  if (boundary && result.success) await consumeUserChoiceGate({ root, taskId: change, boundary });
+  const nextBoundary = result.success ? result.phase === "plan" ? "implementation_gate" : result.phase === "hardVerify" && command === "verify" ? "review_gate" : result.phase === "review" && command === "review" && argv.includes("--approve") ? "judge_gate" : result.phase === "judge" && command === "judge" ? "archive_gate" : null : null;
+  if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
   if (result.success && workflowProfile?.isolationMode === "git_flow") {
-    const plan = inspectGitFlow(root, result.taskId);
+    const plan = inspectGitFlow(root, result.taskId, void 0, gitFlowBranchKindForCommand(command));
     workflowProfile = await updateGitFlowProfile(root, result.taskId, plan);
   }
   const upstream = await readUpstreamSummary(root, result.taskId).catch(() => null);
   const suggestion = workflowProfile ? null : upstream ? suggestCandidateAction(result.phase, upstream) : null;
   const gitFlowPending = workflowProfile?.gitFlow?.status === "pending_confirmation";
+  const gitFlowManualCommand = workflowProfile?.gitFlow?.installation?.status !== "installed" ? workflowProfile?.gitFlow?.installation?.manualCommand : void 0;
   const phaseNextSkill = gitFlowPending ? "/kata" : nextSkillForPhase(result.phase);
   const nextAction = suggestion ? nextActionForTask(result.taskId, suggestion.nextSkill, suggestion.role, suggestion.reason) : null;
-  const workflowNextAction = workflowProfile ? gitFlowPending ? { taskId: result.taskId, nextSkill: "/kata", slashCommand: "/kata", cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`, role: "implementer", reason: "git_flow_confirmation_required", requiresUserConfirmation: true } : nextActionForTask(result.taskId, phaseNextSkill, roleForPhase(result.phase), workflowNextReason(result.phase)) : null;
+  const workflowNextAction = workflowProfile ? gitFlowPending ? {
+    taskId: result.taskId,
+    nextSkill: "/kata",
+    slashCommand: "/kata",
+    cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`,
+    role: "implementer",
+    reason: "git_flow_confirmation_required",
+    requiresUserConfirmation: true,
+    ...gitFlowManualCommand ? { pauseInstruction: `Git Flow \u81EA\u52A8\u5B89\u88C5\u672A\u5B8C\u6210\uFF1B\u8BF7\u5148\u624B\u52A8\u6267\u884C\uFF1A${gitFlowManualCommand}` } : {}
+  } : nextActionForTask(result.taskId, phaseNextSkill, roleForPhase2(result.phase), workflowNextReason(result.phase)) : null;
   const completion = result.success ? workflowCompletion(result.phase, workflowNextAction ?? nextAction) : null;
   const effectiveAction = workflowNextAction ?? nextAction;
   const fromRole = roleForCompletedCommand(command);
@@ -7432,7 +7906,7 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
   const active = result.success ? await activateHookTask({
     root,
     taskId: result.taskId,
-    role: roleForPhase(result.phase),
+    role: roleForPhase2(result.phase),
     ...platform ? { platform } : {},
     origin: "workflow"
   }).catch(() => null) : null;
@@ -7441,6 +7915,15 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     taskId: result.taskId,
     phase: result.phase,
     success: result.success,
+    execution: {
+      workspaceRoot: realpathSync(root),
+      executable: process.argv[1] ?? process.execPath,
+      runtimeVersion: process.version,
+      inputPhase,
+      outputPhase: result.phase,
+      ...upstream?.currentRevisionId ? { revisionId: upstream.currentRevisionId } : {},
+      handoffValidated: command === "open" ? false : true
+    },
     phaseNextSkill,
     ...completion ? { completion } : {},
     ...handoff ? {
@@ -7466,7 +7949,7 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
       nextAction
     } : {},
     ...upstream ? { upstream } : {},
-    ...shouldAskUser ? { askUser: statusActionPrompts(suggestion ?? { nextSkill: phaseNextSkill, role: roleForPhase(result.phase), reason: workflowNextReason(result.phase) }) } : {},
+    ...shouldAskUser ? { askUser: statusActionPrompts(suggestion ?? { nextSkill: phaseNextSkill, role: roleForPhase2(result.phase), reason: workflowNextReason(result.phase) }) } : {},
     ...active ? {
       activeTask: {
         taskId: active.taskId,
@@ -7481,6 +7964,58 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     ...result.diagnostics ? { diagnostics: result.diagnostics } : {},
     ...result.error ? { error: result.error } : {}
   };
+}
+async function readWorkflowPhase(root, taskId) {
+  try {
+    const state = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+    return typeof state.phase === "string" ? state.phase : null;
+  } catch {
+    return null;
+  }
+}
+function roleForCommand(command) {
+  if (command === "review" || command === "verify") return "reviewer";
+  if (command === "judge") return "judge";
+  if (command === "archive") return "distiller";
+  return "implementer";
+}
+function boundaryForCommand(command, phase) {
+  if (command === "build" && phase === "plan") return "implementation_gate";
+  if (command === "review" && phase === "hardVerify") return "review_gate";
+  if (command === "judge" && phase === "review") return "judge_gate";
+  if (command === "archive" && (phase === "judge" || phase === "distill")) return "archive_gate";
+  return null;
+}
+async function runGateCommand(argv, root) {
+  if (argv[0] !== "approve") throw new Error("Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>");
+  const task = valueAfter(argv, "--task");
+  const boundary = valueAfter(argv, "--boundary");
+  const choice = valueAfter(argv, "--choice");
+  if (!task || !boundary || !choice) throw new Error("kata gate approve requires --task, --boundary, and --choice");
+  await approveUserChoiceGate({ root, taskId: task, boundary, choice });
+  return { command: "gate approve", taskId: task, boundary, choice, approved: true };
+}
+function valueAfter(argv, flag) {
+  const index = argv.indexOf(flag);
+  return index >= 0 ? argv[index + 1] : void 0;
+}
+async function requireWorkflowReceipt(root, taskId, role) {
+  const handoffDirectory = join28(root, ".kata/tasks", taskId, "handoffs");
+  let entries;
+  try {
+    entries = await readdir10(handoffDirectory);
+  } catch {
+    throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
+  }
+  const ids = entries.filter((entry) => entry.startsWith("handoff-") && entry.endsWith(".receipt.json")).map((entry) => entry.slice(0, -".receipt.json".length)).sort().reverse();
+  for (const id of ids) {
+    try {
+      await requireAcknowledgedContextPacket({ root, taskId, id, role });
+      return;
+    } catch {
+    }
+  }
+  throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
 }
 function reviewEvidenceArg(argv) {
   const index = argv.indexOf("--review-evidence");
@@ -7528,7 +8063,7 @@ async function readWaiversFile(argv) {
   if (!path) throw new Error("Invalid waivers file: --waivers-file requires a path.");
   let parsed;
   try {
-    parsed = JSON.parse(await readFile22(path, "utf8"));
+    parsed = JSON.parse(await readFile24(path, "utf8"));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid waivers file: ${detail}`);
@@ -7545,11 +8080,11 @@ async function runGitFlowCommand(argv, root) {
   if (argv[0] !== "apply") throw new Error("Usage: kata git-flow apply --change <task-id>");
   const taskId = parseChangeArg(argv.slice(1));
   if (!taskId) throw new Error("Usage: kata git-flow apply --change <task-id>");
-  const task = JSON.parse(await readFile22(join26(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   if (!isWorkflowProfile(task.workflowProfile) || task.workflowProfile.isolationMode !== "git_flow") {
     throw new Error(`Task ${taskId} does not use Git Flow isolation`);
   }
-  const inspected = inspectGitFlow(root, taskId);
+  const inspected = inspectGitFlow(root, taskId, void 0, gitFlowBranchKindForProfile(task.workflowProfile));
   if (inspected.status === "pending_confirmation" && !argv.includes("--confirm")) {
     return {
       command: "git-flow apply",
@@ -7571,6 +8106,12 @@ async function runGitFlowCommand(argv, root) {
     workflowProfile,
     nextAction: state.status === "active" ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata design --change ${taskId}` } : { cliCommand: `kata git-flow apply --change ${taskId} --confirm`, reason: inspected.reason ?? "git_flow_setup_failed" }
   };
+}
+function gitFlowBranchKindForCommand(command) {
+  return command === "hotfix" ? "hotfix" : "feature";
+}
+function gitFlowBranchKindForProfile(profile) {
+  return profile.gitFlow?.branch.startsWith("hotfix/") ? "hotfix" : "feature";
 }
 function requiresWorkflowProfile(command) {
   return command === "open" || command === "hotfix" || command === "tweak";
@@ -7604,7 +8145,7 @@ function parseEnumArg(argv, flags, allowed, label) {
   }
   return value;
 }
-function roleForPhase(phase) {
+function roleForPhase2(phase) {
   if (phase === "intake") return "designer";
   if (phase === "plan" || phase === "implement") return "implementer";
   if (phase === "hardVerify") return "reviewer";
@@ -7641,14 +8182,14 @@ async function discoverSingleTaskForCurrentBranch(root) {
   if (!branch) return null;
   let taskIds;
   try {
-    taskIds = await readdir10(join26(root, ".kata/tasks"));
+    taskIds = await readdir10(join28(root, ".kata/tasks"));
   } catch {
     return null;
   }
   const matches = [];
   for (const taskId of taskIds) {
     try {
-      const task = JSON.parse(await readFile22(join26(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+      const task = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "task.json"), "utf8"));
       if (task.branch === branch && task.phase !== "archive") matches.push(task.id ?? taskId);
     } catch {
     }
@@ -7670,11 +8211,12 @@ async function runLocalStatusCommand(change, resolved, root = resolveWorkspaceRo
       ]
     };
   }
-  const state = JSON.parse(await readFile22(join26(root, ".kata/tasks", change, "current-state.json"), "utf8"));
+  if (await requiresRecovery(change, { root }).catch(() => false)) await recover(change, { root });
+  const state = JSON.parse(await readFile24(join28(root, ".kata/tasks", change, "current-state.json"), "utf8"));
   const autoActive = resolved?.source === "discovered" ? await activateHookTask({
     root,
     taskId: change,
-    role: roleForPhase(state.phase),
+    role: roleForPhase2(state.phase),
     ...resolved.platform ? { platform: resolved.platform } : {},
     origin: "discovered"
   }).catch(() => null) : null;
@@ -7754,7 +8296,7 @@ async function runDispatchStatusCommand(root) {
   return statusDiagnostic(candidates);
 }
 async function readTaskContext(root, change) {
-  const taskRaw = await readFile22(join26(root, ".kata/tasks", change, "task.json"), "utf8");
+  const taskRaw = await readFile24(join28(root, ".kata/tasks", change, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   let context;
   try {
@@ -8056,7 +8598,7 @@ async function runRelationsCommand(argv) {
 async function runHandoffCommand(argv) {
   const [subcommand, ...rest] = argv;
   const args = parseHandoffArgs(rest);
-  const root = args.root ?? resolveWorkspaceRoot();
+  const root = args.root ?? (args.task ? resolveWorkspaceRootForTask(args.task) : resolveWorkspaceRoot());
   if (!args.task) throw new Error("Usage: kata handoff <create|show|verify|acknowledge> --task <id>");
   if (subcommand === "create") {
     if (!args.from || !args.to) throw new Error("Usage: kata handoff create --task <id> --from <role> --to <role>");
@@ -8075,11 +8617,14 @@ async function runHandoffCommand(argv) {
       role: args.role,
       platform: args.platform,
       origin: "handoff"
+    }).catch((error) => {
+      if (error instanceof Error && error.message.includes("does not match current phase")) return null;
+      throw error;
     });
     return {
       command: "handoff acknowledge",
       receipt,
-      activeTask: {
+      ...active ? { activeTask: {
         taskId: active.taskId,
         role: active.role,
         phase: active.phase,
@@ -8087,7 +8632,7 @@ async function runHandoffCommand(argv) {
         ...active.branch ? { branch: active.branch } : {},
         ...active.origin ? { origin: active.origin } : {},
         active: true
-      }
+      } } : {}
     };
   }
   throw new Error(`Unknown handoff command: ${subcommand ?? ""}`);
@@ -8170,7 +8715,7 @@ function parseDelegationArgs(argv) {
   return args;
 }
 async function listTaskCandidates(root) {
-  const tasksRoot = join26(root, ".kata/tasks");
+  const tasksRoot = join28(root, ".kata/tasks");
   let entries;
   try {
     entries = await readdir10(tasksRoot);
@@ -8188,12 +8733,12 @@ async function listTaskCandidates(root) {
   return candidates.sort((a, b) => b.priority - a.priority || a.taskId.localeCompare(b.taskId));
 }
 async function readTaskCandidate(root, taskId) {
-  const task = JSON.parse(await readFile22(join26(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   const terminal = await resolveTerminalTask(root, taskId);
   if (terminal.taskId !== taskId) {
     throw new Error(`Task ${taskId} is redirected to ${terminal.taskId}`);
   }
-  const state = JSON.parse(await readFile22(join26(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   const phase = state.phase ?? "intake";
   const upstream = await readUpstreamSummary(root, taskId);
   const suggestion = suggestCandidateAction(phase, upstream);
@@ -8239,7 +8784,7 @@ async function runOrientCommand(argv) {
   const handoff = await createHandoff(root, change, role);
   const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...args.platform ? { platform: args.platform } : {} });
   const taskContext = await readTaskContext(root, change);
-  const state = JSON.parse(await readFile22(join26(root, ".kata/tasks", change, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile24(join28(root, ".kata/tasks", change, "current-state.json"), "utf8"));
   const phase = typeof state.phase === "string" ? state.phase : handoff.fromPhase;
   const upstream = await readUpstreamSummary(root, change);
   const suggestion = suggestCandidateAction(phase, upstream);
@@ -8723,7 +9268,58 @@ function isCliEntrypoint() {
 }
 function outputResult(result) {
   if (quietOutput) return;
+  if (!jsonOutput && isUpdateResult(result)) {
+    process.stdout.write(renderUpdateSummary(result));
+    return;
+  }
   process.stdout.write(JSON.stringify(result) + "\n");
+}
+function writeUpdateProgress(message) {
+  if (!quietOutput && !jsonOutput) process.stdout.write(message);
+}
+function isUpdateResult(result) {
+  return result.command === "update" || typeof result.platform === "string" && "written" in result && "unchanged" in result;
+}
+function formatUpdateReport(report) {
+  const changes = [
+    `\u5199\u5165 ${report.written.length}`,
+    `\u4FDD\u6301 ${report.unchanged.length}`,
+    `\u51B2\u7A81 ${report.conflicts.length}`,
+    `\u79FB\u9664 ${report.removed.length}`
+  ].join(" \xB7 ");
+  return `  ${report.dryRun ? "\u9884\u89C8\u5B8C\u6210" : "\u5B8C\u6210"}\uFF1A${changes}
+`;
+}
+function renderUpdateSummary(result) {
+  const reports = Array.isArray(result.reports) ? result.reports : [{
+    platform: String(result.platform),
+    summary: {
+      written: Array.isArray(result.written) ? result.written.length : 0,
+      unchanged: Array.isArray(result.unchanged) ? result.unchanged.length : 0,
+      conflicts: Array.isArray(result.conflicts) ? result.conflicts.length : 0,
+      removed: Array.isArray(result.removed) ? result.removed.length : 0,
+      dryRun: result.dryRun === true
+    }
+  }];
+  const total = reports.reduce((sum, report) => ({
+    written: sum.written + report.summary.written,
+    unchanged: sum.unchanged + report.summary.unchanged,
+    conflicts: sum.conflicts + report.summary.conflicts,
+    removed: sum.removed + report.summary.removed
+  }), { written: 0, unchanged: 0, conflicts: 0, removed: 0 });
+  const status = total.conflicts > 0 ? "\u5B8C\u6210\uFF08\u5B58\u5728\u9700\u4EBA\u5DE5\u5904\u7406\u7684\u51B2\u7A81\uFF09" : "\u5B8C\u6210";
+  const runtimeRefresh = result.runtimeRefresh;
+  return `
+${status}
+\u5E73\u53F0\uFF1A${reports.map((report) => report.platform).join("\u3001")}
+\u53D8\u66F4\uFF1A\u5199\u5165 ${total.written} \xB7 \u4FDD\u6301 ${total.unchanged} \xB7 \u51B2\u7A81 ${total.conflicts} \xB7 \u79FB\u9664 ${total.removed}
+${runtimeRefresh ? formatRuntimeRefresh(runtimeRefresh) : ""}${jsonOutput ? "" : "\u63D0\u793A\uFF1A\u4F7F\u7528 --json \u83B7\u53D6\u673A\u5668\u53EF\u8BFB\u62A5\u544A\uFF0C\u4F7F\u7528 --quiet \u9759\u9ED8\u6267\u884C\u3002\n"}`;
+}
+function formatRuntimeRefresh(result) {
+  const status = (value) => value.success ? "\u5B8C\u6210" : "\u5931\u8D25";
+  const cometVersion = result.comet.success && result.comet.installedVersion ? ` (${result.comet.installedVersion})` : "";
+  return `\u8FD0\u884C\u65F6\uFF1AComet \u66F4\u65B0 ${status(result.comet)}${cometVersion} \xB7 CodeGraph sync ${status(result.codegraphSync)} \xB7 CodeGraph index ${status(result.codegraphIndex)}
+`;
 }
 if (isCliEntrypoint()) {
   main().catch((error) => {
@@ -8734,6 +9330,6 @@ if (isCliEntrypoint()) {
 export {
   getRuntimeCompatibility,
   main,
-  roleForPhase
+  roleForPhase2 as roleForPhase
 };
 //# sourceMappingURL=cli.js.map

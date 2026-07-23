@@ -51,6 +51,37 @@ describe('Kata schema validation', () => {
     }
   });
 
+  it('validates the persisted Git Flow installation result', () => {
+    const task = {
+      id: 'task-git-flow',
+      title: 'Initialize Git Flow once',
+      phase: 'intake',
+      acceptance: [{ id: 'AC-1', statement: 'Persist Git Flow bootstrap status.' }],
+      createdAt: '2026-07-22T07:00:00.000Z',
+      updatedAt: '2026-07-22T07:00:00.000Z',
+      workflowProfile: {
+        version: 1,
+        isolationMode: 'git_flow',
+        developmentMode: 'standard',
+        reviewMode: 'std',
+        comet: { projectInit: 'not_requested', openStatus: 'required' },
+        gitFlow: {
+          strategy: 'manual', branch: 'feature/task-git-flow', baseBranch: 'develop', status: 'pending_confirmation',
+          installation: { status: 'failed', command: ['apt-get', 'install', '-y', 'git-flow'], manualCommand: 'sudo apt-get install -y git-flow' },
+        },
+      },
+    };
+
+    expect(validate('task', task)).toEqual(task);
+    expect(() => validate('task', {
+      ...task,
+      workflowProfile: {
+        ...task.workflowProfile,
+        gitFlow: { ...task.workflowProfile.gitFlow, installation: { status: 'unknown' } },
+      },
+    })).toThrow(/installation.*status/i);
+  });
+
   it('accepts only governed Wiki lifecycle statuses', () => {
     const baseRecord = {
       id: 'wiki-record-1',

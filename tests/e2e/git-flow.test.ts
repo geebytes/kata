@@ -52,4 +52,63 @@ describe('Git Flow CLI', () => {
     expect(active.workflowProfile.gitFlow.status).toBe('active');
     expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe('feature/cli-feature');
   });
+
+  it('preserves a recorded hotfix branch kind when confirmation applies the plan', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kata-git-flow-hotfix-cli-'));
+    roots.push(root);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+    await writeFile(join(root, 'README.md'), '# fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['flow', 'init', '-d'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['config', 'gitflow.branch.master', 'main'], { cwd: root });
+    execFileSync('git', ['config', 'gitflow.branch.develop', 'develop'], { cwd: root });
+    execFileSync('git', ['config', 'gitflow.prefix.hotfix', 'hotfix/'], { cwd: root });
+    await initLayout(root);
+    execFileSync('git', ['add', '.gitignore'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'configure kata runtime'], { cwd: root, stdio: 'ignore' });
+    await createTask({
+      root,
+      id: 'cli-hotfix',
+      title: 'CLI hotfix branch',
+      acceptance: [{ id: 'AC-1', statement: 'Create the hotfix branch.' }],
+      workflowProfile: {
+        ...defaultWorkflowProfile(),
+        isolationMode: 'git_flow',
+        gitFlow: { strategy: 'git-flow', branch: 'hotfix/cli-hotfix', baseBranch: 'main', status: 'pending_confirmation' },
+      },
+    });
+
+    await main(['git-flow', 'apply', '--change', 'cli-hotfix', '--confirm', '--root', root, '--quiet']);
+
+    const active = JSON.parse(await readFile(join(root, '.kata/tasks/cli-hotfix/task.json'), 'utf8'));
+    expect(active.workflowProfile.gitFlow).toMatchObject({ strategy: 'git-flow', branch: 'hotfix/cli-hotfix', baseBranch: 'main', status: 'active' });
+    expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe('hotfix/cli-hotfix');
+  });
+
+  it('does not run a Git Flow hotfix build before the branch is explicitly confirmed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kata-git-flow-hotfix-start-'));
+    roots.push(root);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+    await writeFile(join(root, 'README.md'), '# fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['flow', 'init', '-d'], { cwd: root, stdio: 'ignore' });
+    const branchBefore = execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim();
+    await main([
+      'hotfix', 'needs-confirmation', '--root', root, '--quiet',
+      '--isolation', 'git_flow', '--development', 'standard', '--review', 'std',
+    ]);
+
+    const task = JSON.parse(await readFile(join(root, '.kata/tasks/needs-confirmation/task.json'), 'utf8'));
+    expect(task.workflowProfile.gitFlow).toMatchObject({
+      strategy: 'git-flow', branch: 'hotfix/needs-confirmation', status: 'pending_confirmation',
+    });
+    expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe(branchBefore);
+    expect(JSON.parse(await readFile(join(root, '.kata/tasks/needs-confirmation/current-state.json'), 'utf8')).phase).toBe('intake');
+  });
 });

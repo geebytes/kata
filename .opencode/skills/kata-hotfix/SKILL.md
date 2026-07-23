@@ -12,7 +12,7 @@ Use this skill to inspect the Kata hotfix workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-hotfix` Skill as the human-facing interface. Use `kata hotfix --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-hotfix` Skill as the human-facing interface. Use `kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -64,7 +64,7 @@ The packet's allowed writes and guard instructions are authoritative. Model sele
 {
   "id": "kata-hotfix",
   "slashCommand": "/kata-hotfix",
-  "cli": "kata hotfix --change <change-id>",
+  "cli": "kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>",
   "phase": "hotfix",
   "summary": "Runs the constrained hotfix path for behavior fixes without new capability design. Use when the user asks for a focused bug fix or urgent repair."
 }
@@ -91,6 +91,7 @@ Keywords and intents that should trigger this skill:
 
 ## Output goals
 
+- Decide isolation, development, and review workflow choices before starting the repair.
 - Reproduce or identify the failure.
 - Apply a minimal fix.
 - Verify with regression evidence and archive when gates pass.
@@ -98,7 +99,7 @@ Keywords and intents that should trigger this skill:
 ## Invocation
 
 ```bash
-kata hotfix --change <change-id>
+kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -113,3 +114,35 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。
 
+## Skill-level workflow profile decision
+
+`/kata-hotfix` owns the user-facing decision flow. Do **not** rely on CLI TTY prompts for isolation, development, or review mode; many host platforms invoke the CLI non-interactively.
+
+Before running `kata hotfix`, resolve these three choices in the agent conversation:
+
+1. Isolation mode:
+   - `current_worktree` — use the current checkout; fastest, least isolated.
+   - `isolated_worktree` — use/create an isolated worktree; preferred for larger implementation work.
+   - `git_flow` — use a Git Flow branch: ordinary tasks use a feature branch; hotfix tasks use a hotfix branch.
+   - `user_decides` — defer the isolation decision until implementation.
+2. Development mode:
+   - `tdd` — write focused failing tests first, then implement.
+   - `standard` — implement directly with proportional tests.
+3. Review mode:
+   - `std` — standard independent review.
+   - `strict` — stricter architecture/regression review.
+   - `security` — security-focused review.
+
+If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before starting the task. A terse user confirmation such as “确认” may accept the recommended triple.
+
+Then invoke the deterministic layer with explicit flags:
+
+```bash
+kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>
+```
+
+Never let non-interactive CLI defaults silently choose the workflow profile.
+
+## After profile confirmation
+
+Do not ask the user to run `/comet-open` manually after `/kata-open`. When `workflowProfile.comet.openStatus` is `required`, `/kata-design <task>` performs the required acknowledgement before entering `plan`. Follow the returned next action after `/kata-hotfix` completes.

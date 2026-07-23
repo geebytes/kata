@@ -12,7 +12,7 @@ Use this skill to inspect the Kata design workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-design` Skill as the human-facing interface. Use `kata design --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-design` Skill as the human-facing interface. Use `kata design --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -32,7 +32,7 @@ Treat `nextAction.requiresUserConfirmation=true` as a hard stop. Do not invoke t
 
 This is mandatory at trust boundaries:
 
-- `implementation_gate`: stop after design and before the first build; ask whether to keep the current platform/model, delegate a bounded implementation slice to a lower-tier model, or run `/kata-delegate` for another platform.
+- `implementation_gate`: stop after design and before the first build; a platform-neutral handoff packet is already available for any receiving platform.
 - `review_gate`: stop after /kata-verify passes before /kata-review.
 - `judge_gate`: stop after review before /kata-judge.
 - `archive_gate`: stop after judge before /kata-archive.

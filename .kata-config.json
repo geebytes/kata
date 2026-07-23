@@ -1,0 +1,7 @@
+{
+  "quality": {
+    "buildChecks": [
+      { "name": "test", "kind": "test", "command": "npx", "args": ["vitest", "run"], "timeoutMs": 120000 }
+    ]
+  }
+}

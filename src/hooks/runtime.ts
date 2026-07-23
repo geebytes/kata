@@ -23,6 +23,10 @@ export async function activateHookTask(input: {
 }): Promise<ActiveHookTask> {
   assertValidTaskId(input.taskId);
   const phase = await readTaskPhase(input.root, input.taskId);
+  const expectedRole = roleForPhase(phase);
+  if (input.role !== expectedRole) {
+    throw new Error(`Hook role ${input.role} does not match current phase ${phase}; expected ${expectedRole}.`);
+  }
   const branch = currentGitBranch(input.root);
   const active: ActiveHookTask = {
     taskId: input.taskId,
@@ -37,6 +41,15 @@ export async function activateHookTask(input: {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(active, null, 2)}\n`, 'utf8');
   return active;
+}
+
+function roleForPhase(phase: Phase): string {
+  if (phase === 'intake' || phase === 'plan') return 'designer';
+  if (phase === 'implement') return 'implementer';
+  if (phase === 'hardVerify' || phase === 'review') return 'reviewer';
+  if (phase === 'judge') return 'judge';
+  if (phase === 'distill') return 'distiller';
+  return 'approver';
 }
 
 export { currentGitBranch };

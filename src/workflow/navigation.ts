@@ -11,6 +11,7 @@ export type UpstreamSummary = {
   majorFindings: number;
   reviewMode?: string;
   reviewReady?: boolean;
+  invalidReviewApproval?: boolean;
   judgeResult?: string;
   verifyResult?: string;
   failedAcceptance: number;
@@ -58,6 +59,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')), currentRevisionId)
     : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')) : null;
   const findings = review?.findings ?? [];
+  const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'judge.json')), currentRevisionId)
     : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'judge.json')) : null;
@@ -78,6 +80,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     majorFindings: findings.filter((finding) => finding.severity === 'major').length,
     ...(reviewMode ? { reviewMode } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
+    ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
@@ -147,6 +150,14 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: 'implementer',
       reason: 'repair_strict_major_findings',
       priority: 980 + upstream.majorFindings,
+    };
+  }
+  if (phase === 'review' && upstream.invalidReviewApproval) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'invalid_review_approval',
+      priority: 975,
     };
   }
   if (phase === 'review' && !upstream.reviewReady) {
@@ -285,6 +296,9 @@ export function statusActionPrompts(suggestion: { nextSkill: string; reason: str
   }
   if (suggestion.reason === 'complete_review_conclusion') {
     return ['Review 尚未形成绑定当前 revision 的显式结论和审查证据；请完成实际代码审查后，以 /kata-review --approve --review-evidence <summary> 记录结论，或写入 findings。'];
+  }
+  if (suggestion.reason === 'invalid_review_approval') {
+    return ['检测到无效 Review approval：缺少绑定当前 revision 的 reviewEvidence。该产物不能进入 Judge；请重新执行 /kata-review 并记录真实审查结论。'];
   }
   if (suggestion.reason === 'repair_failed_judge') {
     return ['检测到 Judge FAIL；建议先执行 /kata-build 修复 failed acceptance。'];

@@ -3,7 +3,6 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, writeConfigPatch } from '../core/config.js';
 import { initLlmWiki, buildLlmWikiTask } from '../wiki/llmwiki.js';
-import { initCometProject } from '../comet/install.js';
 import {
   commandManifest,
   renderSkill,
@@ -152,12 +151,6 @@ async function writeSkills(
   if (scope === 'project') {
     await writeProjectContractFiles(platform, scope, effectiveOptions, baseRoot, manifest, report);
     await manageProjectWiki(effectiveOptions, baseRoot, report);
-    await initCometProject({ root: baseRoot, scope, language: options.language, yes: options.dryRun ? undefined : true });
-    try {
-      const { execFileSync } = await import('node:child_process');
-      const { codeGraphExecutionEnv } = await import('../codegraph/runtime.js');
-      execFileSync('codegraph', ['index'], { cwd: baseRoot, encoding: 'utf-8', env: codeGraphExecutionEnv() });
-    } catch { /* codegraph may not be installed */ }
   }
 
   if (!effectiveOptions.dryRun) await writeManifest(manifestRoot, manifest);
@@ -636,8 +629,7 @@ function evaluateWrite(actor, normalizedPath, task) {
     return actor.role === 'approver' ? null : 'protected_rules_or_verified_wiki';
   }
   if (actor.role === 'implementer') {
-    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('tests/')) return null;
-    if (normalizedPath.startsWith('.kata/tasks/' + task.id + '/')) return null;
+    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('packages/') || normalizedPath.startsWith('tests/') || normalizedPath.startsWith('docs/')) return null;
     return 'role_scope_violation';
   }
   if (actor.role === 'reviewer') {

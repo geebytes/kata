@@ -29,6 +29,27 @@ describe('workflow profile', () => {
     expect(isWorkflowProfile({ ...profile, reviewMode: 'anything' })).toBe(false);
     expect(isWorkflowProfile({ ...profile, isolationMode: 'git_flow' })).toBe(true);
     expect(isWorkflowProfile({ ...profile, gitFlow: { strategy: 'manual', branch: 'feature/task', baseBranch: 'develop', status: 'unknown' } })).toBe(false);
+    expect(isWorkflowProfile({
+      ...profile,
+      gitFlow: {
+        strategy: 'manual', branch: 'feature/task', baseBranch: 'develop', status: 'pending_confirmation',
+        installation: { status: 'failed', manualCommand: 'sudo apt-get install -y git-flow' },
+      },
+    })).toBe(true);
+    expect(isWorkflowProfile({
+      ...profile,
+      gitFlow: {
+        strategy: 'manual', branch: 'feature/task', baseBranch: 'develop', status: 'pending_confirmation',
+        installation: { status: 'failed', command: ['apt-get', 7] },
+      },
+    })).toBe(false);
+    expect(isWorkflowProfile({
+      ...profile,
+      gitFlow: {
+        strategy: 'manual', branch: 'feature/task', baseBranch: 'develop', status: 'pending_confirmation',
+        installation: { status: 'failed', manualCommand: 'safe-command\nuntrusted-command' },
+      },
+    })).toBe(false);
   });
 
   it('tells implementers how to honor the Git Flow isolation choice', () => {

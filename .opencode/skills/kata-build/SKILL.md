@@ -12,7 +12,7 @@ Use this skill to inspect the Kata implement workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-build` Skill as the human-facing interface. Use `kata build --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-build` Skill as the human-facing interface. Use `kata build --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -73,7 +73,7 @@ Skill-first means the slash command is the agent interface and the CLI is the in
 7. Run kata handoff acknowledge with platform opencode and the current role.
 8. For build, first complete TDD and focused tests (先完成 TDD 与聚焦测试). Do not seal evidence before coding (不要在编码前封存证据). For current_worktree tasks, declare task-owned files with `--owned-path <path>` before sealing. `--seal` creates one immutable revision; `revision_superseded` means an owned file changed and requires Build for a new revision, while workspace drift outside ownership does not invalidate the sealed revision.
 9. After the phase command returns, read `completion.userMessage` first, then `nextAction.slashCommand`, `nextAction.cliCommand`, `recommended.reason`, and `askUser` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command—especially `/kata-build <task> --seal`—the final user-facing response MUST end with `completion.userMessage` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask “what next”. If `completion` is absent, explicitly render the current phase and `nextAction.slashCommand`. Prefer the slash command, for example `/kata-verify <change-id>`; show the CLI command only as fallback.
-10. Stop after this Skill's own phase command. If the returned `nextAction.requiresUserConfirmation=true`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
+10. Stop after this Skill's own phase command. A Skill invocation has exactly one phase-command authority: Build may invoke only `kata build`; it MUST NOT invoke verify, review, judge, archive, or any other `/kata-*` command after Build returns. The same rule applies to every phase Skill: render its next action for the user, then end the invocation. If the returned `nextAction.requiresUserConfirmation=true`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
 
 Do not create a receipt for read-only search, explanation, or orientation-only work.
 

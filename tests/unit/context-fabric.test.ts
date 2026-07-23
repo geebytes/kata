@@ -6,7 +6,7 @@ import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
 import { defaultWorkflowProfile } from '../../src/core/workflow-profile.js';
-import { createContextPacket, acknowledgeContextPacket, verifyContextPacket } from '../../src/workflow/context-fabric.js';
+import { createContextPacket, acknowledgeContextPacket, requireAcknowledgedContextPacket, verifyContextPacket } from '../../src/workflow/context-fabric.js';
 import { createWorkflowHandoff } from '../../src/workflow/delegation-prompt.js';
 
 describe('Context Fabric', () => {
@@ -28,6 +28,31 @@ describe('Context Fabric', () => {
     const receipt = await acknowledgeContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, platform: 'github-copilot', role: 'reviewer' });
     expect(receipt.packetSha256).toMatch(/^[a-f0-9]{64}$/);
     await expect(verifyContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id })).resolves.toMatchObject({ valid: true });
+  });
+
+  it('rejects acknowledgement by a role other than the packet recipient', async () => {
+    const workspace = await root();
+    const packet = await createContextPacket({ root: workspace, taskId: 'handoff-task', fromRole: 'implementer', toRole: 'reviewer' });
+
+    await expect(acknowledgeContextPacket({
+      root: workspace,
+      taskId: 'handoff-task',
+      id: packet.id,
+      platform: 'codex',
+      role: 'judge',
+    })).rejects.toThrow('does not match packet recipient');
+  });
+
+  it('requires a current acknowledgement receipt from the expected receiving role', async () => {
+    const workspace = await root();
+    const packet = await createContextPacket({ root: workspace, taskId: 'handoff-task', fromRole: 'designer', toRole: 'implementer' });
+
+    await expect(requireAcknowledgedContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, role: 'implementer' }))
+      .rejects.toThrow('acknowledged receipt');
+
+    await acknowledgeContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, platform: 'codex', role: 'implementer' });
+    await expect(requireAcknowledgedContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, role: 'implementer' }))
+      .resolves.toMatchObject({ handoffId: packet.id, role: 'implementer' });
   });
 
   it('creates a platform-neutral workflow handoff for the receiving role', async () => {

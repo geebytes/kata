@@ -23,7 +23,7 @@ export function validateWrite(actor: Actor, path: string, task: TaskRecord): Per
   }
 
   if (actor.role === 'implementer') {
-    if (isTaskCodeOrTestPath(normalizedPath) || isTaskOwnedKataPath(normalizedPath, task)) return { allowed: true };
+    if (isImplementationPath(normalizedPath)) return { allowed: true };
     return deny('role_scope_violation');
   }
 
@@ -57,12 +57,11 @@ function isProtectedRulesOrVerifiedWiki(path: string): boolean {
   return path.startsWith('docs/superpowers/rules/') || path.startsWith('.kata/wiki/verified/');
 }
 
-function isTaskCodeOrTestPath(path: string): boolean {
-  return path.startsWith('src/') || path.startsWith('tests/');
-}
-
-function isTaskOwnedKataPath(path: string, task: TaskRecord): boolean {
-  return path.startsWith(`.kata/tasks/${task.id}/`);
+function isImplementationPath(path: string): boolean {
+  return path.startsWith('src/')
+    || path.startsWith('packages/')
+    || path.startsWith('tests/')
+    || path.startsWith('docs/');
 }
 
 function deny(reason: PermissionDenialReason): PermissionResult {

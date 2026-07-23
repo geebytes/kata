@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { initLayout } from '../../src/core/layout.js';
+import { initLayout, resolveWorkspaceRootForTask } from '../../src/core/layout.js';
 import { transition } from '../../src/core/state.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
@@ -682,9 +682,11 @@ describe('Workflow resume and lifecycle', () => {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
+    const reviewPath = join(root, `.kata/tasks/${taskId}/review.json`);
+    const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
     await writeFile(
-      join(root, `.kata/tasks/${taskId}/review.json`),
-      `${JSON.stringify({ findings: [{ severity: 'blocking', title: 'Must repair' }] }, null, 2)}\n`,
+      reviewPath,
+      `${JSON.stringify({ ...review, findings: [{ severity: 'blocking', title: 'Must repair' }] }, null, 2)}\n`,
     );
 
     const repairBuild = await runCommand('build', taskId, root, {
@@ -773,9 +775,11 @@ describe('Workflow resume and lifecycle', () => {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
+    const reviewPath = join(root, `.kata/tasks/${taskId}/review.json`);
+    const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
     await writeFile(
-      join(root, `.kata/tasks/${taskId}/review.json`),
-      `${JSON.stringify({ findings: [{ severity: 'major', title: 'Must repair in strict mode' }] }, null, 2)}\n`,
+      reviewPath,
+      `${JSON.stringify({ ...review, findings: [{ severity: 'major', title: 'Must repair in strict mode' }] }, null, 2)}\n`,
     );
 
     const repairBuild = await runCommand('build', taskId, root, {
@@ -811,9 +815,11 @@ describe('Workflow resume and lifecycle', () => {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
+    const reviewPath = join(root, `.kata/tasks/${taskId}/review.json`);
+    const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
     await writeFile(
-      join(root, `.kata/tasks/${taskId}/review.json`),
-      `${JSON.stringify({ findings: [{ severity: 'major', title: 'Does not require standard repair' }] }, null, 2)}\n`,
+      reviewPath,
+      `${JSON.stringify({ ...review, findings: [{ severity: 'major', title: 'Does not require standard repair' }] }, null, 2)}\n`,
     );
 
     await expect(runCommand('build', taskId, root)).rejects.toThrow(
@@ -959,6 +965,53 @@ describe('Workflow resume and lifecycle', () => {
     expect(archiveResult.success).toBe(true);
   });
 
+  it('/kata-archive rejects a forged Judge PASS when the Review approval lacks evidence', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'wf-archive-invalid-review', root, {
+      acceptance: [{ id: 'AC-1', statement: 'Archive requires an evidence-backed Review.' }],
+    });
+    await runCommand('design', 'wf-archive-invalid-review', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', 'wf-archive-invalid-review', root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    await writeWikiClosure(root, 'wf-archive-invalid-review', { decision: 'not_applicable', reason: 'Fixture validates archive gate integrity.' });
+    await runCommand('review', 'wf-archive-invalid-review', root, { confirmHostModel: true });
+    await runCommand('review', 'wf-archive-invalid-review', root, { approve: true, reviewEvidence: 'Initially valid review.' });
+    await runCommand('judge', 'wf-archive-invalid-review', root, { confirmHostModel: true });
+
+    const hardEvidence = JSON.parse(await readFile(join(root, '.kata/evidence/wf-archive-invalid-review-hard.json'), 'utf8')) as { id: string; revisionId?: string };
+    const diffHash = await (await import('../../src/quality/evidence.js')).computeDiffHash(root);
+    await writeFile(join(root, '.kata/tasks/wf-archive-invalid-review/review.json'), `${JSON.stringify({ revisionId: hardEvidence.revisionId, findings: [], status: 'approved' }, null, 2)}\n`);
+    await writeFile(join(root, '.kata/tasks/wf-archive-invalid-review/judge.json'), `${JSON.stringify({ taskId: 'wf-archive-invalid-review', result: 'PASS', diffHash, revisionId: hardEvidence.revisionId, acceptance: [{ id: 'AC-1', result: 'PASS', evidenceIds: [hardEvidence.id] }], evidenceIds: [hardEvidence.id] }, null, 2)}\n`);
+
+    const result = await runCommand('archive', 'wf-archive-invalid-review', root, { confirmHostModel: true });
+    expect(result).toMatchObject({ success: false, phase: 'judge' });
+    expect(result.error).toContain('evidence-backed Review');
+  });
+
+  it('/kata-archive requires a current-revision Judge PASS before transition', async () => {
+    const root = await tempRoot();
+    await runCommand('open', 'wf-archive-missing-judge', root, {
+      acceptance: [{ id: 'AC-1', statement: 'Archive requires Judge PASS.' }],
+    });
+    await runCommand('design', 'wf-archive-missing-judge', root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', 'wf-archive-missing-judge', root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    await writeWikiClosure(root, 'wf-archive-missing-judge', { decision: 'not_applicable', reason: 'Fixture validates Judge gate integrity.' });
+    await runCommand('review', 'wf-archive-missing-judge', root, { confirmHostModel: true });
+    await runCommand('review', 'wf-archive-missing-judge', root, { approve: true, reviewEvidence: 'Valid review.' });
+    await (await import('../../src/core/state.js')).transition('wf-archive-missing-judge', 'judge', { id: 'forger', role: 'judge' }, { root });
+
+    const result = await runCommand('archive', 'wf-archive-missing-judge', root, { confirmHostModel: true });
+    expect(result).toMatchObject({ success: false, phase: 'judge' });
+    expect(result.error).toContain('current-revision Judge PASS');
+  });
+
   it('resume continues from recorded phase', async () => {
     const root = await tempRoot();
     await runCommand('open', 'wf-resume-test', root, {
@@ -996,22 +1049,17 @@ describe('Workflow resume and lifecycle', () => {
       acceptance: [{ id: 'AC-1', statement: 'This one was explicitly asked for.' }],
     });
 
-    const result = await runCommand('open', 'explicit-requested-task', root, {
+    await expect(runCommand('open', 'explicit-requested-task', root, {
       title: 'Re-open explicit',
       acceptance: [{ id: 'AC-1', statement: 'Explicit task id.' }],
-    });
-
-    expect(result.taskId).toBe('explicit-requested-task');
-    expect(result.success).toBe(true);
-    expect(result.command).toBe('open');
-    expect(result.diagnostics?.acceptanceCount).toBe(1);
+    })).rejects.toThrow('already exists');
 
     const wrongTaskPath = join(root, '.kata/tasks/active-other-task/task.json');
     const wrongTask = JSON.parse(await readFile(wrongTaskPath, 'utf8')) as { acceptance: Array<{ statement: string }> };
     expect(wrongTask.acceptance[0].statement).toBe('This is the active task.');
   });
 
-  it('/kata-hotfix runs full open-build-verify-archive cycle with quick checks', async () => {
+  it('/kata-hotfix stops at hardVerify instead of auto-running Verify or later gates', async () => {
     const root = await tempRoot();
     const quickCheck = { kind: 'test' as const, command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root };
 
@@ -1024,7 +1072,59 @@ describe('Workflow resume and lifecycle', () => {
     });
 
     expect(result.phase).toBe('hardVerify');
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Wiki closure');
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+  }, 15000);
+
+  it('resolves task root from parent workspace into a nested descendant worktree', async () => {
+    const parent = await tempRoot();
+    const child = join(parent, 'subproject');
+    await mkdir(child, { recursive: true });
+    await initLayout(child);
+
+    await runCommand('open', 'descendant-task', child, {
+      title: 'Descendant workflow test',
+      acceptance: [{ id: 'AC-1', statement: 'Workflow resolves from parent.' }],
+    });
+    await runCommand('design', 'descendant-task', child);
+
+    const resolvedRoot = resolveWorkspaceRootForTask('descendant-task', parent);
+    expect(resolvedRoot).toBe(child);
+
+    await writeFile(join(resolvedRoot, 'task-owned.txt'), 'implementation\n', 'utf8');
+    const result = await runCommand('build', 'descendant-task', resolvedRoot, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: resolvedRoot }],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.phase).toBe('hardVerify');
+  }, 15000);
+
+  it('reports distinct error messages for missing, ambiguous, and multi-candidate task roots', async () => {
+    const root = await tempRoot();
+
+    expect(() => resolveWorkspaceRootForTask('nonexistent', root)).toThrow(
+      'No Kata workspace owns task nonexistent',
+    );
+
+    const childA = join(root, 'alpha');
+    const childB = join(root, 'beta');
+    await mkdir(join(childA, '.kata', 'tasks', 'shared-task'), { recursive: true });
+    await writeFile(join(childA, '.kata', 'tasks', 'shared-task', 'current-state.json'), '{}\n');
+    await mkdir(join(childB, '.kata', 'tasks', 'shared-task'), { recursive: true });
+    await writeFile(join(childB, '.kata', 'tasks', 'shared-task', 'current-state.json'), '{}\n');
+
+    expect(() => resolveWorkspaceRootForTask('shared-task', root)).toThrow(
+      'Multiple descendant worktrees own task shared-task',
+    );
+
+    const ancestorChild = join(childA, 'nested');
+    await mkdir(join(ancestorChild, '.kata', 'tasks', 'shared-task'), { recursive: true });
+    await writeFile(join(ancestorChild, '.kata', 'tasks', 'shared-task', 'current-state.json'), '{}\n');
+
+    expect(() => resolveWorkspaceRootForTask('shared-task', ancestorChild)).toThrow(
+      'Ambiguous Kata task root',
+    );
   }, 15000);
 });
