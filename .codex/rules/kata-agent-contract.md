@@ -20,3 +20,6 @@ The /kata-* skill or platform command bridge is the human-facing workflow entryp
 - At review_gate and judge_gate, stop, show the recommendation, and wait for the user to switch the host-platform model and resume. Do not claim a switch or write a route before confirmation. At archive_gate, stop for the user's archive decision.
 - Use CLI commands directly only for non-interactive automation, tests, CI, or when the host platform cannot execute slash-command skills.
 
+## Response language
+
+所有面向用户的自然语言响应必须使用中文。代码、命令、文件路径、API 名称、日志和协议字段可以保留原文。

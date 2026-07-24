@@ -21,4 +21,7 @@ For Kata development and dogfooding, the `/kata-*` skill is the human-facing wor
 
 Protected Kata paths and phase gates are enforced by the CLI.
 
+## Response language
+
+所有面向用户的自然语言响应必须使用中文。代码、命令、文件路径、API 名称、日志和协议字段可以保留原文。
 <!-- STRATA:END -->
