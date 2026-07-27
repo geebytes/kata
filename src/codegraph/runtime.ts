@@ -5,9 +5,11 @@ export function codeGraphExecutionEnv(
   nodeExecutable = process.execPath,
 ): NodeJS.ProcessEnv {
   const runtimeBin = dirname(nodeExecutable);
+  const overrideBin = inherited.STRATA_CODEGRAPH_BIN ? dirname(inherited.STRATA_CODEGRAPH_BIN) : undefined;
   const inheritedPath = inherited.PATH ?? '';
+  const pathSegments = [overrideBin, runtimeBin, inheritedPath].filter((segment): segment is string => Boolean(segment));
   return {
     ...inherited,
-    PATH: inheritedPath ? `${runtimeBin}:${inheritedPath}` : runtimeBin,
+    PATH: pathSegments.join(':'),
   };
 }

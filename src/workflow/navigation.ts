@@ -131,6 +131,18 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2000 + upstream.unresolvedObligations,
     };
   }
+  // When the latest verify failed in review phase, the verify repair reason
+  // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
+  // over blocking or major review findings so --seal is attached to the build
+  // command and stale evidence is refreshed alongside any finding repairs.
+  if (phase === 'review' && upstream.verifyResult === 'FAIL') {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: verifyRepairReason(upstream),
+      priority: 1020 + upstream.failedVerifyAcceptance,
+    };
+  }
   if (phase === 'review' && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -233,7 +245,7 @@ export function nextSkillForPhase(phase: Phase): string {
 export function nextActionForTask(taskId: string, nextSkill: string, role: string, reason: string): NextAction {
   const cliVerb = skillToCliVerb(nextSkill);
   const gate = trustBoundaryForReason(reason);
-  const seal = reason === 'rebuild_stale_evidence' ? ' --seal' : '';
+  const seal = reason === 'rebuild_stale_evidence' || reason === 'rebuild_superseded_revision' ? ' --seal' : '';
   const wikiClosure = reason === 'resolve_wiki_closure';
   return {
     taskId,
@@ -250,6 +262,22 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
     ...(gate ? { pauseInstruction: pauseInstructionForBoundary(gate) } : {}),
     ...(wikiClosure ? { pauseInstruction: '实现验证已通过；请决定本任务的知识闭环是 captured 还是 not_applicable，再重新执行 /kata-verify。' } : {}),
   };
+}
+
+function verifyRepairReason(upstream: UpstreamSummary): string {
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'revision_superseded')) {
+    return 'rebuild_superseded_revision';
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'stale_evidence')) {
+    return 'rebuild_stale_evidence';
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'insufficient_evidence_level')) {
+    return 'add_entrypoint_evidence';
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'unresolved_repair_obligation')) {
+    return 'resolve_repair_obligations';
+  }
+  return 'repair_failed_verify';
 }
 
 export function statusActionPrompts(suggestion: { nextSkill: string; reason: string; role: string; acceptanceIds?: string[] }): string[] {

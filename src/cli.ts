@@ -1900,8 +1900,9 @@ async function runCodegraphCommand(argv: string[]): Promise<Record<string, unkno
   if (!subcommand || !isCodegraphSubcommand(subcommand)) {
     throw new Error(`Unknown codegraph command: ${subcommand ?? ''}. Usage: kata codegraph <${CODEGRAPH_SUBCOMMANDS.join('|')}> [args...]`);
   }
+  const binary = process.env.STRATA_CODEGRAPH_BIN || 'codegraph';
   try {
-    const stdout = execFileSync('codegraph', [subcommand, ...rest], {
+    const stdout = execFileSync(binary, [subcommand, ...rest], {
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
       cwd: resolveWorkspaceRoot(),
@@ -1914,7 +1915,7 @@ async function runCodegraphCommand(argv: string[]): Promise<Record<string, unkno
       ...(stdout ? { output: stdout } : {}),
     };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = codegraphErrorMessage(error, binary);
     return {
       command: `codegraph ${subcommand}`,
       success: false,
@@ -1922,6 +1923,18 @@ async function runCodegraphCommand(argv: string[]): Promise<Record<string, unkno
       error: message,
     };
   }
+}
+
+function codegraphErrorMessage(error: unknown, binary: string): string {
+  if (isNodeError(error) && (error.code === 'ENOENT' || error.code === 'EACCES')) {
+    const override = process.env.STRATA_CODEGRAPH_BIN ? ` configured by STRATA_CODEGRAPH_BIN (${binary})` : '';
+    return `CodeGraph binary${override} was not found or is not executable. Install codegraph, add it to PATH, or set STRATA_CODEGRAPH_BIN to the executable path.`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && 'code' in error;
 }
 
 async function runCometCommand(argv: string[], root = resolveWorkspaceRoot()): Promise<Record<string, unknown>> {

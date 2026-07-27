@@ -768,6 +768,34 @@ describe('Workflow resume and lifecycle', () => {
     expect(result.error).toContain('judge blocked');
   });
 
+  it('/kata-review automatically approves when the review records no findings', async () => {
+    const root = await tempRoot();
+    const taskId = 'wf-auto-approve-empty-review';
+    await runCommand('open', taskId, root, {
+      title: 'Auto approve empty review',
+      acceptance: [{ id: 'AC-1', statement: 'An empty review is an explicit approval.' }],
+    });
+    await runCommand('design', taskId, root);
+    await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await runCommand('build', taskId, root, {
+      ownedPaths: ['task-owned.txt'],
+      checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+    });
+    await writeWikiClosure(root, taskId, { decision: 'not_applicable', reason: 'Fixture validates review gate behavior only.' });
+    await runCommand('verify', taskId, root);
+
+    const reviewResult = await runCommand('review', taskId, root);
+    const review = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/review.json`), 'utf8')) as {
+      status?: string;
+      findings?: unknown[];
+    };
+    const judgeResult = await runCommand('judge', taskId, root);
+
+    expect(reviewResult).toMatchObject({ success: true, phase: 'review' });
+    expect(review).toMatchObject({ status: 'approved', findings: [] });
+    expect(judgeResult).toMatchObject({ success: true, phase: 'judge' });
+  });
+
   it('/kata-archive advances to distill and archive with wiki candidate', async () => {
     const root = await tempRoot();
     await runCommand('open', 'wf-archive-test', root, {

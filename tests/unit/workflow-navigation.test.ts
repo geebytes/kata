@@ -90,6 +90,70 @@ describe('workflow guidance', () => {
     });
   });
 
+  it('does not route review to Judge when latest verify failed with a superseded revision', () => {
+    const suggestion = suggestCandidateAction('review', {
+      ...emptyUpstream,
+      verifyResult: 'FAIL',
+      failedVerifyAcceptance: 8,
+      verifyRepairScopes: ['revision_superseded'],
+    });
+    const action = nextActionForTask('superseded-review-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'rebuild_superseded_revision',
+    });
+    expect(action).toMatchObject({
+      slashCommand: '/kata-build superseded-review-task --seal',
+      cliCommand: 'kata build --change superseded-review-task --seal',
+      requiresUserConfirmation: false,
+    });
+  });
+
+  it('does not route review to Judge when latest verify failed with stale evidence', () => {
+    const suggestion = suggestCandidateAction('review', {
+      ...emptyUpstream,
+      verifyResult: 'FAIL',
+      failedVerifyAcceptance: 2,
+      verifyRepairScopes: ['stale_evidence'],
+    });
+    const action = nextActionForTask('stale-review-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'rebuild_stale_evidence',
+    });
+    expect(action).toMatchObject({
+      slashCommand: '/kata-build stale-review-task --seal',
+      cliCommand: 'kata build --change stale-review-task --seal',
+    });
+  });
+
+  it('prioritizes latest verify failure over strict review findings during review navigation', () => {
+    const suggestion = suggestCandidateAction('review', {
+      ...emptyUpstream,
+      reviewMode: 'strict',
+      majorFindings: 1,
+      reviewFindings: 1,
+      verifyResult: 'FAIL',
+      failedVerifyAcceptance: 1,
+      verifyRepairScopes: ['revision_superseded'],
+    });
+    const action = nextActionForTask('strict-review-verify-fail-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'rebuild_superseded_revision',
+    });
+    expect(action).toMatchObject({
+      slashCommand: '/kata-build strict-review-verify-fail-task --seal',
+      cliCommand: 'kata build --change strict-review-verify-fail-task --seal',
+    });
+  });
+
   it('pauses before implementation so the user can choose the execution platform or model', () => {
     const suggestion = suggestCandidateAction('plan', emptyUpstream);
     const action = nextActionForTask('implementation-choice-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
@@ -345,5 +409,70 @@ describe('workflow guidance', () => {
     expect(suggestion.reason).not.toBe('repair_strict_major_findings');
     // Should route to Judge in standard mode
     expect(suggestion.reason).toBe('judge_reviewed_change');
+  });
+
+  it('verify FAIL takes priority over blocking review findings in review phase (AC-1)', () => {
+    const upstream: UpstreamSummary = {
+      ...emptyUpstream,
+      verifyResult: 'FAIL',
+      failedVerifyAcceptance: 4,
+      verifyRepairScopes: ['revision_superseded'],
+      blockingFindings: 3,
+    };
+    const suggestion = suggestCandidateAction('review', upstream);
+    const action = nextActionForTask('conflict-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'rebuild_superseded_revision',
+    });
+    // Must include --seal; repair_blocking_review_findings would not
+    expect(action).toMatchObject({
+      slashCommand: expect.stringContaining('--seal'),
+      cliCommand: expect.stringContaining('--seal'),
+    });
+    expect(suggestion.reason).not.toBe('repair_blocking_review_findings');
+    expect(suggestion.reason).not.toBe('repair_strict_major_findings');
+  });
+
+  it('verify FAIL takes priority over strict major findings in review phase (AC-1)', () => {
+    const upstream: UpstreamSummary = {
+      ...emptyUpstream,
+      reviewMode: 'strict',
+      verifyResult: 'FAIL',
+      failedVerifyAcceptance: 6,
+      verifyRepairScopes: ['stale_evidence'],
+      majorFindings: 2,
+      blockingFindings: 0,
+    };
+    const suggestion = suggestCandidateAction('review', upstream);
+    const action = nextActionForTask('stale-major-task', suggestion.nextSkill, suggestion.role, suggestion.reason);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'rebuild_stale_evidence',
+    });
+    expect(action).toMatchObject({
+      slashCommand: expect.stringContaining('--seal'),
+      cliCommand: expect.stringContaining('--seal'),
+    });
+    expect(suggestion.reason).not.toBe('repair_strict_major_findings');
+    expect(suggestion.reason).not.toBe('repair_blocking_review_findings');
+  });
+
+  it('blocking review findings still take priority when verify has not failed', () => {
+    // Verify PASS + blocking findings → repair_blocking (preserved behavior)
+    const upstream: UpstreamSummary = {
+      ...emptyUpstream,
+      blockingFindings: 2,
+    };
+    const suggestion = suggestCandidateAction('review', upstream);
+
+    expect(suggestion).toMatchObject({
+      nextSkill: '/kata-build',
+      reason: 'repair_blocking_review_findings',
+    });
   });
 });

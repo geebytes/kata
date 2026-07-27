@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -584,9 +584,10 @@ describe('Kata platform installer', () => {
 
     const result = await captureJsonOutput(() => main(['init', '--json', '--platform', 'codex', '--scope', 'project', '--root', root]));
 
-    expect(result.wiki).toMatchObject({ status: 'initialized', from: 'docs', importedCount: 1 });
+    expect(result.wiki).toMatchObject({ status: 'initialized', from: 'docs', importedCount: 2 });
     await expect(readFile(join(root, '.llmwiki/SCHEMA.md'), 'utf8')).resolves.toContain('Project LLM Wiki');
     await expect(readFile(join(root, '.llmwiki/index.md'), 'utf8')).resolves.toContain('[[raw/docs/guide.md]]');
+    await expect(readFile(join(root, '.llmwiki/index.md'), 'utf8')).resolves.toContain('[[raw/docs/AGENTS.md]]');
   });
 
   it('supports explicit --wiki-from and --no-wiki for binary-managed wiki initialization', async () => {
@@ -598,8 +599,9 @@ describe('Kata platform installer', () => {
       main(['init', '--json', '--platform', 'codex', '--scope', 'project', '--root', explicitRoot, '--wiki-from', 'knowledge']),
     );
 
-    expect(explicit.wiki).toMatchObject({ status: 'initialized', from: 'knowledge', importedCount: 1 });
+    expect(explicit.wiki).toMatchObject({ status: 'initialized', from: 'knowledge', importedCount: 2 });
     await expect(readFile(join(explicitRoot, '.llmwiki/index.md'), 'utf8')).resolves.toContain('architecture.md');
+    await expect(readFile(join(explicitRoot, '.llmwiki/index.md'), 'utf8')).resolves.toContain('[[raw/docs/AGENTS.md]]');
 
     const disabledRoot = await tempRoot();
     await mkdir(join(disabledRoot, 'docs'), { recursive: true });
@@ -1771,6 +1773,29 @@ describe('Kata platform installer', () => {
       args: [`safe-symbol; touch ${marker}`],
     });
     await expect(stat(marker)).rejects.toThrow();
+  });
+
+  it('uses STRATA_CODEGRAPH_BIN when running codegraph commands', async () => {
+    const root = await tempRoot();
+    const fakeCodeGraph = join(root, 'fake-codegraph');
+    const previous = process.env.STRATA_CODEGRAPH_BIN;
+    await writeFile(fakeCodeGraph, '#!/bin/sh\nprintf "fake-codegraph:%s:%s\\n" "$1" "$2"\n', 'utf8');
+    await chmod(fakeCodeGraph, 0o755);
+    process.env.STRATA_CODEGRAPH_BIN = fakeCodeGraph;
+
+    try {
+      const result = await captureJsonOutput(() => main(['codegraph', 'query', 'selected-symbol']));
+
+      expect(result).toMatchObject({
+        command: 'codegraph query',
+        success: true,
+        args: ['selected-symbol'],
+        output: 'fake-codegraph:query:selected-symbol',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.STRATA_CODEGRAPH_BIN;
+      else process.env.STRATA_CODEGRAPH_BIN = previous;
+    }
   });
 });
 

@@ -335,6 +335,20 @@ describe('quality evidence collection', () => {
     await expect(workspaceDrift(root, ['shared.ts'])).resolves.toEqual(['unowned.ts']);
   });
 
+  it('ignores nested platform metadata directories when reporting workspace drift', async () => {
+    const root = await tempRoot();
+    execFileSync('git', ['init', '--quiet'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+    await writeFile(join(root, 'owned.ts'), 'owned\n', 'utf8');
+    execFileSync('git', ['add', 'subject.txt', 'owned.ts'], { cwd: root });
+    execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
+    await mkdir(join(root, '.devcontainer/.opencode'), { recursive: true });
+    await writeFile(join(root, '.devcontainer/.opencode/state.json'), '{}\n', 'utf8');
+
+    await expect(workspaceDrift(root, ['owned.ts'])).resolves.toEqual([]);
+  });
+
   it('ignores ownership claims from archived tasks', async () => {
     const root = await tempRoot();
     await mkdir(join(root, '.kata/tasks/archived-task'), { recursive: true });

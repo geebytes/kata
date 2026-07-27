@@ -185,7 +185,7 @@ export async function inferOwnedPathsFromWorkspace(root: string): Promise<string
 function changedRepositoryPaths(root: string): string[] {
   let output: string;
   try {
-    output = execFileSync('git', ['status', '--porcelain=v1', '-z'], {
+    output = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -220,6 +220,8 @@ function isIgnoredWorkspacePath(path: string): boolean {
     || path.startsWith('.claude/')
     || path === '.opencode'
     || path.startsWith('.opencode/')
+    || path.includes('/.opencode/')
+    || path.endsWith('/.opencode')
     || path === '.github/hooks'
     || path.startsWith('.github/hooks/')
     || path === '.github/skills'

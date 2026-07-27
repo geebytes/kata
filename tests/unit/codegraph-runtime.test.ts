@@ -12,5 +12,6 @@ describe('CodeGraph runtime environment', () => {
     const env = codeGraphExecutionEnv({ PATH: '/inherited/bin', STRATA_CODEGRAPH_BIN: '/custom/codegraph' }, '/runtime/bin/node');
 
     expect(env.STRATA_CODEGRAPH_BIN).toBe('/custom/codegraph');
+    expect(env.PATH).toBe('/custom:/runtime/bin:/inherited/bin');
   });
 });

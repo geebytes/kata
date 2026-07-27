@@ -898,10 +898,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         findings?: ReviewFinding[];
       };
       if (revisionId && previous.revisionId !== revisionId) {
-        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
+      } else if ((previous.findings ?? []).length === 0) {
+        await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
       }
     } catch {
-      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
     }
     return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
   } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
