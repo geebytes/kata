@@ -23,7 +23,7 @@ node dist/cli.js init --root /path/to/your-project
 node dist/cli.js init --platform opencode --root /path/to/your-project
 ```
 
-`kata init` 自动发现项目中已安装的 coding 平台，安装对应的 Skills、rules、hooks，初始化 `.kata/`，在存在项目文档时初始化 `.llmwiki/`，并在同一命令内协调 Comet 项目初始化。初始化时选择的响应语言会写入 `.kata-config.json`，后续 `kata update` 重新生成 Skills 和项目规则时会自动继承。
+`kata-cli init` 自动发现项目中已安装的 coding 平台，安装对应的 Skills、rules、hooks，初始化 `.kata/`，在存在项目文档时初始化 `.llmwiki/`，并在同一命令内协调 Comet 项目初始化。初始化时选择的响应语言会写入 `.kata-config.json`，后续 `kata-cli update` 重新生成 Skills 和项目规则时会自动继承。
 
 初始化后，在你的 AI coding 工具里使用 slash commands：
 
@@ -41,7 +41,7 @@ node dist/cli.js init --platform opencode --root /path/to/your-project
 完整 CLI 命令：
 
 ```
-kata <init|update|uninstall|discover|doctor|wiki|tasks|relations|orient|hooks|
+kata-cli <init|update|uninstall|discover|doctor|wiki|tasks|relations|orient|hooks|
      handoff|collect|comet|codegraph|git-flow|status|open|design|build|
      verify|archive|hotfix|tweak|next>
 ```
@@ -124,7 +124,7 @@ flowchart TD
 
 ## 关系图
 
-Relation Graph 防止多平台协作时的任务漂移。终止性控制关系（`covered_by`、`superseded_by`、`duplicate_of`、`merged_into`）会被 `kata status` 和 `kata orient` 跟随，旧任务自动重定向到当前活跃任务。上下文关系（`parent_of`、`spawned_from`、`related_to`）只保留来源线索，不改变调度。
+Relation Graph 防止多平台协作时的任务漂移。终止性控制关系（`covered_by`、`superseded_by`、`duplicate_of`、`merged_into`）会被 `kata-cli status` 和 `kata-cli orient` 跟随，旧任务自动重定向到当前活跃任务。上下文关系（`parent_of`、`spawned_from`、`related_to`）只保留来源线索，不改变调度。
 
 ```mermaid
 flowchart LR
@@ -138,9 +138,9 @@ flowchart LR
 常用命令：
 
 ```bash
-kata relations add --from change:<change-id> --to task:<task-id> --type contains
-kata relations add --from task:<old-task> --to task:<active-task> --type covered_by
-kata relations show --id change:<change-id>
+kata-cli relations add --from change:<change-id> --to task:<task-id> --type contains
+kata-cli relations add --from task:<old-task> --to task:<active-task> --type covered_by
+kata-cli relations show --id change:<change-id>
 ```
 
 ## 跨平台交接
@@ -154,7 +154,7 @@ sequenceDiagram
     participant L as 低阶 agent / implementer
     participant Q as Quality gates / tests/review/judge
 
-    H->>R: kata handoff create
+    H->>R: kata-cli handoff create
     R-->>H: packet id + requiredReads + allowedWrites
     H-->>L: 带 handoff id 的短 prompt
     L->>R: handoff verify/show/acknowledge
@@ -162,21 +162,21 @@ sequenceDiagram
     L->>R: 只修改 allowed writes
     L->>Q: 运行 evidence
     Q->>R: review.json / judge.json / evidence
-    H->>R: kata collect + review
+    H->>R: kata-cli collect + review
 ```
 
 Handoff 命令：
 
 ```bash
-kata handoff create --task <task-id> --from designer --to implementer
-kata handoff verify --task <task-id> --id <handoff-id>
-kata handoff show --task <task-id> --id <handoff-id>
-kata handoff acknowledge --task <task-id> --id <handoff-id> --platform opencode --role implementer
+kata-cli handoff create --task <task-id> --from designer --to implementer
+kata-cli handoff verify --task <task-id> --id <handoff-id>
+kata-cli handoff show --task <task-id> --id <handoff-id>
+kata-cli handoff acknowledge --task <task-id> --id <handoff-id> --platform opencode --role implementer
 ```
 
 ## 模型路由
 
-Kata 不为不同角色推荐模型层级，不路由也不记录宿主平台模型。模型选择由用户或当前 host agent 决定。`kata status` 会返回 `nextAction`，其中 `recommended` 字段包含建议的角色和对应的模型 tier 策略。若需切换模型，请在宿主平台自己的模型选择器中完成后再继续。
+Kata 不为不同角色推荐模型层级，不路由也不记录宿主平台模型。模型选择由用户或当前 host agent 决定。`kata-cli status` 会返回 `nextAction`，其中 `recommended` 字段包含建议的角色和对应的模型 tier 策略。若需切换模型，请在宿主平台自己的模型选择器中完成后再继续。
 
 Kata 的模型策略（economy / capable / frontier tier，含路由模式和预算限制）通过 `.kata-config.json` 的 `modelPolicy` 字段配置，无需 CLI 命令。
 
@@ -184,21 +184,21 @@ Kata 的模型策略（economy / capable / frontier tier，含路由模式和预
 
 Kata 不会把聊天记录写进 Wiki。它只把稳定、可复用、可治理的项目知识沉淀为 candidate。
 
-使用 `kata wiki --help` 查看支持的命令。Agent 的标准路径：
+使用 `kata-cli wiki --help` 查看支持的命令。Agent 的标准路径：
 
 ```bash
-kata wiki task --kind enrich --from docs    # 从文档提取知识
-kata wiki lint                               # 检查 wiki 格式
-kata wiki verify                             # 校验来源新鲜度（漂移检测）
-kata wiki register                           # 注册为 candidate
-kata wiki promote <wiki-id> --by <actor> --role distiller  # promote 为权威条目
+kata-cli wiki task --kind enrich --from docs    # 从文档提取知识
+kata-cli wiki lint                               # 检查 wiki 格式
+kata-cli wiki verify                             # 校验来源新鲜度（漂移检测）
+kata-cli wiki register                           # 注册为 candidate
+kata-cli wiki promote <wiki-id> --by <actor> --role distiller  # promote 为权威条目
 ```
 
 每个 task 必须在 verify 和 archive 前记录知识闭环决策：
 
 ```bash
-kata wiki closure --task <task-id> --decision captured --reason "新增 API 规范" --candidate <wiki-id>
-kata wiki closure --task <task-id> --decision not_applicable --reason "仅修复拼写错误"
+kata-cli wiki closure --task <task-id> --decision captured --reason "新增 API 规范" --candidate <wiki-id>
+kata-cli wiki closure --task <task-id> --decision not_applicable --reason "仅修复拼写错误"
 ```
 
 ```mermaid
@@ -206,7 +206,7 @@ flowchart TD
     A[对话 / 实施 / 文档] --> B{是否是稳定知识?}
     B -- 否 --> C[不沉淀]
     B -- "yes" --> D["写 source note / task-owned 或 docs/conventions"]
-    D --> E[kata wiki ingest / register]
+    D --> E[kata-cli wiki ingest / register]
     E --> F[Wiki candidate]
     F --> G{Review / promote?}
     G -- promoted --> H[Authoritative Wiki context]

@@ -299,10 +299,10 @@ export async function buildLlmWikiTask(input: LlmWikiTaskInput): Promise<LlmWiki
     ],
     instructions: instructionsForWikiTask(input.kind),
     followupCommands: [
-      'kata wiki lint --root <root>',
-      'kata wiki verify --root <root>',
-      'kata wiki register --root <root>',
-      'kata orient --change <change-id> --role distiller --task-kind read',
+      'kata-cli wiki lint --root <root>',
+      'kata-cli wiki verify --root <root>',
+      'kata-cli wiki register --root <root>',
+      'kata-cli orient --change <change-id> --role distiller --task-kind read',
     ],
   };
 }
@@ -595,7 +595,7 @@ function instructionsForWikiTask(kind: LlmWikiTaskInput['kind']): string[] {
     ...common,
     'Enrich the Wiki by extracting stable concepts, entities, comparisons, project constraints, and recurring workflows from required reads.',
     'IMPORTANT: Design docs (raw/) are historical context — source code under packages/ is ground truth. Before writing a page, read actual source files (ports, domains, infrastructure, adapters) to verify each claim. If source and design doc disagree, source wins.',
-    'Use CodeGraph (available via the codegraph_explore MCP tool or `kata codegraph explore/query/impact`) to navigate the codebase efficiently: find relevant source files, explore call paths, and verify claims against actual implementations.',
+    'Use CodeGraph (available via the codegraph_explore MCP tool or `kata-cli codegraph explore/query/impact`) to navigate the codebase efficiently: find relevant source files, explore call paths, and verify claims against actual implementations.',
     'After writing pages, run the follow-up deterministic CLI commands and fix lint issues before handing off.',
   ];
 }

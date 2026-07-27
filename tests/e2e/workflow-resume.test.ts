@@ -733,7 +733,7 @@ describe('Workflow resume and lifecycle', () => {
         nextAction: {
           nextSkill: '/kata-wiki-enrich',
           reason: 'resolve_wiki_closure',
-          cliCommand: 'kata wiki closure --task wf-wiki-closure-route-test --decision <captured|not_applicable> --reason <reason>',
+          cliCommand: 'kata-cli wiki closure --task wf-wiki-closure-route-test --decision <captured|not_applicable> --reason <reason>',
         },
       },
     });

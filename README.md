@@ -23,7 +23,7 @@ node dist/cli.js init --root /path/to/your-project
 node dist/cli.js init --platform opencode --root /path/to/your-project
 ```
 
-`kata init` detects installed coding platforms, installs matching Skills/rules/hooks, initializes `.kata/`, initializes `.llmwiki/` when project docs exist, and coordinates Comet project initialization in one command. The selected response language is persisted in `.kata-config.json`; subsequent `kata update` runs reuse it when regenerating Skills and project rules.
+`kata-cli init` detects installed coding platforms, installs matching Skills/rules/hooks, initializes `.kata/`, initializes `.llmwiki/` when project docs exist, and coordinates Comet project initialization in one command. The selected response language is persisted in `.kata-config.json`; subsequent `kata-cli update` runs reuse it when regenerating Skills and project rules.
 
 After initialization, use slash commands in your AI coding tool:
 
@@ -41,7 +41,7 @@ After initialization, use slash commands in your AI coding tool:
 Full CLI:
 
 ```
-kata <init|update|uninstall|discover|doctor|wiki|tasks|relations|orient|hooks|
+kata-cli <init|update|uninstall|discover|doctor|wiki|tasks|relations|orient|hooks|
      handoff|collect|comet|codegraph|git-flow|status|open|design|build|
      verify|archive|hotfix|tweak|next>
 ```
@@ -124,7 +124,7 @@ When `nextAction.requiresUserConfirmation: true`, the agent must stop and ask be
 
 ## Relation graph
 
-The Relation Graph prevents workflow drift across platforms. Terminal control relations (`covered_by`, `superseded_by`, `duplicate_of`, `merged_into`) are followed by `kata status` and `kata orient`, redirecting obsolete tasks to the active task. Context relations (`parent_of`, `spawned_from`, `related_to`) preserve lineage without changing dispatch.
+The Relation Graph prevents workflow drift across platforms. Terminal control relations (`covered_by`, `superseded_by`, `duplicate_of`, `merged_into`) are followed by `kata-cli status` and `kata-cli orient`, redirecting obsolete tasks to the active task. Context relations (`parent_of`, `spawned_from`, `related_to`) preserve lineage without changing dispatch.
 
 ```mermaid
 flowchart LR
@@ -138,9 +138,9 @@ flowchart LR
 Useful commands:
 
 ```bash
-kata relations add --from change:<change-id> --to task:<task-id> --type contains
-kata relations add --from task:<old-task> --to task:<active-task> --type covered_by
-kata relations show --id change:<change-id>
+kata-cli relations add --from change:<change-id> --to task:<task-id> --type contains
+kata-cli relations add --from task:<old-task> --to task:<active-task> --type covered_by
+kata-cli relations show --id change:<change-id>
 ```
 
 ## Cross-platform handoff
@@ -154,7 +154,7 @@ sequenceDiagram
     participant L as Low-tier agent / implementer
     participant Q as Quality gates / tests/review/judge
 
-    H->>R: kata handoff create
+    H->>R: kata-cli handoff create
     R-->>H: packet id + requiredReads + allowedWrites
     H-->>L: short prompt with handoff id
     L->>R: handoff verify/show/acknowledge
@@ -162,41 +162,41 @@ sequenceDiagram
     L->>R: write only allowed paths
     L->>Q: run evidence
     Q->>R: review.json / judge.json / evidence
-    H->>R: kata collect + review
+    H->>R: kata-cli collect + review
 ```
 
 Handoff commands:
 
 ```bash
-kata handoff create --task <task-id> --from designer --to implementer
-kata handoff verify --task <task-id> --id <handoff-id>
-kata handoff show --task <task-id> --id <handoff-id>
-kata handoff acknowledge --task <task-id> --id <handoff-id> --platform opencode --role implementer
+kata-cli handoff create --task <task-id> --from designer --to implementer
+kata-cli handoff verify --task <task-id> --id <handoff-id>
+kata-cli handoff show --task <task-id> --id <handoff-id>
+kata-cli handoff acknowledge --task <task-id> --id <handoff-id> --platform opencode --role implementer
 ```
 
 ## Model policy
 
-Kata does not route, configure, or record host-platform model selection. The model policy is declarative in `.kata-config.json` under `modelPolicy`. At trust boundaries, `kata status` and `kata orient` return `nextAction.recommended` with role and tier guidance. Model selection is always the user's choice in their host platform's selector. Correctness belongs to tests, Reviewer, and Judge regardless of which model was used.
+Kata does not route, configure, or record host-platform model selection. The model policy is declarative in `.kata-config.json` under `modelPolicy`. At trust boundaries, `kata-cli status` and `kata-cli orient` return `nextAction.recommended` with role and tier guidance. Model selection is always the user's choice in their host platform's selector. Correctness belongs to tests, Reviewer, and Judge regardless of which model was used.
 
 ## Wiki and knowledge sedimentation
 
 Kata does not dump chat logs into the Wiki. It captures stable, reusable project knowledge as governed candidates.
 
-Use `kata wiki --help` to discover supported commands. The standard agent path:
+Use `kata-cli wiki --help` to discover supported commands. The standard agent path:
 
 ```bash
-kata wiki task --kind enrich --from docs    # extract knowledge from docs
-kata wiki lint                               # check wiki format
-kata wiki verify                             # verify source freshness (drift detection)
-kata wiki register                           # register as candidate
-kata wiki promote <wiki-id> --by <actor> --role distiller  # promote to authoritative
+kata-cli wiki task --kind enrich --from docs    # extract knowledge from docs
+kata-cli wiki lint                               # check wiki format
+kata-cli wiki verify                             # verify source freshness (drift detection)
+kata-cli wiki register                           # register as candidate
+kata-cli wiki promote <wiki-id> --by <actor> --role distiller  # promote to authoritative
 ```
 
 Every task must record a knowledge-closure decision before verification and archival:
 
 ```bash
-kata wiki closure --task <task-id> --decision captured --reason "New API convention" --candidate <wiki-id>
-kata wiki closure --task <task-id> --decision not_applicable --reason "Typo fix only"
+kata-cli wiki closure --task <task-id> --decision captured --reason "New API convention" --candidate <wiki-id>
+kata-cli wiki closure --task <task-id> --decision not_applicable --reason "Typo fix only"
 ```
 
 ```mermaid
@@ -204,7 +204,7 @@ flowchart TD
     A[Conversation / implementation / docs] --> B{Stable knowledge?}
     B -- no --> C[Do not capture]
     B -- "yes" --> D["Write source note / task-owned or docs/conventions"]
-    D --> E[kata wiki ingest / register]
+    D --> E[kata-cli wiki ingest / register]
     E --> F[Wiki candidate]
     F --> G{Review / promote?}
     G -- promoted --> H[Authoritative Wiki context]

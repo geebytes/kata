@@ -40,7 +40,7 @@ describe('workflow guidance', () => {
 
     expect(prompt).toContain('先写聚焦的失败测试');
     expect(prompt).toContain('不要在编码前封存');
-    expect(prompt).toContain('kata build --change guided-task --seal');
+    expect(prompt).toContain('kata-cli build --change guided-task --seal');
   });
 
   it('tells implementers to read bound design references before TDD', () => {
@@ -60,7 +60,7 @@ describe('workflow guidance', () => {
     const prompt = renderDelegationPrompt('guided-task', 'handoff-1', 'opencode', 'implementer');
 
     expect(prompt).toContain('/kata-build guided-task');
-    expect(prompt).toContain('kata build --change guided-task');
+    expect(prompt).toContain('kata-cli build --change guided-task');
     expect(prompt).toContain('先进入实施阶段');
   });
 
@@ -86,7 +86,7 @@ describe('workflow guidance', () => {
     expect(suggestion.reason).toBe('rebuild_stale_evidence');
     expect(action).toMatchObject({
       slashCommand: '/kata-build stale-task --seal',
-      cliCommand: 'kata build --change stale-task --seal',
+      cliCommand: 'kata-cli build --change stale-task --seal',
     });
   });
 
@@ -106,7 +106,7 @@ describe('workflow guidance', () => {
     });
     expect(action).toMatchObject({
       slashCommand: '/kata-build superseded-review-task --seal',
-      cliCommand: 'kata build --change superseded-review-task --seal',
+      cliCommand: 'kata-cli build --change superseded-review-task --seal',
       requiresUserConfirmation: false,
     });
   });
@@ -127,7 +127,7 @@ describe('workflow guidance', () => {
     });
     expect(action).toMatchObject({
       slashCommand: '/kata-build stale-review-task --seal',
-      cliCommand: 'kata build --change stale-review-task --seal',
+      cliCommand: 'kata-cli build --change stale-review-task --seal',
     });
   });
 
@@ -150,7 +150,7 @@ describe('workflow guidance', () => {
     });
     expect(action).toMatchObject({
       slashCommand: '/kata-build strict-review-verify-fail-task --seal',
-      cliCommand: 'kata build --change strict-review-verify-fail-task --seal',
+      cliCommand: 'kata-cli build --change strict-review-verify-fail-task --seal',
     });
   });
 
@@ -189,7 +189,7 @@ describe('workflow guidance', () => {
     });
     expect(action).toMatchObject({
       slashCommand: '/kata-review verified-task',
-      cliCommand: 'kata review --change verified-task',
+      cliCommand: 'kata-cli review --change verified-task',
       requiresUserConfirmation: true,
       trustBoundary: 'review_gate',
     });
@@ -256,7 +256,7 @@ describe('workflow guidance', () => {
     });
     expect(action).toMatchObject({
       slashCommand: '/kata-wiki-enrich wiki-pending-task',
-      cliCommand: 'kata wiki closure --task wiki-pending-task --decision <captured|not_applicable> --reason <reason>',
+      cliCommand: 'kata-cli wiki closure --task wiki-pending-task --decision <captured|not_applicable> --reason <reason>',
     });
   });
 

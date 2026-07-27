@@ -21,12 +21,12 @@ export function renderDelegationPrompt(taskId: string, handoffId: string, platfo
     ? [
         '',
         `先进入实施阶段（此时不要 seal）：/kata-build ${taskId}`,
-        `CLI fallback：kata build --change ${taskId}`,
+        `CLI fallback：kata-cli build --change ${taskId}`,
         '收到实施阶段的 TDD 合同后，再开始阅读、测试与编码。',
         '',
         '实施顺序：先阅读设计引用和 requiredReads，先写聚焦的失败测试（RED），再最小实现并运行聚焦 GREEN。',
         '不要在编码前封存 build 证据。实现和聚焦测试完成后，再执行：',
-        `kata build --change ${taskId} --seal`,
+        `kata-cli build --change ${taskId} --seal`,
       ]
     : [];
 
@@ -39,9 +39,9 @@ export function renderDelegationPrompt(taskId: string, handoffId: string, platfo
     '',
     '先执行：',
     '',
-    `kata handoff verify --task ${taskId} --id ${handoffId}`,
-    `kata handoff show --task ${taskId} --id ${handoffId}`,
-    `kata handoff acknowledge --task ${taskId} --id ${handoffId} --platform <actual-platform> --role ${role}`,
+    `kata-cli handoff verify --task ${taskId} --id ${handoffId}`,
+    `kata-cli handoff show --task ${taskId} --id ${handoffId}`,
+    `kata-cli handoff acknowledge --task ${taskId} --id ${handoffId} --platform <actual-platform> --role ${role}`,
     '',
     '然后读取 packet.requiredReads 中的所有文件，遵守 allowedWrites 和 guardInstructions，运行匹配的 /kata-* skill。',
     ...designGuidance,

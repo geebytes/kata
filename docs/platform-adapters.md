@@ -14,7 +14,7 @@ Each platform declares:
 - optional command bridge support
 - capability flags such as skills, hooks, subagents, and model selection
 
-This keeps `kata init` plan-driven instead of scattering platform-specific branches through the CLI.
+This keeps `kata-cli init` plan-driven instead of scattering platform-specific branches through the CLI.
 
 ## Model selection contract
 
@@ -45,16 +45,16 @@ Hooks are formatted per platform:
 - Windsurf: `hooks.json` with `hooks.pre_write_code`
 - GitHub Copilot: `.github/hooks/kata-guard.json`
 
-Hook config is merged with existing user hooks. `kata uninstall` removes only Kata-managed hook entries and preserves unrelated user hook commands.
+Hook config is merged with existing user hooks. `kata-cli uninstall` removes only Kata-managed hook entries and preserves unrelated user hook commands.
 
 ## Active-task hook guard
 
 Platform hooks become strict only after a task is activated:
 
 ```bash
-kata hooks activate --change <task-id> --role implementer
-kata hooks status
-kata hooks deactivate
+kata-cli hooks activate --change <task-id> --role implementer
+kata-cli hooks status
+kata-cli hooks deactivate
 ```
 
 Activation writes `.kata/runtime/active-task.json`. The installed `kata-hook-guard.mjs` reads that file, the current task phase, and the write target supplied by the host platform hook payload.
@@ -70,7 +70,7 @@ If no active task exists, the hook exits successfully. This keeps platform hooks
 
 ## Diagnostics
 
-Use `kata doctor` after installation or update. Without `--platform`, it checks all detected project platforms. With `--platform <name>`, it checks only that adapter.
+Use `kata-cli doctor` after installation or update. Without `--platform`, it checks all detected project platforms. With `--platform <name>`, it checks only that adapter.
 
 The doctor command checks:
 

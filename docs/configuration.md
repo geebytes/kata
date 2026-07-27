@@ -101,7 +101,7 @@ Kata reads configuration from `.kata-config.json` in the project root.
 | `zh` | Generated Skills, platform rules, `AGENTS.md`, and `.kata/skills-index.md` require user-facing natural-language responses in Chinese. |
 | `en` | Generated Skills, platform rules, `AGENTS.md`, and `.kata/skills-index.md` require user-facing natural-language responses in English. |
 
-`kata init` writes the selected language into `.kata-config.json`. Later `kata update` runs reuse that value even when `--language` is omitted.
+`kata-cli init` writes the selected language into `.kata-config.json`. Later `kata-cli update` runs reuse that value even when `--language` is omitted.
 
 Machine-readable protocol fields, command names, paths, API names, logs, and status enum values may remain in their original form.
 
@@ -153,7 +153,7 @@ Model policy is configured directly in `.kata-config.json`. There are no CLI com
 | `roles.<role>.tier` | Minimum tier for implementer / reviewer / judge |
 | `routing.<tier>.platformOptions.<platform>` | Platform-specific model name hint per tier |
 
-At trust boundaries, `kata status` and `kata orient` return `nextAction.recommended` with role and tier guidance. The user chooses the actual model in their host platform's selector. Kata does not enforce which model is used; correctness belongs to tests, Reviewer, and Judge regardless of which model was selected.
+At trust boundaries, `kata-cli status` and `kata-cli orient` return `nextAction.recommended` with role and tier guidance. The user chooses the actual model in their host platform's selector. Kata does not enforce which model is used; correctness belongs to tests, Reviewer, and Judge regardless of which model was selected.
 
 ## Budgets
 

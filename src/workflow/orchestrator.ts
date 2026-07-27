@@ -249,7 +249,7 @@ async function cmdBuild(
       diagnostics: {
         mode: 'implement',
         implementationPrompt: '先写聚焦的失败测试（RED），再最小实现并运行聚焦 GREEN；不要在编码前封存 build 证据。',
-        sealCommand: `kata build --change ${taskId} --seal`,
+        sealCommand: `kata-cli build --change ${taskId} --seal`,
         ...(ownershipConflicts.length > 0 ? { ownershipConflicts } : {}),
       },
     };
@@ -1218,7 +1218,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
       hasJudgeResult: judgeRaw !== null,
       hasReviewResult: reviewRaw !== null,
       distillation,
-      distillationHint: 'Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata wiki ingest.',
+      distillationHint: 'Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata-cli wiki ingest.',
       ...(codegraphRefresh ? { codegraphRefresh } : {}),
     },
   };

@@ -1,6 +1,6 @@
 # Kata Usage Guide
 
-This guide describes the normal project workflow after `kata init`.
+This guide describes the normal project workflow after `kata-cli init`.
 
 Kata has one north star:
 
@@ -10,19 +10,19 @@ Kata has one north star:
 
 ```bash
 cd your-project
-kata init
-kata doctor
+kata-cli init
+kata-cli doctor
 ```
 
-In an interactive terminal, `kata init` uses a Comet-style selectable wizard for language, install scope, and detected platforms. In automation, use:
+In an interactive terminal, `kata-cli init` uses a Comet-style selectable wizard for language, install scope, and detected platforms. In automation, use:
 
 ```bash
-kata init --yes
+kata-cli init --yes
 ```
 
 The initializer installs Kata skills/rules/hooks for detected coding tools, initializes `.kata/`, and initializes `.llmwiki/` from `docs/` when present. Comet project initialization is coordinated from the same command.
 
-The selected language is also an agent response contract. If `kata init` selected `中文`, generated Skills and project rules require all user-facing natural-language responses to use Chinese. Kata persists the selection in `.kata-config.json`, so later `kata update` runs reuse it without requiring `--language zh`. This is separate from model routing; Kata does not call an LLM API to enforce it, but every installed Skill tells the coding agent how to respond.
+The selected language is also an agent response contract. If `kata-cli init` selected `中文`, generated Skills and project rules require all user-facing natural-language responses to use Chinese. Kata persists the selection in `.kata-config.json`, so later `kata-cli update` runs reuse it without requiring `--language zh`. This is separate from model routing; Kata does not call an LLM API to enforce it, but every installed Skill tells the coding agent how to respond.
 
 ## 2. Start work through a skill
 
@@ -56,37 +56,37 @@ Inside one Git branch, later skill invocations may omit the change id after acti
 /kata-review
 ```
 
-The skill should resolve the task id in this order: explicit skill input first, then `kata status` for the same-branch active task, then same-branch task discovery. If exactly one task is discovered, the skill may continue without asking. If multiple same-branch tasks exist, `kata status` returns `candidates` plus a `recommended` action derived from upstream artifacts such as `review.json`, `judge.json`, and evidence envelopes; the agent should ask the user to confirm the recommendation instead of asking them to remember a change id.
+The skill should resolve the task id in this order: explicit skill input first, then `kata-cli status` for the same-branch active task, then same-branch task discovery. If exactly one task is discovered, the skill may continue without asking. If multiple same-branch tasks exist, `kata-cli status` returns `candidates` plus a `recommended` action derived from upstream artifacts such as `review.json`, `judge.json`, and evidence envelopes; the agent should ask the user to confirm the recommendation instead of asking them to remember a change id.
 
 When an accidental placeholder task, parallel change, or follow-up task is covered by another governed task, record the relationship instead of asking future agents to guess:
 
 ```bash
-kata tasks relate \
+kata-cli tasks relate \
   --from fix-code-style-arch-boundaries \
   --to repair-code-standards-boundaries \
   --type covered_by \
   --reason "covered by the specific repair task"
 ```
 
-Terminal relation types are `covered_by`, `superseded_by`, `duplicate_of`, and `merged_into`. `kata status --change <source>` and `kata orient --change <source>` follow those relations to the target task and include `relationRedirects`. Non-terminal relation types such as `parent_of`, `spawned_from`, and `related_to` document lineage without redirecting workflow.
+Terminal relation types are `covered_by`, `superseded_by`, `duplicate_of`, and `merged_into`. `kata-cli status --change <source>` and `kata-cli orient --change <source>` follow those relations to the target task and include `relationRedirects`. Non-terminal relation types such as `parent_of`, `spawned_from`, and `related_to` document lineage without redirecting workflow.
 
 For relations across changes and tasks, use the generic graph:
 
 ```bash
 # Change owns or groups a task. This documents ownership; it does not change task workflow control.
-kata relations add \
+kata-cli relations add \
   --from change:full-chain-quality-optimization \
   --to task:repair-code-standards-boundaries \
   --type contains \
   --reason "change contains this repair task"
 
 # Change-to-change replacement.
-kata relations add \
+kata-cli relations add \
   --from change:old-quality-plan \
   --to change:full-chain-quality-optimization \
   --type superseded_by
 
-kata relations show --id change:full-chain-quality-optimization
+kata-cli relations show --id change:full-chain-quality-optimization
 ```
 
 Think of Kata relations as four edge classes:
@@ -99,12 +99,12 @@ Think of Kata relations as four edge classes:
 Every non-trivial agent session should begin with:
 
 ```bash
-kata status
-kata orient --role implementer --platform <platform> --task-kind implementation
-kata hooks activate --change <change-id> --role implementer --platform <platform>
+kata-cli status
+kata-cli orient --role implementer --platform <platform> --task-kind implementation
+kata-cli hooks activate --change <change-id> --role implementer --platform <platform>
 ```
 
-`kata status` is not just a phase check. It first uses a same-branch active task; if none exists, it inspects non-archived Kata tasks created on the current Git branch. With one task it returns the change id, phase, next skill, task title, acceptance criteria, required reads, and Wiki/context summary. The returned `nextSkill` is artifact-aware: if a task is in `review` but `review.json` contains blocking findings, `nextSkill` becomes `/kata-build` with `recommended.reason = repair_blocking_review_findings`; the raw phase mapping remains available as `phaseNextSkill = /kata-judge`. The output also includes `nextAction.slashCommand` and `nextAction.cliCommand`, for example `/kata-build repair-code-standards-boundaries` and `kata build --change repair-code-standards-boundaries`. Skills should show the slash command first and use the CLI command only as a fallback for non-interactive environments. With multiple tasks it returns dispatch candidates ordered by urgency: blocking review findings, failed Judge repair scopes, failing evidence, `hardVerify` awaiting review, `review` awaiting Judge, then ordinary build/design work.
+`kata-cli status` is not just a phase check. It first uses a same-branch active task; if none exists, it inspects non-archived Kata tasks created on the current Git branch. With one task it returns the change id, phase, next skill, task title, acceptance criteria, required reads, and Wiki/context summary. The returned `nextSkill` is artifact-aware: if a task is in `review` but `review.json` contains blocking findings, `nextSkill` becomes `/kata-build` with `recommended.reason = repair_blocking_review_findings`; the raw phase mapping remains available as `phaseNextSkill = /kata-judge`. The output also includes `nextAction.slashCommand` and `nextAction.cliCommand`, for example `/kata-build repair-code-standards-boundaries` and `kata-cli build --change repair-code-standards-boundaries`. Skills should show the slash command first and use the CLI command only as a fallback for non-interactive environments. With multiple tasks it returns dispatch candidates ordered by urgency: blocking review findings, failed Judge repair scopes, failing evidence, `hardVerify` awaiting review, `review` awaiting Judge, then ordinary build/design work.
 
 When `/kata-build` is invoked from `review` with blocking findings, Kata records a repair re-entry:
 
@@ -126,7 +126,7 @@ or:
 /kata-collect
 ```
 
-The skill runs `kata status` or `kata collect`, reads the recommended task, and asks for a short confirmation such as “发现上游 blocking review findings，建议作为 implementer repair，是否开始？”. After confirmation it runs `kata orient` for the recommended role and proceeds with the matching `/kata-*` skill. If a skill was invoked with an explicit task id, pass that id to `kata orient --change <change-id>`.
+The skill runs `kata-cli status` or `kata-cli collect`, reads the recommended task, and asks for a short confirmation such as “发现上游 blocking review findings，建议作为 implementer repair，是否开始？”. After confirmation it runs `kata-cli orient` for the recommended role and proceeds with the matching `/kata-*` skill. If a skill was invoked with an explicit task id, pass that id to `kata-cli orient --change <change-id>`.
 
 Read the files returned in `requiredReads` before editing. The important ones are usually:
 
@@ -146,28 +146,28 @@ Before another platform or role takes over, create a packet:
 
 ```bash
 # The current implementer hands the task to a reviewer.
-kata handoff create --task <change-id> --from implementer --to reviewer --platform opencode
+kata-cli handoff create --task <change-id> --from implementer --to reviewer --platform opencode
 
 # The receiving agent verifies the same HEAD, branch and diff, then reads all paths in requiredReads.
-kata handoff verify --task <change-id> --id <handoff-id>
-kata handoff show --task <change-id> --id <handoff-id>
+kata-cli handoff verify --task <change-id> --id <handoff-id>
+kata-cli handoff show --task <change-id> --id <handoff-id>
 
 # It records the platform and role that actually accepted the packet.
-kata handoff acknowledge --task <change-id> --id <handoff-id> \
+kata-cli handoff acknowledge --task <change-id> --id <handoff-id> \
   --platform github-copilot --role reviewer
 ```
 
 The packet contains task acceptance criteria, authoritative Wiki context, evidence and prior artifact paths, Git anchors, and allowed writes. If HEAD, branch, or working-tree diff changes, `handoff verify` returns `valid: false`; create a fresh packet before handing work onward.
 
-`handoff acknowledge` also writes the receiving task, role, platform, branch, and origin into `.kata/runtime/active-task.json`. After acknowledgement, the receiving platform can usually run `/kata-build` or `kata status` without repeating the task id. If no active task exists and exactly one unfinished same-branch task is present, `kata status` auto-activates it with the next suggested role. If multiple unfinished tasks exist, Kata still returns candidates and a recommendation instead of guessing.
+`handoff acknowledge` also writes the receiving task, role, platform, branch, and origin into `.kata/runtime/active-task.json`. After acknowledgement, the receiving platform can usually run `/kata-build` or `kata-cli status` without repeating the task id. If no active task exists and exactly one unfinished same-branch task is present, `kata-cli status` auto-activates it with the next suggested role. If multiple unfinished tasks exist, Kata still returns candidates and a recommendation instead of guessing.
 
 This works equally for Codex, OpenCode, GitHub Copilot, Claude Code, and the generic adapter. The receiver must use the packet rather than relying on a prior agent's summary.
 
 ### Trust-boundary pauses
 
-Kata skills automate the current phase, not the whole lifecycle. When `kata status` or `kata orient` returns `nextAction.requiresUserConfirmation: true`, the agent must stop and ask the user before invoking the next `/kata-*` skill.
+Kata skills automate the current phase, not the whole lifecycle. When `kata-cli status` or `kata-cli orient` returns `nextAction.requiresUserConfirmation: true`, the agent must stop and ask the user before invoking the next `/kata-*` skill.
 
-Every phase command result also returns the next operation. After `/kata-build repair-code-standards-boundaries`, for example, the command result includes `nextAction.slashCommand` such as `/kata-verify repair-code-standards-boundaries` and `nextAction.cliCommand` such as `kata verify --change repair-code-standards-boundaries`. Skills must show the slash command to the user before stopping, even when no model/platform switch is required.
+Every phase command result also returns the next operation. After `/kata-build repair-code-standards-boundaries`, for example, the command result includes `nextAction.slashCommand` such as `/kata-verify repair-code-standards-boundaries` and `nextAction.cliCommand` such as `kata-cli verify --change repair-code-standards-boundaries`. Skills must show the slash command to the user before stopping, even when no model/platform switch is required.
 
 This protects the points where users often want to switch model tier or platform:
 
@@ -184,16 +184,16 @@ This protects the points where users often want to switch model tier or platform
 Initialize or refresh raw Wiki inputs:
 
 ```bash
-kata wiki init --from docs
-kata wiki ingest --from docs/developer
-kata wiki lint
-kata wiki verify
+kata-cli wiki init --from docs
+kata-cli wiki ingest --from docs/developer
+kata-cli wiki lint
+kata-cli wiki verify
 ```
 
 When synthesis needs LLM judgment, do not configure model keys in the Kata binary. Ask the coding agent to use the installed skill:
 
 ```bash
-kata wiki task --kind enrich --from docs
+kata-cli wiki task --kind enrich --from docs
 ```
 
 Then invoke `/kata-wiki-enrich` and let the agent write concept/entity/comparison/query pages under the packet's `writeTargets`. After that, run the deterministic follow-up commands from the packet.
@@ -240,7 +240,7 @@ implementation
 Wiki entries become durable project knowledge only after promotion:
 
 ```bash
-kata wiki promote <wiki-id> --by <reviewer> --role reviewer
+kata-cli wiki promote <wiki-id> --by <reviewer> --role reviewer
 ```
 
 ## 7. Optional structural code memory
@@ -256,9 +256,9 @@ They are not a replacement for `.llmwiki`:
 When a `codegraph` CLI is available, Kata exposes convenience wrappers:
 
 ```bash
-kata codegraph status
-kata codegraph explore "runtime bootstrap"
-kata codegraph impact "createTask"
+kata-cli codegraph status
+kata-cli codegraph explore "runtime bootstrap"
+kata-cli codegraph impact "createTask"
 ```
 
 Every generated `/kata-*` skill now includes the same CodeGraph-assisted search contract. After orientation and required context reads, agents should use CodeGraph before broad repository scans when they need code understanding, impact analysis, or affected-test targeting. CodeGraph results are hints, not proof: agents must still verify with direct file reads, focused `rg`, and the normal CI/test/Reviewer/Judge gates. If CodeGraph is unavailable or stale, the skill should record the fallback and continue with repository search.
@@ -270,5 +270,5 @@ If no structural index tool is installed, Kata still works; use normal repositor
 After archive or when switching away from Kata-governed work:
 
 ```bash
-kata hooks deactivate
+kata-cli hooks deactivate
 ```

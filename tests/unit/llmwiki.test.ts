@@ -230,7 +230,7 @@ describe('LLM Wiki', () => {
         '.llmwiki/raw/docs/gateway.md',
       ]),
       writeTargets: expect.arrayContaining(['.llmwiki/concepts/', '.llmwiki/entities/', '.llmwiki/comparisons/']),
-      followupCommands: expect.arrayContaining(['kata wiki lint --root <root>']),
+      followupCommands: expect.arrayContaining(['kata-cli wiki lint --root <root>']),
     });
     expect(task.instructions).toEqual(expect.arrayContaining([expect.stringContaining('coding agent')]));
     expect(JSON.stringify(task)).not.toMatch(/apiKey|OPENAI|ANTHROPIC/i);

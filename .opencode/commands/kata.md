@@ -24,19 +24,19 @@ Use this skill to inspect the Kata dispatch workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata` Skill as the human-facing interface. Use `kata status` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata` Skill as the human-facing interface. Use `kata-cli status` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
 Before doing task work, run the project orientation command:
 
 ```bash
-kata status
-kata orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
-kata hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
+kata-cli status
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -54,10 +54,10 @@ This is mandatory at trust boundaries:
 After reading required context and before broad file scans, use CodeGraph when code understanding, impact analysis, or test targeting is needed:
 
 ```bash
-kata codegraph status
-kata codegraph explore "<feature, symbol, module, or error>"
-kata codegraph impact "<symbol-or-file>"
-kata codegraph affected <changed-file>...
+kata-cli codegraph status
+kata-cli codegraph explore "<feature, symbol, module, or error>"
+kata-cli codegraph impact "<symbol-or-file>"
+kata-cli codegraph affected <changed-file>...
 ```
 
 Use CodeGraph to find likely source files, call paths, dependents, and affected tests. Then verify with direct file reads and focused `rg` searches before editing or reviewing. If CodeGraph is unavailable or stale, note the fallback and use `rg` plus requiredReads; do not block the workflow solely on CodeGraph.
@@ -66,7 +66,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata handoff verify --task <change-id> --id <handoff-id>, kata handoff show --task <change-id> --id <handoff-id>, then kata handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -76,7 +76,7 @@ The packet's allowed writes and guard instructions are authoritative. Model sele
 {
   "id": "kata",
   "slashCommand": "/kata",
-  "cli": "kata status",
+  "cli": "kata-cli status",
   "phase": "dispatch",
   "summary": "Shows Kata task status and available next actions. Use when the user asks what to do next, wants Kata status, or needs workflow dispatch."
 }
@@ -110,7 +110,7 @@ Keywords and intents that should trigger this skill:
 ## Invocation
 
 ```bash
-kata status
+kata-cli status
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -130,37 +130,37 @@ OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成�
 Read the current task state and upstream artifacts to determine the next action:
 
 ```bash
-kata status  # show current phase and next skill
+kata-cli status  # show current phase and next skill
 ```
 
 For a specific change:
 
 ```bash
-kata status --change <change-id>
+kata-cli status --change <change-id>
 ```
 
-With one active or same-branch task, the output includes a `nextSkill` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, `kata status` returns `candidates` and a `recommended` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
+With one active or same-branch task, the output includes a `nextSkill` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, `kata-cli status` returns `candidates` and a `recommended` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
 
-When `phase === "dispatch" && candidates.length === 0 && recommended === null`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: “当前分支没有活跃的 Kata 任务。你想开启什么工作？请用一句话描述目标，例如‘修复登录超时’或‘新增导出功能’。” Wait for their answer. 收到自然语言目标后，进入 /kata-open；由该 Skill 解释并确认隔离、开发和审查方式，然后使用显式参数调用 `kata open`。
+When `phase === "dispatch" && candidates.length === 0 && recommended === null`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: “当前分支没有活跃的 Kata 任务。你想开启什么工作？请用一句话描述目标，例如‘修复登录超时’或‘新增导出功能’。” Wait for their answer. 收到自然语言目标后，进入 /kata-open；由该 Skill 解释并确认隔离、开发和审查方式，然后使用显式参数调用 `kata-cli open`。
 
-Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say `/kata-build 修复代码规范` or `继续`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run `kata build --change ...` unless the host platform cannot execute shell commands.
+Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say `/kata-build 修复代码规范` or `继续`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run `kata-cli build --change ...` unless the host platform cannot execute shell commands.
 
 Workflow control is task-scoped: Change is the target/scope container, Task is the smallest governed control unit, Artifact is evidence, and Step is agent-local execution detail. Do not drive build/review/judge from a Change directly; resolve the canonical Task first.
 
 If a placeholder task or earlier change is covered by a more specific governed task, do not ask future agents to guess. Record the relation:
 
 ```bash
-kata tasks relate --from <source-task> --to <target-task> --type <covered_by|superseded_by|duplicate_of|merged_into> --reason "<why>"
+kata-cli tasks relate --from <source-task> --to <target-task> --type <covered_by|superseded_by|duplicate_of|merged_into> --reason "<why>"
 ```
 
-`kata status --change <source-task>` and `kata orient --change <source-task>` follow terminal relations and return `relationRedirects`.
+`kata-cli status --change <source-task>` and `kata-cli orient --change <source-task>` follow terminal relations and return `relationRedirects`.
 
 For change-to-task, task-to-change, and change-to-change context, use the generic graph:
 
 ```bash
-kata relations add --from change:<change-id> --to task:<task-id> --type contains --reason "<why>"
-kata relations add --from task:<task-id> --to change:<change-id> --type implements --reason "<why>"
-kata relations show --id change:<change-id>
+kata-cli relations add --from change:<change-id> --to task:<task-id> --type contains --reason "<why>"
+kata-cli relations add --from task:<task-id> --to change:<change-id> --type implements --reason "<why>"
+kata-cli relations show --id change:<change-id>
 ```
 
 Ownership and lineage edges enrich context. Only task-to-task terminal control edges should redirect `status`/`orient`.
@@ -184,14 +184,14 @@ The phase dispatch mapping is:
 If running inside a platform that supports slash commands and `nextAction.requiresUserConfirmation` is not true, invoke the suggested /kata-* skill directly. Otherwise use:
 
 ```bash
-kata <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>
+kata-cli <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>
 ```
 
 You can also check Comet directly:
 
 ```bash
-kata comet verify  # check if Comet is installed and compatible
-kata comet version # show compatibility and installed versions
+kata-cli comet verify  # check if Comet is installed and compatible
+kata-cli comet version # show compatibility and installed versions
 ```
 
 ## Wiki maintenance
@@ -201,14 +201,14 @@ The project wiki (`.llmwiki/` + `.kata/wiki/`) accumulates knowledge across task
 Periodically run:
 
 ```bash
-kata wiki lint
+kata-cli wiki lint
 ```
 
 Fix reported issues: broken wikilinks, orphaned pages, missing frontmatter. Re-run until clean.
 
 ## Ongoing discipline
 
-- If you discover a decision, constraint, or norm **during** task work, capture it immediately via `kata wiki ingest --from <source-path>`. Don't wait for archive.
+- If you discover a decision, constraint, or norm **during** task work, capture it immediately via `kata-cli wiki ingest --from <source-path>`. Don't wait for archive.
 - If the user says “记住这个”, “沉淀到 wiki”, “以后都按这个”, “record this rule”, “add to wiki”, or gives an equivalent durable-knowledge instruction, do **not** treat the chat transcript itself as authoritative. Create a concise source note under the task-owned path or docs/conventions, then ingest/register it as a governed Wiki candidate. Ask a short confirmation only when the instruction is ambiguous.
 - Do not promote conversation-derived knowledge directly. It must remain a candidate until reviewed/promoted; stale ideas and temporary discussion should not pollute authoritative Wiki.
-- Before starting a new task, run `kata wiki orient` to refresh context.
+- Before starting a new task, run `kata-cli wiki orient` to refresh context.

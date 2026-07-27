@@ -252,8 +252,8 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
     nextSkill,
     slashCommand: `${nextSkill} ${taskId}${seal}`,
     cliCommand: wikiClosure
-      ? `kata wiki closure --task ${taskId} --decision <captured|not_applicable> --reason <reason>`
-      : cliVerb ? `kata ${cliVerb} --change ${taskId}${seal}` : `kata status --change ${taskId}`,
+      ? `kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable> --reason <reason>`
+      : cliVerb ? `kata-cli ${cliVerb} --change ${taskId}${seal}` : `kata-cli status --change ${taskId}`,
     role,
     reason,
     requiresUserConfirmation: gate !== null || wikiClosure,

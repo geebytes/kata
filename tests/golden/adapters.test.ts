@@ -51,19 +51,19 @@ describe('platform adapter golden output', () => {
         expect(rendered).toContain('Skill-first operating rule');
         expect(rendered).toContain('Prefer the `');
         expect(rendered).toContain('as the human-facing interface');
-        expect(rendered).toContain('kata orient --role');
+        expect(rendered).toContain('kata-cli orient --role');
         expect(rendered).toContain('task, state, context');
         expect(rendered).toContain('interactive agent workflow');
         expect(rendered).toContain('ask the user to confirm or type a value');
         expect(rendered).toContain('Do not make the user remember command-line flags');
-        expect(rendered).toContain('kata hooks activate --change');
+        expect(rendered).toContain('kata-cli hooks activate --change');
         expect(rendered).toContain('Host model selection');
         expect(rendered).toContain('Kata does not configure or route host-platform models');
         if (platform === 'opencode') expect(rendered).toContain('`/models`');
         expect(rendered).toContain('CodeGraph-assisted code search');
-        expect(rendered).toContain('kata codegraph explore');
-        expect(rendered).toContain('kata codegraph impact');
-        expect(rendered).toContain('kata codegraph affected');
+        expect(rendered).toContain('kata-cli codegraph explore');
+        expect(rendered).toContain('kata-cli codegraph impact');
+        expect(rendered).toContain('kata-cli codegraph affected');
         expect(rendered).toContain('nextAction.requiresUserConfirmation=true');
         expect(rendered).toContain("host platform's own model selector");
         expect(rendered).toContain('Kata has no model routing configuration or route artifact');
@@ -82,12 +82,12 @@ describe('platform adapter golden output', () => {
             expect(rendered).toContain('Wiki closure is a governance action, not an implementation repair');
             expect(rendered).toContain('Only ask the user when the task artifacts are genuinely ambiguous');
             expect(rendered).toContain('implementationReady: true');
-            expect(rendered).toContain('kata wiki closure --task <taskId>');
+            expect(rendered).toContain('kata-cli wiki closure --task <taskId>');
           }
           expect(rendered).toContain('active task, same-branch task, relation redirects');
           expect(rendered).toContain('present concise options');
-          expect(rendered).toContain('kata handoff verify');
-          expect(rendered).toContain('kata handoff acknowledge');
+          expect(rendered).toContain('kata-cli handoff verify');
+          expect(rendered).toContain('kata-cli handoff acknowledge');
           expect(rendered).toContain('Always tell the user the current phase and the next recommended operation');
           expect(rendered).toContain('completion.userMessage');
           expect(rendered).toContain('never wait for the user to ask “what next”');
@@ -103,10 +103,10 @@ describe('platform adapter golden output', () => {
 
         if (command.id === 'kata-wiki-enrich') {
           expect(rendered).toContain('coding agent');
-          expect(rendered).toContain('kata wiki task --kind enrich');
-          expect(rendered).toContain('kata wiki lint');
+          expect(rendered).toContain('kata-cli wiki task --kind enrich');
+          expect(rendered).toContain('kata-cli wiki lint');
           expect(rendered).toContain('Do not guess Wiki CLI subcommands');
-          expect(rendered).toContain('kata wiki --help');
+          expect(rendered).toContain('kata-cli wiki --help');
         }
 
         if (command.id === 'kata-archive') {
@@ -122,12 +122,12 @@ describe('platform adapter golden output', () => {
         expect.objectContaining({
           id: 'kata-wiki-enrich',
           slashCommand: '/kata-wiki-enrich',
-          cli: 'kata wiki task --kind enrich',
+          cli: 'kata-cli wiki task --kind enrich',
         }),
         expect.objectContaining({
           id: 'kata-collect',
           slashCommand: '/kata-collect',
-          cli: 'kata collect',
+          cli: 'kata-cli collect',
         }),
       ]),
     );
@@ -151,10 +151,10 @@ describe('platform adapter golden output', () => {
     expect(rendered).toContain('| `hardVerify` | `/kata-verify` |');
     expect(rendered).toContain('| `review` | `/kata-judge` |');
     expect(rendered).toContain('Workflow control is task-scoped');
-    expect(rendered).toContain('kata tasks relate --from <source-task> --to <target-task>');
-    expect(rendered).toContain('kata relations add --from change:<change-id> --to task:<task-id>');
+    expect(rendered).toContain('kata-cli tasks relate --from <source-task> --to <target-task>');
+    expect(rendered).toContain('kata-cli relations add --from change:<change-id> --to task:<task-id>');
     expect(rendered).toContain('relationRedirects');
-    expect(rendered).toContain('kata <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>');
+    expect(rendered).toContain('kata-cli <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>');
     expect(rendered).toContain('当前分支没有活跃的 Kata 任务。你想开启什么工作？');
     expect(rendered).toContain('请用一句话描述目标');
     expect(rendered).toContain('收到自然语言目标后，进入 /kata-open');

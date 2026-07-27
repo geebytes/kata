@@ -25,7 +25,7 @@ const denial = evaluateWrite({ role }, normalizedPath, { ...task, id: taskId, ph
 
 if (denial) {
   console.error(`Kata hook blocked write to ${targetPath}: ${denial}`);
-  console.error('Run: kata orient --change ' + taskId + ' --role ' + role);
+  console.error('Run: kata-cli orient --change ' + taskId + ' --role ' + role);
   process.exit(2);
 }
 

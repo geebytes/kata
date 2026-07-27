@@ -24,19 +24,19 @@ Use this skill to inspect the Kata wiki-enrich workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-wiki-enrich` Skill as the human-facing interface. Use `kata wiki task --kind enrich` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-wiki-enrich` Skill as the human-facing interface. Use `kata-cli wiki task --kind enrich` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
 Before doing task work, run the project orientation command:
 
 ```bash
-kata status
-kata orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
-kata hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
+kata-cli status
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -54,10 +54,10 @@ This is mandatory at trust boundaries:
 After reading required context and before broad file scans, use CodeGraph when code understanding, impact analysis, or test targeting is needed:
 
 ```bash
-kata codegraph status
-kata codegraph explore "<feature, symbol, module, or error>"
-kata codegraph impact "<symbol-or-file>"
-kata codegraph affected <changed-file>...
+kata-cli codegraph status
+kata-cli codegraph explore "<feature, symbol, module, or error>"
+kata-cli codegraph impact "<symbol-or-file>"
+kata-cli codegraph affected <changed-file>...
 ```
 
 Use CodeGraph to find likely source files, call paths, dependents, and affected tests. Then verify with direct file reads and focused `rg` searches before editing or reviewing. If CodeGraph is unavailable or stale, note the fallback and use `rg` plus requiredReads; do not block the workflow solely on CodeGraph.
@@ -66,7 +66,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata handoff verify --task <change-id> --id <handoff-id>, kata handoff show --task <change-id> --id <handoff-id>, then kata handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -76,7 +76,7 @@ The packet's allowed writes and guard instructions are authoritative. Model sele
 {
   "id": "kata-wiki-enrich",
   "slashCommand": "/kata-wiki-enrich",
-  "cli": "kata wiki task --kind enrich",
+  "cli": "kata-cli wiki task --kind enrich",
   "phase": "wiki-enrich",
   "summary": "Uses the coding agent LLM capability to enrich .llmwiki from deterministic Kata task packets. Use when initializing, enriching, linting, or distilling project wiki knowledge."
 }
@@ -110,7 +110,7 @@ Keywords and intents that should trigger this skill:
 ## Invocation
 
 ```bash
-kata wiki task --kind enrich
+kata-cli wiki task --kind enrich
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -131,10 +131,10 @@ This skill is where LLM work happens. Kata binary does **not** call model provid
 
 1. Get the task packet:
    ```bash
-   kata wiki task --kind enrich --from docs
+   kata-cli wiki task --kind enrich --from docs
    ```
 
-   Do not guess Wiki CLI subcommands. Run `kata wiki --help` when discovery is needed. `kata wiki propose` is only a compatibility alias for the enrich task packet; it neither creates a governed record nor promotes knowledge. Use `kata wiki candidate` to inspect pending records.
+   Do not guess Wiki CLI subcommands. Run `kata-cli wiki --help` when discovery is needed. `kata-cli wiki propose` is only a compatibility alias for the enrich task packet; it neither creates a governed record nor promotes knowledge. Use `kata-cli wiki candidate` to inspect pending records.
 
 2. Read every path in `requiredReads`, especially:
    - `.llmwiki/SCHEMA.md`
@@ -162,19 +162,19 @@ This skill is where LLM work happens. Kata binary does **not** call model provid
 
 7. Run deterministic checks:
    ```bash
-   kata wiki lint
-   kata wiki verify
+   kata-cli wiki lint
+   kata-cli wiki verify
    ```
 
 8. Register synthesized pages as governed candidate records:
    ```bash
-   kata wiki register
+   kata-cli wiki register
    ```
 
-9. Complete the mandatory knowledge-closure decision before `/kata-verify` and `/kata-archive`. Decide it yourself from the task design, acceptance, source changes, and candidate records: reusable capability/rule/convention means `captured`; a local mechanical change with no durable knowledge means `not_applicable`. Create and register a grounded candidate before choosing `captured`. Only ask the user when those artifacts are genuinely ambiguous or contradictory. Never invoke bare `kata wiki closure` merely to make the user classify the task; always pass the selected decision and concrete reason:
+9. Complete the mandatory knowledge-closure decision before `/kata-verify` and `/kata-archive`. Decide it yourself from the task design, acceptance, source changes, and candidate records: reusable capability/rule/convention means `captured`; a local mechanical change with no durable knowledge means `not_applicable`. Create and register a grounded candidate before choosing `captured`. Only ask the user when those artifacts are genuinely ambiguous or contradictory. Never invoke bare `kata-cli wiki closure` merely to make the user classify the task; always pass the selected decision and concrete reason:
    ```bash
-   kata wiki closure --task <task-id> --decision captured --reason "<durable rule>" --candidate <wiki-id>
-   kata wiki closure --task <task-id> --decision not_applicable --reason "<why no reusable knowledge changed>"
+   kata-cli wiki closure --task <task-id> --decision captured --reason "<durable rule>" --candidate <wiki-id>
+   kata-cli wiki closure --task <task-id> --decision not_applicable --reason "<why no reusable knowledge changed>"
    ```
 
 The Wiki helps future agents understand the project. It does not prove code correctness; CI, tests, Reviewer, and Judge own correctness.

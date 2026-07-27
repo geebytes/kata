@@ -18,24 +18,24 @@ Kata skills should avoid asking "which Change is this?" when the repository alre
 Resolution order:
 
 1. Use the explicit task id passed to the skill, such as `/kata-build context-fabric`.
-2. Otherwise run `kata status` and use the active task only when its recorded Git branch matches the current branch. The response includes the task title, acceptance criteria, current state, required reads, and context summary.
-3. If no active task exists, `kata status` may use the single non-archived Kata task whose `task.json` was created on the current Git branch.
+2. Otherwise run `kata-cli status` and use the active task only when its recorded Git branch matches the current branch. The response includes the task title, acceptance criteria, current state, required reads, and context summary.
+3. If no active task exists, `kata-cli status` may use the single non-archived Kata task whose `task.json` was created on the current Git branch.
 4. If no same-branch task exists, multiple same-branch tasks exist, or an active task points at another branch, ask the user for the task id before editing.
 
 Activation records the task, phase, role, platform and branch:
 
 ```sh
-kata hooks activate --change <task-id> --role implementer --platform opencode
+kata-cli hooks activate --change <task-id> --role implementer --platform opencode
 ```
 
 After that, same-branch phase commands may omit `--change` for skill-driven use:
 
 ```sh
-kata status
-kata orient --role implementer --platform opencode
-kata build
-kata review
-kata judge
+kata-cli status
+kata-cli orient --role implementer --platform opencode
+kata-cli build
+kata-cli review
+kata-cli judge
 ```
 
 ## Handoff
@@ -43,10 +43,10 @@ kata judge
 Create a packet before changing platform or role:
 
 ```sh
-kata handoff create --task <task-id> --from implementer --to reviewer --platform opencode
-kata handoff verify --task <task-id> --id <handoff-id>
-kata handoff show --task <task-id> --id <handoff-id>
-kata handoff acknowledge --task <task-id> --id <handoff-id> --platform github-copilot --role reviewer
+kata-cli handoff create --task <task-id> --from implementer --to reviewer --platform opencode
+kata-cli handoff verify --task <task-id> --id <handoff-id>
+kata-cli handoff show --task <task-id> --id <handoff-id>
+kata-cli handoff acknowledge --task <task-id> --id <handoff-id> --platform github-copilot --role reviewer
 ```
 
 The consumer reads every `requiredReads` path, obeys the packet's allowed writes, and writes only the canonical role artifact. If `requiredReads` includes `.kata/tasks/<task-id>/model-routes/<role>.json`, the consumer must read its `decision` field:
@@ -63,6 +63,6 @@ Acknowledgement also activates the task locally:
 .kata/runtime/active-task.json
 ```
 
-The active record stores task id, receiving role, platform, branch, phase, and an `origin` such as `handoff`, `workflow`, `discovered`, or `manual`. This lets a receiving platform run `/kata-build` or `kata status` without asking the user to repeat the task id. If there is exactly one unfinished same-branch task and no active task, `kata status` auto-activates it with the next suggested role; if there are multiple unfinished tasks, Kata reports candidates and asks for confirmation.
+The active record stores task id, receiving role, platform, branch, phase, and an `origin` such as `handoff`, `workflow`, `discovered`, or `manual`. This lets a receiving platform run `/kata-build` or `kata-cli status` without asking the user to repeat the task id. If there is exactly one unfinished same-branch task and no active task, `kata-cli status` auto-activates it with the next suggested role; if there are multiple unfinished tasks, Kata reports candidates and asks for confirmation.
 
 This is intentionally limited to one local worktree and Git branch. Kata does not move private conversation history, synchronize multiple clones, or launch provider-specific models. Model routes remain optional, auditable execution hints; they record both Kata's recommendation and the user/agent decision, but they do not prove the host actually selected that model.

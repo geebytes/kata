@@ -16,11 +16,11 @@ Structural code-memory tools such as CodeGraph or `codebase-memory-mcp` can make
 Initialize a project-local markdown wiki from an existing documentation path:
 
 ```bash
-kata init --wiki-from docs
-kata init --wiki-from /path/to/project-docs
+kata-cli init --wiki-from docs
+kata-cli init --wiki-from /path/to/project-docs
 ```
 
-`kata wiki init --from <path>` remains available as a lower-level command, but the normal project setup path is `kata init`, so the Kata binary manages Skills, project contract files, `.kata/`, and `.llmwiki/` together.
+`kata-cli wiki init --from <path>` remains available as a lower-level command, but the normal project setup path is `kata-cli init`, so the Kata binary manages Skills, project contract files, `.kata/`, and `.llmwiki/` together.
 
 Kata deliberately separates deterministic file governance from LLM synthesis:
 
@@ -59,7 +59,7 @@ sha256: <body hash>
 Agents should run orientation before using the Wiki:
 
 ```bash
-kata wiki orient
+kata-cli wiki orient
 ```
 
 Orientation reads `SCHEMA.md`, `index.md`, and the recent `log.md`, matching the Hermes LLM Wiki rule that an agent must orient before ingesting, querying, or linting.
@@ -67,21 +67,21 @@ Orientation reads `SCHEMA.md`, `index.md`, and the recent `log.md`, matching the
 For day-to-day governed coding, prefer the higher-level project orientation command:
 
 ```bash
-kata orient --change <change-id> --role implementer --task-kind implementation
+kata-cli orient --change <change-id> --role implementer --task-kind implementation
 ```
 
-It includes the `.llmwiki` entry files in `requiredReads` and also returns the current role guard instructions, model route, and next suggested `/kata-*` Skill. Use `kata wiki orient` when you only need the Wiki layer; use `kata orient` when an agent is about to work on a Kata task.
+It includes the `.llmwiki` entry files in `requiredReads` and also returns the current role guard instructions, model route, and next suggested `/kata-*` Skill. Use `kata-cli wiki orient` when you only need the Wiki layer; use `kata-cli orient` when an agent is about to work on a Kata task.
 
 Health check the Wiki:
 
 ```bash
-kata wiki lint
+kata-cli wiki lint
 ```
 
 Ask the coding agent to perform LLM-assisted enrichment through a deterministic task packet:
 
 ```bash
-kata wiki task --kind enrich --from docs
+kata-cli wiki task --kind enrich --from docs
 ```
 
 The task packet returns `requiredReads`, `writeTargets`, `instructions`, and `followupCommands`. Use `/kata-wiki-enrich` in Codex, Claude Code, OpenCode, or another AI coding tool to perform the synthesis work, then run the returned deterministic checks.
@@ -98,8 +98,8 @@ The lint pass checks:
 Incrementally ingest new sources:
 
 ```bash
-kata wiki ingest --from docs/runtime.md
-kata wiki ingest --from docs/developer
+kata-cli wiki ingest --from docs/runtime.md
+kata-cli wiki ingest --from docs/developer
 ```
 
 Ingest copies supported sources (`.md`, `.mdx`, `.txt`) into `raw/docs/`, creates deterministic summary pages in `concepts/`, updates `index.md` and `log.md`, and creates matching `.kata/wiki` candidate records with source hashes.
@@ -107,8 +107,8 @@ Ingest copies supported sources (`.md`, `.mdx`, `.txt`) into `raw/docs/`, create
 Query compiled Wiki pages:
 
 ```bash
-kata wiki query --q "How does the runtime bootstrap work?"
-kata wiki query --q "Compare API and worker responsibilities" --file
+kata-cli wiki query --q "How does the runtime bootstrap work?"
+kata-cli wiki query --q "Compare API and worker responsibilities" --file
 ```
 
 Queries search the compiled markdown pages, return citations such as `[[concepts/runtime.md]]`, and `--file` stores valuable answers under `queries/` so exploration compounds into the Wiki.
@@ -184,7 +184,7 @@ LLM Wiki ingest also creates `.kata/wiki` records, but those records are `candid
 
 ```bash
 # (called automatically during workflow)
-kata wiki propose <task-id>
+kata-cli wiki propose <task-id>
 ```
 
 ## Drift detection
@@ -192,7 +192,7 @@ kata wiki propose <task-id>
 Run `wiki verify` to check all Wiki records against current source files:
 
 ```bash
-kata wiki verify
+kata-cli wiki verify
 ```
 
 Records whose source hashes no longer match current file content are marked `stale`. Missing files also trigger stale marking.
@@ -214,7 +214,7 @@ Promoting a candidate to verified requires an explicit approval event:
 
 ```bash
 # Promote a Wiki candidate
-kata wiki promote <wiki-id> --by <reviewer> --role <role>
+kata-cli wiki promote <wiki-id> --by <reviewer> --role <role>
 ```
 
 Promotion guards:

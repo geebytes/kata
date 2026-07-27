@@ -24,19 +24,19 @@ Use this skill to inspect the Kata verify workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-verify` Skill as the human-facing interface. Use `kata verify --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-verify` Skill as the human-facing interface. Use `kata-cli verify --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
 Before doing task work, run the project orientation command:
 
 ```bash
-kata status
-kata orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
-kata hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
+kata-cli status
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -54,10 +54,10 @@ This is mandatory at trust boundaries:
 After reading required context and before broad file scans, use CodeGraph when code understanding, impact analysis, or test targeting is needed:
 
 ```bash
-kata codegraph status
-kata codegraph explore "<feature, symbol, module, or error>"
-kata codegraph impact "<symbol-or-file>"
-kata codegraph affected <changed-file>...
+kata-cli codegraph status
+kata-cli codegraph explore "<feature, symbol, module, or error>"
+kata-cli codegraph impact "<symbol-or-file>"
+kata-cli codegraph affected <changed-file>...
 ```
 
 Use CodeGraph to find likely source files, call paths, dependents, and affected tests. Then verify with direct file reads and focused `rg` searches before editing or reviewing. If CodeGraph is unavailable or stale, note the fallback and use `rg` plus requiredReads; do not block the workflow solely on CodeGraph.
@@ -66,7 +66,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata handoff verify --task <change-id> --id <handoff-id>, kata handoff show --task <change-id> --id <handoff-id>, then kata handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -76,13 +76,13 @@ The Skill MUST run these commands itself. Do not ask the user to copy or type th
 
 Skill-first means the slash command is the agent interface and the CLI is the internal execution layer. The user may provide no task id, a natural-language task hint, or only "continue"; the Skill must discover candidates and ask for a short confirmation only when needed.
 
-1. Run `kata status` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
-2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the `recommended` task/action from `kata status` or `kata collect`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
+1. Run `kata-cli status` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
+2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the `recommended` task/action from `kata-cli status` or `kata-cli collect`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
 3. Resolve role and task-kind from phase and user intent; if ambiguous, present recommended options and ask for confirmation. Do not default across trust boundaries without confirmation.
-4. Run `kata orient` without `--change` when using the active/single discovered task, or with `--change <id>` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
-5. Run kata handoff verify for that id; stop on an invalid result.
+4. Run `kata-cli orient` without `--change` when using the active/single discovered task, or with `--change <id>` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
+5. Run kata-cli handoff verify for that id; stop on an invalid result.
 6. Read every requiredReads path from the packet.
-7. Run kata handoff acknowledge with platform opencode and the current role.
+7. Run kata-cli handoff acknowledge with platform opencode and the current role.
 8. Run this Skill's phase command and collect normal evidence. The next phase creates a fresh packet.
 9. After the phase command returns, read `completion.userMessage` first, then `nextAction.slashCommand`, `nextAction.cliCommand`, `recommended.reason`, and `askUser` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command—especially `/kata-build <task> --seal`—the final user-facing response MUST end with `completion.userMessage` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask “what next”. If `completion` is absent, explicitly render the current phase and `nextAction.slashCommand`. Prefer the slash command, for example `/kata-verify <change-id>`; show the CLI command only as fallback.
 10. Stop after this Skill's own phase command. If the returned `nextAction.requiresUserConfirmation=true`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
@@ -93,7 +93,7 @@ Do not create a receipt for read-only search, explanation, or orientation-only w
 {
   "id": "kata-verify",
   "slashCommand": "/kata-verify",
-  "cli": "kata verify --change <change-id>",
+  "cli": "kata-cli verify --change <change-id>",
   "phase": "verify",
   "summary": "Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping."
 }
@@ -128,7 +128,7 @@ Keywords and intents that should trigger this skill:
 ## Invocation
 
 ```bash
-kata verify --change <change-id>
+kata-cli verify --change <change-id>
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -158,12 +158,12 @@ If Judge returns FAIL for any acceptance criterion:
 
 3. **Rebuild** — first repair and test the scoped implementation, then collect fresh evidence:
    ```bash
-   kata build --change <taskId> --seal
+   kata-cli build --change <taskId> --seal
    ```
 
 4. **Re-verify**:
    ```bash
-   kata verify --change <taskId>
+   kata-cli verify --change <taskId>
    ```
 
 ## Wiki closure is a governance action, not an implementation repair
@@ -172,14 +172,14 @@ When Verify reports implementationReady: true, governanceReady: false, and reaso
 
 - Choose `captured` when the task establishes a reusable capability, architecture rule, workflow constraint, or domain convention. Create and register the grounded candidate first, then reference its id.
 - Choose `not_applicable` when the task is a local mechanical change and establishes no reusable project knowledge.
-- Only ask the user when the task artifacts are genuinely ambiguous or contradictory. Do not invoke bare `kata wiki closure` and make the user classify an otherwise clear task.
+- Only ask the user when the task artifacts are genuinely ambiguous or contradictory. Do not invoke bare `kata-cli wiki closure` and make the user classify an otherwise clear task.
 
 After making the decision, record it non-interactively and re-verify:
 
 ```bash
-kata wiki closure --task <taskId> --decision captured --reason "<durable rule>" --candidate <wiki-id>
-kata wiki closure --task <taskId> --decision not_applicable --reason "<why no reusable knowledge changed>"
-kata verify --change <taskId>
+kata-cli wiki closure --task <taskId> --decision captured --reason "<durable rule>" --candidate <wiki-id>
+kata-cli wiki closure --task <taskId> --decision not_applicable --reason "<why no reusable knowledge changed>"
+kata-cli verify --change <taskId>
 ```
 
 The deferred decision intentionally blocks review and archive, but it does not mean acceptance criteria, tests, or evidence failed.

@@ -16,27 +16,27 @@ Or add the `dist/cli.js` to your PATH through your shell configuration or a syml
 
 ### Skills not appearing in AI tool
 
-1. Verify installation: `kata discover`
+1. Verify installation: `kata-cli discover`
 2. Check Skill directory exists:
    - Codex: `.codex/skills/kata/`
    - Claude Code: `.claude/skills/kata/`
    - OpenCode: `.opencode/skills/kata/`
-3. Reinstall: `kata init --force`
+3. Reinstall: `kata-cli init --force`
 
-### `kata codegraph ...` fails
+### `kata-cli codegraph ...` fails
 
-`kata codegraph` is an optional wrapper around a separately installed structural code index CLI. If the binary is not installed, Kata still works normally.
+`kata-cli codegraph` is an optional wrapper around a separately installed structural code index CLI. If the binary is not installed, Kata still works normally.
 
-Use `.llmwiki` and `kata orient` for project context, and normal repository search for code navigation until a structural index tool is installed.
+Use `.llmwiki` and `kata-cli orient` for project context, and normal repository search for code navigation until a structural index tool is installed.
 
-### `kata handoff verify` returns `head_mismatch`, `branch_mismatch`, or `diff_mismatch`
+### `kata-cli handoff verify` returns `head_mismatch`, `branch_mismatch`, or `diff_mismatch`
 
 The packet was created for a different Git state. Do not reuse it or copy a prior agent's chat summary. From the current worktree, create a new packet and have the receiving agent verify and acknowledge it:
 
 ```bash
-kata handoff create --task <id> --from implementer --to reviewer
-kata handoff verify --task <id> --id <new-handoff-id>
-kata handoff acknowledge --task <id> --id <new-handoff-id> --platform <platform> --role reviewer
+kata-cli handoff create --task <id> --from implementer --to reviewer
+kata-cli handoff verify --task <id> --id <new-handoff-id>
+kata-cli handoff acknowledge --task <id> --id <new-handoff-id> --platform <platform> --role reviewer
 ```
 
 Handoffs intentionally do not work across different branches, clones, or machines in this version.
@@ -60,7 +60,7 @@ Kata does not own model selection. At trust boundaries, choose the model in your
 
 ### Task stuck in a phase
 
-1. Check current state: `kata status <change>`
+1. Check current state: `kata-cli status <change>`
 2. Verify required artifacts exist in `.kata/tasks/<id>/`
 3. If guard blocks transition, check missing evidence/reviewer/judge files
 4. Manual recovery: delete stale `current-state.json` and rerun
@@ -79,7 +79,7 @@ Run `wiki verify` to check if source files changed. If sources changed intention
 
 ```bash
 # Re-run checks to get fresh evidence
-npm test && kata verify <change>
+npm test && kata-cli verify <change>
 ```
 
 ### Wiki promotion rejected
@@ -87,7 +87,7 @@ npm test && kata verify <change>
 Check the Wiki record:
 1. It must be in `candidate` status
 2. Source references must be available
-3. Run `kata wiki verify` first to check for drift
+3. Run `kata-cli wiki verify` first to check for drift
 4. Run conflict check: ensure no rule/test/code conflicts
 
 ### Conversation was not captured into Wiki
@@ -97,8 +97,8 @@ This is expected unless the user clearly asked for durable knowledge capture. Ka
 ```bash
 mkdir -p .kata/tasks/<id>/wiki-notes
 $EDITOR .kata/tasks/<id>/wiki-notes/<topic>.md
-kata wiki ingest --from .kata/tasks/<id>/wiki-notes/<topic>.md
-kata wiki register
+kata-cli wiki ingest --from .kata/tasks/<id>/wiki-notes/<topic>.md
+kata-cli wiki register
 ```
 
 The resulting record is a candidate; promote it only after review.
@@ -128,10 +128,10 @@ escalate to a user with approver permissions.
 
 ```bash
 # State events are append-only; recover from events
-kata status <change>
+kata-cli status <change>
 # If current-state.json is corrupted, delete it and rerun
 rm .kata/tasks/<id>/current-state.json
-kata status <change>  # auto-recovers from events
+kata-cli status <change>  # auto-recovers from events
 ```
 
 ### Stale Wiki after refactor
@@ -139,7 +139,7 @@ kata status <change>  # auto-recovers from events
 Run `wiki verify` after major refactors to mark affected records as stale:
 
 ```bash
-kata wiki verify
+kata-cli wiki verify
 # Review stale records and re-verify or re-promote as needed
 ```
 
@@ -147,13 +147,13 @@ kata wiki verify
 
 ```bash
 # Full uninstall
-kata uninstall
+kata-cli uninstall
 # Re-init
-kata init
+kata-cli init
 # User-modified files are preserved and reported as conflicts
 ```
 
 ## Getting help
 
 - Open an issue at https://github.com/your-org/kata/issues
-- Include the output of `kata discover` and relevant `.kata/` state
+- Include the output of `kata-cli discover` and relevant `.kata/` state

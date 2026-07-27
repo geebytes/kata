@@ -431,7 +431,7 @@ function renderAgentsContract(language?: 'en' | 'zh'): string {
 
 Before non-trivial work in this project:
 
-1. Run \`kata orient --change <id> --role <role> --task-kind <kind>\`.
+1. Run \`kata-cli orient --change <id> --role <role> --task-kind <kind>\`.
 2. Read AGENTS.md plus the returned \`.llmwiki/SCHEMA.md\`, \`.llmwiki/index.md\`, and \`.llmwiki/log.md\` entries when present.
 3. Use the matching \`/kata-*\` skill and follow its startup checklist.
 4. Kata 不配置、不路由也不记录宿主平台模型。若需切换，请直接使用宿主平台自己的模型选择器或配置后继续。
@@ -439,10 +439,10 @@ Before non-trivial work in this project:
 
 ## Development constraint: skill-first
 
-For Kata development and dogfooding, the \`/kata-*\` skill is the human-facing workflow entrypoint. The \`kata ...\` CLI is the deterministic execution layer used inside skills and scripts.
+For Kata development and dogfooding, the \`/kata-*\` skill is the human-facing workflow entrypoint. The \`kata-cli ...\` CLI is the deterministic execution layer used inside skills and scripts.
 
 - Prefer short skill invocations such as \`/kata-build <intent>\`, \`/kata-review\`, \`/kata-collect\`, or \`继续\`.
-- A skill must first discover the active/same-branch task with \`kata status\`, follow relation redirects, and read \`nextAction\`.
+- A skill must first discover the active/same-branch task with \`kata-cli status\`, follow relation redirects, and read \`nextAction\`.
 - Do not ask the user to provide CLI flags such as \`--change\`, \`--role\`, or \`--task-kind\` unless discovery leaves multiple plausible choices.
 - At \`review_gate\` and \`judge_gate\`, stop so the user can use the host platform's own model selector before continuing. At \`archive_gate\`, stop for the user's archive decision.
 - Use CLI commands directly only for non-interactive automation, tests, CI, or when the host platform cannot execute slash-command skills.
@@ -488,7 +488,7 @@ Wiki helps agents avoid project-context mistakes; CI, tests, Reviewer, and Judge
 
 Before non-trivial work:
 
-1. Run \`kata orient --change <id> --role <role> --task-kind <kind>\`.
+1. Run \`kata-cli orient --change <id> --role <role> --task-kind <kind>\`.
 2. Read returned AGENTS, .llmwiki, model-route, and guard instructions before editing.
 3. Use the matching /kata-* skill or its platform command bridge.
 4. Capture durable project knowledge into .llmwiki, but never treat Wiki as proof that code is correct.
@@ -496,10 +496,10 @@ Before non-trivial work:
 
 ## Development constraint: skill-first
 
-The /kata-* skill or platform command bridge is the human-facing workflow entrypoint. The kata CLI is the deterministic execution layer used inside skills and scripts.
+The /kata-* skill or platform command bridge is the human-facing workflow entrypoint. The kata-cli CLI is the deterministic execution layer used inside skills and scripts.
 
 - Prefer short skill invocations such as /kata-build <intent>, /kata-review, /kata-collect, or 继续.
-- A skill must first discover the active/same-branch task with kata status, follow relation redirects, and read nextAction.
+- A skill must first discover the active/same-branch task with kata-cli status, follow relation redirects, and read nextAction.
 - Do not ask the user to provide CLI flags such as --change, --role, or --task-kind unless discovery leaves multiple plausible choices.
 - At review_gate and judge_gate, stop, show the recommendation, and wait for the user to switch the host-platform model and resume. Do not claim a switch or write a route before confirmation. At archive_gate, stop for the user's archive decision.
 - Use CLI commands directly only for non-interactive automation, tests, CI, or when the host platform cannot execute slash-command skills.
@@ -508,7 +508,7 @@ ${responseLanguage ? `\n${responseLanguage}` : ''}
   const format = platformDefinitionById[platform].rulesFormat;
   if (format === 'mdc') {
     return `---
-description: kata agent contract
+description: kata-cli agent contract
 globs:
 alwaysApply: true
 ---
@@ -553,7 +553,7 @@ const denial = evaluateWrite({ role }, normalizedPath, { ...task, id: taskId, ph
 
 if (denial) {
   console.error(\`Kata hook blocked write to \${targetPath}: \${denial}\`);
-  console.error('Run: kata orient --change ' + taskId + ' --role ' + role);
+  console.error('Run: kata-cli orient --change ' + taskId + ' --role ' + role);
   process.exit(2);
 }
 
@@ -856,7 +856,7 @@ ${lines.join('\n')}
 ${responseLanguage ? `${responseLanguage}\n\n` : ''}Always start with:
 
 \`\`\`bash
-kata orient --change <id> --role <role> --task-kind <kind>
+kata-cli orient --change <id> --role <role> --task-kind <kind>
 \`\`\`
 
 The orientation output links project constraints, LLM Wiki context, allowed writes, phase gates, and the next suggested skill.

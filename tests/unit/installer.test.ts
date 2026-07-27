@@ -25,6 +25,18 @@ describe('Kata platform installer', () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
+  it('publishes kata-cli as the primary binary while keeping kata as a compatibility alias', async () => {
+    const pkg = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {
+      bin?: Record<string, string>;
+    };
+
+    expect(Object.keys(pkg.bin ?? {})).toEqual(['kata-cli', 'kata']);
+    expect(pkg.bin).toMatchObject({
+      'kata-cli': 'dist/cli.js',
+      kata: 'dist/cli.js',
+    });
+  });
+
   it('keeps review work owned by the reviewer before the Judge gate', () => {
     expect(roleForPhase('review')).toBe('reviewer');
     expect(roleForPhase('judge')).toBe('judge');
@@ -129,7 +141,7 @@ describe('Kata platform installer', () => {
       selectedPlatforms: expect.arrayContaining(['codex', 'opencode']),
       codegraph: {
         status: 'deferred',
-        nextCommand: 'kata codegraph install --yes',
+        nextCommand: 'kata-cli codegraph install --yes',
       },
     });
     await expect(readFile(join(root, '.codex/skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
@@ -792,7 +804,7 @@ describe('Kata platform installer', () => {
     }
   });
 
-  it('honors explicit workflow profile flags for non-interactive kata open', async () => {
+  it('honors explicit workflow profile flags for non-interactive kata-cli open', async () => {
     const root = await tempRoot();
     const previousCwd = process.cwd();
     process.chdir(root);
@@ -1091,12 +1103,12 @@ describe('Kata platform installer', () => {
         role: 'implementer',
         reason: 'repair_blocking_review_findings',
         slashCommand: '/kata-build repair-me',
-        cliCommand: 'kata build --change repair-me',
+        cliCommand: 'kata-cli build --change repair-me',
       },
       nextAction: {
         taskId: 'repair-me',
         slashCommand: '/kata-build repair-me',
-        cliCommand: 'kata build --change repair-me',
+        cliCommand: 'kata-cli build --change repair-me',
       },
         candidates: [
           expect.objectContaining({
@@ -1147,12 +1159,12 @@ describe('Kata platform installer', () => {
         role: 'implementer',
         reason: 'repair_blocking_review_findings',
         slashCommand: '/kata-build selected-repair',
-        cliCommand: 'kata build --change selected-repair',
+        cliCommand: 'kata-cli build --change selected-repair',
       },
       nextAction: {
         taskId: 'selected-repair',
         slashCommand: '/kata-build selected-repair',
-        cliCommand: 'kata build --change selected-repair',
+        cliCommand: 'kata-cli build --change selected-repair',
       },
       upstream: expect.objectContaining({
         blockingFindings: 1,
@@ -1198,12 +1210,12 @@ describe('Kata platform installer', () => {
         role: 'implementer',
         reason: 'repair_blocking_review_findings',
         slashCommand: '/kata-build orient-repair',
-        cliCommand: 'kata build --change orient-repair',
+        cliCommand: 'kata-cli build --change orient-repair',
       },
       nextAction: {
         taskId: 'orient-repair',
         slashCommand: '/kata-build orient-repair',
-        cliCommand: 'kata build --change orient-repair',
+        cliCommand: 'kata-cli build --change orient-repair',
       },
       artifactOverride: true,
       upstream: expect.objectContaining({ blockingFindings: 1 }),
@@ -1242,7 +1254,7 @@ describe('Kata platform installer', () => {
         role: 'reviewer',
         reason: 'verify_fresh_implementation',
         slashCommand: '/kata-verify repaired-hardverify',
-        cliCommand: 'kata verify --change repaired-hardverify',
+        cliCommand: 'kata-cli verify --change repaired-hardverify',
       },
       nextAction: {
         taskId: 'repaired-hardverify',
@@ -1289,7 +1301,7 @@ describe('Kata platform installer', () => {
         role: 'reviewer',
         reason: 'verify_fresh_implementation',
         slashCommand: '/kata-verify judge-repaired-hardverify',
-        cliCommand: 'kata verify --change judge-repaired-hardverify',
+        cliCommand: 'kata-cli verify --change judge-repaired-hardverify',
       },
       nextAction: {
         taskId: 'judge-repaired-hardverify',
@@ -1333,7 +1345,7 @@ describe('Kata platform installer', () => {
       recommended: {
         reason: 'archived_task',
         slashCommand: '/kata archived-with-old-failure',
-        cliCommand: 'kata status --change archived-with-old-failure',
+        cliCommand: 'kata-cli status --change archived-with-old-failure',
       },
       upstream: expect.objectContaining({ failingEvidence: 1 }),
     });
@@ -1539,13 +1551,13 @@ describe('Kata platform installer', () => {
         role: 'implementer',
         reason: 'repair_blocking_review_findings',
         slashCommand: '/kata-build collect-repair',
-        cliCommand: 'kata build --change collect-repair',
+        cliCommand: 'kata-cli build --change collect-repair',
         upstream: expect.objectContaining({ blockingFindings: 1 }),
       },
       nextAction: {
         taskId: 'collect-repair',
         slashCommand: '/kata-build collect-repair',
-        cliCommand: 'kata build --change collect-repair',
+        cliCommand: 'kata-cli build --change collect-repair',
       },
       askUser: expect.arrayContaining([
         '检测到上游 blocking review findings；建议作为 implementer repair。',
@@ -1615,13 +1627,13 @@ describe('Kata platform installer', () => {
         role: 'implementer',
         reason: 'continue_implementation',
         slashCommand: '/kata-build cli-next-action-test',
-        cliCommand: 'kata build --change cli-next-action-test',
+        cliCommand: 'kata-cli build --change cli-next-action-test',
       },
       nextAction: {
         taskId: 'cli-next-action-test',
         nextSkill: '/kata-build',
         slashCommand: '/kata-build cli-next-action-test',
-        cliCommand: 'kata build --change cli-next-action-test',
+        cliCommand: 'kata-cli build --change cli-next-action-test',
         requiresUserConfirmation: false,
       },
       askUser: expect.arrayContaining([
@@ -1639,7 +1651,7 @@ describe('Kata platform installer', () => {
         phase: 'hardVerify',
         nextAction: {
           slashCommand: '/kata-verify cli-next-action-test',
-          cliCommand: 'kata verify --change cli-next-action-test',
+          cliCommand: 'kata-cli verify --change cli-next-action-test',
         },
         userMessage: expect.stringContaining('/kata-verify cli-next-action-test'),
       },

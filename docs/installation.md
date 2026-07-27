@@ -29,43 +29,43 @@ sudo ln -sf /app/kata/dist/cli.js /usr/local/bin/kata
 
 ## Platform setup
 
-Kata auto-detects your platform via `kata init`:
+Kata auto-detects your platform via `kata-cli init`:
 
 ```bash
 # Interactive selectable TUI: language, scope, detected platforms
-kata init
+kata-cli init
 
 # Non-interactive: auto-detect and install all detected project platforms
-kata init --yes
+kata-cli init --yes
 
 # Explicit platform
-kata init --platform codex
-kata init --platform claude-code
-kata init --platform opencode
+kata-cli init --platform codex
+kata-cli init --platform claude-code
+kata-cli init --platform opencode
 
 # Initialize project Wiki from a custom documentation path
-kata init --platform codex --wiki-from docs/developer
+kata-cli init --platform codex --wiki-from docs/developer
 
 # Install without creating .llmwiki
-kata init --platform codex --no-wiki
+kata-cli init --platform codex --no-wiki
 
 # Install globally (e.g. for Claude Code)
-kata init --platform claude-code --scope global
+kata-cli init --platform claude-code --scope global
 
 # Dry-run to preview
-kata init --platform codex --dry-run
+kata-cli init --platform codex --dry-run
 
 # Print the install/update report when you need machine-readable output
-kata init --platform codex --json
-kata update --platform codex --json
+kata-cli init --platform codex --json
+kata-cli update --platform codex --json
 
 # Verify installed artifacts
-kata doctor --platform codex
+kata-cli doctor --platform codex
 ```
 
-Installer commands (`kata init`, `kata update`, and `kata uninstall`) are silent on success by default so AI tools can run them without flooding chat. Use `--json` for diagnostics or scripts that need the full report.
+Installer commands (`kata-cli init`, `kata-cli update`, and `kata-cli uninstall`) are silent on success by default so AI tools can run them without flooding chat. Use `--json` for diagnostics or scripts that need the full report.
 
-The language selected during `kata init` is installed as an agent response contract, not only as Skill display text. Choosing `中文` writes a rule into generated Skills, platform rules, `AGENTS.md`, and `.kata/skills-index.md` requiring all user-facing natural-language responses to be Chinese. The selection is persisted in `.kata-config.json`, so future `kata update` runs keep the same response language even when no `--language` flag is provided. Code, commands, paths, API names, and logs may remain in their original form.
+The language selected during `kata-cli init` is installed as an agent response contract, not only as Skill display text. Choosing `中文` writes a rule into generated Skills, platform rules, `AGENTS.md`, and `.kata/skills-index.md` requiring all user-facing natural-language responses to be Chinese. The selection is persisted in `.kata-config.json`, so future `kata-cli update` runs keep the same response language even when no `--language` flag is provided. Code, commands, paths, API names, and logs may remain in their original form.
 
 ### Codex
 
@@ -91,12 +91,12 @@ When no specific platform is detected, Kata installs a generic fallback into `.k
 
 ```bash
 cd your-project
-kata init
+kata-cli init
 ```
 
-When run in an interactive terminal, `kata init` opens a Comet-style setup wizard with selectable options. In scripts or CI, use `kata init --yes` to install all detected supported project platforms without prompts.
+When run in an interactive terminal, `kata-cli init` opens a Comet-style setup wizard with selectable options. In scripts or CI, use `kata-cli init --yes` to install all detected supported project platforms without prompts.
 
-`kata init` is the single project bootstrap command. It coordinates:
+`kata-cli init` is the single project bootstrap command. It coordinates:
 
 1. Comet binary detection/installation and project initialization via `comet init`.
 2. Kata platform detection and Skill installation.
@@ -128,13 +128,13 @@ Wiki initialization is managed by the `kata` binary:
 
 ```bash
 # Default: use docs/ when present
-kata init --platform codex --root /app
+kata-cli init --platform codex --root /app
 
 # Explicit source path
-kata init --platform codex --root /app --wiki-from docs/developer
+kata-cli init --platform codex --root /app --wiki-from docs/developer
 
 # Skip Wiki initialization
-kata init --platform codex --root /app --no-wiki
+kata-cli init --platform codex --root /app --no-wiki
 ```
 
 If `.llmwiki/` already exists, Kata preserves it and reports `wiki.status = "existing"`.
@@ -142,8 +142,8 @@ If `.llmwiki/` already exists, Kata preserves it and reports `wiki.status = "exi
 The contract tells any AI coding tool to begin non-trivial work with:
 
 ```bash
-kata orient --change <change-id> --role <role> --task-kind <kind>
-kata hooks activate --change <change-id> --role <role>
+kata-cli orient --change <change-id> --role <role> --task-kind <kind>
+kata-cli hooks activate --change <change-id> --role <role>
 ```
 
 That orientation command links repository instructions, `.llmwiki` entry files, model routing, role handoff guards, and the next suggested Skill. The Wiki still only improves project understanding; CI, tests, Reviewer, and Judge remain responsible for code correctness.
@@ -151,9 +151,9 @@ That orientation command links repository instructions, `.llmwiki` entry files, 
 When switching tools on the same branch, use the built-in context handoff instead of copying a chat summary:
 
 ```bash
-kata handoff create --task <change-id> --from implementer --to reviewer --platform opencode
-kata handoff verify --task <change-id> --id <handoff-id>
-kata handoff acknowledge --task <change-id> --id <handoff-id> --platform codex --role reviewer
+kata-cli handoff create --task <change-id> --from implementer --to reviewer --platform opencode
+kata-cli handoff verify --task <change-id> --id <handoff-id>
+kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform codex --role reviewer
 ```
 
 The packet is local to one Git worktree and branch. It captures task context, authoritative Wiki references, evidence paths, permissions, and Git freshness anchors; it does not synchronize multiple clones or guarantee actual host model selection.
@@ -161,23 +161,23 @@ The packet is local to one Git worktree and branch. It captures task context, au
 When the task is archived or you intentionally leave the Kata workflow, clear the active hook scope:
 
 ```bash
-kata hooks deactivate
+kata-cli hooks deactivate
 ```
 
 ## Update and uninstall
 
 ```bash
 # Update Skills to latest
-kata update
+kata-cli update
 
 # Update specific platform
-kata update --platform codex
+kata-cli update --platform codex
 
 # Uninstall Skills (preserves user files)
-kata uninstall
+kata-cli uninstall
 
 # Dry-run uninstall
-kata uninstall --dry-run
+kata-cli uninstall --dry-run
 ```
 
 ## CI setup
@@ -200,7 +200,7 @@ This installs the generic fallback without requiring an interactive AI tool.
 
 ## Safe migration
 
-1. `kata init --dry-run` — preview changes
-2. `kata init` — install without overwriting user files
+1. `kata-cli init --dry-run` — preview changes
+2. `kata-cli init` — install without overwriting user files
 3. Verify Skills work: run `/kata status` in your AI tool
-4. To roll back: `kata uninstall` removes only Kata-owned generated files
+4. To roll back: `kata-cli uninstall` removes only Kata-owned generated files

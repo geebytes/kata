@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
+    "kata-cli": "dist/cli.js",
     "kata": "dist/cli.js"
   },
   "scripts": {
