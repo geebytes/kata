@@ -4242,13 +4242,28 @@ async function promptInitPlan(platforms, io = {}) {
     { value: "project", label: "Project" },
     { value: "global", label: "Global" }
   ], { input, output });
-  const candidates = platforms.filter((platform) => platform.scope === scope);
+  const baseCandidates = platforms.filter((platform) => platform.scope === scope);
+  const seenKeys = new Set(baseCandidates.map((p) => `${p.platform}:${p.root}`));
+  const installDirectory = scope === "project" ? io.projectRoot ?? process.cwd() : io.home ?? process.env.HOME ?? process.cwd();
+  const synthesized = supportedPlatforms.filter((platformId) => !seenKeys.has(`${platformId}:${installDirectory}`)).map((platformId) => {
+    const definition = platformDefinitions.find((p) => p.id === platformId);
+    const capabilities = definition?.capabilities ?? { skills: true, hooks: false, subAgents: false, modelSelection: false };
+    return {
+      platform: platformId,
+      scope,
+      detected: false,
+      root: installDirectory,
+      capabilities,
+      unavailable: Object.entries(capabilities).filter(([, supported2]) => !supported2).map(([capability]) => capability)
+    };
+  });
+  const candidates = [...baseCandidates, ...synthesized];
   const supported = candidates.filter((platform) => supportedPlatforms.includes(platform.platform));
   const fallback = candidates.filter((platform) => platform.platform === "generic");
   const defaults = supported.length > 0 ? supported : fallback;
   const selected = await checkbox("Platforms to install", candidates.map((p) => ({
     value: p,
-    label: `${p.platform} (${p.root})`,
+    label: `${p.platform} (${p.root})${p.detected ? "" : " \xB7 not yet installed"}`,
     checked: defaults.includes(p)
   })), { input, output });
   return { scope, language, detected: candidates, selected };
