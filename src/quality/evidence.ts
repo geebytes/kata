@@ -94,7 +94,7 @@ export async function collectEvidence(
   for (const check of commands) {
     if (options.signal?.aborted) break;
     const checkName = check.name ?? check.command;
-    const timeoutMs = check.timeoutMs ?? 120_000;
+    const timeoutMs = check.timeoutMs ?? 600_000;
     options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: 'started', timeoutMs });
 
     const startedAt = new Date().toISOString();
@@ -245,7 +245,7 @@ async function runBoundedCommand(
   options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal },
 ): Promise<ImportedCheckResult> {
   const cwd = check.cwd ?? process.cwd();
-  const timeoutMs = check.timeoutMs ?? 120_000;
+  const timeoutMs = check.timeoutMs ?? 600_000;
   const checkName = check.name ?? check.command;
 
   const child = spawn(check.command, check.args ?? [], {

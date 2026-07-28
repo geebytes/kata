@@ -60,7 +60,20 @@
             "strategy": { "enum": ["git-flow", "manual"] },
             "branch": { "type": "string" },
             "baseBranch": { "type": "string" },
-            "status": { "enum": ["active", "pending_confirmation", "failed"] }
+            "status": { "enum": ["active", "pending_confirmation", "failed"] },
+            "installation": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["installed", "failed", "unsupported"] },
+                "command": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "manualCommand": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },

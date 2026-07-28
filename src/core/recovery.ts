@@ -1,6 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readStateEvents, writeCurrentState, type StateRecord } from './state.js';
+import { isLegalPhaseTransition, readStateEvents, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
 
 export interface RecoveryOptions {
   root?: string;
@@ -18,8 +18,10 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
   const events = await readStateEvents(root, taskId);
   if (events.length === 0) throw new Error(`No state events found for task ${taskId}`);
 
-  const latest = events[events.length - 1];
-  const latestSession = [...events].reverse().find((event) => event.activeSession)?.activeSession;
+  const validEvents = replayValidEvents(events);
+  if (validEvents.length === 0) throw new Error(`No legal state events found for task ${taskId}`);
+  const latest = validEvents[validEvents.length - 1]!;
+  const latestSession = [...validEvents].reverse().find((event) => event.activeSession)?.activeSession;
   const current: StateRecord = {
     taskId,
     phase: latest.to,
@@ -28,6 +30,7 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
     ...(latestSession ? { activeSession: latestSession } : {}),
   };
   const actions: string[] = [];
+  if (validEvents.length !== events.length) actions.push(`ignored-${events.length - validEvents.length}-invalid-state-events`);
 
   let pointerMatches = false;
   if (latestSession) {
@@ -57,6 +60,25 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
     ...(latestSession ? { recoveredActiveSession: latestSession } : {}),
     actions,
   };
+}
+
+export async function requiresRecovery(taskId: string, options: RecoveryOptions = {}): Promise<boolean> {
+  const root = options.root ?? process.cwd();
+  const events = await readStateEvents(root, taskId);
+  return replayValidEvents(events).length !== events.length;
+}
+
+function replayValidEvents(events: StateEvent[]): StateEvent[] {
+  const valid: StateEvent[] = [];
+  for (const event of events) {
+    const previous = valid.at(-1);
+    if (!previous) {
+      if (event.from === null && event.to === 'intake') valid.push(event);
+      continue;
+    }
+    if (event.from === previous.to && isLegalPhaseTransition(previous.to, event.to)) valid.push(event);
+  }
+  return valid;
 }
 
 async function writeCurrentStatePointer(root: string, taskId: string, activeSession: string): Promise<void> {

@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
-import { appendStateEvent, transition, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
@@ -15,7 +15,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask } from './navigation.js';
-import { createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateWaivers, writeWaivers, requiresMatrix, getMatrixRowForAc, evidenceMatchesRow, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
@@ -43,6 +43,8 @@ export interface CommandOptions {
   platform?: string;
   seal?: boolean;
   approve?: boolean;
+  reviewEvidence?: string;
+  confirmHostModel?: boolean;
   allowOwnershipConflicts?: boolean;
   workflowProfile?: WorkflowProfile;
   ownedPaths?: string[];
@@ -211,6 +213,7 @@ async function cmdBuild(
   const current = JSON.parse(
     await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8'),
   ) as { phase: Phase };
+  let enteredReviewRepair = false;
   if (current.phase === 'plan') {
     await guardTransition(options.guard, 'check', taskId, 'implement');
     await transition(taskId, 'implement', actorFor(defaultActor, options.platform), { root });
@@ -219,10 +222,25 @@ async function cmdBuild(
     await reenterImplementForVerifyRepair(taskId, root, actorFor(defaultActor, options.platform));
   } else if (current.phase === 'review') {
     await reenterImplementForReviewRepair(taskId, root, actorFor(defaultActor, options.platform));
+    enteredReviewRepair = true;
   } else if (current.phase === 'judge') {
     await reenterImplementForRepair(taskId, root, actorFor(defaultActor, options.platform));
   } else if (current.phase !== 'implement') {
     throw new Error(`Build cannot run from ${current.phase}`);
+  }
+
+  if (enteredReviewRepair) {
+    return {
+      command: 'build',
+      taskId,
+      phase: 'implement',
+      success: true,
+      diagnostics: {
+        mode: 'implement',
+        implementationPrompt: 'Review repair 已进入 implement。先修复 repair.json 中的 findings、写聚焦 RED/GREEN 测试；本次不会 seal 或创建 revision。',
+        sealCommand: `kata build --change ${taskId} --seal`,
+      },
+    };
   }
 
   if (!(options.seal ?? true)) {
@@ -264,7 +282,7 @@ async function cmdBuild(
   };
   const projectChecks = options.checks?.length
     ? options.checks
-    : await resolveBuildChecks(root, await loadConfig(root));
+    : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
   let matrixDerivedChecks: CheckCommand[] = [];
   if (!options.checks?.length && task.acceptanceMatrix) {
     try {
@@ -322,6 +340,20 @@ async function cmdBuild(
       error: error instanceof Error ? error.message : String(error),
       diagnostics: { missingOwnedPaths: true },
     };
+  }
+  const reviewRepairBaseline = await readActiveReviewRepairBaseline(root, taskId);
+  if (reviewRepairBaseline) {
+    const manifestHash = await computeManifestHash(root, ownedPaths);
+    if (manifestHash === reviewRepairBaseline) {
+      return {
+        command: 'build',
+        taskId,
+        phase: 'implement',
+        success: false,
+        error: 'Cannot seal review repair without a changed task manifest; fix the recorded findings and tests before retrying --seal.',
+        diagnostics: { mode: 'implement', repairRequired: true },
+      };
+    }
   }
   let codeGraphCandidates: CodeGraphCandidate[] = [];
   let codeGraphDisposition: CodeGraphCandidateDisposition | undefined;
@@ -409,6 +441,9 @@ async function cmdBuild(
       evidence,
     );
   }
+  if (revision && reviewRepairBaseline) {
+    await resolveReviewRepair(root, taskId, revision.id);
+  }
 
   const wikiClosure = await ensureWikiClosure(root, taskId);
   await guardTransition(options.guard, 'check', taskId, 'hardVerify');
@@ -445,9 +480,10 @@ function resolveCheckForRow(
   const hasPlaceholder = template.includes('{{selector}}');
 
   if (hasSelector && hasPlaceholder) {
-    const filled = template.replace('{{selector}}', evidence.testSelector!);
-    const [rawCommand, ...args] = filled.split(/\s+/);
     const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+    const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
+    const filled = template.replace('{{selector}}', selector);
+    const [rawCommand, ...args] = filled.split(/\s+/);
     const runtimeEntry = rawCommand === 'vitest'
       ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
       : rawCommand === 'tsc'
@@ -459,7 +495,7 @@ function resolveCheckForRow(
       kind: evidence.kind,
       command,
       args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
-      cwd: root,
+      cwd: runtimeProjectDir,
       timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
     } satisfies CheckCommand;
   }
@@ -470,6 +506,7 @@ function resolveCheckForRow(
     if (isKnownRunner) {
       const [rawCommand, ...args] = template.split(/\s+/);
       const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+      const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
       const runtimeEntry = rawCommand === 'vitest'
         ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
         : rawCommand === 'pytest'
@@ -480,8 +517,8 @@ function resolveCheckForRow(
         name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
         kind: evidence.kind,
         command: runtimeEntry ? process.execPath : rawCommand,
-        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
-        cwd: root,
+        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
+        cwd: runtimeProjectDir,
         timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
       } satisfies CheckCommand;
     }
@@ -490,6 +527,7 @@ function resolveCheckForRow(
 
   const [rawCommand, ...args] = template.split(/\s+/);
   const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
+  const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : undefined;
   const runtimeEntry = rawCommand === 'vitest'
     ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
     : rawCommand === 'tsc'
@@ -500,10 +538,18 @@ function resolveCheckForRow(
     name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
     kind: evidence.kind,
     command,
-    args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(evidence.testSelector ? [evidence.testSelector] : [])],
-    cwd: root,
+    args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
+    cwd: runtimeProjectDir,
     timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
   } satisfies CheckCommand;
+}
+
+function testSelectorForRuntime(selector: string, runtimeProjectDir: string, root: string): string {
+  return runtimeProjectDir !== root && selector.startsWith('kata/') ? selector.slice('kata/'.length) : selector;
+}
+
+function selectorArgs(selector: string): string[] {
+  return selector.split(/\s+/);
 }
 
 function matrixChecks(root: string, matrix: import('../core/task.js').AcceptanceMatrix): CheckCommand[] {
@@ -540,7 +586,16 @@ async function resolveSealOwnedPaths(
   task: { ownedPaths?: string[] },
   options: CommandOptions,
 ): Promise<string[]> {
-  if (task.ownedPaths?.length) return task.ownedPaths;
+  if (task.ownedPaths?.length) {
+    const cliPaths = options.ownedPaths?.length ? options.ownedPaths : [];
+    const merged = cliPaths.length
+      ? [...new Set([...task.ownedPaths, ...cliPaths])].sort()
+      : task.ownedPaths;
+    if (merged.length > task.ownedPaths.length) {
+      await persistTaskOwnedPaths(root, taskId, task, merged);
+    }
+    return merged;
+  }
   if (!options.ownedPaths?.length) {
     throw new Error('seal requires at least one --owned-path when the task has no ownedPaths');
   }
@@ -601,20 +656,26 @@ function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
 async function reenterImplementForReviewRepair(taskId: string, root: string, actor: Actor): Promise<void> {
   const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
   const review = JSON.parse(reviewRaw) as {
+    revisionId?: string;
     findings?: Array<{ severity?: string; title?: string; message?: string; fix?: string }>;
   };
   const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
   const task = JSON.parse(taskRaw) as { workflowProfile?: { reviewMode?: string } };
   const isStrict = task.workflowProfile?.reviewMode === 'strict';
+  const revision = await readCurrentTaskRevision(root, taskId);
+  if (review.revisionId !== revision?.id) {
+    throw new Error('Build cannot run from review because its findings are not bound to the current sealed revision. Re-run /kata-review.');
+  }
   const blockingFindings = (review.findings ?? []).filter((finding) => finding.severity === 'blocking');
   const majorFindings = isStrict
     ? (review.findings ?? []).filter((finding) => finding.severity === 'major')
     : [];
   if (blockingFindings.length === 0 && majorFindings.length === 0) {
-    throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings');
+    throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
   }
 
   const now = new Date().toISOString();
+  await withTaskLock(root, taskId, async () => {
   await appendStateEvent(root, {
     taskId,
     from: 'review',
@@ -628,6 +689,7 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
     actor,
     updatedAt: now,
   });
+  });
   await writeFile(
     join(root, '.kata/tasks', taskId, 'repair.json'),
     `${JSON.stringify({
@@ -636,6 +698,7 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
       toPhase: 'implement',
       actor,
       reason: 'review_findings',
+      ...(revision ? { baselineRevisionId: revision.id, baselineManifestHash: revision.manifestHash } : {}),
       findings: [...blockingFindings, ...majorFindings].map((finding) => ({
         title: finding.title,
         message: finding.message,
@@ -645,6 +708,31 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
     }, null, 2)}\n`,
     'utf8',
   );
+}
+
+async function readActiveReviewRepairBaseline(root: string, taskId: string): Promise<string | undefined> {
+  try {
+    const repair = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'repair.json'), 'utf8')) as {
+      reason?: string;
+      baselineManifestHash?: string;
+      resolvedAt?: string;
+    };
+    if (repair.reason !== 'review_findings' || repair.resolvedAt || !repair.baselineManifestHash) return undefined;
+    return repair.baselineManifestHash;
+  } catch (error: unknown) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
+  const repairPath = join(root, '.kata/tasks', taskId, 'repair.json');
+  const repair = JSON.parse(await readFile(repairPath, 'utf8')) as Record<string, unknown>;
+  await writeFile(repairPath, `${JSON.stringify({
+    ...repair,
+    resolvedAt: new Date().toISOString(),
+    resolvedRevisionId: revisionId,
+  }, null, 2)}\n`, 'utf8');
 }
 
 async function reenterImplementForVerifyRepair(taskId: string, root: string, actor: Actor): Promise<void> {
@@ -874,17 +962,45 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
   try {
     const isApprove = options.approve === true;
     if (isApprove) {
+      const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+      if (current.phase !== 'review') {
+        return {
+          command: 'review', taskId, phase: current.phase, success: false,
+          error: `Review approval requires review phase; current phase is ${current.phase}.`,
+        };
+      }
+      const reviewEvidence = options.reviewEvidence?.trim();
+      if (!reviewEvidence) {
+        return {
+          command: 'review', taskId, phase: 'review', success: false,
+          error: 'Review approval requires non-empty review evidence.',
+        };
+      }
       const reviewPath = join(root, '.kata/tasks', taskId, 'review.json');
       const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
       const existing = await readReview(root, taskId);
+      if (revisionId && existing.revisionId !== revisionId) {
+        return {
+          command: 'review', taskId, phase: 'review', success: false,
+          error: 'Review approval requires findings recorded for the same sealed revision as current evidence. Re-run /kata-review before approving.',
+        };
+      }
       if (existing.findings.some((f) => f.severity === 'blocking' || f.severity === 'major')) {
         return {
           command: 'review', taskId, phase: 'review', success: false,
           error: 'Cannot approve review with blocking or major findings; resolve findings first.',
         };
       }
-      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: existing.findings, status: 'approved' }, null, 2)}\n`, 'utf8');
-      return { command: 'review', taskId, phase: 'review', success: true, diagnostics: { role: 'reviewer', approval: true, ...(revisionId ? { revisionId } : {}) } };
+      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+      return { command: 'review', taskId, phase: 'review', success: true, diagnostics: { role: 'reviewer', approval: true, reviewEvidence, ...(revisionId ? { revisionId } : {}) } };
+    }
+
+    if (!options.confirmHostModel) {
+      return {
+        command: 'review', taskId, phase: 'hardVerify', success: false,
+        error: 'Review requires explicit user confirmation at the review trust boundary.',
+        diagnostics: { requiresUserConfirmation: true, trustBoundary: 'review_gate' },
+      };
     }
 
     await guardTransition(options.guard, 'check', taskId, 'review');
@@ -896,14 +1012,25 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
       const previous = JSON.parse(await readFile(reviewPath, 'utf8')) as {
         revisionId?: string;
         findings?: ReviewFinding[];
+        status?: string;
       };
       if (revisionId && previous.revisionId !== revisionId) {
-        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
+        if (previous.findings?.length) {
+          const historyPath = join(root, '.kata/tasks', taskId, 'review-history.jsonl');
+          const historyEntry = JSON.stringify({
+            revisionId: previous.revisionId,
+            findings: previous.findings,
+            status: previous.status ?? 'pending',
+            archivedAt: new Date().toISOString(),
+          }) + '\n';
+          await appendFile(historyPath, historyEntry, 'utf8');
+        }
+        await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
       } else if ((previous.findings ?? []).length === 0) {
-        await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
+        await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
       }
     } catch {
-      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'approved' }, null, 2)}\n`, 'utf8');
+      await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
     }
     return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
   } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
@@ -926,6 +1053,13 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
       },
     };
   }
+  if (!options.confirmHostModel) {
+    return {
+      command: 'judge', taskId, phase: 'review', success: false,
+      error: 'Judge requires explicit user confirmation at the judge trust boundary.',
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: 'judge_gate' },
+    };
+  }
   const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
   const task = JSON.parse(taskRaw) as {
     acceptance: Array<{ id?: string; statement: string }>;
@@ -933,11 +1067,11 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     workflowProfile?: { reviewMode?: string };
   };
   const review = await readReview(root, taskId);
-  if (review.status !== 'approved') {
+  if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
     return {
       command: 'judge', taskId, phase: 'review', success: false,
       error: review.status === 'pending'
-        ? 'Review has no explicit conclusion. Approve review with /kata-review --approve or record findings before judge.'
+        ? 'Review has no explicit evidence-backed conclusion. Approve review with /kata-review --approve --review-evidence <summary> or record findings before judge.'
         : 'Review has no explicit conclusion. Run /kata-review first.',
     };
   }
@@ -1012,10 +1146,11 @@ async function readTaskEvidence(root: string, taskId: string, options: CommandOp
   try {
     const { readdir } = await import('node:fs/promises');
     const files = await readdir(evidenceDir);
-    const taskFiles = files.filter((f) => f.startsWith(`${taskId}-`));
-    for (const file of taskFiles) {
+    const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
+    for (const file of candidateFiles) {
       const raw = await readFile(join(evidenceDir, file), 'utf8');
-      evidence.push(JSON.parse(raw) as EvidenceEnvelope);
+      const parsed = JSON.parse(raw) as EvidenceEnvelope;
+      if (parsed.taskId === taskId) evidence.push(parsed);
     }
   } catch {
     evidence = options.checks
@@ -1029,11 +1164,11 @@ async function readReviewFindings(root: string, taskId: string): Promise<ReviewF
   return (await readReview(root, taskId)).findings;
 }
 
-async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; findings: ReviewFinding[] }> {
+async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; reviewEvidence?: string; findings: ReviewFinding[] }> {
   try {
     const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
-    const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; status?: string; findings?: ReviewFinding[] };
-    return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, findings: reviewParsed.findings ?? [] };
+    const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; status?: string; reviewEvidence?: string; findings?: ReviewFinding[] };
+    return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
   } catch {
     return { findings: [] };
   }
@@ -1130,10 +1265,36 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
   let archivePhase: Phase = 'distill';
   const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
 
+  if (!options.confirmHostModel) {
+    return {
+      command: 'archive', taskId, phase: current.phase, success: false,
+      error: 'Archive requires explicit user confirmation at the archive trust boundary.',
+      diagnostics: { requiresUserConfirmation: true, trustBoundary: 'archive_gate' },
+    };
+  }
+
+  // Archive is a security boundary: a forged Judge PASS must not be enough to
+  // cross it. Revalidate the Review artifact before changing state so that a
+  // direct write of judge.json cannot bypass the evidence-backed Review gate.
+  const review = await readReview(root, taskId);
+  if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
+    return {
+      command: 'archive', taskId, phase: current.phase, success: false,
+      error: 'Archive requires an evidence-backed Review approval before a Judge result can be archived.',
+    };
+  }
+
   if (current.phase === 'judge') {
-    await guardTransition(options.guard, 'check', taskId, 'distill');
-    await transition(taskId, 'distill', actorFor(defaultActor, options.platform), { root });
-    await guardTransition(options.guard, 'apply', taskId, 'distill');
+    try {
+      await guardTransition(options.guard, 'check', taskId, 'distill');
+      await transition(taskId, 'distill', actorFor(defaultActor, options.platform), { root });
+      await guardTransition(options.guard, 'apply', taskId, 'distill');
+    } catch (error) {
+      return {
+        command: 'archive', taskId, phase: current.phase, success: false,
+        error: `Archive requires a current-revision Judge PASS before transition: ${(error as Error).message}`,
+      };
+    }
   } else if (current.phase !== 'distill' && current.phase !== 'archive') {
     return { command: 'archive', taskId, phase: current.phase, success: false, error: `Archive cannot run from ${current.phase}` };
   }
@@ -1243,16 +1404,7 @@ async function cmdHotfix(
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
 
-  const verifyResult = await cmdVerify(taskId, root, options);
-  if (!verifyResult.success) return verifyResult;
-
-  const reviewResult = await cmdReview(taskId, root, options);
-  if (!reviewResult.success) return reviewResult;
-
-  const judgeResult = await cmdJudge(taskId, root, options);
-  if (!judgeResult.success) return judgeResult;
-
-  return cmdArchive(taskId, root, options);
+  return buildResult;
 }
 
 async function cmdTweak(
@@ -1272,6 +1424,5 @@ async function cmdTweak(
   const buildResult = await cmdBuild(taskId, root, options);
   if (!buildResult.success) return buildResult;
 
-  const verifyResult = await cmdVerify(taskId, root, options);
-  return verifyResult;
+  return buildResult;
 }

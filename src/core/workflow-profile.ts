@@ -81,6 +81,19 @@ function isGitFlowState(value: unknown): value is GitFlowState {
   return (state.strategy === 'git-flow' || state.strategy === 'manual')
     && typeof state.branch === 'string'
     && typeof state.baseBranch === 'string'
-    && (state.status === 'active' || state.status === 'pending_confirmation' || state.status === 'failed');
+    && (state.status === 'active' || state.status === 'pending_confirmation' || state.status === 'failed')
+    && (state.installation === undefined || isGitFlowInstallation(state.installation));
+}
+
+function isGitFlowInstallation(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const installation = value as { status?: unknown; command?: unknown; manualCommand?: unknown };
+  return (installation.status === 'installed' || installation.status === 'failed' || installation.status === 'unsupported')
+    && (installation.command === undefined || (Array.isArray(installation.command) && installation.command.every((part) => typeof part === 'string')))
+    && (installation.manualCommand === undefined || (
+      typeof installation.manualCommand === 'string'
+      && installation.manualCommand.length <= 500
+      && !/[\r\n]/.test(installation.manualCommand)
+    ));
 }
 import type { GitFlowState } from './git-flow.js';

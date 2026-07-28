@@ -83,7 +83,15 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
   };
 
   const taskDirectory = join(root, '.kata/tasks', task.id);
-  await mkdir(taskDirectory, { recursive: true });
+  await mkdir(join(root, '.kata/tasks'), { recursive: true });
+  try {
+    await mkdir(taskDirectory);
+  } catch (error) {
+    if (isNodeError(error) && error.code === 'EEXIST') {
+      throw new Error(`Task ${task.id} already exists; use kata status --change ${task.id} to resume it instead of kata open.`);
+    }
+    throw error;
+  }
   await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 
   const state: StateRecord = {
@@ -102,4 +110,8 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
   await writeCurrentState(root, state);
 
   return task;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === 'object' && error !== null && 'code' in error;
 }

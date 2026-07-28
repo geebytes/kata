@@ -62,6 +62,16 @@ describe('Kata task state transitions', () => {
     ]);
   });
 
+  it('refuses to recreate an existing task without overwriting its state', async () => {
+    const root = await tempRoot();
+    await createTask({ root, id: 'no-overwrite', title: 'Original', acceptance: [{ id: 'AC-1', statement: 'Keep state.' }] });
+    await transition('no-overwrite', 'plan', actor, { root });
+
+    await expect(createTask({ root, id: 'no-overwrite', title: 'Replacement', acceptance: [{ id: 'AC-1', statement: 'Must not replace.' }] }))
+      .rejects.toThrow('already exists');
+    await expect(readFile(join(root, '.kata/tasks/no-overwrite/current-state.json'), 'utf8')).resolves.toContain('"plan"');
+  });
+
   it('rejects direct implement to archive transitions', async () => {
     const root = await tempRoot();
     const task = await createTask({
@@ -75,6 +85,24 @@ describe('Kata task state transitions', () => {
     await transition(task.id, 'implement', actor, { root });
 
     await expect(transition(task.id, 'archive', actor, { root })).rejects.toThrow(/illegal transition/i);
+  });
+
+  it('serializes concurrent transitions for the same task', async () => {
+    const root = await tempRoot();
+    const task = await createTask({
+      root,
+      id: 'task-race',
+      title: 'Serialize concurrent transitions',
+      acceptance: [{ id: 'AC-1', statement: 'Only one transition wins.' }],
+    });
+
+    const results = await Promise.allSettled([
+      transition(task.id, 'plan', actor, { root }),
+      transition(task.id, 'plan', actor, { root }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
   });
 
   it('rejects task ids that would escape the .kata task directory', async () => {

@@ -136,7 +136,7 @@ Before running `kata-cli tweak`, resolve these three choices in the agent conver
 1. Isolation mode:
    - `current_worktree` — use the current checkout; fastest, least isolated.
    - `isolated_worktree` — use/create an isolated worktree; preferred for larger implementation work.
-   - `git_flow` — use a Git Flow feature branch.
+   - `git_flow` — use a Git Flow branch: ordinary tasks use a feature branch; hotfix tasks use a hotfix branch.
    - `user_decides` — defer the isolation decision until implementation.
 2. Development mode:
    - `tdd` — write focused failing tests first, then implement.

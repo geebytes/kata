@@ -12,7 +12,7 @@ Use this skill to inspect the Kata collect workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-collect` Skill as the human-facing interface. Use `kata collect` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-collect` Skill as the human-facing interface. Use `kata collect` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -122,10 +122,5 @@ Do not ask the user for CLI parameters first. Discover the likely returned task,
 3. If the recommendation says `review_fresh_implementation`, ask the user to confirm review and then run reviewer flow.
 4. If the recommendation says `judge_reviewed_change`, ask the user to confirm Judge and then run judge flow.
 5. Read task state, review/judge/evidence files, and relevant handoff receipts before editing or judging.
-6. If evidence is ready and user confirms higher-trust gates, run:
-   ```bash
-   kata review --change <task-id>
-   kata judge --change <task-id>
-   ```
-7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
-8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.
+6. Return only the recommended next slash command or handoff prompt. Never run review, judge, archive, or any other next phase from collection.
+7. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.

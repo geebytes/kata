@@ -101,8 +101,7 @@ function evaluateWrite(actor, normalizedPath, task) {
     return actor.role === 'approver' ? null : 'protected_rules_or_verified_wiki';
   }
   if (actor.role === 'implementer') {
-    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('tests/')) return null;
-    if (normalizedPath.startsWith('.kata/tasks/' + task.id + '/')) return null;
+    if (normalizedPath.startsWith('src/') || normalizedPath.startsWith('packages/') || normalizedPath.startsWith('tests/') || normalizedPath.startsWith('docs/')) return null;
     return 'role_scope_violation';
   }
   if (actor.role === 'reviewer') {

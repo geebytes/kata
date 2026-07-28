@@ -241,6 +241,26 @@ describe('workflow guidance', () => {
     }
   });
 
+  it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {
+    const root = await tempRoot();
+    const taskId = 'forged-review-approval';
+    await mkdir(join(root, '.kata/evidence'), { recursive: true });
+    await mkdir(join(root, '.kata/tasks', taskId), { recursive: true });
+    await writeFile(join(root, '.kata/evidence', `${taskId}-hard.json`), JSON.stringify({
+      taskId, kind: 'test', exitCode: 0, revisionId: 'revision-current',
+    }));
+    await writeFile(join(root, '.kata/tasks', taskId, 'review.json'), JSON.stringify({
+      revisionId: 'revision-current', findings: [], status: 'approved',
+    }));
+
+    const upstream = await readUpstreamSummary(root, taskId);
+    const suggestion = suggestCandidateAction('review', upstream);
+
+    expect(upstream).toMatchObject({ reviewReady: false, invalidReviewApproval: true });
+    expect(suggestion).toMatchObject({ nextSkill: '/kata-review', reason: 'invalid_review_approval' });
+    expect(statusActionPrompts(suggestion).join('\n')).toContain('无效');
+  });
+
   it('routes an implementation-ready task with deferred Wiki closure to governance closure', () => {
     const suggestion = suggestCandidateAction('hardVerify', {
       ...emptyUpstream,
@@ -401,6 +421,7 @@ describe('workflow guidance', () => {
     const upstream: UpstreamSummary = {
       ...emptyUpstream,
       reviewMode: 'std',
+      reviewReady: true,
       majorFindings: 2,
       blockingFindings: 0,
     };

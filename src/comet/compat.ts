@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import bundledCompatYaml from 'kata-asset:comet-compat.yaml';
 
 export interface CometCompatibility {
   minVersion: string;
@@ -6,8 +7,8 @@ export interface CometCompatibility {
   capabilities: Record<string, boolean>;
 }
 
-export function loadCometCompatibility(manifestPath: string | URL = new URL('../../comet-compat.yaml', import.meta.url)): CometCompatibility {
-  const manifest = readFileSync(manifestPath, 'utf8');
+export function loadCometCompatibility(manifestPath?: string): CometCompatibility {
+  const manifest = manifestPath ? readFileSync(manifestPath, 'utf8') : bundledCompatYaml;
   const cometBlock = readIndentedBlock(manifest, 'comet');
   const capabilitiesBlock = readIndentedBlock(manifest, 'capabilities');
   const minVersion = readScalar(cometBlock, 'minVersion');

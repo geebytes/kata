@@ -12,7 +12,7 @@ Use this skill to inspect the Kata open workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-open` Skill as the human-facing interface. Use `kata open --change <change-id> --isolation <mode> --development <mode> --review <mode>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-open` Skill as the human-facing interface. Use `kata open --change <change-id> --isolation <mode> --development <mode> --review <mode>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -123,7 +123,7 @@ Before running `kata open`, resolve these three choices in the agent conversatio
 1. Isolation mode:
    - `current_worktree` — use the current checkout; fastest, least isolated.
    - `isolated_worktree` — use/create an isolated worktree; preferred for larger implementation work.
-   - `git_flow` — use a Git Flow feature branch.
+   - `git_flow` — use a Git Flow branch: ordinary tasks use a feature branch; hotfix tasks use a hotfix branch.
    - `user_decides` — defer the isolation decision until implementation.
 2. Development mode:
    - `tdd` — write focused failing tests first, then implement.
@@ -133,7 +133,7 @@ Before running `kata open`, resolve these three choices in the agent conversatio
    - `strict` — stricter architecture/regression review.
    - `security` — security-focused review.
 
-If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before opening the task. A terse user confirmation such as “确认” may accept the recommended triple.
+If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before starting the task. A terse user confirmation such as “确认” may accept the recommended triple.
 
 Then invoke the deterministic layer with explicit flags:
 
@@ -143,8 +143,6 @@ kata open --change <change-id> --isolation <mode> --development <mode> --review 
 
 Never let non-interactive CLI defaults silently choose the workflow profile.
 
-## Comet open handoff
+## After profile confirmation
 
-Do not ask the user to run `/comet-open` manually after `/kata-open`.
-When `workflowProfile.comet.openStatus` is `required`, `/kata-design <task>` performs the required Comet-open acknowledgement inside Kata before entering `plan`.
-The next user-facing step after a successful open is therefore `/kata-design <task>`.
+Do not ask the user to run `/comet-open` manually after `/kata-open`. When `workflowProfile.comet.openStatus` is `required`, `/kata-design <task>` performs the required acknowledgement before entering `plan`. Follow the returned next action after `/kata-open` completes.

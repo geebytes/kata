@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -45,5 +45,14 @@ describe('Kata recovery', () => {
     expect(diagnostic.recoveredActiveSession).toBe('session-b');
     expect(diagnostic.actions).toContain('rewrote-active-session-pointer');
     await expect(readFile(join(root, '.kata/runtime/active-session.json'), 'utf8')).resolves.toContain('session-b');
+  });
+
+  it('ignores an illegal duplicate-open intake event when recovering state', async () => {
+    const root = await tempRoot();
+    const task = await createTask({ root, id: 'recover-duplicate-open', title: 'Recover plan', acceptance: [{ id: 'AC-1', statement: 'Keep legal phase.' }] });
+    await transition(task.id, 'plan', { id: 'designer', role: 'designer' }, { root });
+    await appendFile(join(root, '.kata/tasks', task.id, 'state-events.jsonl'), `${JSON.stringify({ taskId: task.id, from: null, to: 'intake', actor: { id: 'bad-open', role: 'system' }, at: new Date().toISOString() })}\n`);
+
+    await expect(recover(task.id, { root })).resolves.toMatchObject({ phase: 'plan', actions: expect.arrayContaining(['ignored-1-invalid-state-events']) });
   });
 });

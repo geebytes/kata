@@ -41,11 +41,11 @@ describe('Archive Wiki distillation', () => {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
     await runCommand('verify', taskId, root);
-    await runCommand('review', taskId, root);
-    await runCommand('review', taskId, root, { approve: true });
-    await runCommand('judge', taskId, root);
+    await runCommand('review', taskId, root, { confirmHostModel: true });
+    await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed wiki distillation fixture.' });
+    await runCommand('judge', taskId, root, { confirmHostModel: true });
 
-    const result = await runCommand('archive', taskId, root);
+    const result = await runCommand('archive', taskId, root, { confirmHostModel: true });
 
     expect(result).toMatchObject({ success: true, phase: 'archive' });
     const closure = await readWikiClosure(root, taskId);

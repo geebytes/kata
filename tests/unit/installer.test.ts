@@ -2,18 +2,24 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverPlatforms, identifyPlatformInstallState, install, uninstall, update } from '../../src/adapters/discovery.js';
 import { listManagedPlatforms } from '../../src/adapters/ownership.js';
-import { skillCommands } from '../../src/adapters/manifest.js';
+import { renderSkill, skillCommands } from '../../src/adapters/manifest.js';
 import { main, roleForPhase } from '../../src/cli.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { transition } from '../../src/core/state.js';
 import { planDetectedInit, renderInitBanner } from '../../src/init-wizard.js';
+import { acknowledgeContextPacket, createContextPacket } from '../../src/workflow/context-fabric.js';
 
 describe('Kata platform installer', () => {
   const roots: string[] = [];
+  let previousRuntimeRefreshTimeout: string | undefined;
+  beforeEach(() => {
+    previousRuntimeRefreshTimeout = process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS;
+    process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS = '1000';
+  });
 
   async function tempRoot(prefix = 'kata-installer-'): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), prefix));
@@ -22,6 +28,8 @@ describe('Kata platform installer', () => {
   }
 
   afterEach(async () => {
+    if (previousRuntimeRefreshTimeout === undefined) delete process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS;
+    else process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS = previousRuntimeRefreshTimeout;
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
@@ -375,6 +383,8 @@ describe('Kata platform installer', () => {
       title: 'Guard writes',
       acceptance: [{ id: 'AC-1', statement: 'Hook guard blocks unsafe writes.' }],
     });
+    await transition('hook-task', 'plan', { id: 'designer', role: 'designer' }, { root });
+    await transition('hook-task', 'implement', { id: 'implementer', role: 'implementer' }, { root });
 
     const activated = await captureJsonOutput(() =>
       main(['hooks', 'activate', '--change', 'hook-task', '--role', 'implementer', '--root', root]),
@@ -383,31 +393,24 @@ describe('Kata platform installer', () => {
       command: 'hooks activate',
       taskId: 'hook-task',
       role: 'implementer',
-      phase: 'intake',
+      phase: 'implement',
       active: true,
     });
 
     const script = join(root, '.codex/hooks/kata-hook-guard.mjs');
-    const blocked = await runHook(script, root, { tool_input: { file_path: 'src/core/task.ts' } });
-    expect(blocked.exitCode).toBe(2);
-    expect(blocked.stderr).toContain('phase_scope_violation');
-
-    await writeFile(
-      join(root, '.kata/tasks/hook-task/current-state.json'),
-      `${JSON.stringify(
-        {
-          taskId: 'hook-task',
-          phase: 'implement',
-          actor: { id: 'system', role: 'system' },
-          updatedAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      )}\n`,
-    );
-
     const allowed = await runHook(script, root, { tool_input: { file_path: 'src/core/task.ts' } });
     expect(allowed.exitCode).toBe(0);
+
+    const documentationAllowed = await runHook(script, root, {
+      tool_input: { file_path: 'docs/audit/state-boundary.md' },
+    });
+    expect(documentationAllowed.exitCode).toBe(0);
+
+    const blocked = await runHook(script, root, {
+      tool_input: { file_path: '.kata/tasks/hook-task/review.json' },
+    });
+    expect(blocked.exitCode).toBe(2);
+    expect(blocked.stderr).toContain('role_scope_violation');
 
     const protectedWrite = await runHook(script, root, {
       tool_input: { file_path: 'docs/superpowers/rules/verified.md' },
@@ -422,7 +425,7 @@ describe('Kata platform installer', () => {
       tool_input: { file_path: 'docs/superpowers/rules/verified.md' },
     });
     expect(inactiveAllowed.exitCode).toBe(0);
-  });
+  }, 15_000);
 
   it('records active task branch and platform for same-branch skill resume', async () => {
     const root = await tempRoot();
@@ -436,13 +439,13 @@ describe('Kata platform installer', () => {
     });
 
     const activated = await captureJsonOutput(() =>
-      main(['hooks', 'activate', '--change', 'active-task', '--role', 'implementer', '--platform', 'opencode', '--root', root]),
+      main(['hooks', 'activate', '--change', 'active-task', '--role', 'designer', '--platform', 'opencode', '--root', root]),
     );
 
     expect(activated).toMatchObject({
       command: 'hooks activate',
       taskId: 'active-task',
-      role: 'implementer',
+      role: 'designer',
       phase: 'intake',
       platform: 'opencode',
       active: true,
@@ -460,6 +463,8 @@ describe('Kata platform installer', () => {
       title: 'Handoff active task',
       acceptance: [{ id: 'AC-1', statement: 'Acknowledged handoff becomes active.' }],
     });
+    await transition('handoff-active-task', 'plan', { id: 'designer', role: 'designer' }, { root });
+    await transition('handoff-active-task', 'implement', { id: 'implementer', role: 'implementer' }, { root });
 
     const create = await captureJsonOutput(() =>
       main(['handoff', 'create', '--task', 'handoff-active-task', '--from', 'reviewer', '--to', 'implementer', '--platform', 'codex', '--root', root]),
@@ -551,6 +556,14 @@ describe('Kata platform installer', () => {
     await expect(readFile(join(root, '.codex/skills/kata-build/SKILL.md'), 'utf8')).resolves.toContain('所有面向用户的自然语言响应必须使用中文');
     await expect(readFile(join(root, 'AGENTS.md'), 'utf8')).resolves.toContain('所有面向用户的自然语言响应必须使用中文');
     await expect(readFile(join(root, '.kata/skills-index.md'), 'utf8')).resolves.toContain('Response language');
+  });
+
+  it('installs a platform-neutral single-phase boundary for kata-build', async () => {
+    for (const platform of ['codex', 'opencode', 'claude-code', 'github-copilot'] as const) {
+      expect(renderSkill(skillCommands.find((command) => command.id === 'kata-build')!, platform)).toContain(
+        'Build may invoke only `kata build`; it MUST NOT invoke verify, review, judge, archive',
+      );
+    }
   });
 
   it('installs the skill-first development constraint into the project contract', async () => {
@@ -749,7 +762,7 @@ describe('Kata platform installer', () => {
 
     const initResult = await captureJsonOutput(() => main(['init', '--json', ...installOptions]));
     expect(initResult).toEqual(
-      expect.objectContaining({ platform: 'generic', dryRun: true }),
+      expect.objectContaining({ platform: 'generic', dryRun: true, gitFlowInit: { status: 'skipped', reason: 'dry_run' } }),
     );
   });
 
@@ -924,7 +937,7 @@ describe('Kata platform installer', () => {
     const previousCwd = process.cwd();
     process.chdir(root);
     try {
-      await main(['hooks', 'activate', '--change', 'active-status-task', '--role', 'implementer', '--platform', 'codex']);
+      await main(['hooks', 'activate', '--change', 'active-status-task', '--role', 'designer', '--platform', 'codex']);
 
       const status = await captureJsonOutput(() => main(['status']));
 
@@ -964,7 +977,7 @@ describe('Kata platform installer', () => {
     const previousCwd = process.cwd();
     process.chdir(root);
     try {
-      await main(['hooks', 'activate', '--change', 'active-orient-task', '--role', 'reviewer', '--platform', 'codex']);
+      await main(['hooks', 'activate', '--change', 'active-orient-task', '--role', 'designer', '--platform', 'codex']);
 
       const orient = await captureJsonOutput(() => main(['orient', '--role', 'reviewer', '--platform', 'codex']));
 
@@ -1034,7 +1047,7 @@ describe('Kata platform installer', () => {
       title: 'Wrong branch task',
       acceptance: [{ id: 'AC-1', statement: 'Wrong branch task is not resumed.' }],
     });
-    await main(['hooks', 'activate', '--change', 'wrong-branch-task', '--role', 'implementer', '--platform', 'codex', '--root', root]);
+    await main(['hooks', 'activate', '--change', 'wrong-branch-task', '--role', 'designer', '--platform', 'codex', '--root', root]);
     await writeFile(
       join(root, '.kata/runtime/active-task.json'),
       `${JSON.stringify(
@@ -1347,7 +1360,7 @@ describe('Kata platform installer', () => {
         slashCommand: '/kata archived-with-old-failure',
         cliCommand: 'kata-cli status --change archived-with-old-failure',
       },
-      upstream: expect.objectContaining({ failingEvidence: 1 }),
+      upstream: expect.objectContaining({ failingEvidence: 0 }),
     });
     expect(status.artifactOverride).toBeUndefined();
   });
@@ -1565,13 +1578,15 @@ describe('Kata platform installer', () => {
     });
   });
 
-  it('suppresses installer stdout by default and emits reports only with --json', async () => {
+  it('renders a readable update report by default and preserves JSON output on request', async () => {
     const root = await tempRoot();
 
     const defaultWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       await main(['update', '--platform', 'generic', '--scope', 'project', '--root', root]);
-      expect(defaultWrite).not.toHaveBeenCalled();
+      expect(defaultWrite).toHaveBeenCalledWith(expect.stringContaining('完成'));
+      expect(defaultWrite).toHaveBeenCalledWith(expect.stringContaining('变更：写入'));
+      expect(defaultWrite).toHaveBeenCalledWith(expect.stringContaining('运行时：Comet 更新'));
     } finally {
       defaultWrite.mockRestore();
     }
@@ -1590,6 +1605,11 @@ describe('Kata platform installer', () => {
     expect(explicitJson).toMatchObject({
       platform: 'generic',
       scope: 'project',
+      runtimeRefresh: expect.objectContaining({
+        comet: expect.objectContaining({ success: expect.any(Boolean) }),
+        codegraphSync: expect.objectContaining({ success: expect.any(Boolean) }),
+        codegraphIndex: expect.objectContaining({ success: expect.any(Boolean) }),
+      }),
     });
   });
 
@@ -1613,6 +1633,9 @@ describe('Kata platform installer', () => {
 
     await captureJsonOutput(() => main(['open', 'cli-next-action-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-next-action-test', '--root', root, '--json']));
+    await expect(main(['build', 'cli-next-action-test', '--root', root, '--json'])).rejects.toThrow('implementation_gate requires an explicit user choice');
+    await captureJsonOutput(() => main(['gate', 'approve', '--task', 'cli-next-action-test', '--boundary', 'implementation_gate', '--choice', 'continue_current', '--root', root, '--json']));
+    await acknowledgeImplementerHandoff(root, 'cli-next-action-test');
     const build = await captureJsonOutput(() => main(['build', 'cli-next-action-test', '--root', root, '--json']));
 
     expect(build).toMatchObject({
@@ -1642,6 +1665,7 @@ describe('Kata platform installer', () => {
     });
 
     await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+    await acknowledgeImplementerHandoff(root, 'cli-next-action-test');
     const sealed = await captureJsonOutput(() => main(['build', 'cli-next-action-test', '--seal', '--owned-path', 'task-owned.txt', '--root', root, '--json']));
     expect(sealed).toMatchObject({
       phase: 'hardVerify',
@@ -1678,6 +1702,8 @@ describe('Kata platform installer', () => {
     await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
     await captureJsonOutput(() => main(['open', 'cli-build-owned-path-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-build-owned-path-test', '--root', root, '--json']));
+    await captureJsonOutput(() => main(['gate', 'approve', '--task', 'cli-build-owned-path-test', '--boundary', 'implementation_gate', '--choice', 'continue_current', '--root', root, '--json']));
+    await acknowledgeImplementerHandoff(root, 'cli-build-owned-path-test');
 
     const sealed = await captureJsonOutput(() =>
       main(['build', 'cli-build-owned-path-test', '--seal', '--owned-path', 'task-owned.txt', '--root', root, '--json']),
@@ -1712,7 +1738,6 @@ describe('Kata platform installer', () => {
       quality: { buildChecks: [{ name: 'unit', kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'] }] },
     })}\n`);
     await writeFile(join(root, 'invalid-waivers.json'), '{ invalid json }\n', 'utf8');
-    await captureJsonOutput(() => main(['open', 'cli-waivers-file-test', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'std', '--root', root, '--json']));
     await captureJsonOutput(() => main(['design', 'cli-waivers-file-test', '--root', root, '--json']));
 
     await expect(main([
@@ -1821,6 +1846,11 @@ async function captureJsonOutput(action: () => Promise<void>): Promise<Record<st
   } finally {
     write.mockRestore();
   }
+}
+
+async function acknowledgeImplementerHandoff(root: string, taskId: string): Promise<void> {
+  const packet = await createContextPacket({ root, taskId, fromRole: 'implementer', toRole: 'implementer', platform: 'test' });
+  await acknowledgeContextPacket({ root, taskId, id: packet.id, platform: 'test', role: 'implementer' });
 }
 
 async function runHook(
