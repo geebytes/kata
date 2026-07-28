@@ -7928,6 +7928,16 @@ async function initializeGitFlowProject(root, options) {
   const develop = run(root, ["config", "--get", "gitflow.branch.develop"]);
   if (master.ok && develop.ok) return { status: "already_initialized" };
   if (master.ok || develop.ok) return { status: "skipped", reason: "git_flow_partially_initialized" };
+  const dirty = run(root, ["status", "--porcelain"]);
+  const unmanagedChanges = (dirty.stdout ?? "").split("\n").filter((line) => line.trim());
+  if (unmanagedChanges.length > 0) {
+    return {
+      status: "skipped",
+      reason: "worktree_dirty_deferred",
+      manualCommand: "git flow init -d",
+      userHint: `Comet \u5B89\u88C5\u5728\u5DE5\u4F5C\u6811\u7559\u4E0B\u4E86 ${unmanagedChanges.length} \u4E2A\u672A\u63D0\u4EA4\u6539\u52A8\uFF1B\u5DF2\u8DF3\u8FC7 git flow \u521D\u59CB\u5316\u4EE5\u907F\u514D\u8986\u76D6\u3002\u8BF7\u63D0\u4EA4\u6216 stash \u540E\u624B\u52A8\u6267\u884C 'git flow init -d'\u3002`
+    };
+  }
   let flowVersion = run(root, ["flow", "version"]);
   const installation = flowVersion.ok ? void 0 : install2(root);
   if (installation?.status === "installed") flowVersion = run(root, ["flow", "version"]);
@@ -7948,7 +7958,8 @@ async function initializeGitFlowProject(root, options) {
       status: "failed",
       command,
       ...installation ? { installation } : {},
-      reason: error instanceof Error ? error.message : String(error)
+      reason: error instanceof Error ? error.message : String(error),
+      manualCommand: command.join(" ")
     };
   }
 }
