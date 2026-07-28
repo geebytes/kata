@@ -4254,13 +4254,11 @@ async function promptInitPlan(platforms, io = {}) {
       detected: false,
       root: installDirectory,
       capabilities,
-      unavailable: Object.entries(capabilities).filter(([, supported2]) => !supported2).map(([capability]) => capability)
+      unavailable: Object.entries(capabilities).filter(([, supported]) => !supported).map(([capability]) => capability)
     };
   });
   const candidates = [...baseCandidates, ...synthesized];
-  const supported = candidates.filter((platform) => supportedPlatforms.includes(platform.platform));
-  const fallback = candidates.filter((platform) => platform.platform === "generic");
-  const defaults = supported.length > 0 ? supported : fallback;
+  const defaults = candidates.filter((platform) => platform.detected && supportedPlatforms.includes(platform.platform));
   const selected = await checkbox("Platforms to install", candidates.map((p) => ({
     value: p,
     label: `${p.platform} (${p.root})${p.detected ? "" : " \xB7 not yet installed"}`,

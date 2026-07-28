@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { discoverPlatforms, identifyPlatformInstallState, install, uninstall, update } from '../../src/adapters/discovery.js';
 import { listManagedPlatforms } from '../../src/adapters/ownership.js';
 import { renderSkill, skillCommands } from '../../src/adapters/manifest.js';
+import type { PlatformInfo } from '../../src/adapters/manifest.js';
 import { main, roleForPhase } from '../../src/cli.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
@@ -56,6 +57,40 @@ describe('Kata platform installer', () => {
         expect(candidateIds).toContain('claude-code');
         expect(candidateIds).toContain('opencode');
         // No candidate is reported as already detected since the directory is fresh.
+        expect(plan.detected.every((p) => p.detected === false)).toBe(true);
+        // On non-TTY the checkbox helper returns the items flagged checked; since
+        // none of these synthesized candidates have been detected, nothing should
+        // be pre-selected for install.
+        expect(plan.selected).toEqual([]);
+    });
+
+    it('does not preselect synthesized candidates but keeps detected ones checked', async () => {
+        // Same fresh-home scenario, but we report one already-detected platform
+        // (simulating an existing `.codex/` directory). The wizard must keep the
+        // detected platform checked while leaving the synthesized ones unchecked.
+        const home = await tempRoot('kata-mixed-home-');
+        const output = new PassThrough();
+
+        const detectedCodex: PlatformInfo = {
+            platform: 'codex',
+            scope: 'global',
+            detected: true,
+            root: home,
+            capabilities: { skills: true, hooks: true, subAgents: true, modelSelection: true },
+            unavailable: [],
+        };
+
+        const plan = await promptInitPlan([detectedCodex], {
+            output,
+            home,
+            projectRoot: home,
+        });
+
+        expect(plan.scope).toBe('project'); // first option on non-TTY
+        // The detected codex entry does not match scope=project so it is not part
+        // of the candidates; the project-scope list is fully synthesized and
+        // therefore nothing should be auto-selected.
+        expect(plan.selected).toEqual([]);
         expect(plan.detected.every((p) => p.detected === false)).toBe(true);
     });
 

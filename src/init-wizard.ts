@@ -112,9 +112,10 @@ export async function promptInitPlan(platforms: PlatformInfo[], io: InitWizardIo
             } satisfies PlatformInfo;
         });
     const candidates = [...baseCandidates, ...synthesized];
-    const supported = candidates.filter((platform) => supportedPlatforms.includes(platform.platform));
-    const fallback = candidates.filter((platform) => platform.platform === 'generic');
-    const defaults = supported.length > 0 ? supported : fallback;
+    // Default-checked platforms: only those actually detected on disk.
+    // Synthesized candidates (detected === false) start unchecked so that the
+    // wizard never silently installs platforms the user has not opted into.
+    const defaults = candidates.filter((platform) => platform.detected && supportedPlatforms.includes(platform.platform));
 
     const selected = await checkbox<PlatformInfo>('Platforms to install', candidates.map((p) => ({
         value: p,
