@@ -4,6 +4,13 @@ import type { Writable } from 'node:stream';
 import type { InstallOptions, InstallReport, InstallScope, Platform, PlatformInfo } from './adapters/manifest.js';
 import { platformDefinitions } from './adapters/platforms.js';
 import { checkbox, select } from './cli/prompt.js';
+import type { CometCompatibility, FlagSpec } from './comet/compat.js';
+
+/**
+ * User choices collected for forwarding to {@link buildCometProjectInitInvocation}.
+ * Each entry corresponds to a flag in `compat.flags.init.*`.
+ */
+export type CometExtraOptions = Record<string, string | boolean | string[] | undefined>;
 
 export interface InitPlan {
     scope: InstallScope;
@@ -137,4 +144,140 @@ export function optionsForWizardInstall(
         ...(language ? { language } : {}),
         ...(scope === 'project' ? { root: platformRoot } : { home: platformRoot }),
     };
+}
+
+/**
+ * Collect user choices for the comet init flags declared in the compatibility
+ * manifest. The wizard never hard-codes which flags to ask about — it walks
+ * `compat.flags.init` and synthesises a prompt for every supported (non-preview)
+ * flag whose `minSince` is satisfied by the running comet version.
+ *
+ * Always returns a deterministic object; flags the user did not pick are
+ * omitted entirely so {@link buildCometProjectInitInvocation} can apply its
+ * own "drop unknown" logic.
+ */
+export async function promptCometOptions(input: {
+    compat: CometCompatibility | undefined;
+    scope: InstallScope;
+    language: 'en' | 'zh';
+    cometVersion?: string | null;
+    io?: InitWizardIo;
+}): Promise<CometExtraOptions> {
+    const io = input.io ?? {};
+    const ii = { input: io.input, output: io.output };
+    const result: CometExtraOptions = {};
+    if (!input.compat?.flags?.init) return result;
+
+    const flags = input.compat.flags.init;
+    for (const [flagName, spec] of Object.entries(flags)) {
+        if (!shouldPromptForFlag(flagName, spec, input.scope, input.cometVersion ?? null)) continue;
+        const value = await promptSingleFlag(flagName, spec, input.language, ii);
+        if (value === undefined) continue;
+
+        // The overwrite flow emits a sentinel 'skip' string to mean "skip all
+        // existing"; translate it into the sibling skipExisting flag key so
+        // the extras map mirrors comet's own flag surface.
+        if (flagName === 'overwrite' && value === ('skip' as unknown as boolean)) {
+            result.skipExisting = true;
+            continue;
+        }
+        result[flagName] = value;
+    }
+    return result;
+}
+
+function shouldPromptForFlag(
+    _flagName: string,
+    spec: FlagSpec,
+    scope: InstallScope,
+    cometVersion: string | null,
+): boolean {
+    if (spec.preview) return false;
+    if (spec.scopeGuard && spec.scopeGuard !== scope) return false;
+    if (cometVersion && spec.minSince && compareVersionsLoose(cometVersion, spec.minSince) < 0) return false;
+    if (cometVersion && spec.maxRemovedIn && compareVersionsLoose(cometVersion, spec.maxRemovedIn) >= 0) return false;
+    return true;
+}
+
+async function promptSingleFlag(
+    flagName: string,
+    spec: FlagSpec,
+    language: 'en' | 'zh',
+    io: { input?: Readable; output?: Writable },
+): Promise<string | boolean | string[] | undefined> {
+    // Boolean flags (e.g. overwrite / skip-existing) are mutually exclusive;
+    // present a single choice list so the user picks one strategy.
+    if (spec.type === 'boolean') {
+        if (flagName === 'overwrite' || flagName === 'skipExisting') {
+            // These two are typically offered together; we only prompt once via
+            // the `overwrite` spec to avoid double prompts. The companion is
+            // suppressed by the caller's iteration order dependency.
+            if (flagName !== 'overwrite') return undefined;
+            const choice = await select<'overwrite' | 'skip' | 'ask'>(
+                spec.prompt?.[`message${language === 'zh' ? 'Zh' : 'En'}`] ?? 'Overwrite strategy',
+                [
+                    { label: language === 'zh' ? '冲突时询问' : 'Ask on conflict', value: 'ask' },
+                    { label: language === 'zh' ? '全部覆盖' : 'Overwrite all', value: 'overwrite' },
+                    { label: language === 'zh' ? '全部跳过' : 'Skip existing', value: 'skip' },
+                ],
+                io,
+            );
+            // Caller consumes the result as a single-key record; we encode the
+            // decision as { overwrite: true } / { skipExisting: true } via the
+            // "extras" map after returning. To stay within the return type we
+            // emit just the boolean toggle here and rely on the caller's loop
+            // to set the appropriate key.
+            if (choice === 'overwrite') return true;
+            if (choice === 'skip') return 'skip' as unknown as boolean; // sentinel
+            return undefined;
+        }
+        // Generic boolean flag: yes/no.
+        const answer = await select<'yes' | 'no'>(
+            spec.prompt?.[`message${language === 'zh' ? 'Zh' : 'En'}`] ?? flagName,
+            [
+                { label: language === 'zh' ? '是' : 'Yes', value: 'yes' },
+                { label: language === 'zh' ? '否' : 'No', value: 'no' },
+            ],
+            io,
+        );
+        return answer === 'yes';
+    }
+
+    if (spec.type === 'enum' && spec.choices) {
+        const value = await select<string>(
+            spec.prompt?.[`message${language === 'zh' ? 'Zh' : 'En'}`] ?? flagName,
+            spec.choices.map((c) => ({ label: c, value: c })),
+            io,
+        );
+        return value;
+    }
+
+    if (spec.type === 'list' && spec.itemChoices) {
+        const selected = await checkbox<string>(
+            spec.prompt?.[`message${language === 'zh' ? 'Zh' : 'En'}`] ?? flagName,
+            spec.itemChoices.map((c) => ({ label: c, value: c, checked: false })),
+            io,
+        );
+        return selected;
+    }
+
+    // string flag: defer to comet's own prompt in --yes mode unless a default
+    // is declared in the manifest; otherwise return undefined (skip).
+    if (spec.default !== undefined && typeof spec.default === 'string') return spec.default;
+    return undefined;
+}
+
+function compareVersionsLoose(actual: string, threshold: string): number {
+    const a = parseLooseVersion(actual);
+    const t = parseLooseVersion(threshold);
+    for (let i = 0; i < 3; i += 1) {
+        if (a[i] !== t[i]) return a[i]! - t[i]!;
+    }
+    return 0;
+}
+
+function parseLooseVersion(v: string): [number, number, number] {
+    const match = /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
+    if (!match) return [0, 0, 0];
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
 }

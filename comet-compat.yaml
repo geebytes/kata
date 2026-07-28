@@ -1,11 +1,129 @@
-version: 1
+version: 2
+
+# Comet compatibility protocol (v2)
+# ================================
+# This file declares the contract between kata and @rpamis/comet.
+# kata reads it at runtime to answer: "what flags does this comet version
+# accept? what's the output schema? has anything broken between versions?"
+#
+# Multi-layer discovery order (kata tries each in order, first wins):
+#   1. runtime probe: `comet compat --json`
+#   2. bundled in @rpamis/comet package root: `comet-compat.yaml`
+#   3. this file (kata's own fallback / verified baseline)
+#
+# schema is additive: unknown fields must be ignored by older kata clients.
+
 comet:
-  minVersion: 1.2.0
+  # Backward-compatible v1 fields (still authoritative for version window)
+  minVersion: 0.4.0
   maxVersion: 2.0.0
+
+  # v2 capability declarations (superseeds v1 flat booleans)
   capabilities:
-    init: true
-    status: true
-    next: true
+    init:
+      minSince: "0.4.0"
+    status:
+      minSince: "0.4.0"
+    next:
+      minSince: "0.4.0"
+    doctor:
+      minSince: "0.4.1"
+    workflow:
+      minSince: "0.4.0"
+    uninstall:
+      minSince: "0.4.0"
+    update:
+      minSince: "0.4.0"
+    cometAny:
+      minSince: "0.4.0-beta.1"
+
+  # Command parameter surfaces. kata uses this both to:
+  #  - dynamically prompt the user for these options
+  #  - validate the assembled argv before spawning comet
+  flags:
+    init:
+      workflow:
+        type: enum
+        choices: [native, classic, both]
+        default: native
+        minSince: "0.4.0-beta.7"
+        prompt:
+          messageKey: cometWorkflow
+          messageEn: "Comet workflow"
+          messageZh: "选择要初始化的 Comet 模式"
+      overwrite:
+        type: boolean
+        minSince: "0.4.0"
+        conflictsWith: [skipExisting]
+        prompt:
+          messageKey: cometOverwrite
+          messageEn: "Overwrite existing components"
+          messageZh: "覆盖所有已有组件"
+      skipExisting:
+        type: boolean
+        minSince: "0.4.0"
+        conflictsWith: [overwrite]
+        prompt:
+          messageKey: cometSkipExisting
+          messageEn: "Skip existing components"
+          messageZh: "全部跳过已存在组件"
+      root:
+        type: string
+        minSince: "0.4.0-beta.7"
+        # Only valid for project-scope; validated by kata before passing
+        scopeGuard: project
+        prompt:
+          messageKey: cometArtifactRoot
+          messageEn: "Native artifact root (relative to project)"
+          messageZh: "Native 产物根目录（相对项目）"
+
+      # Reserved: not yet emitted by any released comet, but kata will
+      # auto-pick them up as soon as `comet compat --json` reports them.
+      platforms:
+        type: list
+        itemType: enum
+        itemChoices:
+          [codex, claude-code, opencode, cursor, windsurf,
+           cline, roocode, gemini, github-copilot]
+        minSince: "0.5.0"
+        preview: true
+      installMode:
+        type: enum
+        choices: [copy, symlink, hardlink]
+        minSince: "0.5.0"
+        preview: true
+
+  # JSON output schema (for assertions and IDE tooling)
+  output:
+    init.json:
+      fields:
+        - projectPath
+        - scope
+        - language
+        - workflow
+        - initializedWorkflows
+        - workflowSource
+        - projectConfigCreated
+        - projectConfigUpdated
+        - nativeArtifactRoot
+        - selectedPlatforms
+        - status
+        - results
+        - failures
+      stableFields: [projectPath, scope, language, status]
+
+# Breaking changes that kata should proactively mitigate
+breakingChanges:
+  - version: "0.5.0"
+    field: "selectPlatforms(--yes) default"
+    before: "only detected platforms"
+    after: "all platforms when none detected"
+    mitigation:
+      kataShouldPass: "platforms=<detected>"
+      note: "kata will explicitly pass detected platform list to avoid surprise installs"
+
 boundary:
   invocation: public-cli
   jsonOutput: true
+  stdout: utf8
+  stderr: utf8

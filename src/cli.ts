@@ -8,7 +8,7 @@ import { codeGraphExecutionEnv } from './codegraph/runtime.js';
 import { resolveWorkspaceRoot, resolveWorkspaceRootForTask } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
-import { loadCometCompatibility, type CometCompatibility } from './comet/compat.js';
+import { loadCometCompatibility, loadCometCompatibilityAsync, type CometCompatibility } from './comet/compat.js';
 import { installComet, updateComet, verifyComet, resolveCometPath, getCometVersion, readCometCompatibility, initCometProject } from './comet/install.js';
 import {
     discoverPlatforms,
@@ -22,7 +22,7 @@ import {
     type Platform,
     type PlatformInstallState,
 } from './adapters/discovery.js';
-import { mergeInstallReports, optionsForWizardInstall, planDetectedInit, promptInitPlan } from './init-wizard.js';
+import { mergeInstallReports, optionsForWizardInstall, planDetectedInit, promptInitPlan, promptCometOptions, type CometExtraOptions } from './init-wizard.js';
 import { confirmDestructive } from './cli/prompt.js';
 import { runCommand, type KataCommand } from './workflow/orchestrator.js';
 import { type Waiver, validateWaivers } from './quality/acceptance-matrix.js';
@@ -466,12 +466,27 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     const root = args.options.root ?? defaultRoot ?? resolveWorkspaceRoot();
     const useAuto = args.yes || !process.stdin.isTTY;
     let platforms = await discoverPlatforms({ ...args.options, root });
+    // Discover the live comet manifest so the wizard can offer flags / detect
+    // breaking-change mitigations appropriate to the installed comet version.
+    const cometBinary = await resolveCometPath();
+    const cometVersion = cometBinary ? await getCometVersion(cometBinary) : null;
+    const cometCompat = await loadCometCompatibilityAsync({ cometBinary: cometBinary ?? undefined }).catch(() => loadCometCompatibility());
     const plan = useAuto
         ? await (async () => {
             platforms = await discoverPlatforms({ ...args.options, root });
             return planDetectedInit(platforms, { scope: 'project', language: 'zh' });
         })()
         : await promptInitPlan(platforms);
+    // Forward applicable comet flags the user actually picked. Auto mode keeps
+    // the manifest's declared defaults; interactive mode prompts per spec.
+    const cometExtras: CometExtraOptions = useAuto
+        ? collectAutoCometExtras(cometCompat)
+        : await promptCometOptions({
+            compat: cometCompat,
+            scope: plan.scope,
+            language: plan.language,
+            cometVersion,
+        }).catch(() => ({}));
     const cometInit = useAuto
         ? {
             command: 'comet init',
@@ -486,6 +501,9 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
             root,
             scope: plan.scope,
             language: plan.language,
+            extras: cometExtras,
+            compat: cometCompat,
+            cometVersion,
         });
     const gitFlowInit = args.options.dryRun
         ? { status: 'skipped' as const, reason: 'dry_run' }
@@ -527,6 +545,25 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
         reports,
     });
     return { ...result, cometInit, gitFlowInit, ...codegraphResult };
+}
+
+/**
+ * Build a non-interactive comet extras payload from the compatibility manifest.
+ *
+ * In `--yes` mode the user is not asked per-flag, so we apply any manifest-
+ * declared defaults (treated as "comet's recommended behaviour") and forward
+ * them. Returning an empty object leaves comet to its own defaults — that's
+ * exactly the historical behaviour, so this is purely additive.
+ */
+function collectAutoCometExtras(compat: CometCompatibility | undefined): CometExtraOptions {
+    const extras: CometExtraOptions = {};
+    if (!compat?.flags?.init) return extras;
+    for (const [flagName, spec] of Object.entries(compat.flags.init)) {
+        if (spec.preview) continue;
+        if (spec.default === undefined || spec.default === false) continue;
+        extras[flagName] = spec.default;
+    }
+    return extras;
 }
 
 async function runWorkflowCommand(command: KataCommand, change: string, root: string, platform?: string, argv: string[] = []): Promise<Record<string, unknown>> {
