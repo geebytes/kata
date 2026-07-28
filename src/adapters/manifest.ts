@@ -1,278 +1,278 @@
 export type Platform =
-  | 'codex'
-  | 'claude-code'
-  | 'opencode'
-  | 'cursor'
-  | 'windsurf'
-  | 'cline'
-  | 'roocode'
-  | 'gemini'
-  | 'github-copilot'
-  | 'generic';
+    | 'codex'
+    | 'claude-code'
+    | 'opencode'
+    | 'cursor'
+    | 'windsurf'
+    | 'cline'
+    | 'roocode'
+    | 'gemini'
+    | 'github-copilot'
+    | 'generic';
 export type InstallScope = 'project' | 'global';
 
 export type PlatformCapabilities = {
-  skills: boolean;
-  hooks: boolean;
-  subAgents: boolean;
-  modelSelection: boolean;
+    skills: boolean;
+    hooks: boolean;
+    subAgents: boolean;
+    modelSelection: boolean;
 };
 
 export type PlatformInfo = {
-  platform: Platform;
-  scope: InstallScope;
-  detected: boolean;
-  capabilities: PlatformCapabilities;
-  unavailable: string[];
-  root: string;
+    platform: Platform;
+    scope: InstallScope;
+    detected: boolean;
+    capabilities: PlatformCapabilities;
+    unavailable: string[];
+    root: string;
 };
 
 export type SkillCommand = {
-  id: string;
-  slashCommand: `/kata${string}`;
-  cli: string;
-  phase: string;
-  summary: string;
-  triggerScenarios: string[];
-  inputSignals: string[];
-  outputGoals: string[];
+    id: string;
+    slashCommand: `/kata${string}`;
+    cli: string;
+    phase: string;
+    summary: string;
+    triggerScenarios: string[];
+    inputSignals: string[];
+    outputGoals: string[];
 };
 
 export type InstallMode = 'copy' | 'symlink';
 export type ResponseLanguage = 'en' | 'zh';
 
 export type InstallOptions = {
-  root?: string;
-  home?: string;
-  dryRun?: boolean;
-  force?: boolean;
-  wikiFrom?: string;
-  noWiki?: boolean;
-  mode?: InstallMode;
-  language?: ResponseLanguage;
+    root?: string;
+    home?: string;
+    dryRun?: boolean;
+    force?: boolean;
+    wikiFrom?: string;
+    noWiki?: boolean;
+    mode?: InstallMode;
+    language?: ResponseLanguage;
 };
 
 export type PlatformComponentState = {
-  skills: 'absent' | 'current' | 'stale';
-  rules: 'absent' | 'current' | 'stale';
-  hooks: 'absent' | 'current' | 'stale';
-  contract: 'absent' | 'current' | 'stale';
+    skills: 'absent' | 'current' | 'stale';
+    rules: 'absent' | 'current' | 'stale';
+    hooks: 'absent' | 'current' | 'stale';
+    contract: 'absent' | 'current' | 'stale';
 };
 
 export type PlatformInstallState = {
-  platform: PlatformInfo;
-  components: PlatformComponentState;
+    platform: PlatformInfo;
+    components: PlatformComponentState;
 };
 
 export type InstallReport = {
-  platform: Platform;
-  scope: InstallScope;
-  planned: string[];
-  written: string[];
-  removed: string[];
-  conflicts: string[];
-  unchanged: string[];
-  dryRun: boolean;
-  wiki?: {
-    status: 'initialized' | 'existing' | 'skipped' | 'planned';
-    path?: string;
-    from?: string;
-    importedCount?: number;
-    reason?: string;
-  };
+    platform: Platform;
+    scope: InstallScope;
+    planned: string[];
+    written: string[];
+    removed: string[];
+    conflicts: string[];
+    unchanged: string[];
+    dryRun: boolean;
+    wiki?: {
+        status: 'initialized' | 'existing' | 'skipped' | 'planned';
+        path?: string;
+        from?: string;
+        importedCount?: number;
+        reason?: string;
+    };
 };
 
 export const skillCommands = [
-  {
-    id: 'kata',
-    slashCommand: '/kata',
-    cli: 'kata-cli status',
-    phase: 'dispatch',
-    summary: 'Shows Kata task status and available next actions. Use when the user asks what to do next, wants Kata status, or needs workflow dispatch.',
-    triggerScenarios: [
-      'User asks what Kata phase or next action applies.',
-      'Agent needs to resume an existing Kata task.',
-      'Agent needs a safe entrypoint before choosing a phase skill.',
-    ],
-    inputSignals: ['status', 'next', 'resume', 'continue', 'dispatch', 'what now', '当前阶段', '下一步'],
-    outputGoals: ['Report current phase.', 'Return the next /kata-* skill or CLI command.', 'Surface wiki/model/gate orientation requirements.'],
-  },
-  {
-    id: 'kata-open',
-    slashCommand: '/kata-open',
-    cli: 'kata-cli open --change <change-id> --isolation <mode> --development <mode> --review <mode>',
-    phase: 'open',
-    summary: 'Opens a governed Kata task/change using the Comet-compatible lifecycle. Use when starting a new change, feature, fix, or governed task.',
-    triggerScenarios: [
-      'User wants to start a new governed coding change.',
-      'A task needs acceptance criteria and lifecycle state before design/build.',
-      'Agent needs to convert an idea into a Kata/Comet-compatible change.',
-    ],
-    inputSignals: ['start', 'open', 'new change', 'feature', 'fix', 'hotfix', 'tweak', '创建 change', '开始任务'],
-    outputGoals: ['Create or inspect task state.', 'Decide isolation, development, and review workflow choices in the skill conversation before invoking CLI.', 'Keep /kata-design as the user-facing next step while Kata acknowledges Comet open internally.'],
-  },
-  {
-    id: 'kata-design',
-    slashCommand: '/kata-design',
-    cli: 'kata-cli design --change <change-id>',
-    phase: 'design',
-    summary: 'Creates or refines the technical design and acceptance contract. Use when requirements, architecture, acceptance criteria, or project constraints need clarification before implementation.',
-    triggerScenarios: [
-      'User asks for technical design or implementation plan.',
-      'Acceptance criteria or constraints are not yet concrete enough to build.',
-      'Agent must align design with AGENTS.md and .llmwiki before editing code.',
-    ],
-    inputSignals: ['design', 'plan', 'proposal', 'architecture', 'acceptance', 'requirements', '方案', '技术设计'],
-    outputGoals: ['Produce a bounded design.', 'Clarify acceptance criteria.', 'Capture durable decisions into wiki candidates where useful.'],
-  },
-  {
-    id: 'kata-build',
-    slashCommand: '/kata-build',
-    cli: 'kata-cli build --change <change-id>',
-    phase: 'implement',
-    summary: 'Implements the accepted task slice with hard verification evidence. Use when the design and acceptance contract are ready for code or documentation changes.',
-    triggerScenarios: [
-      'User asks to implement an approved Kata task.',
-      'The current phase is plan/implement and acceptance criteria are available.',
-      'Agent needs to make code/docs changes while collecting evidence.',
-    ],
-    inputSignals: ['build', 'implement', 'code', '落地', '实现', '修改代码', '执行计划'],
-    outputGoals: ['Apply the smallest coherent change.', 'Collect fresh test/build evidence.', 'Capture implementation discoveries into .llmwiki when relevant.'],
-  },
-  {
-    id: 'kata-review',
-    slashCommand: '/kata-review',
-    cli: 'kata-cli review --change <change-id>',
-    phase: 'review',
-    summary: 'Use when an independent Reviewer must record review findings without running Judge.',
-    triggerScenarios: ['User asks for an independent code review before judgment.', 'A completed implementation has fresh evidence.'],
-    inputSignals: ['review', '审查', 'code review'],
-    outputGoals: ['Enter reviewer phase.', 'Record review findings only.', 'Prepare the task for an independent Judge.'],
-  },
-  {
-    id: 'kata-judge',
-    slashCommand: '/kata-judge',
-    cli: 'kata-cli judge --change <change-id>',
-    phase: 'judge',
-    summary: 'Use when an independent Judge must evaluate a task after Reviewer has completed.',
-    triggerScenarios: ['User asks for a final judgment after review.', 'A task is already in reviewer phase.'],
-    inputSignals: ['judge', '裁决', 'final gate'],
-    outputGoals: ['Evaluate acceptance against evidence and findings.', 'Record a structured Judge result.'],
-  },
-  {
-    id: 'kata-verify',
-    slashCommand: '/kata-verify',
-    cli: 'kata-cli verify --change <change-id>',
-    phase: 'verify',
-    summary: 'Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping.',
-    triggerScenarios: [
-      'User asks to verify, review, audit, or judge a completed implementation.',
-      'The current phase is hardVerify/review/judge.',
-      'A previous judge/reviewer result requires scoped repair.',
-    ],
-    inputSignals: ['verify', 'review', 'judge', 'audit', 'test', 'CI', '检查', '审查', '验证'],
-    outputGoals: ['Evaluate acceptance criteria against evidence.', 'Record reviewer/judge results.', 'Return scoped repair instructions on failure.'],
-  },
-  {
-    id: 'kata-archive',
-    slashCommand: '/kata-archive',
-    cli: 'kata-cli archive --change <change-id>',
-    phase: 'archive',
-    summary: 'Archives a completed task after evidence, review, and judge gates pass. Use when a Kata change is ready for final distillation, wiki capture, and archival.',
-    triggerScenarios: [
-      'User wants to close or archive a completed Kata task.',
-      'Evidence, reviewer, and judge gates have passed.',
-      'Agent needs to distill durable decisions into governed wiki records.',
-    ],
-    inputSignals: ['archive', 'finish', 'complete', 'distill', 'close', '归档', '收尾', '沉淀'],
-    outputGoals: ['Move task to archive phase.', 'Distill durable knowledge into .llmwiki/.kata wiki flow.', 'Preserve evidence trail for future agents.'],
-  },
-  {
-    id: 'kata-hotfix',
-    slashCommand: '/kata-hotfix',
-    cli: 'kata-cli hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>',
-    phase: 'hotfix',
-    summary: 'Runs the constrained hotfix path for behavior fixes without new capability design. Use when the user asks for a focused bug fix or urgent repair.',
-    triggerScenarios: [
-      'User reports a bug requiring a narrow behavior fix.',
-      'No new capability or broad design is needed.',
-      'Agent should skip expansive brainstorming and preserve repair scope.',
-    ],
-    inputSignals: ['hotfix', 'bug', 'regression', 'broken', 'fix', '修复', '紧急', '问题'],
-    outputGoals: ['Decide isolation, development, and review workflow choices before starting the repair.', 'Reproduce or identify the failure.', 'Apply a minimal fix.', 'Verify with regression evidence and archive when gates pass.'],
-  },
-  {
-    id: 'kata-tweak',
-    slashCommand: '/kata-tweak',
-    cli: 'kata-cli tweak --change <change-id> --isolation <mode> --development <mode> --review <mode>',
-    phase: 'tweak',
-    summary: 'Runs the lightweight tweak path for local docs, prompt, copy, or configuration changes. Use when the user asks for a small non-bug adjustment.',
-    triggerScenarios: [
-      'User requests a small local improvement.',
-      'Change is limited to docs, prompt text, copy, config, or minor workflow wording.',
-      'Full feature design would be disproportionate.',
-    ],
-    inputSignals: ['tweak', 'small change', 'docs', 'prompt', 'copy', 'config', '微调', '文档', '配置'],
-    outputGoals: ['Decide isolation, development, and review workflow choices before starting the change.', 'Apply a bounded lightweight change.', 'Run proportional verification.', 'Avoid expanding into unrelated implementation work.'],
-  },
-  {
-    id: 'kata-wiki-enrich',
-    slashCommand: '/kata-wiki-enrich',
-    cli: 'kata-cli wiki task --kind enrich',
-    phase: 'wiki-enrich',
-    summary: 'Uses the coding agent LLM capability to enrich .llmwiki from deterministic Kata task packets. Use when initializing, enriching, linting, or distilling project wiki knowledge.',
-    triggerScenarios: [
-      'User asks to initialize or enrich .llmwiki from project docs.',
-      'Agent needs to turn raw docs into durable concepts/entities/comparisons.',
-      'Project knowledge should be captured without Kata binary calling model APIs.',
-    ],
-    inputSignals: ['llmwiki', 'wiki', 'knowledge', 'enrich', 'distill', '初始化 wiki', '知识沉淀', '项目上下文'],
-    outputGoals: ['Read deterministic wiki task packets.', 'Synthesize project knowledge into governed wiki pages.', 'Run lint/verify and keep code correctness responsibility with CI/tests/reviewer/judge.'],
-  },
-  {
-    id: 'kata-collect',
-    slashCommand: '/kata-collect',
-    cli: 'kata-cli collect',
-    phase: 'collect',
-    summary: 'Use when collecting work back from another coding platform after delegated Kata implementation or repair.',
-    triggerScenarios: [
-      'User says another platform has finished implementation or repair.',
-      'Agent needs to inspect returned evidence before review, judge, archive, or repair.',
-      'Delegated work must be reconciled into the current branch and Kata lifecycle.',
-    ],
-    inputSignals: ['collect', 'return', 'done in opencode', '回收', '做完了', '交回', '审计另一个平台', 'OpenCode 完成'],
-    outputGoals: ['Discover the returned task and evidence state.', 'Ask the user to confirm the task/platform when ambiguous.', 'Run reviewer/judge/archive or produce scoped repair instructions.'],
-  },
+    {
+        id: 'kata',
+        slashCommand: '/kata',
+        cli: 'kata-cli status',
+        phase: 'dispatch',
+        summary: 'Shows Kata task status and available next actions. Use when the user asks what to do next, wants Kata status, or needs workflow dispatch.',
+        triggerScenarios: [
+            'User asks what Kata phase or next action applies.',
+            'Agent needs to resume an existing Kata task.',
+            'Agent needs a safe entrypoint before choosing a phase skill.',
+        ],
+        inputSignals: ['status', 'next', 'resume', 'continue', 'dispatch', 'what now', '当前阶段', '下一步'],
+        outputGoals: ['Report current phase.', 'Return the next /kata-* skill or CLI command.', 'Surface wiki/model/gate orientation requirements.'],
+    },
+    {
+        id: 'kata-open',
+        slashCommand: '/kata-open',
+        cli: 'kata-cli open --change <change-id> --isolation <mode> --development <mode> --review <mode>',
+        phase: 'open',
+        summary: 'Opens a governed Kata task/change using the Comet-compatible lifecycle. Use when starting a new change, feature, fix, or governed task.',
+        triggerScenarios: [
+            'User wants to start a new governed coding change.',
+            'A task needs acceptance criteria and lifecycle state before design/build.',
+            'Agent needs to convert an idea into a Kata/Comet-compatible change.',
+        ],
+        inputSignals: ['start', 'open', 'new change', 'feature', 'fix', 'hotfix', 'tweak', '创建 change', '开始任务'],
+        outputGoals: ['Create or inspect task state.', 'Decide isolation, development, and review workflow choices in the skill conversation before invoking CLI.', 'Keep /kata-design as the user-facing next step while Kata acknowledges Comet open internally.'],
+    },
+    {
+        id: 'kata-design',
+        slashCommand: '/kata-design',
+        cli: 'kata-cli design --change <change-id>',
+        phase: 'design',
+        summary: 'Creates or refines the technical design and acceptance contract. Use when requirements, architecture, acceptance criteria, or project constraints need clarification before implementation.',
+        triggerScenarios: [
+            'User asks for technical design or implementation plan.',
+            'Acceptance criteria or constraints are not yet concrete enough to build.',
+            'Agent must align design with AGENTS.md and .llmwiki before editing code.',
+        ],
+        inputSignals: ['design', 'plan', 'proposal', 'architecture', 'acceptance', 'requirements', '方案', '技术设计'],
+        outputGoals: ['Produce a bounded design.', 'Clarify acceptance criteria.', 'Capture durable decisions into wiki candidates where useful.'],
+    },
+    {
+        id: 'kata-build',
+        slashCommand: '/kata-build',
+        cli: 'kata-cli build --change <change-id>',
+        phase: 'implement',
+        summary: 'Implements the accepted task slice with hard verification evidence. Use when the design and acceptance contract are ready for code or documentation changes.',
+        triggerScenarios: [
+            'User asks to implement an approved Kata task.',
+            'The current phase is plan/implement and acceptance criteria are available.',
+            'Agent needs to make code/docs changes while collecting evidence.',
+        ],
+        inputSignals: ['build', 'implement', 'code', '落地', '实现', '修改代码', '执行计划'],
+        outputGoals: ['Apply the smallest coherent change.', 'Collect fresh test/build evidence.', 'Capture implementation discoveries into .llmwiki when relevant.'],
+    },
+    {
+        id: 'kata-review',
+        slashCommand: '/kata-review',
+        cli: 'kata-cli review --change <change-id>',
+        phase: 'review',
+        summary: 'Use when an independent Reviewer must record review findings without running Judge.',
+        triggerScenarios: ['User asks for an independent code review before judgment.', 'A completed implementation has fresh evidence.'],
+        inputSignals: ['review', '审查', 'code review'],
+        outputGoals: ['Enter reviewer phase.', 'Record review findings only.', 'Prepare the task for an independent Judge.'],
+    },
+    {
+        id: 'kata-judge',
+        slashCommand: '/kata-judge',
+        cli: 'kata-cli judge --change <change-id>',
+        phase: 'judge',
+        summary: 'Use when an independent Judge must evaluate a task after Reviewer has completed.',
+        triggerScenarios: ['User asks for a final judgment after review.', 'A task is already in reviewer phase.'],
+        inputSignals: ['judge', '裁决', 'final gate'],
+        outputGoals: ['Evaluate acceptance against evidence and findings.', 'Record a structured Judge result.'],
+    },
+    {
+        id: 'kata-verify',
+        slashCommand: '/kata-verify',
+        cli: 'kata-cli verify --change <change-id>',
+        phase: 'verify',
+        summary: 'Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping.',
+        triggerScenarios: [
+            'User asks to verify, review, audit, or judge a completed implementation.',
+            'The current phase is hardVerify/review/judge.',
+            'A previous judge/reviewer result requires scoped repair.',
+        ],
+        inputSignals: ['verify', 'review', 'judge', 'audit', 'test', 'CI', '检查', '审查', '验证'],
+        outputGoals: ['Evaluate acceptance criteria against evidence.', 'Record reviewer/judge results.', 'Return scoped repair instructions on failure.'],
+    },
+    {
+        id: 'kata-archive',
+        slashCommand: '/kata-archive',
+        cli: 'kata-cli archive --change <change-id>',
+        phase: 'archive',
+        summary: 'Archives a completed task after evidence, review, and judge gates pass. Use when a Kata change is ready for final distillation, wiki capture, and archival.',
+        triggerScenarios: [
+            'User wants to close or archive a completed Kata task.',
+            'Evidence, reviewer, and judge gates have passed.',
+            'Agent needs to distill durable decisions into governed wiki records.',
+        ],
+        inputSignals: ['archive', 'finish', 'complete', 'distill', 'close', '归档', '收尾', '沉淀'],
+        outputGoals: ['Move task to archive phase.', 'Distill durable knowledge into .llmwiki/.kata wiki flow.', 'Preserve evidence trail for future agents.'],
+    },
+    {
+        id: 'kata-hotfix',
+        slashCommand: '/kata-hotfix',
+        cli: 'kata-cli hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>',
+        phase: 'hotfix',
+        summary: 'Runs the constrained hotfix path for behavior fixes without new capability design. Use when the user asks for a focused bug fix or urgent repair.',
+        triggerScenarios: [
+            'User reports a bug requiring a narrow behavior fix.',
+            'No new capability or broad design is needed.',
+            'Agent should skip expansive brainstorming and preserve repair scope.',
+        ],
+        inputSignals: ['hotfix', 'bug', 'regression', 'broken', 'fix', '修复', '紧急', '问题'],
+        outputGoals: ['Decide isolation, development, and review workflow choices before starting the repair.', 'Reproduce or identify the failure.', 'Apply a minimal fix.', 'Verify with regression evidence and archive when gates pass.'],
+    },
+    {
+        id: 'kata-tweak',
+        slashCommand: '/kata-tweak',
+        cli: 'kata-cli tweak --change <change-id> --isolation <mode> --development <mode> --review <mode>',
+        phase: 'tweak',
+        summary: 'Runs the lightweight tweak path for local docs, prompt, copy, or configuration changes. Use when the user asks for a small non-bug adjustment.',
+        triggerScenarios: [
+            'User requests a small local improvement.',
+            'Change is limited to docs, prompt text, copy, config, or minor workflow wording.',
+            'Full feature design would be disproportionate.',
+        ],
+        inputSignals: ['tweak', 'small change', 'docs', 'prompt', 'copy', 'config', '微调', '文档', '配置'],
+        outputGoals: ['Decide isolation, development, and review workflow choices before starting the change.', 'Apply a bounded lightweight change.', 'Run proportional verification.', 'Avoid expanding into unrelated implementation work.'],
+    },
+    {
+        id: 'kata-wiki-enrich',
+        slashCommand: '/kata-wiki-enrich',
+        cli: 'kata-cli wiki task --kind enrich',
+        phase: 'wiki-enrich',
+        summary: 'Uses the coding agent LLM capability to enrich .llmwiki from deterministic Kata task packets. Use when initializing, enriching, linting, or distilling project wiki knowledge.',
+        triggerScenarios: [
+            'User asks to initialize or enrich .llmwiki from project docs.',
+            'Agent needs to turn raw docs into durable concepts/entities/comparisons.',
+            'Project knowledge should be captured without Kata binary calling model APIs.',
+        ],
+        inputSignals: ['llmwiki', 'wiki', 'knowledge', 'enrich', 'distill', '初始化 wiki', '知识沉淀', '项目上下文'],
+        outputGoals: ['Read deterministic wiki task packets.', 'Synthesize project knowledge into governed wiki pages.', 'Run lint/verify and keep code correctness responsibility with CI/tests/reviewer/judge.'],
+    },
+    {
+        id: 'kata-collect',
+        slashCommand: '/kata-collect',
+        cli: 'kata-cli collect',
+        phase: 'collect',
+        summary: 'Use when collecting work back from another coding platform after delegated Kata implementation or repair.',
+        triggerScenarios: [
+            'User says another platform has finished implementation or repair.',
+            'Agent needs to inspect returned evidence before review, judge, archive, or repair.',
+            'Delegated work must be reconciled into the current branch and Kata lifecycle.',
+        ],
+        inputSignals: ['collect', 'return', 'done in opencode', '回收', '做完了', '交回', '审计另一个平台', 'OpenCode 完成'],
+        outputGoals: ['Discover the returned task and evidence state.', 'Ask the user to confirm the task/platform when ambiguous.', 'Run reviewer/judge/archive or produce scoped repair instructions.'],
+    },
 ] as const satisfies readonly SkillCommand[];
 
 export const commandManifest = skillCommands.map((command) => ({
-  id: command.id,
-  slashCommand: command.slashCommand,
-  cli: command.cli,
-  phase: command.phase,
-  summary: command.summary,
+    id: command.id,
+    slashCommand: command.slashCommand,
+    cli: command.cli,
+    phase: command.phase,
+    summary: command.summary,
 }));
 
 export const platformCapabilities: Record<Platform, PlatformCapabilities> = {
-  codex: { skills: true, hooks: false, subAgents: true, modelSelection: true },
-  'claude-code': { skills: true, hooks: true, subAgents: true, modelSelection: true },
-  opencode: { skills: true, hooks: false, subAgents: true, modelSelection: true },
-  cursor: { skills: true, hooks: false, subAgents: false, modelSelection: true },
-  windsurf: { skills: true, hooks: true, subAgents: true, modelSelection: true },
-  cline: { skills: true, hooks: false, subAgents: false, modelSelection: true },
-  roocode: { skills: true, hooks: false, subAgents: false, modelSelection: true },
-  gemini: { skills: true, hooks: true, subAgents: true, modelSelection: true },
-  'github-copilot': { skills: true, hooks: true, subAgents: true, modelSelection: true },
-  generic: { skills: true, hooks: false, subAgents: false, modelSelection: false },
+    codex: { skills: true, hooks: false, subAgents: true, modelSelection: true },
+    'claude-code': { skills: true, hooks: true, subAgents: true, modelSelection: true },
+    opencode: { skills: true, hooks: false, subAgents: true, modelSelection: true },
+    cursor: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+    windsurf: { skills: true, hooks: true, subAgents: true, modelSelection: true },
+    cline: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+    roocode: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+    gemini: { skills: true, hooks: true, subAgents: true, modelSelection: true },
+    'github-copilot': { skills: true, hooks: true, subAgents: true, modelSelection: true },
+    generic: { skills: true, hooks: false, subAgents: false, modelSelection: false },
 };
 
 export function renderSkill(command: SkillCommand, platform: Platform, options: { language?: ResponseLanguage } = {}): string {
-  const capabilities = platformCapabilities[platform];
-  const guardMode = capabilities.hooks ? 'skills plus platform hooks' : 'CLI/CI-only';
-  const responseLanguageContent = renderResponseLanguageContract(options.language);
+    const capabilities = platformCapabilities[platform];
+    const guardMode = capabilities.hooks ? 'skills plus platform hooks' : 'CLI/CI-only';
+    const responseLanguageContent = renderResponseLanguageContract(options.language);
 
-  const phaseContent = command.id === 'kata'
-    ? `## Smart dispatch
+    const phaseContent = command.id === 'kata'
+        ? `## Smart dispatch
 
 Read the current task state and upstream artifacts to determine the next action:
 
@@ -359,8 +359,8 @@ Fix reported issues: broken wikilinks, orphaned pages, missing frontmatter. Re-r
 - If the user says “记住这个”, “沉淀到 wiki”, “以后都按这个”, “record this rule”, “add to wiki”, or gives an equivalent durable-knowledge instruction, do **not** treat the chat transcript itself as authoritative. Create a concise source note under the task-owned path or docs/conventions, then ingest/register it as a governed Wiki candidate. Ask a short confirmation only when the instruction is ambiguous.
 - Do not promote conversation-derived knowledge directly. It must remain a candidate until reviewed/promoted; stale ideas and temporary discussion should not pollute authoritative Wiki.
 - Before starting a new task, run \`kata-cli wiki orient\` to refresh context.`
-    : (command.id === 'kata-open' || command.id === 'kata-hotfix' || command.id === 'kata-tweak')
-      ? `## Skill-level workflow profile decision
+        : (command.id === 'kata-open' || command.id === 'kata-hotfix' || command.id === 'kata-tweak')
+            ? `## Skill-level workflow profile decision
 
 \`${command.slashCommand}\` owns the user-facing decision flow. Do **not** rely on CLI TTY prompts for isolation, development, or review mode; many host platforms invoke the CLI non-interactively.
 
@@ -392,8 +392,8 @@ Never let non-interactive CLI defaults silently choose the workflow profile.
 ## After profile confirmation
 
 Do not ask the user to run \`/comet-open\` manually after \`/kata-open\`. When \`workflowProfile.comet.openStatus\` is \`required\`, \`/kata-design <task>\` performs the required acknowledgement before entering \`plan\`. Follow the returned next action after \`${command.slashCommand}\` completes.`
-    : command.id === 'kata-design'
-      ? `## Knowledge capture during design
+            : command.id === 'kata-design'
+                ? `## Knowledge capture during design
 
 Design decisions often establish lasting constraints and norms. Capture them as you go:
 
@@ -409,8 +409,8 @@ Design decisions often establish lasting constraints and norms. Capture them as 
    \`\`\`
 
 3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.`
-    : command.id === 'kata-build'
-      ? `## Knowledge capture during implementation
+                : command.id === 'kata-build'
+                    ? `## Knowledge capture during implementation
 
 Implementation reveals concrete constraints that design alone cannot foresee:
 
@@ -425,8 +425,8 @@ Implementation reveals concrete constraints that design alone cannot foresee:
    \`\`\`
 
 3. Don't wait for archive. Mid-task capture means the knowledge is available for the verification phase and for future tasks.`
-    : command.id === 'kata-verify'
-      ? `## Repair loop
+                    : command.id === 'kata-verify'
+                        ? `## Repair loop
 
 If Judge returns FAIL for any acceptance criterion:
 
@@ -470,8 +470,8 @@ The deferred decision intentionally blocks review and archive, but it does not m
 ## Escalation
 
 If repair fails repeatedly, use the host platform's own selector to choose a more capable model before continuing. Kata does not prescribe or record that choice.`
-    : command.id === 'kata-archive'
-      ? `## Knowledge distillation
+                        : command.id === 'kata-archive'
+                            ? `## Knowledge distillation
 
 The \`kata-cli archive\` command transitions the task from \`distill\` to \`archive\` phase — a **deterministic** CLI operation. It does NOT generate wiki content. That is your job as the agent.
 
@@ -505,8 +505,8 @@ After archive completes, read the returned diagnostics, then:
    kata-cli hooks deactivate
    \`\`\`
    This prevents the archived task from continuing to scope future writes.`
-    : command.id === 'kata-wiki-enrich'
-      ? `## Coding-agent Wiki enrichment
+                            : command.id === 'kata-wiki-enrich'
+                                ? `## Coding-agent Wiki enrichment
 
 This skill is where LLM work happens. Kata binary does **not** call model provider APIs for Wiki enrichment; it emits a deterministic task packet and the current coding agent performs reading, synthesis, and file edits.
 
@@ -559,8 +559,8 @@ This skill is where LLM work happens. Kata binary does **not** call model provid
    \`\`\`
 
 The Wiki helps future agents understand the project. It does not prove code correctness; CI, tests, Reviewer, and Judge own correctness.`
-    : command.id === 'kata-delegate'
-      ? `## Interactive delegation
+                                : command.id === 'kata-delegate'
+                                    ? `## Interactive delegation
 
 Do not require the user to pass command-line parameters. Treat natural language as the primary interface.
 
@@ -597,8 +597,8 @@ Do not require the user to pass command-line parameters. Treat natural language 
    - stop before phases outside the delegated role
 
 7. Return the prompt and next action to the user.`
-    : command.id === 'kata-collect'
-      ? `## Interactive collection
+                                    : command.id === 'kata-collect'
+                                        ? `## Interactive collection
 
 Do not ask the user for CLI parameters first. Discover the likely returned task, inspect upstream outputs, then ask for confirmation.
 
@@ -614,10 +614,10 @@ Do not ask the user for CLI parameters first. Discover the likely returned task,
    \`\`\`
 7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
 8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.`
-     : '';
+                                        : '';
 
-  const automationContent = ['kata-build', 'kata-review', 'kata-judge', 'kata-verify', 'kata-archive'].includes(command.id)
-    ? `## Skill automation contract
+    const automationContent = ['kata-build', 'kata-review', 'kata-judge', 'kata-verify', 'kata-archive'].includes(command.id)
+        ? `## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
 
@@ -631,15 +631,15 @@ Skill-first means the slash command is the agent interface and the CLI is the in
 6. Read every requiredReads path from the packet.
 7. Run kata-cli handoff acknowledge with platform ${platform} and the current role.
 8. ${command.id === 'kata-build'
-  ? 'For build, first complete TDD and focused tests (先完成 TDD 与聚焦测试). Do not seal evidence before coding (不要在编码前封存证据). For current_worktree tasks, declare task-owned files with `--owned-path <path>` before sealing. `--seal` creates one immutable revision; `revision_superseded` means an owned file changed and requires Build for a new revision, while workspace drift outside ownership does not invalidate the sealed revision.'
-  : 'Run this Skill\'s phase command and collect normal evidence. The next phase creates a fresh packet.'}
+            ? 'For build, first complete TDD and focused tests (先完成 TDD 与聚焦测试). Do not seal evidence before coding (不要在编码前封存证据). For current_worktree tasks, declare task-owned files with `--owned-path <path>` before sealing. `--seal` creates one immutable revision; `revision_superseded` means an owned file changed and requires Build for a new revision, while workspace drift outside ownership does not invalidate the sealed revision.'
+            : 'Run this Skill\'s phase command and collect normal evidence. The next phase creates a fresh packet.'}
 9. After the phase command returns, read \`completion.userMessage\` first, then \`nextAction.slashCommand\`, \`nextAction.cliCommand\`, \`recommended.reason\`, and \`askUser\` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command—especially \`/kata-build <task> --seal\`—the final user-facing response MUST end with \`completion.userMessage\` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask “what next”. If \`completion\` is absent, explicitly render the current phase and \`nextAction.slashCommand\`. Prefer the slash command, for example \`/kata-verify <change-id>\`; show the CLI command only as fallback.
 10. Stop after this Skill's own phase command. A Skill invocation has exactly one phase-command authority: Build may invoke only \`kata build\`; it MUST NOT invoke verify, review, judge, archive, or any other \`/kata-*\` command after Build returns. The same rule applies to every phase Skill: render its next action for the user, then end the invocation. If the returned \`nextAction.requiresUserConfirmation=true\`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
 
 Do not create a receipt for read-only search, explanation, or orientation-only work.`
-    : '';
+        : '';
 
-  return `---
+    return `---
 name: ${command.id}
 description: ${command.summary}
 ---
@@ -736,26 +736,26 @@ guard enforcement: ${guardMode}
 Kata does not configure or route host-platform models. If this phase needs a different model, use the host platform's own selector before continuing; model choice is outside Kata state and does not create a route artifact.
 
 ${platform === 'opencode'
-  ? 'OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。'
-  : '请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。'}
+            ? 'OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。'
+            : '请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。'}
 
 ${phaseContent}`
 }
 
 function formatBullets(items: readonly string[]): string {
-  return items.map((item) => `- ${item}`).join('\n');
+    return items.map((item) => `- ${item}`).join('\n');
 }
 
 function renderResponseLanguageContract(language?: ResponseLanguage): string {
-  if (language === 'zh') {
-    return `## Response language
+    if (language === 'zh') {
+        return `## Response language
 
 所有面向用户的自然语言响应必须使用中文。代码、命令、文件路径、API 名称、日志和协议字段可以保留原文。`;
-  }
-  if (language === 'en') {
-    return `## Response language
+    }
+    if (language === 'en') {
+        return `## Response language
 
 All user-facing natural-language responses must be written in English. Code, commands, file paths, API names, logs, and protocol fields may remain in their original form.`;
-  }
-  return '';
+    }
+    return '';
 }

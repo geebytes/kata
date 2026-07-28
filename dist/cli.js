@@ -637,10 +637,12 @@ import { join as join28 } from "node:path";
 import { dirname } from "node:path";
 function codeGraphExecutionEnv(inherited = process.env, nodeExecutable = process.execPath) {
   const runtimeBin = dirname(nodeExecutable);
+  const overrideBin = inherited.STRATA_CODEGRAPH_BIN ? dirname(inherited.STRATA_CODEGRAPH_BIN) : void 0;
   const inheritedPath = inherited.PATH ?? "";
+  const pathSegments = [overrideBin, runtimeBin, inheritedPath].filter((segment) => Boolean(segment));
   return {
     ...inherited,
-    PATH: inheritedPath ? `${runtimeBin}:${inheritedPath}` : runtimeBin
+    PATH: pathSegments.join(":")
   };
 }
 
@@ -1174,7 +1176,7 @@ async function workspaceDrift(root, ownedPaths2) {
 function changedRepositoryPaths(root) {
   let output;
   try {
-    output = execFileSync("git", ["status", "--porcelain=v1", "-z"], {
+    output = execFileSync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
@@ -1198,7 +1200,7 @@ function changedRepositoryPaths(root) {
   return [...new Set(paths)];
 }
 function isIgnoredWorkspacePath(path) {
-  return path === ".kata" || path.startsWith(".kata/") || path === ".llmwiki" || path.startsWith(".llmwiki/") || path === ".codex" || path.startsWith(".codex/") || path === ".claude" || path.startsWith(".claude/") || path === ".opencode" || path.startsWith(".opencode/") || path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/") || path === "node_modules" || path.startsWith("node_modules/") || path === "dist" || path.startsWith("dist/");
+  return path === ".kata" || path.startsWith(".kata/") || path === ".llmwiki" || path.startsWith(".llmwiki/") || path === ".codex" || path.startsWith(".codex/") || path === ".claude" || path.startsWith(".claude/") || path === ".opencode" || path.startsWith(".opencode/") || path.includes("/.opencode/") || path.endsWith("/.opencode") || path === ".github/hooks" || path.startsWith(".github/hooks/") || path === ".github/skills" || path.startsWith(".github/skills/") || path === ".github/instructions" || path.startsWith(".github/instructions/") || path === "node_modules" || path.startsWith("node_modules/") || path === "dist" || path.startsWith("dist/");
 }
 function pathsOverlap(left, right) {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
@@ -1341,7 +1343,7 @@ async function getFreshPassingEvidence(root, taskId, currentDiffHash) {
 async function hasReviewerClearance(root, taskId, revisionId) {
   try {
     const review = JSON.parse(await readFile5(join6(root, ".kata/tasks", taskId, "review.json"), "utf8"));
-    return Array.isArray(review.findings) && review.findings.every((finding) => finding.severity !== "blocking") && (!revisionId || review.revisionId === revisionId);
+    return review.status === "approved" && Boolean(review.reviewEvidence?.trim()) && Array.isArray(review.findings) && review.findings.every((finding) => finding.severity !== "blocking") && (!revisionId || review.revisionId === revisionId);
   } catch (error) {
     if (isNodeError2(error) && error.code === "ENOENT") return false;
     throw error;
@@ -1838,7 +1840,7 @@ var skillCommands = [
   {
     id: "kata",
     slashCommand: "/kata",
-    cli: "kata status",
+    cli: "kata-cli status",
     phase: "dispatch",
     summary: "Shows Kata task status and available next actions. Use when the user asks what to do next, wants Kata status, or needs workflow dispatch.",
     triggerScenarios: [
@@ -1852,7 +1854,7 @@ var skillCommands = [
   {
     id: "kata-open",
     slashCommand: "/kata-open",
-    cli: "kata open --change <change-id> --isolation <mode> --development <mode> --review <mode>",
+    cli: "kata-cli open --change <change-id> --isolation <mode> --development <mode> --review <mode>",
     phase: "open",
     summary: "Opens a governed Kata task/change using the Comet-compatible lifecycle. Use when starting a new change, feature, fix, or governed task.",
     triggerScenarios: [
@@ -1866,7 +1868,7 @@ var skillCommands = [
   {
     id: "kata-design",
     slashCommand: "/kata-design",
-    cli: "kata design --change <change-id>",
+    cli: "kata-cli design --change <change-id>",
     phase: "design",
     summary: "Creates or refines the technical design and acceptance contract. Use when requirements, architecture, acceptance criteria, or project constraints need clarification before implementation.",
     triggerScenarios: [
@@ -1880,7 +1882,7 @@ var skillCommands = [
   {
     id: "kata-build",
     slashCommand: "/kata-build",
-    cli: "kata build --change <change-id>",
+    cli: "kata-cli build --change <change-id>",
     phase: "implement",
     summary: "Implements the accepted task slice with hard verification evidence. Use when the design and acceptance contract are ready for code or documentation changes.",
     triggerScenarios: [
@@ -1894,7 +1896,7 @@ var skillCommands = [
   {
     id: "kata-review",
     slashCommand: "/kata-review",
-    cli: "kata review --change <change-id>",
+    cli: "kata-cli review --change <change-id>",
     phase: "review",
     summary: "Use when an independent Reviewer must record review findings without running Judge.",
     triggerScenarios: ["User asks for an independent code review before judgment.", "A completed implementation has fresh evidence."],
@@ -1904,7 +1906,7 @@ var skillCommands = [
   {
     id: "kata-judge",
     slashCommand: "/kata-judge",
-    cli: "kata judge --change <change-id>",
+    cli: "kata-cli judge --change <change-id>",
     phase: "judge",
     summary: "Use when an independent Judge must evaluate a task after Reviewer has completed.",
     triggerScenarios: ["User asks for a final judgment after review.", "A task is already in reviewer phase."],
@@ -1914,7 +1916,7 @@ var skillCommands = [
   {
     id: "kata-verify",
     slashCommand: "/kata-verify",
-    cli: "kata verify --change <change-id>",
+    cli: "kata-cli verify --change <change-id>",
     phase: "verify",
     summary: "Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping.",
     triggerScenarios: [
@@ -1928,7 +1930,7 @@ var skillCommands = [
   {
     id: "kata-archive",
     slashCommand: "/kata-archive",
-    cli: "kata archive --change <change-id>",
+    cli: "kata-cli archive --change <change-id>",
     phase: "archive",
     summary: "Archives a completed task after evidence, review, and judge gates pass. Use when a Kata change is ready for final distillation, wiki capture, and archival.",
     triggerScenarios: [
@@ -1942,7 +1944,7 @@ var skillCommands = [
   {
     id: "kata-hotfix",
     slashCommand: "/kata-hotfix",
-    cli: "kata hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>",
+    cli: "kata-cli hotfix --change <change-id> --isolation <mode> --development <mode> --review <mode>",
     phase: "hotfix",
     summary: "Runs the constrained hotfix path for behavior fixes without new capability design. Use when the user asks for a focused bug fix or urgent repair.",
     triggerScenarios: [
@@ -1956,7 +1958,7 @@ var skillCommands = [
   {
     id: "kata-tweak",
     slashCommand: "/kata-tweak",
-    cli: "kata tweak --change <change-id> --isolation <mode> --development <mode> --review <mode>",
+    cli: "kata-cli tweak --change <change-id> --isolation <mode> --development <mode> --review <mode>",
     phase: "tweak",
     summary: "Runs the lightweight tweak path for local docs, prompt, copy, or configuration changes. Use when the user asks for a small non-bug adjustment.",
     triggerScenarios: [
@@ -1970,7 +1972,7 @@ var skillCommands = [
   {
     id: "kata-wiki-enrich",
     slashCommand: "/kata-wiki-enrich",
-    cli: "kata wiki task --kind enrich",
+    cli: "kata-cli wiki task --kind enrich",
     phase: "wiki-enrich",
     summary: "Uses the coding agent LLM capability to enrich .llmwiki from deterministic Kata task packets. Use when initializing, enriching, linting, or distilling project wiki knowledge.",
     triggerScenarios: [
@@ -1984,7 +1986,7 @@ var skillCommands = [
   {
     id: "kata-collect",
     slashCommand: "/kata-collect",
-    cli: "kata collect",
+    cli: "kata-cli collect",
     phase: "collect",
     summary: "Use when collecting work back from another coding platform after delegated Kata implementation or repair.",
     triggerScenarios: [
@@ -2024,37 +2026,37 @@ function renderSkill(command, platform, options = {}) {
 Read the current task state and upstream artifacts to determine the next action:
 
 \`\`\`bash
-kata status  # show current phase and next skill
+kata-cli status  # show current phase and next skill
 \`\`\`
 
 For a specific change:
 
 \`\`\`bash
-kata status --change <change-id>
+kata-cli status --change <change-id>
 \`\`\`
 
-With one active or same-branch task, the output includes a \`nextSkill\` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, \`kata status\` returns \`candidates\` and a \`recommended\` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
+With one active or same-branch task, the output includes a \`nextSkill\` field that tells you which /kata-* command can happen next. With multiple same-branch tasks, \`kata-cli status\` returns \`candidates\` and a \`recommended\` action. Prefer the recommendation and ask the user for a short confirmation instead of asking them to remember command-line flags or change ids.
 
-When \`phase === "dispatch" && candidates.length === 0 && recommended === null\`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: \u201C\u5F53\u524D\u5206\u652F\u6CA1\u6709\u6D3B\u8DC3\u7684 Kata \u4EFB\u52A1\u3002\u4F60\u60F3\u5F00\u542F\u4EC0\u4E48\u5DE5\u4F5C\uFF1F\u8BF7\u7528\u4E00\u53E5\u8BDD\u63CF\u8FF0\u76EE\u6807\uFF0C\u4F8B\u5982\u2018\u4FEE\u590D\u767B\u5F55\u8D85\u65F6\u2019\u6216\u2018\u65B0\u589E\u5BFC\u51FA\u529F\u80FD\u2019\u3002\u201D Wait for their answer. \u6536\u5230\u81EA\u7136\u8BED\u8A00\u76EE\u6807\u540E\uFF0C\u8FDB\u5165 /kata-open\uFF1B\u7531\u8BE5 Skill \u89E3\u91CA\u5E76\u786E\u8BA4\u9694\u79BB\u3001\u5F00\u53D1\u548C\u5BA1\u67E5\u65B9\u5F0F\uFF0C\u7136\u540E\u4F7F\u7528\u663E\u5F0F\u53C2\u6570\u8C03\u7528 \`kata open\`\u3002
+When \`phase === "dispatch" && candidates.length === 0 && recommended === null\`, do not display raw CLI diagnostics and do not ask for a task id, change id, or CLI flags. Tell the user: \u201C\u5F53\u524D\u5206\u652F\u6CA1\u6709\u6D3B\u8DC3\u7684 Kata \u4EFB\u52A1\u3002\u4F60\u60F3\u5F00\u542F\u4EC0\u4E48\u5DE5\u4F5C\uFF1F\u8BF7\u7528\u4E00\u53E5\u8BDD\u63CF\u8FF0\u76EE\u6807\uFF0C\u4F8B\u5982\u2018\u4FEE\u590D\u767B\u5F55\u8D85\u65F6\u2019\u6216\u2018\u65B0\u589E\u5BFC\u51FA\u529F\u80FD\u2019\u3002\u201D Wait for their answer. \u6536\u5230\u81EA\u7136\u8BED\u8A00\u76EE\u6807\u540E\uFF0C\u8FDB\u5165 /kata-open\uFF1B\u7531\u8BE5 Skill \u89E3\u91CA\u5E76\u786E\u8BA4\u9694\u79BB\u3001\u5F00\u53D1\u548C\u5BA1\u67E5\u65B9\u5F0F\uFF0C\u7136\u540E\u4F7F\u7528\u663E\u5F0F\u53C2\u6570\u8C03\u7528 \`kata-cli open\`\u3002
 
-Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say \`/kata-build \u4FEE\u590D\u4EE3\u7801\u89C4\u8303\` or \`\u7EE7\u7EED\`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run \`kata build --change ...\` unless the host platform cannot execute shell commands.
+Skill-first rule: treat slash-command Skills as the user interface and CLI commands as the deterministic execution layer inside the Skill. A user should be able to say \`/kata-build \u4FEE\u590D\u4EE3\u7801\u89C4\u8303\` or \`\u7EE7\u7EED\`; the Skill must discover the task, relation redirects, current phase, and next action before asking for missing choices. Do not ask the user to run \`kata-cli build --change ...\` unless the host platform cannot execute shell commands.
 
 Workflow control is task-scoped: Change is the target/scope container, Task is the smallest governed control unit, Artifact is evidence, and Step is agent-local execution detail. Do not drive build/review/judge from a Change directly; resolve the canonical Task first.
 
 If a placeholder task or earlier change is covered by a more specific governed task, do not ask future agents to guess. Record the relation:
 
 \`\`\`bash
-kata tasks relate --from <source-task> --to <target-task> --type <covered_by|superseded_by|duplicate_of|merged_into> --reason "<why>"
+kata-cli tasks relate --from <source-task> --to <target-task> --type <covered_by|superseded_by|duplicate_of|merged_into> --reason "<why>"
 \`\`\`
 
-\`kata status --change <source-task>\` and \`kata orient --change <source-task>\` follow terminal relations and return \`relationRedirects\`.
+\`kata-cli status --change <source-task>\` and \`kata-cli orient --change <source-task>\` follow terminal relations and return \`relationRedirects\`.
 
 For change-to-task, task-to-change, and change-to-change context, use the generic graph:
 
 \`\`\`bash
-kata relations add --from change:<change-id> --to task:<task-id> --type contains --reason "<why>"
-kata relations add --from task:<task-id> --to change:<change-id> --type implements --reason "<why>"
-kata relations show --id change:<change-id>
+kata-cli relations add --from change:<change-id> --to task:<task-id> --type contains --reason "<why>"
+kata-cli relations add --from task:<task-id> --to change:<change-id> --type implements --reason "<why>"
+kata-cli relations show --id change:<change-id>
 \`\`\`
 
 Ownership and lineage edges enrich context. Only task-to-task terminal control edges should redirect \`status\`/\`orient\`.
@@ -2078,14 +2080,14 @@ The phase dispatch mapping is:
 If running inside a platform that supports slash commands and \`nextAction.requiresUserConfirmation\` is not true, invoke the suggested /kata-* skill directly. Otherwise use:
 
 \`\`\`bash
-kata <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>
+kata-cli <design|build|review|judge|verify|archive|hotfix|tweak> --change <change-id>
 \`\`\`
 
 You can also check Comet directly:
 
 \`\`\`bash
-kata comet verify  # check if Comet is installed and compatible
-kata comet version # show compatibility and installed versions
+kata-cli comet verify  # check if Comet is installed and compatible
+kata-cli comet version # show compatibility and installed versions
 \`\`\`
 
 ## Wiki maintenance
@@ -2095,21 +2097,21 @@ The project wiki (\`.llmwiki/\` + \`.kata/wiki/\`) accumulates knowledge across 
 Periodically run:
 
 \`\`\`bash
-kata wiki lint
+kata-cli wiki lint
 \`\`\`
 
 Fix reported issues: broken wikilinks, orphaned pages, missing frontmatter. Re-run until clean.
 
 ## Ongoing discipline
 
-- If you discover a decision, constraint, or norm **during** task work, capture it immediately via \`kata wiki ingest --from <source-path>\`. Don't wait for archive.
+- If you discover a decision, constraint, or norm **during** task work, capture it immediately via \`kata-cli wiki ingest --from <source-path>\`. Don't wait for archive.
 - If the user says \u201C\u8BB0\u4F4F\u8FD9\u4E2A\u201D, \u201C\u6C89\u6DC0\u5230 wiki\u201D, \u201C\u4EE5\u540E\u90FD\u6309\u8FD9\u4E2A\u201D, \u201Crecord this rule\u201D, \u201Cadd to wiki\u201D, or gives an equivalent durable-knowledge instruction, do **not** treat the chat transcript itself as authoritative. Create a concise source note under the task-owned path or docs/conventions, then ingest/register it as a governed Wiki candidate. Ask a short confirmation only when the instruction is ambiguous.
 - Do not promote conversation-derived knowledge directly. It must remain a candidate until reviewed/promoted; stale ideas and temporary discussion should not pollute authoritative Wiki.
-- Before starting a new task, run \`kata wiki orient\` to refresh context.` : command.id === "kata-open" || command.id === "kata-hotfix" || command.id === "kata-tweak" ? `## Skill-level workflow profile decision
+- Before starting a new task, run \`kata-cli wiki orient\` to refresh context.` : command.id === "kata-open" || command.id === "kata-hotfix" || command.id === "kata-tweak" ? `## Skill-level workflow profile decision
 
 \`${command.slashCommand}\` owns the user-facing decision flow. Do **not** rely on CLI TTY prompts for isolation, development, or review mode; many host platforms invoke the CLI non-interactively.
 
-Before running \`kata ${command.phase}\`, resolve these three choices in the agent conversation:
+Before running \`kata-cli ${command.phase}\`, resolve these three choices in the agent conversation:
 
 1. Isolation mode:
    - \`current_worktree\` \u2014 use the current checkout; fastest, least isolated.
@@ -2142,13 +2144,13 @@ Design decisions often establish lasting constraints and norms. Capture them as 
 
 1. After accepting or rejecting an approach, run:
    \`\`\`bash
-   kata wiki ingest --from docs/decisions/<decision-log>.md
+   kata-cli wiki ingest --from docs/decisions/<decision-log>.md
    \`\`\`
    This creates a \`candidate\` wiki record linking the decision to source evidence.
 
 2. If you identify new rules, conventions, or architectural constraints, write a brief summary page and ingest it:
    \`\`\`bash
-   kata wiki ingest --from .llmwiki/concepts/<topic>.md
+   kata-cli wiki ingest --from .llmwiki/concepts/<topic>.md
    \`\`\`
 
 3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.` : command.id === "kata-build" ? `## Knowledge capture during implementation
@@ -2157,12 +2159,12 @@ Implementation reveals concrete constraints that design alone cannot foresee:
 
 1. If you discover an unexpected limitation, workaround, or invariant, document it:
    \`\`\`bash
-   kata wiki ingest --from src/<relevant-file>.ts
+   kata-cli wiki ingest --from src/<relevant-file>.ts
    \`\`\`
 
 2. If you establish new conventions (naming, structure, error handling), write a short convention note and ingest it:
    \`\`\`bash
-   kata wiki ingest --from docs/conventions/<topic>.md
+   kata-cli wiki ingest --from docs/conventions/<topic>.md
    \`\`\`
 
 3. Don't wait for archive. Mid-task capture means the knowledge is available for the verification phase and for future tasks.` : command.id === "kata-verify" ? `## Repair loop
@@ -2180,12 +2182,12 @@ If Judge returns FAIL for any acceptance criterion:
 
 3. **Rebuild** \u2014 first repair and test the scoped implementation, then collect fresh evidence:
    \`\`\`bash
-   kata build --change <taskId> --seal
+   kata-cli build --change <taskId> --seal
    \`\`\`
 
 4. **Re-verify**:
    \`\`\`bash
-   kata verify --change <taskId>
+   kata-cli verify --change <taskId>
    \`\`\`
 
 ## Wiki closure is a governance action, not an implementation repair
@@ -2194,14 +2196,14 @@ When Verify reports implementationReady: true, governanceReady: false, and reaso
 
 - Choose \`captured\` when the task establishes a reusable capability, architecture rule, workflow constraint, or domain convention. Create and register the grounded candidate first, then reference its id.
 - Choose \`not_applicable\` when the task is a local mechanical change and establishes no reusable project knowledge.
-- Only ask the user when the task artifacts are genuinely ambiguous or contradictory. Do not invoke bare \`kata wiki closure\` and make the user classify an otherwise clear task.
+- Only ask the user when the task artifacts are genuinely ambiguous or contradictory. Do not invoke bare \`kata-cli wiki closure\` and make the user classify an otherwise clear task.
 
 After making the decision, record it non-interactively and re-verify:
 
 \`\`\`bash
-kata wiki closure --task <taskId> --decision captured --reason "<durable rule>" --candidate <wiki-id>
-kata wiki closure --task <taskId> --decision not_applicable --reason "<why no reusable knowledge changed>"
-kata verify --change <taskId>
+kata-cli wiki closure --task <taskId> --decision captured --reason "<durable rule>" --candidate <wiki-id>
+kata-cli wiki closure --task <taskId> --decision not_applicable --reason "<why no reusable knowledge changed>"
+kata-cli verify --change <taskId>
 \`\`\`
 
 The deferred decision intentionally blocks review and archive, but it does not mean acceptance criteria, tests, or evidence failed.
@@ -2210,7 +2212,7 @@ The deferred decision intentionally blocks review and archive, but it does not m
 
 If repair fails repeatedly, use the host platform's own selector to choose a more capable model before continuing. Kata does not prescribe or record that choice.` : command.id === "kata-archive" ? `## Knowledge distillation
 
-The \`kata archive\` command transitions the task from \`distill\` to \`archive\` phase \u2014 a **deterministic** CLI operation. It does NOT generate wiki content. That is your job as the agent.
+The \`kata-cli archive\` command transitions the task from \`distill\` to \`archive\` phase \u2014 a **deterministic** CLI operation. It does NOT generate wiki content. That is your job as the agent.
 
 After archive completes, read the returned diagnostics, then:
 
@@ -2229,17 +2231,17 @@ After archive completes, read the returned diagnostics, then:
 
 3. **Write** the wiki record via CLI:
    \`\`\`bash
-   kata wiki ingest --from .kata/tasks/<taskId>/task.json
+   kata-cli wiki ingest --from .kata/tasks/<taskId>/task.json
    \`\`\`
 
 4. **Promote** (optional):
    \`\`\`bash
-   kata wiki promote wiki-<taskId> --by <your-id> --role distiller
+   kata-cli wiki promote wiki-<taskId> --by <your-id> --role distiller
    \`\`\`
 
 5. **Deactivate active hook task**:
    \`\`\`bash
-   kata hooks deactivate
+   kata-cli hooks deactivate
    \`\`\`
    This prevents the archived task from continuing to scope future writes.` : command.id === "kata-wiki-enrich" ? `## Coding-agent Wiki enrichment
 
@@ -2247,10 +2249,10 @@ This skill is where LLM work happens. Kata binary does **not** call model provid
 
 1. Get the task packet:
    \`\`\`bash
-   kata wiki task --kind enrich --from docs
+   kata-cli wiki task --kind enrich --from docs
    \`\`\`
 
-   Do not guess Wiki CLI subcommands. Run \`kata wiki --help\` when discovery is needed. \`kata wiki propose\` is only a compatibility alias for the enrich task packet; it neither creates a governed record nor promotes knowledge. Use \`kata wiki candidate\` to inspect pending records.
+   Do not guess Wiki CLI subcommands. Run \`kata-cli wiki --help\` when discovery is needed. \`kata-cli wiki propose\` is only a compatibility alias for the enrich task packet; it neither creates a governed record nor promotes knowledge. Use \`kata-cli wiki candidate\` to inspect pending records.
 
 2. Read every path in \`requiredReads\`, especially:
    - \`.llmwiki/SCHEMA.md\`
@@ -2278,19 +2280,19 @@ This skill is where LLM work happens. Kata binary does **not** call model provid
 
 7. Run deterministic checks:
    \`\`\`bash
-   kata wiki lint
-   kata wiki verify
+   kata-cli wiki lint
+   kata-cli wiki verify
    \`\`\`
 
 8. Register synthesized pages as governed candidate records:
    \`\`\`bash
-   kata wiki register
+   kata-cli wiki register
    \`\`\`
 
-9. Complete the mandatory knowledge-closure decision before \`/kata-verify\` and \`/kata-archive\`. Decide it yourself from the task design, acceptance, source changes, and candidate records: reusable capability/rule/convention means \`captured\`; a local mechanical change with no durable knowledge means \`not_applicable\`. Create and register a grounded candidate before choosing \`captured\`. Only ask the user when those artifacts are genuinely ambiguous or contradictory. Never invoke bare \`kata wiki closure\` merely to make the user classify the task; always pass the selected decision and concrete reason:
+9. Complete the mandatory knowledge-closure decision before \`/kata-verify\` and \`/kata-archive\`. Decide it yourself from the task design, acceptance, source changes, and candidate records: reusable capability/rule/convention means \`captured\`; a local mechanical change with no durable knowledge means \`not_applicable\`. Create and register a grounded candidate before choosing \`captured\`. Only ask the user when those artifacts are genuinely ambiguous or contradictory. Never invoke bare \`kata-cli wiki closure\` merely to make the user classify the task; always pass the selected decision and concrete reason:
    \`\`\`bash
-   kata wiki closure --task <task-id> --decision captured --reason "<durable rule>" --candidate <wiki-id>
-   kata wiki closure --task <task-id> --decision not_applicable --reason "<why no reusable knowledge changed>"
+   kata-cli wiki closure --task <task-id> --decision captured --reason "<durable rule>" --candidate <wiki-id>
+   kata-cli wiki closure --task <task-id> --decision not_applicable --reason "<why no reusable knowledge changed>"
    \`\`\`
 
 The Wiki helps future agents understand the project. It does not prove code correctness; CI, tests, Reviewer, and Judge own correctness.` : command.id === "kata-delegate" ? `## Interactive delegation
@@ -2298,7 +2300,7 @@ The Wiki helps future agents understand the project. It does not prove code corr
 Do not require the user to pass command-line parameters. Treat natural language as the primary interface.
 
 1. Discover candidate tasks:
-   - Run \`kata status\`.
+   - Run \`kata-cli status\`.
    - If the user mentioned a change by name or number, inspect that candidate.
    - If multiple same-branch tasks are plausible, present 2\u20135 options and ask the user to confirm or type a task id.
 
@@ -2309,7 +2311,7 @@ Do not require the user to pass command-line parameters. Treat natural language 
    - \`judge\` or \`distill\` \u2192 \`distiller\`
    Ask for confirmation if the user intent conflicts with the phase.
 
-3. Discover platforms with \`kata discover\`. Recommend one platform based on role and model policy, but ask the user to confirm when more than one suitable platform is available. Let the user type a custom platform name if needed.
+3. Discover platforms with \`kata-cli discover\`. Recommend one platform based on role and model policy, but ask the user to confirm when more than one suitable platform is available. Let the user type a custom platform name if needed.
 
 4. Ensure the task is ready for delegation:
    - If missing, open it.
@@ -2318,8 +2320,8 @@ Do not require the user to pass command-line parameters. Treat natural language 
 
 5. Create and verify the packet:
    \`\`\`bash
-   kata handoff create --task <task-id> --from <current-role> --to <target-role>
-   kata handoff verify --task <task-id> --id <handoff-id>
+   kata-cli handoff create --task <task-id> --from <current-role> --to <target-role>
+   kata-cli handoff verify --task <task-id> --id <handoff-id>
    \`\`\`
 
 6. Generate a target-agent prompt that says:
@@ -2333,26 +2335,31 @@ Do not require the user to pass command-line parameters. Treat natural language 
 
 Do not ask the user for CLI parameters first. Discover the likely returned task, inspect upstream outputs, then ask for confirmation.
 
-1. Run \`kata collect\` first. It returns same-branch candidates, upstream summaries, and a \`recommended\` task/action.
+1. Run \`kata-cli collect\` first. It returns same-branch candidates, upstream summaries, and a \`recommended\` task/action.
 2. If the recommendation says \`repair_blocking_review_findings\`, \`repair_failed_judge\`, or \`repair_failing_evidence\`, ask the user to confirm repair and then act as implementer.
 3. If the recommendation says \`review_fresh_implementation\`, ask the user to confirm review and then run reviewer flow.
 4. If the recommendation says \`judge_reviewed_change\`, ask the user to confirm Judge and then run judge flow.
 5. Read task state, review/judge/evidence files, and relevant handoff receipts before editing or judging.
-6. Return only the recommended next slash command or handoff prompt. Never run review, judge, archive, or any other next phase from collection.
-7. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.` : "";
+6. If evidence is ready and user confirms higher-trust gates, run:
+   \`\`\`bash
+   kata-cli review --change <task-id>
+   kata-cli judge --change <task-id>
+   \`\`\`
+7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
+8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.` : "";
   const automationContent = ["kata-build", "kata-review", "kata-judge", "kata-verify", "kata-archive"].includes(command.id) ? `## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
 
 Skill-first means the slash command is the agent interface and the CLI is the internal execution layer. The user may provide no task id, a natural-language task hint, or only "continue"; the Skill must discover candidates and ask for a short confirmation only when needed.
 
-1. Run \`kata status\` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
-2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the \`recommended\` task/action from \`kata status\` or \`kata collect\`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
+1. Run \`kata-cli status\` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
+2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the \`recommended\` task/action from \`kata-cli status\` or \`kata-cli collect\`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
 3. Resolve role and task-kind from phase and user intent; if ambiguous, present recommended options and ask for confirmation. Do not default across trust boundaries without confirmation.
-4. Run \`kata orient\` without \`--change\` when using the active/single discovered task, or with \`--change <id>\` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
-5. Run kata handoff verify for that id; stop on an invalid result.
+4. Run \`kata-cli orient\` without \`--change\` when using the active/single discovered task, or with \`--change <id>\` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
+5. Run kata-cli handoff verify for that id; stop on an invalid result.
 6. Read every requiredReads path from the packet.
-7. Run kata handoff acknowledge with platform ${platform} and the current role.
+7. Run kata-cli handoff acknowledge with platform ${platform} and the current role.
 8. ${command.id === "kata-build" ? "For build, first complete TDD and focused tests (\u5148\u5B8C\u6210 TDD \u4E0E\u805A\u7126\u6D4B\u8BD5). Do not seal evidence before coding (\u4E0D\u8981\u5728\u7F16\u7801\u524D\u5C01\u5B58\u8BC1\u636E). For current_worktree tasks, declare task-owned files with `--owned-path <path>` before sealing. `--seal` creates one immutable revision; `revision_superseded` means an owned file changed and requires Build for a new revision, while workspace drift outside ownership does not invalidate the sealed revision." : "Run this Skill's phase command and collect normal evidence. The next phase creates a fresh packet."}
 9. After the phase command returns, read \`completion.userMessage\` first, then \`nextAction.slashCommand\`, \`nextAction.cliCommand\`, \`recommended.reason\`, and \`askUser\` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command\u2014especially \`/kata-build <task> --seal\`\u2014the final user-facing response MUST end with \`completion.userMessage\` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask \u201Cwhat next\u201D. If \`completion\` is absent, explicitly render the current phase and \`nextAction.slashCommand\`. Prefer the slash command, for example \`/kata-verify <change-id>\`; show the CLI command only as fallback.
 10. Stop after this Skill's own phase command. A Skill invocation has exactly one phase-command authority: Build may invoke only \`kata build\`; it MUST NOT invoke verify, review, judge, archive, or any other \`/kata-*\` command after Build returns. The same rule applies to every phase Skill: render its next action for the user, then end the invocation. If the returned \`nextAction.requiresUserConfirmation=true\`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
@@ -2374,19 +2381,19 @@ Use this skill to inspect the Kata ${command.phase} workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the \`${command.slashCommand}\` Skill as the human-facing interface. Use \`${command.cli}\` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via \`kata status\` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with \`kata status\`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the \`${command.slashCommand}\` Skill as the human-facing interface. Use \`${command.cli}\` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via \`kata-cli status\` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with \`kata-cli status\`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
 Before doing task work, run the project orientation command:
 
 \`\`\`bash
-kata status
-kata orient --role <designer|implementer|reviewer|judge|distiller> --platform ${platform} --task-kind <read|implementation|security>
-kata hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform ${platform}
+kata-cli status
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform ${platform} --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform ${platform}
 \`\`\`
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run \`kata orient\` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run \`kata-cli orient\` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -2404,10 +2411,10 @@ This is mandatory at trust boundaries:
 After reading required context and before broad file scans, use CodeGraph when code understanding, impact analysis, or test targeting is needed:
 
 \`\`\`bash
-kata codegraph status
-kata codegraph explore "<feature, symbol, module, or error>"
-kata codegraph impact "<symbol-or-file>"
-kata codegraph affected <changed-file>...
+kata-cli codegraph status
+kata-cli codegraph explore "<feature, symbol, module, or error>"
+kata-cli codegraph impact "<symbol-or-file>"
+kata-cli codegraph affected <changed-file>...
 \`\`\`
 
 Use CodeGraph to find likely source files, call paths, dependents, and affected tests. Then verify with direct file reads and focused \`rg\` searches before editing or reviewing. If CodeGraph is unavailable or stale, note the fallback and use \`rg\` plus requiredReads; do not block the workflow solely on CodeGraph.
@@ -2416,7 +2423,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata handoff verify --task <change-id> --id <handoff-id>, kata handoff show --task <change-id> --id <handoff-id>, then kata handoff acknowledge --task <change-id> --id <handoff-id> --platform ${platform} --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform ${platform} --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -2662,10 +2669,10 @@ async function buildLlmWikiTask(input) {
     ],
     instructions: instructionsForWikiTask(input.kind),
     followupCommands: [
-      "kata wiki lint --root <root>",
-      "kata wiki verify --root <root>",
-      "kata wiki register --root <root>",
-      "kata orient --change <change-id> --role distiller --task-kind read"
+      "kata-cli wiki lint --root <root>",
+      "kata-cli wiki verify --root <root>",
+      "kata-cli wiki register --root <root>",
+      "kata-cli orient --change <change-id> --role distiller --task-kind read"
     ]
   };
 }
@@ -2932,7 +2939,7 @@ function instructionsForWikiTask(kind) {
     ...common,
     "Enrich the Wiki by extracting stable concepts, entities, comparisons, project constraints, and recurring workflows from required reads.",
     "IMPORTANT: Design docs (raw/) are historical context \u2014 source code under packages/ is ground truth. Before writing a page, read actual source files (ports, domains, infrastructure, adapters) to verify each claim. If source and design doc disagree, source wins.",
-    "Use CodeGraph (available via the codegraph_explore MCP tool or `kata codegraph explore/query/impact`) to navigate the codebase efficiently: find relevant source files, explore call paths, and verify claims against actual implementations.",
+    "Use CodeGraph (available via the codegraph_explore MCP tool or `kata-cli codegraph explore/query/impact`) to navigate the codebase efficiently: find relevant source files, explore call paths, and verify claims against actual implementations.",
     "After writing pages, run the follow-up deterministic CLI commands and fix lint issues before handing off."
   ];
 }
@@ -3611,7 +3618,7 @@ function renderAgentsContract(language) {
 
 Before non-trivial work in this project:
 
-1. Run \`kata orient --change <id> --role <role> --task-kind <kind>\`.
+1. Run \`kata-cli orient --change <id> --role <role> --task-kind <kind>\`.
 2. Read AGENTS.md plus the returned \`.llmwiki/SCHEMA.md\`, \`.llmwiki/index.md\`, and \`.llmwiki/log.md\` entries when present.
 3. Use the matching \`/kata-*\` skill and follow its startup checklist.
 4. Kata \u4E0D\u914D\u7F6E\u3001\u4E0D\u8DEF\u7531\u4E5F\u4E0D\u8BB0\u5F55\u5BBF\u4E3B\u5E73\u53F0\u6A21\u578B\u3002\u82E5\u9700\u5207\u6362\uFF0C\u8BF7\u76F4\u63A5\u4F7F\u7528\u5BBF\u4E3B\u5E73\u53F0\u81EA\u5DF1\u7684\u6A21\u578B\u9009\u62E9\u5668\u6216\u914D\u7F6E\u540E\u7EE7\u7EED\u3002
@@ -3619,10 +3626,10 @@ Before non-trivial work in this project:
 
 ## Development constraint: skill-first
 
-For Kata development and dogfooding, the \`/kata-*\` skill is the human-facing workflow entrypoint. The \`kata ...\` CLI is the deterministic execution layer used inside skills and scripts.
+For Kata development and dogfooding, the \`/kata-*\` skill is the human-facing workflow entrypoint. The \`kata-cli ...\` CLI is the deterministic execution layer used inside skills and scripts.
 
 - Prefer short skill invocations such as \`/kata-build <intent>\`, \`/kata-review\`, \`/kata-collect\`, or \`\u7EE7\u7EED\`.
-- A skill must first discover the active/same-branch task with \`kata status\`, follow relation redirects, and read \`nextAction\`.
+- A skill must first discover the active/same-branch task with \`kata-cli status\`, follow relation redirects, and read \`nextAction\`.
 - Do not ask the user to provide CLI flags such as \`--change\`, \`--role\`, or \`--task-kind\` unless discovery leaves multiple plausible choices.
 - At \`review_gate\` and \`judge_gate\`, stop so the user can use the host platform's own model selector before continuing. At \`archive_gate\`, stop for the user's archive decision.
 - Use CLI commands directly only for non-interactive automation, tests, CI, or when the host platform cannot execute slash-command skills.
@@ -3666,7 +3673,7 @@ Wiki helps agents avoid project-context mistakes; CI, tests, Reviewer, and Judge
 
 Before non-trivial work:
 
-1. Run \`kata orient --change <id> --role <role> --task-kind <kind>\`.
+1. Run \`kata-cli orient --change <id> --role <role> --task-kind <kind>\`.
 2. Read returned AGENTS, .llmwiki, model-route, and guard instructions before editing.
 3. Use the matching /kata-* skill or its platform command bridge.
 4. Capture durable project knowledge into .llmwiki, but never treat Wiki as proof that code is correct.
@@ -3674,10 +3681,10 @@ Before non-trivial work:
 
 ## Development constraint: skill-first
 
-The /kata-* skill or platform command bridge is the human-facing workflow entrypoint. The kata CLI is the deterministic execution layer used inside skills and scripts.
+The /kata-* skill or platform command bridge is the human-facing workflow entrypoint. The kata-cli CLI is the deterministic execution layer used inside skills and scripts.
 
 - Prefer short skill invocations such as /kata-build <intent>, /kata-review, /kata-collect, or \u7EE7\u7EED.
-- A skill must first discover the active/same-branch task with kata status, follow relation redirects, and read nextAction.
+- A skill must first discover the active/same-branch task with kata-cli status, follow relation redirects, and read nextAction.
 - Do not ask the user to provide CLI flags such as --change, --role, or --task-kind unless discovery leaves multiple plausible choices.
 - At review_gate and judge_gate, stop, show the recommendation, and wait for the user to switch the host-platform model and resume. Do not claim a switch or write a route before confirmation. At archive_gate, stop for the user's archive decision.
 - Use CLI commands directly only for non-interactive automation, tests, CI, or when the host platform cannot execute slash-command skills.
@@ -3687,7 +3694,7 @@ ${responseLanguage}` : ""}
   const format = platformDefinitionById[platform].rulesFormat;
   if (format === "mdc") {
     return `---
-description: kata agent contract
+description: kata-cli agent contract
 globs:
 alwaysApply: true
 ---
@@ -3731,7 +3738,7 @@ const denial = evaluateWrite({ role }, normalizedPath, { ...task, id: taskId, ph
 
 if (denial) {
   console.error(\`Kata hook blocked write to \${targetPath}: \${denial}\`);
-  console.error('Run: kata orient --change ' + taskId + ' --role ' + role);
+  console.error('Run: kata-cli orient --change ' + taskId + ' --role ' + role);
   process.exit(2);
 }
 
@@ -4011,7 +4018,7 @@ ${responseLanguage ? `${responseLanguage}
 ` : ""}Always start with:
 
 \`\`\`bash
-kata orient --change <id> --role <role> --task-kind <kind>
+kata-cli orient --change <id> --role <role> --task-kind <kind>
 \`\`\`
 
 The orientation output links project constraints, LLM Wiki context, allowed writes, phase gates, and the next suggested skill.
@@ -5280,6 +5287,14 @@ function suggestCandidateAction(phase, upstream) {
       priority: 2e3 + upstream.unresolvedObligations
     };
   }
+  if (phase === "review" && upstream.verifyResult === "FAIL") {
+    return {
+      nextSkill: "/kata-build",
+      role: "implementer",
+      reason: verifyRepairReason(upstream),
+      priority: 1020 + upstream.failedVerifyAcceptance
+    };
+  }
   if (phase === "review" && upstream.blockingFindings > 0) {
     return {
       nextSkill: "/kata-build",
@@ -5396,13 +5411,13 @@ function nextSkillForPhase(phase) {
 function nextActionForTask(taskId, nextSkill, role, reason) {
   const cliVerb = skillToCliVerb(nextSkill);
   const gate = trustBoundaryForReason(reason);
-  const seal = reason === "rebuild_stale_evidence" ? " --seal" : "";
+  const seal = reason === "rebuild_stale_evidence" || reason === "rebuild_superseded_revision" ? " --seal" : "";
   const wikiClosure = reason === "resolve_wiki_closure";
   return {
     taskId,
     nextSkill,
     slashCommand: `${nextSkill} ${taskId}${seal}`,
-    cliCommand: wikiClosure ? `kata wiki closure --task ${taskId} --decision <captured|not_applicable> --reason <reason>` : cliVerb ? `kata ${cliVerb} --change ${taskId}${seal}` : `kata status --change ${taskId}`,
+    cliCommand: wikiClosure ? `kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable> --reason <reason>` : cliVerb ? `kata-cli ${cliVerb} --change ${taskId}${seal}` : `kata-cli status --change ${taskId}`,
     role,
     reason,
     requiresUserConfirmation: gate !== null || wikiClosure,
@@ -5411,6 +5426,21 @@ function nextActionForTask(taskId, nextSkill, role, reason) {
     ...gate ? { pauseInstruction: pauseInstructionForBoundary(gate) } : {},
     ...wikiClosure ? { pauseInstruction: "\u5B9E\u73B0\u9A8C\u8BC1\u5DF2\u901A\u8FC7\uFF1B\u8BF7\u51B3\u5B9A\u672C\u4EFB\u52A1\u7684\u77E5\u8BC6\u95ED\u73AF\u662F captured \u8FD8\u662F not_applicable\uFF0C\u518D\u91CD\u65B0\u6267\u884C /kata-verify\u3002" } : {}
   };
+}
+function verifyRepairReason(upstream) {
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === "revision_superseded")) {
+    return "rebuild_superseded_revision";
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === "stale_evidence")) {
+    return "rebuild_stale_evidence";
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === "insufficient_evidence_level")) {
+    return "add_entrypoint_evidence";
+  }
+  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === "unresolved_repair_obligation")) {
+    return "resolve_repair_obligations";
+  }
+  return "repair_failed_verify";
 }
 function statusActionPrompts(suggestion) {
   if (suggestion.reason === "choose_execution_mode") {
@@ -5709,7 +5739,7 @@ async function cmdBuild(taskId, root, options = {}) {
       diagnostics: {
         mode: "implement",
         implementationPrompt: "\u5148\u5199\u805A\u7126\u7684\u5931\u8D25\u6D4B\u8BD5\uFF08RED\uFF09\uFF0C\u518D\u6700\u5C0F\u5B9E\u73B0\u5E76\u8FD0\u884C\u805A\u7126 GREEN\uFF1B\u4E0D\u8981\u5728\u7F16\u7801\u524D\u5C01\u5B58 build \u8BC1\u636E\u3002",
-        sealCommand: `kata build --change ${taskId} --seal`,
+        sealCommand: `kata-cli build --change ${taskId} --seal`,
         ...ownershipConflicts2.length > 0 ? { ownershipConflicts: ownershipConflicts2 } : {}
       }
     };
@@ -6268,7 +6298,9 @@ async function cmdVerify(taskId, root, options = {}) {
     taskId,
     phase: current.phase,
     success: verifyResult.result === "PASS",
-    ...verifyResult.result === "FAIL" ? { error: implementationReady && !wikiClosure.valid ? `Implementation verification passed; complete Wiki closure (${wikiClosure.reason}) before review/judge.` : wikiClosure.valid ? repairReason === "rebuild_stale_evidence" ? "Verify found stale evidence; reseal checks against the current implementation before review/judge." : repairReason === "add_entrypoint_evidence" ? "Verify requires integration/entrypoint evidence for at least one AC; unit evidence alone is insufficient." : repairReason === "resolve_repair_obligations" ? "Verify blocked by unresolved repair obligations; supply matrix-linked evidence and mark obligations resolved." : "Verify failed; repair evidence or blocking findings before review/judge." : `Verify failed; complete Wiki closure (${wikiClosure.reason}) before review/judge.` } : {},
+    ...verifyResult.result === "FAIL" ? {
+      error: implementationReady && !wikiClosure.valid ? `Implementation verification passed; complete Wiki closure (${wikiClosure.reason}) before review/judge.` : wikiClosure.valid ? repairReason === "rebuild_stale_evidence" ? "Verify found stale evidence; reseal checks against the current implementation before review/judge." : repairReason === "add_entrypoint_evidence" ? "Verify requires integration/entrypoint evidence for at least one AC; unit evidence alone is insufficient." : repairReason === "resolve_repair_obligations" ? "Verify blocked by unresolved repair obligations; supply matrix-linked evidence and mark obligations resolved." : "Verify failed; repair evidence or blocking findings before review/judge." : `Verify failed; complete Wiki closure (${wikiClosure.reason}) before review/judge.`
+    } : {},
     diagnostics: {
       verifyResult: verifyResult.result,
       acceptanceResults: verifyResult.acceptance.map((a) => ({
@@ -6372,6 +6404,9 @@ async function cmdReview(taskId, root, options = {}) {
           await appendFile2(historyPath, historyEntry, "utf8");
         }
         await writeFile13(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: "pending" }, null, 2)}
+`, "utf8");
+      } else if ((previous.findings ?? []).length === 0) {
+        await writeFile13(reviewPath, `${JSON.stringify({ ...revisionId ? { revisionId } : {}, findings: [], status: "pending" }, null, 2)}
 `, "utf8");
       }
     } catch {
@@ -6690,7 +6725,7 @@ async function cmdArchive(taskId, root, options = {}) {
       hasJudgeResult: judgeRaw !== null,
       hasReviewResult: reviewRaw !== null,
       distillation,
-      distillationHint: "Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata wiki ingest.",
+      distillationHint: "Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata-cli wiki ingest.",
       ...codegraphRefresh ? { codegraphRefresh } : {}
     }
   };
@@ -6873,12 +6908,12 @@ function renderDelegationPrompt(taskId, handoffId, platform, role, designRefs = 
   const implementationGuidance = role === "implementer" ? [
     "",
     `\u5148\u8FDB\u5165\u5B9E\u65BD\u9636\u6BB5\uFF08\u6B64\u65F6\u4E0D\u8981 seal\uFF09\uFF1A/kata-build ${taskId}`,
-    `CLI fallback\uFF1Akata build --change ${taskId}`,
+    `CLI fallback\uFF1Akata-cli build --change ${taskId}`,
     "\u6536\u5230\u5B9E\u65BD\u9636\u6BB5\u7684 TDD \u5408\u540C\u540E\uFF0C\u518D\u5F00\u59CB\u9605\u8BFB\u3001\u6D4B\u8BD5\u4E0E\u7F16\u7801\u3002",
     "",
     "\u5B9E\u65BD\u987A\u5E8F\uFF1A\u5148\u9605\u8BFB\u8BBE\u8BA1\u5F15\u7528\u548C requiredReads\uFF0C\u5148\u5199\u805A\u7126\u7684\u5931\u8D25\u6D4B\u8BD5\uFF08RED\uFF09\uFF0C\u518D\u6700\u5C0F\u5B9E\u73B0\u5E76\u8FD0\u884C\u805A\u7126 GREEN\u3002",
     "\u4E0D\u8981\u5728\u7F16\u7801\u524D\u5C01\u5B58 build \u8BC1\u636E\u3002\u5B9E\u73B0\u548C\u805A\u7126\u6D4B\u8BD5\u5B8C\u6210\u540E\uFF0C\u518D\u6267\u884C\uFF1A",
-    `kata build --change ${taskId} --seal`
+    `kata-cli build --change ${taskId} --seal`
   ] : [];
   return [
     `\u8BF7\u4F7F\u7528 Kata \u63A5\u624B\u4EFB\u52A1\uFF1A${taskId}`,
@@ -6889,9 +6924,9 @@ function renderDelegationPrompt(taskId, handoffId, platform, role, designRefs = 
     "",
     "\u5148\u6267\u884C\uFF1A",
     "",
-    `kata handoff verify --task ${taskId} --id ${handoffId}`,
-    `kata handoff show --task ${taskId} --id ${handoffId}`,
-    `kata handoff acknowledge --task ${taskId} --id ${handoffId} --platform <actual-platform> --role ${role}`,
+    `kata-cli handoff verify --task ${taskId} --id ${handoffId}`,
+    `kata-cli handoff show --task ${taskId} --id ${handoffId}`,
+    `kata-cli handoff acknowledge --task ${taskId} --id ${handoffId} --platform <actual-platform> --role ${role}`,
     "",
     "\u7136\u540E\u8BFB\u53D6 packet.requiredReads \u4E2D\u7684\u6240\u6709\u6587\u4EF6\uFF0C\u9075\u5B88 allowedWrites \u548C guardInstructions\uFF0C\u8FD0\u884C\u5339\u914D\u7684 /kata-* skill\u3002",
     ...designGuidance,
@@ -7489,14 +7524,14 @@ async function main(argv = process.argv.slice(2)) {
 async function runMain(argv) {
   const [command, maybeChange] = argv;
   if (!command) {
-    throw new Error("Usage: kata <init|update|uninstall|discover|comet|codegraph|tasks> [--platform name] [--scope project|global] [--root path]");
+    throw new Error("Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|tasks> [--platform name] [--scope project|global] [--root path]");
   }
   const requestedChange = parseChangeArg(argv.slice(1));
   const workspaceRoot = parseRootArg(argv) ?? (requestedChange && command !== "open" && (isWorkflowCommand(command) || command === "status") ? resolveWorkspaceRootForTask(requestedChange) : resolveWorkspaceRoot());
   if (isWorkflowCommand(command) && (argv.includes("--help") || argv.includes("-h"))) {
     outputResult({
       command,
-      usage: "kata <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]",
+      usage: "kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]",
       readOnly: true
     });
     return;
@@ -7507,7 +7542,7 @@ async function runMain(argv) {
     return;
   }
   if (command === "init" && !process.stdin.isTTY && !argv.includes("--yes") && (!argv.includes("--platform") || !argv.includes("--scope"))) {
-    throw new Error("kata init requires explicit --platform and --scope choices in non-interactive mode; use the installation Skill to collect user confirmation first.");
+    throw new Error("kata-cli init requires explicit --platform and --scope choices in non-interactive mode; use the installation Skill to collect user confirmation first.");
   }
   if (isInstallerCommand(command) && (maybeChange === void 0 || maybeChange.startsWith("--"))) {
     const args = parseInstallerArgs(argv.slice(1));
@@ -7617,7 +7652,7 @@ async function runMain(argv) {
   }
   if (!change) {
     throw new Error(
-      "Usage: kata <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]"
+      "Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]"
     );
   }
   if (command === "status") {
@@ -7742,7 +7777,7 @@ function statusDiagnostic(candidates = []) {
     success: true,
     diagnostics: {
       message: candidates.length > 0 ? "Multiple same-branch Kata tasks were discovered. Pick the recommended task or pass --change explicitly." : "No same-branch Kata task was discovered. Provide a change id with --change, or open a new task.",
-      usage: "kata <status|open|design|build|verify|archive|hotfix|tweak|next> --change <id>"
+      usage: "kata-cli <status|open|design|build|verify|archive|hotfix|tweak|next> --change <id>"
     },
     candidates,
     recommended: recommended ? {
@@ -7811,7 +7846,7 @@ async function runInitWizardCommand(argv, defaultRoot) {
       )
     );
   }
-  const codegraphResult = useAuto ? { codegraph: { status: "deferred", nextCommand: "kata codegraph install --yes" } } : (() => {
+  const codegraphResult = useAuto ? { codegraph: { status: "deferred", nextCommand: "kata-cli codegraph install --yes" } } : (() => {
     try {
       const output = execFileSync5("codegraph", ["index"], {
         encoding: "utf-8",
@@ -7891,7 +7926,7 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
     taskId: result.taskId,
     nextSkill: "/kata",
     slashCommand: "/kata",
-    cliCommand: `kata git-flow apply --change ${result.taskId} --confirm`,
+    cliCommand: `kata-cli git-flow apply --change ${result.taskId} --confirm`,
     role: "implementer",
     reason: "git_flow_confirmation_required",
     requiresUserConfirmation: true,
@@ -8077,9 +8112,9 @@ async function readWaiversFile(argv) {
   return waivers;
 }
 async function runGitFlowCommand(argv, root) {
-  if (argv[0] !== "apply") throw new Error("Usage: kata git-flow apply --change <task-id>");
+  if (argv[0] !== "apply") throw new Error("Usage: kata-cli git-flow apply --change <task-id>");
   const taskId = parseChangeArg(argv.slice(1));
-  if (!taskId) throw new Error("Usage: kata git-flow apply --change <task-id>");
+  if (!taskId) throw new Error("Usage: kata-cli git-flow apply --change <task-id>");
   const task = JSON.parse(await readFile24(join28(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   if (!isWorkflowProfile(task.workflowProfile) || task.workflowProfile.isolationMode !== "git_flow") {
     throw new Error(`Task ${taskId} does not use Git Flow isolation`);
@@ -8092,7 +8127,7 @@ async function runGitFlowCommand(argv, root) {
       workflowProfile: task.workflowProfile,
       nextAction: {
         slashCommand: "/kata",
-        cliCommand: `kata git-flow apply --change ${taskId} --confirm`,
+        cliCommand: `kata-cli git-flow apply --change ${taskId} --confirm`,
         reason: "git_flow_confirmation_required",
         requiresUserConfirmation: true
       }
@@ -8104,7 +8139,7 @@ async function runGitFlowCommand(argv, root) {
     command: "git-flow apply",
     taskId,
     workflowProfile,
-    nextAction: state.status === "active" ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata design --change ${taskId}` } : { cliCommand: `kata git-flow apply --change ${taskId} --confirm`, reason: inspected.reason ?? "git_flow_setup_failed" }
+    nextAction: state.status === "active" ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata-cli design --change ${taskId}` } : { cliCommand: `kata-cli git-flow apply --change ${taskId} --confirm`, reason: inspected.reason ?? "git_flow_setup_failed" }
   };
 }
 function gitFlowBranchKindForCommand(command) {
@@ -8119,7 +8154,7 @@ function requiresWorkflowProfile(command) {
 async function resolveWorkflowProfile(command, argv = []) {
   const explicit = parseWorkflowProfileArgs(argv);
   if (!explicit.isolationMode || !explicit.developmentMode || !explicit.reviewMode) {
-    throw new Error(`kata ${command} requires explicit --isolation, --development, and --review choices; use /kata-${command} to collect user confirmation first.`);
+    throw new Error(`kata-cli ${command} requires explicit --isolation, --development, and --review choices; use /kata-${command} to collect user confirmation first.`);
   }
   return {
     ...defaultWorkflowProfile(),
@@ -8333,12 +8368,12 @@ async function runWikiCommand(argv) {
       command: "wiki help",
       commands: ["init --from <path>", "orient", "ingest --from <path>", "query --q <question>", "lint", "verify", "task --kind enrich", "register", "candidate", "closure --task <task-id> --decision <captured|not_applicable|deferred> --reason <text>", "audit", "lifecycle", "refresh --task <task-id>", "relevance --task <task-id>", "promote <wiki-id> --by <actor> --role <role>", "reject <wiki-id> --by <actor> --role <role> --reason <reason>", "retire <wiki-id> --by <actor> --role <role> --reason <reason>"],
       aliases: { propose: "task --kind enrich" },
-      examples: ["kata wiki task --kind enrich --from docs", "kata wiki propose --task <task-id> --from docs", "kata wiki candidate"]
+      examples: ["kata-cli wiki task --kind enrich --from docs", "kata-cli wiki propose --task <task-id> --from docs", "kata-cli wiki candidate"]
     };
   }
   const args = subcommand === "promote" || subcommand === "reject" || subcommand === "retire" ? parseWikiArgs(rest.slice(1)) : parseWikiArgs(rest);
   if (subcommand === "init") {
-    if (!args.from) throw new Error("Usage: kata wiki init --from <path> [--wiki <path>] [--root <path>]");
+    if (!args.from) throw new Error("Usage: kata-cli wiki init --from <path> [--wiki <path>] [--root <path>]");
     const result = await initLlmWiki({ root: args.root, wikiPath: args.wikiPath, from: args.from });
     return {
       command: "wiki init",
@@ -8358,7 +8393,7 @@ async function runWikiCommand(argv) {
     };
   }
   if (subcommand === "ingest") {
-    if (!args.from) throw new Error("Usage: kata wiki ingest --from <path> [--wiki <path>] [--root <path>]");
+    if (!args.from) throw new Error("Usage: kata-cli wiki ingest --from <path> [--wiki <path>] [--root <path>]");
     const result = await ingestLlmWiki({ root: args.root, wikiPath: args.wikiPath, from: args.from });
     return {
       command: "wiki ingest",
@@ -8370,7 +8405,7 @@ async function runWikiCommand(argv) {
     };
   }
   if (subcommand === "query") {
-    if (!args.query) throw new Error("Usage: kata wiki query --q <question> [--file] [--wiki <path>] [--root <path>]");
+    if (!args.query) throw new Error("Usage: kata-cli wiki query --q <question> [--file] [--wiki <path>] [--root <path>]");
     const result = await queryLlmWiki({ root: args.root, wikiPath: args.wikiPath, query: args.query, file: args.file });
     return {
       command: "wiki query",
@@ -8391,7 +8426,7 @@ async function runWikiCommand(argv) {
   }
   if (subcommand === "task") {
     if (args.kind !== "bootstrap" && args.kind !== "enrich" && args.kind !== "distill") {
-      throw new Error("Usage: kata wiki task --kind <bootstrap|enrich|distill> [--from <path>] [--wiki <path>] [--root <path>]");
+      throw new Error("Usage: kata-cli wiki task --kind <bootstrap|enrich|distill> [--from <path>] [--wiki <path>] [--root <path>]");
     }
     return { ...await buildLlmWikiTask({ root: args.root, wikiPath: args.wikiPath, kind: args.kind, from: args.from }) };
   }
@@ -8406,7 +8441,7 @@ async function runWikiCommand(argv) {
   }
   if (subcommand === "closure") {
     if (!args.task || !args.decision || !args.reason || !["captured", "not_applicable", "deferred"].includes(args.decision)) {
-      throw new Error("Usage: kata wiki closure --task <task-id> --decision <captured|not_applicable|deferred> --reason <text> [--candidate <wiki-id>]");
+      throw new Error("Usage: kata-cli wiki closure --task <task-id> --decision <captured|not_applicable|deferred> --reason <text> [--candidate <wiki-id>]");
     }
     const root = args.root ?? resolveWorkspaceRoot();
     const closure = await writeWikiClosure(root, args.task, { decision: args.decision, reason: args.reason, candidateIds: args.candidates });
@@ -8418,11 +8453,11 @@ async function runWikiCommand(argv) {
   if (subcommand === "audit") return { command: "wiki audit", ...await auditWiki(args.root ?? resolveWorkspaceRoot()) };
   if (subcommand === "lifecycle") return { command: "wiki lifecycle", ...await auditWiki(args.root ?? resolveWorkspaceRoot()) };
   if (subcommand === "refresh") {
-    if (!args.task) throw new Error("Usage: kata wiki refresh --task <task-id> [--root <path>]");
+    if (!args.task) throw new Error("Usage: kata-cli wiki refresh --task <task-id> [--root <path>]");
     return { command: "wiki refresh", ...await createRefreshPacket(args.root ?? resolveWorkspaceRoot(), args.task) };
   }
   if (subcommand === "relevance") {
-    if (!args.task) throw new Error("Usage: kata wiki relevance --task <task-id> [--root <path>]");
+    if (!args.task) throw new Error("Usage: kata-cli wiki relevance --task <task-id> [--root <path>]");
     return { command: "wiki relevance", taskId: args.task, records: await relevantWiki(args.root ?? resolveWorkspaceRoot(), args.task) };
   }
   if (subcommand === "verify") {
@@ -8454,7 +8489,7 @@ async function runWikiCommand(argv) {
   if (subcommand === "promote") {
     const id = rest[0];
     if (!id || id.startsWith("--") || !args.by || !args.role) {
-      throw new Error("Usage: kata wiki promote <wiki-id> --by <actor> --role <role> [--root <path>]");
+      throw new Error("Usage: kata-cli wiki promote <wiki-id> --by <actor> --role <role> [--root <path>]");
     }
     const approvedAt = (/* @__PURE__ */ new Date()).toISOString();
     const record = await promote(args.root ?? resolveWorkspaceRoot(), id, { approvedBy: args.by, role: args.role, approvedAt });
@@ -8470,7 +8505,7 @@ async function runWikiCommand(argv) {
   if (subcommand === "reject") {
     const id = rest[0];
     if (!id || id.startsWith("--") || !args.by || !args.role || !args.reason) {
-      throw new Error("Usage: kata wiki reject <wiki-id> --by <actor> --role <role> --reason <reason> [--root <path>]");
+      throw new Error("Usage: kata-cli wiki reject <wiki-id> --by <actor> --role <role> --reason <reason> [--root <path>]");
     }
     const rejectedAt = (/* @__PURE__ */ new Date()).toISOString();
     const record = await rejectCandidate(args.root ?? resolveWorkspaceRoot(), id, {
@@ -8492,7 +8527,7 @@ async function runWikiCommand(argv) {
   if (subcommand === "retire") {
     const id = rest[0];
     if (!id || id.startsWith("--") || !args.by || !args.role || !args.reason) {
-      throw new Error("Usage: kata wiki retire <wiki-id> --by <actor> --role <role> --reason <reason> [--root <path>]");
+      throw new Error("Usage: kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <reason> [--root <path>]");
     }
     const rejectedAt = (/* @__PURE__ */ new Date()).toISOString();
     const record = await retireWikiRecord(args.root ?? resolveWorkspaceRoot(), id, {
@@ -8519,7 +8554,7 @@ async function runTasksCommand(argv) {
   const root = args.root ?? resolveWorkspaceRoot();
   if (subcommand === "relate") {
     if (!args.from || !args.to || !args.type) {
-      throw new Error("Usage: kata tasks relate --from <task> --to <task> --type <superseded_by|covered_by|duplicate_of|merged_into|parent_of|spawned_from|related_to> [--reason <text>] [--root <path>]");
+      throw new Error("Usage: kata-cli tasks relate --from <task> --to <task> --type <superseded_by|covered_by|duplicate_of|merged_into|parent_of|spawned_from|related_to> [--reason <text>] [--root <path>]");
     }
     const record = await addTaskRelation({
       root,
@@ -8540,12 +8575,12 @@ async function runTasksCommand(argv) {
       ...terminal.taskId !== args.from ? { redirectsTo: terminal.taskId, relationRedirects: terminal.redirects } : {},
       nextAction: {
         slashCommand: `/kata ${terminal.taskId}`,
-        cliCommand: `kata status --change ${terminal.taskId}`
+        cliCommand: `kata-cli status --change ${terminal.taskId}`
       }
     };
   }
   if (subcommand === "relations" || subcommand === "show") {
-    if (!args.task && !args.from) throw new Error("Usage: kata tasks relations --task <task> [--root <path>]");
+    if (!args.task && !args.from) throw new Error("Usage: kata-cli tasks relations --task <task> [--root <path>]");
     const taskId = args.task ?? args.from;
     const record = await readTaskRelations(root, taskId);
     const terminal = await resolveTerminalTask(root, taskId);
@@ -8564,7 +8599,7 @@ async function runRelationsCommand(argv) {
   const root = args.root ?? resolveWorkspaceRoot();
   if (subcommand === "add" || subcommand === "relate") {
     if (!args.from || !args.to || !args.type) {
-      throw new Error("Usage: kata relations add --from <task:id|change:id> --to <task:id|change:id> --type <relation> [--reason <text>] [--root <path>]");
+      throw new Error("Usage: kata-cli relations add --from <task:id|change:id> --to <task:id|change:id> --type <relation> [--reason <text>] [--root <path>]");
     }
     const from = parseRelationEndpoint(args.from);
     const to = parseRelationEndpoint(args.to);
@@ -8586,7 +8621,7 @@ async function runRelationsCommand(argv) {
     };
   }
   if (subcommand === "show" || subcommand === "list") {
-    if (!args.id) throw new Error("Usage: kata relations show --id <task:id|change:id> [--root <path>]");
+    if (!args.id) throw new Error("Usage: kata-cli relations show --id <task:id|change:id> [--root <path>]");
     const endpoint = parseRelationEndpoint(args.id);
     return {
       command: "relations show",
@@ -8599,17 +8634,17 @@ async function runHandoffCommand(argv) {
   const [subcommand, ...rest] = argv;
   const args = parseHandoffArgs(rest);
   const root = args.root ?? (args.task ? resolveWorkspaceRootForTask(args.task) : resolveWorkspaceRoot());
-  if (!args.task) throw new Error("Usage: kata handoff <create|show|verify|acknowledge> --task <id>");
+  if (!args.task) throw new Error("Usage: kata-cli handoff <create|show|verify|acknowledge> --task <id>");
   if (subcommand === "create") {
-    if (!args.from || !args.to) throw new Error("Usage: kata handoff create --task <id> --from <role> --to <role>");
+    if (!args.from || !args.to) throw new Error("Usage: kata-cli handoff create --task <id> --from <role> --to <role>");
     const packet = await createContextPacket({ root, taskId: args.task, fromRole: args.from, toRole: args.to, ...args.platform ? { platform: args.platform } : {} });
     return { command: "handoff create", taskId: args.task, id: packet.id, path: `.kata/tasks/${args.task}/handoffs/${packet.id}.json`, sha256: createPacketHash(packet), packet };
   }
-  if (!args.id) throw new Error("Usage: kata handoff <show|verify|acknowledge> --task <id> --id <handoff-id>");
+  if (!args.id) throw new Error("Usage: kata-cli handoff <show|verify|acknowledge> --task <id> --id <handoff-id>");
   if (subcommand === "show") return { command: "handoff show", packet: await readContextPacket(root, args.task, args.id) };
   if (subcommand === "verify") return { command: "handoff verify", ...await verifyContextPacket({ root, taskId: args.task, id: args.id }) };
   if (subcommand === "acknowledge") {
-    if (!args.platform || !args.role) throw new Error("Usage: kata handoff acknowledge --task <id> --id <handoff-id> --platform <name> --role <role>");
+    if (!args.platform || !args.role) throw new Error("Usage: kata-cli handoff acknowledge --task <id> --id <handoff-id> --platform <name> --role <role>");
     const receipt = await acknowledgeContextPacket({ root, taskId: args.task, id: args.id, platform: args.platform, role: args.role });
     const active = await activateHookTask({
       root,
@@ -8624,15 +8659,17 @@ async function runHandoffCommand(argv) {
     return {
       command: "handoff acknowledge",
       receipt,
-      ...active ? { activeTask: {
-        taskId: active.taskId,
-        role: active.role,
-        phase: active.phase,
-        ...active.platform ? { platform: active.platform } : {},
-        ...active.branch ? { branch: active.branch } : {},
-        ...active.origin ? { origin: active.origin } : {},
-        active: true
-      } } : {}
+      ...active ? {
+        activeTask: {
+          taskId: active.taskId,
+          role: active.role,
+          phase: active.phase,
+          ...active.platform ? { platform: active.platform } : {},
+          ...active.branch ? { branch: active.branch } : {},
+          ...active.origin ? { origin: active.origin } : {},
+          active: true
+        }
+      } : {}
     };
   }
   throw new Error(`Unknown handoff command: ${subcommand ?? ""}`);
@@ -8775,7 +8812,7 @@ async function runOrientCommand(argv) {
   const resolved = args.change ? null : await resolveTaskForCurrentBranch(root);
   let change = args.change ?? resolved?.taskId;
   if (!change) {
-    throw new Error("Usage: kata orient [--change <id>] [--root <path>] [--role <role>] [--platform <name>] [--task-kind <kind>] [--mode <mode>] [--failures <n>]");
+    throw new Error("Usage: kata-cli orient [--change <id>] [--root <path>] [--role <role>] [--platform <name>] [--task-kind <kind>] [--mode <mode>] [--failures <n>]");
   }
   const terminal = await resolveTerminalTask(root, change);
   const relationRedirects = terminal.taskId !== change ? terminal.redirects : [];
@@ -8826,7 +8863,7 @@ async function runOrientCommand(argv) {
     requiredReads: taskContext.requiredReads,
     context: taskContext.context,
     guardInstructions: handoff.guardInstructions,
-    handoff: { id: contextPacket.id, path: `.kata/tasks/${change}/handoffs/${contextPacket.id}.json`, sha256: createPacketHash(contextPacket), verificationCommand: `kata handoff verify --task ${change} --id ${contextPacket.id}` },
+    handoff: { id: contextPacket.id, path: `.kata/tasks/${change}/handoffs/${contextPacket.id}.json`, sha256: createPacketHash(contextPacket), verificationCommand: `kata-cli handoff verify --task ${change} --id ${contextPacket.id}` },
     legacyHandoff: handoff,
     reminders: [
       "Wiki reduces project-context mistakes; CI, tests, Reviewer, and Judge prevent code-correctness mistakes.",
@@ -8839,7 +8876,7 @@ async function runHooksCommand(argv) {
   const args = parseHooksArgs(rest);
   const root = args.root ?? resolveWorkspaceRoot();
   if (subcommand === "activate") {
-    if (!args.change) throw new Error("Usage: kata hooks activate --change <id> [--role <role>] [--platform <name>] [--root <path>]");
+    if (!args.change) throw new Error("Usage: kata-cli hooks activate --change <id> [--role <role>] [--platform <name>] [--root <path>]");
     const active = await activateHookTask({
       root,
       taskId: args.change,
@@ -8876,7 +8913,7 @@ async function runHooksCommand(argv) {
       activatedAt: active.activatedAt
     } : { command: "hooks status", active: false };
   }
-  throw new Error(`Unknown hooks command: ${subcommand ?? ""}. Usage: kata hooks <activate|deactivate|status>`);
+  throw new Error(`Unknown hooks command: ${subcommand ?? ""}. Usage: kata-cli hooks <activate|deactivate|status>`);
 }
 async function runDoctorCommand(argv) {
   const hasExplicitPlatform = argv.includes("--platform");
@@ -9159,10 +9196,11 @@ function isCodegraphSubcommand(value) {
 async function runCodegraphCommand(argv) {
   const [subcommand, ...rest] = argv;
   if (!subcommand || !isCodegraphSubcommand(subcommand)) {
-    throw new Error(`Unknown codegraph command: ${subcommand ?? ""}. Usage: kata codegraph <${CODEGRAPH_SUBCOMMANDS.join("|")}> [args...]`);
+    throw new Error(`Unknown codegraph command: ${subcommand ?? ""}. Usage: kata-cli codegraph <${CODEGRAPH_SUBCOMMANDS.join("|")}> [args...]`);
   }
+  const binary = process.env.STRATA_CODEGRAPH_BIN || "codegraph";
   try {
-    const stdout = execFileSync5("codegraph", [subcommand, ...rest], {
+    const stdout = execFileSync5(binary, [subcommand, ...rest], {
       encoding: "utf-8",
       maxBuffer: 10 * 1024 * 1024,
       cwd: resolveWorkspaceRoot(),
@@ -9175,7 +9213,7 @@ async function runCodegraphCommand(argv) {
       ...stdout ? { output: stdout } : {}
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = codegraphErrorMessage(error, binary);
     return {
       command: `codegraph ${subcommand}`,
       success: false,
@@ -9184,12 +9222,22 @@ async function runCodegraphCommand(argv) {
     };
   }
 }
+function codegraphErrorMessage(error, binary) {
+  if (isNodeError9(error) && (error.code === "ENOENT" || error.code === "EACCES")) {
+    const override = process.env.STRATA_CODEGRAPH_BIN ? ` configured by STRATA_CODEGRAPH_BIN (${binary})` : "";
+    return `CodeGraph binary${override} was not found or is not executable. Install codegraph, add it to PATH, or set STRATA_CODEGRAPH_BIN to the executable path.`;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+function isNodeError9(error) {
+  return error instanceof Error && "code" in error;
+}
 async function runCometCommand(argv, root = resolveWorkspaceRoot()) {
   const [subcommand, ...rest] = argv;
   const args = parseCometArgs(rest);
   if (subcommand === "acknowledge-open") {
-    if (!args.change) throw new Error("Usage: kata comet acknowledge-open --change <id>");
-    return { command: "comet acknowledge-open", taskId: args.change, workflowProfile: await acknowledgeCometOpen(root, args.change), nextAction: { slashCommand: `/kata-design ${args.change}`, cliCommand: `kata design --change ${args.change}` } };
+    if (!args.change) throw new Error("Usage: kata-cli comet acknowledge-open --change <id>");
+    return { command: "comet acknowledge-open", taskId: args.change, workflowProfile: await acknowledgeCometOpen(root, args.change), nextAction: { slashCommand: `/kata-design ${args.change}`, cliCommand: `kata-cli design --change ${args.change}` } };
   }
   if (subcommand === "install" || subcommand === "update") {
     const result = subcommand === "install" ? await installComet(args.version) : await updateComet();
@@ -9232,7 +9280,7 @@ async function runCometCommand(argv, root = resolveWorkspaceRoot()) {
       path: result.path
     };
   }
-  throw new Error(`Unknown comet command: ${subcommand ?? ""}. Usage: kata comet <install|update|version|path|verify|acknowledge-open>`);
+  throw new Error(`Unknown comet command: ${subcommand ?? ""}. Usage: kata-cli comet <install|update|version|path|verify|acknowledge-open>`);
 }
 function parseCometArgs(argv) {
   const args = {};
