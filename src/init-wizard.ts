@@ -127,11 +127,26 @@ export async function promptInitPlan(platforms: PlatformInfo[], io: InitWizardIo
 
     const selected = await checkbox<PlatformInfo>('Platforms to install', candidates.map((p) => ({
         value: p,
-        label: `${p.platform} (${join(p.root, platformSkillsDir(p.platform, p.scope))})${p.detected ? '' : ' · not yet installed'}`,
+        label: `${p.platform} (${platformDisplayPath(p)})${p.detected ? '' : ' · not yet installed'}`,
         checked: defaults.includes(p),
     })), { input, output });
 
     return { scope, language, detected: candidates, selected };
+}
+
+function platformDisplayPath(p: PlatformInfo): string {
+    if (p.scope === 'project') return join(p.root, platformSkillsDir(p.platform, 'project'));
+    // Global: prefer platform-specific env var, otherwise root + skills dir
+    const envDir = resolvePlatformGlobalDir(p.platform);
+    if (envDir) return envDir;
+    return join(p.root, platformSkillsDir(p.platform, 'global'));
+}
+
+function resolvePlatformGlobalDir(platform: Platform): string | null {
+    if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
+    if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+    if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+    return null;
 }
 
 export function optionsForWizardInstall(
