@@ -33,7 +33,8 @@ export async function install(platform: Platform, scope: InstallScope, options: 
 }
 
 export async function update(platform: Platform, scope: InstallScope, options: InstallOptions = {}): Promise<InstallReport> {
-  return writeSkills(platform, scope, options);
+  const initializedScope = await resolveInitializedScope(platform, scope, options);
+  return writeSkills(platform, initializedScope, options);
 }
 
 export async function listManagedPlatforms(
@@ -155,6 +156,25 @@ async function writeSkills(
 
   if (!effectiveOptions.dryRun) await writeManifest(manifestRoot, manifest);
   return report;
+}
+
+async function resolveInitializedScope(
+  platform: Platform,
+  requestedScope: InstallScope,
+  options: InstallOptions,
+): Promise<InstallScope> {
+  if (requestedScope === 'global') return requestedScope;
+
+  const requestedManifest = await readManifest(manifestBaseRoot(requestedScope, options));
+  if (manifestOwnsPlatform(requestedManifest, platform, requestedScope)) return requestedScope;
+
+  const alternateScope: InstallScope = requestedScope === 'project' ? 'global' : 'project';
+  const alternateManifest = await readManifest(manifestBaseRoot(alternateScope, options));
+  return manifestOwnsPlatform(alternateManifest, platform, alternateScope) ? alternateScope : requestedScope;
+}
+
+function manifestOwnsPlatform(manifest: OwnershipManifest, platform: Platform, scope: InstallScope): boolean {
+  return Object.values(manifest.files).some((file) => file.platform === platform && file.scope === scope);
 }
 
 async function removeObsoleteCommandFiles(

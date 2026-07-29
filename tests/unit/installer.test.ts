@@ -807,6 +807,17 @@ describe('Kata platform installer', () => {
         expect(directed).toMatchObject({ platform: 'opencode', scope: 'project' });
     });
 
+    it('updates files at the scope selected during initialization instead of defaulting to project', async () => {
+        const projectRoot = await tempRoot('kata-update-project-');
+        const globalRoot = await tempRoot('kata-update-global-');
+
+        await install('generic', 'global', { home: globalRoot, noWiki: true });
+        await update('generic', 'project', { root: projectRoot, home: globalRoot, noWiki: true });
+
+        await expect(stat(join(globalRoot, '.kata/skills/kata.md'))).resolves.toBeDefined();
+        await expect(stat(join(projectRoot, '.kata/skills/kata.md'))).rejects.toThrow();
+    });
+
     it('CLI init/update/uninstall route to the platform installer when no change id is provided', async () => {
         const root = await tempRoot();
 

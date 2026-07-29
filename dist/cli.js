@@ -3682,7 +3682,8 @@ async function install(platform, scope, options = {}) {
   return writeSkills(platform, scope, options);
 }
 async function update(platform, scope, options = {}) {
-  return writeSkills(platform, scope, options);
+  const initializedScope = await resolveInitializedScope(platform, scope, options);
+  return writeSkills(platform, initializedScope, options);
 }
 async function listManagedPlatforms(scope, options = {}) {
   const manifest = await readManifest(manifestBaseRoot(scope, options));
@@ -3780,6 +3781,17 @@ async function writeSkills(platform, scope, options) {
   }
   if (!effectiveOptions.dryRun) await writeManifest(manifestRoot, manifest);
   return report;
+}
+async function resolveInitializedScope(platform, requestedScope, options) {
+  if (requestedScope === "global") return requestedScope;
+  const requestedManifest = await readManifest(manifestBaseRoot(requestedScope, options));
+  if (manifestOwnsPlatform(requestedManifest, platform, requestedScope)) return requestedScope;
+  const alternateScope = requestedScope === "project" ? "global" : "project";
+  const alternateManifest = await readManifest(manifestBaseRoot(alternateScope, options));
+  return manifestOwnsPlatform(alternateManifest, platform, alternateScope) ? alternateScope : requestedScope;
+}
+function manifestOwnsPlatform(manifest, platform, scope) {
+  return Object.values(manifest.files).some((file) => file.platform === platform && file.scope === scope);
 }
 async function removeObsoleteCommandFiles(platform, scope, options, baseRoot, manifest, report) {
   const activeCommands = new Set(skillCommands.map((command) => command.id));
