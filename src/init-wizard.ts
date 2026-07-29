@@ -1,8 +1,9 @@
 import { stdin as defaultInput, stdout as defaultOutput } from 'node:process';
+import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import type { InstallOptions, InstallReport, InstallScope, Platform, PlatformInfo } from './adapters/manifest.js';
-import { platformDefinitions } from './adapters/platforms.js';
+import { platformDefinitions, platformSkillsDir } from './adapters/platforms.js';
 import { checkbox, select } from './cli/prompt.js';
 import type { CometCompatibility, FlagSpec } from './comet/compat.js';
 
@@ -126,7 +127,7 @@ export async function promptInitPlan(platforms: PlatformInfo[], io: InitWizardIo
 
     const selected = await checkbox<PlatformInfo>('Platforms to install', candidates.map((p) => ({
         value: p,
-        label: `${p.platform} (${p.root})${p.detected ? '' : ' · not yet installed'}`,
+        label: `${p.platform} (${join(p.root, platformSkillsDir(p.platform, p.scope))})${p.detected ? '' : ' · not yet installed'}`,
         checked: defaults.includes(p),
     })), { input, output });
 
