@@ -164,6 +164,38 @@ describe('Kata platform installer', () => {
         );
     });
 
+    it('detects Codex and OpenCode global installations from CODEX_HOME and OPENCODE_CONFIG_DIR env vars', async () => {
+        const root = await tempRoot();
+        const home = await tempRoot('kata-home-');
+        const codexHome = await tempRoot('kata-codex-');
+        const openCodeConfigDir = await tempRoot('kata-opencode-');
+
+        const claudeConfigDir = await tempRoot('kata-claude-');
+
+        // CODEX_HOME / CLAUDE_CONFIG_DIR / OPENCODE_CONFIG_DIR are the config directory itself
+        const previousCodexHome = process.env.CODEX_HOME;
+        const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+        const previousOpenCodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
+        process.env.CODEX_HOME = codexHome;
+        process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+        process.env.OPENCODE_CONFIG_DIR = openCodeConfigDir;
+        try {
+            const platforms = await discoverPlatforms({ root, home });
+
+            expect(platforms).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ platform: 'codex', scope: 'global', detected: true }),
+                    expect.objectContaining({ platform: 'claude-code', scope: 'global', detected: true }),
+                    expect.objectContaining({ platform: 'opencode', scope: 'global', detected: true }),
+                ]),
+            );
+        } finally {
+            process.env.CODEX_HOME = previousCodexHome;
+            process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+            process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
+        }
+    });
+
     it('plans init from detected coding platforms like the interactive wizard', async () => {
         const root = await tempRoot();
         const home = await tempRoot('kata-home-');

@@ -35,6 +35,14 @@ export async function discoverPlatforms(options: InstallOptions = {}): Promise<P
 
 async function isDetected(platform: Platform, scope: InstallScope, root: string): Promise<boolean> {
   const definition = platformDefinitionById[platform];
+
+  // Platform-specific environment variables override the default global root
+  // so that custom config directories are recognised during detection.
+  if (scope === 'global') {
+    const envDir = resolvePlatformGlobalDir(platform);
+    if (envDir && (await exists(envDir))) return true;
+  }
+
   const paths = definition.detectionPaths ?? [platformSkillsDir(platform, scope)];
   if (platform === 'codex' && scope === 'project') paths.push('AGENTS.md');
   if (platform === 'claude-code' && scope === 'global') paths.push('.claude.json');
@@ -42,6 +50,13 @@ async function isDetected(platform: Platform, scope: InstallScope, root: string)
     if (await exists(join(root, relativePath))) return true;
   }
   return false;
+}
+
+function resolvePlatformGlobalDir(platform: Platform): string | null {
+  if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
+  if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+  if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  return null;
 }
 
 function platformInfo(platform: Platform, scope: InstallScope, detected: boolean, root: string): PlatformInfo {
