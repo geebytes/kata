@@ -100,10 +100,28 @@ Keywords and intents that should trigger this skill:
 - `审查`
 - `code review`
 
+## Review discipline
+
+Before recording any finding, the Reviewer MUST:
+
+1. **Read the task acceptance criteria** from `.kata/tasks/<task-id>/task.json`.
+2. **Read every changed source file** in the sealed revision scope (listed in the handoff packet's `repository.scope.paths` and the task's `ownedPaths`).
+3. **Compare each change** against the acceptance criteria, guard instructions, and design refs from the handoff context.
+4. **Verify test coverage** — check that evidence files reference tests which exercise the claimed behaviour and that those tests are in the revision scope.
+5. **Inspect for regressions** — changed code must not weaken existing contracts, silently change behaviour, or bypass ownership boundaries.
+6. **Ground every finding in a concrete file, line, symbol, or diff hunk.** Vague or speculative findings without source evidence are not admissible.
+
+Severity assignments:
+- `blocking` — violates acceptance criteria, data integrity, security, or API contract
+- `major` — design mismatch, missing coverage, or brittle pattern likely to cause later bugs
+- `minor` — style, naming, or documentation that is technically correct
+- `note` — observation that does not require a change
+
 ## Output goals
 
 - Enter reviewer phase.
-- Record review findings only.
+- Read implementation source and compare against design.
+- Record review findings with severity and concrete source references.
 - Prepare the task for an independent Judge.
 
 ## Invocation
