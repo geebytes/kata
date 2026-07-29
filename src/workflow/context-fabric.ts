@@ -67,7 +67,27 @@ async function anchor(root: string, taskId: string): Promise<HandoffPacket['repo
 }
 function git(root: string, args: string[]): string | null { try { const value = execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); return value || null; } catch { return null; } }
 function existingReads(root: string, taskId: string, designRefs: string[]): string[] { return ['AGENTS.md', '.llmwiki/SCHEMA.md', '.llmwiki/index.md', '.llmwiki/log.md', `.kata/tasks/${taskId}/task.json`, `.kata/tasks/${taskId}/current-state.json`, ...designRefs].filter((path) => { try { return resolve(root, path).startsWith(resolve(root)); } catch { return false; } }); }
-function designRefsFor(root: string, taskId: string, role: Role): string[] { const designPath = `.kata/tasks/${taskId}/design.md`; return (role === 'implementer' || role === 'reviewer' || role === 'judge') && existsSync(join(root, designPath)) ? [designPath] : []; }
+function designRefsFor(root: string, taskId: string, role: Role): string[] {
+  if (role !== 'implementer' && role !== 'reviewer' && role !== 'judge') return [];
+
+  const candidates = [
+    `.kata/tasks/${taskId}/design.md`,
+    `openspec/changes/${taskId}/design.md`,
+  ];
+
+  // Comet design-phase Design Doc under docs/superpowers/specs/
+  const specsDir = join(root, 'docs/superpowers/specs');
+  try {
+    const { readdirSync } = require('node:fs') as typeof import('node:fs');
+    if (existsSync(specsDir)) {
+      for (const entry of readdirSync(specsDir)) {
+        if (entry.endsWith('-design.md')) candidates.push(`docs/superpowers/specs/${entry}`);
+      }
+    }
+  } catch {}
+
+  return candidates.filter((p) => existsSync(join(root, p)));
+}
 function taskContextPaths(root: string, taskId: string): string[] { const base = `.kata/tasks/${taskId}`; return [`${base}/task.json`, `${base}/current-state.json`, ...(existsSync(join(root, base, 'design.md')) ? [`${base}/design.md`] : [])]; }
 function sameScopeIdentity(left: HandoffAnchorScope, right: HandoffAnchorScope): boolean {
   if (left.kind !== right.kind || left.paths.length !== right.paths.length) return false;

@@ -105,7 +105,11 @@ Keywords and intents that should trigger this skill:
 Before recording any finding, the Reviewer MUST:
 
 1. **Read the task acceptance criteria** from `.kata/tasks/<task-id>/task.json`.
-2. **Read the design document** from `.kata/tasks/<task-id>/design.md` when it exists. The handoff packet's `context.designRefs` lists the available design paths. When no design.md is present, treat the acceptance criteria as the design contract.
+2. **Read the design documents** referenced in the handoff packet's `context.designRefs`. Design documents may live in:
+   - `.kata/tasks/<task-id>/design.md` — Kata-native task design
+   - `openspec/changes/<task-id>/design.md` — Comet open-phase high-level design
+   - `docs/superpowers/specs/*-design.md` — Comet design-phase deep technical Design Doc
+   When none of these exist, treat the acceptance criteria as the design contract.
 3. **Read every changed source file** in the sealed revision scope (listed in the handoff packet's `repository.scope.paths` and the task's `ownedPaths`).
 4. **Compare each change** against the acceptance criteria, guard instructions, and design refs from the handoff context.
 5. **Verify test coverage** — check that evidence files reference tests which exercise the claimed behaviour and that those tests are in the revision scope.
