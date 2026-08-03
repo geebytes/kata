@@ -142,18 +142,49 @@ export function platformSkillsDir(platform: Platform, scope: InstallScope): stri
   return scope === 'global' && definition.globalSkillsDir ? definition.globalSkillsDir : definition.skillsDir;
 }
 
-export function platformSkillPath(platform: Platform, scope: InstallScope, commandId: string): string {
-  if (platform === 'generic') return `.kata/skills/${commandId}.md`;
-  return `${platformSkillsDir(platform, scope)}/skills/${commandId}/SKILL.md`;
+/**
+ * Resolve the config-directory override for a platform, if one is configured
+ * via its platform-specific environment variable. Kata treats these env vars
+ * (CODEX_HOME / CLAUDE_CONFIG_DIR / OPENCODE_CONFIG_DIR) as the authoritative
+ * install root for the global scope: when set, the skills live directly under
+ * that directory rather than under `$HOME/<platformSkillsDir>`.
+ */
+export function resolvePlatformGlobalDir(platform: Platform): string | null {
+  if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
+  if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+  if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  return null;
 }
 
-export function platformCommandPath(platform: Platform, scope: InstallScope, commandId: string): string | null {
+/**
+ * The relative (to `baseRoot`) directory that holds this platform's config.
+ * When the global install root IS the platform's env-dir, the platform config
+ * lives at the root itself — otherwise it is `<platformSkillsDir>` (e.g.
+ * `.codex`, `.config/opencode`). This keeps kata's install target identical
+ * to the path the wizard displays for env-var-configured platforms.
+ */
+export function platformConfigDir(platform: Platform, scope: InstallScope, baseRoot?: string): string {
+  if (scope === 'global' && baseRoot) {
+    const envDir = resolvePlatformGlobalDir(platform);
+    if (envDir && baseRoot === envDir) return '';
+  }
+  return platformSkillsDir(platform, scope);
+}
+
+export function platformSkillPath(platform: Platform, scope: InstallScope, commandId: string, baseRoot?: string): string {
+  if (platform === 'generic') return `.kata/skills/${commandId}.md`;
+  const base = platformConfigDir(platform, scope, baseRoot);
+  return [base, 'skills', commandId, 'SKILL.md'].filter(Boolean).join('/');
+}
+
+export function platformCommandPath(platform: Platform, scope: InstallScope, commandId: string, baseRoot?: string): string | null {
   const definition = platformDefinitionById[platform];
   if (!definition.supportsOpenCodeCommands) return null;
-  return `${platformSkillsDir(platform, scope)}/commands/${commandId}.md`;
+  const base = platformConfigDir(platform, scope, baseRoot);
+  return [base, 'commands', `${commandId}.md`].filter(Boolean).join('/');
 }
 
-export function platformRulePath(platform: Platform, scope: InstallScope, ruleName: string): string | null {
+export function platformRulePath(platform: Platform, scope: InstallScope, ruleName: string, baseRoot?: string): string | null {
   const definition = platformDefinitionById[platform];
   if (!definition.rulesDir || !definition.rulesFormat) return null;
   const base =
@@ -161,7 +192,7 @@ export function platformRulePath(platform: Platform, scope: InstallScope, ruleNa
       ? definition.rulesBaseDir === ''
         ? ''
         : definition.rulesBaseDir
-      : platformSkillsDir(platform, scope);
+      : platformConfigDir(platform, scope, baseRoot);
   const fileName =
     definition.rulesFormat === 'mdc'
       ? `${ruleName}.mdc`

@@ -14,7 +14,7 @@ import {
   skillCommands as allSkillCommands,
 } from './manifest.js';
 import { exists, install, listManagedPlatforms, uninstall, update } from './ownership.js';
-import { platformDefinitionById, platformDefinitions, platformSkillPath, platformSkillsDir } from './platforms.js';
+import { platformConfigDir, platformDefinitionById, platformDefinitions, platformSkillPath, platformSkillsDir, resolvePlatformGlobalDir } from './platforms.js';
 
 export { install, listManagedPlatforms, uninstall, update };
 
@@ -57,13 +57,6 @@ async function isDetected(platform: Platform, scope: InstallScope, root: string)
   return false;
 }
 
-function resolvePlatformGlobalDir(platform: Platform): string | null {
-  if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
-  if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
-  if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
-  return null;
-}
-
 function platformInfo(platform: Platform, scope: InstallScope, detected: boolean, root: string): PlatformInfo {
   const capabilities = platformDefinitionById[platform].capabilities;
   return { platform, scope, detected, root, capabilities, unavailable: unavailable(capabilities) };
@@ -89,13 +82,16 @@ export async function identifyPlatformInstallState(
   platform: PlatformInfo,
   options: InstallOptions = {},
 ): Promise<PlatformInstallState> {
-  const root = options.root ?? platform.root;
+  // The platform's own root is authoritative: for global env-var platforms it
+  // already points at CODEX_HOME etc., which must not be overridden by the
+  // workspace root.
+  const root = platform.root ?? options.root ?? options.home;
   const definition = platformDefinitionById[platform.platform];
-  const skillPath = platformSkillPath(platform.platform, platform.scope, allSkillCommands[0]?.id ?? '');
+  const skillPath = platformSkillPath(platform.platform, platform.scope, allSkillCommands[0]?.id ?? '', root);
   const skillExists = skillPath ? await exists(join(root, skillPath)) : false;
   const rulesDir = definition.rulesDir ?? '';
-  const rulesExist = rulesDir ? await exists(join(root, platformSkillsDir(platform.platform, platform.scope), rulesDir)) : false;
-  const hooksConfigPath = hookConfigPathFor(platform.platform, platform.scope);
+  const rulesExist = rulesDir ? await exists(join(root, platformConfigDir(platform.platform, platform.scope, root), rulesDir)) : false;
+  const hooksConfigPath = hookConfigPathFor(platform.platform, platform.scope, root);
   const hooksExist = hooksConfigPath ? await exists(join(root, hooksConfigPath)) : false;
   const contractExists = await exists(join(root, 'AGENTS.md'));
 
@@ -110,12 +106,12 @@ export async function identifyPlatformInstallState(
   };
 }
 
-function hookConfigPathFor(platform: Platform, scope: InstallScope): string | null {
+function hookConfigPathFor(platform: Platform, scope: InstallScope, baseRoot: string): string | null {
   const hooks: Record<string, string> = {
-    'claude-code': `${platformSkillsDir('claude-code', scope)}/settings.local.json`,
-    gemini: `${platformSkillsDir('gemini', scope)}/settings.json`,
-    windsurf: `${platformSkillsDir('windsurf', scope)}/hooks.json`,
-    copilot: `${platformSkillsDir('github-copilot', scope)}/hooks/kata-guard.json`,
+    'claude-code': [platformConfigDir('claude-code', scope, baseRoot), 'settings.local.json'].filter(Boolean).join('/'),
+    gemini: [platformConfigDir('gemini', scope, baseRoot), 'settings.json'].filter(Boolean).join('/'),
+    windsurf: [platformConfigDir('windsurf', scope, baseRoot), 'hooks.json'].filter(Boolean).join('/'),
+    copilot: [platformConfigDir('github-copilot', scope, baseRoot), 'hooks', 'kata-guard.json'].filter(Boolean).join('/'),
   };
   const definition = platformDefinitionById[platform];
   return definition.hookFormat ? hooks[definition.hookFormat] ?? null : null;

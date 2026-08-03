@@ -208,6 +208,32 @@ describe('Kata platform installer', () => {
         }
     });
 
+    it('installs into the env dir itself, not $ENV_DIR/<platformSkillsDir> (no double stack)', async () => {
+        // Regression: install() treated the env dir as a bare home and re-applied
+        // the platform skills dir, writing to $CODEX_HOME/.codex/skills/ instead
+        // of $CODEX_HOME/skills/. The env dir IS the platform config root.
+        const codexHome = await tempRoot('kata-env-codex-');
+        const openCodeConfigDir = await tempRoot('kata-env-opencode-');
+        const previousCodexHome = process.env.CODEX_HOME;
+        const previousOpenCodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
+        process.env.CODEX_HOME = codexHome;
+        process.env.OPENCODE_CONFIG_DIR = openCodeConfigDir;
+        try {
+            const codexReport = await install('codex', 'global', { home: codexHome, language: 'zh' });
+            expect(codexReport.written).toContain('skills/kata/SKILL.md');
+            expect(codexReport.written).not.toContain('.codex/skills/kata/SKILL.md');
+            await expect(readFile(join(codexHome, 'skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
+
+            const openCodeReport = await install('opencode', 'global', { home: openCodeConfigDir, language: 'zh' });
+            expect(openCodeReport.written).toContain('skills/kata/SKILL.md');
+            expect(openCodeReport.written).not.toContain('.config/opencode/skills/kata/SKILL.md');
+            await expect(readFile(join(openCodeConfigDir, 'skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
+        } finally {
+            process.env.CODEX_HOME = previousCodexHome;
+            process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
+        }
+    });
+
     it('synthesizes wizard candidates with the env-dir root when global env vars are set', async () => {
         // Global scope + CODEX_HOME/OPENCODE_CONFIG_DIR set but empty discovery:
         // the synthesized candidates must use the env dir as their root so the

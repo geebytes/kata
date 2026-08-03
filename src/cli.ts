@@ -487,11 +487,12 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
             language: plan.language,
             cometVersion,
         }).catch(() => ({}));
-    // Forward the wizard's platform selection to comet init. Comet's CLI
-    // accepts a single --platform per invocation, so initCometProject loops
-    // one comet init per selected platform and merges the reports. Without
-    // this, comet falls back to its own detection and the platforms the user
-    // picked in the STRATA wizard are silently dropped (e.g. codex).
+    // Forward the wizard's platform selection to comet init. Comet 0.4.x only
+    // accepts a single --platform per invocation and its interactive mode
+    // blocks on stdin prompts, so looping a *spawn* would show the user a
+    // sequence of full comet wizards ("repeated installs"). Running each
+    // platform as a non-interactive capture (--yes) keeps the loop silent and
+    // fast, and kata itself installs the kata skills env-dir aware.
     const selectedPlatformIds = plan.selected.map((platform) => platform.platform);
     const cometInit = useAuto
         ? {
@@ -509,6 +510,9 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
             root,
             scope: plan.scope,
             language: plan.language,
+            // Interactive wizard: run comet headless so it never blocks the
+            // terminal waiting for stdin prompts during the multi-platform loop.
+            yes: true,
             platforms: selectedPlatformIds,
             extras: cometExtras,
             compat: cometCompat,

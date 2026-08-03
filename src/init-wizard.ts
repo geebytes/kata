@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 import type { InstallOptions, InstallReport, InstallScope, Platform, PlatformInfo } from './adapters/manifest.js';
-import { platformDefinitions, platformSkillsDir } from './adapters/platforms.js';
+import { platformDefinitions, platformSkillsDir, resolvePlatformGlobalDir } from './adapters/platforms.js';
 import { checkbox, select } from './cli/prompt.js';
 import type { CometCompatibility, FlagSpec } from './comet/compat.js';
 
@@ -156,13 +156,6 @@ function platformDisplayPath(p: PlatformInfo): string {
     const envDir = resolvePlatformGlobalDir(p.platform);
     if (envDir) return envDir;
     return join(p.root, platformSkillsDir(p.platform, 'global'));
-}
-
-function resolvePlatformGlobalDir(platform: Platform): string | null {
-    if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
-    if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
-    if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
-    return null;
 }
 
 export function optionsForWizardInstall(

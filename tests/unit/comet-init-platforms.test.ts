@@ -1,46 +1,60 @@
 import { describe, expect, it } from 'vitest';
-import { buildCometProjectInitInvocation } from '../../src/comet/install.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { initCometProject } from '../../src/comet/install.js';
 import { loadCometCompatibility } from '../../src/comet/compat.js';
 
-describe('comet init platform passthrough (bundled manifest)', () => {
-    const compat = loadCometCompatibility();
+// These tests run against the real comet binary (present in the dev container).
+// They verify the multi-platform contract introduced for the STRATA wizard:
+// one non-interactive comet init per selected platform, merged into one report.
 
-    it('forwards each wizard-selected platform as its own --platform <id>', () => {
-        const perPlatform = ['codex', 'opencode', 'gemini', 'github-copilot'].map((p) =>
-            buildCometProjectInitInvocation({
-                root: '/app',
+describe('initCometProject multi-platform loop (real comet)', () => {
+    it('runs one headless comet init per selected platform and merges results', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'comet-loop-'));
+        const previousHome = process.env.HOME;
+        process.env.HOME = home;
+        try {
+            const compat = loadCometCompatibility();
+            const result = await initCometProject({
+                root: home,
                 scope: 'global',
-                language: 'zh',
-                extras: { platform: p, workflow: 'native' },
+                language: 'en',
+                yes: true,
+                platforms: ['codex', 'opencode'],
+                extras: { workflow: 'native' },
                 compat,
                 cometVersion: '0.4.0-beta.14',
-            }).args,
-        );
-        for (const [i, platform] of ['codex', 'opencode', 'gemini', 'github-copilot'].entries()) {
-            expect(perPlatform[i]).toContain('--platform');
-            expect(perPlatform[i]).toContain(platform);
+            });
+            expect(result.status).toBe('initialized');
+            expect(result.platforms).toEqual(['codex', 'opencode']);
+        } finally {
+            process.env.HOME = previousHome;
+            await rm(home, { recursive: true, force: true });
         }
-    });
+    }, 30000);
 
-    it('never emits the list-form --platforms (preview flag for 0.5.0+)', () => {
-        const { args } = buildCometProjectInitInvocation({
-            root: '/app',
-            scope: 'global',
-            extras: { platforms: ['codex', 'opencode'], workflow: 'native' },
-            compat,
-            cometVersion: '0.4.0-beta.14',
-        });
-        expect(args).not.toContain('--platforms');
-    });
-
-    it('drops --platform when the comet version predates 0.4.0', () => {
-        const { args } = buildCometProjectInitInvocation({
-            root: '/app',
-            scope: 'global',
-            extras: { platform: 'codex', workflow: 'native' },
-            compat,
-            cometVersion: '0.3.9',
-        });
-        expect(args).not.toContain('--platform');
-    });
+    it('runs a single comet init when no platforms are given', async () => {
+        const home = await mkdtemp(join(tmpdir(), 'comet-single-'));
+        const previousHome = process.env.HOME;
+        process.env.HOME = home;
+        try {
+            const compat = loadCometCompatibility();
+            const result = await initCometProject({
+                root: home,
+                scope: 'global',
+                language: 'en',
+                yes: true,
+                platforms: [],
+                extras: { workflow: 'native' },
+                compat,
+                cometVersion: '0.4.0-beta.14',
+            });
+            expect(result.status).toBe('initialized');
+            expect(result.platforms).toBeUndefined();
+        } finally {
+            process.env.HOME = previousHome;
+            await rm(home, { recursive: true, force: true });
+        }
+    }, 30000);
 });

@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { skillCommands, type InstallOptions, type InstallScope, type Platform } from './manifest.js';
 import { installationRoot, sha256 } from './ownership.js';
-import { platformCommandPath, platformDefinitionById, platformRulePath, platformSkillPath, platformSkillsDir } from './platforms.js';
+import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath } from './platforms.js';
 
 export type DoctorStatus = 'ok' | 'missing' | 'conflict' | 'skipped';
 
@@ -37,19 +37,19 @@ export async function doctor(
   const checks: DoctorCheck[] = [];
 
   for (const command of skillCommands) {
-    checks.push(await checkPath(root, manifest, platformSkillPath(platform, scope, command.id), 'skill'));
-    const commandPath = platformCommandPath(platform, scope, command.id);
+    checks.push(await checkPath(root, manifest, platformSkillPath(platform, scope, command.id, root), 'skill'));
+    const commandPath = platformCommandPath(platform, scope, command.id, root);
     if (commandPath) checks.push(await checkPath(root, manifest, commandPath, 'command'));
   }
 
-  const rulePath = platformRulePath(platform, scope, 'kata-agent-contract');
+  const rulePath = platformRulePath(platform, scope, 'kata-agent-contract', root);
   if (rulePath) checks.push(await checkPath(root, manifest, rulePath, 'rule'));
 
   const definition = platformDefinitionById[platform];
   if (definition.hookFormat) {
-    const base = platformSkillsDir(platform, scope);
-    checks.push(await checkPath(root, manifest, `${base}/hooks/kata-hook-guard.mjs`, 'hook'));
-    const hookConfigPath = hookConfigPathFor(platform, scope);
+    const base = platformConfigDir(platform, scope, root);
+    checks.push(await checkPath(root, manifest, [base, 'hooks', 'kata-hook-guard.mjs'].filter(Boolean).join('/'), 'hook'));
+    const hookConfigPath = hookConfigPathFor(platform, scope, root);
     if (hookConfigPath) checks.push(await checkPath(root, manifest, hookConfigPath, 'hook'));
   }
 
@@ -71,13 +71,13 @@ export async function doctor(
   };
 }
 
-function hookConfigPathFor(platform: Platform, scope: InstallScope): string | null {
-  const base = platformSkillsDir(platform, scope);
+function hookConfigPathFor(platform: Platform, scope: InstallScope, baseRoot: string): string | null {
+  const base = platformConfigDir(platform, scope, baseRoot);
   const format = platformDefinitionById[platform].hookFormat;
-  if (format === 'claude-code') return `${base}/settings.local.json`;
-  if (format === 'gemini') return `${base}/settings.json`;
-  if (format === 'windsurf') return `${base}/hooks.json`;
-  if (format === 'copilot') return `${base}/hooks/kata-guard.json`;
+  if (format === 'claude-code') return [base, 'settings.local.json'].filter(Boolean).join('/');
+  if (format === 'gemini') return [base, 'settings.json'].filter(Boolean).join('/');
+  if (format === 'windsurf') return [base, 'hooks.json'].filter(Boolean).join('/');
+  if (format === 'copilot') return [base, 'hooks', 'kata-guard.json'].filter(Boolean).join('/');
   return null;
 }
 

@@ -12,7 +12,7 @@ import {
   type InstallScope,
   type Platform,
 } from './manifest.js';
-import { platformCommandPath, platformDefinitionById, platformRulePath, platformSkillPath, platformSkillsDir } from './platforms.js';
+import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, resolvePlatformGlobalDir } from './platforms.js';
 
 type OwnedFile = {
   platform: Platform;
@@ -29,12 +29,30 @@ type OwnershipManifest = {
 };
 
 export async function install(platform: Platform, scope: InstallScope, options: InstallOptions = {}): Promise<InstallReport> {
-  return writeSkills(platform, scope, options);
+  const effective = await resolveGlobalInstallRoot(platform, scope, options);
+  return writeSkills(platform, scope, effective);
 }
 
 export async function update(platform: Platform, scope: InstallScope, options: InstallOptions = {}): Promise<InstallReport> {
   const initializedScope = await resolveInitializedScope(platform, scope, options);
-  return writeSkills(platform, initializedScope, options);
+  const effective = await resolveGlobalInstallRoot(platform, initializedScope, options);
+  return writeSkills(platform, initializedScope, effective);
+}
+
+/**
+ * Global-scope installs honour the platform's env-var config dir (CODEX_HOME
+ * etc.) before falling back to $HOME. Without this, `kata-cli init --scope
+ * global` writes to $HOME/.codex even when CODEX_HOME points elsewhere.
+ */
+async function resolveGlobalInstallRoot(
+  platform: Platform,
+  scope: InstallScope,
+  options: InstallOptions,
+): Promise<InstallOptions> {
+  if (scope !== 'global' || options.home) return options;
+  const envDir = resolvePlatformGlobalDir(platform);
+  if (envDir) return { ...options, home: envDir };
+  return options;
 }
 
 export async function listManagedPlatforms(
@@ -54,8 +72,9 @@ export async function uninstall(
   scope: InstallScope,
   options: InstallOptions = {},
 ): Promise<InstallReport> {
-  const baseRoot = installationRoot(scope, options);
-  const manifestRoot = manifestBaseRoot(scope, options);
+  const effective = await resolveGlobalInstallRoot(platform, scope, options);
+  const baseRoot = installationRoot(scope, effective);
+  const manifestRoot = manifestBaseRoot(scope, effective);
   const manifest = await readManifest(manifestRoot);
   const report = createReport(platform, scope, options.dryRun === true);
   const entries = Object.values(manifest.files).filter((file) => file.platform === platform && file.scope === scope);
@@ -112,7 +131,7 @@ async function writeSkills(
   const report = createReport(platform, scope, effectiveOptions.dryRun === true);
 
   for (const command of skillCommands) {
-    const relativePath = platformSkillPath(platform, scope, command.id);
+    const relativePath = platformSkillPath(platform, scope, command.id, baseRoot);
     const absolutePath = join(baseRoot, relativePath);
     const content = renderSkill(command, platform, { language: effectiveOptions.language });
     const nextHash = sha256(content);
@@ -231,7 +250,7 @@ async function writePlatformHookFiles(
   const definition = platformDefinitionById[platform];
   if (!definition.hookFormat) return;
 
-  const hookScriptPath = `${platformSkillsDir(platform, scope)}/hooks/kata-hook-guard.mjs`;
+  const hookScriptPath = [platformConfigDir(platform, scope, baseRoot), 'hooks', 'kata-hook-guard.mjs'].filter(Boolean).join('/');
   await writeSupportFile({
     platform,
     scope,
@@ -245,7 +264,7 @@ async function writePlatformHookFiles(
   });
 
   const command = `node "${hookScriptPath}" --project-root "${baseRoot.replaceAll('"', '\\"')}"`;
-  const config = hookConfigForPlatform(platform, scope);
+  const config = hookConfigForPlatform(platform, scope, baseRoot);
   if (!config) return;
 
   await writeSupportFile({
@@ -271,7 +290,7 @@ async function writePlatformAdapterFiles(
   report: InstallReport,
 ): Promise<void> {
   for (const command of skillCommands) {
-    const relativePath = platformCommandPath(platform, scope, command.id);
+    const relativePath = platformCommandPath(platform, scope, command.id, baseRoot);
     if (!relativePath) continue;
     await writeSupportFile({
       platform,
@@ -286,7 +305,7 @@ async function writePlatformAdapterFiles(
     });
   }
 
-  const rulePath = platformRulePath(platform, scope, 'kata-agent-contract');
+  const rulePath = platformRulePath(platform, scope, 'kata-agent-contract', baseRoot);
   if (!rulePath) return;
   await writeSupportFile({
     platform,
@@ -304,28 +323,29 @@ async function writePlatformAdapterFiles(
 function hookConfigForPlatform(
   platform: Platform,
   scope: InstallScope,
+  baseRoot: string,
 ): { relativePath: string; render: (command: string) => string } | null {
   const definition = platformDefinitionById[platform];
-  const base = platformSkillsDir(platform, scope);
+  const base = platformConfigDir(platform, scope, baseRoot);
   switch (definition.hookFormat) {
     case 'claude-code':
       return {
-        relativePath: `${base}/settings.local.json`,
+        relativePath: [base, 'settings.local.json'].filter(Boolean).join('/'),
         render: (command) => JSON.stringify(claudeCodeHookConfig(command), null, 2) + '\n',
       };
     case 'gemini':
       return {
-        relativePath: `${base}/settings.json`,
+        relativePath: [base, 'settings.json'].filter(Boolean).join('/'),
         render: (command) => JSON.stringify(geminiHookConfig(command), null, 2) + '\n',
       };
     case 'windsurf':
       return {
-        relativePath: `${base}/hooks.json`,
+        relativePath: [base, 'hooks.json'].filter(Boolean).join('/'),
         render: (command) => JSON.stringify(windsurfHookConfig(command), null, 2) + '\n',
       };
     case 'copilot':
       return {
-        relativePath: `${base}/hooks/kata-guard.json`,
+        relativePath: [base, 'hooks', 'kata-guard.json'].filter(Boolean).join('/'),
         render: (command) => JSON.stringify(copilotHookConfig(command), null, 2) + '\n',
       };
     default:
