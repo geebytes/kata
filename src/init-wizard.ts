@@ -101,25 +101,8 @@ export async function promptInitPlan(platforms: PlatformInfo[], io: InitWizardIo
     // user with no selectable targets. Synthesize installable candidates from the
     // platform definitions so the wizard always offers at least the supported set.
     const baseCandidates = platforms.filter((platform) => platform.scope === scope);
-    const seenKeys = new Set(baseCandidates.map((p) => `${p.platform}:${p.root}`));
     const installDirectory = scope === 'project' ? (io.projectRoot ?? process.cwd()) : (io.home ?? process.env.HOME ?? process.cwd());
-    const synthesized = supportedPlatforms
-        .filter((platformId) => !seenKeys.has(`${platformId}:${installDirectory}`))
-        .map((platformId) => {
-            const definition = platformDefinitions.find((p) => p.id === platformId);
-            const capabilities = definition?.capabilities ?? { skills: true, hooks: false, subAgents: false, modelSelection: false };
-            return {
-                platform: platformId,
-                scope,
-                detected: false,
-                root: installDirectory,
-                capabilities,
-                unavailable: Object.entries(capabilities)
-                    .filter(([, supported]) => !supported)
-                    .map(([capability]) => capability),
-            } satisfies PlatformInfo;
-        });
-    const candidates = [...baseCandidates, ...synthesized];
+    const candidates = [...baseCandidates, ...synthesizePlatformCandidates(baseCandidates, scope, installDirectory)];
     // Default-checked platforms: only those actually detected on disk.
     // Synthesized candidates (detected === false) start unchecked so that the
     // wizard never silently installs platforms the user has not opted into.
@@ -132,6 +115,39 @@ export async function promptInitPlan(platforms: PlatformInfo[], io: InitWizardIo
     })), { input, output });
 
     return { scope, language, detected: candidates, selected };
+}
+
+/**
+ * Build installable candidates for platforms that have no marker on disk yet,
+ * so the wizard can offer the full supported set even on a fresh machine.
+ * For global scope, a platform-specific env var (CODEX_HOME etc.) overrides
+ * the default root — mirroring discoverPlatforms — so the candidate points at
+ * the same directory kata will actually write to.
+ */
+export function synthesizePlatformCandidates(
+    baseCandidates: PlatformInfo[],
+    scope: InstallScope,
+    installDirectory: string,
+): PlatformInfo[] {
+    const seenKeys = new Set(baseCandidates.map((p) => p.platform));
+    return supportedPlatforms
+        .filter((platformId) => !seenKeys.has(platformId))
+        .map((platformId) => {
+            const definition = platformDefinitions.find((p) => p.id === platformId);
+            const capabilities = definition?.capabilities ?? { skills: true, hooks: false, subAgents: false, modelSelection: false };
+            const envDir = resolvePlatformGlobalDir(platformId);
+            const root = scope === 'project' || !envDir ? installDirectory : envDir;
+            return {
+                platform: platformId,
+                scope,
+                detected: false,
+                root,
+                capabilities,
+                unavailable: Object.entries(capabilities)
+                    .filter(([, supported]) => !supported)
+                    .map(([capability]) => capability),
+            } satisfies PlatformInfo;
+        });
 }
 
 function platformDisplayPath(p: PlatformInfo): string {
@@ -186,6 +202,10 @@ export async function promptCometOptions(input: {
 
     const flags = input.compat.flags.init;
     for (const [flagName, spec] of Object.entries(flags)) {
+        // The platform target is collected by the wizard's own platform
+        // checkbox (promptInitPlan); comet's --platform is forwarded from that
+        // selection, so never prompt for it again here.
+        if (flagName === 'platform' || flagName === 'platforms') continue;
         if (!shouldPromptForFlag(flagName, spec, input.scope, input.cometVersion ?? null)) continue;
         const value = await promptSingleFlag(flagName, spec, input.language, ii);
         if (value === undefined) continue;

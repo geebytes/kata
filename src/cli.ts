@@ -487,6 +487,12 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
             language: plan.language,
             cometVersion,
         }).catch(() => ({}));
+    // Forward the wizard's platform selection to comet init. Comet's CLI
+    // accepts a single --platform per invocation, so initCometProject loops
+    // one comet init per selected platform and merges the reports. Without
+    // this, comet falls back to its own detection and the platforms the user
+    // picked in the STRATA wizard are silently dropped (e.g. codex).
+    const selectedPlatformIds = plan.selected.map((platform) => platform.platform);
     const cometInit = useAuto
         ? {
             command: 'comet init',
@@ -495,12 +501,15 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
             root,
             scope: plan.scope,
             language: plan.language,
-            nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}`,
+            nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}${
+                selectedPlatformIds.length > 0 ? ` --platform ${selectedPlatformIds.join(' --platform ')}` : ''
+            }`,
         }
         : await initCometProject({
             root,
             scope: plan.scope,
             language: plan.language,
+            platforms: selectedPlatformIds,
             extras: cometExtras,
             compat: cometCompat,
             cometVersion,

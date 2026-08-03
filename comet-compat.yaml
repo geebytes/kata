@@ -77,8 +77,16 @@ comet:
           messageEn: "Native artifact root (relative to project)"
           messageZh: "Native 产物根目录（相对项目）"
 
-      # Reserved: not yet emitted by any released comet, but kata will
-      # auto-pick them up as soon as `comet compat --json` reports them.
+      # Comet's actual CLI (>= 0.4.0) accepts a single --platform <id>.
+      # kata forwards the wizard's platform selection here, one init call per
+      # platform, so the platforms the user picked in the STRATA wizard are
+      # exactly the ones comet installs (no surprise detection, no dropouts).
+      # --platforms (list form) is reserved for comet 0.5.0+; see breakingChanges.
+      platform:
+        type: enum
+        choices: [codex, claude-code, opencode, cursor, windsurf,
+                  cline, roocode, gemini, github-copilot]
+        minSince: "0.4.0"
       platforms:
         type: list
         itemType: enum
@@ -87,6 +95,7 @@ comet:
            cline, roocode, gemini, github-copilot]
         minSince: "0.5.0"
         preview: true
+        aliases: [platform]
       installMode:
         type: enum
         choices: [copy, symlink, hardlink]

@@ -12,7 +12,7 @@ import { main, roleForPhase } from '../../src/cli.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { transition } from '../../src/core/state.js';
-import { planDetectedInit, promptInitPlan, renderInitBanner } from '../../src/init-wizard.js';
+import { planDetectedInit, promptInitPlan, renderInitBanner, synthesizePlatformCandidates } from '../../src/init-wizard.js';
 import { acknowledgeContextPacket, createContextPacket } from '../../src/workflow/context-fabric.js';
 
 describe('Kata platform installer', () => {
@@ -189,9 +189,51 @@ describe('Kata platform installer', () => {
                     expect.objectContaining({ platform: 'opencode', scope: 'global', detected: true }),
                 ]),
             );
+            // Regression: the wizard displayed the env-dir path (via
+            // resolvePlatformGlobalDir) while discoverPlatforms reported the
+            // $HOME-based root, so kata installed to ~/.config/opencode even
+            // though OPENCODE_CONFIG_DIR pointed elsewhere. The reported root
+            // must match the env dir so display === install target.
+            expect(platforms).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ platform: 'codex', scope: 'global', root: codexHome }),
+                    expect.objectContaining({ platform: 'claude-code', scope: 'global', root: claudeConfigDir }),
+                    expect.objectContaining({ platform: 'opencode', scope: 'global', root: openCodeConfigDir }),
+                ]),
+            );
         } finally {
             process.env.CODEX_HOME = previousCodexHome;
             process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+            process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
+        }
+    });
+
+    it('synthesizes wizard candidates with the env-dir root when global env vars are set', async () => {
+        // Global scope + CODEX_HOME/OPENCODE_CONFIG_DIR set but empty discovery:
+        // the synthesized candidates must use the env dir as their root so the
+        // checkbox displays the path kata will actually install to.
+        const home = await tempRoot('kata-wizard-home-');
+        const codexHome = await tempRoot('kata-wizard-codex-');
+        const openCodeConfigDir = await tempRoot('kata-wizard-opencode-');
+
+        const previousCodexHome = process.env.CODEX_HOME;
+        const previousOpenCodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
+        process.env.CODEX_HOME = codexHome;
+        process.env.OPENCODE_CONFIG_DIR = openCodeConfigDir;
+        try {
+            const candidates = synthesizePlatformCandidates([], 'global', home);
+
+            expect(candidates.find((c) => c.platform === 'codex')?.root).toBe(codexHome);
+            expect(candidates.find((c) => c.platform === 'opencode')?.root).toBe(openCodeConfigDir);
+            // Platforms without an env override keep the default global root.
+            expect(candidates.find((c) => c.platform === 'gemini')?.root).toBe(home);
+            // A base candidate for the same platform suppresses synthesis.
+            const withBase = synthesizePlatformCandidates([
+                { platform: 'codex', scope: 'global', detected: true, root: home, capabilities: { skills: true, hooks: true, subAgents: true, modelSelection: true }, unavailable: [] },
+            ], 'global', home);
+            expect(withBase.some((c) => c.platform === 'codex')).toBe(false);
+        } finally {
+            process.env.CODEX_HOME = previousCodexHome;
             process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
         }
     });

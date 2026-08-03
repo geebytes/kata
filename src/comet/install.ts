@@ -44,6 +44,7 @@ export type CometProjectInitResult = {
     language?: 'en' | 'zh';
     stdout?: string;
     reason?: string;
+    platforms?: string[];
 };
 
 function npmPackageName(): string {
@@ -177,17 +178,23 @@ export async function initCometProject(input: {
     scope: 'project' | 'global';
     language?: 'en' | 'zh';
     yes?: boolean;
+    /**
+     * Explicit platform targets picked in the STRATA wizard. Comet's CLI only
+     * accepts a single `--platform <id>`, so each platform gets its own
+     * `comet init` invocation and the results are merged. When omitted, a
+     * single invocation runs without `--platform` (comet decides itself).
+     */
+    platforms?: string[];
     extras?: Record<string, string | boolean | string[] | undefined>;
     compat?: CometCompatibility;
     cometVersion?: string | null;
 }): Promise<CometProjectInitResult> {
-    let binaryPath = await resolveCometPath();
+    const binaryPath = await resolveCometPath();
 
     // Auto-install comet binary if not found
     if (!binaryPath) {
         try {
             await installComet();
-            binaryPath = await resolveCometPath();
         } catch {
             return {
                 command: 'comet init',
@@ -201,7 +208,8 @@ export async function initCometProject(input: {
         }
     }
 
-    if (!binaryPath) {
+    const resolvedBinary = await resolveCometPath();
+    if (!resolvedBinary) {
         return {
             command: 'comet init',
             status: 'skipped',
@@ -213,6 +221,34 @@ export async function initCometProject(input: {
         };
     }
 
+    // Comet 0.4.x only accepts one --platform per invocation. The wizard may
+    // have picked several, so run one init per platform and merge the reports.
+    const targets = input.platforms && input.platforms.length > 0 ? input.platforms : [undefined];
+    const results: CometProjectInitResult[] = [];
+    for (const platform of targets) {
+        const perPlatform = await runCometInitOnce(resolvedBinary, {
+            ...input,
+            extras: platform ? { ...(input.extras ?? {}), platform } : input.extras,
+        });
+        results.push(perPlatform);
+        if (perPlatform.status === 'failed') break;
+    }
+    const merged = mergeCometInitResults(results, input.root, input.scope, input.language);
+    return targets.some((t) => t !== undefined) ? { ...merged, platforms: targets.filter((t): t is string => t !== undefined) } : merged;
+}
+
+async function runCometInitOnce(
+    binaryPath: string,
+    input: {
+        root: string;
+        scope: 'project' | 'global';
+        language?: 'en' | 'zh';
+        yes?: boolean;
+        extras?: Record<string, string | boolean | string[] | undefined>;
+        compat?: CometCompatibility;
+        cometVersion?: string | null;
+    },
+): Promise<CometProjectInitResult> {
     const invocation = buildCometProjectInitInvocation(input);
 
     if (input.yes) {
@@ -244,7 +280,7 @@ export async function initCometProject(input: {
     // Interactive: passthrough stdio so user sees comet prompts
     try {
         await new Promise<void>((resolvePromise, reject) => {
-            const child = spawn(binaryPath!, invocation.args, {
+            const child = spawn(binaryPath, invocation.args, {
                 stdio: 'inherit',
                 env: { ...process.env },
             });
@@ -273,6 +309,27 @@ export async function initCometProject(input: {
             reason: error instanceof Error ? error.message : String(error),
         };
     }
+}
+
+function mergeCometInitResults(
+    results: CometProjectInitResult[],
+    root: string,
+    scope: 'project' | 'global',
+    language?: 'en' | 'zh',
+): CometProjectInitResult {
+    const failed = results.find((result) => result.status === 'failed');
+    const skipped = results.find((result) => result.status === 'skipped');
+    const status = failed?.status ?? skipped?.status ?? 'initialized';
+    return {
+        command: 'comet init',
+        status,
+        path: results.find((result) => result.path !== null)?.path ?? null,
+        root,
+        scope,
+        ...(language ? { language } : {}),
+        ...(results.find((result) => result.stdout)?.stdout ? { stdout: results.map((r) => r.stdout ?? '').filter(Boolean).join('\n') } : {}),
+        ...(failed?.reason ? { reason: failed.reason } : skipped?.reason ? { reason: skipped.reason } : {}),
+    };
 }
 
 export async function getCometVersion(binaryPath?: string): Promise<string | null> {

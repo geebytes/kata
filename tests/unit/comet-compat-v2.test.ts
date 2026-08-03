@@ -49,6 +49,10 @@ comet:
         type: string
         minSince: "0.4.0-beta.7"
         scopeGuard: project
+      platform:
+        type: enum
+        choices: [codex, claude-code, opencode]
+        minSince: "0.4.0"
       platforms:
         type: list
         itemType: enum
@@ -198,6 +202,41 @@ describe('buildCometProjectInitInvocation flag filtering', () => {
             compat,
         });
         expect(args).not.toContain('--platforms');
+    });
+
+    it('forwards the single-value platform flag since comet 0.4.0 accepts --platform', () => {
+        const { args } = buildCometProjectInitInvocation({
+            root: '/proj',
+            scope: 'project',
+            extras: { platform: 'codex' },
+            compat,
+            cometVersion: '0.4.0',
+        });
+        expect(args).toContain('--platform');
+        expect(args).toContain('codex');
+    });
+
+    it('drops platform values outside the declared choices', () => {
+        const { args } = buildCometProjectInitInvocation({
+            root: '/proj',
+            scope: 'project',
+            extras: { platform: 'martian' },
+            compat,
+            cometVersion: '0.4.0',
+        });
+        expect(args).not.toContain('--platform');
+        expect(args).not.toContain('martian');
+    });
+
+    it('does not forward --platform when the comet version predates 0.4.0', () => {
+        const { args } = buildCometProjectInitInvocation({
+            root: '/proj',
+            scope: 'project',
+            extras: { platform: 'codex' },
+            compat,
+            cometVersion: '0.3.9',
+        });
+        expect(args).not.toContain('--platform');
     });
 
     it('drops scope-guarded flags when their scope guard does not match', () => {

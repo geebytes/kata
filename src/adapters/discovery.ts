@@ -26,7 +26,12 @@ export async function discoverPlatforms(options: InstallOptions = {}): Promise<P
   for (const platform of platformDefinitions) {
     if (platform.id === 'generic') continue;
     if (await isDetected(platform.id, 'project', root)) detected.push(platformInfo(platform.id, 'project', true, root));
-    if (await isDetected(platform.id, 'global', home)) detected.push(platformInfo(platform.id, 'global', true, home));
+    // A platform-specific env var (CODEX_HOME etc.) overrides the default
+    // global root. Detection honours it, so the reported root must too —
+    // otherwise the wizard displays the env-dir path but installs to $HOME.
+    const envDir = resolvePlatformGlobalDir(platform.id);
+    const globalRoot = envDir && (await exists(envDir)) ? envDir : home;
+    if (await isDetected(platform.id, 'global', home)) detected.push(platformInfo(platform.id, 'global', true, globalRoot));
   }
 
   detected.push(platformInfo('generic', 'project', true, root));

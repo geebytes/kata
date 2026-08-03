@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -631,7 +637,7 @@ import { createHash as createHash7 } from "node:crypto";
 import { execFileSync as execFileSync6 } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { join as join29 } from "node:path";
+import { join as join30 } from "node:path";
 
 // src/codegraph/runtime.ts
 import { dirname } from "node:path";
@@ -1464,7 +1470,7 @@ import { dirname as dirname5, join as join8, resolve as resolve4 } from "node:pa
 import { fileURLToPath } from "node:url";
 
 // kata-asset:/app/kata/comet-compat.yaml
-var comet_compat_default = 'version: 2\n\n# Comet compatibility protocol (v2)\n# ================================\n# This file declares the contract between kata and @rpamis/comet.\n# kata reads it at runtime to answer: "what flags does this comet version\n# accept? what\'s the output schema? has anything broken between versions?"\n#\n# Multi-layer discovery order (kata tries each in order, first wins):\n#   1. runtime probe: `comet compat --json`\n#   2. bundled in @rpamis/comet package root: `comet-compat.yaml`\n#   3. this file (kata\'s own fallback / verified baseline)\n#\n# schema is additive: unknown fields must be ignored by older kata clients.\n\ncomet:\n  # Backward-compatible v1 fields (still authoritative for version window)\n  minVersion: 0.4.0\n  maxVersion: 2.0.0\n\n  # v2 capability declarations (superseeds v1 flat booleans)\n  capabilities:\n    init:\n      minSince: "0.4.0"\n    status:\n      minSince: "0.4.0"\n    next:\n      minSince: "0.4.0"\n    doctor:\n      minSince: "0.4.1"\n    workflow:\n      minSince: "0.4.0"\n    uninstall:\n      minSince: "0.4.0"\n    update:\n      minSince: "0.4.0"\n    cometAny:\n      minSince: "0.4.0-beta.1"\n\n  # Command parameter surfaces. kata uses this both to:\n  #  - dynamically prompt the user for these options\n  #  - validate the assembled argv before spawning comet\n  flags:\n    init:\n      workflow:\n        type: enum\n        choices: [native, classic, both]\n        default: native\n        minSince: "0.4.0-beta.7"\n        prompt:\n          messageKey: cometWorkflow\n          messageEn: "Comet workflow"\n          messageZh: "\u9009\u62E9\u8981\u521D\u59CB\u5316\u7684 Comet \u6A21\u5F0F"\n      overwrite:\n        type: boolean\n        minSince: "0.4.0"\n        conflictsWith: [skipExisting]\n        prompt:\n          messageKey: cometOverwrite\n          messageEn: "Overwrite existing components"\n          messageZh: "\u8986\u76D6\u6240\u6709\u5DF2\u6709\u7EC4\u4EF6"\n      skipExisting:\n        type: boolean\n        minSince: "0.4.0"\n        conflictsWith: [overwrite]\n        prompt:\n          messageKey: cometSkipExisting\n          messageEn: "Skip existing components"\n          messageZh: "\u5168\u90E8\u8DF3\u8FC7\u5DF2\u5B58\u5728\u7EC4\u4EF6"\n      root:\n        type: string\n        minSince: "0.4.0-beta.7"\n        # Only valid for project-scope; validated by kata before passing\n        scopeGuard: project\n        prompt:\n          messageKey: cometArtifactRoot\n          messageEn: "Native artifact root (relative to project)"\n          messageZh: "Native \u4EA7\u7269\u6839\u76EE\u5F55\uFF08\u76F8\u5BF9\u9879\u76EE\uFF09"\n\n      # Reserved: not yet emitted by any released comet, but kata will\n      # auto-pick them up as soon as `comet compat --json` reports them.\n      platforms:\n        type: list\n        itemType: enum\n        itemChoices:\n          [codex, claude-code, opencode, cursor, windsurf,\n           cline, roocode, gemini, github-copilot]\n        minSince: "0.5.0"\n        preview: true\n      installMode:\n        type: enum\n        choices: [copy, symlink, hardlink]\n        minSince: "0.5.0"\n        preview: true\n\n  # JSON output schema (for assertions and IDE tooling)\n  output:\n    init.json:\n      fields:\n        - projectPath\n        - scope\n        - language\n        - workflow\n        - initializedWorkflows\n        - workflowSource\n        - projectConfigCreated\n        - projectConfigUpdated\n        - nativeArtifactRoot\n        - selectedPlatforms\n        - status\n        - results\n        - failures\n      stableFields: [projectPath, scope, language, status]\n\n# Breaking changes that kata should proactively mitigate\nbreakingChanges:\n  - version: "0.5.0"\n    field: "selectPlatforms(--yes) default"\n    before: "only detected platforms"\n    after: "all platforms when none detected"\n    mitigation:\n      kataShouldPass: "platforms=<detected>"\n      note: "kata will explicitly pass detected platform list to avoid surprise installs"\n\nboundary:\n  invocation: public-cli\n  jsonOutput: true\n  stdout: utf8\n  stderr: utf8\n';
+var comet_compat_default = 'version: 2\n\n# Comet compatibility protocol (v2)\n# ================================\n# This file declares the contract between kata and @rpamis/comet.\n# kata reads it at runtime to answer: "what flags does this comet version\n# accept? what\'s the output schema? has anything broken between versions?"\n#\n# Multi-layer discovery order (kata tries each in order, first wins):\n#   1. runtime probe: `comet compat --json`\n#   2. bundled in @rpamis/comet package root: `comet-compat.yaml`\n#   3. this file (kata\'s own fallback / verified baseline)\n#\n# schema is additive: unknown fields must be ignored by older kata clients.\n\ncomet:\n  # Backward-compatible v1 fields (still authoritative for version window)\n  minVersion: 0.4.0\n  maxVersion: 2.0.0\n\n  # v2 capability declarations (superseeds v1 flat booleans)\n  capabilities:\n    init:\n      minSince: "0.4.0"\n    status:\n      minSince: "0.4.0"\n    next:\n      minSince: "0.4.0"\n    doctor:\n      minSince: "0.4.1"\n    workflow:\n      minSince: "0.4.0"\n    uninstall:\n      minSince: "0.4.0"\n    update:\n      minSince: "0.4.0"\n    cometAny:\n      minSince: "0.4.0-beta.1"\n\n  # Command parameter surfaces. kata uses this both to:\n  #  - dynamically prompt the user for these options\n  #  - validate the assembled argv before spawning comet\n  flags:\n    init:\n      workflow:\n        type: enum\n        choices: [native, classic, both]\n        default: native\n        minSince: "0.4.0-beta.7"\n        prompt:\n          messageKey: cometWorkflow\n          messageEn: "Comet workflow"\n          messageZh: "\u9009\u62E9\u8981\u521D\u59CB\u5316\u7684 Comet \u6A21\u5F0F"\n      overwrite:\n        type: boolean\n        minSince: "0.4.0"\n        conflictsWith: [skipExisting]\n        prompt:\n          messageKey: cometOverwrite\n          messageEn: "Overwrite existing components"\n          messageZh: "\u8986\u76D6\u6240\u6709\u5DF2\u6709\u7EC4\u4EF6"\n      skipExisting:\n        type: boolean\n        minSince: "0.4.0"\n        conflictsWith: [overwrite]\n        prompt:\n          messageKey: cometSkipExisting\n          messageEn: "Skip existing components"\n          messageZh: "\u5168\u90E8\u8DF3\u8FC7\u5DF2\u5B58\u5728\u7EC4\u4EF6"\n      root:\n        type: string\n        minSince: "0.4.0-beta.7"\n        # Only valid for project-scope; validated by kata before passing\n        scopeGuard: project\n        prompt:\n          messageKey: cometArtifactRoot\n          messageEn: "Native artifact root (relative to project)"\n          messageZh: "Native \u4EA7\u7269\u6839\u76EE\u5F55\uFF08\u76F8\u5BF9\u9879\u76EE\uFF09"\n\n      # Comet\'s actual CLI (>= 0.4.0) accepts a single --platform <id>.\n      # kata forwards the wizard\'s platform selection here, one init call per\n      # platform, so the platforms the user picked in the STRATA wizard are\n      # exactly the ones comet installs (no surprise detection, no dropouts).\n      # --platforms (list form) is reserved for comet 0.5.0+; see breakingChanges.\n      platform:\n        type: enum\n        choices: [codex, claude-code, opencode, cursor, windsurf,\n                  cline, roocode, gemini, github-copilot]\n        minSince: "0.4.0"\n      platforms:\n        type: list\n        itemType: enum\n        itemChoices:\n          [codex, claude-code, opencode, cursor, windsurf,\n           cline, roocode, gemini, github-copilot]\n        minSince: "0.5.0"\n        preview: true\n        aliases: [platform]\n      installMode:\n        type: enum\n        choices: [copy, symlink, hardlink]\n        minSince: "0.5.0"\n        preview: true\n\n  # JSON output schema (for assertions and IDE tooling)\n  output:\n    init.json:\n      fields:\n        - projectPath\n        - scope\n        - language\n        - workflow\n        - initializedWorkflows\n        - workflowSource\n        - projectConfigCreated\n        - projectConfigUpdated\n        - nativeArtifactRoot\n        - selectedPlatforms\n        - status\n        - results\n        - failures\n      stableFields: [projectPath, scope, language, status]\n\n# Breaking changes that kata should proactively mitigate\nbreakingChanges:\n  - version: "0.5.0"\n    field: "selectPlatforms(--yes) default"\n    before: "only detected platforms"\n    after: "all platforms when none detected"\n    mitigation:\n      kataShouldPass: "platforms=<detected>"\n      note: "kata will explicitly pass detected platform list to avoid surprise installs"\n\nboundary:\n  invocation: public-cli\n  jsonOutput: true\n  stdout: utf8\n  stderr: utf8\n';
 
 // src/comet/compat.ts
 function loadCometCompatibility(manifestPath2) {
@@ -1996,11 +2002,10 @@ function serializeFlag(flagName, value) {
   return [cliFlag];
 }
 async function initCometProject(input) {
-  let binaryPath = await resolveCometPath();
+  const binaryPath = await resolveCometPath();
   if (!binaryPath) {
     try {
       await installComet();
-      binaryPath = await resolveCometPath();
     } catch {
       return {
         command: "comet init",
@@ -2013,7 +2018,8 @@ async function initCometProject(input) {
       };
     }
   }
-  if (!binaryPath) {
+  const resolvedBinary = await resolveCometPath();
+  if (!resolvedBinary) {
     return {
       command: "comet init",
       status: "skipped",
@@ -2024,6 +2030,20 @@ async function initCometProject(input) {
       reason: "comet_binary_not_found"
     };
   }
+  const targets = input.platforms && input.platforms.length > 0 ? input.platforms : [void 0];
+  const results = [];
+  for (const platform of targets) {
+    const perPlatform = await runCometInitOnce(resolvedBinary, {
+      ...input,
+      extras: platform ? { ...input.extras ?? {}, platform } : input.extras
+    });
+    results.push(perPlatform);
+    if (perPlatform.status === "failed") break;
+  }
+  const merged = mergeCometInitResults(results, input.root, input.scope, input.language);
+  return targets.some((t) => t !== void 0) ? { ...merged, platforms: targets.filter((t) => t !== void 0) } : merged;
+}
+async function runCometInitOnce(binaryPath, input) {
   const invocation = buildCometProjectInitInvocation(input);
   if (input.yes) {
     try {
@@ -2080,6 +2100,21 @@ async function initCometProject(input) {
       reason: error instanceof Error ? error.message : String(error)
     };
   }
+}
+function mergeCometInitResults(results, root, scope, language) {
+  const failed2 = results.find((result) => result.status === "failed");
+  const skipped = results.find((result) => result.status === "skipped");
+  const status = failed2?.status ?? skipped?.status ?? "initialized";
+  return {
+    command: "comet init",
+    status,
+    path: results.find((result) => result.path !== null)?.path ?? null,
+    root,
+    scope,
+    ...language ? { language } : {},
+    ...results.find((result) => result.stdout)?.stdout ? { stdout: results.map((r) => r.stdout ?? "").filter(Boolean).join("\n") } : {},
+    ...failed2?.reason ? { reason: failed2.reason } : skipped?.reason ? { reason: skipped.reason } : {}
+  };
 }
 async function getCometVersion(binaryPath) {
   try {
@@ -4504,13 +4539,19 @@ async function discoverPlatforms(options = {}) {
   for (const platform of platformDefinitions) {
     if (platform.id === "generic") continue;
     if (await isDetected(platform.id, "project", root)) detected.push(platformInfo(platform.id, "project", true, root));
-    if (await isDetected(platform.id, "global", home)) detected.push(platformInfo(platform.id, "global", true, home));
+    const envDir = resolvePlatformGlobalDir(platform.id);
+    const globalRoot = envDir && await exists(envDir) ? envDir : home;
+    if (await isDetected(platform.id, "global", home)) detected.push(platformInfo(platform.id, "global", true, globalRoot));
   }
   detected.push(platformInfo("generic", "project", true, root));
   return dedupe(detected);
 }
 async function isDetected(platform, scope, root) {
   const definition = platformDefinitionById[platform];
+  if (scope === "global") {
+    const envDir = resolvePlatformGlobalDir(platform);
+    if (envDir && await exists(envDir)) return true;
+  }
   const paths = definition.detectionPaths ?? [platformSkillsDir(platform, scope)];
   if (platform === "codex" && scope === "project") paths.push("AGENTS.md");
   if (platform === "claude-code" && scope === "global") paths.push(".claude.json");
@@ -4518,6 +4559,12 @@ async function isDetected(platform, scope, root) {
     if (await exists(join12(root, relativePath))) return true;
   }
   return false;
+}
+function resolvePlatformGlobalDir(platform) {
+  if (platform === "codex" && process.env.CODEX_HOME) return process.env.CODEX_HOME;
+  if (platform === "claude-code" && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+  if (platform === "opencode" && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  return null;
 }
 function platformInfo(platform, scope, detected, root) {
   const capabilities = platformDefinitionById[platform].capabilities;
@@ -4568,6 +4615,7 @@ function hookConfigPathFor(platform, scope) {
 
 // src/init-wizard.ts
 import { stdin as defaultInput2, stdout as defaultOutput2 } from "node:process";
+import { join as join13 } from "node:path";
 init_prompt();
 var supportedPlatforms = platformDefinitions.map((platform) => platform.id).filter((platform) => platform !== "generic");
 function renderInitBanner() {
@@ -4629,28 +4677,44 @@ async function promptInitPlan(platforms, io = {}) {
     { value: "global", label: "Global" }
   ], { input, output });
   const baseCandidates = platforms.filter((platform) => platform.scope === scope);
-  const seenKeys = new Set(baseCandidates.map((p) => `${p.platform}:${p.root}`));
   const installDirectory = scope === "project" ? io.projectRoot ?? process.cwd() : io.home ?? process.env.HOME ?? process.cwd();
-  const synthesized = supportedPlatforms.filter((platformId) => !seenKeys.has(`${platformId}:${installDirectory}`)).map((platformId) => {
+  const candidates = [...baseCandidates, ...synthesizePlatformCandidates(baseCandidates, scope, installDirectory)];
+  const defaults = candidates.filter((platform) => platform.detected && supportedPlatforms.includes(platform.platform));
+  const selected = await checkbox("Platforms to install", candidates.map((p) => ({
+    value: p,
+    label: `${p.platform} (${platformDisplayPath(p)})${p.detected ? "" : " \xB7 not yet installed"}`,
+    checked: defaults.includes(p)
+  })), { input, output });
+  return { scope, language, detected: candidates, selected };
+}
+function synthesizePlatformCandidates(baseCandidates, scope, installDirectory) {
+  const seenKeys = new Set(baseCandidates.map((p) => p.platform));
+  return supportedPlatforms.filter((platformId) => !seenKeys.has(platformId)).map((platformId) => {
     const definition = platformDefinitions.find((p) => p.id === platformId);
     const capabilities = definition?.capabilities ?? { skills: true, hooks: false, subAgents: false, modelSelection: false };
+    const envDir = resolvePlatformGlobalDir2(platformId);
+    const root = scope === "project" || !envDir ? installDirectory : envDir;
     return {
       platform: platformId,
       scope,
       detected: false,
-      root: installDirectory,
+      root,
       capabilities,
       unavailable: Object.entries(capabilities).filter(([, supported]) => !supported).map(([capability]) => capability)
     };
   });
-  const candidates = [...baseCandidates, ...synthesized];
-  const defaults = candidates.filter((platform) => platform.detected && supportedPlatforms.includes(platform.platform));
-  const selected = await checkbox("Platforms to install", candidates.map((p) => ({
-    value: p,
-    label: `${p.platform} (${p.root})${p.detected ? "" : " \xB7 not yet installed"}`,
-    checked: defaults.includes(p)
-  })), { input, output });
-  return { scope, language, detected: candidates, selected };
+}
+function platformDisplayPath(p) {
+  if (p.scope === "project") return join13(p.root, platformSkillsDir(p.platform, "project"));
+  const envDir = resolvePlatformGlobalDir2(p.platform);
+  if (envDir) return envDir;
+  return join13(p.root, platformSkillsDir(p.platform, "global"));
+}
+function resolvePlatformGlobalDir2(platform) {
+  if (platform === "codex" && process.env.CODEX_HOME) return process.env.CODEX_HOME;
+  if (platform === "claude-code" && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
+  if (platform === "opencode" && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  return null;
 }
 function optionsForWizardInstall(base, scope, platformRoot, language) {
   return {
@@ -4666,6 +4730,7 @@ async function promptCometOptions(input) {
   if (!input.compat?.flags?.init) return result;
   const flags = input.compat.flags.init;
   for (const [flagName, spec] of Object.entries(flags)) {
+    if (flagName === "platform" || flagName === "platforms") continue;
     if (!shouldPromptForFlag(flagName, spec, input.scope, input.cometVersion ?? null)) continue;
     const value = await promptSingleFlag(flagName, spec, input.language, ii);
     if (value === void 0) continue;
@@ -4749,11 +4814,11 @@ init_prompt();
 
 // src/workflow/orchestrator.ts
 import { appendFile as appendFile2, mkdir as mkdir13, readFile as readFile17, writeFile as writeFile13 } from "node:fs/promises";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 
 // src/core/task.ts
 import { mkdir as mkdir8, writeFile as writeFile8 } from "node:fs/promises";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 import { randomUUID as randomUUID5 } from "node:crypto";
 
 // src/core/git.ts
@@ -4789,8 +4854,8 @@ async function createTask(input) {
     ...input.ownedPaths?.length ? { ownedPaths: [...new Set(input.ownedPaths)].sort() } : {},
     ...input.acceptanceMatrix ? { acceptanceMatrix: input.acceptanceMatrix } : {}
   };
-  const taskDirectory = join13(root, ".kata/tasks", task.id);
-  await mkdir8(join13(root, ".kata/tasks"), { recursive: true });
+  const taskDirectory = join14(root, ".kata/tasks", task.id);
+  await mkdir8(join14(root, ".kata/tasks"), { recursive: true });
   try {
     await mkdir8(taskDirectory);
   } catch (error) {
@@ -4799,7 +4864,7 @@ async function createTask(input) {
     }
     throw error;
   }
-  await writeFile8(join13(taskDirectory, "task.json"), `${JSON.stringify(task, null, 2)}
+  await writeFile8(join14(taskDirectory, "task.json"), `${JSON.stringify(task, null, 2)}
 `, "utf8");
   const state = {
     taskId: task.id,
@@ -4823,7 +4888,7 @@ function isNodeError5(error) {
 
 // src/core/context.ts
 import { readdir as readdir5, readFile as readFile10 } from "node:fs/promises";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 async function buildContextManifest(input) {
   const root = input.root ?? process.cwd();
   const records = await readWikiRecords2(root);
@@ -4849,7 +4914,7 @@ function isRelevantWikiRecord(record, requestedSourceRefs) {
   return record.sourceRefs.some((sourceRef) => requestedSourceRefs.has(sourceRef)) || record.scope.some((scopeRef) => requestedSourceRefs.has(scopeRef));
 }
 async function readWikiRecords2(root) {
-  const wikiDirectory = join14(root, ".kata/wiki");
+  const wikiDirectory = join15(root, ".kata/wiki");
   let files;
   try {
     files = await readdir5(wikiDirectory);
@@ -4858,7 +4923,7 @@ async function readWikiRecords2(root) {
     throw error;
   }
   const records = await Promise.all(
-    files.filter((file) => file.endsWith(".json")).sort().map(async (file) => JSON.parse(await readFile10(join14(wikiDirectory, file), "utf8")))
+    files.filter((file) => file.endsWith(".json")).sort().map(async (file) => JSON.parse(await readFile10(join15(wikiDirectory, file), "utf8")))
   );
   return records;
 }
@@ -4872,7 +4937,7 @@ init_evidence();
 // src/quality/judge.ts
 init_evidence();
 import { mkdir as mkdir9, writeFile as writeFile9 } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/quality/acceptance-matrix.ts
 import { execFile as execFile3 } from "node:child_process";
@@ -5052,8 +5117,8 @@ function isRepositoryRelativeTestPath(value) {
 async function readWaivers(root, taskId) {
   try {
     const { readFile: readFile25 } = await import("node:fs/promises");
-    const { join: join30 } = await import("node:path");
-    const raw = await readFile25(join30(root, ".kata/tasks", taskId, "waivers.json"), "utf8");
+    const { join: join31 } = await import("node:path");
+    const raw = await readFile25(join31(root, ".kata/tasks", taskId, "waivers.json"), "utf8");
     return JSON.parse(raw).waivers;
   } catch {
     return [];
@@ -5061,10 +5126,10 @@ async function readWaivers(root, taskId) {
 }
 async function writeWaivers(root, taskId, waivers) {
   const { mkdir: mkdir18, writeFile: writeFile19 } = await import("node:fs/promises");
-  const { join: join30 } = await import("node:path");
-  await mkdir18(join30(root, ".kata/tasks", taskId), { recursive: true });
+  const { join: join31 } = await import("node:path");
+  await mkdir18(join31(root, ".kata/tasks", taskId), { recursive: true });
   await writeFile19(
-    join30(root, ".kata/tasks", taskId, "waivers.json"),
+    join31(root, ".kata/tasks", taskId, "waivers.json"),
     `${JSON.stringify({ waivers, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
 `,
     "utf8"
@@ -5097,8 +5162,8 @@ async function judge(input) {
       }))
     };
     const root2 = input.root ?? process.cwd();
-    await mkdir9(join15(root2, ".kata/tasks", input.taskId), { recursive: true });
-    await writeFile9(join15(root2, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result2, null, 2)}
+    await mkdir9(join16(root2, ".kata/tasks", input.taskId), { recursive: true });
+    await writeFile9(join16(root2, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result2, null, 2)}
 `, "utf8");
     return result2;
   }
@@ -5143,15 +5208,15 @@ async function judge(input) {
     evidenceIds: freshPassingTestEvidence.map((evidence) => evidence.id)
   };
   const root = input.root ?? process.cwd();
-  await mkdir9(join15(root, ".kata/tasks", input.taskId), { recursive: true });
-  await writeFile9(join15(root, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result, null, 2)}
+  await mkdir9(join16(root, ".kata/tasks", input.taskId), { recursive: true });
+  await writeFile9(join16(root, ".kata/tasks", input.taskId, "judge.json"), `${JSON.stringify(result, null, 2)}
 `, "utf8");
   return result;
 }
 
 // src/workflow/handoff.ts
 import { readFile as readFile11 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/core/workflow-profile.ts
 var isolationModes = ["current_worktree", "isolated_worktree", "git_flow", "user_decides"];
@@ -5181,8 +5246,8 @@ function profileGuardInstructions(profile, role) {
 }
 async function acknowledgeCometOpen(root, taskId) {
   const { readFile: readFile25, writeFile: writeFile19 } = await import("node:fs/promises");
-  const { join: join30 } = await import("node:path");
-  const path = join30(root, ".kata/tasks", taskId, "task.json");
+  const { join: join31 } = await import("node:path");
+  const path = join31(root, ".kata/tasks", taskId, "task.json");
   const task = JSON.parse(await readFile25(path, "utf8"));
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next = { ...profile, comet: { ...profile.comet, openStatus: "acknowledged" } };
@@ -5193,8 +5258,8 @@ async function acknowledgeCometOpen(root, taskId) {
 }
 async function updateGitFlowProfile(root, taskId, gitFlow) {
   const { readFile: readFile25, writeFile: writeFile19 } = await import("node:fs/promises");
-  const { join: join30 } = await import("node:path");
-  const path = join30(root, ".kata/tasks", taskId, "task.json");
+  const { join: join31 } = await import("node:path");
+  const path = join31(root, ".kata/tasks", taskId, "task.json");
   const task = JSON.parse(await readFile25(path, "utf8"));
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next = { ...profile, gitFlow };
@@ -5216,11 +5281,11 @@ function isGitFlowInstallation(value) {
 
 // src/workflow/handoff.ts
 async function createHandoff(root, taskId, nextRole) {
-  const taskRaw = await readFile11(join16(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile11(join17(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
-  const stateRaw = await readFile11(join16(root, ".kata/tasks", taskId, "current-state.json"), "utf8");
+  const stateRaw = await readFile11(join17(root, ".kata/tasks", taskId, "current-state.json"), "utf8");
   const state = JSON.parse(stateRaw);
-  const evidenceDir = join16(root, ".kata/evidence");
+  const evidenceDir = join17(root, ".kata/evidence");
   let evidenceIds = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
@@ -5283,7 +5348,7 @@ function buildGuardInstructions(phase, nextRole) {
 
 // src/quality/project-checks.ts
 import { readdir as readdir6, readFile as readFile12 } from "node:fs/promises";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 async function resolveBuildChecks(root, config, ownedPaths2 = []) {
   const configured = config.quality?.buildChecks?.map((check) => ({
     name: check.name ?? inferCheckName(check.command, check.args ?? []),
@@ -5315,8 +5380,8 @@ async function discoverProjectQualityChecks(root) {
   return dedupe2(commands).map((command) => commandLineToCheck(root, command)).filter((check) => Boolean(check));
 }
 async function candidateConstraintFiles(root) {
-  const files = [join17(root, "AGENTS.md")];
-  const skillsRoot = join17(root, ".agents/skills");
+  const files = [join18(root, "AGENTS.md")];
+  const skillsRoot = join18(root, ".agents/skills");
   let skillNames = [];
   try {
     skillNames = await readdir6(skillsRoot);
@@ -5324,7 +5389,7 @@ async function candidateConstraintFiles(root) {
     skillNames = [];
   }
   for (const skillName of skillNames.sort()) {
-    files.push(join17(skillsRoot, skillName, "SKILL.md"));
+    files.push(join18(skillsRoot, skillName, "SKILL.md"));
   }
   return files;
 }
@@ -5404,7 +5469,7 @@ function dedupeChecks(checks) {
 // src/wiki/closure.ts
 init_store();
 import { mkdir as mkdir11, readFile as readFile13, writeFile as writeFile11 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 async function ensureWikiClosure(root, taskId) {
   const existing = await readWikiClosure(root, taskId);
   if (existing) return existing;
@@ -5444,10 +5509,10 @@ async function evaluateWikiClosure(root, taskId) {
   return { valid: true, decision: "captured", closure };
 }
 function pathFor(root, taskId) {
-  return join18(root, ".kata/tasks", taskId, "wiki-closure.json");
+  return join19(root, ".kata/tasks", taskId, "wiki-closure.json");
 }
 async function persist(root, closure) {
-  await mkdir11(join18(root, ".kata/tasks", closure.taskId), { recursive: true });
+  await mkdir11(join19(root, ".kata/tasks", closure.taskId), { recursive: true });
   await writeFile11(pathFor(root, closure.taskId), `${JSON.stringify(closure, null, 2)}
 `, "utf8");
 }
@@ -5461,21 +5526,21 @@ function isWikiClosure(value) {
 init_store();
 init_record();
 import { readFile as readFile14, readdir as readdir7 } from "node:fs/promises";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 async function proposeFromPassedTask(root, taskId, input) {
-  const judgePath = join19(root, ".kata/tasks", taskId, "judge.json");
+  const judgePath = join20(root, ".kata/tasks", taskId, "judge.json");
   const judgeRaw = await readFile14(judgePath, "utf8");
   const judge2 = JSON.parse(judgeRaw);
   if (judge2.taskId !== taskId || judge2.result !== "PASS") {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} has not passed Judge (result: ${judge2.result})`);
   }
-  const statePath = join19(root, ".kata/tasks", taskId, "current-state.json");
+  const statePath = join20(root, ".kata/tasks", taskId, "current-state.json");
   const stateRaw = await readFile14(statePath, "utf8");
   const state = JSON.parse(stateRaw);
   if (state.phase !== "distill" && state.phase !== "archive") {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} must be in distill or archive phase (current: ${state.phase})`);
   }
-  const evidencePath = join19(root, `.kata/evidence/${taskId}-hard.json`);
+  const evidencePath = join20(root, `.kata/evidence/${taskId}-hard.json`);
   let evidenceIds = [];
   try {
     const evidenceRaw = await readFile14(evidencePath, "utf8");
@@ -5483,11 +5548,11 @@ async function proposeFromPassedTask(root, taskId, input) {
     if (parsed.id) evidenceIds = [parsed.id];
   } catch {
     const { readdir: readdir11 } = await import("node:fs/promises");
-    const evidenceDir = join19(root, ".kata/evidence");
+    const evidenceDir = join20(root, ".kata/evidence");
     const files = await readdir11(evidenceDir);
     const taskEvidenceFiles = files.filter((f) => f.startsWith(`${taskId}-`));
     for (const file of taskEvidenceFiles) {
-      const raw = await readFile14(join19(evidenceDir, file), "utf8");
+      const raw = await readFile14(join20(evidenceDir, file), "utf8");
       const parsed = JSON.parse(raw);
       if (parsed.id) evidenceIds.push(parsed.id);
     }
@@ -5556,11 +5621,11 @@ async function readTask2(root, taskId) {
   return readJson(root, `.kata/tasks/${taskId}/task.json`);
 }
 async function readJson(root, path) {
-  return JSON.parse(await readFile14(join19(root, path), "utf8"));
+  return JSON.parse(await readFile14(join20(root, path), "utf8"));
 }
 async function readText(root, path) {
   try {
-    return await readFile14(join19(root, path), "utf8");
+    return await readFile14(join20(root, path), "utf8");
   } catch {
     return "";
   }
@@ -5574,14 +5639,14 @@ async function sourceRefsForTask(root, taskId, ownedPaths2) {
     ...ownedPaths2
   ];
   try {
-    const evidenceFiles = await readdir7(join19(root, ".kata/evidence"));
+    const evidenceFiles = await readdir7(join20(root, ".kata/evidence"));
     refs.push(...evidenceFiles.filter((file) => file.startsWith(`${taskId}-`)).map((file) => `.kata/evidence/${file}`));
   } catch {
   }
   const existing = [];
   for (const ref of refs) {
     try {
-      await readFile14(join19(root, ref), "utf8");
+      await readFile14(join20(root, ref), "utf8");
       existing.push(ref);
     } catch {
     }
@@ -5591,7 +5656,7 @@ async function sourceRefsForTask(root, taskId, ownedPaths2) {
 async function hashSources(root, refs) {
   const hashes = {};
   for (const ref of refs) {
-    hashes[ref] = computeFileHash(await readFile14(join19(root, ref), "utf8"));
+    hashes[ref] = computeFileHash(await readFile14(join20(root, ref), "utf8"));
   }
   return hashes;
 }
@@ -5623,11 +5688,11 @@ function statementFor(taskId, task, design) {
 
 // src/workflow/navigation.ts
 import { readdir as readdir8, readFile as readFile16 } from "node:fs/promises";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 
 // src/quality/repair-obligations.ts
 import { mkdir as mkdir12, readFile as readFile15, writeFile as writeFile12 } from "node:fs/promises";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 async function readObligations(root, taskId) {
   try {
     const raw = await readFile15(obligationsPath(root, taskId), "utf8");
@@ -5683,10 +5748,10 @@ async function resolveObligationsForRevision(root, taskId, revisionId, resolvedA
   return existing;
 }
 function obligationsPath(root, taskId) {
-  return join20(root, ".kata/tasks", taskId, "repair-obligations.json");
+  return join21(root, ".kata/tasks", taskId, "repair-obligations.json");
 }
 async function writeObligations(root, taskId, obligations) {
-  await mkdir12(join20(root, ".kata/tasks", taskId), { recursive: true });
+  await mkdir12(join21(root, ".kata/tasks", taskId), { recursive: true });
   const record = {
     obligations,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -5698,21 +5763,21 @@ async function writeObligations(root, taskId, obligations) {
 // src/workflow/navigation.ts
 async function readUpstreamSummary(root, taskId) {
   const evidenceFiles = await listEvidenceFiles(root, taskId);
-  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile(join21(root, ".kata/evidence", file))));
+  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile(join22(root, ".kata/evidence", file))));
   const revisionIds = [...new Set(evidence.map((item) => item?.revisionId).filter((id) => Boolean(id)))];
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : void 0;
-  const review = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join21(root, ".kata/tasks", taskId, "review.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join21(root, ".kata/tasks", taskId, "review.json")) : null;
+  const review = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join22(root, ".kata/tasks", taskId, "review.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join22(root, ".kata/tasks", taskId, "review.json")) : null;
   const findings = review?.findings ?? [];
   const invalidReviewApproval = review?.status === "approved" && !review.reviewEvidence?.trim();
-  const judge2 = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join21(root, ".kata/tasks", taskId, "judge.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join21(root, ".kata/tasks", taskId, "judge.json")) : null;
+  const judge2 = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join22(root, ".kata/tasks", taskId, "judge.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join22(root, ".kata/tasks", taskId, "judge.json")) : null;
   const failedAcceptance = judge2?.acceptance?.filter((item) => item.result === "FAIL") ?? [];
-  const verify = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join21(root, ".kata/tasks", taskId, "verify.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join21(root, ".kata/tasks", taskId, "verify.json")) : null;
+  const verify = currentRevisionId && !mixedRevision ? onlyCurrentRevision(await readJsonFile(join22(root, ".kata/tasks", taskId, "verify.json")), currentRevisionId) : !mixedRevision ? await readJsonFile(join22(root, ".kata/tasks", taskId, "verify.json")) : null;
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === "FAIL") ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   const obligations = await readObligations(root, taskId);
   const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
-  const task = await readJsonFile(join21(root, ".kata/tasks", taskId, "task.json"));
+  const task = await readJsonFile(join22(root, ".kata/tasks", taskId, "task.json"));
   const reviewMode = task?.workflowProfile?.reviewMode;
   return {
     ...currentRevisionId ? { currentRevisionId } : {},
@@ -6022,11 +6087,11 @@ async function readJsonFile(path) {
 }
 async function listEvidenceFiles(root, taskId) {
   try {
-    const evidenceDir = join21(root, ".kata/evidence");
+    const evidenceDir = join22(root, ".kata/evidence");
     const candidates = (await readdir8(evidenceDir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith(".json"));
     const matches = await Promise.all(candidates.map(async (file) => ({
       file,
-      evidence: await readJsonFile(join21(evidenceDir, file))
+      evidence: await readJsonFile(join22(evidenceDir, file))
     })));
     return matches.filter(({ evidence }) => evidence?.taskId === taskId).map(({ file }) => file).sort();
   } catch {
@@ -6110,9 +6175,9 @@ async function cmdOpen(taskId, root, options = {}) {
 async function cmdDesign(taskId, root, options) {
   const actor = actorFor({ id: "kata-designer", role: "designer" }, options?.platform);
   const workflowProfile = await acknowledgeCometOpenIfRequired(root, taskId);
-  const taskPath = join22(root, ".kata/tasks", taskId, "task.json");
+  const taskPath = join23(root, ".kata/tasks", taskId, "task.json");
   const task = JSON.parse(await readFile17(taskPath, "utf8"));
-  const current = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (!task.acceptanceMatrix && (current.phase === "implement" || current.phase === "hardVerify")) {
     const handoff2 = await createHandoff(root, taskId, "designer");
     return {
@@ -6162,14 +6227,14 @@ async function cmdDesign(taskId, root, options) {
   };
 }
 async function acknowledgeCometOpenIfRequired(root, taskId) {
-  const task = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   if (!isWorkflowProfile(task.workflowProfile)) return void 0;
   if (task.workflowProfile.comet.openStatus !== "required") return task.workflowProfile;
   return acknowledgeCometOpen(root, taskId);
 }
 async function cmdBuild(taskId, root, options = {}) {
   const current = JSON.parse(
-    await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8")
+    await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8")
   );
   let enteredReviewRepair = false;
   if (current.phase === "plan") {
@@ -6203,7 +6268,7 @@ async function cmdBuild(taskId, root, options = {}) {
     let buildOwnedPaths = [];
     try {
       const currentTask = JSON.parse(
-        await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8")
+        await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8")
       );
       if (currentTask.ownedPaths?.length) {
         buildOwnedPaths = currentTask.ownedPaths;
@@ -6227,7 +6292,7 @@ async function cmdBuild(taskId, root, options = {}) {
       }
     };
   }
-  const taskPath = join22(root, ".kata/tasks", taskId, "task.json");
+  const taskPath = join23(root, ".kata/tasks", taskId, "task.json");
   const task = JSON.parse(await readFile17(taskPath, "utf8"));
   const projectChecks = options.checks?.length ? options.checks : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
   let matrixDerivedChecks = [];
@@ -6429,11 +6494,11 @@ function resolveCheckForRow(row, evidence, root) {
   const template = evidence.command.trim();
   const hasPlaceholder = template.includes("{{selector}}");
   if (hasSelector && hasPlaceholder) {
-    const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join22(root, "kata") : root;
+    const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join23(root, "kata") : root;
     const selector2 = testSelectorForRuntime(evidence.testSelector, runtimeProjectDir2, root);
     const filled = template.replace("{{selector}}", selector2);
     const [rawCommand2, ...args2] = filled.split(/\s+/);
-    const runtimeEntry2 = rawCommand2 === "vitest" ? join22(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "tsc" ? join22(runtimeProjectDir2, "node_modules", "typescript", "bin", "tsc") : void 0;
+    const runtimeEntry2 = rawCommand2 === "vitest" ? join23(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "tsc" ? join23(runtimeProjectDir2, "node_modules", "typescript", "bin", "tsc") : void 0;
     const command2 = runtimeEntry2 ? process.execPath : rawCommand2;
     return {
       name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
@@ -6449,9 +6514,9 @@ function resolveCheckForRow(row, evidence, root) {
     const isKnownRunner = knownRunners.some((runner) => template === runner || template.startsWith(runner + " "));
     if (isKnownRunner) {
       const [rawCommand2, ...args2] = template.split(/\s+/);
-      const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join22(root, "kata") : root;
+      const runtimeProjectDir2 = row.testPaths.every((path) => path.startsWith("kata/")) ? join23(root, "kata") : root;
       const selector2 = testSelectorForRuntime(evidence.testSelector, runtimeProjectDir2, root);
-      const runtimeEntry2 = rawCommand2 === "vitest" ? join22(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "pytest" ? rawCommand2 : void 0;
+      const runtimeEntry2 = rawCommand2 === "vitest" ? join23(runtimeProjectDir2, "node_modules", "vitest", "vitest.mjs") : rawCommand2 === "pytest" ? rawCommand2 : void 0;
       const command2 = runtimeEntry2 === void 0 && rawCommand2 === "uv" ? template : runtimeEntry2 ? process.execPath : rawCommand2;
       return {
         name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
@@ -6465,9 +6530,9 @@ function resolveCheckForRow(row, evidence, root) {
     return new Error(`Matrix row ${row.acceptanceId} declares a testSelector but command "${template}" does not support selectors. Use vitest, pytest, uv run pytest, or a command template with {{selector}} placeholder.`);
   }
   const [rawCommand, ...args] = template.split(/\s+/);
-  const runtimeProjectDir = row.testPaths.every((path) => path.startsWith("kata/")) ? join22(root, "kata") : root;
+  const runtimeProjectDir = row.testPaths.every((path) => path.startsWith("kata/")) ? join23(root, "kata") : root;
   const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : void 0;
-  const runtimeEntry = rawCommand === "vitest" ? join22(runtimeProjectDir, "node_modules", "vitest", "vitest.mjs") : rawCommand === "tsc" ? join22(runtimeProjectDir, "node_modules", "typescript", "bin", "tsc") : void 0;
+  const runtimeEntry = rawCommand === "vitest" ? join23(runtimeProjectDir, "node_modules", "vitest", "vitest.mjs") : rawCommand === "tsc" ? join23(runtimeProjectDir, "node_modules", "typescript", "bin", "tsc") : void 0;
   const command = runtimeEntry ? process.execPath : rawCommand;
   return {
     name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
@@ -6522,21 +6587,21 @@ async function resolveSealOwnedPaths(root, taskId, task, options) {
 }
 async function persistTaskOwnedPaths(root, taskId, task, ownedPaths2) {
   await writeFile13(
-    join22(root, ".kata/tasks", taskId, "task.json"),
+    join23(root, ".kata/tasks", taskId, "task.json"),
     `${JSON.stringify({ ...task, ownedPaths: ownedPaths2 }, null, 2)}
 `,
     "utf8"
   );
 }
 async function writeEvidence(root, taskId, evidence) {
-  const evidenceDir = join22(root, ".kata/evidence");
+  const evidenceDir = join23(root, ".kata/evidence");
   await mkdir13(evidenceDir, { recursive: true });
   const { readdir: readdir11, unlink } = await import("node:fs/promises");
   try {
     const files = await readdir11(evidenceDir);
     for (const file of files) {
       if (file.startsWith(`${taskId}-`) && file.endsWith(".json")) {
-        await unlink(join22(evidenceDir, file)).catch(() => {
+        await unlink(join23(evidenceDir, file)).catch(() => {
         });
       }
     }
@@ -6544,7 +6609,7 @@ async function writeEvidence(root, taskId, evidence) {
   }
   for (const envelope of evidence) {
     await writeFile13(
-      join22(evidenceDir, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
+      join23(evidenceDir, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
       `${JSON.stringify(envelope, null, 2)}
 `,
       "utf8"
@@ -6553,7 +6618,7 @@ async function writeEvidence(root, taskId, evidence) {
   const testEvidence = evidence.find((item) => item.kind === "test");
   if (testEvidence) {
     await writeFile13(
-      join22(evidenceDir, `${taskId}-hard.json`),
+      join23(evidenceDir, `${taskId}-hard.json`),
       `${JSON.stringify(testEvidence, null, 2)}
 `,
       "utf8"
@@ -6564,9 +6629,9 @@ function evidenceFileSuffix(envelope) {
   return (envelope.name ?? envelope.kind).replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-|-$/g, "") || envelope.kind;
 }
 async function reenterImplementForReviewRepair(taskId, root, actor) {
-  const reviewRaw = await readFile17(join22(root, ".kata/tasks", taskId, "review.json"), "utf8");
+  const reviewRaw = await readFile17(join23(root, ".kata/tasks", taskId, "review.json"), "utf8");
   const review = JSON.parse(reviewRaw);
-  const taskRaw = await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   const isStrict = task.workflowProfile?.reviewMode === "strict";
   const revision = await readCurrentTaskRevision(root, taskId);
@@ -6595,7 +6660,7 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
     });
   });
   await writeFile13(
-    join22(root, ".kata/tasks", taskId, "repair.json"),
+    join23(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "review",
@@ -6616,7 +6681,7 @@ async function reenterImplementForReviewRepair(taskId, root, actor) {
 }
 async function readActiveReviewRepairBaseline(root, taskId) {
   try {
-    const repair = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "repair.json"), "utf8"));
+    const repair = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "repair.json"), "utf8"));
     if (repair.reason !== "review_findings" || repair.resolvedAt || !repair.baselineManifestHash) return void 0;
     return repair.baselineManifestHash;
   } catch (error) {
@@ -6625,7 +6690,7 @@ async function readActiveReviewRepairBaseline(root, taskId) {
   }
 }
 async function resolveReviewRepair(root, taskId, revisionId) {
-  const repairPath = join22(root, ".kata/tasks", taskId, "repair.json");
+  const repairPath = join23(root, ".kata/tasks", taskId, "repair.json");
   const repair = JSON.parse(await readFile17(repairPath, "utf8"));
   await writeFile13(repairPath, `${JSON.stringify({
     ...repair,
@@ -6637,7 +6702,7 @@ async function resolveReviewRepair(root, taskId, revisionId) {
 async function reenterImplementForVerifyRepair(taskId, root, actor) {
   let verifyRaw;
   try {
-    verifyRaw = await readFile17(join22(root, ".kata/tasks", taskId, "verify.json"), "utf8");
+    verifyRaw = await readFile17(join23(root, ".kata/tasks", taskId, "verify.json"), "utf8");
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
@@ -6677,7 +6742,7 @@ async function reenterImplementForVerifyRepair(taskId, root, actor) {
     updatedAt: now
   });
   await writeFile13(
-    join22(root, ".kata/tasks", taskId, "repair.json"),
+    join23(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "hardVerify",
@@ -6695,7 +6760,7 @@ async function reenterImplementForVerifyRepair(taskId, root, actor) {
   );
 }
 async function reenterImplementForRepair(taskId, root, actor) {
-  const judgeRaw = await readFile17(join22(root, ".kata/tasks", taskId, "judge.json"), "utf8");
+  const judgeRaw = await readFile17(join23(root, ".kata/tasks", taskId, "judge.json"), "utf8");
   const judgeResult = JSON.parse(judgeRaw);
   const repairableScopes = /* @__PURE__ */ new Set([
     "missing_test_evidence",
@@ -6725,7 +6790,7 @@ async function reenterImplementForRepair(taskId, root, actor) {
     updatedAt: now
   });
   await writeFile13(
-    join22(root, ".kata/tasks", taskId, "repair.json"),
+    join23(root, ".kata/tasks", taskId, "repair.json"),
     `${JSON.stringify({
       taskId,
       fromPhase: "judge",
@@ -6743,9 +6808,9 @@ async function reenterImplementForRepair(taskId, root, actor) {
   );
 }
 async function cmdVerify(taskId, root, options = {}) {
-  const taskRaw = await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
-  const current = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   const currentDiffHash = await computeDiffHash(root);
   const evidence = await readTaskEvidence(root, taskId, options);
   const scopeHashes = await currentScopeHashes(root, evidence);
@@ -6764,7 +6829,7 @@ async function cmdVerify(taskId, root, options = {}) {
   const implementationReady = verifyResult.result === "PASS";
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   if (!wikiClosure.valid) verifyResult.result = "FAIL";
-  await writeFile13(join22(root, ".kata/tasks", taskId, "verify.json"), `${JSON.stringify(verifyResult, null, 2)}
+  await writeFile13(join23(root, ".kata/tasks", taskId, "verify.json"), `${JSON.stringify(verifyResult, null, 2)}
 `, "utf8");
   const failedScopes = verifyResult.acceptance.filter((acceptance) => acceptance.result === "FAIL").map((acceptance) => acceptance.repairScope).filter((scope) => scope !== void 0);
   const repairReason = failedScopes.length > 0 && failedScopes.every((scope) => scope === "revision_superseded") ? "rebuild_superseded_revision" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "stale_evidence") ? "rebuild_stale_evidence" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "insufficient_evidence_level") ? "add_entrypoint_evidence" : failedScopes.length > 0 && failedScopes.every((scope) => scope === "unresolved_repair_obligation") ? "resolve_repair_obligations" : "repair_failed_verify";
@@ -6813,7 +6878,7 @@ async function cmdReview(taskId, root, options = {}) {
   try {
     const isApprove = options.approve === true;
     if (isApprove) {
-      const current = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+      const current = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
       if (current.phase !== "review") {
         return {
           command: "review",
@@ -6833,7 +6898,7 @@ async function cmdReview(taskId, root, options = {}) {
           error: "Review approval requires non-empty review evidence."
         };
       }
-      const reviewPath2 = join22(root, ".kata/tasks", taskId, "review.json");
+      const reviewPath2 = join23(root, ".kata/tasks", taskId, "review.json");
       const revisionId2 = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
       const existing = await readReview(root, taskId);
       if (revisionId2 && existing.revisionId !== revisionId2) {
@@ -6871,13 +6936,13 @@ async function cmdReview(taskId, root, options = {}) {
     await guardTransition(options.guard, "check", taskId, "review");
     const state = await transition(taskId, "review", actorFor(reviewerActor, options.platform), { root });
     await guardTransition(options.guard, "apply", taskId, "review");
-    const reviewPath = join22(root, ".kata/tasks", taskId, "review.json");
+    const reviewPath = join23(root, ".kata/tasks", taskId, "review.json");
     const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
     try {
       const previous = JSON.parse(await readFile17(reviewPath, "utf8"));
       if (revisionId && previous.revisionId !== revisionId) {
         if (previous.findings?.length) {
-          const historyPath = join22(root, ".kata/tasks", taskId, "review-history.jsonl");
+          const historyPath = join23(root, ".kata/tasks", taskId, "review-history.jsonl");
           const historyEntry = JSON.stringify({
             revisionId: previous.revisionId,
             findings: previous.findings,
@@ -6902,7 +6967,7 @@ async function cmdReview(taskId, root, options = {}) {
   }
 }
 async function cmdJudge(taskId, root, options = {}) {
-  const current = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (current.phase !== "review") {
     return {
       command: "judge",
@@ -6928,7 +6993,7 @@ async function cmdJudge(taskId, root, options = {}) {
       diagnostics: { requiresUserConfirmation: true, trustBoundary: "judge_gate" }
     };
   }
-  const taskRaw = await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   const review = await readReview(root, taskId);
   if (review.status !== "approved" || !review.reviewEvidence?.trim()) {
@@ -7005,14 +7070,14 @@ async function cmdJudge(taskId, root, options = {}) {
   };
 }
 async function readTaskEvidence(root, taskId, options = {}) {
-  const evidenceDir = join22(root, ".kata/evidence");
+  const evidenceDir = join23(root, ".kata/evidence");
   let evidence = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
     const files = await readdir11(evidenceDir);
     const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
     for (const file of candidateFiles) {
-      const raw = await readFile17(join22(evidenceDir, file), "utf8");
+      const raw = await readFile17(join23(evidenceDir, file), "utf8");
       const parsed = JSON.parse(raw);
       if (parsed.taskId === taskId) evidence.push(parsed);
     }
@@ -7023,7 +7088,7 @@ async function readTaskEvidence(root, taskId, options = {}) {
 }
 async function readReview(root, taskId) {
   try {
-    const reviewRaw = await readFile17(join22(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    const reviewRaw = await readFile17(join23(root, ".kata/tasks", taskId, "review.json"), "utf8");
     const reviewParsed = JSON.parse(reviewRaw);
     return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
   } catch {
@@ -7032,7 +7097,7 @@ async function readReview(root, taskId) {
 }
 async function readReviewRevisionId(root, taskId) {
   try {
-    const raw = await readFile17(join22(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    const raw = await readFile17(join23(root, ".kata/tasks", taskId, "review.json"), "utf8");
     return JSON.parse(raw).revisionId;
   } catch {
     return void 0;
@@ -7095,7 +7160,7 @@ async function currentScopeHashes(root, evidence) {
 }
 async function cmdArchive(taskId, root, options = {}) {
   let archivePhase = "distill";
-  const current = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const current = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   if (!options.confirmHostModel) {
     return {
       command: "archive",
@@ -7136,7 +7201,7 @@ async function cmdArchive(taskId, root, options = {}) {
   const distillation = await distillPassedTaskKnowledge(root, taskId);
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   if (!wikiClosure.valid) {
-    const latest = JSON.parse(await readFile17(join22(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+    const latest = JSON.parse(await readFile17(join23(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
     return {
       command: "archive",
       taskId,
@@ -7146,22 +7211,22 @@ async function cmdArchive(taskId, root, options = {}) {
       diagnostics: { wikiClosure, distillation }
     };
   }
-  const taskRaw = await readFile17(join22(root, ".kata/tasks", taskId, "task.json"), "utf8");
+  const taskRaw = await readFile17(join23(root, ".kata/tasks", taskId, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   let judgeRaw = null;
   try {
-    judgeRaw = await readFile17(join22(root, ".kata/tasks", taskId, "judge.json"), "utf8");
+    judgeRaw = await readFile17(join23(root, ".kata/tasks", taskId, "judge.json"), "utf8");
   } catch {
   }
   let reviewRaw = null;
   try {
-    reviewRaw = await readFile17(join22(root, ".kata/tasks", taskId, "review.json"), "utf8");
+    reviewRaw = await readFile17(join23(root, ".kata/tasks", taskId, "review.json"), "utf8");
   } catch {
   }
   let evidenceIds = [];
   try {
     const { readdir: readdir11 } = await import("node:fs/promises");
-    const files = await readdir11(join22(root, ".kata/evidence"));
+    const files = await readdir11(join23(root, ".kata/evidence"));
     evidenceIds = files.filter((f) => f.startsWith(`${taskId}-`));
   } catch {
   }
@@ -7177,7 +7242,7 @@ async function cmdArchive(taskId, root, options = {}) {
   if (archivePhase === "archive") {
     try {
       const { stat: stat6 } = await import("node:fs/promises");
-      await stat6(join22(root, ".codegraph/index.db"));
+      await stat6(join23(root, ".codegraph/index.db"));
       const { execFileSync: execFileSync7 } = await import("node:child_process");
       const output = execFileSync7("codegraph", ["index"], {
         encoding: "utf8",
@@ -7245,14 +7310,14 @@ async function cmdTweak(taskId, root, options) {
 import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
 import { execFileSync as execFileSync4 } from "node:child_process";
 import { mkdir as mkdir14, readFile as readFile18, writeFile as writeFile14 } from "node:fs/promises";
-import { join as join23, resolve as resolve6 } from "node:path";
+import { join as join24, resolve as resolve6 } from "node:path";
 import { existsSync as existsSync3 } from "node:fs";
 async function createContextPacket(input) {
   assertValidTaskId(input.taskId);
   assertRole(input.fromRole);
   assertRole(input.toRole);
   const handoff = await createHandoff(input.root, input.taskId, input.toRole);
-  const task = JSON.parse(await readFile18(join23(input.root, ".kata/tasks", input.taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile18(join24(input.root, ".kata/tasks", input.taskId, "task.json"), "utf8"));
   const context = await buildContextManifest({ root: input.root, taskId: input.taskId, sourceRefs: handoff.context.sourceRefs });
   const designRefs = designRefsFor(input.root, input.taskId, input.toRole);
   const packet = { protocolVersion: 1, id: `handoff-${randomUUID6().slice(0, 12)}`, taskId: input.taskId, createdAt: (/* @__PURE__ */ new Date()).toISOString(), from: { role: input.fromRole, ...input.platform ? { platform: safePlatform(input.platform) } : {} }, to: { role: input.toRole }, phase: handoff.fromPhase, repository: await anchor(input.root, input.taskId), task, context: { requiredReads: existingReads(input.root, input.taskId, designRefs), designRefs, sourceRefs: [...handoff.context.sourceRefs].sort(), authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })), excludedWiki: context.excludedWiki.map((record) => ({ id: record.id, reason: record.reason })), evidencePaths: handoff.context.evidenceIds.map((id) => `.kata/evidence/${id}`), priorArtifacts: roleArtifacts(input.root, input.taskId) }, permissions: { allowedWrites: allowedWrites(input.toRole, input.taskId, input.root), guardInstructions: handoff.guardInstructions }, nextAction: `Perform ${input.toRole} work after verifying this handoff.` };
@@ -7331,12 +7396,26 @@ function existingReads(root, taskId, designRefs) {
   });
 }
 function designRefsFor(root, taskId, role) {
-  const designPath = `.kata/tasks/${taskId}/design.md`;
-  return role === "implementer" && existsSync3(join23(root, designPath)) ? [designPath] : [];
+  if (role !== "implementer" && role !== "reviewer" && role !== "judge") return [];
+  const candidates = [
+    `.kata/tasks/${taskId}/design.md`,
+    `openspec/changes/${taskId}/design.md`
+  ];
+  const specsDir = join24(root, "docs/superpowers/specs");
+  try {
+    const { readdirSync: readdirSync2 } = __require("node:fs");
+    if (existsSync3(specsDir)) {
+      for (const entry of readdirSync2(specsDir)) {
+        if (entry.endsWith("-design.md")) candidates.push(`docs/superpowers/specs/${entry}`);
+      }
+    }
+  } catch {
+  }
+  return candidates.filter((p) => existsSync3(join24(root, p)));
 }
 function taskContextPaths(root, taskId) {
   const base = `.kata/tasks/${taskId}`;
-  return [`${base}/task.json`, `${base}/current-state.json`, ...existsSync3(join23(root, base, "design.md")) ? [`${base}/design.md`] : []];
+  return [`${base}/task.json`, `${base}/current-state.json`, ...existsSync3(join24(root, base, "design.md")) ? [`${base}/design.md`] : []];
 }
 function sameScopeIdentity(left, right) {
   if (left.kind !== right.kind || left.paths.length !== right.paths.length) return false;
@@ -7349,20 +7428,20 @@ function roleArtifacts(root, taskId) {
 }
 function allowedWrites(role, taskId, root = process.cwd()) {
   if (role === "designer") return ["docs/", `.kata/tasks/${taskId}/`];
-  if (role === "implementer") return [existsSync3(join23(root, "packages")) ? "packages/" : "src/", "tests/", "docs/"];
+  if (role === "implementer") return [existsSync3(join24(root, "packages")) ? "packages/" : "src/", "tests/", "docs/"];
   return [`.kata/tasks/${taskId}/${role === "reviewer" ? "review.json" : role === "judge" ? "judge.json" : "wiki/"}`];
 }
 async function writePacket(root, packet) {
-  const directory = join23(root, ".kata/tasks", packet.taskId, "handoffs");
+  const directory = join24(root, ".kata/tasks", packet.taskId, "handoffs");
   await mkdir14(directory, { recursive: true });
   await writeFile14(packetPath(root, packet.taskId, packet.id), `${JSON.stringify(packet, null, 2)}
 `);
 }
 function packetPath(root, taskId, id) {
-  return join23(root, ".kata/tasks", taskId, "handoffs", `${id}.json`);
+  return join24(root, ".kata/tasks", taskId, "handoffs", `${id}.json`);
 }
 function receiptPath(root, taskId, id) {
-  return join23(root, ".kata/tasks", taskId, "handoffs", `${id}.receipt.json`);
+  return join24(root, ".kata/tasks", taskId, "handoffs", `${id}.receipt.json`);
 }
 function hash(value) {
   return createHash6("sha256").update(value).digest("hex");
@@ -7421,11 +7500,11 @@ function renderDelegationPrompt(taskId, handoffId, platform, role, designRefs = 
 
 // src/workflow/user-choice-gate.ts
 import { mkdir as mkdir15, readFile as readFile19, writeFile as writeFile15 } from "node:fs/promises";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 async function createUserChoiceGate(input) {
   assertValidTaskId(input.taskId);
   const gate = { taskId: input.taskId, boundary: input.boundary, ...input.revisionId ? { revisionId: input.revisionId } : {}, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
-  await mkdir15(join24(input.root, ".kata/tasks", input.taskId), { recursive: true });
+  await mkdir15(join25(input.root, ".kata/tasks", input.taskId), { recursive: true });
   await writeFile15(pathFor2(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}
 `);
 }
@@ -7458,14 +7537,14 @@ function assertRevision(gate, revisionId) {
   if (gate.revisionId !== revisionId) throw new Error(`User choice gate ${gate.boundary} is not bound to the current revision.`);
 }
 function pathFor2(root, taskId, boundary) {
-  return join24(root, ".kata/tasks", taskId, `user-choice-${boundary}.json`);
+  return join25(root, ".kata/tasks", taskId, `user-choice-${boundary}.json`);
 }
 
 // src/wiki/drift.ts
 init_record();
 init_store();
 import { readFile as readFile20 } from "node:fs/promises";
-import { join as join25 } from "node:path";
+import { join as join26 } from "node:path";
 async function verifySources(root) {
   const records = await readWikiRecords(root);
   const intact = [];
@@ -7486,7 +7565,7 @@ async function verifySources(root) {
     }
     for (const [sourcePath, expectedHash] of sourceHashEntries) {
       try {
-        const absolutePath = join25(root, sourcePath);
+        const absolutePath = join26(root, sourcePath);
         const content = await readFile20(absolutePath, "utf8");
         const currentHash = computeFileHash(content);
         if (currentHash !== expectedHash) {
@@ -7562,7 +7641,7 @@ init_store();
 
 // src/wiki/lifecycle.ts
 import { mkdir as mkdir16, readFile as readFile21, readdir as readdir9, writeFile as writeFile16 } from "node:fs/promises";
-import { join as join26 } from "node:path";
+import { join as join27 } from "node:path";
 init_store();
 var reviewAfterDays = 90;
 var maxCandidatesPerTask = 2;
@@ -7580,7 +7659,7 @@ async function auditWiki(root) {
   }
   const candidatesByTask = /* @__PURE__ */ new Map();
   for (const record of recordsBeforeDrift.filter((item) => item.status === "candidate")) candidatesByTask.set(record.validationTaskId, (candidatesByTask.get(record.validationTaskId) ?? 0) + 1);
-  const pages = await countPages(join26(root, ".llmwiki"));
+  const pages = await countPages(join27(root, ".llmwiki"));
   const duplicateGroups = [...duplicates.values()].filter((group) => group.length > 1).sort((a, b) => a[0].localeCompare(b[0]));
   const overBudgetTasks = [...candidatesByTask.entries()].filter(([, count]) => count > maxCandidatesPerTask).map(([taskId, candidates]) => ({ taskId, candidates, limit: maxCandidatesPerTask })).sort((a, b) => a.taskId.localeCompare(b.taskId));
   const recommendedActions = lifecycleActions(records, {
@@ -7594,14 +7673,14 @@ async function auditWiki(root) {
 }
 async function createRefreshPacket(root, taskId) {
   const audit = await auditWiki(root);
-  const path = join26(root, ".kata/tasks", taskId, "wiki-refresh.json");
-  await mkdir16(join26(root, ".kata/tasks", taskId), { recursive: true });
+  const path = join27(root, ".kata/tasks", taskId, "wiki-refresh.json");
+  await mkdir16(join27(root, ".kata/tasks", taskId), { recursive: true });
   await writeFile16(path, `${JSON.stringify({ taskId, generatedAt: audit.generatedAt, staleIds: audit.staleIds, reviewDueIds: audit.reviewDueIds, duplicateGroups: audit.duplicateGroups, instructions: ["Revalidate code/document anchors before editing.", "Update, merge, mark stale, or reject records; do not promote automatically."] }, null, 2)}
 `);
   return { path: `.kata/tasks/${taskId}/wiki-refresh.json`, audit };
 }
 async function relevantWiki(root, taskId, limit = 8) {
-  const task = JSON.parse(await readFile21(join26(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile21(join27(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   const terms = new Set(`${task.title ?? ""} ${(task.acceptance ?? []).map((item) => item.statement ?? "").join(" ")}`.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? []);
   return (await readWikiRecords(root)).filter((record) => record.status === "verified").map((record) => ({ record, score: score(record, terms) })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id)).slice(0, limit).map((item) => item.record);
 }
@@ -7612,7 +7691,7 @@ function score(record, terms) {
 async function countPages(root) {
   try {
     const entries = await readdir9(root, { withFileTypes: true });
-    const counts = await Promise.all(entries.map((entry) => entry.isDirectory() ? countPages(join26(root, entry.name)) : entry.name.endsWith(".md") ? 1 : 0));
+    const counts = await Promise.all(entries.map((entry) => entry.isDirectory() ? countPages(join27(root, entry.name)) : entry.name.endsWith(".md") ? 1 : 0));
     return counts.reduce((a, b) => a + b, 0);
   } catch {
     return 0;
@@ -7697,7 +7776,7 @@ ${b}`.toLowerCase();
 
 // src/hooks/runtime.ts
 import { mkdir as mkdir17, readFile as readFile22, rm as rm4, writeFile as writeFile17 } from "node:fs/promises";
-import { dirname as dirname8, join as join27 } from "node:path";
+import { dirname as dirname8, join as join28 } from "node:path";
 async function activateHookTask(input) {
   assertValidTaskId(input.taskId);
   const phase = await readTaskPhase(input.root, input.taskId);
@@ -7741,11 +7820,11 @@ async function readActiveHookTask(root) {
   }
 }
 async function readTaskPhase(root, taskId) {
-  const state = JSON.parse(await readFile22(join27(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile22(join28(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   return state.phase;
 }
 function activeHookTaskPath(root) {
-  return join27(root, ".kata/runtime/active-task.json");
+  return join28(root, ".kata/runtime/active-task.json");
 }
 function isNodeError7(error) {
   return error instanceof Error && "code" in error;
@@ -7753,7 +7832,7 @@ function isNodeError7(error) {
 
 // src/adapters/doctor.ts
 import { readFile as readFile23, stat as stat5 } from "node:fs/promises";
-import { join as join28 } from "node:path";
+import { join as join29 } from "node:path";
 async function doctor(platform, scope, options = {}) {
   const root = installationRoot(scope, options);
   const manifest = await readOwnershipManifest(root);
@@ -7798,7 +7877,7 @@ function hookConfigPathFor2(platform, scope) {
   return null;
 }
 async function checkPath(root, manifest, relativePath, kind) {
-  const content = await readOptional2(join28(root, relativePath));
+  const content = await readOptional2(join29(root, relativePath));
   if (content === void 0) return { path: relativePath, kind, status: "missing" };
   const owned = manifest.files?.[relativePath];
   if (owned?.sha256 && owned.sha256 !== sha2562(content)) {
@@ -7808,7 +7887,7 @@ async function checkPath(root, manifest, relativePath, kind) {
 }
 async function checkExists(root, relativePath, kind) {
   try {
-    await stat5(join28(root, relativePath));
+    await stat5(join29(root, relativePath));
     return { path: relativePath, kind, status: "ok" };
   } catch (error) {
     if (isNodeError8(error) && error.code === "ENOENT") return { path: relativePath, kind, status: "missing" };
@@ -7816,7 +7895,7 @@ async function checkExists(root, relativePath, kind) {
   }
 }
 async function readOwnershipManifest(root) {
-  const content = await readOptional2(join28(root, ".kata/adapters/manifest.json"));
+  const content = await readOptional2(join29(root, ".kata/adapters/manifest.json"));
   if (!content) return {};
   try {
     return JSON.parse(content);
@@ -8321,6 +8400,7 @@ async function runInitWizardCommand(argv, defaultRoot) {
     language: plan.language,
     cometVersion
   }).catch(() => ({}));
+  const selectedPlatformIds = plan.selected.map((platform) => platform.platform);
   const cometInit = useAuto ? {
     command: "comet init",
     status: "deferred",
@@ -8328,11 +8408,12 @@ async function runInitWizardCommand(argv, defaultRoot) {
     root,
     scope: plan.scope,
     language: plan.language,
-    nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}`
+    nextCommand: `comet init ${root} --scope ${plan.scope} --language ${plan.language}${selectedPlatformIds.length > 0 ? ` --platform ${selectedPlatformIds.join(" --platform ")}` : ""}`
   } : await initCometProject({
     root,
     scope: plan.scope,
     language: plan.language,
+    platforms: selectedPlatformIds,
     extras: cometExtras,
     compat: cometCompat,
     cometVersion
@@ -8518,7 +8599,7 @@ async function runWorkflowCommand(command, change, root, platform, argv = []) {
 }
 async function readWorkflowPhase(root, taskId) {
   try {
-    const state = JSON.parse(await readFile24(join29(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+    const state = JSON.parse(await readFile24(join30(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
     return typeof state.phase === "string" ? state.phase : null;
   } catch {
     return null;
@@ -8551,7 +8632,7 @@ function valueAfter(argv, flag) {
   return index >= 0 ? argv[index + 1] : void 0;
 }
 async function requireWorkflowReceipt(root, taskId, role) {
-  const handoffDirectory = join29(root, ".kata/tasks", taskId, "handoffs");
+  const handoffDirectory = join30(root, ".kata/tasks", taskId, "handoffs");
   let entries;
   try {
     entries = await readdir10(handoffDirectory);
@@ -8631,7 +8712,7 @@ async function runGitFlowCommand(argv, root) {
   if (argv[0] !== "apply") throw new Error("Usage: kata-cli git-flow apply --change <task-id>");
   const taskId = parseChangeArg(argv.slice(1));
   if (!taskId) throw new Error("Usage: kata-cli git-flow apply --change <task-id>");
-  const task = JSON.parse(await readFile24(join29(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile24(join30(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   if (!isWorkflowProfile(task.workflowProfile) || task.workflowProfile.isolationMode !== "git_flow") {
     throw new Error(`Task ${taskId} does not use Git Flow isolation`);
   }
@@ -8733,14 +8814,14 @@ async function discoverSingleTaskForCurrentBranch(root) {
   if (!branch) return null;
   let taskIds;
   try {
-    taskIds = await readdir10(join29(root, ".kata/tasks"));
+    taskIds = await readdir10(join30(root, ".kata/tasks"));
   } catch {
     return null;
   }
   const matches = [];
   for (const taskId of taskIds) {
     try {
-      const task = JSON.parse(await readFile24(join29(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+      const task = JSON.parse(await readFile24(join30(root, ".kata/tasks", taskId, "task.json"), "utf8"));
       if (task.branch === branch && task.phase !== "archive") matches.push(task.id ?? taskId);
     } catch {
     }
@@ -8763,7 +8844,7 @@ async function runLocalStatusCommand(change, resolved, root = resolveWorkspaceRo
     };
   }
   if (await requiresRecovery(change, { root }).catch(() => false)) await recover(change, { root });
-  const state = JSON.parse(await readFile24(join29(root, ".kata/tasks", change, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile24(join30(root, ".kata/tasks", change, "current-state.json"), "utf8"));
   const autoActive = resolved?.source === "discovered" ? await activateHookTask({
     root,
     taskId: change,
@@ -8847,7 +8928,7 @@ async function runDispatchStatusCommand(root) {
   return statusDiagnostic(candidates);
 }
 async function readTaskContext(root, change) {
-  const taskRaw = await readFile24(join29(root, ".kata/tasks", change, "task.json"), "utf8");
+  const taskRaw = await readFile24(join30(root, ".kata/tasks", change, "task.json"), "utf8");
   const task = JSON.parse(taskRaw);
   let context;
   try {
@@ -9268,7 +9349,7 @@ function parseDelegationArgs(argv) {
   return args;
 }
 async function listTaskCandidates(root) {
-  const tasksRoot = join29(root, ".kata/tasks");
+  const tasksRoot = join30(root, ".kata/tasks");
   let entries;
   try {
     entries = await readdir10(tasksRoot);
@@ -9286,12 +9367,12 @@ async function listTaskCandidates(root) {
   return candidates.sort((a, b) => b.priority - a.priority || a.taskId.localeCompare(b.taskId));
 }
 async function readTaskCandidate(root, taskId) {
-  const task = JSON.parse(await readFile24(join29(root, ".kata/tasks", taskId, "task.json"), "utf8"));
+  const task = JSON.parse(await readFile24(join30(root, ".kata/tasks", taskId, "task.json"), "utf8"));
   const terminal = await resolveTerminalTask(root, taskId);
   if (terminal.taskId !== taskId) {
     throw new Error(`Task ${taskId} is redirected to ${terminal.taskId}`);
   }
-  const state = JSON.parse(await readFile24(join29(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile24(join30(root, ".kata/tasks", taskId, "current-state.json"), "utf8"));
   const phase = state.phase ?? "intake";
   const upstream = await readUpstreamSummary(root, taskId);
   const suggestion = suggestCandidateAction(phase, upstream);
@@ -9337,7 +9418,7 @@ async function runOrientCommand(argv) {
   const handoff = await createHandoff(root, change, role);
   const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...args.platform ? { platform: args.platform } : {} });
   const taskContext = await readTaskContext(root, change);
-  const state = JSON.parse(await readFile24(join29(root, ".kata/tasks", change, "current-state.json"), "utf8"));
+  const state = JSON.parse(await readFile24(join30(root, ".kata/tasks", change, "current-state.json"), "utf8"));
   const phase = typeof state.phase === "string" ? state.phase : handoff.fromPhase;
   const upstream = await readUpstreamSummary(root, change);
   const suggestion = suggestCandidateAction(phase, upstream);
