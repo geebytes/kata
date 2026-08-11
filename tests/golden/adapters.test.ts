@@ -3,6 +3,7 @@ import { commandManifest, platformCapabilities, renderSkill, skillCommands, type
 import { renderSkill as renderCodexSkill } from '../../src/adapters/codex.js';
 import { renderSkill as renderClaudeCodeSkill } from '../../src/adapters/claude-code.js';
 import { renderSkill as renderOpenCodeSkill } from '../../src/adapters/opencode.js';
+import { renderSkill as renderPiSkill } from '../../src/adapters/pi.js';
 import { renderSkill as renderGenericSkill } from '../../src/adapters/generic.js';
 import { platformDefinitions } from '../../src/adapters/platforms.js';
 
@@ -10,6 +11,7 @@ const renderers: Partial<Record<Platform, (command: (typeof skillCommands)[numbe
   codex: renderCodexSkill,
   'claude-code': renderClaudeCodeSkill,
   opencode: renderOpenCodeSkill,
+  pi: renderPiSkill,
   generic: renderGenericSkill,
 };
 const platforms = platformDefinitions.map((platform) => platform.id);
@@ -20,6 +22,18 @@ describe('platform adapter golden output', () => {
       skills: true,
       hooks: false,
       subAgents: true,
+      modelSelection: true,
+    });
+  });
+
+  it('declares Pi capabilities without hooks, subagents, or rules', () => {
+    // Pi has no declarative PreToolUse hook and no "rules" file concept; skills
+    // + AGENTS.md context carry the Kata contract. Global scope targets Pi's
+    // native config dir, consistent with every other platform adapter.
+    expect(platformCapabilities.pi).toEqual({
+      skills: true,
+      hooks: false,
+      subAgents: false,
       modelSelection: true,
     });
   });

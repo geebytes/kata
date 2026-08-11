@@ -1716,8 +1716,8 @@ function recommendDelegationTask(candidates: Array<{ phase: string }>): { phase:
 
 function recommendPlatform(platforms: string[], role: string): string | undefined {
     const preferred = role === 'implementer'
-        ? ['opencode', 'codex', 'claude-code', 'github-copilot']
-        : ['codex', 'claude-code', 'github-copilot', 'opencode'];
+        ? ['opencode', 'codex', 'claude-code', 'github-copilot', 'pi']
+        : ['codex', 'claude-code', 'github-copilot', 'opencode', 'pi'];
     return preferred.find((platform) => platforms.includes(platform)) ?? platforms.find((platform) => platform !== 'generic') ?? platforms[0];
 }
 

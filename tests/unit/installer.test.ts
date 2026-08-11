@@ -137,6 +137,7 @@ describe('Kata platform installer', () => {
         await mkdir(join(root, '.clinerules'), { recursive: true });
         await mkdir(join(root, '.roo'), { recursive: true });
         await mkdir(join(root, '.gemini'), { recursive: true });
+        await mkdir(join(root, '.pi'), { recursive: true });
         await mkdir(join(root, '.github'), { recursive: true });
         await writeFile(join(root, '.github', 'copilot-instructions.md'), '# Copilot\n');
         await writeFile(join(home, '.claude.json'), '{}\n');
@@ -159,6 +160,7 @@ describe('Kata platform installer', () => {
                 expect.objectContaining({ platform: 'roocode', scope: 'project', capabilities: expect.objectContaining({ skills: true }) }),
                 expect.objectContaining({ platform: 'gemini', scope: 'project', capabilities: expect.objectContaining({ hooks: true }) }),
                 expect.objectContaining({ platform: 'github-copilot', scope: 'project', capabilities: expect.objectContaining({ skills: true }) }),
+                expect.objectContaining({ platform: 'pi', scope: 'project', capabilities: expect.objectContaining({ skills: true, hooks: false, subAgents: false, modelSelection: true }) }),
                 expect.objectContaining({ platform: 'generic', scope: 'project', capabilities: expect.objectContaining({ hooks: false }) }),
             ]),
         );
@@ -232,6 +234,55 @@ describe('Kata platform installer', () => {
             process.env.CODEX_HOME = previousCodexHome;
             process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
         }
+    });
+
+    it('detects Pi, installs project skills to .agents/skills, and scopes global to ~/.agents/skills', async () => {
+        // Pi loads project skills from `.agents/skills/` and global skills from
+        // `~/.agents/skills/` — both are native Pi load paths and follow the
+        // cross-harness Agent Skills standard, so a single install is usable by
+        // Pi and any compatible harness. PI_CODING_AGENT_DIR overrides the
+        // global root (like CODEX_HOME). Pi has no "rules" concept and reads
+        // AGENTS.md, so no platform rule file is written (the contract lives in
+        // AGENTS.md).
+        const root = await tempRoot();
+        const home = await tempRoot('kata-home-');
+        const piAgentDir = await tempRoot('kata-pi-');
+
+        const previousPiDir = process.env.PI_CODING_AGENT_DIR;
+        process.env.PI_CODING_AGENT_DIR = piAgentDir;
+        try {
+            const platforms = await discoverPlatforms({ root, home });
+
+            expect(platforms).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ platform: 'pi', scope: 'global', detected: true, root: piAgentDir }),
+                ]),
+            );
+
+            // Project-scope install targets .agents/skills/<command>/SKILL.md and
+            // writes no platform rule file (Pi has no rules concept).
+            const report = await install('pi', 'project', { root, language: 'zh' });
+            expect(report.written).toContain('.agents/skills/kata/SKILL.md');
+            expect(report.written).not.toContain('.agents/rules/kata-agent-contract.md');
+            await expect(readFile(join(root, '.agents/skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
+            await expect(readFile(join(root, '.agents/skills/kata/SKILL.md'), 'utf8')).resolves.toContain('所有面向用户的自然语言响应必须使用中文');
+            await expect(readFile(join(root, '.agents/skills/kata/SKILL.md'), 'utf8')).resolves.toContain('Pi：如需切换模型，先执行 `/model`');
+
+            // Global install with PI_CODING_AGENT_DIR writes into the env dir root directly.
+            const globalReport = await install('pi', 'global', { home: piAgentDir, language: 'zh' });
+            expect(globalReport.written).toContain('skills/kata/SKILL.md');
+            expect(globalReport.written).not.toContain('.agents/skills/kata/SKILL.md');
+            await expect(readFile(join(piAgentDir, 'skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
+        } finally {
+            process.env.PI_CODING_AGENT_DIR = previousPiDir;
+        }
+
+        // Without PI_CODING_AGENT_DIR, global installs land in the shared
+        // ~/.agents/skills/ directory — a native Pi global load path.
+        const sharedHome = await tempRoot('kata-pi-shared-');
+        const sharedReport = await install('pi', 'global', { home: sharedHome, language: 'zh', noWiki: true });
+        expect(sharedReport.written).toContain('.agents/skills/kata/SKILL.md');
+        await expect(readFile(join(sharedHome, '.agents/skills/kata/SKILL.md'), 'utf8')).resolves.toContain('/kata');
     });
 
     it('synthesizes wizard candidates with the env-dir root when global env vars are set', async () => {

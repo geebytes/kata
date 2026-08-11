@@ -2,6 +2,7 @@ export type Platform =
     | 'codex'
     | 'claude-code'
     | 'opencode'
+    | 'pi'
     | 'cursor'
     | 'windsurf'
     | 'cline'
@@ -263,6 +264,7 @@ export const platformCapabilities: Record<Platform, PlatformCapabilities> = {
     roocode: { skills: true, hooks: false, subAgents: false, modelSelection: true },
     gemini: { skills: true, hooks: true, subAgents: true, modelSelection: true },
     'github-copilot': { skills: true, hooks: true, subAgents: true, modelSelection: true },
+    pi: { skills: true, hooks: false, subAgents: false, modelSelection: true },
     generic: { skills: true, hooks: false, subAgents: false, modelSelection: false },
 };
 
@@ -737,7 +739,9 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 ${platform === 'opencode'
             ? 'OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。'
-            : '请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。'}
+            : platform === 'pi'
+                ? 'Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。'
+                : '请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。'}
 
 ${phaseContent}`
 }

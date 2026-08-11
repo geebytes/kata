@@ -124,6 +124,15 @@ export const platformDefinitions: readonly PlatformDefinition[] = [
     capabilities: hookCapabilities,
   },
   {
+    id: 'pi',
+    name: 'Pi',
+    skillsDir: '.agents',
+    globalSkillsDir: '.agents',
+    detectionPaths: ['.agents/skills', '.pi'],
+    modelSelectionInstruction: 'Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。',
+    capabilities: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+  },
+  {
     id: 'generic',
     name: 'Generic',
     skillsDir: '.kata',
@@ -153,6 +162,7 @@ export function resolvePlatformGlobalDir(platform: Platform): string | null {
   if (platform === 'codex' && process.env.CODEX_HOME) return process.env.CODEX_HOME;
   if (platform === 'claude-code' && process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR;
   if (platform === 'opencode' && process.env.OPENCODE_CONFIG_DIR) return process.env.OPENCODE_CONFIG_DIR;
+  if (platform === 'pi' && process.env.PI_CODING_AGENT_DIR) return process.env.PI_CODING_AGENT_DIR;
   return null;
 }
 

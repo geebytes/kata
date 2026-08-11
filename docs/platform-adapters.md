@@ -16,6 +16,24 @@ Each platform declares:
 
 This keeps `kata-cli init` plan-driven instead of scattering platform-specific branches through the CLI.
 
+## Supported platforms
+
+| Platform | Project skills dir | Global env override | Hooks | Model selection |
+|----------|--------------------|---------------------|-------|-----------------|
+| Codex | `.codex/skills` | `CODEX_HOME` | yes | yes |
+| Claude Code | `.claude/skills` | `CLAUDE_CONFIG_DIR` | yes | yes |
+| OpenCode | `.opencode/skills` | `OPENCODE_CONFIG_DIR` | no | yes (`/models`) |
+| Pi | `.agents/skills` | `PI_CODING_AGENT_DIR` | no | yes (`/model`) |
+| Cursor | `.cursor/skills` | — | no | yes |
+| Windsurf | `.windsurf/skills` | — | yes | yes |
+| Cline | `.cline/skills` | — | no | yes |
+| RooCode | `.roo/skills` | — | no | yes |
+| Gemini CLI | `.gemini/skills` | — | yes | yes |
+| GitHub Copilot | `.github/skills` | — | yes | yes |
+| Generic | `.kata/skills` | — | no | no |
+
+Pi is detected via `.agents/skills` or `.pi` markers. Project installs land in the Agent Skills standard directory `.agents/skills/<command>/SKILL.md`, which Pi discovers recursively. Global installs target the shared Agent Skills directory `~/.agents/skills/<command>/SKILL.md`, which Pi discovers as one of its native global load paths (alongside `~/.pi/agent/skills/`); when `PI_CODING_AGENT_DIR` is set, global installs instead land in `$PI_CODING_AGENT_DIR/skills/`. Because `~/.agents/skills/` follows the cross-harness Agent Skills standard, a single global install is immediately usable by Pi and any other compatible harness. Pi reads `AGENTS.md` as project/global context, so the Kata Agent Contract written there is honoured; Pi has no separate "rules" file concept, so no platform rule file is installed. Pi exposes no declarative `PreToolUse` hook, so the Kata write guard is CLI/CI-only on this platform; switch models with the `/model` command.
+
 ## Model selection contract
 
 Kata does not own model selection, route models automatically, or write model route artifacts. Model policy is configured declaratively in `.kata-config.json` under `modelPolicy.roles`. At trust boundaries (`review_gate`, `judge_gate`), Kata pauses so the user can choose the model in their host platform's selector before continuing.
