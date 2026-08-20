@@ -2,7 +2,8 @@
   "language": "zh",
   "quality": {
     "buildChecks": [
-      { "name": "test", "kind": "test", "command": "npx", "args": ["vitest", "run"], "timeoutMs": 120000 }
+      { "name": "lint", "kind": "lint", "command": "make", "args": ["lint"], "timeoutMs": 180000 },
+      { "name": "typecheck", "kind": "typecheck", "command": "make", "args": ["typecheck"], "timeoutMs": 180000 }
     ]
   }
 }
