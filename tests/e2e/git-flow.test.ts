@@ -111,4 +111,37 @@ describe('Git Flow CLI', () => {
     expect(execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()).toBe(branchBefore);
     expect(JSON.parse(await readFile(join(root, '.kata/tasks/needs-confirmation/current-state.json'), 'utf8')).phase).toBe('intake');
   });
+
+  it('ignores .kata runtime changes in the dirty-worktree check for git flow apply', async () => {
+    // Regression: a tracked .kata file with a worktree modification yields a porcelain
+    // row with a leading status space (` M .kata/...`). The old runGit did `.trim()` on
+    // the whole porcelain stdout, which stripped that leading space and shifted the
+    // `line.slice(3)` path offset — so `.kata/` paths were mis-classified as non-.kata
+    // and apply failed with a false worktree_dirty.
+    const root = await mkdtemp(join(tmpdir(), 'kata-git-flow-kata-dirty-'));
+    roots.push(root);
+    execFileSync('git', ['init', '-b', 'develop'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+    await writeFile(join(root, 'README.md'), '# fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: root, stdio: 'ignore' });
+    await initLayout(root);
+    execFileSync('git', ['add', '.gitignore'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'configure kata runtime'], { cwd: root, stdio: 'ignore' });
+
+    // Create a tracked .kata/runtime file, then modify it in the worktree only.
+    const runtimeDir = join(root, '.kata', 'runtime');
+    await writeFile(join(runtimeDir, 'active-task.json'), JSON.stringify({ taskId: 'cli-feature' }));
+    // .kata/runtime is gitignored by initLayout; force-add so the file becomes a
+    // tracked path (mirroring repos that commit .kata state) and a subsequent
+    // worktree edit yields a ` M .kata/...` porcelain row.
+    execFileSync('git', ['add', '-f', '.kata/runtime/active-task.json'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'track active task'], { cwd: root, stdio: 'ignore' });
+    await writeFile(join(runtimeDir, 'active-task.json'), JSON.stringify({ taskId: 'cli-feature', dirty: true }));
+
+    const plan = inspectGitFlow(root, 'cli-feature');
+    expect(plan.reason).toBeUndefined();
+    expect(plan).toMatchObject({ status: 'pending_confirmation', strategy: 'manual' });
+  });
 });

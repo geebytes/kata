@@ -48,7 +48,7 @@ export interface GitFlowInitializationOptions {
 
 const runGit: GitCommandRunner = (root, args) => {
     try {
-        return { ok: true, stdout: execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() };
+        return { ok: true, stdout: execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\s+$/, '') };
     } catch {
         return { ok: false, stdout: '' };
     }
