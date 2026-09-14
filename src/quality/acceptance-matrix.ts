@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { codeGraphExecutionEnv } from '../codegraph/runtime.js';
 import type { AcceptanceCriterion, AcceptanceMatrix, AcceptanceMatrixRow } from '../core/task.js';
@@ -39,6 +41,22 @@ export interface Waiver {
 
 export function requiresMatrix(workflowProfile?: { strictClosure?: boolean; reviewMode?: string }): boolean {
   return workflowProfile?.strictClosure === true || workflowProfile?.reviewMode === 'strict';
+}
+
+/**
+ * Upstream coverage (mapping upstream doc requirements to ACs, or marking them
+ * out-of-scope) is a **new** gate and is therefore opt-in via the dedicated
+ * `strictClosure` flag only — it must NOT be inferred from `reviewMode: 'strict'`.
+ *
+ * Why the distinction matters: `requiresMatrix` (strict ⇒ acceptance matrix) is a
+ * long-standing requirement that existing strict tasks already satisfy; upstream
+ * coverage is stricter still and would retroactively block every in-flight strict
+ * task that never declared coverage. Coupling them silently breaks the existing
+ * lifecycle (observed: design returns phase=intake, then build fails with
+ * "Build cannot run from intake").
+ */
+export function requiresUpstreamCoverage(workflowProfile?: { strictClosure?: boolean; reviewMode?: string }): boolean {
+  return workflowProfile?.strictClosure === true;
 }
 
 export function validateMatrix(
@@ -117,6 +135,96 @@ export function getMatrixRowForAc(
   acceptanceId: string,
 ): AcceptanceMatrixRow | undefined {
   return matrix?.rows.find((row) => row.acceptanceId === acceptanceId);
+}
+
+
+export interface UpstreamCoverageError {
+  requirementId?: string;
+  sourceRef?: string;
+  message: string;
+}
+
+/**
+ * Validate that every upstream requirement maps to an existing AC or is explicitly
+ * out-of-scope, and that every mapped AC exists in the matrix. This prevents the
+ * self-authored-AC failure mode where task scope silently excludes upstream docs.
+ *
+ * Rules:
+ *  1. Every requirement maps to an AC or declares outOfScopeReason.
+ *  2. A mapped AC must exist in `acceptance` and have a matrix row.
+ *  3. Reverse completeness: every acceptance AC is covered by ≥1 requirement
+ *     (no orphan ACs that no upstream requirement justifies).
+ *  4. When `root` is given, each source ref must point to an existing file.
+ */
+export function validateUpstreamCoverage(
+  acceptance: Array<{ id?: string; statement: string }>,
+  matrix: AcceptanceMatrix | undefined,
+  coverage: import('../core/task.js').UpstreamCoverage | undefined,
+  root?: string,
+): UpstreamCoverageError[] {
+  if (!coverage) return [];
+  if (coverage.version !== 1) return [{ message: 'Unsupported upstream coverage version' }];
+  const acIds = new Set(acceptance.map((ac) => ac.id).filter((id): id is string => Boolean(id)));
+  const matrixAcIds = new Set((matrix?.rows ?? []).map((r) => r.acceptanceId));
+  const errors: UpstreamCoverageError[] = [];
+
+  for (const source of coverage.sources) {
+    if (root && source.ref) {
+      try {
+        if (!existsSync(join(root, source.ref))) {
+          errors.push({ sourceRef: source.ref, message: `Upstream source ref does not exist: ${source.ref}` });
+        }
+      } catch {
+        errors.push({ sourceRef: source.ref, message: `Upstream source ref unreadable: ${source.ref}` });
+      }
+    }
+    if (!source.ref || !source.requirements?.length) {
+      errors.push({ sourceRef: source.ref, message: `Upstream source ${source.ref} must declare a ref and at least one requirement` });
+      continue;
+    }
+    for (const req of source.requirements) {
+      const mapped = req.mappedTo ?? null;
+      const hasReason = Boolean(req.outOfScopeReason?.trim());
+      if (!mapped && !hasReason) {
+        errors.push({
+          requirementId: req.id,
+          sourceRef: source.ref,
+          message: `Requirement ${req.id} in ${source.ref} must map to an AC or declare outOfScopeReason`,
+        });
+      }
+      if (mapped) {
+        if (!acIds.has(mapped)) {
+          errors.push({ requirementId: req.id, sourceRef: source.ref, message: `Requirement ${req.id} maps to unknown AC ${mapped}` });
+        } else if (!matrixAcIds.has(mapped)) {
+          errors.push({ requirementId: req.id, sourceRef: source.ref, message: `Requirement ${req.id} maps to AC ${mapped} which has no matrix row` });
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Rule 3 (warning, not error): find acceptance criteria not justified by any
+ * upstream requirement (orphan ACs). Reported as a warning so tasks with an
+ * intentionally broader AC surface are not blocked, but reviewers see the gap.
+ */
+export function findOrphanAcs(
+  acceptance: Array<{ id?: string; statement: string }>,
+  coverage: import('../core/task.js').UpstreamCoverage | undefined,
+): Array<{ acId: string }> {
+  if (!coverage) return [];
+  const coveredAcIds = new Set<string>();
+  for (const source of coverage.sources) {
+    for (const req of source.requirements ?? []) {
+      if (req.mappedTo) coveredAcIds.add(req.mappedTo);
+    }
+  }
+  return acceptance
+    .map((ac) => ac.id)
+    .filter((id): id is string => Boolean(id))
+    .filter((id) => !coveredAcIds.has(id))
+    .map((acId) => ({ acId }));
 }
 
 export function validatePathCoverage(
@@ -223,6 +331,44 @@ export async function discoverCodeGraphCandidates(
     reason: `CodeGraph reports this test is affected by sealed implementation paths: ${candidateSources.join(', ')}`,
   }));
 }
+
+export interface RequirementWithoutEvidence {
+  requirementId: string;
+  sourceRef: string;
+  mappedTo: string;
+}
+
+/**
+ * Find upstream requirements whose mappedTo AC has NO matching passing evidence.
+ * This is the seal-time check that a requirement is genuinely implemented (not just
+ * declared): every mapped requirement must be backed by the AC's matrix evidence.
+ */
+export function findRequirementsWithoutEvidence(
+  coverage: import('../core/task.js').UpstreamCoverage | undefined,
+  matrix: AcceptanceMatrix | undefined,
+  evidence: Array<{ id: string; kind: string; command: string; exitCode: number }>,
+): RequirementWithoutEvidence[] {
+  if (!coverage) return [];
+  const passing = evidence.filter((e) => e.exitCode === 0);
+  const missing: RequirementWithoutEvidence[] = [];
+  for (const source of coverage.sources) {
+    for (const req of source.requirements ?? []) {
+      const mapped = req.mappedTo ?? null;
+      if (!mapped) continue; // out-of-scope or unmapped handled elsewhere
+      const row = matrix?.rows.find((r) => r.acceptanceId === mapped);
+      if (!row) {
+        missing.push({ requirementId: req.id, sourceRef: source.ref, mappedTo: mapped });
+        continue;
+      }
+      const hasEvidence = passing.some((e) => evidenceMatchesRow(row, e.command, e.kind));
+      if (!hasEvidence) {
+        missing.push({ requirementId: req.id, sourceRef: source.ref, mappedTo: mapped });
+      }
+    }
+  }
+  return missing;
+}
+
 
 export function classifyCodeGraphCandidates(
   matrix: AcceptanceMatrix,

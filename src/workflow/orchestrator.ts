@@ -16,7 +16,7 @@ import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
-import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateWaivers, writeWaivers, requiresMatrix, getMatrixRowForAc, evidenceMatchesRow, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
+import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 
@@ -38,6 +38,7 @@ const judgeActor: Actor = { id: 'kata-judge', role: 'judge' };
 export interface CommandOptions {
     title?: string;
     acceptance?: Array<{ id?: string; statement: string }>;
+    requirements?: Array<{ id?: string; statement: string; source?: string }>;
     checks?: CheckCommand[];
     guard?: CometGuard;
     platform?: string;
@@ -106,12 +107,19 @@ async function cmdOpen(
     root: string,
     options: CommandOptions = {},
 ): Promise<CommandResult> {
+    const requirements = options.requirements ?? [];
+    const acceptance = options.acceptance?.length
+        ? options.acceptance
+        : requirements.length > 0
+            ? requirements.map((r, i) => ({ id: `AC-${i + 1}`, statement: r.statement }))
+            : [{ id: 'AC-1', statement: 'Implement the change successfully.' }];
     const input: CreateTaskInput = {
         root,
         id: taskId,
-        title: options.title ?? `Change ${taskId}`,
-        acceptance: options.acceptance ?? [{ statement: 'Implement the change successfully.' }],
+        title: options.title ?? (requirements[0]?.statement.slice(0, 80) ?? `Change ${taskId}`),
+        acceptance,
         workflowProfile: options.workflowProfile ?? defaultWorkflowProfile(),
+        ...(requirements.length > 0 ? { requirements: requirements.map((r, i) => ({ id: r.id ?? `REQ-${i + 1}`, statement: r.statement, ...(r.source ? { source: r.source } : {}), confirmedAt: new Date().toISOString() })) } : {}),
         ...(options.ownedPaths?.length ? { ownedPaths: options.ownedPaths } : {}),
     };
 
@@ -153,7 +161,8 @@ async function cmdDesign(taskId: string, root: string, options?: CommandOptions)
     const task = JSON.parse(await readFile(taskPath, 'utf8')) as {
         acceptance?: Array<{ id?: string; statement: string }>;
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
-        workflowProfile?: { strictClosure?: boolean };
+        upstreamCoverage?: import('../core/task.js').UpstreamCoverage;
+        workflowProfile?: { strictClosure?: boolean; reviewMode?: string };
     };
     const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
     if (!task.acceptanceMatrix && (current.phase === 'implement' || current.phase === 'hardVerify')) {
@@ -177,6 +186,36 @@ async function cmdDesign(taskId: string, root: string, options?: CommandOptions)
             error: `Acceptance matrix validation failed during design: ${matrixErrors.length} error(s).`,
             diagnostics: { matrixErrors },
         };
+    }
+    // Upstream coverage: strict tasks MUST declare which upstream requirements each
+    // AC covers (or explicitly out-of-scope). Prevents self-authored-AC scope drift.
+    const coverageRequired = requiresUpstreamCoverage(task.workflowProfile);
+    if (coverageRequired && !task.upstreamCoverage) {
+        return {
+            command: 'design', taskId, phase: 'intake', success: false,
+            error: 'Strict closure requires upstreamCoverage (map upstream doc requirements to ACs or out-of-scope); add it to task.json before designing.',
+            diagnostics: { missingUpstreamCoverage: true },
+        };
+    }
+    const coverageErrors = validateUpstreamCoverage(task.acceptance ?? [], task.acceptanceMatrix, task.upstreamCoverage, root);
+    if (coverageRequired && coverageErrors.length > 0) {
+        return {
+            command: 'design', taskId, phase: 'intake', success: false,
+            error: `Upstream coverage validation failed during design: ${coverageErrors.length} error(s).`,
+            diagnostics: { coverageErrors },
+        };
+    }
+    // Orphan AC enforcement: every acceptance criterion must be justified by ≥1
+    // upstream requirement. Prevents adding ACs that no requirement demands.
+    if (task.upstreamCoverage) {
+        const orphanAcs = findOrphanAcs(task.acceptance ?? [], task.upstreamCoverage);
+        if (orphanAcs.length > 0) {
+            return {
+                command: 'design', taskId, phase: 'intake', success: false,
+                error: `Design blocked: ${orphanAcs.length} acceptance criterion(s) have no upstream requirement (${orphanAcs.map((o) => o.acId).join(', ')}). Every AC must be justified by an upstream requirement or the requirement marked out-of-scope.`,
+                diagnostics: { orphanAcs },
+            };
+        }
     }
 
     await guardTransition(options?.guard, 'check', taskId, 'plan');
@@ -278,7 +317,8 @@ async function cmdBuild(
         ownedPaths?: string[];
         acceptance?: Array<{ id?: string; statement: string }>;
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
-        workflowProfile?: { strictClosure?: boolean };
+        upstreamCoverage?: import('../core/task.js').UpstreamCoverage;
+        workflowProfile?: { strictClosure?: boolean; reviewMode?: string };
     };
     const projectChecks = options.checks?.length
         ? options.checks
@@ -314,6 +354,26 @@ async function cmdBuild(
             error: `Acceptance matrix validation failed: ${matrixErrors.length} error(s).`,
             diagnostics: { matrixErrors },
         };
+    }
+    // Upstream coverage is REQUIRED for strict tasks at seal (consistent with design).
+    // This prevents sealing with self-authored ACs that silently omit upstream doc
+    // requirements. Legacy tasks (non-strict, matrix optional) stay compatible.
+    if (requiresUpstreamCoverage(task.workflowProfile) && !task.upstreamCoverage) {
+        return {
+            command: 'build', taskId, phase: 'implement', success: false,
+            error: 'Strict closure requires upstreamCoverage before sealing; add it to task.json (map upstream doc requirements to ACs or out-of-scope).',
+            diagnostics: { missingUpstreamCoverage: true },
+        };
+    }
+    if (task.upstreamCoverage) {
+        const coverageErrors = validateUpstreamCoverage(task.acceptance ?? [], task.acceptanceMatrix, task.upstreamCoverage, root);
+        if (coverageErrors.length > 0) {
+            return {
+                command: 'build', taskId, phase: 'implement', success: false,
+                error: `Upstream coverage validation failed before sealing: ${coverageErrors.length} error(s).`,
+                diagnostics: { coverageErrors },
+            };
+        }
     }
 
     if (!task.acceptanceMatrix) {
@@ -430,6 +490,19 @@ async function cmdBuild(
                 failing: evidence.filter((item) => item.exitCode !== 0).length,
             },
         };
+    }
+
+    // Seal-time requirement evidence check: every mapped upstream requirement must
+    // be backed by its AC's passing evidence (not just declared in coverage).
+    if (task.upstreamCoverage) {
+        const reqsWithoutEvidence = findRequirementsWithoutEvidence(task.upstreamCoverage, task.acceptanceMatrix, evidence);
+        if (reqsWithoutEvidence.length > 0) {
+            return {
+                command: 'build', taskId, phase: 'implement', success: false,
+                error: `Seal blocked: ${reqsWithoutEvidence.length} mapped upstream requirement(s) have no passing evidence (${reqsWithoutEvidence.map((r) => r.requirementId).join(', ')}). Every mapped requirement must be backed by its AC's evidence.`,
+                diagnostics: { requirementsWithoutEvidence: reqsWithoutEvidence },
+            };
+        }
     }
 
     if (revision && task.acceptanceMatrix) {
@@ -867,6 +940,7 @@ async function cmdVerify(
     const task = JSON.parse(taskRaw) as {
         acceptance: Array<{ id?: string; statement: string }>;
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
+        upstreamCoverage?: import('../core/task.js').UpstreamCoverage;
         workflowProfile?: { reviewMode?: string };
     };
 
@@ -891,6 +965,18 @@ async function cmdVerify(
     const implementationReady = verifyResult.result === 'PASS';
     const wikiClosure = await evaluateWikiClosure(root, taskId);
     if (!wikiClosure.valid) verifyResult.result = 'FAIL';
+    // Persist out-of-scope requirements into verify.json so reviewers reading the
+    // verify artifact (not just the command output) can judge their legitimacy.
+    if (task.upstreamCoverage) {
+        (verifyResult as { outOfScopeRequirements?: unknown }).outOfScopeRequirements = task.upstreamCoverage.sources.flatMap((s) =>
+            (s.requirements ?? []).filter((r) => !r.mappedTo).map((r) => ({
+                id: r.id,
+                statement: r.statement,
+                sourceRef: s.ref,
+                reason: r.outOfScopeReason ?? '',
+            })),
+        );
+    }
     await writeFile(join(root, '.kata/tasks', taskId, 'verify.json'), `${JSON.stringify(verifyResult, null, 2)}\n`, 'utf8');
 
     const failedScopes = verifyResult.acceptance
@@ -949,6 +1035,16 @@ async function cmdVerify(
             blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
             implementationReady,
             governanceReady: wikiClosure.valid,
+            ...(task.upstreamCoverage ? {
+                outOfScopeRequirements: task.upstreamCoverage.sources.flatMap((s) =>
+                    (s.requirements ?? []).filter((r) => !r.mappedTo).map((r) => ({
+                        id: r.id,
+                        statement: r.statement,
+                        sourceRef: s.ref,
+                        reason: r.outOfScopeReason ?? '',
+                    })),
+                ),
+            } : {}),
             wikiClosure,
             ...(unresolvedObligations.length > 0 ? { unresolvedObligations: unresolvedObligations.length } : {}),
             ...(revisionId ? { revisionId } : {}),

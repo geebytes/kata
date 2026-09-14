@@ -41,6 +41,29 @@ describe('Workflow resume and lifecycle', () => {
         expect(task.acceptance).toHaveLength(1);
         expect(task.acceptance[0].id).toBe('AC-1');
     });
+    it('/kata-open with requirements persists requirements and derives ACs', async () => {
+        const root = await tempRoot();
+        const result = await runCommand('open', 'wf-req-open-test', root, {
+            title: 'Req task',
+            requirements: [
+                { id: 'REQ-1', statement: 'Req one' },
+                { id: 'REQ-2', statement: 'Req two', source: 'user said' },
+            ],
+        });
+
+        expect(result).toMatchObject({ success: true, phase: 'intake' });
+        const taskRaw = await readFile(join(root, '.kata/tasks/wf-req-open-test/task.json'), 'utf8');
+        const task = JSON.parse(taskRaw);
+        expect(task.requirements).toHaveLength(2);
+        expect(task.requirements[0]).toMatchObject({ id: 'REQ-1', statement: 'Req one' });
+        expect(task.requirements[1]).toMatchObject({ id: 'REQ-2', statement: 'Req two', source: 'user said' });
+        expect(task.requirements[0].confirmedAt).toBeTruthy();
+        // ACs derived from requirements
+        expect(task.acceptance).toHaveLength(2);
+        expect(task.acceptance[0]).toMatchObject({ id: 'AC-1', statement: 'Req one' });
+        expect(task.acceptance[1]).toMatchObject({ id: 'AC-2', statement: 'Req two' });
+    });
+
 
     it('/kata-open then /kata-design advances to plan phase', async () => {
         const root = await tempRoot();
@@ -62,6 +85,28 @@ describe('Workflow resume and lifecycle', () => {
         const taskRaw = await readFile(join(root, '.kata/tasks/wf-design-test/task.json'), 'utf8');
         const task = JSON.parse(taskRaw) as { workflowProfile?: { comet?: { openStatus?: string } } };
         expect(task.workflowProfile?.comet?.openStatus).toBe('acknowledged');
+    });
+
+
+    it('rejects strict design when an AC is not justified by any upstream requirement', async () => {
+        const root = await tempRoot();
+        await runCommand('open', 'wf-orphan-test', root, {
+            title: 'Orphan AC test',
+            acceptance: [
+                { id: 'AC-1', statement: 'Justified.' },
+                { id: 'AC-2', statement: 'Orphan — no requirement covers this.' },
+            ],
+            // strictClosure 是 upstream coverage 的显式开关（不从 reviewMode 推断）。
+            workflowProfile: { version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode: 'strict', strictClosure: true, comet: { projectInit: 'not_requested', openStatus: 'acknowledged' } },
+        });
+        await writeFile(join(root, 'justifier.md'), '# justifies AC-1\n');
+        const taskPath = join(root, '.kata/tasks/wf-orphan-test/task.json');
+        const task = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...task, acceptanceMatrix: { version: 1, rows: [{ acceptanceId: 'AC-1', implementationPaths: ['a'], testPaths: ['t'], evidence: [{ kind: 'test', command: 'x' }], verificationLevel: 'unit' }, { acceptanceId: 'AC-2', implementationPaths: ['b'], testPaths: ['t2'], evidence: [{ kind: 'test', command: 'y' }], verificationLevel: 'unit' }] }, upstreamCoverage: { version: 1, sources: [{ ref: 'justifier.md', requirements: [{ id: 'R-1', statement: 'justify', mappedTo: 'AC-1' }] }] } }, null, 2)}\n`);
+
+        const result = await runCommand('design', 'wf-orphan-test', root);
+        expect(result.success).toBe(false);
+        expect(result.diagnostics?.orphanAcs).toEqual([expect.objectContaining({ acId: 'AC-2' })]);
     });
 
     it('keeps an implementing legacy task in place while opening matrix migration design', async () => {
@@ -194,6 +239,16 @@ describe('Workflow resume and lifecycle', () => {
             scope?: { paths: string[] };
         };
         expect(sealed.scope?.paths).toEqual(['task-owned.txt']);
+
+
+        // Inject upstreamCoverage with an out-of-scope requirement; verify must
+        // surface it in diagnostics for the reviewer.
+        const task2 = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...task2, upstreamCoverage: { version: 1, sources: [{ ref: 'task-owned.txt', requirements: [{ id: 'R-1', statement: 'covered', mappedTo: 'AC-1' }, { id: 'R-2', statement: 'deferred', mappedTo: null, outOfScopeReason: 'future work' }] }] } }, null, 2)}\n`);
+        const verify2 = await runCommand('verify', 'wf-scoped-freshness', root);
+        expect(verify2.diagnostics?.outOfScopeRequirements).toEqual([
+            expect.objectContaining({ id: 'R-2', reason: 'future work', sourceRef: 'task-owned.txt' }),
+        ]);
 
         await writeFile(join(root, 'unrelated-task.txt'), 'another task changed this\n', 'utf8');
         const verify = await runCommand('verify', 'wf-scoped-freshness', root);

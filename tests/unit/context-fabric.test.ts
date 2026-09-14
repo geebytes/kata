@@ -65,7 +65,7 @@ describe('Context Fabric', () => {
     expect(handoff.prompt).not.toContain('/kata-delegate');
   });
 
-  it('binds a task design to implementer packets but not reviewer packets', async () => {
+  it('binds a task design to implementer AND reviewer packets (scope review needs upstream)', async () => {
     const workspace = await root();
     const designPath = '.kata/tasks/handoff-task/design.md';
     await writeFile(join(workspace, designPath), '# Handoff design\n');
@@ -75,8 +75,10 @@ describe('Context Fabric', () => {
 
     expect(implementer.context.requiredReads).toContain(designPath);
     expect(implementer.context.designRefs).toEqual([designPath]);
-    expect(reviewer.context.requiredReads).not.toContain(designPath);
-    expect(reviewer.context.designRefs).toEqual([]);
+    // Scope-gap review: reviewer MUST also see the design/upstream refs so it can
+    // check whether the implementation covers the task's real requirements.
+    expect(reviewer.context.requiredReads).toContain(designPath);
+    expect(reviewer.context.designRefs).toEqual([designPath]);
   });
 
   it('does not invent design references for a task without design.md', async () => {

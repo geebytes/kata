@@ -75,6 +75,25 @@ function designRefsFor(root: string, taskId: string, role: Role): string[] {
     `openspec/changes/${taskId}/design.md`,
   ];
 
+  // 1) Structured upstream refs: task.json upstreamCoverage.sources[].ref +
+  //    acceptanceMatrix.rows[].designRefs — these are the binding docs the task
+  //    must satisfy (designs / audits / methodology). Reading them here is what
+  //    feeds reviewer/judge the real requirements (previously a dead field).
+  try {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const taskRaw = readFileSync(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+    const task = JSON.parse(taskRaw) as {
+      upstreamCoverage?: { sources?: Array<{ ref?: string }> };
+      acceptanceMatrix?: { rows?: Array<{ designRefs?: string[] }> };
+    };
+    for (const source of task.upstreamCoverage?.sources ?? []) {
+      if (source.ref) candidates.push(source.ref);
+    }
+    for (const row of task.acceptanceMatrix?.rows ?? []) {
+      for (const ref of row.designRefs ?? []) candidates.push(ref);
+    }
+  } catch {}
+
   // Comet design-phase Design Doc under docs/superpowers/specs/
   const specsDir = join(root, 'docs/superpowers/specs');
   try {

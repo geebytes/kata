@@ -1,9 +1,41 @@
 {
-  "language": "zh",
-  "quality": {
-    "buildChecks": [
-      { "name": "lint", "kind": "lint", "command": "make", "args": ["lint"], "timeoutMs": 180000 },
-      { "name": "typecheck", "kind": "typecheck", "command": "make", "args": ["typecheck"], "timeoutMs": 180000 }
-    ]
-  }
+    "language": "zh",
+    "quality": {
+        "buildChecks": [
+            {
+                "name": "lint",
+                "kind": "lint",
+                "command": "make",
+                "args": [
+                    "lint"
+                ],
+                "timeoutMs": 180000
+            },
+            {
+                "name": "typecheck",
+                "kind": "typecheck",
+                "command": "make",
+                "args": [
+                    "typecheck"
+                ],
+                "timeoutMs": 180000
+            },
+            {
+                "name": "test",
+                "kind": "test",
+                "command": "uv",
+                "args": [
+                    "run",
+                    "pytest",
+                    "tests/test_workflow_asset_inventory.py",
+                    "tests/test_workflow_asset_contracts.py",
+                    "tests/test_workflow_asset_loader.py",
+                    "tests/test_workflow_asset_manifest.py",
+                    "tests/test_workflow_asset_governance.py",
+                    "-q"
+                ],
+                "timeoutMs": 300000
+            }
+        ]
+    }
 }
