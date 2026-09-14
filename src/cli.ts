@@ -609,9 +609,12 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
     // first; the following phase is then selected from the persisted task state.
     const branchPreparationOnly = workflowProfile?.isolationMode === 'git_flow' && command !== 'open';
     const commandToRun: KataCommand = branchPreparationOnly ? 'open' : command;
+    const openRequirements = command === 'open' ? await readRequirementsFile(argv.slice(1)) : undefined;
     const result = await runCommand(commandToRun, change, root, {
-        title: command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`,
-        acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }],
+        title: openRequirements?.[0]?.statement.slice(0, 80) ?? (command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`),
+        ...(openRequirements ? { requirements: openRequirements } : command === 'hotfix' || command === 'tweak'
+            ? { acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }] }
+            : {}),
         ...(platform ? { platform } : {}),
         ...(commandToRun === 'build' ? { seal: argv.includes('--seal') } : {}),
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
@@ -885,6 +888,35 @@ async function readWaiversFile(argv: string[]): Promise<Waiver[] | undefined> {
     const errors = validateWaivers(waivers);
     if (errors.length > 0) throw new Error(`Invalid waivers file: ${errors.join('; ')}`);
     return waivers;
+}
+
+async function readRequirementsFile(argv: string[]): Promise<Array<{ id?: string; statement: string; source?: string }> | undefined> {
+    const index = argv.indexOf('--requirements-file');
+    if (index === -1) return undefined;
+    const path = argv[index + 1];
+    if (!path) throw new Error('Invalid requirements file: --requirements-file requires a path.');
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(await readFile(path, 'utf8'));
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid requirements file: ${detail}`);
+    }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as { requirements?: unknown }).requirements)) {
+        throw new Error('Invalid requirements file: expected an object with a requirements array.');
+    }
+    const items = (parsed as { requirements: Array<{ id?: string; statement?: unknown; source?: unknown }> }).requirements;
+    return items.map((item) => {
+        if (typeof item.statement !== 'string' || !item.statement.trim()) {
+            throw new Error('Invalid requirements file: each requirement needs a non-empty statement.');
+        }
+        return {
+            ...(item.id ? { id: item.id } : {}),
+            statement: item.statement,
+            ...(typeof item.source === 'string' ? { source: item.source } : {}),
+        };
+    });
 }
 
 async function runGitFlowCommand(argv: string[], root: string): Promise<Record<string, unknown>> {

@@ -39,6 +39,32 @@ export interface AcceptanceMatrix {
   rows: AcceptanceMatrixRow[];
 }
 
+export interface RequirementItem {
+  id: string;
+  statement: string;
+  source?: string;
+  confirmedAt?: string;
+}
+
+export interface UpstreamRequirement {
+  id: string;
+  statement: string;
+  mappedTo?: string | null;
+  outOfScopeReason?: string | null;
+  mappedAt?: string;
+}
+
+export interface UpstreamSource {
+  ref: string;
+  requirements: UpstreamRequirement[];
+}
+
+export interface UpstreamCoverage {
+  version: 1;
+  sources: UpstreamSource[];
+}
+
+
 export interface CreateTaskInput {
   root?: string;
   id?: string;
@@ -47,6 +73,8 @@ export interface CreateTaskInput {
   workflowProfile?: WorkflowProfile;
   ownedPaths?: string[];
   acceptanceMatrix?: AcceptanceMatrix;
+  requirements?: RequirementItem[];
+  upstreamCoverage?: UpstreamCoverage;
 }
 
 export interface TaskRecord {
@@ -61,6 +89,8 @@ export interface TaskRecord {
   workflowProfile?: WorkflowProfile;
   ownedPaths?: string[];
   acceptanceMatrix?: AcceptanceMatrix;
+  requirements?: RequirementItem[];
+  upstreamCoverage?: UpstreamCoverage;
 }
 
 export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
@@ -80,6 +110,8 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
     ...(input.workflowProfile ? { workflowProfile: input.workflowProfile } : {}),
     ...(input.ownedPaths?.length ? { ownedPaths: [...new Set(input.ownedPaths)].sort() } : {}),
     ...(input.acceptanceMatrix ? { acceptanceMatrix: input.acceptanceMatrix } : {}),
+    ...(input.requirements?.length ? { requirements: input.requirements } : {}),
+    ...(input.upstreamCoverage ? { upstreamCoverage: input.upstreamCoverage } : {}),
   };
 
   const taskDirectory = join(root, '.kata/tasks', task.id);

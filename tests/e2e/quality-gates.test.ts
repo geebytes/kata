@@ -420,8 +420,15 @@ describe('acceptance matrix closure', () => {
                     acceptanceId: 'AC-1',
                     implementationPaths: ['subject.ts'],
                     testPaths: ['tests/e2e/foo.test.ts'],
-                    evidence: [{ kind: 'test', command: process.execPath, testSelector: 'foo.test.ts' }],
+                    evidence: [{ kind: 'test', command: process.execPath }],
                     verificationLevel: 'unit',
+                }],
+            },
+            upstreamCoverage: {
+                version: 1,
+                sources: [{
+                    ref: 'subject.ts',
+                    requirements: [{ id: 'R-1', statement: 'classify candidates', mappedTo: 'AC-1' }],
                 }],
             },
         });
@@ -642,6 +649,13 @@ describe('acceptance matrix closure', () => {
                     testPaths: ['tests/unit/foo.test.ts'],
                     evidence: [{ kind: 'test', command: process.execPath }],
                     verificationLevel: 'unit',
+                }],
+            },
+            upstreamCoverage: {
+                version: 1,
+                sources: [{
+                    ref: 'subject.ts',
+                    requirements: [{ id: 'R-1', statement: 'waive mapped path', mappedTo: 'AC-1' }],
                 }],
             },
         });

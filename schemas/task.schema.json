@@ -3,25 +3,55 @@
   "$id": "https://kata.dev/schemas/task.schema.json",
   "title": "Kata Task",
   "type": "object",
-  "required": ["id", "title", "phase", "acceptance", "createdAt", "updatedAt"],
+  "required": [
+    "id",
+    "title",
+    "phase",
+    "acceptance",
+    "createdAt",
+    "updatedAt"
+  ],
   "additionalProperties": false,
   "properties": {
-    "id": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
-    "title": { "type": "string", "minLength": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
     "phase": {
       "type": "string",
-      "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"]
+      "enum": [
+        "intake",
+        "plan",
+        "implement",
+        "hardVerify",
+        "review",
+        "judge",
+        "distill",
+        "archive"
+      ]
     },
     "acceptance": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["statement"],
+        "required": [
+          "statement"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
-          "statement": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "pattern": "^AC-[0-9]+$"
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -29,48 +59,136 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["type", "targetTaskId", "createdAt"],
+        "required": [
+          "type",
+          "targetTaskId",
+          "createdAt"
+        ],
         "additionalProperties": false,
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["superseded_by", "covered_by", "duplicate_of", "merged_into", "parent_of", "spawned_from", "related_to"]
+            "enum": [
+              "superseded_by",
+              "covered_by",
+              "duplicate_of",
+              "merged_into",
+              "parent_of",
+              "spawned_from",
+              "related_to"
+            ]
           },
-          "targetTaskId": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
-          "reason": { "type": "string", "minLength": 1 },
-          "createdAt": { "type": "string", "minLength": 1 },
-          "createdBy": { "type": "string", "minLength": 1 }
+          "targetTaskId": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdBy": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
-    "createdAt": { "type": "string", "minLength": 1 },
-    "updatedAt": { "type": "string", "minLength": 1 },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    },
     "workflowProfile": {
       "type": "object",
-      "required": ["version", "isolationMode", "developmentMode", "reviewMode", "comet"],
+      "required": [
+        "version",
+        "isolationMode",
+        "developmentMode",
+        "reviewMode",
+        "comet"
+      ],
       "properties": {
-        "version": { "const": 1 },
-        "isolationMode": { "enum": ["current_worktree", "isolated_worktree", "git_flow", "user_decides"] },
-        "developmentMode": { "enum": ["tdd", "standard"] },
-        "reviewMode": { "enum": ["std", "strict", "security"] },
+        "version": {
+          "const": 1
+        },
+        "isolationMode": {
+          "enum": [
+            "current_worktree",
+            "isolated_worktree",
+            "git_flow",
+            "user_decides"
+          ]
+        },
+        "developmentMode": {
+          "enum": [
+            "tdd",
+            "standard"
+          ]
+        },
+        "reviewMode": {
+          "enum": [
+            "std",
+            "strict",
+            "security"
+          ]
+        },
         "gitFlow": {
           "type": "object",
-          "required": ["strategy", "branch", "baseBranch", "status"],
+          "required": [
+            "strategy",
+            "branch",
+            "baseBranch",
+            "status"
+          ],
           "properties": {
-            "strategy": { "enum": ["git-flow", "manual"] },
-            "branch": { "type": "string" },
-            "baseBranch": { "type": "string" },
-            "status": { "enum": ["active", "pending_confirmation", "failed"] },
+            "strategy": {
+              "enum": [
+                "git-flow",
+                "manual"
+              ]
+            },
+            "branch": {
+              "type": "string"
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "pending_confirmation",
+                "failed"
+              ]
+            },
             "installation": {
               "type": "object",
-              "required": ["status"],
+              "required": [
+                "status"
+              ],
               "properties": {
-                "status": { "enum": ["installed", "failed", "unsupported"] },
+                "status": {
+                  "enum": [
+                    "installed",
+                    "failed",
+                    "unsupported"
+                  ]
+                },
                 "command": {
                   "type": "array",
-                  "items": { "type": "string" }
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "manualCommand": { "type": "string" }
+                "manualCommand": {
+                  "type": "string"
+                }
               },
               "additionalProperties": false
             }
@@ -79,14 +197,31 @@
         },
         "comet": {
           "type": "object",
-          "required": ["projectInit", "openStatus"],
+          "required": [
+            "projectInit",
+            "openStatus"
+          ],
           "properties": {
-            "projectInit": { "enum": ["not_requested", "initialized", "skipped", "failed"] },
-            "openStatus": { "enum": ["required", "acknowledged"] }
+            "projectInit": {
+              "enum": [
+                "not_requested",
+                "initialized",
+                "skipped",
+                "failed"
+              ]
+            },
+            "openStatus": {
+              "enum": [
+                "required",
+                "acknowledged"
+              ]
+            }
           },
           "additionalProperties": false
         },
-        "strictClosure": { "type": "boolean" }
+        "strictClosure": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
@@ -94,57 +229,200 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "acceptanceMatrix": {
       "type": "object",
-      "required": ["version", "rows"],
+      "required": [
+        "version",
+        "rows"
+      ],
       "additionalProperties": false,
       "properties": {
-        "version": { "type": "integer", "minimum": 1 },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
         "rows": {
           "type": "array",
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["acceptanceId", "implementationPaths", "testPaths", "evidence", "verificationLevel"],
+            "required": [
+              "acceptanceId",
+              "implementationPaths",
+              "testPaths",
+              "evidence",
+              "verificationLevel"
+            ],
             "additionalProperties": false,
             "properties": {
-              "acceptanceId": { "type": "string", "pattern": "^AC-[0-9]+$" },
+              "acceptanceId": {
+                "type": "string",
+                "pattern": "^AC-[0-9]+$"
+              },
               "designRefs": {
                 "type": "array",
-                "items": { "type": "string", "minLength": 1 }
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "implementationPaths": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "string", "minLength": 1 }
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "testPaths": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "string", "minLength": 1 }
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               },
               "evidence": {
                 "type": "array",
                 "minItems": 1,
                 "items": {
                   "type": "object",
-                  "required": ["kind", "command"],
+                  "required": [
+                    "kind",
+                    "command"
+                  ],
                   "additionalProperties": false,
                   "properties": {
                     "kind": {
                       "type": "string",
-                      "enum": ["test", "lint", "typecheck", "integration", "entrypoint"]
+                      "enum": [
+                        "test",
+                        "lint",
+                        "typecheck",
+                        "integration",
+                        "entrypoint"
+                      ]
                     },
-                    "command": { "type": "string", "minLength": 1 },
-                    "testSelector": { "type": "string", "minLength": 1 }
+                    "command": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "testSelector": {
+                      "type": "string",
+                      "minLength": 1
+                    }
                   }
                 }
               },
               "verificationLevel": {
                 "type": "string",
-                "enum": ["unit", "integration", "entrypoint"]
+                "enum": [
+                  "unit",
+                  "integration",
+                  "entrypoint"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "statement"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^REQ-[0-9]+$"
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confirmedAt": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "upstreamCoverage": {
+      "type": "object",
+      "required": [
+        "version",
+        "sources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "ref",
+              "requirements"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "requirements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "statement"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "statement": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "mappedTo": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outOfScopeReason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "mappedAt": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
               }
             }
           }
