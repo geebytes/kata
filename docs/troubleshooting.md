@@ -65,6 +65,19 @@ Kata does not own model selection. At trust boundaries, choose the model in your
 3. If guard blocks transition, check missing evidence/reviewer/judge files
 4. Manual recovery: delete stale `current-state.json` and rerun
 
+### Phase rewinds after a repair
+
+Symptom: `kata-cli status <change>` reports the phase a repair started from (for example `review`) even though `implement → hardVerify` was sealed, and the phase never advances; the reported `updatedAt` is the pre-repair timestamp.
+
+Cause: repair paths record a backward state event (`review → implement`, `hardVerify → implement`, `judge → implement`) in `.kata/tasks/<id>/state-events.jsonl`. `status` replays that log and rewrites `current-state.json` from the last chain link it accepts; if repair returns are not replayable, the chain is truncated at the repair link and the phase rewinds on every resume.
+
+Fix: update and rebuild Kata (`npm install && npm run build`), then rewrite the projection once:
+
+```bash
+kata-cli recover --change <task-id>
+kata-cli status <change>
+```
+
 ### Judge always returns FAIL
 
 Common causes:

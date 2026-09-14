@@ -135,7 +135,7 @@ The verification pipeline enforces strict ordering:
 5. **Judge PASS** — all acceptance criteria pass
 6. **Wiki candidate** — only from passed tasks
 
-Any gate failure returns the task to bounded repair. Blocking reviewer findings in `review.json` route the task back through `/kata-build`, which records `review → implement → hardVerify` in `state-events.jsonl` and `.kata/tasks/<id>/repair.json`. Judge FAIL follows the same repair discipline from `judge → implement → hardVerify`.
+Any gate failure returns the task to bounded repair. Blocking reviewer findings in `review.json` route the task back through `/kata-build`, which records `review → implement → hardVerify` in `state-events.jsonl` and `.kata/tasks/<id>/repair.json`. Judge FAIL follows the same repair discipline from `judge → implement → hardVerify`. These backward links are recognized repair returns: recovery replays them as chain links, so the projection keeps the post-repair `hardVerify` instead of rewinding to the phase the repair started from.
 
 ## Evaluation
 
