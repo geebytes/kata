@@ -55,6 +55,24 @@ export function isLegalPhaseTransition(from: Phase, to: Phase): boolean {
     return orderedPhases.indexOf(to) === orderedPhases.indexOf(from) + 1;
 }
 
+/**
+ * Repair entrypoints (verify/review/judge repair) deliberately return to `implement`
+ * from a later phase. Those backward links bypass `transition()`, so the state
+ * event log records them directly and the replay must accept them as chain links —
+ * otherwise recovery truncates the chain and rewinds the task to the phase it was
+ * repaired from.
+ */
+export const repairReturnPhases = ['hardVerify', 'review', 'judge'] as const satisfies readonly Phase[];
+
+export function isRepairReturn(from: Phase, to: Phase): boolean {
+    return to === 'implement' && (repairReturnPhases as readonly Phase[]).includes(from);
+}
+
+/** Chain link accepted by recovery: a normal forward step or a repair return. */
+export function isReplayableTransition(from: Phase, to: Phase): boolean {
+    return isLegalPhaseTransition(from, to) || isRepairReturn(from, to);
+}
+
 export async function transition(
     taskId: string,
     to: Phase,
@@ -115,6 +133,19 @@ export async function withTaskLock<T>(root: string, taskId: string, action: () =
 }
 
 export async function appendStateEvent(root: string, event: StateEvent): Promise<void> {
+    // The event log is replayed by recovery, so every append must be a chain link it
+    // can accept: the opening intake event, a normal forward step, or a recognized
+    // repair return. Rejecting anything else here keeps the log replayable instead of
+    // silently rewinding a task's phase later.
+    if (event.from === null) {
+        if (event.to !== 'intake') {
+            throw new Error(`Illegal opening state event: ${event.to}`);
+        }
+    } else if (!isReplayableTransition(event.from, event.to)) {
+        throw new Error(
+            `Illegal state event ${event.from} → ${event.to}; extend the replay rules before appending it.`
+        );
+    }
     await appendFile(stateEventsPath(root, event.taskId), `${JSON.stringify(event)}\n`, 'utf8');
 }
 

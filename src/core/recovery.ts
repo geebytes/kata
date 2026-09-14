@@ -1,6 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isLegalPhaseTransition, readStateEvents, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
+import { isReplayableTransition, readStateEvents, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
 
 export interface RecoveryOptions {
   root?: string;
@@ -76,7 +76,7 @@ function replayValidEvents(events: StateEvent[]): StateEvent[] {
       if (event.from === null && event.to === 'intake') valid.push(event);
       continue;
     }
-    if (event.from === previous.to && isLegalPhaseTransition(previous.to, event.to)) valid.push(event);
+    if (event.from === previous.to && isReplayableTransition(previous.to, event.to)) valid.push(event);
   }
   return valid;
 }
