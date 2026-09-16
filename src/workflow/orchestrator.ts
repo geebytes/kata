@@ -746,9 +746,18 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
     const majorFindings = isStrict
         ? (review.findings ?? []).filter((finding) => finding.severity === 'major')
         : [];
-    if (blockingFindings.length === 0 && majorFindings.length === 0) {
-        throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
+    const severityAuthorized = blockingFindings.length + majorFindings.length > 0;
+    // 证据漂移授权（revision_superseded）：已封存 revision 之后工作树又被改动时，证据必然与当前实现
+    // 不再对应。此时**必须**允许回到 implement 重新 seal——否则只剩「带着过期证据进 Judge」这条路，
+    // 而 verify 早就把 revision_superseded 视为可修复范围（见 reenterImplementForVerifyRepair）。
+    // 这不会削弱评审：新 revision 会让 review.json 的绑定失效，因此必须重新 seal → verify → review。
+    const superseded = revision !== null && (await revisionStatus(root, revision)).status === 'superseded';
+    if (!severityAuthorized && !superseded) {
+        throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
     }
+    const repairReason = severityAuthorized ? 'review_findings' : 'revision_superseded';
+    // 漂移授权时携带**全部**发现（含 minor/note）作为修复上下文；严重级授权时沿用原有语义。
+    const repairFindings = severityAuthorized ? [...blockingFindings, ...majorFindings] : (review.findings ?? []);
 
     const now = new Date().toISOString();
     await withTaskLock(root, taskId, async () => {
@@ -773,9 +782,9 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
             fromPhase: 'review',
             toPhase: 'implement',
             actor,
-            reason: 'review_findings',
+            reason: repairReason,
             ...(revision ? { baselineRevisionId: revision.id, baselineManifestHash: revision.manifestHash } : {}),
-            findings: [...blockingFindings, ...majorFindings].map((finding) => ({
+            findings: repairFindings.map((finding) => ({
                 title: finding.title,
                 message: finding.message,
                 fix: finding.fix,
@@ -793,7 +802,10 @@ async function readActiveReviewRepairBaseline(root: string, taskId: string): Pro
             baselineManifestHash?: string;
             resolvedAt?: string;
         };
-        if (repair.reason !== 'review_findings' || repair.resolvedAt || !repair.baselineManifestHash) return undefined;
+        // 两种评审修复原因都要参与「必须先改变 manifest 才能 seal」的校验：
+        // review_findings（按严重级授权）与 revision_superseded（按证据漂移授权）。
+        const isReviewRepair = repair.reason === 'review_findings' || repair.reason === 'revision_superseded';
+        if (!isReviewRepair || repair.resolvedAt || !repair.baselineManifestHash) return undefined;
         return repair.baselineManifestHash;
     } catch (error: unknown) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;

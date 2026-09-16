@@ -849,6 +849,116 @@ describe('Workflow resume and lifecycle', () => {
         expect(repair.findings).toContainEqual(expect.objectContaining({ title: 'Must repair in strict mode' }));
     });
 
+    it('/kata-build re-enters implementation when a repair superseded the sealed revision', async () => {
+        const root = await tempRoot();
+        const taskId = 'wf-superseded-review-repair';
+        const acceptanceMatrix = {
+            version: 1,
+            rows: [{
+                acceptanceId: 'AC-1',
+                implementationPaths: ['task-owned.txt'],
+                testPaths: ['task-owned.txt'],
+                evidence: [{ kind: 'test', command: process.execPath, testSelector: 'task-owned.txt' }],
+                verificationLevel: 'unit',
+            }],
+        };
+        await runCommand('open', taskId, root, {
+            title: 'Superseded revision review repair workflow test',
+            acceptance: [{ id: 'AC-1', statement: 'A superseded revision must be re-sealable.' }],
+            workflowProfile: {
+                version: 1,
+                isolationMode: 'current_worktree',
+                developmentMode: 'tdd',
+                reviewMode: 'strict',
+                comet: { projectInit: 'not_requested', openStatus: 'acknowledged' },
+            },
+        });
+        const taskPath = join(root, `.kata/tasks/${taskId}/task.json`);
+        const task = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...task, acceptanceMatrix }, null, 2)}\n`);
+        await runCommand('design', taskId, root);
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+        await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+        await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
+        const reviewPath = join(root, `.kata/tasks/${taskId}/review.json`);
+        const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
+        // 只有 minor 发现：平台语义上「无需修复」，但评审确实要求了整改。
+        await writeFile(
+            reviewPath,
+            `${JSON.stringify({ ...review, findings: [{ severity: 'minor', title: 'Minor finding repaired voluntarily' }] }, null, 2)}\n`,
+        );
+        // 评审之后真的改了代码 ⇒ 已封存 revision 被 supersede，证据必然过期。
+        await writeFile(join(root, 'task-owned.txt'), 'repaired implementation\n', 'utf8');
+
+        const repairBuild = await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+
+        expect(repairBuild).toMatchObject({ success: true, phase: 'implement' });
+        const repair = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/repair.json`), 'utf8')) as {
+            reason?: string;
+            baselineManifestHash?: string;
+            findings: Array<{ title?: string }>;
+        };
+        expect(repair.reason).toBe('revision_superseded');
+        expect(repair.baselineManifestHash).toBeTruthy();
+        expect(repair.findings).toContainEqual(
+            expect.objectContaining({ title: 'Minor finding repaired voluntarily' }),
+        );
+    });
+
+    it('/kata-build still rejects minor-only review findings when nothing changed', async () => {
+        const root = await tempRoot();
+        const taskId = 'wf-minor-review-no-drift';
+        const acceptanceMatrix = {
+            version: 1,
+            rows: [{
+                acceptanceId: 'AC-1',
+                implementationPaths: ['task-owned.txt'],
+                testPaths: ['task-owned.txt'],
+                evidence: [{ kind: 'test', command: process.execPath, testSelector: 'task-owned.txt' }],
+                verificationLevel: 'unit',
+            }],
+        };
+        await runCommand('open', taskId, root, {
+            title: 'Minor findings without drift stay in review',
+            acceptance: [{ id: 'AC-1', statement: 'Minor findings alone do not authorize a repair.' }],
+            workflowProfile: {
+                version: 1,
+                isolationMode: 'current_worktree',
+                developmentMode: 'tdd',
+                reviewMode: 'strict',
+                comet: { projectInit: 'not_requested', openStatus: 'acknowledged' },
+            },
+        });
+        const taskPath = join(root, `.kata/tasks/${taskId}/task.json`);
+        const task = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...task, acceptanceMatrix }, null, 2)}\n`);
+        await runCommand('design', taskId, root);
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+        await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+        await runCommand('review', taskId, root, { platform: 'codex', confirmHostModel: true });
+        const reviewPath = join(root, `.kata/tasks/${taskId}/review.json`);
+        const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(
+            reviewPath,
+            `${JSON.stringify({ ...review, findings: [{ severity: 'minor', title: 'Advisory only' }] }, null, 2)}\n`,
+        );
+
+        await expect(runCommand('build', taskId, root)).rejects.toThrow(
+            'Build cannot run from review without blocking (or strict-mode major) review findings',
+        );
+        const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
+        expect(state.phase).toBe('review');
+    });
+
     it('/kata-build rejects a standard-mode major finding from review', async () => {
         const root = await tempRoot();
         const taskId = 'wf-standard-major-review-no-repair';
