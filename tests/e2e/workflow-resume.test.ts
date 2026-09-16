@@ -959,6 +959,69 @@ describe('Workflow resume and lifecycle', () => {
         expect(state.phase).toBe('review');
     });
 
+    it('/kata-build re-enters implementation when a judged revision was superseded', async () => {
+        const root = await tempRoot();
+        const taskId = 'wf-superseded-judge-repair';
+        await runCommand('open', taskId, root, {
+            title: 'Superseded revision after Judge repair workflow test',
+            acceptance: [{ id: 'AC-1', statement: 'Evidence added after Judge must be re-sealable.' }],
+        });
+        await runCommand('design', taskId, root);
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+        await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+        await writeWikiClosure(root, taskId, { decision: 'not_applicable', reason: 'Fixture validates judge-phase repair only.' });
+        await runCommand('verify', taskId, root);
+        await runCommand('review', taskId, root, { confirmHostModel: true });
+        await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed judge-phase repair fixture.' });
+        const judgeResult = await runCommand('judge', taskId, root, { confirmHostModel: true });
+        expect(judgeResult).toMatchObject({ success: true, phase: 'judge' });
+
+        // Judge PASS 之后又改了 owned path（例如追加发布证据）⇒ 已封存 revision 被 supersede，
+        // 而 archive 会因证据不新鲜拒绝进入 distill，故必须能回到 implement 重新 seal。
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\nplus post-judge evidence\n', 'utf8');
+        const repairBuild = await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+
+        expect(repairBuild).toMatchObject({ success: true, phase: 'implement' });
+        const repair = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/repair.json`), 'utf8')) as {
+            reason?: string;
+            fromPhase?: string;
+        };
+        expect(repair.reason).toBe('revision_superseded');
+        expect(repair.fromPhase).toBe('judge');
+    });
+
+    it('/kata-build still rejects a judge PASS when nothing changed after Judge', async () => {
+        const root = await tempRoot();
+        const taskId = 'wf-judge-pass-no-drift';
+        await runCommand('open', taskId, root, {
+            title: 'Judge PASS without drift stays in judge',
+            acceptance: [{ id: 'AC-1', statement: 'A judge PASS alone does not authorize a rebuild.' }],
+        });
+        await runCommand('design', taskId, root);
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+        await runCommand('build', taskId, root, {
+            ownedPaths: ['task-owned.txt'],
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+        await writeWikiClosure(root, taskId, { decision: 'not_applicable', reason: 'Fixture validates judge-phase guard only.' });
+        await runCommand('verify', taskId, root);
+        await runCommand('review', taskId, root, { confirmHostModel: true });
+        await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed judge-phase guard fixture.' });
+        await runCommand('judge', taskId, root, { confirmHostModel: true });
+
+        await expect(runCommand('build', taskId, root)).rejects.toThrow(
+            'Build cannot run from judge without a repairable judge FAIL result',
+        );
+        const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
+        expect(state.phase).toBe('judge');
+    });
+
     it('/kata-build rejects a standard-mode major finding from review', async () => {
         const root = await tempRoot();
         const taskId = 'wf-standard-major-review-no-repair';

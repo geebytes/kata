@@ -252,7 +252,8 @@ async function cmdBuild(
     const current = JSON.parse(
         await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8'),
     ) as { phase: Phase };
-    let enteredReviewRepair = false;
+    // 修复入口只把任务送回 implement；是否立刻继续 seal 由调用方显式决定（与 review 边界一致）。
+    let enteredRepairAwaitingSeal = false;
     if (current.phase === 'plan') {
         await guardTransition(options.guard, 'check', taskId, 'implement');
         await transition(taskId, 'implement', actorFor(defaultActor, options.platform), { root });
@@ -261,14 +262,15 @@ async function cmdBuild(
         await reenterImplementForVerifyRepair(taskId, root, actorFor(defaultActor, options.platform));
     } else if (current.phase === 'review') {
         await reenterImplementForReviewRepair(taskId, root, actorFor(defaultActor, options.platform));
-        enteredReviewRepair = true;
+        enteredRepairAwaitingSeal = true;
     } else if (current.phase === 'judge') {
         await reenterImplementForRepair(taskId, root, actorFor(defaultActor, options.platform));
+        enteredRepairAwaitingSeal = true;
     } else if (current.phase !== 'implement') {
         throw new Error(`Build cannot run from ${current.phase}`);
     }
 
-    if (enteredReviewRepair) {
+    if (enteredRepairAwaitingSeal) {
         return {
             command: 'build',
             taskId,
@@ -904,11 +906,18 @@ async function reenterImplementForRepair(taskId: string, root: string, actor: Ac
         'unresolved_repair_obligation',
     ]);
     const failedAcceptance = judgeResult.acceptance?.filter((criterion) => criterion.result === 'FAIL') ?? [];
-    const isRepairable = judgeResult.result === 'FAIL'
+    const judgeRepairable = judgeResult.result === 'FAIL'
         && failedAcceptance.length > 0
         && failedAcceptance.every((criterion) => criterion.repairScope && repairableScopes.has(criterion.repairScope));
+    // 证据漂移授权（与 review 边界同一规则）：Judge PASS 之后工作树又被打动时（例如在 archive gate 前
+    // 追加发布证据），已封存 revision 被 supersede，`assertDistillGates` 随即拒绝进入 distill——
+    // 而 judge 修复入口原先只认 judge FAIL，于是 PASS + 漂移成为死锁。漂移是 hash 派生的事实，
+    // 与阶段无关，故此处同样接受；新 revision 会失效 review 绑定，仍必须重走 seal → verify → review → judge。
+    const revision = await readCurrentTaskRevision(root, taskId);
+    const superseded = revision !== null && (await revisionStatus(root, revision)).status === 'superseded';
+    const isRepairable = judgeRepairable || superseded;
     if (!isRepairable) {
-        throw new Error('Build cannot run from judge without a repairable judge FAIL result');
+        throw new Error('Build cannot run from judge without a repairable judge FAIL result, or a superseded sealed revision');
     }
 
     const now = new Date().toISOString();
@@ -932,7 +941,12 @@ async function reenterImplementForRepair(taskId: string, root: string, actor: Ac
             fromPhase: 'judge',
             toPhase: 'implement',
             actor,
-            reason: 'judge_fail',
+            reason: judgeRepairable ? 'judge_fail' : 'revision_superseded',
+            // 漂移授权时写下漂移基线：让 repair.json 自证「supersede 了哪个 revision」；
+            // 同时也让 seal 前的「manifest 必须已变」校验生效（此处必然已变）。
+            ...(judgeRepairable
+                ? {}
+                : { baselineRevisionId: revision?.id, baselineManifestHash: revision?.manifestHash }),
             scopes: failedAcceptance.map((criterion) => ({
                 id: criterion.id,
                 repairScope: criterion.repairScope,
