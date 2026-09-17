@@ -11,6 +11,7 @@ import { CometGuard } from '../comet/guard.js';
 import { assertValidTaskId } from '../core/ids.js';
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
+import { matrixChecks, dedupeChecks as dedupeCheckCommands } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
@@ -594,123 +595,6 @@ async function cmdBuild(
     };
 }
 
-const selectorCapableRunners = new Set(['vitest', 'pytest', 'uv']);
-
-function resolveCheckForRow(
-    row: import('../core/task.js').AcceptanceMatrixRow,
-    evidence: import('../core/task.js').MatrixEvidenceItem,
-    root: string,
-): CheckCommand | Error {
-    const hasSelector = typeof evidence.testSelector === 'string' && evidence.testSelector.length > 0;
-    const template = evidence.command.trim();
-    const hasPlaceholder = template.includes('{{selector}}');
-
-    if (hasSelector && hasPlaceholder) {
-        const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
-        const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
-        const filled = template.replace('{{selector}}', selector);
-        const [rawCommand, ...args] = filled.split(/\s+/);
-        const runtimeEntry = rawCommand === 'vitest'
-            ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
-            : rawCommand === 'tsc'
-                ? join(runtimeProjectDir, 'node_modules', 'typescript', 'bin', 'tsc')
-                : undefined;
-        const command = runtimeEntry ? process.execPath : rawCommand;
-        return {
-            id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
-            source: 'matrix',
-            name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
-            kind: evidence.kind,
-            command,
-            args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
-            cwd: runtimeProjectDir,
-            timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
-        } satisfies CheckCommand;
-    }
-
-    if (hasSelector) {
-        const knownRunners = ['vitest', 'pytest', 'uv run pytest'];
-        const isKnownRunner = knownRunners.some((runner) => template === runner || template.startsWith(runner + ' '));
-        if (isKnownRunner) {
-            const [rawCommand, ...args] = template.split(/\s+/);
-            const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
-            const selector = testSelectorForRuntime(evidence.testSelector!, runtimeProjectDir, root);
-            const runtimeEntry = rawCommand === 'vitest'
-                ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
-                : rawCommand === 'pytest'
-                    ? rawCommand
-                    : undefined;
-            const command = runtimeEntry === undefined && rawCommand === 'uv' ? template : (runtimeEntry ? process.execPath : rawCommand);
-            return {
-                id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
-                source: 'matrix',
-                name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
-                kind: evidence.kind,
-                command: runtimeEntry ? process.execPath : rawCommand,
-                args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
-                cwd: runtimeProjectDir,
-                timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
-            } satisfies CheckCommand;
-        }
-        return new Error(`Matrix row ${row.acceptanceId} declares a testSelector but command "${template}" does not support selectors. Use vitest, pytest, uv run pytest, or a command template with {{selector}} placeholder.`);
-    }
-
-    const [rawCommand, ...args] = template.split(/\s+/);
-    const runtimeProjectDir = row.testPaths.every((path) => path.startsWith('kata/')) ? join(root, 'kata') : root;
-    const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : undefined;
-    const runtimeEntry = rawCommand === 'vitest'
-        ? join(runtimeProjectDir, 'node_modules', 'vitest', 'vitest.mjs')
-        : rawCommand === 'tsc'
-            ? join(runtimeProjectDir, 'node_modules', 'typescript', 'bin', 'tsc')
-            : undefined;
-    const command = runtimeEntry ? process.execPath : rawCommand;
-    return {
-        id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
-        source: 'matrix',
-        name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
-        kind: evidence.kind,
-        command,
-        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
-        cwd: runtimeProjectDir,
-        timeoutMs: evidence.kind === 'test' || evidence.kind === 'integration' || evidence.kind === 'entrypoint' ? 120_000 : 60_000,
-    } satisfies CheckCommand;
-}
-
-function testSelectorForRuntime(selector: string, runtimeProjectDir: string, root: string): string {
-    return runtimeProjectDir !== root && selector.startsWith('kata/') ? selector.slice('kata/'.length) : selector;
-}
-
-function selectorArgs(selector: string): string[] {
-    return selector.split(/\s+/);
-}
-
-function matrixChecks(root: string, matrix: import('../core/task.js').AcceptanceMatrix): CheckCommand[] {
-    const checks: CheckCommand[] = [];
-    for (const row of matrix.rows) {
-        for (const evidence of row.evidence) {
-            const result = resolveCheckForRow(row, evidence, root);
-            if (result instanceof Error) {
-                throw result;
-            }
-            checks.push(result);
-        }
-    }
-    return checks.filter((check, index) => checks.findIndex((candidate) =>
-        candidate.kind === check.kind
-        && candidate.command === check.command
-        && (candidate.args ?? []).join('\0') === (check.args ?? []).join('\0')
-        && candidate.cwd === check.cwd,
-    ) === index);
-}
-
-function dedupeCheckCommands(checks: CheckCommand[]): CheckCommand[] {
-    return checks.filter((check, index) => checks.findIndex((candidate) =>
-        candidate.kind === check.kind
-        && candidate.command === check.command
-        && (candidate.args ?? []).join('\0') === (check.args ?? []).join('\0')
-        && candidate.cwd === check.cwd,
-    ) === index);
-}
 
 /**
  * The checks a seal resolves, with each one's identity and origin stamped on. The seal and the preflight
