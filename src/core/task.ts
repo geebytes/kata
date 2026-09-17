@@ -7,6 +7,7 @@ import { assertValidTaskId } from './ids.js';
 import { currentGitBranch } from './git.js';
 import type { TaskRelation } from './relations.js';
 import type { WorkflowProfile } from './workflow-profile.js';
+import { taskDir, tasksDir, taskPath } from './layout.js';
 
 export interface AcceptanceCriterionInput {
   id?: string;
@@ -120,8 +121,8 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
     ...(input.upstreamCoverage ? { upstreamCoverage: input.upstreamCoverage } : {}),
   };
 
-  const taskDirectory = join(root, '.kata/tasks', task.id);
-  await mkdir(join(root, '.kata/tasks'), { recursive: true });
+  const taskDirectory = taskDir(root, task.id);
+  await mkdir(tasksDir(root), { recursive: true });
   try {
     await mkdir(taskDirectory);
   } catch (error) {
@@ -156,5 +157,5 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 /** Reads a task record against its schema. Every caller that used to parse task.json by hand should use this. */
 export async function readTask(root: string, taskId: string): Promise<TaskRecord> {
-  return readValidated<TaskRecord>('task', join(root, '.kata/tasks', taskId, 'task.json'));
+  return readValidated<TaskRecord>('task', taskPath(root, taskId));
 }

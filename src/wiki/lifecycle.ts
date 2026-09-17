@@ -4,6 +4,7 @@ import { lintLlmWiki } from './llmwiki.js';
 import { verifySources } from './drift.js';
 import { readWikiRecords } from './store.js';
 import type { WikiRecord } from './record.js';
+import { taskDir, taskPath } from '../core/layout.js';
 
 const reviewAfterDays = 90;
 const maxCandidatesPerTask = 2;
@@ -63,14 +64,14 @@ export async function auditWiki(root: string): Promise<WikiAudit> {
 
 export async function createRefreshPacket(root: string, taskId: string): Promise<{ path: string; audit: WikiAudit }> {
   const audit = await auditWiki(root);
-  const path = join(root, '.kata/tasks', taskId, 'wiki-refresh.json');
-  await mkdir(join(root, '.kata/tasks', taskId), { recursive: true });
+  const path = join(taskDir(root, taskId), 'wiki-refresh.json');
+  await mkdir(taskDir(root, taskId), { recursive: true });
   await writeFile(path, `${JSON.stringify({ taskId, generatedAt: audit.generatedAt, staleIds: audit.staleIds, reviewDueIds: audit.reviewDueIds, duplicateGroups: audit.duplicateGroups, instructions: ['Revalidate code/document anchors before editing.', 'Update, merge, mark stale, or reject records; do not promote automatically.'] }, null, 2)}\n`);
   return { path: `.kata/tasks/${taskId}/wiki-refresh.json`, audit };
 }
 
 export async function relevantWiki(root: string, taskId: string, limit = 8): Promise<WikiRecord[]> {
-  const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as { title?: string; acceptance?: Array<{ statement?: string }> };
+  const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as { title?: string; acceptance?: Array<{ statement?: string }> };
   const terms = new Set(`${task.title ?? ''} ${(task.acceptance ?? []).map((item) => item.statement ?? '').join(' ')}`.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? []);
   return (await readWikiRecords(root)).filter((record) => record.status === 'verified').map((record) => ({ record, score: score(record, terms) })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.record.id.localeCompare(b.record.id)).slice(0, limit).map((item) => item.record);
 }

@@ -4,6 +4,7 @@ import { writeWikiRecord } from './store.js';
 import { computeFileHash, type WikiRecord } from './record.js';
 import { readWikiClosure, writeWikiClosure, type WikiClosure } from './closure.js';
 import { readRecordedEvidence } from '../quality/evidence.js';
+import { judgePath as layoutJudgePath, currentStatePath as layoutCurrentStatePath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 export interface CandidateInput {
   statement: string;
@@ -19,7 +20,7 @@ export type DistillKnowledgeResult =
   | { decision: 'deferred'; candidateIds: []; records: []; reason: string };
 
 export async function proposeFromPassedTask(root: string, taskId: string, input: CandidateInput): Promise<WikiRecord[]> {
-  const judgePath = join(root, '.kata/tasks', taskId, 'judge.json');
+  const judgePath = layoutJudgePath(root, taskId);
   const judgeRaw = await readFile(judgePath, 'utf8');
   const judge = JSON.parse(judgeRaw) as { taskId: string; result: string };
 
@@ -27,7 +28,7 @@ export async function proposeFromPassedTask(root: string, taskId: string, input:
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} has not passed Judge (result: ${judge.result})`);
   }
 
-  const statePath = join(root, '.kata/tasks', taskId, 'current-state.json');
+  const statePath = layoutCurrentStatePath(root, taskId);
   const stateRaw = await readFile(statePath, 'utf8');
   const state = JSON.parse(stateRaw) as { phase: string };
 
@@ -141,7 +142,7 @@ async function sourceRefsForTask(root: string, taskId: string, ownedPaths: strin
     ...ownedPaths,
   ];
   try {
-    const evidenceFiles = await readdir(join(root, '.kata/evidence'));
+    const evidenceFiles = await readdir(layoutEvidenceDir(root));
     refs.push(...evidenceFiles.filter((file) => file.startsWith(`${taskId}-`)).map((file) => `.kata/evidence/${file}`));
   } catch { /* no evidence directory */ }
   const existing: string[] = [];

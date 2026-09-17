@@ -4,6 +4,7 @@ import type { AcceptanceCriterion, AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import type { ReviewFinding } from './reviewer.js';
 import { evaluateAcceptanceAdequacy } from './evidence-adequacy.js';
+import { judgePath as layoutJudgePath, taskDir } from '../core/layout.js';
 
 export interface JudgeInput {
   root?: string;
@@ -97,8 +98,8 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
   };
 
   const root = input.root ?? process.cwd();
-  await mkdir(join(root, '.kata/tasks', input.taskId), { recursive: true });
-  await writeFile(join(root, '.kata/tasks', input.taskId, 'judge.json'), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  await mkdir(taskDir(root, input.taskId), { recursive: true });
+  await writeFile(layoutJudgePath(root, input.taskId), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 
   return result;
 }

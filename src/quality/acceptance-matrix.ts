@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { codeGraphExecutionEnv } from '../codegraph/runtime.js';
 import type { AcceptanceCriterion, AcceptanceMatrix, AcceptanceMatrixRow } from '../core/task.js';
+import { waiversPath, taskDir } from '../core/layout.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -472,7 +473,7 @@ export async function readWaivers(root: string, taskId: string): Promise<Waiver[
   try {
     const { readFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
-    const raw = await readFile(join(root, '.kata/tasks', taskId, 'waivers.json'), 'utf8');
+    const raw = await readFile(waiversPath(root, taskId), 'utf8');
     return (JSON.parse(raw) as { waivers: Waiver[] }).waivers;
   } catch {
     return [];
@@ -482,9 +483,9 @@ export async function readWaivers(root: string, taskId: string): Promise<Waiver[
 export async function writeWaivers(root: string, taskId: string, waivers: Waiver[]): Promise<void> {
   const { mkdir, writeFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-  await mkdir(join(root, '.kata/tasks', taskId), { recursive: true });
+  await mkdir(taskDir(root, taskId), { recursive: true });
   await writeFile(
-    join(root, '.kata/tasks', taskId, 'waivers.json'),
+    waiversPath(root, taskId),
     `${JSON.stringify({ waivers, updatedAt: new Date().toISOString() }, null, 2)}\n`,
     'utf8',
   );

@@ -15,6 +15,7 @@ import {
 import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, resolvePlatformGlobalDir } from './platforms.js';
 import { renderPolicySource } from '../policy/hook-policy.js';
 import { hashContent } from '../core/hash.js';
+import { adaptersManifestPath, skillsIndexRelativePath, taskDir as layoutTaskDir } from '../core/layout.js';
 
 type OwnedFile = {
   platform: Platform;
@@ -388,7 +389,7 @@ async function manageProjectWiki(options: InstallOptions, root: string, report: 
   }
 
   const enrichTask = await buildLlmWikiTask({ root, kind: 'enrich' });
-  const taskDir = join(root, '.kata/tasks/wiki-enrich');
+  const taskDir = layoutTaskDir(root, 'wiki-enrich');
   await mkdir(taskDir, { recursive: true });
   await writeFile(join(taskDir, 'task-packet.json'), `${JSON.stringify(enrichTask, null, 2)}\n`);
 }
@@ -421,7 +422,7 @@ async function writeProjectContractFiles(
     manifest,
     report,
     commandId: 'skills-index',
-    relativePath: '.kata/skills-index.md',
+    relativePath: skillsIndexRelativePath,
     content: renderSkillsIndex(options.language),
   });
 }
@@ -927,7 +928,7 @@ async function writeManifest(root: string, manifest: OwnershipManifest): Promise
 }
 
 function manifestPath(root: string): string {
-  return join(root, '.kata/adapters/manifest.json');
+  return adaptersManifestPath(root);
 }
 
 function isOwnershipManifest(value: unknown): value is OwnershipManifest {

@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { WikiRecord } from './record.js';
+import { rulesDir } from '../core/layout.js';
 
 export interface ConflictEntry {
   type: 'rule' | 'spec' | 'test' | 'code';
@@ -14,8 +15,10 @@ export interface ConflictReport {
   analysis: string;
 }
 
-async function collectFiles(root: string, subDir: string, extension: string): Promise<string[]> {
-  const dirPath = join(root, subDir);
+async function collectFiles(directory: string, extension: string): Promise<string[]> {
+  // `directory` is absolute: the callers know their own location, and joining a root onto an absolute path would
+  // duplicate it.
+  const dirPath = directory;
   try {
     const entries = await readdir(dirPath, { withFileTypes: true, recursive: true });
     return entries
@@ -72,7 +75,7 @@ export async function checkConflicts(root: string, record: WikiRecord): Promise<
     return { hasConflict: false, conflicts: [], analysis: 'No meaningful keywords to check.' };
   }
 
-  const ruleFiles = await collectFiles(root, '.kata/rules', '.md');
+  const ruleFiles = await collectFiles(rulesDir(root), '.md');
   for (const filePath of ruleFiles) {
     const content = await readTextFile(filePath);
     const matches = findKeywordMatches(content, keywords);
@@ -82,7 +85,7 @@ export async function checkConflicts(root: string, record: WikiRecord): Promise<
     }
   }
 
-  const specFiles = await collectFiles(root, 'docs/superpowers/specs', '.md');
+  const specFiles = await collectFiles(join(root, 'docs/superpowers/specs'), '.md');
   for (const filePath of specFiles) {
     const content = await readTextFile(filePath);
     const matches = findKeywordMatches(content, keywords);
@@ -91,7 +94,7 @@ export async function checkConflicts(root: string, record: WikiRecord): Promise<
     }
   }
 
-  const testFiles = await collectFiles(root, 'tests', '.ts');
+  const testFiles = await collectFiles(join(root, 'tests'), '.ts');
   for (const filePath of testFiles.slice(0, 15)) {
     const content = await readTextFile(filePath);
     const moduleMatch = record.sourceRefs.some((ref) => {

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { skillCommands, type InstallOptions, type InstallScope, type Platform } from './manifest.js';
 import { installationRoot, sha256 } from './ownership.js';
 import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath } from './platforms.js';
+import { adaptersManifestPath, skillsIndexRelativePath } from '../core/layout.js';
 
 export type DoctorStatus = 'ok' | 'missing' | 'conflict' | 'skipped';
 
@@ -55,7 +56,7 @@ export async function doctor(
 
   if (scope === 'project') {
     checks.push(await checkPath(root, manifest, 'AGENTS.md', 'support'));
-    checks.push(await checkPath(root, manifest, '.kata/skills-index.md', 'support'));
+    checks.push(await checkPath(root, manifest, skillsIndexRelativePath, 'support'));
     checks.push(await checkExists(root, '.llmwiki', 'wiki'));
   }
 
@@ -107,7 +108,7 @@ async function checkExists(root: string, relativePath: string, kind: DoctorCheck
 }
 
 async function readOwnershipManifest(root: string): Promise<OwnershipManifest> {
-  const content = await readOptional(join(root, '.kata/adapters/manifest.json'));
+  const content = await readOptional(adaptersManifestPath(root));
   if (!content) return {};
   try {
     return JSON.parse(content) as OwnershipManifest;

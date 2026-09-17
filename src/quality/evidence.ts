@@ -6,6 +6,7 @@ import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 import { createContentHasher } from '../core/hash.js';
 import * as os from 'node:os';
+import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
 
@@ -195,7 +196,7 @@ export async function collectEvidence(
 export async function readRecordedEvidence(root: string, taskId: string): Promise<EvidenceEnvelope[]> {
   const { readdir } = await import('node:fs/promises');
   const { readValidated } = await import('../core/schema.js');
-  const evidenceDir = join(root, '.kata/evidence');
+  const evidenceDir = layoutEvidenceDir(root);
   let files: string[] = [];
   try {
     files = await readdir(evidenceDir);
@@ -205,7 +206,7 @@ export async function readRecordedEvidence(root: string, taskId: string): Promis
 
   const evidence: EvidenceEnvelope[] = [];
   for (const file of files.filter((name) => name.startsWith(`${taskId}-`) && name.endsWith('.json'))) {
-    const envelope = await readValidated<EvidenceEnvelope>('evidence', join(evidenceDir, file));
+    const envelope = await readValidated<EvidenceEnvelope>('evidence', join(layoutEvidenceDir(root), file));
     if (envelope.taskId === taskId) evidence.push(envelope);
   }
   return evidence;

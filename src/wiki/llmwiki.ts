@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path
 import { writeWikiRecord } from './store.js';
 import { computeFileHash } from './record.js';
 import { hashContent } from '../core/hash.js';
+import { wikiDir as layoutWikiDir, taskDir } from '../core/layout.js';
 
 export interface LlmWikiInput {
   root?: string;
@@ -355,7 +356,7 @@ export async function registerWikiPages(input: LlmWikiInput = {}): Promise<LlmWi
 }
 
 async function collectExistingRecordIds(root: string): Promise<string[]> {
-  const wikiDir = join(root, '.kata/wiki');
+  const wikiDir = layoutWikiDir(root);
   try {
     const entries = await readdir(wikiDir);
     return entries.filter((e) => e.endsWith('.json')).map((e) => e.replace(/\.json$/, ''));
@@ -382,7 +383,7 @@ export async function rebuildLlmWiki(input: LlmWikiInput = {}): Promise<LlmWikiR
     } catch {}
   }
 
-  const wikiDir = join(root, '.kata/wiki');
+  const wikiDir = layoutWikiDir(root);
   try {
     const files = await readdir(wikiDir);
     for (const file of files) {
@@ -393,8 +394,8 @@ export async function rebuildLlmWiki(input: LlmWikiInput = {}): Promise<LlmWikiR
     }
   } catch {}
 
-  const taskPacketPath = join(root, '.kata/tasks/wiki-enrich/task-packet.json');
-  const wrapDir = join(root, '.kata/tasks/wiki-enrich');
+  const taskPacketPath = join(taskDir(root, 'wiki-enrich'), 'task-packet.json');
+  const wrapDir = taskDir(root, 'wiki-enrich');
   await mkdir(wrapDir, { recursive: true });
   const enrichTask = await buildLlmWikiTask({ root, kind: 'enrich' });
   await writeFile(taskPacketPath, `${JSON.stringify(enrichTask, null, 2)}\n`);

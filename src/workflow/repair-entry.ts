@@ -5,6 +5,7 @@ import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import type { RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionStatus } from './revision.js';
+import { verifyPath, reviewPath, taskPath, judgePath } from '../core/layout.js';
 
 /**
  * Whether a task may leave a gate and re-enter implementation, and what that entry is recorded as.
@@ -43,7 +44,7 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
     // An absent verdict means there is nothing to repair against; a drifted one is an error, not an absence.
     const verify = await readValidatedOptional<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
         'verify-result',
-        join(root, '.kata/tasks', taskId, 'verify.json'),
+        verifyPath(root, taskId),
     );
     if (!verify) {
         // No verify verdict to repair against: the entry is recorded by the state transition alone.
@@ -75,11 +76,11 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     const review = await readValidatedOptional<{
         revisionId?: string;
         findings?: Array<{ id?: string; acceptanceId?: string; severity?: string; message?: string; path?: string }>;
-    }>('review', join(root, '.kata/tasks', taskId, 'review.json'));
+    }>('review', reviewPath(root, taskId));
     if (!review) {
         return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
     }
-    const task = await readValidatedOptional<{ workflowProfile?: { reviewMode?: string } }>('task', join(root, '.kata/tasks', taskId, 'task.json'))
+    const task = await readValidatedOptional<{ workflowProfile?: { reviewMode?: string } }>('task', taskPath(root, taskId))
         .catch(() => null);
     const isStrict = task?.workflowProfile?.reviewMode === 'strict';
     const revision = await readCurrentTaskRevision(root, taskId);
@@ -123,7 +124,7 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     const entryPhase: RepairEntryPhase = 'judge';
     const judge = await readValidatedOptional<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
         'judge-result',
-        join(root, '.kata/tasks', taskId, 'judge.json'),
+        judgePath(root, taskId),
     );
     if (!judge) {
         return denial(entryPhase, 'Build cannot run from judge without a recorded judge result. Run /kata-judge first.');

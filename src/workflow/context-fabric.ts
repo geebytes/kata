@@ -11,6 +11,7 @@ import { computeManifestHash, readCurrentTaskRevision } from './revision.js';
 import { readValidated, readValidatedOptional } from '../core/schema.js';
 import { hashContent } from '../core/hash.js';
 import { currentGitBranch, currentGitHead } from '../core/git.js';
+import { taskPath, handoffDir, handoffPacketPath, handoffReceiptPath, reviewPath, judgePath } from '../core/layout.js';
 
 type HandoffAnchorScope =
   | { kind: 'revision'; revisionId: string; paths: string[]; hash: string }
@@ -29,7 +30,7 @@ export type ContextPacketVerification = { valid: true } | { valid: false; reason
 export async function createContextPacket(input: { root: string; taskId: string; fromRole: Role; toRole: Role; platform?: string }): Promise<HandoffPacket> {
   assertValidTaskId(input.taskId); assertRole(input.fromRole); assertRole(input.toRole);
   const handoff = await createHandoff(input.root, input.taskId, input.toRole);
-  const task = JSON.parse(await readFile(join(input.root, '.kata/tasks', input.taskId, 'task.json'), 'utf8')) as HandoffPacket['task'];
+  const task = JSON.parse(await readFile(taskPath(input.root, input.taskId), 'utf8')) as HandoffPacket['task'];
   const context = await buildContextManifest({ root: input.root, taskId: input.taskId, sourceRefs: handoff.context.sourceRefs });
   const designRefs = designRefsFor(input.root, input.taskId, input.toRole);
   const packet: HandoffPacket = { protocolVersion: 1, id: `handoff-${randomUUID().slice(0, 12)}`, taskId: input.taskId, createdAt: new Date().toISOString(), from: { role: input.fromRole, ...(input.platform ? { platform: safePlatform(input.platform) } : {}) }, to: { role: input.toRole }, phase: handoff.fromPhase, repository: await anchor(input.root, input.taskId), task, context: { requiredReads: existingReads(input.root, input.taskId, designRefs), designRefs, sourceRefs: [...handoff.context.sourceRefs].sort(), authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })), excludedWiki: context.excludedWiki.map((record) => ({ id: record.id, reason: record.reason })), evidencePaths: handoff.context.evidenceIds.map((id) => `.kata/evidence/${id}`), priorArtifacts: roleArtifacts(input.root, input.taskId) }, permissions: { allowedWrites: allowedWrites(input.toRole, input.taskId, input.root), guardInstructions: handoff.guardInstructions }, nextAction: `Perform ${input.toRole} work after verifying this handoff.` };
@@ -80,7 +81,7 @@ function designRefsFor(root: string, taskId: string, role: Role): string[] {
   //    feeds reviewer/judge the real requirements (previously a dead field).
   try {
     const { readFileSync } = require('node:fs') as typeof import('node:fs');
-    const taskRaw = readFileSync(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+    const taskRaw = readFileSync(taskPath(root, taskId), 'utf8');
     const task = JSON.parse(taskRaw) as {
       upstreamCoverage?: { sources?: Array<{ ref?: string }> };
       acceptanceMatrix?: { rows?: Array<{ designRefs?: string[] }> };
@@ -118,9 +119,9 @@ function allowedWrites(role: Role, taskId: string, root = process.cwd()): string
   if (role === 'implementer') return [existsSync(join(root, 'packages')) ? 'packages/' : 'src/', 'tests/', 'docs/'];
   return [`.kata/tasks/${taskId}/${role === 'reviewer' ? 'review.json' : role === 'judge' ? 'judge.json' : 'wiki/'}`];
 }
-async function writePacket(root: string, packet: HandoffPacket): Promise<void> { const directory = join(root, '.kata/tasks', packet.taskId, 'handoffs'); await mkdir(directory, { recursive: true }); await writeFile(packetPath(root, packet.taskId, packet.id), `${JSON.stringify(packet, null, 2)}\n`); }
-function packetPath(root: string, taskId: string, id: string): string { return join(root, '.kata/tasks', taskId, 'handoffs', `${id}.json`); }
-function receiptPath(root: string, taskId: string, id: string): string { return join(root, '.kata/tasks', taskId, 'handoffs', `${id}.receipt.json`); }
+async function writePacket(root: string, packet: HandoffPacket): Promise<void> { const directory = handoffDir(root, packet.taskId); await mkdir(directory, { recursive: true }); await writeFile(packetPath(root, packet.taskId, packet.id), `${JSON.stringify(packet, null, 2)}\n`); }
+function packetPath(root: string, taskId: string, id: string): string { return handoffPacketPath(root, taskId, id); }
+function receiptPath(root: string, taskId: string, id: string): string { return handoffReceiptPath(root, taskId, id); }
 
 function safeId(id: string): void { if (!/^handoff-[a-z0-9-]{1,63}$/.test(id)) throw new Error('Invalid handoff id'); }
 function safePlatform(platform: string): string { if (!/^[a-z][a-z0-9-]{0,63}$/.test(platform)) throw new Error('Invalid platform'); return platform; }

@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Phase, Actor } from '../core/state.js';
 import { profileGuardInstructions, type WorkflowProfile } from '../core/workflow-profile.js';
+import { taskPath, currentStatePath, evidenceDir as evidenceDirPath } from '../core/layout.js';
 
 export type Role = 'designer' | 'implementer' | 'reviewer' | 'judge' | 'distiller' | 'approver';
 
@@ -25,7 +26,7 @@ export async function createHandoff(
   taskId: string,
   nextRole: Role,
 ): Promise<HandoffBundle> {
-  const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+  const taskRaw = await readFile(taskPath(root, taskId), 'utf8');
   const task = JSON.parse(taskRaw) as {
     id: string;
     title: string;
@@ -34,10 +35,10 @@ export async function createHandoff(
     workflowProfile?: WorkflowProfile;
   };
 
-  const stateRaw = await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8');
+  const stateRaw = await readFile(currentStatePath(root, taskId), 'utf8');
   const state = JSON.parse(stateRaw) as { phase: Phase };
 
-  const evidenceDir = join(root, '.kata/evidence');
+  const evidenceDir = evidenceDirPath(root);
   let evidenceIds: string[] = [];
   try {
     const { readdir } = await import('node:fs/promises');

@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { resolveTerminalTask } from '../core/relations.js';
 import { createContentHasher } from '../core/hash.js';
+import { revisionsDir, currentRevisionPath, revisionPath, tasksDir } from '../core/layout.js';
 
 export interface TaskRevision {
   id: string;
@@ -49,7 +50,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
       ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
     };
-    await writeFile(join(input.root, '.kata/tasks', input.taskId, 'current-revision.json'), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
+    await writeFile(currentRevisionPath(input.root, input.taskId), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
     return { revision, reused: true };
   }
 
@@ -62,10 +63,10 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
     ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
   };
-  const directory = join(input.root, '.kata/tasks', input.taskId, 'revisions');
+  const directory = revisionsDir(input.root, input.taskId);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
-  await writeFile(join(input.root, '.kata/tasks', input.taskId, 'current-revision.json'), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
+  await writeFile(currentRevisionPath(input.root, input.taskId), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
   return { revision, reused: false };
 }
 
@@ -85,12 +86,12 @@ export function revisionIdFor(taskId: string, manifestHash: string, checkIds: st
 }
 
 export async function readTaskRevision(root: string, taskId: string, revisionId: string): Promise<TaskRevision> {
-  return JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'revisions', `${revisionId}.json`), 'utf8')) as TaskRevision;
+  return JSON.parse(await readFile(revisionPath(root, taskId, revisionId), 'utf8')) as TaskRevision;
 }
 
 export async function readCurrentTaskRevision(root: string, taskId: string): Promise<TaskRevision | null> {
   try {
-    return JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-revision.json'), 'utf8')) as TaskRevision;
+    return JSON.parse(await readFile(currentRevisionPath(root, taskId), 'utf8')) as TaskRevision;
   } catch (error) {
     if (isMissingFile(error)) return null;
     throw error;
@@ -144,7 +145,7 @@ export async function findOwnershipConflicts(
   taskId: string,
   ownedPaths: string[],
 ): Promise<Array<{ taskId: string; path: string }>> {
-  const tasksRoot = join(root, '.kata/tasks');
+  const tasksRoot = tasksDir(root);
   let entries: string[] = [];
   try { entries = await readdir(tasksRoot); } catch { return []; }
   const normalized = normalizeOwnedPaths(root, ownedPaths);

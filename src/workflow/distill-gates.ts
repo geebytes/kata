@@ -4,6 +4,7 @@ import { readValidatedOptional } from '../core/schema.js';
 import { join } from 'node:path';
 import { readTaskRevision, revisionStatus } from './revision.js';
 import type { JudgeResult } from '../quality/judge.js';
+import { judgePath, reviewPath } from '../core/layout.js';
 
 /**
  * Whether a task may enter distill.
@@ -57,7 +58,7 @@ export async function evaluateReviewClearance(
         revisionId?: string;
         status?: string;
         reviewEvidence?: string;
-    }>('review', join(root, '.kata/tasks', taskId, 'review.json'));
+    }>('review', reviewPath(root, taskId));
     if (!review) return { cleared: false, reason: 'not_approved' };
     if (review.status !== 'approved') return { cleared: false, reason: 'not_approved' };
     if (!review.reviewEvidence?.trim()) return { cleared: false, reason: 'no_review_evidence' };
@@ -85,7 +86,7 @@ export async function evaluateJudgePass(input: {
     currentDiffHash: string;
     freshEvidence: FreshPassingEvidence | null;
 }): Promise<JudgePass> {
-    const judge = await readValidatedOptional<JudgeResult>('judge-result', join(input.root, '.kata/tasks', input.taskId, 'judge.json'));
+    const judge = await readValidatedOptional<JudgeResult>('judge-result', judgePath(input.root, input.taskId));
     if (!judge || judge.taskId !== input.taskId || judge.result !== 'PASS') return { passed: false, reason: 'not_passed' };
     if (input.freshEvidence?.revisionId) {
         if (judge.revisionId !== input.freshEvidence.revisionId) return { passed: false, reason: 'stale_judgement' };

@@ -4,6 +4,7 @@ import { readValidatedOptional } from '../core/schema.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evidenceMatchesRow, getMatrixRowForAc } from './acceptance-matrix.js';
+import { repairObligationsPath, taskDir } from '../core/layout.js';
 
 export interface RepairObligation {
   id: string;
@@ -162,11 +163,11 @@ export async function reopenObligation(
 }
 
 function obligationsPath(root: string, taskId: string): string {
-  return join(root, '.kata/tasks', taskId, 'repair-obligations.json');
+  return repairObligationsPath(root, taskId);
 }
 
 async function writeObligations(root: string, taskId: string, obligations: RepairObligation[]): Promise<void> {
-  await mkdir(join(root, '.kata/tasks', taskId), { recursive: true });
+  await mkdir(taskDir(root, taskId), { recursive: true });
   const record: ObligationRecord = {
     obligations,
     updatedAt: new Date().toISOString(),

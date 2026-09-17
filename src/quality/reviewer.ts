@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validate } from '../core/schema.js';
+import { reviewPath as layoutReviewPath, taskDir } from '../core/layout.js';
 
 export type ReviewSeverity = 'blocking' | 'major' | 'minor' | 'note';
 
@@ -34,7 +35,7 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
     ...(input.path ? { path: input.path } : {}),
   };
 
-  const reviewPath = join(root, '.kata/tasks', input.taskId, 'review.json');
+  const reviewPath = layoutReviewPath(root, input.taskId);
   let findings: ReviewFinding[] = [];
   let revisionId: string | undefined;
   let status: string | undefined;
@@ -48,7 +49,7 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
     if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
   }
 
-  await mkdir(join(root, '.kata/tasks', input.taskId), { recursive: true });
+  await mkdir(taskDir(root, input.taskId), { recursive: true });
   await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`, 'utf8');
 
   if (finding.severity === 'blocking') {

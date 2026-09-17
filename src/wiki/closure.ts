@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readWikiRecords } from './store.js';
+import { wikiClosurePath as layoutWikiClosurePath, taskDir } from '../core/layout.js';
 
 export type WikiClosureDecision = 'captured' | 'not_applicable' | 'deferred';
 
@@ -59,11 +60,11 @@ export async function evaluateWikiClosure(root: string, taskId: string): Promise
 }
 
 function pathFor(root: string, taskId: string): string {
-  return join(root, '.kata/tasks', taskId, 'wiki-closure.json');
+  return layoutWikiClosurePath(root, taskId);
 }
 
 async function persist(root: string, closure: WikiClosure): Promise<void> {
-  await mkdir(join(root, '.kata/tasks', closure.taskId), { recursive: true });
+  await mkdir(taskDir(root, closure.taskId), { recursive: true });
   await writeFile(pathFor(root, closure.taskId), `${JSON.stringify(closure, null, 2)}\n`, 'utf8');
 }
 

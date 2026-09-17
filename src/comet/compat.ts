@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import bundledCompatYaml from 'kata-asset:comet-compat.yaml';
-import { resolveWorkspaceRoot } from '../core/layout.js';
+import { cometCompatOverridePath, resolveWorkspaceRoot } from '../core/layout.js';
 
 // =============================================================================
 // Public types
@@ -127,7 +127,7 @@ export function loadCometCompatibility(manifestPath?: string, root?: string): Co
  * package itself.
  */
 export function workspaceCometCompatibilityPath(root: string = resolveWorkspaceRoot()): string {
-    return join(root, '.kata', 'comet-compat.yaml');
+    return cometCompatOverridePath(root);
 }
 
 function readWorkspaceCompatYaml(root?: string): string | null {

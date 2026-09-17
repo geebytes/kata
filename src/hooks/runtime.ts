@@ -4,6 +4,7 @@ import { assertValidTaskId } from '../core/ids.js';
 import type { Phase } from '../core/state.js';
 import { activeRoleForPhase } from '../workflow/navigation.js';
 import { currentGitBranch } from '../core/git.js';
+import { currentStatePath as layoutCurrentStatePath, activeTaskPath as layoutActiveTaskPath } from '../core/layout.js';
 
 export type ActiveHookTask = {
   taskId: string;
@@ -60,14 +61,14 @@ export async function readActiveHookTask(root: string): Promise<ActiveHookTask |
 }
 
 async function readTaskPhase(root: string, taskId: string): Promise<Phase> {
-  const state = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as {
+  const state = JSON.parse(await readFile(layoutCurrentStatePath(root, taskId), 'utf8')) as {
     phase: Phase;
   };
   return state.phase;
 }
 
 function activeHookTaskPath(root: string): string {
-  return join(root, '.kata/runtime/active-task.json');
+  return layoutActiveTaskPath(root);
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

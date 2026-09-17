@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import { readValidated } from '../core/schema.js';
+import { userChoiceGatePath, taskDir } from '../core/layout.js';
 
 export type UserChoiceBoundary = 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate';
 export type UserChoice = 'continue_current' | 'switched' | 'delegated';
@@ -19,7 +20,7 @@ type UserChoiceGate = {
 export async function createUserChoiceGate(input: { root: string; taskId: string; boundary: UserChoiceBoundary; revisionId?: string }): Promise<void> {
   assertValidTaskId(input.taskId);
   const gate: UserChoiceGate = { taskId: input.taskId, boundary: input.boundary, ...(input.revisionId ? { revisionId: input.revisionId } : {}), createdAt: new Date().toISOString() };
-  await mkdir(join(input.root, '.kata/tasks', input.taskId), { recursive: true });
+  await mkdir(taskDir(input.root, input.taskId), { recursive: true });
   await writeFile(pathFor(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}\n`);
 }
 
@@ -55,5 +56,5 @@ function assertRevision(gate: UserChoiceGate, revisionId: string | undefined): v
 }
 
 function pathFor(root: string, taskId: string, boundary: UserChoiceBoundary): string {
-  return join(root, '.kata/tasks', taskId, `user-choice-${boundary}.json`);
+  return userChoiceGatePath(root, taskId, boundary);
 }

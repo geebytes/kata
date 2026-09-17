@@ -25,6 +25,7 @@ import { readValidated, readValidatedOptional, validate } from '../core/schema.j
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
+import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
 
@@ -263,7 +264,7 @@ async function cmdBuild(
         };
     }
     const current = JSON.parse(
-        await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8'),
+        await readFile(currentStatePath(root, taskId), 'utf8'),
     ) as { phase: Phase };
     // 修复入口只把任务送回 implement；是否立刻继续 seal 由调用方显式决定（与 review 边界一致）。
     let enteredRepairAwaitingSeal = false;
@@ -301,7 +302,7 @@ async function cmdBuild(
         let buildOwnedPaths: string[] = [];
         try {
             const currentTask = JSON.parse(
-                await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8'),
+                await readFile(taskPath(root, taskId), 'utf8'),
             ) as { ownedPaths?: string[] };
             if (currentTask.ownedPaths?.length) {
                 buildOwnedPaths = currentTask.ownedPaths;
@@ -775,7 +776,7 @@ async function persistTaskOwnedPaths(
     ownedPaths: string[],
 ): Promise<void> {
     await writeFile(
-        join(root, '.kata/tasks', taskId, 'task.json'),
+        taskPath(root, taskId),
         `${JSON.stringify({ ...task, ownedPaths }, null, 2)}\n`,
         'utf8',
     );
@@ -788,26 +789,26 @@ async function persistTaskOwnedPaths(
  * revision it belonged to. The active set stays at the top level, so readers see exactly what the current seal proved.
  */
 async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnvelope[]): Promise<void> {
-    const evidenceDir = join(root, '.kata/evidence');
-    await mkdir(evidenceDir, { recursive: true });
+    const evidenceDirectory = evidenceDir(root);
+    await mkdir(evidenceDirectory, { recursive: true });
 
     const { readdir, rename } = await import('node:fs/promises');
     try {
-        const files = (await readdir(evidenceDir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
+        const files = (await readdir(evidenceDirectory)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
         if (files.length > 0) {
             // The revision the outgoing set was collected for, read from the envelope rather than guessed.
-            const previous = JSON.parse(await readFile(join(evidenceDir, files[0]!), 'utf8')) as { revisionId?: string };
-            const archiveDir = join(evidenceDir, 'superseded', previous.revisionId ?? 'unsealed');
+            const previous = JSON.parse(await readFile(join(evidenceDirectory, files[0]!), 'utf8')) as { revisionId?: string };
+            const archiveDir = join(evidenceDirectory, 'superseded', previous.revisionId ?? 'unsealed');
             await mkdir(archiveDir, { recursive: true });
             for (const file of files) {
-                await rename(join(evidenceDir, file), join(archiveDir, file)).catch(() => { });
+                await rename(join(evidenceDirectory, file), join(archiveDir, file)).catch(() => { });
             }
         }
     } catch { }
 
     for (const envelope of evidence) {
         await writeFile(
-            join(evidenceDir, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
+            join(evidenceDirectory, `${taskId}-${evidenceFileSuffix(envelope)}.json`),
             `${JSON.stringify(envelope, null, 2)}\n`,
             'utf8',
         );
@@ -822,7 +823,7 @@ function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
 }
 
 async function readActiveReviewRepairBaseline(root: string, taskId: string): Promise<string | undefined> {
-    const repair = await readValidatedOptional<RepairRecordShape>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    const repair = await readValidatedOptional<RepairRecordShape>('repair', repairPath(root, taskId));
     if (!repair) return undefined;
     // 两种评审修复原因都要参与「必须先改变 manifest 才能 seal」的校验：
     // review_findings（按严重级授权）与 revision_superseded（按证据漂移授权）。
@@ -841,7 +842,7 @@ interface ActiveRepair {
  * constrain the next seal: a sealed revision resolves the repair that produced it.
  */
 async function readActiveRepair(root: string, taskId: string): Promise<ActiveRepair | null> {
-    const repair = await readValidatedOptional<RepairRecordShape>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    const repair = await readValidatedOptional<RepairRecordShape>('repair', repairPath(root, taskId));
     if (!repair || repair.resolvedAt) return null;
     return {
         ...(repair.reason ? { reason: repair.reason } : {}),
@@ -852,9 +853,9 @@ async function readActiveRepair(root: string, taskId: string): Promise<ActiveRep
 }
 
 async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
-    const repairPath = join(root, '.kata/tasks', taskId, 'repair.json');
-    const repair = await readValidated<RepairRecordShape>('repair', repairPath);
-    await writeFile(repairPath, `${JSON.stringify({
+    const repairRecordPath = repairPath(root, taskId);
+    const repair = await readValidated<RepairRecordShape>('repair', repairRecordPath);
+    await writeFile(repairRecordPath, `${JSON.stringify({
         ...repair,
         resolvedAt: new Date().toISOString(),
         resolvedRevisionId: revisionId,
@@ -883,7 +884,7 @@ async function cmdVerify(
     root: string,
     options: CommandOptions = {},
 ): Promise<CommandResult> {
-    const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+    const taskRaw = await readFile(taskPath(root, taskId), 'utf8');
     const task = JSON.parse(taskRaw) as {
         acceptance: Array<{ id?: string; statement: string }>;
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
@@ -924,7 +925,7 @@ async function cmdVerify(
             })),
         );
     }
-    await writeFile(join(root, '.kata/tasks', taskId, 'verify.json'), `${JSON.stringify(verifyResult, null, 2)}\n`, 'utf8');
+    await writeFile(verifyPath(root, taskId), `${JSON.stringify(verifyResult, null, 2)}\n`, 'utf8');
 
     // Verify does not decide what happens next: it asks the same resolver the dispatcher uses, over the artefacts it
     // just wrote, so both surfaces answer with one ladder, one vocabulary and the priorities the dispatcher shows.
@@ -1005,7 +1006,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires non-empty review evidence.',
                 };
             }
-            const reviewPath = join(root, '.kata/tasks', taskId, 'review.json');
+            const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const existing = await readReview(root, taskId);
             if (revisionId && existing.revisionId !== revisionId) {
@@ -1035,17 +1036,17 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         await guardTransition(options.guard, 'check', taskId, 'review');
         const state = await transition(taskId, 'review', actorFor(reviewerActor, options.platform), { root });
         await guardTransition(options.guard, 'apply', taskId, 'review');
-        const reviewPath = join(root, '.kata/tasks', taskId, 'review.json');
+        const reviewRecordPath = layoutReviewPath(root, taskId);
         const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
         try {
-            const previous = JSON.parse(await readFile(reviewPath, 'utf8')) as {
+            const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
                 revisionId?: string;
                 findings?: ReviewFinding[];
                 status?: string;
             };
             if (revisionId && previous.revisionId !== revisionId) {
                 if (previous.findings?.length) {
-                    const historyPath = join(root, '.kata/tasks', taskId, 'review-history.jsonl');
+                    const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
                     const historyEntry = JSON.stringify({
                         revisionId: previous.revisionId,
                         findings: previous.findings,
@@ -1054,12 +1055,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     }) + '\n';
                     await appendFile(historyPath, historyEntry, 'utf8');
                 }
-                await writeFile(reviewPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+                await writeFile(reviewRecordPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
             } else if ((previous.findings ?? []).length === 0) {
-                await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+                await writeFile(reviewRecordPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
             }
         } catch {
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+            await writeFile(reviewRecordPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
@@ -1089,7 +1090,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             diagnostics: { requiresUserConfirmation: true, trustBoundary: 'judge_gate' },
         };
     }
-    const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+    const taskRaw = await readFile(taskPath(root, taskId), 'utf8');
     const task = JSON.parse(taskRaw) as {
         acceptance: Array<{ id?: string; statement: string }>;
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
@@ -1184,7 +1185,7 @@ async function readReviewFindings(root: string, taskId: string): Promise<ReviewF
 
 async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; reviewEvidence?: string; findings: ReviewFinding[] }> {
     try {
-        const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
+        const reviewRaw = await readFile(layoutReviewPath(root, taskId), 'utf8');
         const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; status?: string; reviewEvidence?: string; findings?: ReviewFinding[] };
         return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
     } catch {
@@ -1194,7 +1195,7 @@ async function readReview(root: string, taskId: string): Promise<{ revisionId?: 
 
 async function readReviewRevisionId(root: string, taskId: string): Promise<string | undefined> {
     try {
-        const raw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
+        const raw = await readFile(layoutReviewPath(root, taskId), 'utf8');
         return (JSON.parse(raw) as { revisionId?: string }).revisionId;
     } catch {
         return undefined;
@@ -1321,7 +1322,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         };
     }
 
-    const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
+    const taskRaw = await readFile(taskPath(root, taskId), 'utf8');
     const task = JSON.parse(taskRaw) as {
         title: string;
         acceptance: Array<{ id?: string; statement: string }>;
@@ -1329,18 +1330,18 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
 
     let judgeRaw: string | null = null;
     try {
-        judgeRaw = await readFile(join(root, '.kata/tasks', taskId, 'judge.json'), 'utf8');
+        judgeRaw = await readFile(judgePath(root, taskId), 'utf8');
     } catch { /* judge result may not exist yet */ }
 
     let reviewRaw: string | null = null;
     try {
-        reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
+        reviewRaw = await readFile(layoutReviewPath(root, taskId), 'utf8');
     } catch { /* review may not exist yet */ }
 
     let evidenceIds: string[] = [];
     try {
         const { readdir } = await import('node:fs/promises');
-        const files = await readdir(join(root, '.kata/evidence'));
+        const files = await readdir(evidenceDir(root));
         evidenceIds = files.filter((f) => f.startsWith(`${taskId}-`));
     } catch { /* no evidence yet */ }
 

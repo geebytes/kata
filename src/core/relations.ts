@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { assertValidTaskId } from './ids.js';
 import { readValidatedOptional } from './schema.js';
+import { relationsPath, taskPath } from './layout.js';
 
 export type TaskRelationType =
   | 'superseded_by'
@@ -274,7 +275,7 @@ async function assertTaskExists(root: string, taskId: string): Promise<void> {
 
 /** The task record itself, for the existence check. Relations are no longer mirrored into it. */
 async function readTask(root: string, taskId: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as Record<string, unknown>;
+  return JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as Record<string, unknown>;
 }
 
 
@@ -282,11 +283,11 @@ async function readTask(root: string, taskId: string): Promise<Record<string, un
 
 
 async function writeKataRelations(root: string, graph: KataRelationsGraph): Promise<void> {
-  const path = graphPath(root);
+  const path = relationsPath(root);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(graph, null, 2)}\n`, 'utf8');
 }
 
 function graphPath(root: string): string {
-  return join(root, '.kata/relations.json');
+  return relationsPath(root);
 }

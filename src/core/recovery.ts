@@ -1,6 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isReplayableTransition, readStateEvents, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
+import { runtimeDir } from './layout.js';
 
 export interface RecoveryOptions {
   root?: string;
@@ -49,7 +50,7 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
   actions.push('rewrote-current-state');
 
   if (latestSession && !pointerMatches) {
-    await mkdir(join(root, '.kata/runtime'), { recursive: true });
+    await mkdir(runtimeDir(root), { recursive: true });
     await writeCurrentStatePointer(root, taskId, latestSession);
     actions.push('rewrote-active-session-pointer');
   }
@@ -87,7 +88,7 @@ async function writeCurrentStatePointer(root: string, taskId: string, activeSess
 }
 
 function activeSessionPath(root: string): string {
-  return join(root, '.kata/runtime/active-session.json');
+  return join(runtimeDir(root), 'active-session.json');
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

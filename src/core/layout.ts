@@ -301,3 +301,202 @@ async function writeFileAtomic(path: string, content: string): Promise<void> {
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+export function kataDir(root: string): string {
+    return join(root, '.kata');
+}
+
+export function tasksDir(root: string): string {
+    return join(kataDir(root), 'tasks');
+}
+
+export function taskDir(root: string, taskId: string): string {
+    return join(tasksDir(root), taskId);
+}
+
+export function taskPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'task.json');
+}
+
+export function currentStatePath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'current-state.json');
+}
+
+export function stateEventsPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'state-events.jsonl');
+}
+
+export function transitionLockPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), '.transition.lock');
+}
+
+export function reviewPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'review.json');
+}
+
+export function judgePath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'judge.json');
+}
+
+export function verifyPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'verify.json');
+}
+
+export function repairPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'repair.json');
+}
+
+export function repairObligationsPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'repair-obligations.json');
+}
+
+export function wikiClosurePath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'wiki-closure.json');
+}
+
+export function userChoiceGatePath(root: string, taskId: string, boundary: string): string {
+    return join(taskDir(root, taskId), `user-choice-${boundary}.json`);
+}
+
+export function subagentProgressPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'subagent-progress.md');
+}
+
+export function waiversPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'waivers.json');
+}
+
+export function migrationsPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'migrations.json');
+}
+
+export function recoveryPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'recovery.json');
+}
+
+export function taskProfilePath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'workflow-profile.json');
+}
+
+// ---------------------------------------------------------------------------
+// Revisions
+// ---------------------------------------------------------------------------
+
+export function revisionsDir(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'revisions');
+}
+
+export function revisionPath(root: string, taskId: string, revisionId: string): string {
+    return join(revisionsDir(root, taskId), `${revisionId}.json`);
+}
+
+export function currentRevisionPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'current-revision.json');
+}
+
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
+export function evidenceDir(root: string): string {
+    return join(kataDir(root), 'evidence');
+}
+
+/** Where a superseded revision's evidence is kept, so a seal never destroys what a previous one proved. */
+export function evidenceArchiveDir(root: string, revisionId: string): string {
+    return join(evidenceDir(root), 'superseded', revisionId);
+}
+
+export function evidenceFilePath(root: string, taskId: string, suffix: string): string {
+    return join(evidenceDir(root), `${taskId}-${suffix}.json`);
+}
+
+// ---------------------------------------------------------------------------
+// Relations, wiki, runtime
+// ---------------------------------------------------------------------------
+
+export function relationsPath(root: string): string {
+    return join(kataDir(root), 'relations.json');
+}
+
+export function wikiDir(root: string): string {
+    return join(kataDir(root), 'wiki');
+}
+
+export function wikiCandidatesDir(root: string): string {
+    return join(wikiDir(root), 'candidates');
+}
+
+export function wikiVerifiedDir(root: string): string {
+    return join(wikiDir(root), 'verified');
+}
+
+export function wikiRecordPath(root: string, id: string): string {
+    return join(wikiDir(root), `${id}.json`);
+}
+
+export function runtimeDir(root: string): string {
+    return join(kataDir(root), 'runtime');
+}
+
+/** The pointer the platform hook guard reads to know which task and role is active. */
+export function activeTaskPath(root: string): string {
+    return join(runtimeDir(root), 'active-task.json');
+}
+
+export function llmwikiDir(root: string): string {
+    return join(root, '.llmwiki');
+}
+
+// ---------------------------------------------------------------------------
+// Handoffs
+// ---------------------------------------------------------------------------
+
+export function handoffDir(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'handoffs');
+}
+
+export function handoffPacketPath(root: string, taskId: string, id: string): string {
+    return join(handoffDir(root, taskId), `${id}.json`);
+}
+
+export function handoffReceiptPath(root: string, taskId: string, id: string): string {
+    return join(handoffDir(root, taskId), `${id}.receipt.json`);
+}
+
+export function handoffBaselinePath(root: string, taskId: string): string {
+    return join(handoffDir(root, taskId), 'baseline.json');
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+export function projectConfigPath(root: string): string {
+    return join(root, '.kata-config.json');
+}
+
+/** The adapter ownership manifest, and the two repository-relative names kata reports about itself. */
+export function adaptersDir(root: string): string {
+    return join(kataDir(root), 'adapters');
+}
+
+export function adaptersManifestPath(root: string): string {
+    return join(adaptersDir(root), 'manifest.json');
+}
+
+export function rulesDir(root: string): string {
+    return join(kataDir(root), 'rules');
+}
+
+/** Repository-relative names, for the reports and checks that describe kata's own files rather than build paths. */
+export const skillsIndexRelativePath = '.kata/skills-index.md';
+export const relationsRelativePath = '.kata/relations.json';
+
+export function cometCompatOverridePath(root: string): string {
+    return join(kataDir(root), 'comet-compat.yaml');
+}

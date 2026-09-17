@@ -9,6 +9,7 @@ import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { computeMetrics, type EvaluationRun, type EvaluationMetrics } from './metrics.js';
 import { checkReleaseGates, type ReleaseGateResult } from './release-gates.js';
+import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 /** Metrics this harness cannot observe in process: the host platform owns model choice, cost and retries. */
 export const unmeasuredMetrics = ['tokensUsed', 'costCredits', 'escalationCount'] as const;
@@ -170,7 +171,7 @@ function withCwd(checks: CheckCommand[], root: string): CheckCommand[] {
 
 async function readRecordedEvidence(root: string, taskId: string): Promise<EvidenceEnvelope[]> {
   const { readdir, readFile } = await import('node:fs/promises');
-  const directory = join(root, '.kata/evidence');
+  const directory = layoutEvidenceDir(root);
   const files = await readdir(directory).catch(() => [] as string[]);
   const envelopes: EvidenceEnvelope[] = [];
   for (const file of files.filter((name) => name.startsWith(`${taskId}-`) && name.endsWith('.json'))) {

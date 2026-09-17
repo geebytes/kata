@@ -4,6 +4,7 @@ import type { Phase } from '../core/state.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { readObligations } from '../quality/repair-obligations.js';
 import type { RepairScope } from '../quality/judge.js';
+import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -111,27 +112,27 @@ export type NextAction = {
 
 export async function readUpstreamSummary(root: string, taskId: string): Promise<UpstreamSummary> {
   const evidenceFiles = await listEvidenceFiles(root, taskId);
-  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile<{ exitCode?: number; revisionId?: string }>(join(root, '.kata/evidence', file))));
+  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile<{ exitCode?: number; revisionId?: string }>(join(layoutEvidenceDir(root), file))));
   const revisionIds = [...new Set(evidence.map((item) => item?.revisionId).filter((id): id is string => Boolean(id)))];
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : undefined;
   const review = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')), currentRevisionId)
-    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(join(root, '.kata/tasks', taskId, 'review.json')) : null;
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), currentRevisionId)
+    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
   const findings = review?.findings ?? [];
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'judge.json')), currentRevisionId)
-    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'judge.json')) : null;
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), currentRevisionId)
+    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)) : null;
   const failedAcceptance = judge?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const verify = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'verify.json')), currentRevisionId)
-    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(join(root, '.kata/tasks', taskId, 'verify.json')) : null;
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)), currentRevisionId)
+    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)) : null;
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   const obligations = await readObligations(root, taskId);
   const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
-  const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(join(root, '.kata/tasks', taskId, 'task.json'));
+  const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
   const reviewMode = task?.workflowProfile?.reviewMode;
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
@@ -503,12 +504,12 @@ async function readJsonFile<T>(path: string): Promise<T | null> {
 
 async function listEvidenceFiles(root: string, taskId: string): Promise<string[]> {
   try {
-    const evidenceDir = join(root, '.kata/evidence');
-    const candidates = (await readdir(evidenceDir))
+    const evidenceDirectory = layoutEvidenceDir(root);
+    const candidates = (await readdir(evidenceDirectory))
       .filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
     const matches = await Promise.all(candidates.map(async (file) => ({
       file,
-      evidence: await readJsonFile<{ taskId?: string }>(join(evidenceDir, file)),
+      evidence: await readJsonFile<{ taskId?: string }>(join(evidenceDirectory, file)),
     })));
     return matches
       .filter(({ evidence }) => evidence?.taskId === taskId)

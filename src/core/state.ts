@@ -5,6 +5,7 @@ import { readValidated, readValidatedOptional, validate } from './schema.js';
 import { assertDistillGates as assertDistillGatesFromRecords } from '../workflow/distill-gates.js';
 import type { RepairPayload, RepairRecordShape } from '../quality/repair.js';
 import { assertValidTaskId } from './ids.js';
+import { currentStatePath as layoutCurrentStatePath, stateEventsPath as layoutStateEventsPath, repairPath, taskPath, transitionLockPath } from './layout.js';
 
 export const orderedPhases = [
     'intake',
@@ -155,7 +156,7 @@ export async function transitionForRepair(input: {
                 actor: input.actor,
                 createdAt: now,
             };
-            await writeFile(join(root, '.kata/tasks', input.taskId, 'repair.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+            await writeFile(repairPath(root, input.taskId), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
         }
 
         return next;
@@ -165,7 +166,7 @@ export async function transitionForRepair(input: {
 /** Serialize a task mutation across local processes; a conflicting command fails closed. */
 export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {
     assertValidTaskId(taskId);
-    const lockPath = join(root, '.kata/tasks', taskId, '.transition.lock');
+    const lockPath = transitionLockPath(root, taskId);
     try {
         await mkdir(lockPath);
     } catch (error) {
@@ -195,15 +196,15 @@ export async function appendStateEvent(root: string, event: StateEvent): Promise
             `Illegal state event ${event.from} → ${event.to}; extend the replay rules before appending it.`
         );
     }
-    await appendFile(stateEventsPath(root, event.taskId), `${JSON.stringify(event)}\n`, 'utf8');
+    await appendFile(layoutStateEventsPath(root, event.taskId), `${JSON.stringify(event)}\n`, 'utf8');
 }
 
 export async function writeCurrentState(root: string, state: StateRecord): Promise<void> {
-    await writeFileAtomic(currentStatePath(root, state.taskId), `${JSON.stringify(state, null, 2)}\n`);
+    await writeFileAtomic(layoutCurrentStatePath(root, state.taskId), `${JSON.stringify(state, null, 2)}\n`);
 }
 
 export async function readStateEvents(root: string, taskId: string): Promise<StateEvent[]> {
-    const raw = await readFile(stateEventsPath(root, taskId), 'utf8');
+    const raw = await readFile(layoutStateEventsPath(root, taskId), 'utf8');
     return raw
         .trim()
         .split('\n')
@@ -213,11 +214,11 @@ export async function readStateEvents(root: string, taskId: string): Promise<Sta
 
 /** The projection every reader should use instead of parsing current-state.json by hand: it is schema-validated. */
 export async function readCurrentState(root: string, taskId: string): Promise<StateRecord> {
-    return readValidated<StateRecord>('workflow-state-record', currentStatePath(root, taskId));
+    return readValidated<StateRecord>('workflow-state-record', layoutCurrentStatePath(root, taskId));
 }
 
 async function assertAcceptanceIds(root: string, taskId: string): Promise<void> {
-    const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as TaskRecordOnDisk;
+    const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as TaskRecordOnDisk;
     if (!task.acceptance?.length || task.acceptance.some((criterion) => !/^AC-[0-9]+$/.test(criterion.id ?? ''))) {
         throw new Error('Cannot enter implement until every acceptance criterion has a stable acceptance id');
     }
@@ -231,12 +232,12 @@ async function assertDistillGates(root: string, taskId: string): Promise<void> {
 
 function currentStatePath(root: string, taskId: string): string {
     assertValidTaskId(taskId);
-    return join(root, '.kata/tasks', taskId, 'current-state.json');
+    return layoutCurrentStatePath(root, taskId);
 }
 
 function stateEventsPath(root: string, taskId: string): string {
     assertValidTaskId(taskId);
-    return join(root, '.kata/tasks', taskId, 'state-events.jsonl');
+    return layoutStateEventsPath(root, taskId);
 }
 
 async function writeFileAtomic(path: string, content: string): Promise<void> {

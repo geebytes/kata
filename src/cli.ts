@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { codeGraphExecutionEnv } from './codegraph/runtime.js';
-import { resolveWorkspaceRoot, resolveWorkspaceRootForTask } from './core/layout.js';
+import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
 import { loadCometCompatibility, loadCometCompatibilityAsync, type CometCompatibility } from './comet/compat.js';
@@ -74,6 +74,7 @@ import {
     type TaskRelationType,
 } from './core/relations.js';
 import { hashContent } from './core/hash.js';
+import { currentStatePath, handoffDir, taskPath, tasksDir } from './core/layout.js';
 
 export function getRuntimeCompatibility(manifestPath?: string): CometCompatibility {
     return loadCometCompatibility(manifestPath);
@@ -765,7 +766,7 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
 
 async function readWorkflowPhase(root: string, taskId: string): Promise<string | null> {
     try {
-        const state = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase?: unknown };
+        const state = JSON.parse(await readFile(currentStatePath(root, taskId), 'utf8')) as { phase?: unknown };
         return typeof state.phase === 'string' ? state.phase : null;
     } catch {
         return null;
@@ -803,7 +804,7 @@ function valueAfter(argv: string[], flag: string): string | undefined {
 }
 
 async function requireWorkflowReceipt(root: string, taskId: string, role: HandoffRole): Promise<void> {
-    const handoffDirectory = join(root, '.kata/tasks', taskId, 'handoffs');
+    const handoffDirectory = handoffDir(root, taskId);
     let entries: string[];
     try {
         entries = await readdir(handoffDirectory);
@@ -937,7 +938,7 @@ async function runGitFlowCommand(argv: string[], root: string): Promise<Record<s
     if (argv[0] !== 'apply') throw new Error('Usage: kata-cli git-flow apply --change <task-id>');
     const taskId = parseChangeArg(argv.slice(1));
     if (!taskId) throw new Error('Usage: kata-cli git-flow apply --change <task-id>');
-    const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as { workflowProfile?: unknown };
+    const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as { workflowProfile?: unknown };
     if (!isWorkflowProfile(task.workflowProfile) || task.workflowProfile.isolationMode !== 'git_flow') {
         throw new Error(`Task ${taskId} does not use Git Flow isolation`);
     }
@@ -1059,14 +1060,14 @@ async function discoverSingleTaskForCurrentBranch(root: string): Promise<Resolve
     if (!branch) return null;
     let taskIds: string[];
     try {
-        taskIds = await readdir(join(root, '.kata/tasks'));
+        taskIds = await readdir(tasksDir(root));
     } catch {
         return null;
     }
     const matches: string[] = [];
     for (const taskId of taskIds) {
         try {
-            const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as {
+            const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as {
                 id?: string;
                 branch?: string;
                 phase?: Phase;
@@ -1097,7 +1098,7 @@ async function runLocalStatusCommand(change: string, resolved?: ResolvedTask | n
     // Status is the cross-platform resume entrypoint. Rebuild the mutable
     // projection from the append-only legal event chain before reporting it.
     if (await requiresRecovery(change, { root }).catch(() => false)) await recover(change, { root });
-    const state = JSON.parse(await readFile(join(root, '.kata/tasks', change, 'current-state.json'), 'utf8')) as {
+    const state = JSON.parse(await readFile(currentStatePath(root, change), 'utf8')) as {
         phase: Phase;
         updatedAt?: string;
         actor?: unknown;
@@ -1200,7 +1201,7 @@ async function readTaskContext(root: string, change: string): Promise<{
     requiredReads: string[];
     context: Record<string, unknown>;
 }> {
-    const taskRaw = await readFile(join(root, '.kata/tasks', change, 'task.json'), 'utf8');
+    const taskRaw = await readFile(taskPath(root, change), 'utf8');
     const task = JSON.parse(taskRaw) as { title: string; acceptance: Array<{ id?: string; statement: string }> };
     let context: Awaited<ReturnType<typeof buildContextManifest>>;
     try {
@@ -1215,7 +1216,7 @@ async function readTaskContext(root: string, change: string): Promise<{
         },
         requiredReads: [
             'AGENTS.md',
-            '.kata/skills-index.md',
+            skillsIndexRelativePath,
             '.llmwiki/SCHEMA.md',
             '.llmwiki/index.md',
             '.llmwiki/log.md',
@@ -1476,7 +1477,7 @@ async function runTasksCommand(argv: string[]): Promise<Record<string, unknown>>
             fromTaskId: args.from,
             toTaskId: args.to,
             type: args.type,
-            relationPath: '.kata/relations.json',
+            relationPath: relationsRelativePath,
             relations: record.relations,
             ...(terminal.taskId !== args.from ? { redirectsTo: terminal.taskId, relationRedirects: terminal.redirects } : {}),
             nextAction: {
@@ -1523,7 +1524,7 @@ async function runRelationsCommand(argv: string[]): Promise<Record<string, unkno
             from,
             to,
             type: args.type,
-            graphPath: '.kata/relations.json',
+            graphPath: relationsRelativePath,
             relation: graph.relations.at(-1) ?? null,
         };
     }
@@ -1727,7 +1728,7 @@ type TaskCandidate = {
 };
 
 async function listTaskCandidates(root: string): Promise<TaskCandidate[]> {
-    const tasksRoot = join(root, '.kata/tasks');
+    const tasksRoot = tasksDir(root);
     let entries: string[];
     try {
         entries = await readdir(tasksRoot);
@@ -1746,12 +1747,12 @@ async function listTaskCandidates(root: string): Promise<TaskCandidate[]> {
 }
 
 async function readTaskCandidate(root: string, taskId: string): Promise<TaskCandidate> {
-    const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as { title?: string; branch?: string };
+    const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as { title?: string; branch?: string };
     const terminal = await resolveTerminalTask(root, taskId);
     if (terminal.taskId !== taskId) {
         throw new Error(`Task ${taskId} is redirected to ${terminal.taskId}`);
     }
-    const state = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase?: Phase };
+    const state = JSON.parse(await readFile(currentStatePath(root, taskId), 'utf8')) as { phase?: Phase };
     const phase = state.phase ?? 'intake';
     const upstream = await readUpstreamSummary(root, taskId);
     const suggestion = suggestCandidateAction(phase, upstream);
@@ -1826,7 +1827,7 @@ async function runOrientCommand(argv: string[]): Promise<Record<string, unknown>
     const handoff = await createHandoff(root, change, role);
     const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...(args.platform ? { platform: args.platform } : {}) });
     const taskContext = await readTaskContext(root, change);
-    const state = JSON.parse(await readFile(join(root, '.kata/tasks', change, 'current-state.json'), 'utf8')) as Record<string, unknown>;
+    const state = JSON.parse(await readFile(currentStatePath(root, change), 'utf8')) as Record<string, unknown>;
     const phase = (typeof state.phase === 'string' ? state.phase : handoff.fromPhase) as Phase;
     const upstream = await readUpstreamSummary(root, change);
     const suggestion = suggestCandidateAction(phase, upstream);

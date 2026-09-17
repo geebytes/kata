@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { evidenceKinds, type EvidenceKind } from '../quality/evidence.js';
+import { projectConfigPath } from './layout.js';
 
 export type ResponseLanguage = 'en' | 'zh';
 
@@ -34,7 +35,7 @@ export async function loadConfig(root: string): Promise<KataConfig> {
 }
 
 export async function readConfigObject(root: string): Promise<Record<string, unknown>> {
-  const configPath = join(root, '.kata-config.json');
+  const configPath = projectConfigPath(root);
   let raw: string;
   try {
     raw = await readFile(configPath, 'utf8');
@@ -57,7 +58,7 @@ export async function readConfigObject(root: string): Promise<Record<string, unk
 export async function writeConfigPatch(root: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
   const current = await readConfigObject(root);
   const next = { ...current, ...patch };
-  await writeFile(join(root, '.kata-config.json'), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  await writeFile(projectConfigPath(root), `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   return next;
 }
 

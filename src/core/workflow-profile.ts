@@ -1,3 +1,4 @@
+import { taskPath } from './layout.js';
 export const isolationModes = ['current_worktree', 'isolated_worktree', 'git_flow', 'user_decides'] as const;
 export const developmentModes = ['tdd', 'standard'] as const;
 export const reviewModes = ['std', 'strict', 'security'] as const;
@@ -54,7 +55,7 @@ export function profileGuardInstructions(profile: WorkflowProfile | undefined, r
 export async function acknowledgeCometOpen(root: string, taskId: string): Promise<WorkflowProfile> {
   const { readFile, writeFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-  const path = join(root, '.kata/tasks', taskId, 'task.json');
+  const path = taskPath(root, taskId);
   const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next: WorkflowProfile = { ...profile, comet: { ...profile.comet, openStatus: 'acknowledged' } };
@@ -66,7 +67,7 @@ export async function acknowledgeCometOpen(root: string, taskId: string): Promis
 export async function updateGitFlowProfile(root: string, taskId: string, gitFlow: GitFlowState): Promise<WorkflowProfile> {
   const { readFile, writeFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
-  const path = join(root, '.kata/tasks', taskId, 'task.json');
+  const path = taskPath(root, taskId);
   const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
   const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
   const next: WorkflowProfile = { ...profile, gitFlow };
