@@ -9,6 +9,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { CometGuard } from '../../src/comet/guard.js';
 import { writeWikiClosure } from '../../src/wiki/closure.js';
+import { recordAdversarialPass } from '../helpers/adversarial.js';
 
 /** The evidence envelope a seal recorded for a task, read from the recorded set (the `-hard.json` projection is gone). */
 async function readSealedEvidence(root: string, taskId: string): Promise<{ id: string; revisionId?: string; scope?: { paths: string[] } }> {
@@ -22,6 +23,14 @@ async function readSealedEvidence(root: string, taskId: string): Promise<{ id: s
 
 describe('Workflow resume and lifecycle', () => {
     const roots: string[] = [];
+
+    /**
+     * The workflow now requires an independent adversarial pass at the verify and review nodes. Fixtures that walk a
+     * task through those nodes record one, exactly as the skill instructs the agent to.
+     */
+    async function adversarial(root: string, taskId: string, node: 'verify' | 'review' = 'verify'): Promise<void> {
+        await recordAdversarialPass(root, taskId, node);
+    }
 
     async function tempRoot(): Promise<string> {
         const root = await mkdtemp(join(tmpdir(), 'kata-wf-'));
@@ -255,12 +264,14 @@ describe('Workflow resume and lifecycle', () => {
         // surface it in diagnostics for the reviewer.
         const task2 = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
         await writeFile(taskPath, `${JSON.stringify({ ...task2, upstreamCoverage: { version: 1, sources: [{ ref: 'task-owned.txt', requirements: [{ id: 'R-1', statement: 'covered', mappedTo: 'AC-1' }, { id: 'R-2', statement: 'deferred', mappedTo: null, outOfScopeReason: 'future work' }] }] } }, null, 2)}\n`);
+        await adversarial(root, 'wf-scoped-freshness');
         const verify2 = await runCommand('verify', 'wf-scoped-freshness', root);
         expect(verify2.diagnostics?.outOfScopeRequirements).toEqual([
             expect.objectContaining({ id: 'R-2', reason: 'future work', sourceRef: 'task-owned.txt' }),
         ]);
 
         await writeFile(join(root, 'unrelated-task.txt'), 'another task changed this\n', 'utf8');
+        await adversarial(root, 'wf-scoped-freshness');
         const verify = await runCommand('verify', 'wf-scoped-freshness', root);
 
         expect(verify.diagnostics?.acceptanceResults).toEqual([
@@ -301,6 +312,7 @@ describe('Workflow resume and lifecycle', () => {
         expect(task.ownedPaths).toEqual(['task-owned.txt']);
 
         await writeFile(join(root, 'unrelated-task.txt'), 'another task changed this\n', 'utf8');
+        await adversarial(root, 'wf-auto-scoped-freshness');
         const verify = await runCommand('verify', 'wf-auto-scoped-freshness', root);
 
         expect(verify.diagnostics?.acceptanceResults).toEqual([
@@ -335,6 +347,8 @@ describe('Workflow resume and lifecycle', () => {
             reason: 'Fixture only checks revision-bound review filtering.',
         });
 
+        await adversarial(root, 'wf-old-review-ignored');
+
         const verify = await runCommand('verify', 'wf-old-review-ignored', root);
 
         expect(verify.success).toBe(true);
@@ -364,6 +378,7 @@ describe('Workflow resume and lifecycle', () => {
         });
 
         await writeFile(join(root, 'task-owned.txt'), 'changed after seal\n', 'utf8');
+        await adversarial(root, 'wf-revision-superseded');
         const verify = await runCommand('verify', 'wf-revision-superseded', root);
 
         expect(verify.success).toBe(false);
@@ -439,12 +454,15 @@ describe('Workflow resume and lifecycle', () => {
             checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
         });
 
+        await adversarial(root, 'wf-review-approval-proof', 'review');
+
         const bypass = await runCommand('review', 'wf-review-approval-proof', root, { approve: true });
 
         expect(bypass.success).toBe(false);
         expect(bypass.error).toContain('review phase');
 
         await runCommand('review', 'wf-review-approval-proof', root, { confirmHostModel: true });
+        await adversarial(root, 'wf-review-approval-proof', 'review');
         const missingEvidence = await runCommand('review', 'wf-review-approval-proof', root, { approve: true });
 
         expect(missingEvidence.success).toBe(false);
@@ -470,6 +488,7 @@ describe('Workflow resume and lifecycle', () => {
             'utf8',
         );
 
+        await adversarial(root, taskId, 'review');
         const result = await runCommand('review', taskId, root, {
             approve: true,
             reviewEvidence: 'This must not relabel an old review as current.',
@@ -984,6 +1003,7 @@ describe('Workflow resume and lifecycle', () => {
         await writeWikiClosure(root, taskId, { decision: 'not_applicable', reason: 'Fixture validates judge-phase repair only.' });
         await runCommand('verify', taskId, root);
         await runCommand('review', taskId, root, { confirmHostModel: true });
+        await adversarial(root, taskId, 'review');
         await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed judge-phase repair fixture.' });
         const judgeResult = await runCommand('judge', taskId, root, { confirmHostModel: true });
         expect(judgeResult).toMatchObject({ success: true, phase: 'judge' });
@@ -1021,6 +1041,7 @@ describe('Workflow resume and lifecycle', () => {
         await writeWikiClosure(root, taskId, { decision: 'not_applicable', reason: 'Fixture validates judge-phase guard only.' });
         await runCommand('verify', taskId, root);
         await runCommand('review', taskId, root, { confirmHostModel: true });
+        await adversarial(root, taskId, 'review');
         await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed judge-phase guard fixture.' });
         await runCommand('judge', taskId, root, { confirmHostModel: true });
 
@@ -1080,6 +1101,8 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeWikiClosure(root, 'wf-verify-test', { decision: 'not_applicable', reason: 'Fixture has no durable project knowledge.' });
 
+        await adversarial(root, 'wf-verify-test');
+
         const result = await runCommand('verify', 'wf-verify-test', root);
         expect(result.success).toBe(true);
         expect(result.phase).toBe('hardVerify');
@@ -1111,6 +1134,8 @@ describe('Workflow resume and lifecycle', () => {
             ownedPaths: ['task-owned.txt'],
             checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
         });
+
+        await adversarial(root, 'wf-wiki-closure-route-test');
 
         const result = await runCommand('verify', 'wf-wiki-closure-route-test', root);
 
@@ -1150,6 +1175,7 @@ describe('Workflow resume and lifecycle', () => {
         });
 
         await runCommand('review', 'wf-judge-guard-test', root, { confirmHostModel: true });
+        await adversarial(root, 'wf-judge-guard-test', 'review');
         await runCommand('review', 'wf-judge-guard-test', root, { approve: true, reviewEvidence: 'Reviewed guarded judge transition.' });
         const result = await runCommand('judge', 'wf-judge-guard-test', root, { guard, confirmHostModel: true });
 
@@ -1179,6 +1205,7 @@ describe('Workflow resume and lifecycle', () => {
             status?: string;
             findings?: unknown[];
         };
+        await adversarial(root, taskId, 'review');
         const approvalResult = await runCommand('review', taskId, root, {
             approve: true,
             reviewEvidence: 'No findings; explicit reviewer approval recorded.',
@@ -1210,10 +1237,13 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeWikiClosure(root, 'wf-archive-test', { decision: 'not_applicable', reason: 'Fixture validates lifecycle transitions only.' });
 
+        await adversarial(root, 'wf-archive-test');
+
         const verifyResult = await runCommand('verify', 'wf-archive-test', root);
         expect(verifyResult.phase).toBe('hardVerify');
         const reviewResult = await runCommand('review', 'wf-archive-test', root, { confirmHostModel: true });
         expect(reviewResult.phase).toBe('review');
+        await adversarial(root, 'wf-archive-test', 'review');
         await runCommand('review', 'wf-archive-test', root, { approve: true, reviewEvidence: 'Reviewed archive lifecycle fixture.' });
         const unconfirmedJudge = await runCommand('judge', 'wf-archive-test', root);
         expect(unconfirmedJudge).toMatchObject({
@@ -1259,6 +1289,7 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeWikiClosure(root, 'wf-archive-invalid-review', { decision: 'not_applicable', reason: 'Fixture validates archive gate integrity.' });
         await runCommand('review', 'wf-archive-invalid-review', root, { confirmHostModel: true });
+        await adversarial(root, 'wf-archive-invalid-review', 'review');
         await runCommand('review', 'wf-archive-invalid-review', root, { approve: true, reviewEvidence: 'Initially valid review.' });
         await runCommand('judge', 'wf-archive-invalid-review', root, { confirmHostModel: true });
 
@@ -1285,6 +1316,7 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeWikiClosure(root, 'wf-archive-missing-judge', { decision: 'not_applicable', reason: 'Fixture validates Judge gate integrity.' });
         await runCommand('review', 'wf-archive-missing-judge', root, { confirmHostModel: true });
+        await adversarial(root, 'wf-archive-missing-judge', 'review');
         await runCommand('review', 'wf-archive-missing-judge', root, { approve: true, reviewEvidence: 'Valid review.' });
         await (await import('../../src/core/state.js')).transition('wf-archive-missing-judge', 'judge', { id: 'forger', role: 'judge' }, { root });
 

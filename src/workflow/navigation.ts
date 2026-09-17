@@ -36,6 +36,8 @@ export type UpstreamSummary = {
  */
 export const nextActionReasons = [
   'add_entrypoint_evidence',
+  'adversarial_review_pending',
+  'adversarial_verify_pending',
   'archive_judged_change',
   'archived_task',
   'choose_execution_mode',
@@ -448,6 +450,8 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   judge_reviewed_change: 'judge_gate',
   archive_judged_change: 'archive_gate',
   add_entrypoint_evidence: null,
+  adversarial_review_pending: null,
+  adversarial_verify_pending: null,
   archived_task: null,
   complete_review_conclusion: null,
   continue_implementation: null,

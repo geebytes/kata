@@ -350,6 +350,11 @@ export function repairPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'repair.json');
 }
 
+/** The recorded outcome of one node's independent adversarial pass (or its explicit waiver). */
+export function adversarialReviewPath(root: string, taskId: string, node: string): string {
+    return join(taskDir(root, taskId), `adversarial-${node}.json`);
+}
+
 export function repairObligationsPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'repair-obligations.json');
 }

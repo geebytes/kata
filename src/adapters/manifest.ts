@@ -637,6 +637,53 @@ Do not ask the user for CLI parameters first. Discover the likely returned task,
 8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.`
                                         : '';
 
+    // Verify and review are exactly the nodes where the context that produced the change is the worst available
+    // judge of it, so both carry the independent adversarial step.
+    const adversarialGuidance = (command.id === 'kata-verify' || command.id === 'kata-review')
+        ? `## Independent adversarial review (clean context)
+
+Both nodes below must answer to a **different context than the one that wrote the change**. The same context that
+implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own
+confirmation is the weakest possible evidence that the change is sound.
+
+Before this Skill's node can conclude — before \`kata-cli verify\` reports success, and before
+\`kata-cli review --approve\` records an approval — kata requires a recorded adversarial pass over the sealed revision,
+or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+
+Do this:
+
+1. Render the brief. It is self-contained and states the revision, the claims under test, the recorded evidence and
+   the exact result shape:
+   \`\`\`bash
+   kata-cli adversarial brief --change <task-id> --node ${command.id === 'kata-verify' ? 'verify' : 'review'}
+   \`\`\`
+2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
+   conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
+   do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
+   every claim, to run the attempts, and to return one JSON object.
+3. Record what came back, unchanged:
+   \`\`\`bash
+   kata-cli adversarial record --change <task-id> --node ${command.id === 'kata-verify' ? 'verify' : 'review'} --from-file <result.json>
+   \`\`\`
+4. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
+   repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
+   (\`kata-cli adversarial status --change <task-id>\` shows both nodes).
+5. Then run this Skill's own command again (\`${command.cli.replace(' <change-id>', ' --change <task-id>')}\`).
+
+If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
+decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:
+
+\`\`\`bash
+kata-cli adversarial waive --change <task-id> --node ${command.id === 'kata-verify' ? 'verify' : 'review'} --reason "<why this node proceeds without an independent pass>"
+\`\`\`
+
+Kata cannot start a subagent or inspect the host's session: it renders the brief, checks the result against the revision
+and that brief, and holds the gate. Who ran it, in which context, is reported by the executing agent in
+\`executedInFreshContext\`/\`contextNote\` — the same way host model confirmation is reported.
+
+`
+        : '';
+
     const automationContent = ['kata-build', 'kata-review', 'kata-judge', 'kata-verify', 'kata-archive'].includes(command.id)
         ? `## Skill automation contract
 
@@ -720,7 +767,7 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
-${automationContent}
+${adversarialGuidance}${automationContent}
 
 \`\`\`json kata-command-manifest
 ${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null, 2)}

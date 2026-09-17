@@ -137,6 +137,42 @@ The verification pipeline enforces strict ordering:
 
 Any gate failure returns the task to bounded repair. Blocking reviewer findings in `review.json` route the task back through `/kata-build`, which records `review → implement → hardVerify` in `state-events.jsonl` and `.kata/tasks/<id>/repair.json`. Judge FAIL follows the same repair discipline from `judge → implement → hardVerify`. These backward links are recognized repair returns: recovery replays them as chain links, so the projection keeps the post-repair `hardVerify` instead of rewinding to the phase the repair started from.
 
+## Independent adversarial review
+
+Verify and review are the two nodes where the context that produced the change is the worst available judge of it: it
+shares the implementation's assumptions, its blind spots, and its reading of its own evidence. Both nodes therefore
+require an **independent adversarial pass** over the sealed revision, executed in a context that did not author the
+change — the host platform's own subagent facility, a fresh session, no prior conversation.
+
+Kata cannot start a subagent or inspect the host's session. What it does is render the brief, check the result against
+the revision and that brief, and hold the gate:
+
+```bash
+kata-cli adversarial brief  --change <task-id> --node verify|review   # self-contained brief + its hash
+kata-cli adversarial record --change <task-id> --node verify|review --from-file <result.json>
+kata-cli adversarial waive  --change <task-id> --node verify|review --reason "<why>"
+kata-cli adversarial status --change <task-id>                        # both nodes
+```
+
+The brief states the sealed revision, the acceptance criteria under test, the evidence the author recorded, the
+findings recorded so far, and the exact JSON result shape. It instructs the reviewer to read the repository rather than
+the brief, to form and run at least one **falsification attempt per claim**, and to report a finding for every defect it
+confirmed.
+
+The gate:
+
+- `kata-cli verify` succeeds only with a recorded pass for the current revision, or an explicit waiver.
+- `kata-cli review --approve` likewise — an approval is the review's conclusion.
+- A pass recorded against another revision, without the fresh-context attestation, or against a different brief does not
+  satisfy the gate; `status` reports which of those it was.
+- Findings at `blocking` or `major` severity from the pass stop the node until they are repaired, exactly as reviewer
+  findings do.
+- A waiver satisfies the gate and is reported as a waiver, never hidden.
+
+`executedInFreshContext`/`contextNote` are attested by the executing agent, in the same way host model confirmation is.
+Kata checks everything else: that the pass names this revision, that it answered the brief kata renders now, and that it
+actually attempted something.
+
 ## Evaluation
 
 Run a workflow evaluation:

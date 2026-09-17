@@ -4,6 +4,17 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { codeGraphInvocation } from './codegraph/runtime.js';
+import {
+    adversarialGateFor,
+    adversarialNodes,
+    adversarialReasonFor,
+    blockingAdversarialFindings,
+    buildAdversarialBrief,
+    readAdversarialRecord,
+    writeAdversarialRecord,
+    type AdversarialNode,
+    type AdversarialRecord,
+} from './quality/adversarial.js';
 import { runProcessSync } from './process/run.js';
 import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
@@ -200,6 +211,12 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (command === 'eval') {
         const result = await runEvalCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'adversarial') {
+        const result = await runAdversarialCommand(argv.slice(1));
         outputResult(result);
         return;
     }
@@ -1492,6 +1509,122 @@ async function runTasksCommand(argv: string[]): Promise<Record<string, unknown>>
         };
     }
     throw new Error(`Unknown tasks command: ${subcommand ?? ''}`);
+}
+
+/**
+ * `kata-cli adversarial …` — the independent adversarial pass at the verify and review nodes.
+ *
+ * `brief` renders the self-contained brief for a clean-context subagent and reports the hash the result must carry;
+ * `record` validates and files the result; `status` reports both nodes. The gate that consumes the record lives in the
+ * workflow (verify and review refuse to conclude without one), so this command is the only way in.
+ */
+async function runAdversarialCommand(argv: string[]): Promise<Record<string, unknown>> {
+    const [subcommand, ...rest] = argv;
+    const change = parseChangeArg(rest);
+    if (!change) throw new Error(`Usage: kata-cli adversarial <brief|record|status> --change <task-id> [--node verify|review]`);
+    const root = resolveWorkspaceRoot();
+    const nodeArg = (() => {
+        const index = rest.indexOf('--node');
+        return index >= 0 ? rest[index + 1] : undefined;
+    })();
+    const node = nodeArg ?? 'verify';
+    if (!isAdversarialNode(node)) throw new Error(`Unknown adversarial node: ${nodeArg}. Expected one of: ${adversarialNodes.join('|')}`);
+
+    if (subcommand === 'brief') {
+        const brief = await buildAdversarialBrief(root, change, node);
+        return {
+            command: 'adversarial brief',
+            taskId: change,
+            node,
+            revisionId: brief.revisionId,
+            briefSha256: brief.sha256,
+            brief: brief.text,
+            recordCommand: `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
+        };
+    }
+
+    if (subcommand === 'waive') {
+        const reason = argValue(rest, '--reason');
+        if (!reason?.trim()) throw new Error('kata-cli adversarial waive requires --reason "<why this node proceeds without the pass>"');
+        const record = await writeAdversarialRecord(root, change, {
+            node,
+            status: 'waived',
+            revisionId: (await buildAdversarialBrief(root, change, node)).revisionId ?? '',
+            createdAt: new Date().toISOString(),
+            waivedReason: reason,
+            ...(argValue(rest, '--by') ? { waivedBy: argValue(rest, '--by')! } : {}),
+        });
+        return {
+            command: 'adversarial waive',
+            taskId: change,
+            node,
+            status: record.status,
+            waivedReason: record.waivedReason,
+            gate: { satisfied: true, reason: 'waived' },
+        };
+    }
+
+    if (subcommand === 'record') {
+        const fromFile = argValue(rest, '--from-file');
+        const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
+        if (!raw.trim()) throw new Error('adversarial record requires the result JSON on stdin or via --from-file');
+        let parsed: AdversarialRecord;
+        try {
+            parsed = JSON.parse(raw) as AdversarialRecord;
+        } catch (error) {
+            throw new Error(`adversarial record could not parse the result: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const record = await writeAdversarialRecord(root, change, { ...parsed, node });
+        const gate = await adversarialGateFor(root, change, node);
+        return {
+            command: 'adversarial record',
+            taskId: change,
+            node,
+            status: record.status,
+            verdict: record.verdict ?? null,
+            findings: (record.findings ?? []).map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
+            gate: { satisfied: gate.satisfied, reason: gate.reason ?? null },
+            ...(gate.satisfied ? {} : { error: adversarialReasonFor(gate.reason) }),
+        };
+    }
+
+    if (subcommand === 'status') {
+        const nodes: Record<string, unknown> = {};
+        for (const candidate of adversarialNodes) {
+            const record = await readAdversarialRecord(root, change, candidate);
+            const gate = await adversarialGateFor(root, change, candidate);
+            nodes[candidate] = {
+                recorded: record !== null,
+                status: record?.status ?? null,
+                revisionId: record?.revisionId ?? null,
+                verdict: record?.verdict ?? null,
+                executedInFreshContext: record?.executedInFreshContext ?? null,
+                blockingFindings: blockingAdversarialFindings(record).length,
+                satisfied: gate.satisfied,
+                reason: gate.reason ?? null,
+            };
+        }
+        return { command: 'adversarial status', taskId: change, nodes };
+    }
+
+    throw new Error(`Unknown adversarial command: ${subcommand ?? ''}. Usage: kata-cli adversarial <brief|record|waive|status>`);
+}
+
+function isAdversarialNode(value: string): value is AdversarialNode {
+    return (adversarialNodes as readonly string[]).includes(value);
+}
+
+function argValue(argv: string[], flag: string): string | undefined {
+    const index = argv.indexOf(flag);
+    return index >= 0 ? argv[index + 1] : undefined;
+}
+
+async function readStdin(): Promise<string> {
+    if (process.stdin.isTTY) return '';
+    process.stdin.setEncoding('utf8');
+    let data = '';
+    for await (const chunk of process.stdin) data += chunk;
+    return data;
 }
 
 async function runRelationsCommand(argv: string[]): Promise<Record<string, unknown>> {

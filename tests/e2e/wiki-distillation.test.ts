@@ -7,6 +7,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readWikiClosure } from '../../src/wiki/closure.js';
 import { verifySources } from '../../src/wiki/drift.js';
 import { readWikiRecords } from '../../src/wiki/store.js';
+import { recordAdversarialPass } from '../helpers/adversarial.js';
 
 describe('Archive Wiki distillation', () => {
   const roots: string[] = [];
@@ -40,8 +41,10 @@ describe('Archive Wiki distillation', () => {
     await runCommand('build', taskId, root, {
       checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
     });
+    await recordAdversarialPass(root, taskId, 'verify');
     await runCommand('verify', taskId, root);
     await runCommand('review', taskId, root, { confirmHostModel: true });
+    await recordAdversarialPass(root, taskId, 'review');
     await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed wiki distillation fixture.' });
     await runCommand('judge', taskId, root, { confirmHostModel: true });
 

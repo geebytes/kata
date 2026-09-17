@@ -21,6 +21,8 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
+import { adversarialGateFor, adversarialReasonFor, blockingAdversarialFindings } from '../quality/adversarial.js';
+import { readReview } from './review-read.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -936,6 +938,53 @@ async function cmdVerify(
     const repairReason = suggestion.reason;
     const nextAction = nextActionForTask(taskId, suggestion.nextSkill, suggestion.role, suggestion.reason);
 
+    // The verify node does not conclude on the author's own reading of the evidence: an independent adversarial pass
+    // over this revision has to have been recorded (or explicitly waived). This gate runs only when everything else
+    // passed — a failing verification is repaired first, and the adversarial pass attacks the revision that survives.
+    const adversarial = verifyResult.result === 'PASS' && implementationReady
+        ? await adversarialGateFor(root, taskId, 'verify')
+        : null;
+    if (adversarial && !adversarial.satisfied) {
+        return {
+            command: 'verify',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Verify is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason)}`,
+            diagnostics: {
+                verifyResult: verifyResult.result,
+                acceptanceResults: verifyResult.acceptance.map((a) => ({ id: a.id, result: a.result, repairScope: a.repairScope })),
+                evidenceCount: evidence.length,
+                implementationReady,
+                governanceReady: wikiClosure.valid,
+                adversarial: { node: 'verify', required: true, satisfied: false, reason: adversarial.reason ?? null },
+                nextAction: nextActionForTask(taskId, '/kata-verify', 'reviewer', 'adversarial_verify_pending'),
+            },
+        };
+    }
+    const adversarialFindings = adversarial?.satisfied ? blockingAdversarialFindings(adversarial.record ?? null) : [];
+    if (adversarialFindings.length > 0) {
+        return {
+            command: 'verify',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `The independent adversarial pass confirmed ${adversarialFindings.length} defect(s) at blocking or major severity; repair them before review/judge.`,
+            diagnostics: {
+                verifyResult: verifyResult.result,
+                evidenceCount: evidence.length,
+                implementationReady,
+                adversarial: {
+                    node: 'verify',
+                    required: true,
+                    satisfied: true,
+                    findings: adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, path: finding.path })),
+                },
+                nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
+            },
+        };
+    }
+
     return {
         command: 'verify',
         taskId,
@@ -966,6 +1015,7 @@ async function cmdVerify(
             blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
             implementationReady,
             governanceReady: wikiClosure.valid,
+            ...(adversarial?.satisfied ? { adversarial: { node: 'verify', required: true, satisfied: true, waived: adversarial.reason === 'waived' } } : {}),
             ...(task.upstreamCoverage ? {
                 outOfScopeRequirements: task.upstreamCoverage.sources.flatMap((s) =>
                     (s.requirements ?? []).filter((r) => !r.mappedTo).map((r) => ({
@@ -1006,6 +1056,35 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
                     error: 'Review approval requires non-empty review evidence.',
+                };
+            }
+            // An approval is the review's conclusion, so the independent adversarial pass belongs here: the reviewer
+            // may not certify a change their own context authored and read.
+            const adversarial = await adversarialGateFor(root, taskId, 'review');
+            if (!adversarial.satisfied) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason)}`,
+                    diagnostics: {
+                        adversarial: { node: 'review', required: true, satisfied: false, reason: adversarial.reason ?? null },
+                        nextAction: nextActionForTask(taskId, '/kata-review', 'reviewer', 'adversarial_review_pending'),
+                    },
+                };
+            }
+            const adversarialFindings = blockingAdversarialFindings(adversarial.record ?? null);
+            if (adversarialFindings.length > 0) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `The independent adversarial pass confirmed ${adversarialFindings.length} defect(s) at blocking or major severity; resolve them before approving.`,
+                    diagnostics: {
+                        adversarial: {
+                            node: 'review',
+                            required: true,
+                            satisfied: true,
+                            findings: adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, path: finding.path })),
+                        },
+                        nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
+                    },
                 };
             }
             const reviewPath = layoutReviewPath(root, taskId);
@@ -1185,15 +1264,6 @@ async function readReviewFindings(root: string, taskId: string): Promise<ReviewF
     return (await readReview(root, taskId)).findings;
 }
 
-async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; reviewEvidence?: string; findings: ReviewFinding[] }> {
-    try {
-        const reviewRaw = await readFile(layoutReviewPath(root, taskId), 'utf8');
-        const reviewParsed = JSON.parse(reviewRaw) as { revisionId?: string; status?: string; reviewEvidence?: string; findings?: ReviewFinding[] };
-        return { revisionId: reviewParsed.revisionId, status: reviewParsed.status, reviewEvidence: reviewParsed.reviewEvidence, findings: reviewParsed.findings ?? [] };
-    } catch {
-        return { findings: [] };
-    }
-}
 
 async function readReviewRevisionId(root: string, taskId: string): Promise<string | undefined> {
     try {
