@@ -40,7 +40,6 @@ export const nextActionReasons = [
   'choose_execution_mode',
   'complete_review_conclusion',
   'continue_implementation',
-  'continue_workflow',
   'design_intake_task',
   'git_flow_confirmation_required',
   'inspect_task',
@@ -168,9 +167,48 @@ function onlyCurrentRevision<T extends { revisionId?: string }>(artifact: T | nu
   return artifact?.revisionId === currentRevisionId ? artifact : null;
 }
 
+/**
+ * Who may be active while a task is in each phase. The platform hook guard enforces exactly this, and the CLI activates
+ * the hook with it; a task in `plan` is activated as its designer, not as the implementer it will become.
+ */
+export const activeRoleByPhase: Record<Phase, string> = {
+  intake: 'designer',
+  plan: 'designer',
+  implement: 'implementer',
+  hardVerify: 'reviewer',
+  review: 'reviewer',
+  judge: 'judge',
+  distill: 'distiller',
+  archive: 'approver',
+};
+
+export function activeRoleForPhase(phase: Phase): string {
+  return activeRoleByPhase[phase];
+}
+
+/**
+ * The next action a phase implies when no task-specific suggestion applies. One table holds the skill, the role that
+ * acts, the reason and the priority, so the CLI's fallback action, `nextSkillForPhase` and the dispatcher's own tail
+ * ladder cannot disagree about what a phase means.
+ */
+export const phaseFallback: Record<Phase, { nextSkill: string; role: string; reason: NextActionReason; priority: number }> = {
+  intake: { nextSkill: '/kata-design', role: 'designer', reason: 'design_intake_task', priority: 300 },
+  plan: { nextSkill: '/kata-build', role: 'implementer', reason: 'choose_execution_mode', priority: 400 },
+  implement: { nextSkill: '/kata-build', role: 'implementer', reason: 'continue_implementation', priority: 400 },
+  hardVerify: { nextSkill: '/kata-verify', role: 'reviewer', reason: 'verify_fresh_implementation', priority: 700 },
+  review: { nextSkill: '/kata-judge', role: 'judge', reason: 'judge_reviewed_change', priority: 600 },
+  judge: { nextSkill: '/kata-archive', role: 'distiller', reason: 'archive_judged_change', priority: 500 },
+  distill: { nextSkill: '/kata-archive', role: 'distiller', reason: 'archive_judged_change', priority: 500 },
+  archive: { nextSkill: '/kata', role: 'dispatcher', reason: 'archived_task', priority: 0 },
+};
+
+export function phaseFallbackAction(phase: Phase): { nextSkill: string; role: string; reason: NextActionReason; priority: number } {
+  return phaseFallback[phase];
+}
+
 export function suggestCandidateAction(phase: string, upstream: UpstreamSummary): SuggestedAction {
   if (phase === 'archive') {
-    return { nextSkill: '/kata', role: 'dispatcher', reason: 'archived_task', priority: 0 };
+    return phaseFallbackAction('archive');
   }
   if (upstream.mixedRevisionEvidence) {
     return {
@@ -257,6 +295,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 800 + upstream.failingEvidence,
     };
   }
+  // Wiki closure blocks review only when verify has run to a verdict and the implementation itself is ready;
+  // otherwise the task still has to be verified or repaired first.
   if (phase === 'hardVerify' && upstream.verifyResult === 'FAIL' && upstream.wikiClosureValid === false && upstream.failedVerifyAcceptance === 0) {
     return {
       nextSkill: '/kata-wiki-enrich',
@@ -274,10 +314,11 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
         priority: 760 + upstream.failedVerifyAcceptance,
       };
     }
+    // The scope→reason table decides; a failed set with no scope-specific reason falls back to the generic repair.
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
-      reason: 'repair_failed_verify',
+      reason: verifyRepairReason(upstream),
       priority: 750 + upstream.failedVerifyAcceptance,
     };
   }
@@ -285,43 +326,25 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
     return { nextSkill: '/kata-review', role: 'reviewer', reason: 'review_fresh_implementation', priority: 740 };
   }
   if (phase === 'hardVerify') {
-    return { nextSkill: '/kata-verify', role: 'reviewer', reason: 'verify_fresh_implementation', priority: 700 };
+    return phaseFallbackAction('hardVerify');
   }
   if (phase === 'review') {
-    return { nextSkill: '/kata-judge', role: 'judge', reason: 'judge_reviewed_change', priority: 600 };
+    return phaseFallbackAction('review');
   }
   if (phase === 'judge' || phase === 'distill') {
-    return { nextSkill: '/kata-archive', role: 'distiller', reason: 'archive_judged_change', priority: 500 };
+    return phaseFallbackAction('judge');
   }
-  if (phase === 'plan') {
-    return { nextSkill: '/kata-build', role: 'implementer', reason: 'choose_execution_mode', priority: 400 };
+  if (phase === 'plan' || phase === 'implement' || phase === 'intake') {
+    return phaseFallbackAction(phase);
   }
-  if (phase === 'implement') {
-    return { nextSkill: '/kata-build', role: 'implementer', reason: 'continue_implementation', priority: 400 };
-  }
-  if (phase === 'intake') {
-    return { nextSkill: '/kata-design', role: 'designer', reason: 'design_intake_task', priority: 300 };
+  if (phase === 'review') {
+    return phaseFallbackAction('review');
   }
   return { nextSkill: '/kata', role: 'dispatcher', reason: 'inspect_task', priority: 0 };
 }
 
 export function nextSkillForPhase(phase: Phase): string {
-  switch (phase) {
-    case 'intake':
-      return '/kata-design';
-    case 'plan':
-    case 'implement':
-      return '/kata-build';
-    case 'hardVerify':
-      return '/kata-verify';
-    case 'review':
-      return '/kata-judge';
-    case 'judge':
-    case 'distill':
-      return '/kata-archive';
-    case 'archive':
-      return '/kata';
-  }
+  return phaseFallback[phase].nextSkill;
 }
 
 export function nextActionForTask(taskId: string, nextSkill: string, role: string, reason: NextActionReason): NextAction {
@@ -427,7 +450,6 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   archived_task: null,
   complete_review_conclusion: null,
   continue_implementation: null,
-  continue_workflow: null,
   design_intake_task: null,
   git_flow_confirmation_required: null,
   inspect_task: null,

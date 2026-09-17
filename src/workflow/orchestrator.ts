@@ -14,7 +14,7 @@ import { resolveBuildChecks } from '../quality/project-checks.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
-import { nextActionForTask, uniformScopeReason } from './navigation.js';
+import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
@@ -1029,24 +1029,12 @@ async function cmdVerify(
     }
     await writeFile(join(root, '.kata/tasks', taskId, 'verify.json'), `${JSON.stringify(verifyResult, null, 2)}\n`, 'utf8');
 
-    const failedScopes = verifyResult.acceptance
-        .filter((acceptance) => acceptance.result === 'FAIL')
-        .map((acceptance) => acceptance.repairScope)
-        .filter((scope): scope is RepairScope => scope !== undefined);
-    // The scope→reason table is shared with navigation, so a new scope is decided in one place.
-    const repairReason = uniformScopeReason(failedScopes) ?? 'repair_failed_verify';
-    const repairAction = nextActionForTask(taskId, '/kata-build', 'implementer', repairReason);
-    const wikiClosureAction = nextActionForTask(taskId, '/kata-wiki-enrich', 'implementer', 'resolve_wiki_closure');
-    const nextAction = implementationReady && !wikiClosure.valid
-        ? wikiClosureAction
-        : verifyResult.result === 'PASS'
-            ? nextActionForTask(
-                taskId,
-                current.phase === 'review' ? '/kata-judge' : '/kata-review',
-                current.phase === 'review' ? 'judge' : 'reviewer',
-                current.phase === 'review' ? 'judge_reviewed_change' : 'review_fresh_implementation',
-            )
-            : repairAction;
+    // Verify does not decide what happens next: it asks the same resolver the dispatcher uses, over the artefacts it
+    // just wrote, so both surfaces answer with one ladder, one vocabulary and the priorities the dispatcher shows.
+    const upstream = await readUpstreamSummary(root, taskId);
+    const suggestion = suggestCandidateAction(current.phase, upstream);
+    const repairReason = suggestion.reason;
+    const nextAction = nextActionForTask(taskId, suggestion.nextSkill, suggestion.role, suggestion.reason);
 
     return {
         command: 'verify',

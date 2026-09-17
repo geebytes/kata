@@ -36,6 +36,8 @@ import {
     readUpstreamSummary,
     statusActionPrompts,
     suggestCandidateAction,
+    activeRoleForPhase,
+    phaseFallbackAction,
     type NextActionReason,
     type UpstreamSummary,
 } from './workflow/navigation.js';
@@ -47,7 +49,7 @@ import { promote, rejectCandidate, retireWikiRecord } from './wiki/promotion.js'
 import { readWikiRecords } from './wiki/store.js';
 import { evaluateWikiClosure, writeWikiClosure } from './wiki/closure.js';
 import { auditWiki, createRefreshPacket, relevantWiki } from './wiki/lifecycle.js';
-import type { Phase } from './core/state.js';
+import { orderedPhases, type Phase } from './core/state.js';
 import { activateHookTask, currentGitBranch, deactivateHookTask, readActiveHookTask, type ActiveHookTask } from './hooks/runtime.js';
 import { platformDefinitionById } from './adapters/platforms.js';
 import { doctor } from './adapters/doctor.js';
@@ -673,7 +675,7 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
                 requiresUserConfirmation: true,
                 ...(gitFlowManualCommand ? { pauseInstruction: `Git Flow 自动安装未完成；请先手动执行：${gitFlowManualCommand}` } : {}),
             }
-            : nextActionForTask(result.taskId, phaseNextSkill, roleForPhase(result.phase), workflowNextReason(result.phase))
+            : nextActionForTask(result.taskId, phaseNextSkill, phaseFallbackAction(result.phase).role, workflowNextReason(result.phase))
         : null;
     const completion = result.success
         ? workflowCompletion(result.phase, workflowNextAction ?? nextAction)
@@ -736,7 +738,7 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
             : {}),
         ...(upstream ? { upstream } : {}),
         ...(shouldAskUser
-            ? { askUser: statusActionPrompts(suggestion ?? { nextSkill: phaseNextSkill, role: roleForPhase(result.phase), reason: workflowNextReason(result.phase) }) }
+            ? { askUser: statusActionPrompts(suggestion ?? { nextSkill: phaseNextSkill, role: phaseFallbackAction(result.phase).role, reason: workflowNextReason(result.phase) }) }
             : {}),
         ...(active
             ? {
@@ -868,9 +870,7 @@ function workflowCompletion(
 }
 
 function workflowNextReason(phase: Phase): NextActionReason {
-    if (phase === 'intake') return 'design_intake_task';
-    if (phase === 'plan') return 'choose_execution_mode';
-    return 'continue_workflow';
+    return phaseFallbackAction(phase).reason;
 }
 
 function ownedPaths(argv: string[]): string[] {
@@ -1007,14 +1007,12 @@ function parseEnumArg<const T extends readonly string[]>(
     return value as T[number];
 }
 
+/**
+ * The role a task in this phase is activated as, which is also the role the hook guard accepts. It is the phase table's
+ * `activeRoleByPhase`, shared with the hook, so activation and enforcement cannot disagree.
+ */
 export function roleForPhase(phase: Phase | string): string {
-    if (phase === 'intake') return 'designer';
-    if (phase === 'plan' || phase === 'implement') return 'implementer';
-    if (phase === 'hardVerify') return 'reviewer';
-    if (phase === 'review') return 'reviewer';
-    if (phase === 'judge') return 'judge';
-    if (phase === 'distill') return 'distiller';
-    return 'dispatcher';
+    return (orderedPhases as readonly string[]).includes(phase) ? activeRoleForPhase(phase as Phase) : 'approver';
 }
 
 type ResolvedTask = {

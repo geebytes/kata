@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import type { Phase } from '../core/state.js';
+import { activeRoleForPhase } from '../workflow/navigation.js';
 import { currentGitBranch } from '../core/git.js';
 
 export type ActiveHookTask = {
@@ -23,7 +24,7 @@ export async function activateHookTask(input: {
 }): Promise<ActiveHookTask> {
   assertValidTaskId(input.taskId);
   const phase = await readTaskPhase(input.root, input.taskId);
-  const expectedRole = roleForPhase(phase);
+  const expectedRole = activeRoleForPhase(phase);
   if (input.role !== expectedRole) {
     throw new Error(`Hook role ${input.role} does not match current phase ${phase}; expected ${expectedRole}.`);
   }
@@ -41,15 +42,6 @@ export async function activateHookTask(input: {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(active, null, 2)}\n`, 'utf8');
   return active;
-}
-
-function roleForPhase(phase: Phase): string {
-  if (phase === 'intake' || phase === 'plan') return 'designer';
-  if (phase === 'implement') return 'implementer';
-  if (phase === 'hardVerify' || phase === 'review') return 'reviewer';
-  if (phase === 'judge') return 'judge';
-  if (phase === 'distill') return 'distiller';
-  return 'approver';
 }
 
 export { currentGitBranch };
