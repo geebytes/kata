@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { readValidatedOptional } from '../core/schema.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evidenceMatchesRow, getMatrixRowForAc } from './acceptance-matrix.js';
@@ -25,8 +26,8 @@ export interface ObligationRecord {
 
 export async function readObligations(root: string, taskId: string): Promise<RepairObligation[]> {
   try {
-    const raw = await readFile(obligationsPath(root, taskId), 'utf8');
-    return (JSON.parse(raw) as ObligationRecord).obligations;
+    const record = await readValidatedOptional<ObligationRecord>('repair-obligations', obligationsPath(root, taskId));
+    return record?.obligations ?? [];
   } catch {
     return [];
   }

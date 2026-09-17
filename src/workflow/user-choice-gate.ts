@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
+import { readValidated } from '../core/schema.js';
 
 export type UserChoiceBoundary = 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate';
 export type UserChoice = 'continue_current' | 'switched' | 'delegated';
@@ -46,7 +47,7 @@ export async function consumeUserChoiceGate(input: { root: string; taskId: strin
 
 async function readGate(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<UserChoiceGate> {
   assertValidTaskId(taskId);
-  return JSON.parse(await readFile(pathFor(root, taskId, boundary), 'utf8')) as UserChoiceGate;
+  return readValidated<UserChoiceGate>('user-choice-gate', pathFor(root, taskId, boundary));
 }
 
 function assertRevision(gate: UserChoiceGate, revisionId: string | undefined): void {

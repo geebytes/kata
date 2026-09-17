@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appendStateEvent, writeCurrentState, type Phase, type StateRecord } from './state.js';
+import { readValidated } from './schema.js';
 import { assertValidTaskId } from './ids.js';
 import { currentGitBranch } from './git.js';
 import type { TaskRelation } from './relations.js';
@@ -146,4 +147,9 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === 'object' && error !== null && 'code' in error;
+}
+
+/** Reads a task record against its schema. Every caller that used to parse task.json by hand should use this. */
+export async function readTask(root: string, taskId: string): Promise<TaskRecord> {
+  return readValidated<TaskRecord>('task', join(root, '.kata/tasks', taskId, 'task.json'));
 }

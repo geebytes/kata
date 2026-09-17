@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
-import { appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { readCurrentState, appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
@@ -18,6 +18,8 @@ import { nextActionForTask } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
+import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
+import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 
@@ -159,14 +161,8 @@ async function cmdDesign(taskId: string, root: string, options?: CommandOptions)
     const actor: Actor = actorFor({ id: 'kata-designer', role: 'designer' }, options?.platform);
     const workflowProfile = await acknowledgeCometOpenIfRequired(root, taskId);
 
-    const taskPath = join(root, '.kata/tasks', taskId, 'task.json');
-    const task = JSON.parse(await readFile(taskPath, 'utf8')) as {
-        acceptance?: Array<{ id?: string; statement: string }>;
-        acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
-        upstreamCoverage?: import('../core/task.js').UpstreamCoverage;
-        workflowProfile?: { strictClosure?: boolean; reviewMode?: string };
-    };
-    const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+    const task = await readTask(root, taskId);
+    const current = await readCurrentState(root, taskId);
     if (!task.acceptanceMatrix && (current.phase === 'implement' || current.phase === 'hardVerify')) {
         const handoff = await createHandoff(root, taskId, 'designer');
         return {
@@ -240,7 +236,7 @@ async function cmdDesign(taskId: string, root: string, options?: CommandOptions)
 }
 
 async function acknowledgeCometOpenIfRequired(root: string, taskId: string): Promise<WorkflowProfile | undefined> {
-    const task = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as { workflowProfile?: unknown };
+    const task = await readTask(root, taskId);
     if (!isWorkflowProfile(task.workflowProfile)) return undefined;
     if (task.workflowProfile.comet.openStatus !== 'required') return task.workflowProfile;
     return acknowledgeCometOpen(root, taskId);
@@ -316,14 +312,7 @@ async function cmdBuild(
         };
     }
 
-    const taskPath = join(root, '.kata/tasks', taskId, 'task.json');
-    const task = JSON.parse(await readFile(taskPath, 'utf8')) as {
-        ownedPaths?: string[];
-        acceptance?: Array<{ id?: string; statement: string }>;
-        acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
-        upstreamCoverage?: import('../core/task.js').UpstreamCoverage;
-        workflowProfile?: { strictClosure?: boolean; reviewMode?: string };
-    };
+    const task = await readTask(root, taskId);
     const projectChecks = options.checks?.length
         ? options.checks
         : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
@@ -824,21 +813,26 @@ async function reenterImplementForReviewRepair(taskId: string, root: string, act
 }
 
 async function readActiveReviewRepairBaseline(root: string, taskId: string): Promise<string | undefined> {
-    try {
-        const repair = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'repair.json'), 'utf8')) as {
-            reason?: string;
-            baselineManifestHash?: string;
-            resolvedAt?: string;
-        };
-        // 两种评审修复原因都要参与「必须先改变 manifest 才能 seal」的校验：
-        // review_findings（按严重级授权）与 revision_superseded（按证据漂移授权）。
-        const isReviewRepair = repair.reason === 'review_findings' || repair.reason === 'revision_superseded';
-        if (!isReviewRepair || repair.resolvedAt || !repair.baselineManifestHash) return undefined;
-        return repair.baselineManifestHash;
-    } catch (error: unknown) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
-        throw error;
-    }
+    const repair = await readValidatedOptional<RepairRecord>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    if (!repair) return undefined;
+    // 两种评审修复原因都要参与「必须先改变 manifest 才能 seal」的校验：
+    // review_findings（按严重级授权）与 revision_superseded（按证据漂移授权）。
+    const isReviewRepair = repair.reason === 'review_findings' || repair.reason === 'revision_superseded';
+    if (!isReviewRepair || repair.resolvedAt || !repair.baselineManifestHash) return undefined;
+    return repair.baselineManifestHash;
+}
+
+/** The repair artefact, validated on read. The write path spreads it, so unknown fields stay allowed. */
+interface RepairRecord {
+    reason?: string;
+    baselineRevisionId?: string;
+    baselineManifestHash?: string;
+    scopes?: Array<{ id?: string; repairScope?: string }>;
+    findings?: Array<Record<string, unknown>>;
+    createdAt?: string;
+    resolvedAt?: string;
+    resolvedRevisionId?: string;
+    [key: string]: unknown;
 }
 
 interface ActiveRepair {
@@ -851,26 +845,17 @@ interface ActiveRepair {
  * constrain the next seal: a sealed revision resolves the repair that produced it.
  */
 async function readActiveRepair(root: string, taskId: string): Promise<ActiveRepair | null> {
-    try {
-        const repair = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'repair.json'), 'utf8')) as {
-            reason?: string;
-            scopes?: Array<{ id?: string; repairScope?: string }>;
-            resolvedAt?: string;
-        };
-        if (repair.resolvedAt) return null;
-        return {
-            ...(repair.reason ? { reason: repair.reason } : {}),
-            scopes: Array.isArray(repair.scopes) ? repair.scopes : [],
-        };
-    } catch (error: unknown) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
-        throw error;
-}
+    const repair = await readValidatedOptional<RepairRecord>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    if (!repair || repair.resolvedAt) return null;
+    return {
+        ...(repair.reason ? { reason: repair.reason } : {}),
+        scopes: Array.isArray(repair.scopes) ? repair.scopes : [],
+    };
 }
 
 async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
     const repairPath = join(root, '.kata/tasks', taskId, 'repair.json');
-    const repair = JSON.parse(await readFile(repairPath, 'utf8')) as Record<string, unknown>;
+    const repair = await readValidated<RepairRecord>('repair', repairPath);
     await writeFile(repairPath, `${JSON.stringify({
         ...repair,
         resolvedAt: new Date().toISOString(),
@@ -1023,7 +1008,7 @@ async function cmdVerify(
         workflowProfile?: { reviewMode?: string };
     };
 
-    const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+    const current = await readCurrentState(root, taskId);
     const currentDiffHash = await computeDiffHash(root);
     const evidence = await readTaskEvidence(root, taskId, options);
     const scopeHashes = await currentScopeHashes(root, evidence);
@@ -1142,7 +1127,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
     try {
         const isApprove = options.approve === true;
         if (isApprove) {
-            const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+            const current = await readCurrentState(root, taskId);
             if (current.phase !== 'review') {
                 return {
                     command: 'review', taskId, phase: current.phase, success: false,
@@ -1217,7 +1202,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
 }
 
 async function cmdJudge(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
-    const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+    const current = await readCurrentState(root, taskId);
     if (current.phase !== 'review') {
         return {
             command: 'judge',
@@ -1329,7 +1314,7 @@ async function readTaskEvidence(root: string, taskId: string, options: CommandOp
         const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
         for (const file of candidateFiles) {
             const raw = await readFile(join(evidenceDir, file), 'utf8');
-            const parsed = JSON.parse(raw) as EvidenceEnvelope;
+            const parsed = validate<EvidenceEnvelope>('evidence', JSON.parse(raw));
             if (parsed.taskId === taskId) evidence.push(parsed);
         }
     } catch {
@@ -1443,7 +1428,7 @@ async function currentScopeHashes(root: string, evidence: EvidenceEnvelope[]): P
 
 async function cmdArchive(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     let archivePhase: Phase = 'distill';
-    const current = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+    const current = await readCurrentState(root, taskId);
 
     if (!options.confirmHostModel) {
         return {
@@ -1482,7 +1467,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     const distillation = await distillPassedTaskKnowledge(root, taskId);
     const wikiClosure = await evaluateWikiClosure(root, taskId);
     if (!wikiClosure.valid) {
-        const latest = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8')) as { phase: Phase };
+        const latest = await readCurrentState(root, taskId);
         return {
             command: 'archive',
             taskId,

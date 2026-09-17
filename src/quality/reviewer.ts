@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { validate } from '../core/schema.js';
 
 export type ReviewSeverity = 'blocking' | 'major' | 'minor' | 'note';
 
@@ -38,8 +39,9 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
   let revisionId: string | undefined;
   let status: string | undefined;
   try {
-    const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: ReviewFinding[]; revisionId?: string; status?: string };
-    findings = parsed.findings ?? [];
+    const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: unknown[]; revisionId?: string; status?: string };
+    // findings are validated against review-finding.schema.json: a drifted finding is rejected where it is read.
+    findings = (parsed.findings ?? []).map((record) => validate<ReviewFinding>('review-finding', record));
     revisionId = parsed.revisionId;
     status = parsed.status;
   } catch (error) {

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/repair-obligations.schema.json",
+  "title": "Kata repair obligations",
+  "type": "object",
+  "required": ["obligations", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "obligations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "taskId", "source", "severity", "message", "createdAt"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "taskId": { "type": "string", "minLength": 1 },
+          "source": { "type": "string", "enum": ["review", "judge"] },
+          "findingId": { "type": "string", "minLength": 1 },
+          "acceptanceId": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["blocking"] },
+          "message": { "type": "string", "minLength": 1 },
+          "createdAt": { "type": "string", "minLength": 1 },
+          "resolvedAt": { "type": "string", "minLength": 1 },
+          "resolvedByRevisionId": { "type": "string", "minLength": 1 },
+          "resolvedEvidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}

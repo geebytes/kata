@@ -7,6 +7,11 @@ import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
 import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+import repairSchema from 'kata-asset:schemas/repair.schema.json';
+import repairObligationsSchema from 'kata-asset:schemas/repair-obligations.schema.json';
+import revisionSchema from 'kata-asset:schemas/revision.schema.json';
+import userChoiceGateSchema from 'kata-asset:schemas/user-choice-gate.schema.json';
+import { readFile } from 'node:fs/promises';
 
 const schemaText: Record<string, string> = {
   task: taskSchema,
@@ -18,12 +23,16 @@ const schemaText: Record<string, string> = {
   'wiki-record': wikiRecordSchema,
   'handoff-packet': handoffPacketSchema,
   'handoff-receipt': handoffReceiptSchema,
+  repair: repairSchema,
+  'repair-obligations': repairObligationsSchema,
+  revision: revisionSchema,
+  'user-choice-gate': userChoiceGateSchema,
 };
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
 type Schema = {
-  type?: string;
+  type?: string | string[];
   enum?: Json[];
   required?: string[];
   additionalProperties?: boolean | Schema;
@@ -41,6 +50,46 @@ export function validate<T>(schemaName: string, value: unknown): T {
   const schema = loadSchema(schemaName);
   assertMatches(schema, value, '$');
   return value as T;
+}
+
+/**
+ * Reads a JSON artefact and validates it against its schema. Every failure names the artefact and the path, so a
+ * drifted file is reported where it is read instead of surfacing later as a missing field in a decision.
+ */
+export async function readValidated<T>(schemaName: string, path: string): Promise<T> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    throw new Error(`Cannot read ${schemaName} artefact ${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${schemaName} artefact ${path} is not valid JSON`);
+  }
+
+  try {
+    return validate<T>(schemaName, parsed);
+  } catch (error) {
+    throw new Error(`${schemaName} artefact ${path} does not match its schema: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * The tolerant variant: an absent artefact is `null`, drift is still an error. Readers that treat "not written yet"
+ * as a normal state use this instead of catching everything, so a corrupted file cannot masquerade as absent.
+ */
+export async function readValidatedOptional<T>(schemaName: string, path: string): Promise<T | null> {
+  try {
+    return await readValidated<T>(schemaName, path);
+  } catch (error) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function loadSchema(schemaName: string): Schema {
@@ -64,7 +113,12 @@ function assertMatches(schema: Schema, value: unknown, path: string): void {
     throw new Error(`${path} must be one of ${schema.enum.join(', ')}`);
   }
 
-  if (schema.type) assertType(schema.type, value, path);
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (!types.some((type) => matchesType(type, value))) {
+      throw new Error(`${path} must be ${types.join(' or ')}`);
+    }
+  }
 
   if (schema.type === 'string' && typeof value === 'string') {
     if (schema.minLength !== undefined && value.length < schema.minLength) {
@@ -111,20 +165,12 @@ function assertMatches(schema: Schema, value: unknown, path: string): void {
   }
 }
 
-function assertType(type: string, value: unknown, path: string): void {
-  if (type === 'array') {
-    if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
-    return;
-  }
-  if (type === 'integer') {
-    if (!Number.isInteger(value)) throw new Error(`${path} must be an integer`);
-    return;
-  }
-  if (type === 'object') {
-    if (!isRecord(value)) throw new Error(`${path} must be an object`);
-    return;
-  }
-  if (typeof value !== type) throw new Error(`${path} must be a ${type}`);
+function matchesType(type: string, value: unknown): boolean {
+  if (type === 'null') return value === null;
+  if (type === 'array') return Array.isArray(value);
+  if (type === 'integer') return Number.isInteger(value);
+  if (type === 'object') return isRecord(value);
+  return typeof value === type;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/prom
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { checkFreshness, computeDiffHash } from '../quality/evidence.js';
+import { readValidated, readValidatedOptional, validate } from './schema.js';
 import { readTaskRevision, revisionStatus } from '../workflow/revision.js';
 import { assertValidTaskId } from './ids.js';
 
@@ -159,11 +160,12 @@ export async function readStateEvents(root: string, taskId: string): Promise<Sta
         .trim()
         .split('\n')
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as StateEvent);
+        .map((line) => validate<StateEvent>('workflow-state-event', JSON.parse(line)));
 }
 
-async function readCurrentState(root: string, taskId: string): Promise<StateRecord> {
-    return JSON.parse(await readFile(currentStatePath(root, taskId), 'utf8')) as StateRecord;
+/** The projection every reader should use instead of parsing current-state.json by hand: it is schema-validated. */
+export async function readCurrentState(root: string, taskId: string): Promise<StateRecord> {
+    return readValidated<StateRecord>('workflow-state-record', currentStatePath(root, taskId));
 }
 
 async function assertAcceptanceIds(root: string, taskId: string): Promise<void> {
@@ -253,15 +255,15 @@ async function hasJudgePass(
     freshEvidence: HardEvidenceOnDisk | null,
 ): Promise<boolean> {
     try {
-        const judge = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'judge.json'), 'utf8')) as {
-            taskId?: string;
-            result?: string;
+        const judge = await readValidatedOptional<{
+            taskId: string;
+            result: string;
             diffHash?: string;
-            acceptance?: Array<{ id?: string; result?: string; evidenceIds?: string[] }>;
+            acceptance: Array<{ id?: string; result?: string; evidenceIds?: string[] }>;
             evidenceIds?: string[];
             revisionId?: string;
-        };
-        if (judge.taskId !== taskId || judge.result !== 'PASS') return false;
+        }>('judge-result', join(root, '.kata/tasks', taskId, 'judge.json'));
+        if (!judge || judge.taskId !== taskId || judge.result !== 'PASS') return false;
         if (freshEvidence?.revisionId) {
             if (judge.revisionId !== freshEvidence.revisionId) return false;
         } else if (judge.diffHash !== currentDiffHash) return false;

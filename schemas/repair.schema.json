@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/repair.schema.json",
+  "title": "Kata repair record",
+  "type": "object",
+  "required": ["taskId", "fromPhase", "toPhase", "actor", "reason", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "fromPhase": { "type": "string", "enum": ["intake", "plan", "implement", "hardVerify", "review", "judge", "distill", "archive"] },
+    "toPhase": { "type": "string", "enum": ["implement"] },
+    "actor": {
+      "type": "object",
+      "required": ["id", "role"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "baselineRevisionId": { "type": "string", "minLength": 1 },
+    "baselineManifestHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "findings": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "scopes": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "resolvedAt": { "type": "string", "minLength": 1 },
+    "resolvedRevisionId": { "type": "string", "minLength": 1 }
+  }
+}
