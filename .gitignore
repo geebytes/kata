@@ -3,3 +3,12 @@
 .llmwiki/
 node_modules/
 dist/
+
+# Comet change runtime state. Durable artifacts stay tracked: the change's .comet.yaml and
+# .openspec.yaml, .comet/handoff/, and .comet/subagent-progress.md.
+openspec/changes/*/.comet/*
+!openspec/changes/*/.comet/handoff/
+!openspec/changes/*/.comet/subagent-progress.md
+openspec/changes/archive/*/.comet/*
+!openspec/changes/archive/*/.comet/handoff/
+!openspec/changes/archive/*/.comet/subagent-progress.md
