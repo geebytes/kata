@@ -414,6 +414,11 @@ export function recoveryPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'recovery.json');
 }
 
+/** The seal's own progress log: what a monitoring agent needs instead of guessing from process tables. */
+export function sealProgressPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'seal-progress.jsonl');
+}
+
 export function taskProfilePath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'workflow-profile.json');
 }

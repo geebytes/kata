@@ -194,4 +194,30 @@ describe('seal cost and revision identity', () => {
         // A claim on the whole directory legitimately collides with a sibling's file claim, and names the file.
         expect(await findOwnershipConflicts(root, 'mine-task', ['shared'])).toEqual([{ taskId: 'theirs-task', path: 'shared/mine.ts' }]);
     });
+
+    it('writes a readable heartbeat while the seal runs', async () => {
+        const root = await tempRoot();
+        await openTask(root, 'heartbeat-seal');
+        const result = await seal('heartbeat-seal', root, {
+            checks: [
+                { id: 'linty', name: 'linty', kind: 'lint', command: process.execPath, cwd: root, timeoutMs: 10_000, args: ['-e', 'process.exit(0)'] },
+                { id: 'testy', name: 'testy', kind: 'test', command: process.execPath, cwd: root, timeoutMs: 10_000, args: ['-e', 'process.exit(0)'] },
+            ],
+        });
+
+        expect(result).toMatchObject({ success: true });
+        // Monitoring a seal used to mean pgrep-ing for a process (which false-positives on the agent's own command
+        // line) or waiting blind; the seal now says what it is doing, when, and for how long.
+        const lines = (await readFile(join(root, '.kata/tasks/heartbeat-seal/seal-progress.jsonl'), 'utf8'))
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+        const states = lines.filter((line) => line.type === 'quality_check_progress');
+        expect(states.some((line) => line.check === 'linty' && line.state === 'started')).toBe(true);
+        expect(states.some((line) => line.check === 'testy' && line.state === 'passed')).toBe(true);
+        expect(states.every((line) => typeof line.at === 'string')).toBe(true);
+        expect(lines.at(-1)).toMatchObject({ type: 'seal_complete', checks: 2 });
+    });
+
 });

@@ -257,6 +257,51 @@ async function acknowledgeCometOpenIfRequired(root: string, taskId: string): Pro
     return acknowledgeCometOpen(root, taskId);
 }
 
+
+/**
+ * The seal heartbeat: one JSON line per check transition in `.kata/tasks/<task>/seal-progress.jsonl`.
+ *
+ * Written for a monitoring agent, not for a human reading a terminal: `state`, the check's name, how long it has been
+ * running, and when the line was written. A failure to write it never fails a seal — the log is an observation, and a
+ * seal that died because its log was unwritable would be worse than one nobody can watch.
+ */
+async function sealProgressWriter(
+    root: string,
+    taskId: string,
+): Promise<((event: CheckProgressEvent) => void) & { finish: () => Promise<void> }> {
+    const { appendFile, mkdir } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    const { sealProgressPath } = await import('../core/layout.js');
+    const path = sealProgressPath(root, taskId);
+    const startedAt = new Map<string, number>();
+    const write = async (line: Record<string, unknown>): Promise<void> => {
+        try {
+            await mkdir(dirname(path), { recursive: true });
+            await appendFile(path, `${JSON.stringify(line)}\n`, 'utf8');
+        } catch {
+            // Observation only: never let the log decide the seal.
+        }
+    };
+    const writer = ((event: CheckProgressEvent): void => {
+        const now = Date.now();
+        const name = String(event.check ?? '');
+        if (event.type === 'quality_check_progress' && event.state === 'started') startedAt.set(name, now);
+        const started = startedAt.get(name);
+        void write({
+            type: event.type,
+            check: name,
+            state: event.state,
+            ...(event.exitCode !== undefined ? { exitCode: event.exitCode } : {}),
+            ...(started !== undefined ? { elapsedMs: now - started } : {}),
+            at: new Date(now).toISOString(),
+        });
+    }) as ((event: CheckProgressEvent) => void) & { finish: () => Promise<void> };
+    writer.finish = async () => {
+        await write({ type: 'seal_complete', at: new Date().toISOString(), checks: startedAt.size });
+    };
+    return writer;
+}
+
 async function cmdBuild(
     taskId: string,
     root: string,
@@ -428,11 +473,18 @@ async function cmdBuild(
         }
     }
 
+    // A readable heartbeat. Monitoring a seal used to mean `pgrep`-ing for a process — which false-positives on the
+    // agent's own command line — or waiting blind, so the seal writes what it is doing, when, and for how long.
+    const progress = await sealProgressWriter(root, taskId);
     const evidence = await collectEvidence(taskId, checks, {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
-        ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+        onProgress: (event) => {
+            progress(event);
+            options.onProgress?.(event);
+        },
     });
+    await progress.finish();
     await writeEvidence(root, taskId, evidence);
     if (evidence.some((item) => item.exitCode !== 0)) {
         return {
