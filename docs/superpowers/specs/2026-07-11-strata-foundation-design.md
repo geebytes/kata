@@ -2,6 +2,8 @@
 comet_change: kata-foundation
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-09-17-strata-foundation
+status: final
 ---
 
 # Kata Foundation 技术设计

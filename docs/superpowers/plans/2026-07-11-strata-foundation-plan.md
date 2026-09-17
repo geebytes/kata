@@ -2,6 +2,7 @@
 change: kata-foundation
 design-doc: docs/superpowers/specs/2026-07-11-kata-foundation-design.md
 base-ref: dca2f22b17f1b4777c9db1f09f518ad6b8ced012
+archived-with: 2026-09-17-strata-foundation
 ---
 
 # Kata Foundation 实施计划
