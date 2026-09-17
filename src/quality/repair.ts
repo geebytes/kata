@@ -86,3 +86,37 @@ export function outOfScopeRepairPaths(
     );
     return verdict.allowed ? [] : [...(verdict.unrelatedPaths ?? [])];
 }
+
+/**
+ * Why a repair was opened. One union for the record: the seal path, the reviewer-repair authorization and the repair
+ * gate all read it, and each entry phase writes one member of it.
+ */
+export type RepairReason = 'review_findings' | 'revision_superseded' | 'judge_fail' | 'verify_fail' | 'verify_reseal';
+
+/** The repair artefact. Unknown fields are preserved: the resolution path spreads the record it read. */
+export interface RepairRecordShape {
+  taskId: string;
+  fromPhase: Phase;
+  toPhase: 'implement';
+  actor: { id: string; role: string; platform?: string };
+  reason: RepairReason;
+  /** The review findings that authorised the repair, in the producer's shape. */
+  findings?: Array<{ id?: string; acceptanceId?: string; severity?: string; message?: string; path?: string }>;
+  scopes?: Array<{ id?: string; repairScope?: string }>;
+  baselineRevisionId?: string;
+  baselineManifestHash?: string;
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedRevisionId?: string;
+  [key: string]: unknown;
+}
+
+/** What an authorized repair entry carries, before the transition stamps the task, actor and time onto it. */
+export interface RepairPayload {
+  fromPhase?: Phase;
+  reason: RepairReason;
+  findings?: Array<{ title?: string; message?: string; fix?: string }>;
+  scopes?: Array<{ id?: string; repairScope?: string }>;
+  baselineRevisionId?: string;
+  baselineManifestHash?: string;
+}

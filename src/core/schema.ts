@@ -12,6 +12,7 @@ import repairObligationsSchema from 'kata-asset:schemas/repair-obligations.schem
 import revisionSchema from 'kata-asset:schemas/revision.schema.json';
 import userChoiceGateSchema from 'kata-asset:schemas/user-choice-gate.schema.json';
 import reviewSchema from 'kata-asset:schemas/review.schema.json';
+import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
 import { readFile } from 'node:fs/promises';
 
 const schemaText: Record<string, string> = {
@@ -29,6 +30,7 @@ const schemaText: Record<string, string> = {
   revision: revisionSchema,
   'user-choice-gate': userChoiceGateSchema,
   review: reviewSchema,
+  'verify-result': verifyResultSchema,
 };
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
-import { readCurrentState, appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { readCurrentState, appendStateEvent, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
@@ -17,7 +17,8 @@ import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
-import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
+import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
+import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -259,12 +260,12 @@ async function cmdBuild(
         await transition(taskId, 'implement', actorFor(defaultActor, options.platform), { root });
         await guardTransition(options.guard, 'apply', taskId, 'implement');
     } else if (current.phase === 'hardVerify') {
-        await reenterImplementForVerifyRepair(taskId, root, actorFor(defaultActor, options.platform));
+        await reenterImplementForRepairEntry('hardVerify', taskId, root, actorFor(defaultActor, options.platform));
     } else if (current.phase === 'review') {
-        await reenterImplementForReviewRepair(taskId, root, actorFor(defaultActor, options.platform));
+        await reenterImplementForRepairEntry('review', taskId, root, actorFor(defaultActor, options.platform));
         enteredRepairAwaitingSeal = true;
     } else if (current.phase === 'judge') {
-        await reenterImplementForRepair(taskId, root, actorFor(defaultActor, options.platform));
+        await reenterImplementForRepairEntry('judge', taskId, root, actorFor(defaultActor, options.platform));
         enteredRepairAwaitingSeal = true;
     } else if (current.phase !== 'implement') {
         throw new Error(`Build cannot run from ${current.phase}`);
@@ -740,74 +741,8 @@ function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
     return raw.length > 200 ? raw.slice(0, 200) : raw;
 }
 
-async function reenterImplementForReviewRepair(taskId: string, root: string, actor: Actor): Promise<void> {
-    const reviewRaw = await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8');
-    const review = JSON.parse(reviewRaw) as {
-        revisionId?: string;
-        findings?: Array<{ severity?: string; title?: string; message?: string; fix?: string }>;
-    };
-    const taskRaw = await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8');
-    const task = JSON.parse(taskRaw) as { workflowProfile?: { reviewMode?: string } };
-    const isStrict = task.workflowProfile?.reviewMode === 'strict';
-    const revision = await readCurrentTaskRevision(root, taskId);
-    if (review.revisionId !== revision?.id) {
-        throw new Error('Build cannot run from review because its findings are not bound to the current sealed revision. Re-run /kata-review.');
-    }
-    const blockingFindings = (review.findings ?? []).filter((finding) => finding.severity === 'blocking');
-    const majorFindings = isStrict
-        ? (review.findings ?? []).filter((finding) => finding.severity === 'major')
-        : [];
-    const severityAuthorized = blockingFindings.length + majorFindings.length > 0;
-    // 证据漂移授权（revision_superseded）：已封存 revision 之后工作树又被改动时，证据必然与当前实现
-    // 不再对应。此时**必须**允许回到 implement 重新 seal——否则只剩「带着过期证据进 Judge」这条路，
-    // 而 verify 早就把 revision_superseded 视为可修复范围（见 reenterImplementForVerifyRepair）。
-    // 这不会削弱评审：新 revision 会让 review.json 的绑定失效，因此必须重新 seal → verify → review。
-    const superseded = revision !== null && (await revisionStatus(root, revision)).status === 'superseded';
-    if (!severityAuthorized && !superseded) {
-        throw new Error('Build cannot run from review without blocking (or strict-mode major) review findings, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
-    }
-    const repairReason = severityAuthorized ? 'review_findings' : 'revision_superseded';
-    // 漂移授权时携带**全部**发现（含 minor/note）作为修复上下文；严重级授权时沿用原有语义。
-    const repairFindings = severityAuthorized ? [...blockingFindings, ...majorFindings] : (review.findings ?? []);
-
-    const now = new Date().toISOString();
-    await withTaskLock(root, taskId, async () => {
-        await appendStateEvent(root, {
-            taskId,
-            from: 'review',
-            to: 'implement',
-            actor,
-            at: now,
-        });
-        await writeCurrentState(root, {
-            taskId,
-            phase: 'implement',
-            actor,
-            updatedAt: now,
-        });
-    });
-    await writeFile(
-        join(root, '.kata/tasks', taskId, 'repair.json'),
-        `${JSON.stringify({
-            taskId,
-            fromPhase: 'review',
-            toPhase: 'implement',
-            actor,
-            reason: repairReason,
-            ...(revision ? { baselineRevisionId: revision.id, baselineManifestHash: revision.manifestHash } : {}),
-            findings: repairFindings.map((finding) => ({
-                title: finding.title,
-                message: finding.message,
-                fix: finding.fix,
-            })),
-            createdAt: now,
-        }, null, 2)}\n`,
-        'utf8',
-    );
-}
-
 async function readActiveReviewRepairBaseline(root: string, taskId: string): Promise<string | undefined> {
-    const repair = await readValidatedOptional<RepairRecord>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    const repair = await readValidatedOptional<RepairRecordShape>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
     if (!repair) return undefined;
     // 两种评审修复原因都要参与「必须先改变 manifest 才能 seal」的校验：
     // review_findings（按严重级授权）与 revision_superseded（按证据漂移授权）。
@@ -816,28 +751,9 @@ async function readActiveReviewRepairBaseline(root: string, taskId: string): Pro
     return repair.baselineManifestHash;
 }
 
-/**
- * Why a repair was opened. The orchestrator is the only producer; the seal path and the reviewer-repair authorization
- * both read it, so it is one union rather than literals in three places.
- */
-type RepairReason = 'review_findings' | 'revision_superseded' | 'judge_fail' | 'verify_fail';
-
-/** The repair artefact, validated on read. The write path spreads it, so unknown fields stay allowed. */
-interface RepairRecord {
-    reason?: RepairReason;
-    baselineRevisionId?: string;
-    baselineManifestHash?: string;
-    scopes?: Array<{ id?: string; repairScope?: RepairScope }>;
-    findings?: Array<Record<string, unknown>>;
-    createdAt?: string;
-    resolvedAt?: string;
-    resolvedRevisionId?: string;
-    [key: string]: unknown;
-}
-
 interface ActiveRepair {
-    reason?: string;
-    scopes: Array<{ id?: string; repairScope?: string }>;
+    reason?: RepairReason;
+    scopes: Array<{ id?: string; repairScope?: RepairScope }>;
 }
 
 /**
@@ -845,17 +761,19 @@ interface ActiveRepair {
  * constrain the next seal: a sealed revision resolves the repair that produced it.
  */
 async function readActiveRepair(root: string, taskId: string): Promise<ActiveRepair | null> {
-    const repair = await readValidatedOptional<RepairRecord>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
+    const repair = await readValidatedOptional<RepairRecordShape>('repair', join(root, '.kata/tasks', taskId, 'repair.json'));
     if (!repair || repair.resolvedAt) return null;
     return {
         ...(repair.reason ? { reason: repair.reason } : {}),
-        scopes: Array.isArray(repair.scopes) ? repair.scopes : [],
+        scopes: Array.isArray(repair.scopes)
+            ? repair.scopes.map((scope) => ({ id: scope.id, repairScope: scope.repairScope as RepairScope | undefined }))
+            : [],
     };
 }
 
 async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
     const repairPath = join(root, '.kata/tasks', taskId, 'repair.json');
-    const repair = await readValidated<RepairRecord>('repair', repairPath);
+    const repair = await readValidated<RepairRecordShape>('repair', repairPath);
     await writeFile(repairPath, `${JSON.stringify({
         ...repair,
         resolvedAt: new Date().toISOString(),
@@ -863,114 +781,21 @@ async function resolveReviewRepair(root: string, taskId: string, revisionId: str
     }, null, 2)}\n`, 'utf8');
 }
 
-async function reenterImplementForVerifyRepair(taskId: string, root: string, actor: Actor): Promise<void> {
-    let verifyRaw: string | undefined;
-    try {
-        verifyRaw = await readFile(join(root, '.kata/tasks', taskId, 'verify.json'), 'utf8');
-    } catch (error: unknown) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+/**
+ * Entering implementation from a gate is one operation: ask `workflow/repair-entry.ts` whether it is authorized, then
+ * let `state.transitionForRepair` write the event, the current state and the repair record.
+ */
+async function reenterImplementForRepairEntry(
+    entryPhase: 'hardVerify' | 'review' | 'judge',
+    taskId: string,
+    root: string,
+    actor: Actor,
+): Promise<void> {
+    const authorization = await authorizeRepair(entryPhase, root, taskId);
+    if (!authorization.authorized) {
+        throw new Error(authorization.denial ?? `Build cannot re-enter implementation from ${entryPhase}`);
     }
-    if (!verifyRaw) {
-        const now = new Date().toISOString();
-        await appendStateEvent(root, { taskId, from: 'hardVerify', to: 'implement', actor, at: now });
-        await writeCurrentState(root, { taskId, phase: 'implement', actor, updatedAt: now });
-        return;
-    }
-    // Typed with the producer's acceptance type instead of a third inline structural copy.
-    const verify = JSON.parse(verifyRaw) as { result?: string; acceptance?: JudgeAcceptanceResult[] };
-    const failedAcceptance = verify.acceptance?.filter((criterion) => criterion.result === 'FAIL') ?? [];
-    const isRepairable = verify.result === 'FAIL'
-        && (failedAcceptance.length === 0
-            || failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableVerifyScopes)));
-    if (!isRepairable) {
-        throw new Error('Build cannot run from hardVerify without a repairable verify FAIL result');
-    }
-
-    const now = new Date().toISOString();
-    await appendStateEvent(root, {
-        taskId,
-        from: 'hardVerify',
-        to: 'implement',
-        actor,
-        at: now,
-    });
-    await writeCurrentState(root, {
-        taskId,
-        phase: 'implement',
-        actor,
-        updatedAt: now,
-    });
-    await writeFile(
-        join(root, '.kata/tasks', taskId, 'repair.json'),
-        `${JSON.stringify({
-            taskId,
-            fromPhase: 'hardVerify',
-            toPhase: 'implement',
-            actor,
-            reason: failedAcceptance.length === 0 ? 'verify_reseal' : 'verify_fail',
-            scopes: failedAcceptance.map((criterion) => ({
-                id: criterion.id,
-                repairScope: criterion.repairScope,
-            })),
-            createdAt: now,
-        }, null, 2)}\n`,
-        'utf8',
-    );
-}
-
-async function reenterImplementForRepair(taskId: string, root: string, actor: Actor): Promise<void> {
-    const judgeRaw = await readFile(join(root, '.kata/tasks', taskId, 'judge.json'), 'utf8');
-    const judgeResult = JSON.parse(judgeRaw) as { result?: string; acceptance?: JudgeAcceptanceResult[] };
-    const failedAcceptance = judgeResult.acceptance?.filter((criterion) => criterion.result === 'FAIL') ?? [];
-    const judgeRepairable = judgeResult.result === 'FAIL'
-        && failedAcceptance.length > 0
-        && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
-    // 证据漂移授权（与 review 边界同一规则）：Judge PASS 之后工作树又被打动时（例如在 archive gate 前
-    // 追加发布证据），已封存 revision 被 supersede，`assertDistillGates` 随即拒绝进入 distill——
-    // 而 judge 修复入口原先只认 judge FAIL，于是 PASS + 漂移成为死锁。漂移是 hash 派生的事实，
-    // 与阶段无关，故此处同样接受；新 revision 会失效 review 绑定，仍必须重走 seal → verify → review → judge。
-    const revision = await readCurrentTaskRevision(root, taskId);
-    const superseded = revision !== null && (await revisionStatus(root, revision)).status === 'superseded';
-    const isRepairable = judgeRepairable || superseded;
-    if (!isRepairable) {
-        throw new Error('Build cannot run from judge without a repairable judge FAIL result, or a superseded sealed revision');
-    }
-
-    const now = new Date().toISOString();
-    await appendStateEvent(root, {
-        taskId,
-        from: 'judge',
-        to: 'implement',
-        actor,
-        at: now,
-    });
-    await writeCurrentState(root, {
-        taskId,
-        phase: 'implement',
-        actor,
-        updatedAt: now,
-    });
-    await writeFile(
-        join(root, '.kata/tasks', taskId, 'repair.json'),
-        `${JSON.stringify({
-            taskId,
-            fromPhase: 'judge',
-            toPhase: 'implement',
-            actor,
-            reason: judgeRepairable ? 'judge_fail' : 'revision_superseded',
-            // 漂移授权时写下漂移基线：让 repair.json 自证「supersede 了哪个 revision」；
-            // 同时也让 seal 前的「manifest 必须已变」校验生效（此处必然已变）。
-            ...(judgeRepairable
-                ? {}
-                : { baselineRevisionId: revision?.id, baselineManifestHash: revision?.manifestHash }),
-            scopes: failedAcceptance.map((criterion) => ({
-                id: criterion.id,
-                repairScope: criterion.repairScope,
-            })),
-            createdAt: now,
-        }, null, 2)}\n`,
-        'utf8',
-    );
+    await transitionForRepair({ taskId, actor, entryPhase, repair: authorization.repair, root });
 }
 
 async function cmdVerify(

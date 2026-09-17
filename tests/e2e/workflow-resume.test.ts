@@ -326,7 +326,7 @@ describe('Workflow resume and lifecycle', () => {
             join(root, '.kata/tasks/wf-old-review-ignored/review.json'),
             `${JSON.stringify({
                 revisionId: 'revision-old',
-                findings: [{ severity: 'blocking', title: 'Old blocker' }],
+                findings: [{ id: 'finding-old-blocker', taskId: 'wf-review-repair-stale-findings', severity: 'blocking', message: 'Old blocker' }],
             }, null, 2)}\n`,
             'utf8',
         );
@@ -708,7 +708,7 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeFile(
             join(root, `.kata/tasks/${taskId}/review.json`),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', title: 'Must repair' }] }, null, 2)}\n`,
+            `${JSON.stringify({ findings: [{ id: 'finding-1', taskId: 'wf-build-review-repair-test', severity: 'blocking', message: 'Must repair' }] }, null, 2)}\n`,
         );
         await writeWikiClosure(root, taskId, {
             decision: 'not_applicable',
@@ -750,7 +750,7 @@ describe('Workflow resume and lifecycle', () => {
         const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
         await writeFile(
             reviewPath,
-            `${JSON.stringify({ ...review, findings: [{ severity: 'blocking', title: 'Must repair' }] }, null, 2)}\n`,
+            `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-review-repair-manifest', severity: 'blocking', message: 'Must repair' }] }, null, 2)}\n`,
         );
 
         const repairBuild = await runCommand('build', taskId, root, {
@@ -843,7 +843,7 @@ describe('Workflow resume and lifecycle', () => {
         const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
         await writeFile(
             reviewPath,
-            `${JSON.stringify({ ...review, findings: [{ severity: 'major', title: 'Must repair in strict mode' }] }, null, 2)}\n`,
+            `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-strict-major-review-repair', severity: 'major', message: 'Must repair in strict mode' }] }, null, 2)}\n`,
         );
 
         const repairBuild = await runCommand('build', taskId, root, {
@@ -855,7 +855,7 @@ describe('Workflow resume and lifecycle', () => {
         const repair = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/repair.json`), 'utf8')) as {
             findings: Array<{ title?: string }>;
         };
-        expect(repair.findings).toContainEqual(expect.objectContaining({ title: 'Must repair in strict mode' }));
+        expect(repair.findings).toContainEqual(expect.objectContaining({ message: 'Must repair in strict mode', severity: 'major' }));
     });
 
     it('/kata-build re-enters implementation when a repair superseded the sealed revision', async () => {
@@ -897,7 +897,7 @@ describe('Workflow resume and lifecycle', () => {
         // 只有 minor 发现：平台语义上「无需修复」，但评审确实要求了整改。
         await writeFile(
             reviewPath,
-            `${JSON.stringify({ ...review, findings: [{ severity: 'minor', title: 'Minor finding repaired voluntarily' }] }, null, 2)}\n`,
+            `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-minor-review-repair', severity: 'minor', message: 'Minor finding repaired voluntarily' }] }, null, 2)}\n`,
         );
         // 评审之后真的改了代码 ⇒ 已封存 revision 被 supersede，证据必然过期。
         await writeFile(join(root, 'task-owned.txt'), 'repaired implementation\n', 'utf8');
@@ -916,7 +916,7 @@ describe('Workflow resume and lifecycle', () => {
         expect(repair.reason).toBe('revision_superseded');
         expect(repair.baselineManifestHash).toBeTruthy();
         expect(repair.findings).toContainEqual(
-            expect.objectContaining({ title: 'Minor finding repaired voluntarily' }),
+            expect.objectContaining({ message: 'Minor finding repaired voluntarily', severity: 'minor' }),
         );
     });
 
@@ -958,7 +958,7 @@ describe('Workflow resume and lifecycle', () => {
         const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
         await writeFile(
             reviewPath,
-            `${JSON.stringify({ ...review, findings: [{ severity: 'minor', title: 'Advisory only' }] }, null, 2)}\n`,
+            `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-minor-only-review', severity: 'minor', message: 'Advisory only' }] }, null, 2)}\n`,
         );
 
         await expect(runCommand('build', taskId, root)).rejects.toThrow(
@@ -1056,7 +1056,7 @@ describe('Workflow resume and lifecycle', () => {
         const review = JSON.parse(await readFile(reviewPath, 'utf8')) as Record<string, unknown>;
         await writeFile(
             reviewPath,
-            `${JSON.stringify({ ...review, findings: [{ severity: 'major', title: 'Does not require standard repair' }] }, null, 2)}\n`,
+            `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-standard-major-review', severity: 'major', message: 'Does not require standard repair' }] }, null, 2)}\n`,
         );
 
         await expect(runCommand('build', taskId, root)).rejects.toThrow(

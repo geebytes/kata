@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readValidated, readValidatedOptional, validate } from './schema.js';
 import { assertDistillGates as assertDistillGatesFromRecords } from '../workflow/distill-gates.js';
+import type { RepairPayload, RepairRecordShape } from '../quality/repair.js';
 import { assertValidTaskId } from './ids.js';
 
 export const orderedPhases = [
@@ -108,6 +109,54 @@ export async function transition(
             ...(options.activeSession ? { activeSession: options.activeSession } : {}),
         });
         await writeCurrentState(root, next);
+
+        return next;
+    });
+}
+
+/**
+ * The one way a task re-enters implementation from a gate.
+ *
+ * Repair entries are the only backward links the state machine accepts, and they used to be maintained by hand in three
+ * places: each gate's authorization function appended the event, rewrote the current state and wrote `repair.json`
+ * itself. This is that work in one place, driven by the authorization verdict `workflow/repair-entry.ts` returns.
+ */
+export async function transitionForRepair(input: {
+    taskId: string;
+    actor: Actor;
+    entryPhase: Extract<Phase, 'hardVerify' | 'review' | 'judge'>;
+    /** The repair record to persist, or `null` when the entry carries nothing to record. */
+    repair: RepairPayload | null;
+    root?: string;
+}): Promise<StateRecord> {
+    const root = input.root ?? process.cwd();
+    assertValidTaskId(input.taskId);
+    return withTaskLock(root, input.taskId, async () => {
+        const current = await readCurrentState(root, input.taskId);
+        if (current.phase !== input.entryPhase) {
+            throw new Error(`Repair entry expects ${input.taskId} to be in ${input.entryPhase}, but it is in ${current.phase}`);
+        }
+        if (!isRepairReturn(current.phase, 'implement')) {
+            throw new Error(`Illegal repair return from ${current.phase} to implement`);
+        }
+
+        const now = new Date().toISOString();
+        const next: StateRecord = { taskId: input.taskId, phase: 'implement', actor: input.actor, updatedAt: now };
+
+        await appendStateEvent(root, { taskId: input.taskId, from: current.phase, to: 'implement', actor: input.actor, at: now });
+        await writeCurrentState(root, next);
+
+        if (input.repair) {
+            const record: RepairRecordShape = {
+                ...input.repair,
+                fromPhase: input.repair.fromPhase ?? input.entryPhase,
+                taskId: input.taskId,
+                toPhase: 'implement',
+                actor: input.actor,
+                createdAt: now,
+            };
+            await writeFile(join(root, '.kata/tasks', input.taskId, 'repair.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+        }
 
         return next;
     });
