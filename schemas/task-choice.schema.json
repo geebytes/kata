@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/task-choice.schema.json",
+  "title": "Kata task-scope user choice",
+  "type": "object",
+  "required": [
+    "taskId",
+    "choice",
+    "createdAt",
+    "approvedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "choice": {
+      "type": "string",
+      "enum": [
+        "continue_current",
+        "switched",
+        "delegated"
+      ]
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestHash": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approvedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

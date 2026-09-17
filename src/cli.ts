@@ -727,13 +727,23 @@ function boundaryForCommand(command: KataCommand, phase: string | null): UserCho
 }
 
 async function runGateCommand(argv: string[], root: string): Promise<Record<string, unknown>> {
-    if (argv[0] !== 'approve') throw new Error('Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>');
+    if (argv[0] !== 'approve') throw new Error('Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated> [--for-task]');
     const task = valueAfter(argv, '--task');
     const boundary = valueAfter(argv, '--boundary') as UserChoiceBoundary | undefined;
     const choice = valueAfter(argv, '--choice') as 'continue_current' | 'switched' | 'delegated' | undefined;
     if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
-    await approveUserChoiceGate({ root, taskId: task, boundary, choice });
-    return { command: 'gate approve', taskId: task, boundary, choice, approved: true };
+    // --for-task records the same answer for the whole task: the boundaries still exist and are still recorded, they
+    // just stop asking the same human the same question (and they report when they reuse the answer).
+    const forTask = argv.includes('--for-task');
+    await approveUserChoiceGate({ root, taskId: task, boundary, choice, forTask });
+    return {
+        command: 'gate approve',
+        taskId: task,
+        boundary,
+        choice,
+        approved: true,
+        ...(forTask ? { recordedForTask: true } : {}),
+    };
 }
 
 function valueAfter(argv: string[], flag: string): string | undefined {
