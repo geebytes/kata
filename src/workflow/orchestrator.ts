@@ -11,6 +11,7 @@ import { CometGuard } from '../comet/guard.js';
 import { assertValidTaskId } from '../core/ids.js';
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
+import { collectSealPreflight } from './seal-preflight.js';
 import { matrixChecks, dedupeChecks as dedupeCheckCommands } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
@@ -346,149 +347,52 @@ async function cmdBuild(
         };
     }
 
-    if (requiresMatrix(task.workflowProfile) && !task.acceptanceMatrix) {
-        return {
-            command: 'build', taskId, phase: 'implement', success: false,
-            error: 'Strict closure requires an acceptanceMatrix; add it to task.json before sealing.',
-            diagnostics: { missingMatrix: true },
-        };
-    }
-    const matrixErrors = validateMatrix(task.acceptance ?? [], task.acceptanceMatrix);
-    if (requiresMatrix(task.workflowProfile) && matrixErrors.length > 0) {
-        return {
-            command: 'build', taskId, phase: 'implement', success: false,
-            error: `Acceptance matrix validation failed: ${matrixErrors.length} error(s).`,
-            diagnostics: { matrixErrors },
-        };
-    }
-    // Upstream coverage is REQUIRED for strict tasks at seal (consistent with design).
-    // This prevents sealing with self-authored ACs that silently omit upstream doc
-    // requirements. Legacy tasks (non-strict, matrix optional) stay compatible.
-    if (requiresUpstreamCoverage(task.workflowProfile) && !task.upstreamCoverage) {
-        return {
-            command: 'build', taskId, phase: 'implement', success: false,
-            error: 'Strict closure requires upstreamCoverage before sealing; add it to task.json (map upstream doc requirements to ACs or out-of-scope).',
-            diagnostics: { missingUpstreamCoverage: true },
-        };
-    }
-    if (task.upstreamCoverage) {
-        const coverageErrors = validateUpstreamCoverage(task.acceptance ?? [], task.acceptanceMatrix, task.upstreamCoverage, root);
-        if (coverageErrors.length > 0) {
-            return {
-                command: 'build', taskId, phase: 'implement', success: false,
-                error: `Upstream coverage validation failed before sealing: ${coverageErrors.length} error(s).`,
-                diagnostics: { coverageErrors },
-            };
-        }
-    }
-
-    if (!task.acceptanceMatrix) {
-        const obligations = await readObligations(root, taskId);
-        const unresolved = obligations.filter((o) => !o.resolvedAt);
-        if (unresolved.length > 0) {
-            return {
-                command: 'build', taskId, phase: 'implement', success: false,
-                error: 'Legacy task has unresolved repair obligations; add an acceptanceMatrix to task.json so closure can record matrix-matched evidence for the affected AC(s).',
-                diagnostics: {
-                    unresolvedObligations: unresolved.length,
-                    unresolvedAcceptanceIds: [...new Set(unresolved.map((o) => o.acceptanceId).filter((id): id is string => Boolean(id)))],
-                },
-            };
-        }
-    }
-
-    let ownedPaths: string[];
+    // The preflight is collected, not fail-fast: a task with three independent closure problems hears about all three
+    // in one run instead of one per run — and without paying the evidence cost between them. The first blocker keeps
+    // the message and diagnostics key the early return had, so nothing that reads this result has to change.
+    let ownedPaths: string[] = [];
+    let ownedPathsError: string | undefined;
     try {
         ownedPaths = await resolveSealOwnedPaths(root, taskId, task, options);
     } catch (error) {
+        ownedPathsError = error instanceof Error ? error.message : String(error);
+    }
+
+    const preflight = await collectSealPreflight({
+        root,
+        taskId,
+        task,
+        ownedPaths,
+        options: {
+            ...(options.waivers ? { waivers: options.waivers } : {}),
+            ...(options.allowOwnershipConflicts ? { allowOwnershipConflicts: true } : {}),
+            ...(options.allowOutOfScopeRepair ? { allowOutOfScopeRepair: true } : {}),
+            ...(ownedPathsError ? { ownedPathsError } : {}),
+        },
+    });
+    if (preflight.blockers.length > 0) {
+        const [first, ...rest] = preflight.blockers;
         return {
-            command: 'build', taskId, phase: 'implement', success: false,
-            error: error instanceof Error ? error.message : String(error),
-            diagnostics: { missingOwnedPaths: true },
-        };
-    }
-    const reviewRepairBaseline = await readActiveReviewRepairBaseline(root, taskId);
-    if (reviewRepairBaseline) {
-        const manifestHash = await computeManifestHash(root, ownedPaths);
-        if (manifestHash === reviewRepairBaseline) {
-            return {
-                command: 'build',
-                taskId,
-                phase: 'implement',
-                success: false,
-                error: 'Cannot seal review repair without a changed task manifest; fix the recorded findings and tests before retrying --seal.',
-                diagnostics: { mode: 'implement', repairRequired: true },
-            };
-        }
-    }
-    // Bounded repair loop: while a repair is active, the seal may not contain changes outside the acceptance
-    // criteria that repair was authorized for. Drift-authorized repairs record no scopes and are not constrained
-    // here — their whole purpose is to re-seal a revision the workspace has already moved past.
-    const activeRepair = await readActiveRepair(root, taskId);
-    if (activeRepair) {
-        const scopePaths = repairScopePaths(
-            task.acceptanceMatrix,
-            activeRepair.scopes.map((scope) => scope.id).filter((id): id is string => Boolean(id)),
-        );
-        if (scopePaths.length > 0) {
-            const unrelatedRepairPaths = outOfScopeRepairPaths(
-                taskId,
-                await inferOwnedPathsFromWorkspace(root),
-                scopePaths,
-            );
-            if (unrelatedRepairPaths.length > 0 && !options.allowOutOfScopeRepair) {
-                return {
-                    command: 'build', taskId, phase: 'implement', success: false,
-                    error: `Repair touched files outside the failed acceptance scope: ${unrelatedRepairPaths.join(', ')}. Fix only the failing acceptance criteria, or confirm with --allow-out-of-scope-repair.`,
-                    diagnostics: { mode: 'implement', unrelatedRepairPaths, repairScopePaths: scopePaths },
-                };
-            }
-        }
-    }
-    let codeGraphCandidates: CodeGraphCandidate[] = [];
-    let codeGraphDisposition: CodeGraphCandidateDisposition | undefined;
-    const ownershipConflicts = ownedPaths.length
-        ? await findOwnershipConflicts(root, taskId, ownedPaths)
-        : [];
-    if (ownershipConflicts.length > 0 && !options.allowOwnershipConflicts) {
-        return {
-            command: 'build', taskId, phase: 'implement', success: false,
-            error: 'Cannot seal while declared task ownership overlaps another task. Use --allow-ownership-conflicts to confirm and proceed.',
-            diagnostics: { ownershipConflicts },
+            command: 'build',
+            taskId,
+            phase: 'implement',
+            success: false,
+            error: rest.length === 0
+                ? first!.message
+                : `${first!.message}\nThis seal is blocked by ${preflight.blockers.length} independent problems; fix all of them before retrying:\n${preflight.blockers.map((blocker, index) => `${index + 1}. ${blocker.message}`).join('\n')}`,
+            diagnostics: {
+                ...first!.diagnostics,
+                // Every blocker, so a caller can act on all of them rather than only the first.
+                blockers: preflight.blockers.map((blocker) => ({ code: blocker.code, message: blocker.message, diagnostics: blocker.diagnostics })),
+                blockerCount: preflight.blockers.length,
+            },
         };
     }
 
-    if (requiresMatrix(task.workflowProfile)) {
-        const coverage = validatePathCoverage(task.acceptanceMatrix!, ownedPaths);
-        const persistedWaivers = await readWaivers(root, taskId);
-        const waivers = [...new Map([...persistedWaivers, ...(options.waivers ?? [])].map((waiver) => [waiver.path, waiver])).values()];
-        const waiverErrors = validateWaivers(waivers);
-        if (waiverErrors.length > 0) {
-            return { command: 'build', taskId, phase: 'implement', success: false, error: 'Invalid recorded waiver.', diagnostics: { waiverErrors } };
-        }
-        if (task.workflowProfile?.strictClosure) {
-            codeGraphCandidates = await discoverCodeGraphCandidates(root, task.acceptanceMatrix!, ownedPaths);
-            codeGraphDisposition = classifyCodeGraphCandidates(task.acceptanceMatrix!, ownedPaths, waivers, codeGraphCandidates);
-        }
-        const waivedPaths = new Set(waivers.map((w) => w.path));
-        const unwaivedMissingImpl = coverage.missingImplementationPaths.filter((p) => !waivedPaths.has(p));
-        const unwaivedMissingTest = coverage.missingTestPaths.filter((p) => !waivedPaths.has(p));
-        if (unwaivedMissingImpl.length > 0 || unwaivedMissingTest.length > 0 || (codeGraphDisposition?.unresolvedCandidates.length ?? 0) > 0) {
-            return {
-                command: 'build', taskId, phase: 'implement', success: false,
-                error: 'Owned path coverage incomplete: matrix implementation and test paths must be covered by owned paths or waived.',
-                diagnostics: {
-                    missingImplementationPaths: unwaivedMissingImpl,
-                    missingTestPaths: unwaivedMissingTest,
-                    waivedImplementationPaths: coverage.missingImplementationPaths.filter((p) => waivedPaths.has(p)),
-                    waivedTestPaths: coverage.missingTestPaths.filter((p) => waivedPaths.has(p)),
-                    ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
-                    waivers,
-                },
-            };
-        }
-        await writeWaivers(root, taskId, waivers);
-    }
+    const { waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition } = preflight;
+    // Reaching here means every blocker was absent; a non-strict task has no waivers to persist.
+    if (requiresMatrix(task.workflowProfile)) await writeWaivers(root, taskId, waivers);
+
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
@@ -568,7 +472,9 @@ async function cmdBuild(
             evidence,
         );
     }
-    if (revision && reviewRepairBaseline) {
+    // A review repair is outstanding only when the manifest changed, which the preflight just established; resolving
+    // it here is what closes the repair against the revision that superseded it.
+    if (revision && await readActiveReviewRepairBaseline(root, taskId)) {
         await resolveReviewRepair(root, taskId, revision.id);
     }
 
