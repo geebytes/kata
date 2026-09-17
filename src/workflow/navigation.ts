@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Phase } from '../core/state.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { readObligations } from '../quality/repair-obligations.js';
+import type { RepairScope } from '../quality/judge.js';
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -16,8 +17,8 @@ export type UpstreamSummary = {
   verifyResult?: string;
   failedAcceptance: number;
   failedVerifyAcceptance: number;
-  repairScopes: string[];
-  verifyRepairScopes: string[];
+  repairScopes: RepairScope[];
+  verifyRepairScopes: RepairScope[];
   wikiClosureValid?: boolean;
   wikiClosureReason?: string;
   evidenceFiles: string[];
@@ -28,10 +29,70 @@ export type UpstreamSummary = {
   mixedRevisionEvidence?: boolean;
 };
 
+/**
+ * Every reason a next action can carry. The field is part of the CLI's public JSON and drives the trust-boundary
+ * decision below, so producers pass a member of this union rather than a loose string.
+ */
+export const nextActionReasons = [
+  'add_entrypoint_evidence',
+  'archive_judged_change',
+  'archived_task',
+  'choose_execution_mode',
+  'complete_review_conclusion',
+  'continue_implementation',
+  'continue_workflow',
+  'design_intake_task',
+  'git_flow_confirmation_required',
+  'inspect_task',
+  'invalid_review_approval',
+  'judge_reviewed_change',
+  'migrate_legacy_acceptance_matrix',
+  'rebuild_stale_evidence',
+  'rebuild_superseded_revision',
+  'repair_blocking_review_findings',
+  'repair_failed_judge',
+  'repair_failed_verify',
+  'repair_failing_evidence',
+  'repair_mixed_revision_evidence',
+  'repair_strict_major_findings',
+  'repair_unresolved_obligations',
+  'resolve_repair_obligations',
+  'resolve_wiki_closure',
+  'review_fresh_implementation',
+  'verify_fresh_implementation',
+] as const;
+
+export type NextActionReason = (typeof nextActionReasons)[number];
+
+export type TrustBoundary = 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate';
+
+/**
+ * The reason a repair carries when every failed acceptance shares one scope. `null` means the caller's own default
+ * applies. A `Record` over the whole vocabulary so a new scope has to decide this.
+ */
+export const reasonForUniformScope: Record<RepairScope, NextActionReason | null> = {
+  revision_superseded: 'rebuild_superseded_revision',
+  stale_evidence: 'rebuild_stale_evidence',
+  insufficient_evidence_level: 'add_entrypoint_evidence',
+  unresolved_repair_obligation: 'resolve_repair_obligations',
+  missing_test_evidence: null,
+  failing_evidence: null,
+  blocking_review_finding: null,
+  cross_revision_evidence: null,
+};
+
+/** The scopes that a uniform failed set can map to a specific reason, or `null` when they are mixed or unmapped. */
+export function uniformScopeReason(scopes: readonly RepairScope[]): NextActionReason | null {
+  if (scopes.length === 0) return null;
+  const [first] = scopes;
+  if (!scopes.every((scope) => scope === first)) return null;
+  return reasonForUniformScope[first as RepairScope] ?? null;
+}
+
 export type SuggestedAction = {
   nextSkill: string;
   role: string;
-  reason: string;
+  reason: NextActionReason;
   priority: number;
   acceptanceIds?: string[];
 };
@@ -42,10 +103,10 @@ export type NextAction = {
   slashCommand: string;
   cliCommand: string;
   role: string;
-  reason: string;
+  reason: NextActionReason;
   requiresUserConfirmation: boolean;
   modelOrPlatformSwitchAllowed: boolean;
-  trustBoundary?: 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate';
+  trustBoundary?: TrustBoundary;
   pauseInstruction?: string;
 };
 
@@ -85,8 +146,8 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
-    repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is string => Boolean(scope)),
-    verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is string => Boolean(scope)),
+    repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
+    verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     wikiClosureValid: wikiClosure.valid,
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
     evidenceFiles,
@@ -205,7 +266,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
     };
   }
   if (phase === 'hardVerify' && upstream.verifyResult === 'FAIL') {
-    if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'stale_evidence')) {
+    if (uniformScopeReason(upstream.verifyRepairScopes) === 'rebuild_stale_evidence') {
       return {
         nextSkill: '/kata-build',
         role: 'implementer',
@@ -263,9 +324,9 @@ export function nextSkillForPhase(phase: Phase): string {
   }
 }
 
-export function nextActionForTask(taskId: string, nextSkill: string, role: string, reason: string): NextAction {
+export function nextActionForTask(taskId: string, nextSkill: string, role: string, reason: NextActionReason): NextAction {
   const cliVerb = skillToCliVerb(nextSkill);
-  const gate = trustBoundaryForReason(reason);
+  const gate = trustBoundaryFor(reason);
   const seal = reason === 'rebuild_stale_evidence' || reason === 'rebuild_superseded_revision' ? ' --seal' : '';
   const wikiClosure = reason === 'resolve_wiki_closure';
   return {
@@ -285,23 +346,11 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
   };
 }
 
-function verifyRepairReason(upstream: UpstreamSummary): string {
-  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'revision_superseded')) {
-    return 'rebuild_superseded_revision';
-  }
-  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'stale_evidence')) {
-    return 'rebuild_stale_evidence';
-  }
-  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'insufficient_evidence_level')) {
-    return 'add_entrypoint_evidence';
-  }
-  if (upstream.verifyRepairScopes.length > 0 && upstream.verifyRepairScopes.every((scope) => scope === 'unresolved_repair_obligation')) {
-    return 'resolve_repair_obligations';
-  }
-  return 'repair_failed_verify';
+function verifyRepairReason(upstream: UpstreamSummary): NextActionReason {
+  return uniformScopeReason(upstream.verifyRepairScopes) ?? 'repair_failed_verify';
 }
 
-export function statusActionPrompts(suggestion: { nextSkill: string; reason: string; role: string; acceptanceIds?: string[] }): string[] {
+export function statusActionPrompts(suggestion: { nextSkill: string; reason: NextActionReason; role: string; acceptanceIds?: string[] }): string[] {
   if (suggestion.reason === 'choose_execution_mode') {
     return [
       '设计已完成，实施前请确认执行方式：留在当前平台继续，或在任意已识别平台接手自动生成的平台无关交接包。Kata 不会自动切换平台或模型。',
@@ -365,15 +414,44 @@ export function statusActionPrompts(suggestion: { nextSkill: string; reason: str
   return [`建议执行 ${suggestion.nextSkill}，角色 ${suggestion.role}。`];
 }
 
-function trustBoundaryForReason(reason: string): 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate' | null {
-  if (reason === 'choose_execution_mode') return 'implementation_gate';
-  if (reason === 'review_fresh_implementation') return 'review_gate';
-  if (reason === 'judge_reviewed_change') return 'judge_gate';
-  if (reason === 'archive_judged_change') return 'archive_gate';
-  return null;
+/**
+ * The trust boundary each reason stops at. A `Record` over the whole vocabulary: a new reason has to decide whether it
+ * is a gate, instead of silently defaulting to no gate.
+ */
+const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
+  choose_execution_mode: 'implementation_gate',
+  review_fresh_implementation: 'review_gate',
+  judge_reviewed_change: 'judge_gate',
+  archive_judged_change: 'archive_gate',
+  add_entrypoint_evidence: null,
+  archived_task: null,
+  complete_review_conclusion: null,
+  continue_implementation: null,
+  continue_workflow: null,
+  design_intake_task: null,
+  git_flow_confirmation_required: null,
+  inspect_task: null,
+  invalid_review_approval: null,
+  migrate_legacy_acceptance_matrix: null,
+  rebuild_stale_evidence: null,
+  rebuild_superseded_revision: null,
+  repair_blocking_review_findings: null,
+  repair_failed_judge: null,
+  repair_failed_verify: null,
+  repair_failing_evidence: null,
+  repair_mixed_revision_evidence: null,
+  repair_strict_major_findings: null,
+  repair_unresolved_obligations: null,
+  resolve_repair_obligations: null,
+  resolve_wiki_closure: null,
+  verify_fresh_implementation: null,
+};
+
+export function trustBoundaryFor(reason: NextActionReason): TrustBoundary | null {
+  return trustBoundaryByReason[reason];
 }
 
-function pauseInstructionForBoundary(boundary: 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate'): string {
+function pauseInstructionForBoundary(boundary: TrustBoundary): string {
   if (boundary === 'implementation_gate') {
     return '暂停：设计已完成。Kata 已生成平台无关交接包；可在当前或任意已识别平台接手。Kata 不会自动切换或记录宿主平台模型。';
   }

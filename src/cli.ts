@@ -36,6 +36,7 @@ import {
     readUpstreamSummary,
     statusActionPrompts,
     suggestCandidateAction,
+    type NextActionReason,
     type UpstreamSummary,
 } from './workflow/navigation.js';
 import { buildContextManifest } from './core/context.js';
@@ -866,7 +867,7 @@ function workflowCompletion(
     };
 }
 
-function workflowNextReason(phase: Phase): string {
+function workflowNextReason(phase: Phase): NextActionReason {
     if (phase === 'intake') return 'design_intake_task';
     if (phase === 'plan') return 'choose_execution_mode';
     return 'continue_workflow';
@@ -1717,7 +1718,7 @@ type TaskCandidate = {
     nextSkill: string;
     branch?: string;
     suggestedRole: string;
-    suggestedReason: string;
+    suggestedReason: NextActionReason;
     priority: number;
     upstream: UpstreamSummary;
 };

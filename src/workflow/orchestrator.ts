@@ -14,10 +14,11 @@ import { resolveBuildChecks } from '../quality/project-checks.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
-import { nextActionForTask } from './navigation.js';
+import { nextActionForTask, uniformScopeReason } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
+import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
@@ -822,12 +823,18 @@ async function readActiveReviewRepairBaseline(root: string, taskId: string): Pro
     return repair.baselineManifestHash;
 }
 
+/**
+ * Why a repair was opened. The orchestrator is the only producer; the seal path and the reviewer-repair authorization
+ * both read it, so it is one union rather than literals in three places.
+ */
+type RepairReason = 'review_findings' | 'revision_superseded' | 'judge_fail' | 'verify_fail';
+
 /** The repair artefact, validated on read. The write path spreads it, so unknown fields stay allowed. */
 interface RepairRecord {
-    reason?: string;
+    reason?: RepairReason;
     baselineRevisionId?: string;
     baselineManifestHash?: string;
-    scopes?: Array<{ id?: string; repairScope?: string }>;
+    scopes?: Array<{ id?: string; repairScope?: RepairScope }>;
     findings?: Array<Record<string, unknown>>;
     createdAt?: string;
     resolvedAt?: string;
@@ -876,23 +883,12 @@ async function reenterImplementForVerifyRepair(taskId: string, root: string, act
         await writeCurrentState(root, { taskId, phase: 'implement', actor, updatedAt: now });
         return;
     }
-    const verify = JSON.parse(verifyRaw) as {
-        result?: string;
-        acceptance?: Array<{ id?: string; result?: string; repairScope?: string }>;
-    };
-    const repairableScopes = new Set([
-        'missing_test_evidence',
-        'stale_evidence',
-        'failing_evidence',
-        'blocking_review_finding',
-        'revision_superseded',
-        'insufficient_evidence_level',
-        'unresolved_repair_obligation',
-    ]);
+    // Typed with the producer's acceptance type instead of a third inline structural copy.
+    const verify = JSON.parse(verifyRaw) as { result?: string; acceptance?: JudgeAcceptanceResult[] };
     const failedAcceptance = verify.acceptance?.filter((criterion) => criterion.result === 'FAIL') ?? [];
     const isRepairable = verify.result === 'FAIL'
         && (failedAcceptance.length === 0
-            || failedAcceptance.every((criterion) => criterion.repairScope && repairableScopes.has(criterion.repairScope)));
+            || failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableVerifyScopes)));
     if (!isRepairable) {
         throw new Error('Build cannot run from hardVerify without a repairable verify FAIL result');
     }
@@ -931,22 +927,11 @@ async function reenterImplementForVerifyRepair(taskId: string, root: string, act
 
 async function reenterImplementForRepair(taskId: string, root: string, actor: Actor): Promise<void> {
     const judgeRaw = await readFile(join(root, '.kata/tasks', taskId, 'judge.json'), 'utf8');
-    const judgeResult = JSON.parse(judgeRaw) as {
-        result?: string;
-        acceptance?: Array<{ id?: string; result?: string; repairScope?: string }>;
-    };
-    const repairableScopes = new Set([
-        'missing_test_evidence',
-        'stale_evidence',
-        'failing_evidence',
-        'blocking_review_finding',
-        'insufficient_evidence_level',
-        'unresolved_repair_obligation',
-    ]);
+    const judgeResult = JSON.parse(judgeRaw) as { result?: string; acceptance?: JudgeAcceptanceResult[] };
     const failedAcceptance = judgeResult.acceptance?.filter((criterion) => criterion.result === 'FAIL') ?? [];
     const judgeRepairable = judgeResult.result === 'FAIL'
         && failedAcceptance.length > 0
-        && failedAcceptance.every((criterion) => criterion.repairScope && repairableScopes.has(criterion.repairScope));
+        && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
     // 证据漂移授权（与 review 边界同一规则）：Judge PASS 之后工作树又被打动时（例如在 archive gate 前
     // 追加发布证据），已封存 revision 被 supersede，`assertDistillGates` 随即拒绝进入 distill——
     // 而 judge 修复入口原先只认 judge FAIL，于是 PASS + 漂移成为死锁。漂移是 hash 派生的事实，
@@ -1046,16 +1031,9 @@ async function cmdVerify(
     const failedScopes = verifyResult.acceptance
         .filter((acceptance) => acceptance.result === 'FAIL')
         .map((acceptance) => acceptance.repairScope)
-        .filter((scope): scope is Exclude<typeof scope, undefined> => scope !== undefined);
-    const repairReason = failedScopes.length > 0 && failedScopes.every((scope) => scope === 'revision_superseded')
-        ? 'rebuild_superseded_revision'
-        : failedScopes.length > 0 && failedScopes.every((scope) => scope === 'stale_evidence')
-            ? 'rebuild_stale_evidence'
-            : failedScopes.length > 0 && failedScopes.every((scope) => scope === 'insufficient_evidence_level')
-                ? 'add_entrypoint_evidence'
-                : failedScopes.length > 0 && failedScopes.every((scope) => scope === 'unresolved_repair_obligation')
-                    ? 'resolve_repair_obligations'
-                    : 'repair_failed_verify';
+        .filter((scope): scope is RepairScope => scope !== undefined);
+    // The scope→reason table is shared with navigation, so a new scope is decided in one place.
+    const repairReason = uniformScopeReason(failedScopes) ?? 'repair_failed_verify';
     const repairAction = nextActionForTask(taskId, '/kata-build', 'implementer', repairReason);
     const wikiClosureAction = nextActionForTask(taskId, '/kata-wiki-enrich', 'implementer', 'resolve_wiki_closure');
     const nextAction = implementationReady && !wikiClosure.valid

@@ -18,11 +18,50 @@ export interface JudgeInput {
   reviewMode?: string;
 }
 
+/**
+ * The repair vocabulary. Producers (this Judge, the verify evaluator) write `repairScope`; navigation, the
+ * orchestrator, the repair gate and the installer's skill text read it. It is declared once, here, so a producer can
+ * add a member and every consumer that maps it fails compilation until it decides what the new scope means.
+ */
+export const repairScopes = [
+  'missing_test_evidence',
+  'stale_evidence',
+  'failing_evidence',
+  'blocking_review_finding',
+  'revision_superseded',
+  'cross_revision_evidence',
+  'insufficient_evidence_level',
+  'unresolved_repair_obligation',
+] as const;
+
+export type RepairScope = (typeof repairScopes)[number];
+
+/** Scopes a Judge FAIL may authorise repair for. */
+export const repairableJudgeScopes = [
+  'missing_test_evidence',
+  'stale_evidence',
+  'failing_evidence',
+  'blocking_review_finding',
+  'insufficient_evidence_level',
+  'unresolved_repair_obligation',
+] as const satisfies readonly RepairScope[];
+
+/** Verify FAILs authorise drift repairs as well, which a Judge FAIL cannot. */
+export const repairableVerifyScopes = [
+  ...repairableJudgeScopes,
+  'revision_superseded',
+] as const satisfies readonly RepairScope[];
+
+/** True when a failed acceptance carries a scope the given surface may authorise repair for. */
+export function isRepairableScope(scope: RepairScope | undefined, allowed: readonly RepairScope[]): boolean {
+  return scope !== undefined && allowed.includes(scope);
+}
+
 export interface JudgeAcceptanceResult {
   id: string;
   result: 'PASS' | 'FAIL';
   evidenceIds?: string[];
-  repairScope?: 'missing_test_evidence' | 'stale_evidence' | 'revision_superseded' | 'cross_revision_evidence' | 'failing_evidence' | 'blocking_review_finding' | 'insufficient_evidence_level' | 'unresolved_repair_obligation';
+  repairScope?: RepairScope;
 }
 
 export interface JudgeResult {
