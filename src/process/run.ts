@@ -43,6 +43,13 @@ export interface RunProcessOptions {
     onOutput?: (chunk: { stream: 'stdout' | 'stderr'; text: string }) => void;
     /** Extra grace between SIGTERM and SIGKILL while a killed child cleans up. */
     killGraceMs?: number;
+    /**
+     * Stream the child's output straight to the terminal instead of capturing it, for a child that genuinely needs the
+     * user (an interactive prompt). It is still spawned in its own process group and still bounded by `timeoutMs`, so
+     * an interactive child can be cancelled and cannot hang the invocation. `stdout`/`stderr` on the result are empty
+     * in this mode: there is nothing captured to report.
+     */
+    inheritOutput?: boolean;
 }
 
 const defaultKillGraceMs = 5_000;
@@ -56,7 +63,7 @@ export async function runProcess(command: string, args: string[], options: RunPr
             cwd: options.cwd,
             env: options.env ?? process.env,
             detached: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
+            stdio: options.inheritOutput ? 'inherit' : ['ignore', 'pipe', 'pipe'],
         });
 
         let stdout = '';
@@ -105,6 +112,20 @@ export async function runProcess(command: string, args: string[], options: RunPr
         if (options.signal) {
             if (options.signal.aborted) kill('aborted');
             else options.signal.addEventListener('abort', onAbort, { once: true });
+        }
+
+        if (options.inheritOutput) {
+            child.on('error', (error) => {
+                failure = failure ?? 'spawn_failed';
+                stderr += error.message;
+                finish(127, null);
+            });
+            child.on('close', (code, signal) => {
+                if (failure === 'timeout') finish(124, signal);
+                else if (failure === 'aborted') finish(130, signal);
+                else finish(code ?? 1, signal);
+            });
+            return;
         }
 
         child.stdout?.setEncoding('utf8');

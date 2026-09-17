@@ -188,6 +188,41 @@ describe('Git Flow isolation', () => {
         expect(calls).toEqual([['status', '--porcelain']]);
     });
 
+    it('records why a branch command failed, and what it printed', () => {
+        const commandRunner = runner({ 'switch -c feature/sample-task develop': { ok: false, stdout: 'fatal: a branch named feature/sample-task already exists' } });
+
+        const execution = applyGitFlowPlan('/repo', {
+            strategy: 'manual', branch: 'feature/sample-task', baseBranch: 'develop',
+            status: 'pending_confirmation', command: ['switch', '-c', 'feature/sample-task', 'develop'],
+        }, commandRunner);
+
+        // The operation with the largest blast radius used to report only `status: 'failed'`.
+        expect(execution).toMatchObject({
+            status: 'failed',
+            reason: 'fatal: a branch named feature/sample-task already exists',
+            output: 'fatal: a branch named feature/sample-task already exists',
+        });
+    });
+
+    it('marks an interactive initialization, so the record says a child held the terminal', async () => {
+        const calls: string[][] = [];
+        const result = await initializeGitFlowProject('/repo', {
+            interactive: true,
+            run: runner({
+                'rev-parse --is-inside-work-tree': { ok: true, stdout: 'true' },
+                'config --get gitflow.branch.master': { ok: false },
+                'config --get gitflow.branch.develop': { ok: false },
+                'status --porcelain': { ok: true, stdout: '' },
+                'flow version': { ok: true, stdout: '1.12.0' },
+            }),
+            executeInteractive: async (_root, args) => { calls.push(args); },
+            install: () => ({ status: 'installed' }),
+        });
+
+        expect(result).toMatchObject({ status: 'initialized', interactive: true, command: ['flow', 'init'] });
+        expect(calls).toEqual([['flow', 'init']]);
+    });
+
     it('executes only a pending plan and reports an active branch', () => {
         const calls: string[][] = [];
         const commandRunner = runner({ 'switch -c feature/sample-task develop': { ok: true } }, calls);

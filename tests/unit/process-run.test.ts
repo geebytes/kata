@@ -75,6 +75,17 @@ describe('process facility', () => {
         expect(['ENOENT', 'EACCES']).toContain(syncResult.error?.code);
     });
 
+    it('streams an interactive child to the terminal while still bounding it', async () => {
+        const root = await tempRoot();
+        // A child that keeps the terminal: nothing is captured, so the result reports empty streams...
+        const inherited = await runProcess(process.execPath, ['-e', 'process.exit(0)'], { cwd: root, inheritOutput: true });
+        expect(inherited).toMatchObject({ ok: true, exitCode: 0, stdout: '', stderr: '' });
+
+        // ...and it is still bounded, so an interactive prompt cannot hang the invocation.
+        const timedOut = await runProcess(process.execPath, ['-e', 'setTimeout(()=>{}, 30000)'], { cwd: root, inheritOutput: true, timeoutMs: 200, killGraceMs: 100 });
+        expect(timedOut).toMatchObject({ ok: false, exitCode: 124, failure: 'timeout' });
+    });
+
     it('runs synchronously for callers that cannot await, reporting rather than throwing', async () => {
         const root = await tempRoot();
         await writeFile(join(root, 'marker'), 'yes\n', 'utf8');
