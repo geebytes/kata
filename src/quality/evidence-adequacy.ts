@@ -84,7 +84,7 @@ export function evaluateAcceptanceAdequacy(input: AcceptanceAdequacyInput): Acce
         if (input.matrix) {
             const row = getMatrixRowForAc(input.matrix, acceptanceId);
             if (row && isEntrypointEvidenceKind(row.verificationLevel)) {
-                const hasRowSpecificEvidence = freshEvidence.some((item) => evidenceMatchesRow(row, item.command, item.kind));
+                const hasRowSpecificEvidence = freshEvidence.some((item) => evidenceMatchesRow(row, item.command, item.kind, item.checkId));
                 if (!hasRowSpecificEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'insufficient_evidence_level' };
             }
         }

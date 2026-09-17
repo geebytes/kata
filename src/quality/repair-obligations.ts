@@ -128,7 +128,7 @@ export async function resolveObligationsForRevision(
     if (obligation.resolvedAt) continue;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
     const matchedEvidence = matrix && row
-      ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind))
+      ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
       : evidence.filter((item) => evidenceIds.includes(item.id) && item.exitCode === 0);
     const hasMappedEvidence = !matrix || matchedEvidence.length > 0;
     if (obligation.acceptanceId && resolvedAcceptanceIds.includes(obligation.acceptanceId) && hasMappedEvidence) {

@@ -296,13 +296,26 @@ function selectorMatches(evidenceCommand: string, testSelector: string): boolean
   return false;
 }
 
+/**
+ * Whether a recorded envelope satisfies a matrix row.
+ *
+ * Identity first: the declaration carries an `id`, the runner resolved it to a check carrying the same id, and the
+ * evidence names it — so a rename, a wrapper script or a differently worded but equivalent command cannot change the
+ * verdict. A declaration without an id, or evidence recorded before ids existed, falls back to the textual comparison
+ * this used to be the only path.
+ */
 export function evidenceMatchesRow(
   row: AcceptanceMatrixRow,
   evidenceCommand: string,
   evidenceKind: string,
+  checkId?: string,
 ): boolean {
   for (const decl of row.evidence) {
     const kindMatch = decl.kind === evidenceKind && hasRequiredEvidenceLevel(row, evidenceKind);
+    if (decl.id !== undefined && checkId !== undefined) {
+      if (decl.id === checkId && kindMatch) return true;
+      continue;
+    }
     const commandMatch = evidenceCommand.includes(decl.command)
       || (decl.command.startsWith('vitest ') && /(?:^|\/)vitest(?:\.mjs)?\s+run\b/.test(evidenceCommand))
       || (decl.command.startsWith('tsc ') && /(?:^|\/)tsc\s+/.test(evidenceCommand));
@@ -361,7 +374,7 @@ export interface RequirementWithoutEvidence {
 export function findRequirementsWithoutEvidence(
   coverage: import('../core/task.js').UpstreamCoverage | undefined,
   matrix: AcceptanceMatrix | undefined,
-  evidence: Array<{ id: string; kind: string; command: string; exitCode: number }>,
+  evidence: Array<{ id: string; kind: string; command: string; exitCode: number; checkId?: string }>,
 ): RequirementWithoutEvidence[] {
   if (!coverage) return [];
   const passing = evidence.filter((e) => e.exitCode === 0);
@@ -375,7 +388,7 @@ export function findRequirementsWithoutEvidence(
         missing.push({ requirementId: req.id, sourceRef: source.ref, mappedTo: mapped });
         continue;
       }
-      const hasEvidence = passing.some((e) => evidenceMatchesRow(row, e.command, e.kind));
+      const hasEvidence = passing.some((e) => evidenceMatchesRow(row, e.command, e.kind, e.checkId));
       if (!hasEvidence) {
         missing.push({ requirementId: req.id, sourceRef: source.ref, mappedTo: mapped });
       }
