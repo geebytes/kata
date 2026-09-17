@@ -146,6 +146,29 @@ export async function collectEvidence(
   }));
 }
 
+/**
+ * The evidence set a task actually recorded: every `.kata/evidence/<taskId>-*.json` envelope, validated against the
+ * evidence schema. A reader that instead parses one known filename sees a projection of this set, not the set itself.
+ */
+export async function readRecordedEvidence(root: string, taskId: string): Promise<EvidenceEnvelope[]> {
+  const { readdir } = await import('node:fs/promises');
+  const { readValidated } = await import('../core/schema.js');
+  const evidenceDir = join(root, '.kata/evidence');
+  let files: string[] = [];
+  try {
+    files = await readdir(evidenceDir);
+  } catch {
+    return [];
+  }
+
+  const evidence: EvidenceEnvelope[] = [];
+  for (const file of files.filter((name) => name.startsWith(`${taskId}-`) && name.endsWith('.json'))) {
+    const envelope = await readValidated<EvidenceEnvelope>('evidence', join(evidenceDir, file));
+    if (envelope.taskId === taskId) evidence.push(envelope);
+  }
+  return evidence;
+}
+
 export function checkFreshness(
   evidence: EvidenceEnvelope,
   diffHash: string,

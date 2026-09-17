@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review.schema.json",
+  "title": "Kata review record",
+  "type": "object",
+  "required": ["findings", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": { "type": "string", "minLength": 1 },
+    "revisionId": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["pending", "approved"] },
+    "reviewEvidence": { "type": "string", "minLength": 1 },
+    "approvedAt": { "type": "string", "minLength": 1 },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "taskId", "severity", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "taskId": { "type": "string", "minLength": 1 },
+          "acceptanceId": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["blocking", "major", "minor", "nit"] },
+          "message": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { writeWikiRecord } from './store.js';
 import { computeFileHash, type WikiRecord } from './record.js';
 import { readWikiClosure, writeWikiClosure, type WikiClosure } from './closure.js';
+import { readRecordedEvidence } from '../quality/evidence.js';
 
 export interface CandidateInput {
   statement: string;
@@ -34,23 +35,9 @@ export async function proposeFromPassedTask(root: string, taskId: string, input:
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} must be in distill or archive phase (current: ${state.phase})`);
   }
 
-  const evidencePath = join(root, `.kata/evidence/${taskId}-hard.json`);
-  let evidenceIds: string[] = [];
-  try {
-    const evidenceRaw = await readFile(evidencePath, 'utf8');
-    const parsed = JSON.parse(evidenceRaw) as { id?: string };
-    if (parsed.id) evidenceIds = [parsed.id];
-  } catch {
-    const { readdir } = await import('node:fs/promises');
-    const evidenceDir = join(root, '.kata/evidence');
-    const files = await readdir(evidenceDir);
-    const taskEvidenceFiles = files.filter((f) => f.startsWith(`${taskId}-`));
-    for (const file of taskEvidenceFiles) {
-      const raw = await readFile(join(evidenceDir, file), 'utf8');
-      const parsed = JSON.parse(raw) as { id?: string };
-      if (parsed.id) evidenceIds.push(parsed.id);
-    }
-  }
+  // The evidence set the task recorded, not a single projection file: a candidate's back-links must name the evidence
+  // that actually exists.
+  const evidenceIds = (await readRecordedEvidence(root, taskId)).map((envelope) => envelope.id);
 
   const record: WikiRecord = {
     id: `wiki-${taskId}`,

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
 import { readCurrentState, appendStateEvent, transition, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
-import { checkFreshness, collectEvidence, computeDiffHash, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
+import { checkFreshness, collectEvidence, computeDiffHash, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
 import { createHandoff } from './handoff.js';
@@ -731,14 +731,6 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
         );
     }
 
-    const testEvidence = evidence.find((item) => item.kind === 'test');
-    if (testEvidence) {
-        await writeFile(
-            join(evidenceDir, `${taskId}-hard.json`),
-            `${JSON.stringify(testEvidence, null, 2)}\n`,
-            'utf8',
-        );
-    }
 }
 
 function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
@@ -1273,23 +1265,12 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
 }
 
 async function readTaskEvidence(root: string, taskId: string, options: CommandOptions = {}): Promise<EvidenceEnvelope[]> {
-    const evidenceDir = join(root, '.kata/evidence');
-    let evidence: EvidenceEnvelope[] = [];
+    // The recorded set, read through the shared reader. Only a genuinely absent directory falls back to collecting now.
     try {
-        const { readdir } = await import('node:fs/promises');
-        const files = await readdir(evidenceDir);
-        const candidateFiles = files.filter((f) => f.startsWith(`${taskId}-`));
-        for (const file of candidateFiles) {
-            const raw = await readFile(join(evidenceDir, file), 'utf8');
-            const parsed = validate<EvidenceEnvelope>('evidence', JSON.parse(raw));
-            if (parsed.taskId === taskId) evidence.push(parsed);
-        }
+        return await readRecordedEvidence(root, taskId);
     } catch {
-        evidence = options.checks
-            ? await collectEvidence(taskId, options.checks)
-            : [];
+        return options.checks ? await collectEvidence(taskId, options.checks) : [];
     }
-    return evidence;
 }
 
 async function readReviewFindings(root: string, taskId: string): Promise<ReviewFinding[]> {

@@ -10,6 +10,16 @@ import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/
 import { CometGuard } from '../../src/comet/guard.js';
 import { writeWikiClosure } from '../../src/wiki/closure.js';
 
+/** The evidence envelope a seal recorded for a task, read from the recorded set (the `-hard.json` projection is gone). */
+async function readSealedEvidence(root: string, taskId: string): Promise<{ id: string; revisionId?: string; scope?: { paths: string[] } }> {
+    const dir = join(root, '.kata/evidence');
+    const files = (await readdir(dir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
+    const envelopes = await Promise.all(files.map(async (file) => JSON.parse(await readFile(join(dir, file), 'utf8')) as { id: string; revisionId?: string; scope?: { paths: string[] } }));
+    const envelope = envelopes.find((item) => item.revisionId) ?? envelopes[0];
+    if (!envelope) throw new Error(`No evidence was recorded for ${taskId}`);
+    return envelope;
+}
+
 describe('Workflow resume and lifecycle', () => {
     const roots: string[] = [];
 
@@ -187,7 +197,9 @@ describe('Workflow resume and lifecycle', () => {
             diagnostics: { mode: 'implement' },
         });
         expect(result.diagnostics?.implementationPrompt).toContain('先写聚焦的失败测试');
-        await expect(readFile(join(root, '.kata/evidence/wf-guided-build-hard.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        const guidedEvidenceDir = join(root, '.kata/evidence');
+        const guidedFiles = await readdir(guidedEvidenceDir).catch(() => [] as string[]);
+        expect(guidedFiles.filter((file) => file.startsWith('wf-guided-build-'))).toEqual([]);
     });
 
     it('/kata-build seals one final snapshot after implementation', async () => {
@@ -235,9 +247,7 @@ describe('Workflow resume and lifecycle', () => {
             checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
         });
 
-        const sealed = JSON.parse(await readFile(join(root, '.kata/evidence/wf-scoped-freshness-hard.json'), 'utf8')) as {
-            scope?: { paths: string[] };
-        };
+        const sealed = await readSealedEvidence(root, 'wf-scoped-freshness');
         expect(sealed.scope?.paths).toEqual(['task-owned.txt']);
 
 
@@ -282,10 +292,7 @@ describe('Workflow resume and lifecycle', () => {
             ownedPaths: ['task-owned.txt'],
             ownedPathsSource: 'build-option',
         });
-        const sealed = JSON.parse(await readFile(join(root, '.kata/evidence/wf-auto-scoped-freshness-hard.json'), 'utf8')) as {
-            revisionId?: string;
-            scope?: { paths: string[] };
-        };
+        const sealed = await readSealedEvidence(root, 'wf-auto-scoped-freshness');
         expect(sealed.revisionId).toMatch(/^revision-/);
         expect(sealed.scope?.paths).toEqual(['task-owned.txt']);
         const task = JSON.parse(await readFile(join(root, '.kata/tasks/wf-auto-scoped-freshness/task.json'), 'utf8')) as {
@@ -516,7 +523,9 @@ describe('Workflow resume and lifecycle', () => {
         const result = await runCommand('verify', taskId, root);
 
         expect(upstream.failingEvidence).toBe(0);
-        expect(result.diagnostics).toMatchObject({ implementationReady: true, evidenceCount: 2 });
+        // Exactly the evidence the seal recorded: the foreign envelope is ignored, and there is no longer a second
+        // copy of the task's own envelope sitting beside it under a projection filename.
+        expect(result.diagnostics).toMatchObject({ implementationReady: true, evidenceCount: 1 });
     });
 
     it('/kata-build discovers project-owned acceptance gate checks from local skills', async () => {
@@ -1216,7 +1225,7 @@ describe('Workflow resume and lifecycle', () => {
         expect(judgeResult.phase).toBe('judge');
 
         const diffHash = await (await import('../../src/quality/evidence.js')).computeDiffHash(root);
-        const hardEvidence = JSON.parse(await readFile(join(root, '.kata/evidence/wf-archive-test-hard.json'), 'utf8')) as { id: string; revisionId?: string };
+        const hardEvidence = await readSealedEvidence(root, 'wf-archive-test');
         const judgeData: Record<string, unknown> = {
             taskId: 'wf-archive-test', result: 'PASS', diffHash,
             acceptance: [{ id: 'AC-1', result: 'PASS', evidenceIds: [hardEvidence.id] }],
@@ -1253,7 +1262,7 @@ describe('Workflow resume and lifecycle', () => {
         await runCommand('review', 'wf-archive-invalid-review', root, { approve: true, reviewEvidence: 'Initially valid review.' });
         await runCommand('judge', 'wf-archive-invalid-review', root, { confirmHostModel: true });
 
-        const hardEvidence = JSON.parse(await readFile(join(root, '.kata/evidence/wf-archive-invalid-review-hard.json'), 'utf8')) as { id: string; revisionId?: string };
+        const hardEvidence = await readSealedEvidence(root, 'wf-archive-invalid-review');
         const diffHash = await (await import('../../src/quality/evidence.js')).computeDiffHash(root);
         await writeFile(join(root, '.kata/tasks/wf-archive-invalid-review/review.json'), `${JSON.stringify({ revisionId: hardEvidence.revisionId, findings: [], status: 'approved' }, null, 2)}\n`);
         await writeFile(join(root, '.kata/tasks/wf-archive-invalid-review/judge.json'), `${JSON.stringify({ taskId: 'wf-archive-invalid-review', result: 'PASS', diffHash, revisionId: hardEvidence.revisionId, acceptance: [{ id: 'AC-1', result: 'PASS', evidenceIds: [hardEvidence.id] }], evidenceIds: [hardEvidence.id] }, null, 2)}\n`);

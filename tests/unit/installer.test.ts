@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -1940,7 +1940,10 @@ describe('Kata platform installer', () => {
                 ownedPathsSource: 'build-option',
             },
         });
-        const evidence = JSON.parse(await readFile(join(root, '.kata/evidence/cli-build-owned-path-test-hard.json'), 'utf8')) as {
+        const evidenceDir = join(root, '.kata/evidence');
+        const evidenceFile = (await readdir(evidenceDir)).find((file) => file.startsWith('cli-build-owned-path-test-') && file.endsWith('.json'));
+        expect(evidenceFile).toBeDefined();
+        const evidence = JSON.parse(await readFile(join(evidenceDir, evidenceFile!), 'utf8')) as {
             revisionId?: string;
             scope?: { paths: string[] };
         };

@@ -1,9 +1,8 @@
 import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { checkFreshness, computeDiffHash } from '../quality/evidence.js';
 import { readValidated, readValidatedOptional, validate } from './schema.js';
-import { readTaskRevision, revisionStatus } from '../workflow/revision.js';
+import { assertDistillGates as assertDistillGatesFromRecords } from '../workflow/distill-gates.js';
 import { assertValidTaskId } from './ids.js';
 
 export const orderedPhases = [
@@ -176,107 +175,9 @@ async function assertAcceptanceIds(root: string, taskId: string): Promise<void> 
 }
 
 async function assertDistillGates(root: string, taskId: string): Promise<void> {
-    const currentDiffHash = await computeDiffHash(root);
-    const freshEvidence = await getFreshPassingEvidence(root, taskId, currentDiffHash);
-    const gates = await Promise.all([
-        Promise.resolve(freshEvidence !== null),
-        hasReviewerClearance(root, taskId, freshEvidence?.revisionId),
-        hasJudgePass(root, taskId, currentDiffHash, freshEvidence),
-    ]);
-    if (!gates.every(Boolean)) {
-        throw new Error('Cannot enter distill until fresh evidence, reviewer clearance, and judge PASS are present');
-    }
-}
-
-interface HardEvidenceOnDisk {
-    id?: string;
-    taskId?: string;
-    kind?: string;
-    command?: string;
-    exitCode?: number;
-    startedAt?: string;
-    finishedAt?: string;
-    diffHash?: string;
-    revisionId?: string;
-}
-
-async function getFreshPassingEvidence(root: string, taskId: string, currentDiffHash: string): Promise<HardEvidenceOnDisk | null> {
-    try {
-        const evidence = JSON.parse(await readFile(join(root, `.kata/evidence/${taskId}-hard.json`), 'utf8')) as HardEvidenceOnDisk;
-        if (evidence.taskId !== taskId || evidence.exitCode !== 0 || !evidence.diffHash) return null;
-        if (evidence.revisionId) {
-            const revision = await readTaskRevision(root, taskId, evidence.revisionId);
-            if ((await revisionStatus(root, revision)).status !== 'current') return null;
-            return evidence;
-        }
-        const freshness = checkFreshness(
-            {
-                id: evidence.id ?? `${taskId}-hard`,
-                taskId,
-                kind: 'test',
-                command: evidence.command ?? 'hard verification',
-                exitCode: evidence.exitCode,
-                startedAt: evidence.startedAt ?? '',
-                finishedAt: evidence.finishedAt ?? '',
-                diffHash: evidence.diffHash,
-            },
-            currentDiffHash,
-        );
-        return freshness.fresh ? evidence : null;
-    } catch (error) {
-        if (isNodeError(error) && error.code === 'ENOENT') return null;
-        throw error;
-    }
-}
-
-async function hasReviewerClearance(root: string, taskId: string, revisionId?: string): Promise<boolean> {
-    try {
-        const review = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'review.json'), 'utf8')) as {
-            findings?: Array<{ severity?: string }>;
-            revisionId?: string;
-            status?: string;
-            reviewEvidence?: string;
-        };
-        return review.status === 'approved'
-            && Boolean(review.reviewEvidence?.trim())
-            && Array.isArray(review.findings)
-            && review.findings.every((finding) => finding.severity !== 'blocking')
-            && (!revisionId || review.revisionId === revisionId);
-    } catch (error) {
-        if (isNodeError(error) && error.code === 'ENOENT') return false;
-        throw error;
-    }
-}
-
-async function hasJudgePass(
-    root: string,
-    taskId: string,
-    currentDiffHash: string,
-    freshEvidence: HardEvidenceOnDisk | null,
-): Promise<boolean> {
-    try {
-        const judge = await readValidatedOptional<{
-            taskId: string;
-            result: string;
-            diffHash?: string;
-            acceptance: Array<{ id?: string; result?: string; evidenceIds?: string[] }>;
-            evidenceIds?: string[];
-            revisionId?: string;
-        }>('judge-result', join(root, '.kata/tasks', taskId, 'judge.json'));
-        if (!judge || judge.taskId !== taskId || judge.result !== 'PASS') return false;
-        if (freshEvidence?.revisionId) {
-            if (judge.revisionId !== freshEvidence.revisionId) return false;
-        } else if (judge.diffHash !== currentDiffHash) return false;
-        if (!freshEvidence?.id) return false;
-        if (!Array.isArray(judge.acceptance) || judge.acceptance.length === 0) return false;
-        if (judge.acceptance.some((criterion) => criterion.result !== 'PASS')) return false;
-
-        const acceptedEvidenceIds = new Set([...(judge.evidenceIds ?? []), ...judge.acceptance.flatMap((criterion) => criterion.evidenceIds ?? [])]);
-        return acceptedEvidenceIds.has(freshEvidence.id);
-    } catch (error) {
-        if (isNodeError(error) && error.code === 'ENOENT') return false;
-        throw error;
-    }
+    // The rules live in workflow/distill-gates.ts: fresh recorded evidence, reviewer clearance, and a Judge pass bound
+    // to that same revision and evidence set. The transition asks them instead of deciding them again.
+    await assertDistillGatesFromRecords(root, taskId);
 }
 
 function currentStatePath(root: string, taskId: string): string {
