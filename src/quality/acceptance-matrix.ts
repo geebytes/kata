@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { codeGraphExecutionEnv } from '../codegraph/runtime.js';
+import { codeGraphInvocation } from '../codegraph/runtime.js';
+import { runProcess } from '../process/run.js';
 import type { AcceptanceCriterion, AcceptanceMatrix, AcceptanceMatrixRow } from '../core/task.js';
 import { waiversPath, taskDir } from '../core/layout.js';
 
@@ -434,18 +435,17 @@ function isEvidenceCoveredCandidate(matrix: AcceptanceMatrix, candidatePath: str
 }
 
 async function runCodeGraphAffected(root: string, sourcePaths: string[]): Promise<string[]> {
-  const binary = process.env.STRATA_CODEGRAPH_BIN || 'codegraph';
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(binary, ['affected', ...sourcePaths], {
-      cwd: root,
-      maxBuffer: 1024 * 1024,
-      env: codeGraphExecutionEnv(),
-    }));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  const invocation = codeGraphInvocation(root);
+  const result = await runProcess(invocation.command, ['affected', ...sourcePaths], {
+    cwd: invocation.cwd,
+    env: invocation.env,
+    timeoutMs: 60_000,
+  });
+  if (!result.ok) {
+    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
     throw new Error(`CodeGraph candidate discovery failed; strict sealing is refused: ${detail}`);
   }
+  const stdout = result.stdout;
 
   const output = stripAnsi(stdout);
   const reportsNoAffectedTests = /no .*test files.*affected|no .*affected.*test files/i.test(output);

@@ -1,10 +1,10 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { codeGraphExecutionEnv } from './codegraph/runtime.js';
+import { codeGraphInvocation } from './codegraph/runtime.js';
+import { runProcessSync } from './process/run.js';
 import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
@@ -333,14 +333,12 @@ async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshResult> {
         .then((result) => ({ success: true, previousVersion: result.previousVersion, installedVersion: result.installedVersion }))
         .catch((error: unknown) => ({ success: false, error: error instanceof Error ? error.message : String(error) }));
     const runCodegraph = (subcommand: 'sync' | 'index') => {
-        try {
-            const output = execFileSync('codegraph', [subcommand], {
-                encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, cwd: root, env: codeGraphExecutionEnv(), stdio: ['ignore', 'pipe', 'pipe'],
-            }).trim();
-            return { success: true, ...(output ? { output } : {}) };
-        } catch (error: unknown) {
-            return { success: false, error: error instanceof Error ? error.message : String(error) };
-        }
+        const invocation = codeGraphInvocation(root);
+        const result = runProcessSync(invocation.command, [subcommand], { cwd: invocation.cwd, env: invocation.env, timeoutMs: 60_000 });
+        const output = result.stdout.trim();
+        return result.ok
+            ? { success: true, ...(output ? { output } : {}) }
+            : { success: false, error: result.stderr.trim() || `codegraph ${subcommand} exited ${result.exitCode}` };
     };
     return { comet, codegraphSync: runCodegraph('sync'), codegraphIndex: runCodegraph('index') };
 }
@@ -551,16 +549,11 @@ async function runInitWizardCommand(argv: string[], defaultRoot?: string): Promi
     const codegraphResult = useAuto
         ? { codegraph: { status: 'deferred', nextCommand: 'kata-cli codegraph install --yes' } }
         : (() => {
-            try {
-                const output = execFileSync('codegraph', ['index'], {
-                    encoding: 'utf-8',
-                    cwd: root,
-                    env: codeGraphExecutionEnv(),
-                }).trim();
-                return { codegraph: { status: 'initialized', ...(output ? { error: undefined } : {}) } };
-            } catch (error: unknown) {
-                return { codegraph: { status: 'failed', error: error instanceof Error ? error.message : String(error) } };
-            }
+            const invocation = codeGraphInvocation(root);
+            const index = runProcessSync(invocation.command, ['index'], { cwd: invocation.cwd, env: invocation.env, timeoutMs: 60_000 });
+            return index.ok
+                ? { codegraph: { status: 'initialized', ...(index.stdout.trim() ? { error: undefined } : {}) } }
+                : { codegraph: { status: 'failed', error: index.stderr.trim() || `codegraph index exited ${index.exitCode}` } };
         })();
 
     const result = mergeInstallReports({
@@ -2266,14 +2259,12 @@ async function runCodegraphCommand(argv: string[]): Promise<Record<string, unkno
     if (!subcommand || !isCodegraphSubcommand(subcommand)) {
         throw new Error(`Unknown codegraph command: ${subcommand ?? ''}. Usage: kata-cli codegraph <${CODEGRAPH_SUBCOMMANDS.join('|')}> [args...]`);
     }
-    const binary = process.env.STRATA_CODEGRAPH_BIN || 'codegraph';
+    const invocation = codeGraphInvocation(resolveWorkspaceRoot());
+    const binary = invocation.command;
     try {
-        const stdout = execFileSync(binary, [subcommand, ...rest], {
-            encoding: 'utf-8',
-            maxBuffer: 10 * 1024 * 1024,
-            cwd: resolveWorkspaceRoot(),
-            env: codeGraphExecutionEnv(),
-        }).trim();
+        const result = runProcessSync(invocation.command, [subcommand, ...rest], { cwd: invocation.cwd, env: invocation.env, timeoutMs: 120_000 });
+        if (!result.ok) throw Object.assign(new Error(result.stderr.trim() || `codegraph ${subcommand} exited ${result.exitCode}`), { code: result.error?.code });
+        const stdout = result.stdout.trim();
         return {
             command: `codegraph ${subcommand}`,
             success: true,

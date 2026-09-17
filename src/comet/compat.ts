@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { runProcessSync } from '../process/run.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,11 +183,9 @@ async function probeRuntimeCompat(
     const cmd = binary ?? 'comet';
     if (!isCommandAvailable(cmd)) return null;
     try {
-        const stdout = execFileSync(cmd, ['compat', '--json'], {
-            encoding: 'utf8',
-            timeout: timeoutMs,
-            stdio: ['ignore', 'pipe', 'ignore'],
-        });
+        const probe = runProcessSync(cmd, ['compat', '--json'], { cwd: process.cwd(), timeoutMs, captureStderr: false });
+        if (!probe.ok) return null;
+        const stdout = probe.stdout;
         return parseCompatYaml(stdout, 'runtime');
     } catch {
         // Older comet does not implement `comet compat` — fall through silently.
@@ -197,7 +195,7 @@ async function probeRuntimeCompat(
 
 function isCommandAvailable(cmd: string): boolean {
     try {
-        execFileSync('which', [cmd], { stdio: ['ignore', 'pipe', 'ignore'] });
+        if (!runProcessSync('which', [cmd], { cwd: process.cwd(), timeoutMs: 10_000, captureStderr: false }).ok) return false;
         return true;
     } catch {
         return false;
@@ -229,7 +227,7 @@ function resolveCometPackageCandidates(): string[] {
     const candidates: string[] = [];
     // From the global npm root.
     try {
-        const npmRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
+        const npmRoot = runProcessSync('npm', ['root', '-g'], { cwd: process.cwd(), timeoutMs: 20_000 }).stdout.trim();
         candidates.push(join(npmRoot, '@rpamis', 'comet', 'comet-compat.yaml'));
     } catch { /* npm not available */ }
 

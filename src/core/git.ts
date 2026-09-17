@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { runProcessSync } from '../process/run.js';
 
 /**
  * The one place kata reads the repository.
@@ -15,18 +15,10 @@ export interface GitCommandResult {
 }
 
 /** Runs a git command in the repository, reporting failure instead of throwing. */
+/** Runs a git command in the repository through the shared subprocess facility, reporting failure instead of throwing. */
 export function runGit(root: string, args: string[]): GitCommandResult {
-    try {
-        const stdout = execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-        return { ok: true, stdout, stderr: '' };
-    } catch (error) {
-        const failure = error as { stdout?: string; stderr?: string };
-        return {
-            ok: false,
-            stdout: typeof failure.stdout === 'string' ? failure.stdout : '',
-            stderr: typeof failure.stderr === 'string' ? failure.stderr.trim() : '',
-        };
-    }
+    const result = runProcessSync('git', args, { cwd: root, timeoutMs: 60_000 });
+    return { ok: result.ok, stdout: result.stdout, stderr: result.stderr.trim() };
 }
 
 /** A single-value read, or `null` when git cannot answer (not a repository, missing ref, and so on). */

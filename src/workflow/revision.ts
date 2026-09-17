@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isIgnoredRepositoryPath, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
-import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { resolveTerminalTask } from '../core/relations.js';

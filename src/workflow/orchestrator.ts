@@ -21,6 +21,8 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
+import { codeGraphInvocation } from '../codegraph/runtime.js';
+import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
@@ -1356,22 +1358,20 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
 
     let codegraphRefresh: { ok: boolean; output?: string } | undefined;
     if (archivePhase === 'archive') {
-        try {
-            const { stat } = await import('node:fs/promises');
-            await stat(join(root, '.codegraph/index.db'));
-            const { execFileSync } = await import('node:child_process');
-            const output = execFileSync('codegraph', ['index'], {
-                encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000,
+        // The shared invocation: same binary resolution, environment and working directory as every other CodeGraph
+        // call. This one used to pass neither the environment fix nor the workspace root.
+        const { stat } = await import('node:fs/promises');
+        const indexExists = await stat(join(root, '.codegraph/index.db')).then(() => true).catch(() => false);
+        if (!indexExists) {
+            codegraphRefresh = { ok: false, output: 'CodeGraph not initialized; skip index refresh.' };
+        } else {
+            const invocation = codeGraphInvocation(root);
+            const refresh = await runProcess(invocation.command, ['index'], {
+                cwd: invocation.cwd, env: invocation.env, timeoutMs: 30_000,
             });
-            codegraphRefresh = { ok: true, output: output.trim() };
-        } catch (error) {
-            const nodeError = error as { code?: string };
-            if (nodeError?.code === 'ENOENT') {
-                codegraphRefresh = { ok: false, output: 'CodeGraph not initialized; skip index refresh.' };
-            } else {
-                const detail = error instanceof Error ? error.message : String(error);
-                codegraphRefresh = { ok: false, output: detail };
-            }
+            codegraphRefresh = refresh.ok
+                ? { ok: true, output: refresh.stdout.trim() }
+                : { ok: false, output: refresh.stderr.trim() || `codegraph index exited ${refresh.exitCode}` };
         }
     }
 

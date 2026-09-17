@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 import { createContentHasher } from '../core/hash.js';
+import { runProcess } from '../process/run.js';
 import * as os from 'node:os';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
@@ -284,98 +285,35 @@ export async function computeDiffHash(root: string = process.cwd()): Promise<str
 
 const graceMs = 5_000;
 
+/**
+ * Runs one check through the subprocess facility, so a check gets the same bounded, captured, process-group-killed
+ * treatment as every other child kata spawns. The log keeps the terminal note the evidence record has always carried.
+ */
 async function runBoundedCommand(
   check: CheckCommand,
   options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal },
 ): Promise<ImportedCheckResult> {
   const cwd = check.cwd ?? process.cwd();
-  const timeoutMs = check.timeoutMs ?? 600_000;
-  const checkName = check.name ?? check.command;
-
-  const child = spawn(check.command, check.args ?? [], {
+  const result = await runProcess(check.command, check.args ?? [], {
     cwd,
     env: { ...process.env, ...(check.env ?? {}) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: false,
-    detached: true,
+    ...(check.timeoutMs !== undefined ? { timeoutMs: check.timeoutMs } : {}),
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 
-  const exitPromise = new Promise<number | null>((exitResolve) => {
-    child.on('close', (code) => exitResolve(code));
-  });
+  const note = result.failure === 'timeout'
+    ? `TIMEOUT after ${check.timeoutMs ?? 600_000}ms`
+    : result.failure === 'aborted'
+      ? 'CANCELLED'
+      : undefined;
+  const log = [result.stdout, result.stderr].filter(Boolean).join('');
 
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let output = '';
-    let terminating = false;
-
-    async function terminateAndWait(exitCode: number, logNote: string): Promise<void> {
-      const pid = child.pid;
-      if (pid === undefined) return;
-      terminating = true;
-      try { process.kill(-pid, 'SIGTERM'); } catch { /* already gone */ }
-      const grace = setTimeout(() => {
-        try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
-      }, graceMs);
-      await exitPromise;
-      clearTimeout(grace);
-      if (!settled) {
-        settled = true;
-        resolve({
-          exitCode,
-          log: `${truncate(output)}\n[${logNote}]`,
-          environment: environmentSummary(cwd),
-        });
-      }
-    }
-
-    const timer = setTimeout(() => {
-      terminateAndWait(124, `TIMEOUT after ${timeoutMs}ms`);
-    }, timeoutMs);
-
-    function onAbort(): void {
-      clearTimeout(timer);
-      terminateAndWait(1, 'CANCELLED');
-    }
-
-    const abortSignal = options?.signal;
-    if (abortSignal?.aborted) {
-      onAbort();
-      return;
-    }
-    abortSignal?.addEventListener('abort', onAbort, { once: true });
-
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => {
-      output = truncate(output + chunk);
-    });
-    child.stderr.on('data', (chunk: string) => {
-      output = truncate(output + chunk);
-    });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener('abort', onAbort);
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-    exitPromise.then((code) => {
-      clearTimeout(timer);
-      abortSignal?.removeEventListener('abort', onAbort);
-      if (!terminating && !settled) {
-        settled = true;
-        resolve({
-          exitCode: code ?? 1,
-          log: output,
-          environment: environmentSummary(cwd),
-        });
-      }
-    });
-  });
+  return {
+    exitCode: result.exitCode,
+    log: note ? `${truncate(log)}\n[${note}]` : truncate(log),
+    environment: result.environment,
+  };
 }
-
 
 function collectRedactions(check: CheckCommand): string[] {
   return [
