@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import type { Phase } from '../core/state.js';
 import { activeRoleForPhase } from '../workflow/navigation.js';
+import { ensureRuntimeGitignore } from '../core/layout.js';
 import { currentGitBranch } from '../core/git.js';
 import { currentStatePath as layoutCurrentStatePath, activeTaskPath as layoutActiveTaskPath } from '../core/layout.js';
 
@@ -39,6 +40,10 @@ export async function activateHookTask(input: {
     origin: input.origin ?? 'manual',
     activatedAt: new Date().toISOString(),
   };
+  // Writing the session pointer is the moment the ignore rule matters: an unignored pointer gets committed, and a
+  // worktree or a fresh clone then checks out an "active task" nobody activated there. The rule is written first so the
+  // pointer can never be staged by accident; a workspace that already has it is unchanged.
+  await ensureRuntimeGitignore(input.root).catch(() => null);
   const path = activeHookTaskPath(input.root);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(active, null, 2)}\n`, 'utf8');

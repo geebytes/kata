@@ -103,7 +103,7 @@ describe('Kata project layout', () => {
     expect(resolveWorkspaceRootForTask('outer-task', nested)).toBe(root);
   });
 
-  it('fails closed when two ancestor Kata roots claim an explicit task', async () => {
+  it('resolves a task shared by a nested checkout and its parent to the checkout the command runs in', async () => {
     const root = await tempRoot();
     const nested = join(root, 'nested');
     await mkdir(join(root, '.kata', 'tasks', 'duplicated-task'), { recursive: true });
@@ -111,7 +111,10 @@ describe('Kata project layout', () => {
     await writeFile(join(root, '.kata', 'tasks', 'duplicated-task', 'current-state.json'), '{}\n');
     await writeFile(join(nested, '.kata', 'tasks', 'duplicated-task', 'current-state.json'), '{}\n');
 
-    expect(() => resolveWorkspaceRootForTask('duplicated-task', nested)).toThrow('Ambiguous Kata task root');
+    // A linked worktree nested in its primary checkout owns the same task (task state is tracked). Running a command
+    // inside the worktree means that worktree, not the checkout it happens to be nested in.
+    expect(resolveWorkspaceRootForTask('duplicated-task', nested)).toBe(nested);
+    expect(resolveWorkspaceRootForTask('duplicated-task', root)).toBe(root);
   });
 
   it('discovers a descendant Git worktree that owns the task when no ancestor does', async () => {

@@ -109,10 +109,13 @@ export function resolveWorkspaceRoot(from?: string): string {
  * itself and reject ambiguous ownership rather than guessing.
  *
  * Resolution order:
- * 1. Search ancestor directories from the starting path upward.
+ * 1. Search ancestor directories from the starting path upward; the nearest
+ *    owner wins (a linked worktree nested in its primary checkout owns the task
+ *    itself, and a command run there means that worktree).
  * 2. If no ancestor owns the task, search descendant directories beneath the
  *    workspace root, skipping dependency, metadata, and Kata-internal dirs.
- * 3. A single result wins; multiple results fail closed.
+ * 3. A single descendant wins; multiple descendants fail closed, because nothing
+ *    in the invocation says which of those sibling worktrees was meant.
  */
 export function resolveWorkspaceRootForTask(taskId: string, from?: string): string {
   const start = resolve(from ?? cwd());
@@ -126,10 +129,10 @@ export function resolveWorkspaceRootForTask(taskId: string, from?: string): stri
     if (parent === directory) break;
     directory = parent;
   }
-  if (candidates.length === 1) return candidates[0]!;
-  if (candidates.length > 1) {
-    throw new Error(`Ambiguous Kata task root for ${taskId}: ${candidates.join(', ')}. Pass --root explicitly.`);
-  }
+  // The nearest owner wins. `candidates` is built from the starting directory upward, so the first entry is the
+  // directory the user is standing in. A nested worktree and its primary checkout both own the same task (task state is
+  // tracked), and running a command inside the worktree means the worktree — not the primary checkout it is nested in.
+  if (candidates.length > 0) return candidates[0]!;
 
   const workspaceRoot = resolveWorkspaceRoot(start);
   const descendants = findDescendantTaskRoots(taskId, workspaceRoot);
@@ -193,16 +196,18 @@ export async function initLayout(root: string): Promise<LayoutResult> {
     }
   }
 
-  if (result.conflicts.length === 0) {
-    await installSchemaCopies(root, result);
-    await ensureRuntimeGitignore(root);
-  }
+  // Hygiene runs whether or not a path conflicted: a schema mismatch must not leave the runtime pointer unignored.
+  const hygiene = await ensureWorkspaceHygiene(root);
+  result.conflicts.push(...hygiene.conflicts);
 
   return result;
 }
 
 async function installSchemaCopies(root: string, result: LayoutResult): Promise<void> {
   const targetDirectory = join(root, '.kata/schemas');
+  // The directory exists whenever schema copies are wanted; a caller asking for hygiene on an existing workspace must
+  // not depend on initLayout having created it first.
+  await mkdir(targetDirectory, { recursive: true });
   const manifest = await readSchemaManifest(targetDirectory, result);
   if (manifest === undefined) return;
 
@@ -275,7 +280,29 @@ function isSchemaManifest(value: unknown): value is SchemaManifest {
 
 
 
-async function ensureRuntimeGitignore(root: string): Promise<void> {
+/**
+ * The workspace hygiene every kata workspace needs, idempotent and safe to re-run.
+ *
+ * Two things live here because both are easy to forget and expensive to miss:
+ *
+ * - **`.kata/runtime/` is ignored.** The active-task pointer is a session pointer, not project state. When it is not
+ *   ignored it gets committed, and a worktree or a fresh clone checks it out — so the hook guard reads an "active task"
+ *   nobody activated in that checkout, and enforces that task's phase and role against whoever is working there.
+ * - **`.kata/worktrees/` is ignored.** A linked worktree nested in the repository shows up as untracked paths in the
+ *   primary checkout unless it is ignored, which is exactly why hosts that nest worktrees keep them under an ignored
+ *   directory.
+ *
+ * The schema copies are vendored for transparency and external tooling; a mismatch is reported rather than thrown.
+ */
+export async function ensureWorkspaceHygiene(root: string): Promise<{ gitignoreUpdated: boolean; conflicts: string[] }> {
+  const conflicts: string[] = [];
+  const layout: LayoutResult = { created: [], existing: [], conflicts };
+  await installSchemaCopies(root, layout);
+  const gitignoreUpdated = await ensureRuntimeGitignore(root);
+  return { gitignoreUpdated, conflicts };
+}
+
+export async function ensureRuntimeGitignore(root: string): Promise<boolean> {
   const gitignorePath = join(root, '.gitignore');
   let content = '';
   try {
@@ -284,13 +311,17 @@ async function ensureRuntimeGitignore(root: string): Promise<void> {
     if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
   }
 
-  const entry = '.kata/runtime/';
   const lines = content.split(/\r?\n/);
-  if (lines.includes(entry)) return;
+  const missing = ignoredRuntimePaths.filter((entry) => !lines.includes(entry));
+  if (missing.length === 0) return false;
 
   const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-  await writeFileAtomic(gitignorePath, `${content}${separator}${entry}\n`);
+  await writeFileAtomic(gitignorePath, `${content}${separator}${missing.join('\n')}\n`);
+  return true;
 }
+
+/** Machine-local paths under `.kata/`: session pointers and linked worktrees. */
+export const ignoredRuntimePaths = ['.kata/runtime/', '.kata/worktrees/'];
 
 async function writeFileAtomic(path: string, content: string): Promise<void> {
   const temporaryPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);

@@ -137,6 +137,41 @@ The verification pipeline enforces strict ordering:
 
 Any gate failure returns the task to bounded repair. Blocking reviewer findings in `review.json` route the task back through `/kata-build`, which records `review → implement → hardVerify` in `state-events.jsonl` and `.kata/tasks/<id>/repair.json`. Judge FAIL follows the same repair discipline from `judge → implement → hardVerify`. These backward links are recognized repair returns: recovery replays them as chain links, so the projection keeps the post-repair `hardVerify` instead of rewinding to the phase the repair started from.
 
+## Worktrees
+
+`isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place
+(`.claude/worktrees/`, `.codex/…`, a sibling directory), so nothing resolved the workspace root on the agent's behalf.
+Kata owns the convention now:
+
+```bash
+kata-cli worktree create --change <task-id> [--branch <name>] [--base <ref>] [--path <dir>]
+kata-cli worktree list
+kata-cli worktree remove <path> [--force]
+```
+
+- **Where they live.** Linked worktrees go under `<repo>/.kata/worktrees/<task>`, which is ignored by git **and** by
+  repository identity, so a nested worktree never appears as untracked paths in its primary checkout and never counts as
+  workspace drift.
+- **What a created worktree carries.** Kata's ignore rules, and the task's own state — copied in when the branch's commit
+  predates the task (task state is tracked, so an older base would otherwise check out an empty workspace). The session
+  pointer is deliberately **not** copied: activate in the worktree (`kata-cli hooks activate --change <task> --role <role>`).
+- **Which checkout a command uses.** A task shared by a nested worktree and its primary checkout resolves to the
+  **nearest** owner — the checkout the command runs in. From the primary checkout it resolves to the primary checkout.
+  Sibling worktrees that own the task with no owner above them still fail closed (`Multiple descendant worktrees own…`),
+  because nothing in the invocation says which one was meant; `--root` selects one explicitly.
+- **Removal.** `git worktree remove` semantics: uncommitted changes are refused unless `--force`, and a forced removal
+  says so in its result rather than passing silently.
+
+### What git sees
+
+`.kata/runtime/` and `.kata/worktrees/` are written into `.gitignore` — at hook activation (which every flow performs),
+at `worktree create`, and at `init`. `.kata/runtime/` holds the active-task pointer, a **session** pointer: when it is
+committed, a worktree or a fresh clone checks it out, and the hook guard then enforces a task nobody activated in that
+checkout against whoever is working there.
+
+Task state itself stays tracked (that is what lets a worktree inherit the task), which also means branches fork task
+state and merging them merges it.
+
 ## Independent adversarial review
 
 Verify and review are the two nodes where the context that produced the change is the worst available judge of it: it

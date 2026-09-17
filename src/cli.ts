@@ -4,6 +4,8 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { codeGraphInvocation } from './codegraph/runtime.js';
+import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from './workflow/worktree.js';
+import { ensureWorkspaceHygiene } from './core/layout.js';
 import {
     adversarialGateFor,
     adversarialNodes,
@@ -215,6 +217,12 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
+    if (command === 'worktree') {
+        const result = await runWorktreeCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
     if (command === 'adversarial') {
         const result = await runAdversarialCommand(argv.slice(1));
         outputResult(result);
@@ -300,6 +308,8 @@ async function runMain(argv: string[]): Promise<void> {
             ])
             : 'zh';
         await client.init(change, { language: initLanguage });
+        // Setup is the other safe moment for the ignore rules: the workspace is being written anyway.
+        await ensureWorkspaceHygiene(workspaceRoot).catch(() => null);
         outputResult({
             command: 'init',
             gitFlowInit: await initializeGitFlowProject(workspaceRoot, { interactive: process.stdin.isTTY }),
@@ -1518,6 +1528,63 @@ async function runTasksCommand(argv: string[]): Promise<Record<string, unknown>>
  * `record` validates and files the result; `status` reports both nodes. The gate that consumes the record lives in the
  * workflow (verify and review refuse to conclude without one), so this command is the only way in.
  */
+/**
+ * `kata-cli worktree …` — linked worktrees with kata's own convention.
+ *
+ * `isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place, and
+ * from inside a nested one no task-addressed command could resolve `--root` without help. Kata now creates, lists and
+ * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
+ * checkout) and carries the task's state into the checkout.
+ */
+async function runWorktreeCommand(argv: string[]): Promise<Record<string, unknown>> {
+    const [subcommand, ...rest] = argv;
+    const root = resolveWorkspaceRoot();
+
+    if (!subcommand || subcommand === 'list') {
+        const entries = await listWorktrees(root);
+        return {
+            command: 'worktree list',
+            workspaceRoot: root,
+            worktreesDir: worktreesDir(root),
+            worktrees: entries.map((entry) => ({
+                path: entry.path,
+                branch: entry.branch,
+                kind: entry.kind,
+                current: entry.current,
+                tasks: entry.tasks,
+            })),
+        };
+    }
+
+    if (subcommand === 'create') {
+        const change = parseChangeArg(rest);
+        const result = await createWorktree({
+            root,
+            ...(change ? { taskId: change } : {}),
+            ...(argValue(rest, '--branch') ? { branch: argValue(rest, '--branch')! } : {}),
+            ...(argValue(rest, '--path') ? { path: argValue(rest, '--path')! } : {}),
+            ...(argValue(rest, '--base') ? { base: argValue(rest, '--base')! } : {}),
+        });
+        return {
+            command: 'worktree create',
+            ...result,
+            nextSteps: [
+                `cd ${result.path}`,
+                change ? `kata-cli hooks activate --change ${change} --role <role>` : 'kata-cli hooks activate --change <task> --role <role>',
+                change ? `kata-cli status --change ${change}` : 'kata-cli status',
+            ],
+        };
+    }
+
+    if (subcommand === 'remove') {
+        const path = rest.find((argument) => !argument.startsWith('--')) ?? argValue(rest, '--path');
+        if (!path) throw new Error('Usage: kata-cli worktree remove <path> [--force]');
+        return { command: 'worktree remove', ...(await removeWorktree({ root, path, ...(rest.includes('--force') ? { force: true } : {}) })) };
+    }
+
+    throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove>`);
+}
+
 async function runAdversarialCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     const change = parseChangeArg(rest);

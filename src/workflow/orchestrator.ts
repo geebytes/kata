@@ -26,6 +26,7 @@ import { readReview } from './review-read.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
+import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';

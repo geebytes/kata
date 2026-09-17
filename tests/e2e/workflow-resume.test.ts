@@ -1436,8 +1436,7 @@ describe('Workflow resume and lifecycle', () => {
         await mkdir(join(ancestorChild, '.kata', 'tasks', 'shared-task'), { recursive: true });
         await writeFile(join(ancestorChild, '.kata', 'tasks', 'shared-task', 'current-state.json'), '{}\n');
 
-        expect(() => resolveWorkspaceRootForTask('shared-task', ancestorChild)).toThrow(
-            'Ambiguous Kata task root',
-        );
+        // A nested checkout that owns the task resolves to itself: nearest owner wins.
+        expect(resolveWorkspaceRootForTask('shared-task', ancestorChild)).toBe(ancestorChild);
     }, 15000);
 });
