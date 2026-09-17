@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import bundledCompatYaml from 'kata-asset:comet-compat.yaml';
+import { resolveWorkspaceRoot } from '../core/layout.js';
 
 // =============================================================================
 // Public types
@@ -41,16 +42,74 @@ export interface CometCompatibility {
     output?: Record<string, { fields?: string[]; stableFields?: string[]; schemaUrl?: string }>;
     breakingChanges?: BreakingChange[];
     unknownFieldsHandled?: boolean;  // true if upstream returned fields we don't model
-    source: 'runtime' | 'comet-package' | 'kata-bundled' | 'fallback';
+    source: 'runtime' | 'comet-package' | 'workspace-override' | 'kata-bundled' | 'fallback';
 }
 
 // =============================================================================
 // Synchronous loader (backward-compatible with v1 callers)
 // =============================================================================
 
-export function loadCometCompatibility(manifestPath?: string): CometCompatibility {
-    const raw = manifestPath ? readFileSync(manifestPath, 'utf8') : bundledCompatYaml;
-    return parseCompatYaml(raw, 'kata-bundled');
+export function loadCometCompatibility(manifestPath?: string, root?: string): CometCompatibility {
+    if (manifestPath) return parseCompatYaml(readFileSync(manifestPath, 'utf8'), 'kata-bundled');
+    const workspace = readWorkspaceCompatYaml(root);
+    if (workspace) return parseCompatYaml(workspace, 'workspace-override');
+    return parseCompatYaml(bundledCompatYaml, 'kata-bundled');
+}
+
+// =============================================================================
+// Workspace override
+// =============================================================================
+
+/**
+ * The bundled manifest is inlined into the published single-file bundle, so it cannot be
+ * rewritten at runtime. A version window learned from an installed comet is therefore
+ * recorded in the workspace — which survives package upgrades and never lives inside the
+ * package itself.
+ */
+export function workspaceCometCompatibilityPath(root: string = resolveWorkspaceRoot()): string {
+    return join(root, '.kata', 'comet-compat.yaml');
+}
+
+function readWorkspaceCompatYaml(root?: string): string | null {
+    const path = workspaceCometCompatibilityPath(root);
+    if (!existsSync(path)) return null;
+    try {
+        return readFileSync(path, 'utf8');
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Records the version window of an installed comet in the workspace. Never throws: failing to
+ * persist the window must not fail an install that already succeeded.
+ */
+export function persistCometCompatibilityOverride(version: string, root?: string): boolean {
+    try {
+        const path = workspaceCometCompatibilityPath(root);
+        const base = readWorkspaceCompatYaml(root) ?? bundledCompatYaml;
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, rewriteVersionWindow(base, version), 'utf8');
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function rewriteVersionWindow(raw: string, version: string): string {
+    let minUpdated = false;
+    const updated = raw.split('\n').map((line) => {
+        const minMatch = /^(\s*minVersion:\s*).+/.exec(line);
+        if (minMatch) {
+            minUpdated = true;
+            return `${minMatch[1]}${version}`;
+        }
+        const maxMatch = /^(\s*maxVersion:\s*).+/.exec(line);
+        if (maxMatch) return `${maxMatch[1]}${version}`;
+        return line;
+    });
+    if (!minUpdated) throw new Error('Could not find minVersion in comet-compat.yaml');
+    return updated.join('\n');
 }
 
 // =============================================================================
@@ -58,17 +117,21 @@ export function loadCometCompatibility(manifestPath?: string): CometCompatibilit
 // =============================================================================
 
 export async function loadCometCompatibilityAsync(
-    options: { cometBinary?: string; cometPackageRoot?: string; timeoutMs?: number } = {},
+    options: { cometBinary?: string; cometPackageRoot?: string; timeoutMs?: number; root?: string } = {},
 ): Promise<CometCompatibility> {
     // Layer 1: comet runtime probe — always freshest.
     const runtime = await probeRuntimeCompat(options.cometBinary, options.timeoutMs);
     if (runtime) return runtime;
 
-    // Layer 2: @rpamis/comet package root yaml
+    // Layer 2: workspace override recorded by an earlier install.
+    const workspace = readWorkspaceCompatYaml(options.root);
+    if (workspace) return parseCompatYaml(workspace, 'workspace-override');
+
+    // Layer 3: @rpamis/comet package root yaml
     const pkgYaml = await readCometPackageYaml(options.cometPackageRoot);
     if (pkgYaml) return pkgYaml;
 
-    // Layer 3: kata bundled fallback (synchronous read of the bundled asset).
+    // Layer 4: kata bundled fallback (synchronous read of the bundled asset).
     return parseCompatYaml(bundledCompatYaml, 'kata-bundled');
 }
 

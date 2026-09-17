@@ -1023,12 +1023,12 @@ async function cmdVerify(
     const nextAction = implementationReady && !wikiClosure.valid
         ? wikiClosureAction
         : verifyResult.result === 'PASS'
-            ? {
-                nextSkill: current.phase === 'review' ? '/kata-judge' : '/kata-review',
-                requiresUserConfirmation: true,
-                modelOrPlatformSwitchAllowed: true,
-                trustBoundary: current.phase === 'review' ? 'judge_gate' : 'review_gate',
-            }
+            ? nextActionForTask(
+                taskId,
+                current.phase === 'review' ? '/kata-judge' : '/kata-review',
+                current.phase === 'review' ? 'judge' : 'reviewer',
+                current.phase === 'review' ? 'judge_reviewed_change' : 'review_fresh_implementation',
+            )
             : repairAction;
 
     return {

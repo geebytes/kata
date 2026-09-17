@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { EvidenceKind } from '../quality/evidence.js';
+import { evidenceKinds, type EvidenceKind } from '../quality/evidence.js';
 
 export type ResponseLanguage = 'en' | 'zh';
 
@@ -92,7 +92,7 @@ function parseQualityCheck(value: unknown): NonNullable<NonNullable<KataConfig['
 }
 
 function isEvidenceKind(value: unknown): value is EvidenceKind {
-  return typeof value === 'string' && ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security'].includes(value);
+  return typeof value === 'string' && (evidenceKinds as readonly string[]).includes(value);
 }
 
 function parseResponseLanguage(value: unknown): ResponseLanguage {

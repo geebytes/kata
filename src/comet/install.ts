@@ -1,9 +1,9 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
-import { loadCometCompatibility, assertCometVersion, flagSpecFor, isFlagSupported, type CometCompatibility } from './compat.js';
+import { loadCometCompatibility, assertCometVersion, flagSpecFor, isFlagSupported, persistCometCompatibilityOverride, type CometCompatibility } from './compat.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -370,8 +370,7 @@ export async function installComet(version?: string): Promise<CometInstallResult
     try {
         assertCometVersion(installedVersion, compatibility);
     } catch {
-        updateCometCompatibility(installedVersion);
-        compatUpdated = true;
+        compatUpdated = persistCometCompatibilityOverride(installedVersion);
     }
 
     return {
@@ -462,31 +461,3 @@ export function readCometCompatibility(): { minVersion: string; maxVersion?: str
     };
 }
 
-function updateCometCompatibility(version: string): void {
-    const manifestPath = new URL('../../comet-compat.yaml', import.meta.url);
-    const content = readFileSync(manifestPath, 'utf8');
-
-    const lines = content.split('\n');
-    let minUpdated = false;
-    let maxUpdated = false;
-    const updated = lines.map((line) => {
-        const minMatch = /^(\s*minVersion:\s*).+/.exec(line);
-        if (minMatch) {
-            minUpdated = true;
-            return `${minMatch[1]}${version}`;
-        }
-        const maxMatch = /^(\s*maxVersion:\s*).+/.exec(line);
-        if (maxMatch) {
-            maxUpdated = true;
-            return `${maxMatch[1]}${version}`;
-        }
-        return line;
-    });
-
-    if (!minUpdated) {
-        throw new Error('Could not find minVersion in comet-compat.yaml');
-    }
-
-    const newContent = updated.join('\n');
-    writeFileSync(manifestPath, newContent, 'utf8');
-}

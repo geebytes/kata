@@ -1075,11 +1075,17 @@ describe('Workflow resume and lifecycle', () => {
         expect(result.success).toBe(true);
         expect(result.phase).toBe('hardVerify');
         expect(result.diagnostics?.verifyResult).toBe('PASS');
-        expect(result.diagnostics?.nextAction).toMatchObject({
+        expect(result.diagnostics?.nextAction).toEqual({
+            taskId: 'wf-verify-test',
             nextSkill: '/kata-review',
+            slashCommand: '/kata-review wf-verify-test',
+            cliCommand: 'kata-cli review --change wf-verify-test',
+            role: 'reviewer',
+            reason: 'review_fresh_implementation',
             requiresUserConfirmation: true,
             modelOrPlatformSwitchAllowed: true,
             trustBoundary: 'review_gate',
+            pauseInstruction: '暂停：Kata 不能切换宿主平台模型，也不得写入已切换的路由记录。展示推荐平台/模型；请用户先在宿主平台设置中完成切换，再恢复会话并确认实际平台/模型。仅此后才可用 --confirm-host-model 写入审计记录并进入 Review。',
         });
         await expect(readFile(join(root, '.kata/tasks/wf-verify-test/verify.json'), 'utf8')).resolves.toContain('"result": "PASS"');
     });

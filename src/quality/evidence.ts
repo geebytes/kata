@@ -14,7 +14,9 @@ export interface CheckProgressEvent {
   exitCode?: number | null;
 }
 
-export type EvidenceKind = 'lint' | 'typecheck' | 'test' | 'ci' | 'review' | 'judge' | 'security' | 'integration' | 'entrypoint';
+export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security', 'integration', 'entrypoint'] as const;
+
+export type EvidenceKind = (typeof evidenceKinds)[number];
 
 export interface ImportedCheckResult {
   exitCode: number;
