@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { validateWikiRecord, type WikiRecord } from './record.js';
 import { wikiDir as layoutWikiDir, wikiRecordPath as layoutWikiRecordPath } from '../core/layout.js';
 
-function normalizeId(id: string): string {
+export function normalizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 

@@ -57,7 +57,7 @@ import {
 import { buildContextManifest } from './core/context.js';
 import { buildLlmWikiTask, ingestLlmWiki, initLlmWiki, lintLlmWiki, orientLlmWiki, queryLlmWiki, rebuildLlmWiki, registerWikiPages } from './wiki/llmwiki.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from './eval/runner.js';
-import { verifySources } from './wiki/drift.js';
+import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from './wiki/drift.js';
 import { promote, rejectCandidate, retireWikiRecord } from './wiki/promotion.js';
 import { readWikiRecords } from './wiki/store.js';
 import { evaluateWikiClosure, writeWikiClosure } from './wiki/closure.js';
@@ -1227,6 +1227,25 @@ async function runWikiCommand(argv: string[]): Promise<Record<string, unknown>> 
             ...(result.filedPath ? { filedPath: result.filedPath } : {}),
         };
     }
+    if (subcommand === 'revalidate') {
+        // The transition out of `stale`: without it a record for an edited page stayed stale forever, so the closure
+        // gate could keep reading a record whose sources no longer matched (see `wiki/drift.ts`).
+        const record = argValue(rest, '--record');
+        if (record) {
+            const result = await revalidateWikiRecord(args.root ?? resolveWorkspaceRoot(), record);
+            return { command: 'wiki revalidate', ...result };
+        }
+        if (!rest.includes('--all')) {
+            throw new Error('Usage: kata-cli wiki revalidate --record <wiki-id> | --all [--root <path>]');
+        }
+        const { report, revalidated } = await revalidateStaleRecords(args.root ?? resolveWorkspaceRoot());
+        return {
+            command: 'wiki revalidate',
+            stale: report.stale.length,
+            revalidated: revalidated.map((entry) => ({ id: entry.id, refreshed: entry.refreshed })),
+        };
+    }
+
     if (subcommand === 'lint') {
         const result = await lintLlmWiki({ root: args.root, wikiPath: args.wikiPath });
         return {
