@@ -54,6 +54,33 @@ export function setOutput(context: OutputContext): void {
     activeOutput = context;
 }
 
+/**
+ * Renders a command result through the active context.
+ *
+ * The human shape is supplied by the caller that knows it (`{ human: renderUpdateSummary }`), rather than sniffing the
+ * result object here: a printer that recognises one command's fields is a boundary that has to change whenever that
+ * command's result does.
+ */
+export interface RenderOptions {
+    human?: (result: Record<string, unknown>) => string;
+}
+
+export function outputResult(result: Record<string, unknown>, options: RenderOptions = {}): void {
+    const output = activeOutput;
+    if (output.quiet) return;
+    if (output.format === 'human' && options.human) {
+        output.stdout.write(options.human(result));
+        return;
+    }
+    output.stdout.write(JSON.stringify(result) + '\n');
+}
+
+/** Progress text for a command that narrates while it works; quiet and JSON runs stay silent. */
+export function writeProgress(message: string): void {
+    const output = activeOutput;
+    if (!output.quiet && output.format === 'human') output.stdout.write(message);
+}
+
 export function isQuietOutput(argv: string[]): boolean {
     return process.env.STRATA_QUIET === '1' || process.env.STRATA_QUIET === 'true' || argv.includes('--quiet');
 }

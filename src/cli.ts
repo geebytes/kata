@@ -88,7 +88,7 @@ import {
 } from './core/relations.js';
 import { hashContent } from './core/hash.js';
 import { currentStatePath, handoffDir, taskPath, tasksDir } from './core/layout.js';
-import { createOutputContext, currentOutput, isDefaultSilentInstallerCommand, isJsonOutput, isQuietOutput, setOutput, type OutputContext, type OutputOverrides } from './cli/output.js';
+import { createOutputContext, currentOutput, isDefaultSilentInstallerCommand, isJsonOutput, isQuietOutput, outputResult, setOutput, writeProgress, type OutputContext, type OutputOverrides } from './cli/output.js';
 
 // The output context is the CLI's public boundary; re-exported so callers (and tests) that know the entry point keep
 // working while command handlers move to their own modules.
@@ -160,7 +160,7 @@ async function runMain(argv: string[]): Promise<void> {
             }
         }
         if (command === 'update' && !argv.includes('--platform')) {
-            outputResult(await runAggregateUpdate(args.scope, args.options));
+            outputResult(await runAggregateUpdate(args.scope, args.options), { human: renderUpdateSummary });
             return;
         }
         const report =
@@ -177,11 +177,15 @@ async function runMain(argv: string[]): Promise<void> {
                 ? { status: 'skipped' as const, reason: 'dry_run' }
                 : await initializeGitFlowProject(args.options.root!, { interactive: process.stdin.isTTY && !args.yes })
             : undefined;
-        outputResult({
-            ...(report as unknown as Record<string, unknown>),
-            ...(runtimeRefresh ? { runtimeRefresh } : {}),
-            ...(gitFlowInit ? { gitFlowInit } : {}),
-        });
+        outputResult(
+            {
+                ...(report as unknown as Record<string, unknown>),
+                ...(runtimeRefresh ? { runtimeRefresh } : {}),
+                ...(gitFlowInit ? { gitFlowInit } : {}),
+            },
+            // The update family renders its own human summary; the boundary no longer sniffs the result shape.
+            { human: renderUpdateSummary },
+        );
         return;
     }
 
@@ -341,16 +345,16 @@ async function runAggregateUpdate(
         .sort();
     const targets: Platform[] = [...realPlatforms];
     if (targets.length === 0 || managed.includes('generic')) targets.push('generic');
-    writeUpdateProgress(`Kata update · ${scope === 'project' ? '当前项目' : '全局安装'}\n`);
+    writeProgress(`Kata update · ${scope === 'project' ? '当前项目' : '全局安装'}\n`);
     const reports = [];
     for (const platform of targets) {
-        writeUpdateProgress(`\n→ 更新 ${platform}\n`);
+        writeProgress(`\n→ 更新 ${platform}\n`);
         const report = await update(platform, scope, options);
         reports.push(report);
-        writeUpdateProgress(formatUpdateReport(report));
+        writeProgress(formatUpdateReport(report));
     }
     const runtimeRefresh = await runRuntimeRefresh(options.root!);
-    writeUpdateProgress(formatRuntimeRefresh(runtimeRefresh));
+    writeProgress(formatRuntimeRefresh(runtimeRefresh));
     return { ...mergeInstallReports({ command: 'update', mode: 'auto', scope, reports }), runtimeRefresh };
 }
 
@@ -2651,25 +2655,6 @@ function isCliEntrypoint(): boolean {
     } catch {
         return false;
     }
-}
-
-function outputResult(result: Record<string, unknown>): void {
-    const output = currentOutput();
-    if (output.quiet) return;
-    if (output.format === 'human' && isUpdateResult(result)) {
-        output.stdout.write(renderUpdateSummary(result));
-        return;
-    }
-    output.stdout.write(JSON.stringify(result) + '\n');
-}
-
-function writeUpdateProgress(message: string): void {
-    const output = currentOutput();
-    if (!output.quiet && output.format === 'human') output.stdout.write(message);
-}
-
-function isUpdateResult(result: Record<string, unknown>): boolean {
-    return result.command === 'update' || (typeof result.platform === 'string' && 'written' in result && 'unchanged' in result);
 }
 
 function formatUpdateReport(report: { platform: string; written: string[]; unchanged: string[]; conflicts: string[]; removed: string[]; dryRun: boolean }): string {
