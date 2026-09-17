@@ -19,6 +19,7 @@ import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferO
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
+import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
@@ -1326,6 +1327,11 @@ async function readReviewRevisionId(root: string, taskId: string): Promise<strin
     }
 }
 
+/**
+ * The verify step's reading of the same question the Judge answers: is each acceptance criterion evidenced? The ladder
+ * is the shared one in `quality/evidence-adequacy.ts`; verify's own inputs are the unresolved repair obligations, which
+ * a Judge verdict cannot know about yet.
+ */
 function evaluateReadiness(
     taskId: string,
     acceptance: Array<{ id?: string; statement: string }>,
@@ -1337,37 +1343,22 @@ function evaluateReadiness(
     unresolvedObligations: Array<{ acceptanceId?: string; id: string; message: string }> = [],
     reviewMode?: string,
 ): JudgeResult {
-    const freshEvidence = evidence.filter((item) => checkFreshness(item, currentDiffHash, scopeHashes.get(item.id)).fresh);
-    const freshPassingTestEvidence = freshEvidence.filter((item) => item.kind === 'test' && item.exitCode === 0);
-    const failingTestEvidence = freshEvidence.find((item) => item.kind === 'test' && item.exitCode !== 0);
-    const blockingFindings = findings.filter((finding) => finding.severity === 'blocking'
-        || (reviewMode === 'strict' && finding.severity === 'major'));
-    const acceptanceResults = acceptance.map((criterion): JudgeAcceptanceResult => {
-        const acceptanceId = criterion.id ?? '';
-        const blockingFinding = blockingFindings.find((finding) => !finding.acceptanceId || finding.acceptanceId === acceptanceId);
-        const obligation = unresolvedObligations.find((o) => o.acceptanceId === acceptanceId || !o.acceptanceId);
-        if (failingTestEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'failing_evidence' };
-        if (obligation) return { id: acceptanceId, result: 'FAIL', repairScope: 'unresolved_repair_obligation' };
-        if (freshPassingTestEvidence.length === 0 && evidence.some((item) => item.kind === 'test')) {
-            return { id: acceptanceId, result: 'FAIL', repairScope: 'stale_evidence' };
-        }
-        if (freshPassingTestEvidence.length === 0) return { id: acceptanceId, result: 'FAIL', repairScope: 'missing_test_evidence' };
-        if (matrix) {
-            const row = getMatrixRowForAc(matrix, acceptanceId);
-            if (row && isEntrypointEvidenceKind(row.verificationLevel)) {
-                const hasRowSpecificEvidence = freshEvidence.some((item) => evidenceMatchesRow(row, item.command, item.kind));
-                if (!hasRowSpecificEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'insufficient_evidence_level' };
-            }
-        }
-        if (blockingFinding) return { id: acceptanceId, result: 'FAIL', repairScope: 'blocking_review_finding' };
-        return { id: acceptanceId, result: 'PASS', evidenceIds: freshPassingTestEvidence.map((item) => item.id) };
+    const adequacy = evaluateAcceptanceAdequacy({
+        acceptance,
+        evidence,
+        findings,
+        currentDiffHash,
+        currentScopeHashes: scopeHashes,
+        ...(matrix ? { matrix } : {}),
+        ...(reviewMode ? { reviewMode } : {}),
+        unresolvedObligations,
     });
     return {
         taskId,
-        result: acceptanceResults.every((item) => item.result === 'PASS') ? 'PASS' : 'FAIL',
+        result: adequacy.acceptance.every((item) => item.result === 'PASS') ? 'PASS' : 'FAIL',
         diffHash: currentDiffHash,
-        acceptance: acceptanceResults,
-        evidenceIds: freshPassingTestEvidence.map((item) => item.id),
+        acceptance: adequacy.acceptance,
+        evidenceIds: adequacy.evidenceIds,
     };
 }
 
