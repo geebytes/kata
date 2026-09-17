@@ -8,7 +8,7 @@ import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
 import { createHandoff } from './handoff.js';
 import { CometGuard } from '../comet/guard.js';
-import { assertValidTaskId } from '../core/ids.js';
+import { assertValidAcceptanceId, assertValidTaskId, requirementIdPattern } from '../core/ids.js';
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { collectSealPreflight } from './seal-preflight.js';
@@ -127,6 +127,20 @@ async function cmdOpen(
     options: CommandOptions = {},
 ): Promise<CommandResult> {
     const requirements = options.requirements ?? [];
+    // Ids supplied by the caller are checked here rather than at seal: an acceptance id is kata's own numbering, and a
+    // requirement id is quoted from the upstream document — both are validated against the one rule that governs them
+    // (`core/ids.ts`, kept in step with the schema assets by a test), and a mistake is reported where it is made.
+    for (const criterion of options.acceptance ?? []) {
+        if (criterion.id) assertValidAcceptanceId(criterion.id);
+    }
+    for (const requirement of requirements) {
+        if (requirement.id && !requirementIdPattern.test(requirement.id)) {
+            throw new Error(
+                `Invalid upstream requirement id: ${requirement.id}. Use the identifier the upstream document itself uses `
+                + `(letters, digits, '.', '_', ':' or '-').`,
+            );
+        }
+    }
     const acceptance = options.acceptance?.length
         ? options.acceptance
         : requirements.length > 0
