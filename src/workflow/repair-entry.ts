@@ -51,12 +51,30 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
         return { authorized: true, entryPhase, repair: null };
     }
 
+    // Evidence drift authorises re-entry here for the same reason it does at review: once the sealed revision is
+    // superseded, the recorded verdict cannot describe the current implementation, and the only alternative is to judge
+    // with evidence that no longer matches. Without this the task had to run a verify it knew would FAIL merely to have
+    // the phase moved back — a whole round-trip per re-seal, and the same "authorised but unrecognised" shape as the
+    // review and judge deadlocks.
+    if (await revisionSuperseded(root, taskId)) {
+        return {
+            authorized: true,
+            entryPhase,
+            repair: { fromPhase: entryPhase, reason: 'revision_superseded', scopes: [] },
+        };
+    }
+
     const failedAcceptance = (verify.acceptance ?? []).filter((criterion) => criterion.result === 'FAIL');
     const isRepairable = verify.result === 'FAIL'
         && (failedAcceptance.length === 0
             || failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableVerifyScopes)));
     if (!isRepairable) {
-        return denial(entryPhase, 'Build cannot run from hardVerify without a repairable verify FAIL result');
+        return denial(
+            entryPhase,
+            'Build cannot run from hardVerify without a repairable verify FAIL result, and the sealed revision still '
+            + 'matches the workspace. Run `kata-cli verify --change <task>` to record what is missing, or make the '
+            + 'change the verdict asks for.',
+        );
     }
 
     return {

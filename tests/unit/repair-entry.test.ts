@@ -197,4 +197,40 @@ describe('repair authorisation', () => {
         expect((await authorizeRepair('judge', root, taskId)).repair).toMatchObject({ reason: 'judge_fail' });
         expect((await authorizeRepair('hardVerify', root, taskId)).authorized).toBe(true);
     });
+describe('a superseded seal authorises the re-seal from hardVerify', () => {
+    it('authorises the re-entry once the workspace has moved past the sealed revision', async () => {
+        // Measured cost of not allowing this: a verify run known to FAIL, purely to have the phase moved back, on
+        // every re-seal after a code change.
+        const root = await tempRoot();
+        await seedSupersededRevision(root);
+        await writeJson(root, `.kata/tasks/${taskId}/verify.json`, {
+            taskId,
+            result: 'FAIL',
+            diffHash: 'b'.repeat(64),
+            acceptance: [{ id: 'AC-1', result: 'FAIL', repairScope: 'missing_test_evidence' }],
+        });
+
+        const authorization = await authorizeVerifyRepair(root, taskId);
+
+        expect(authorization).toMatchObject({ authorized: true, entryPhase: 'hardVerify' });
+        expect(authorization.repair).toMatchObject({ reason: 'revision_superseded', scopes: [] });
+    });
+
+    it('refuses a non-repairable verdict while the seal still matches, and names the remedy', async () => {
+        const root = await tempRoot();
+        // No current revision at all: the seal matches trivially, so drift cannot authorise anything — and a PASS is
+        // not something a re-entry can repair.
+        await writeJson(root, `.kata/tasks/${taskId}/verify.json`, {
+            taskId,
+            result: 'PASS',
+            diffHash: 'b'.repeat(64),
+            acceptance: [{ id: 'AC-1', result: 'PASS' }],
+        });
+
+        const authorization = await authorizeVerifyRepair(root, taskId);
+
+        expect(authorization.authorized).toBe(false);
+        expect(authorization.denial).toContain('kata-cli verify --change <task>');
+    });
+});
 });
