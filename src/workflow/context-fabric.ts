@@ -25,7 +25,17 @@ export interface HandoffPacket {
   permissions: { allowedWrites: string[]; guardInstructions: string[] }; nextAction: string;
 }
 export interface HandoffReceipt { protocolVersion: 1; taskId: string; handoffId: string; platform: string; role: Role; packetSha256: string; acknowledgedAt: string; repository: HandoffPacket['repository']; }
-export type ContextPacketVerification = { valid: true } | { valid: false; reason: 'head_mismatch' | 'branch_mismatch' | 'diff_mismatch' | 'packet_hash_mismatch' };
+/**
+ * Why a packet failed verification.
+ *
+ * There is no `head_mismatch` any more: a packet is bound to **what the task owns**, not to a commit. Measured cost of
+ * the old rule: 40 packets and 18 receipts for one task in a day, and 13 rebuilds of the implementer's packet, because
+ * every commit — including ones that touched only `docs/` or `.llmwiki/`, which no revision covers — invalidated every
+ * receipt. Committing a wiki page is not a change to the artefact under review.
+ */
+export type ContextPacketVerification =
+  | { valid: true }
+  | { valid: false; reason: 'branch_mismatch' | 'diff_mismatch' | 'packet_hash_mismatch' };
 export async function createContextPacket(input: { root: string; taskId: string; fromRole: Role; toRole: Role; platform?: string }): Promise<HandoffPacket> {
   assertValidTaskId(input.taskId); assertRole(input.fromRole); assertRole(input.toRole);
   const handoff = await createHandoff(input.root, input.taskId, input.toRole);
@@ -56,7 +66,7 @@ export async function requireAcknowledgedContextPacket(input: { root: string; ta
   }
   return receipt;
 }
-export async function verifyContextPacket(input: { root: string; taskId: string; id: string }): Promise<ContextPacketVerification> { const packet = await readContextPacket(input.root, input.taskId, input.id); const current = await anchor(input.root, input.taskId); if (packet.repository.head !== current.head) return { valid: false, reason: 'head_mismatch' }; if (packet.repository.branch !== current.branch) return { valid: false, reason: 'branch_mismatch' }; if (packet.repository.scope && !sameScopeIdentity(packet.repository.scope, current.scope!)) return { valid: false, reason: 'diff_mismatch' }; if (packet.repository.diffHash !== current.diffHash) return { valid: false, reason: 'diff_mismatch' }; try { const receipt = await readValidatedOptional<HandoffReceipt>('handoff-receipt', receiptPath(input.root, input.taskId, input.id)); if (receipt && receipt.packetSha256 !== hashContent(JSON.stringify(packet))) return { valid: false, reason: 'packet_hash_mismatch' }; } catch (error) { if (!isMissingFile(error)) throw error; } return { valid: true }; }
+export async function verifyContextPacket(input: { root: string; taskId: string; id: string }): Promise<ContextPacketVerification> { const packet = await readContextPacket(input.root, input.taskId, input.id); const current = await anchor(input.root, input.taskId); if (packet.repository.branch !== current.branch) return { valid: false, reason: 'branch_mismatch' }; if (packet.repository.scope && !sameScopeIdentity(packet.repository.scope, current.scope!)) return { valid: false, reason: 'diff_mismatch' }; if (packet.repository.diffHash !== current.diffHash) return { valid: false, reason: 'diff_mismatch' }; try { const receipt = await readValidatedOptional<HandoffReceipt>('handoff-receipt', receiptPath(input.root, input.taskId, input.id)); if (receipt && receipt.packetSha256 !== hashContent(JSON.stringify(packet))) return { valid: false, reason: 'packet_hash_mismatch' }; } catch (error) { if (!isMissingFile(error)) throw error; } return { valid: true }; }
 async function anchor(root: string, taskId: string): Promise<HandoffPacket['repository']> {
   const revision = await readCurrentTaskRevision(root, taskId);
   const scope = revision
@@ -107,9 +117,16 @@ function designRefsFor(root: string, taskId: string, role: Role): string[] {
   return candidates.filter((p) => existsSync(join(root, p)));
 }
 function taskContextPaths(root: string, taskId: string): string[] { const base = `.kata/tasks/${taskId}`; return [`${base}/task.json`, `${base}/current-state.json`, ...(existsSync(join(root, base, 'design.md')) ? [`${base}/design.md`] : [])]; }
+/**
+ * Whether two anchors cover the same content.
+ *
+ * Deliberately **not** the revision's id: a re-seal of unchanged owned paths produces the same content, and requiring a
+ * matching id made every receipt expire the moment anything was sealed again — while requiring a matching HEAD made
+ * them expire on any commit at all. Paths and their manifest hash are what the packet is actually about.
+ */
 function sameScopeIdentity(left: HandoffAnchorScope, right: HandoffAnchorScope): boolean {
   if (left.kind !== right.kind || left.paths.length !== right.paths.length) return false;
-  if (left.kind === 'revision' && (right.kind !== 'revision' || left.revisionId !== right.revisionId)) return false;
+  if (left.hash !== right.hash) return false;
   return left.paths.every((path, index) => path === right.paths[index]);
 }
 function roleArtifacts(root: string, taskId: string): string[] { const base = `.kata/tasks/${taskId}`; return [`${base}/review.json`, `${base}/judge.json`, `${base}/repair.json`]; }

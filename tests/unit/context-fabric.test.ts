@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
@@ -8,6 +10,10 @@ import { createTaskRevision } from '../../src/workflow/revision.js';
 import { defaultWorkflowProfile } from '../../src/core/workflow-profile.js';
 import { createContextPacket, acknowledgeContextPacket, requireAcknowledgedContextPacket, verifyContextPacket } from '../../src/workflow/context-fabric.js';
 import { createWorkflowHandoff } from '../../src/workflow/delegation-prompt.js';
+
+const execFileAsync = promisify(execFile);
+const git = (cwd: string, args: string[]) => execFileAsync('git', args, { cwd });
+const currentHead = async (cwd: string): Promise<string> => (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd })).stdout.trim();
 
 describe('Context Fabric', () => {
   const roots: string[] = [];
@@ -186,5 +192,49 @@ describe('Context Fabric', () => {
 
     const packet = await createContextPacket({ root: workspace, taskId: 'git-flow-task', fromRole: 'designer', toRole: 'implementer' });
     expect(packet.permissions.guardInstructions).toContain('Work on feature/git-flow-task; do not start, finish, or switch Git Flow branches outside the recorded task action.');
+  });
+});
+
+describe('a packet is bound to what the task owns, not to a commit', () => {
+  const roots: string[] = [];
+  async function root(): Promise<string> {
+    const value = await mkdtemp(join(tmpdir(), 'kata-context-bind-'));
+    roots.push(value);
+    await git(value, ['init', '-q']);
+    await git(value, ['config', 'user.email', 'kata@example.test']);
+    await git(value, ['config', 'user.name', 'Kata Test']);
+    await git(value, ['commit', '-qm', 'baseline', '--allow-empty']);
+    await initLayout(value);
+    await createTask({ root: value, id: 'handoff-task', title: 'Portable handoff', acceptance: [{ id: 'AC-1', statement: 'A packet is portable.' }] });
+    return value;
+  }
+  afterEach(async () => Promise.all(roots.splice(0).map((value) => rm(value, { recursive: true, force: true }))));
+
+  it('stays valid after a commit that touches nothing the task owns', async () => {
+    const workspace = await root();
+    const packet = await createContextPacket({ root: workspace, taskId: 'handoff-task', fromRole: 'implementer', toRole: 'reviewer' });
+    await acknowledgeContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, platform: 'codex', role: 'reviewer' });
+
+    // A commit that only adds a doc: the artefact under review did not change, so the receipt still holds.
+    await writeFile(join(workspace, 'NOTES.md'), '# notes\n', 'utf8');
+    await git(workspace, ['add', '-A']);
+    await git(workspace, ['commit', '-qm', 'docs: notes']);
+
+    expect(await currentHead(workspace)).not.toBe(packet.repository.head);
+    await expect(verifyContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id })).resolves.toMatchObject({ valid: true });
+  });
+
+  it('still fails when what the task owns changes', async () => {
+    const workspace = await root();
+    const packet = await createContextPacket({ root: workspace, taskId: 'handoff-task', fromRole: 'implementer', toRole: 'reviewer' });
+    await acknowledgeContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id, platform: 'codex', role: 'reviewer' });
+
+    // The task context is part of the anchor: editing task.json changes what the packet is about.
+    const taskFile = join(workspace, '.kata/tasks/handoff-task/task.json');
+    const task = JSON.parse(await readFile(taskFile, 'utf8')) as Record<string, unknown>;
+    task.title = 'Changed after acknowledgement';
+    await writeFile(taskFile, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+
+    await expect(verifyContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id })).resolves.toMatchObject({ valid: false, reason: 'diff_mismatch' });
   });
 });
