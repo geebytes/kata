@@ -1837,6 +1837,31 @@ describe('Kata platform installer', () => {
         });
     });
 
+    it('reports each runtime refresh stage, and treats a missing refresh dependency as skipped rather than failed', async () => {
+        const root = await tempRoot();
+        const previousBinary = process.env.STRATA_CODEGRAPH_BIN;
+        process.env.STRATA_CODEGRAPH_BIN = join(root, 'not-installed-codegraph');
+
+        try {
+            const result = await captureJsonOutput(() =>
+                main(['update', '--json', '--platform', 'generic', '--scope', 'project', '--root', root]),
+            ) as { runtimeRefresh?: { policy?: string; stages?: Array<{ stage: string; status: string; durationMs: number; detail?: string }> } };
+
+            const refresh = result.runtimeRefresh;
+            // The refresh is best-effort: the update reports success and each stage reports its own outcome.
+            expect(refresh?.policy).toBe('best-effort');
+            const byStage = new Map((refresh?.stages ?? []).map((entry) => [entry.stage, entry]));
+            expect(byStage.get('codegraph-sync')).toMatchObject({ status: 'skipped' });
+            expect(byStage.get('codegraph-index')).toMatchObject({ status: 'skipped' });
+            expect(byStage.get('codegraph-sync')?.detail).toContain('not installed');
+            // Every stage is bounded and its duration is recorded, so a slow refresh is visible.
+            for (const entry of refresh?.stages ?? []) expect(typeof entry.durationMs).toBe('number');
+        } finally {
+            if (previousBinary === undefined) delete process.env.STRATA_CODEGRAPH_BIN;
+            else process.env.STRATA_CODEGRAPH_BIN = previousBinary;
+        }
+    });
+
     it('returns the next recommended operation after a workflow phase command completes', async () => {
         const root = await tempRoot();
         await writeFile(

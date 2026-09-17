@@ -17,7 +17,7 @@ import {
     type AdversarialNode,
     type AdversarialRecord,
 } from './quality/adversarial.js';
-import { runProcessSync } from './process/run.js';
+import { runProcess, runProcessSync } from './process/run.js';
 import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
@@ -348,7 +348,34 @@ async function runAggregateUpdate(
     return { ...mergeInstallReports({ command: 'update', mode: 'auto', scope, reports }), runtimeRefresh };
 }
 
+/**
+ * One refresh stage's outcome. `status` distinguishes a stage that could not run (`skipped`) from one that ran and
+ * failed, and from one that was cut off by its own timeout — the three used to be collapsed into `success: false`.
+ */
+type RefreshStageStatus = 'completed' | 'failed' | 'timed_out' | 'skipped';
+type RefreshStageOutcome = {
+    stage: 'comet' | 'codegraph-sync' | 'codegraph-index';
+    status: RefreshStageStatus;
+    durationMs: number;
+    /** Whatever the stage printed, for the stages that run a child process. */
+    output?: string;
+    /** Why a stage failed, timed out or was skipped. */
+    detail?: string;
+};
+
+/**
+ * The runtime refresh is **best-effort**: it runs after the platforms are installed and updated, and no stage failure
+ * aborts the update. Each stage is bounded by its own timeout, runs asynchronously (it used to block the event loop with
+ * `execFileSync`), and reports its own outcome — so a timed-out CodeGraph index is visible as `timed_out` rather than as
+ * a generic failure, and the update still reports success.
+ *
+ * The two CodeGraph stages are independent and run in order (`sync`, then `index`); a failure in one does not skip the
+ * other, because either can be useful on its own.
+ */
 type RuntimeRefreshResult = {
+    policy: 'best-effort';
+    stages: RefreshStageOutcome[];
+    // The per-stage fields the update report and `--json` consumers already read, kept as the compatibility surface.
     comet: { success: boolean; previousVersion?: string | null; installedVersion?: string | null; error?: string };
     codegraphSync: { success: boolean; output?: string; error?: string };
     codegraphIndex: { success: boolean; output?: string; error?: string };
@@ -356,18 +383,59 @@ type RuntimeRefreshResult = {
 
 async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshResult> {
     const timeoutMs = runtimeRefreshTimeoutMs();
-    const comet = await withTimeout(updateComet(), timeoutMs, `Comet update timed out after ${timeoutMs}ms`)
+    const stages: RefreshStageOutcome[] = [];
+    const started = (): number => Date.now();
+
+    const cometStart = started();
+    const comet: RuntimeRefreshResult['comet'] = await withTimeout(updateComet(), timeoutMs, `Comet update timed out after ${timeoutMs}ms`)
         .then((result) => ({ success: true, previousVersion: result.previousVersion, installedVersion: result.installedVersion }))
         .catch((error: unknown) => ({ success: false, error: error instanceof Error ? error.message : String(error) }));
-    const runCodegraph = (subcommand: 'sync' | 'index') => {
+    stages.push({
+        stage: 'comet',
+        status: comet.success ? 'completed' : /timed out/i.test(comet.error ?? '') ? 'timed_out' : 'failed',
+        durationMs: started() - cometStart,
+        ...(comet.error ? { detail: comet.error } : {}),
+    });
+
+    const runCodegraphStage = async (subcommand: 'sync' | 'index'): Promise<{ success: boolean; output?: string; error?: string }> => {
+        const stage = subcommand === 'sync' ? 'codegraph-sync' : 'codegraph-index';
         const invocation = codeGraphInvocation(root);
-        const result = runProcessSync(invocation.command, [subcommand], { cwd: invocation.cwd, env: invocation.env, timeoutMs: 60_000 });
+        const stageStart = started();
+        const result = await runProcess(invocation.command, [subcommand], {
+            cwd: invocation.cwd,
+            env: invocation.env,
+            timeoutMs,
+        });
         const output = result.stdout.trim();
+        const detail = result.failure === 'timeout'
+            ? `codegraph ${subcommand} timed out after ${timeoutMs}ms`
+            : result.failure === 'spawn_failed'
+                ? `codegraph is not installed (or not executable) at ${invocation.command}`
+                : result.stderr.trim() || `codegraph ${subcommand} exited ${result.exitCode}`;
+
+        stages.push({
+            stage,
+            // Three structural cases, no matching on CodeGraph's own wording: a missing binary is nothing to do
+            // (`skipped`), a child that outlived its budget was cut off (`timed_out`), anything else ran and failed.
+            status: result.ok
+                ? 'completed'
+                : result.failure === 'timeout'
+                    ? 'timed_out'
+                    : result.failure === 'spawn_failed'
+                        ? 'skipped'
+                        : 'failed',
+            durationMs: started() - stageStart,
+            ...(output ? { output } : {}),
+            ...(result.ok ? {} : { detail }),
+        });
         return result.ok
             ? { success: true, ...(output ? { output } : {}) }
-            : { success: false, error: result.stderr.trim() || `codegraph ${subcommand} exited ${result.exitCode}` };
+            : { success: false, error: detail };
     };
-    return { comet, codegraphSync: runCodegraph('sync'), codegraphIndex: runCodegraph('index') };
+
+    const codegraphSync = await runCodegraphStage('sync');
+    const codegraphIndex = await runCodegraphStage('index');
+    return { policy: 'best-effort', stages, comet, codegraphSync, codegraphIndex };
 }
 
 function runtimeRefreshTimeoutMs(): number {
@@ -2644,9 +2712,15 @@ function renderUpdateSummary(result: Record<string, unknown>): string {
 }
 
 function formatRuntimeRefresh(result: RuntimeRefreshResult): string {
-    const status = (value: { success: boolean }) => value.success ? '完成' : '失败';
+    const stage = (name: RefreshStageOutcome['stage']): string => result.stages.find((entry) => entry.stage === name)?.status ?? '';
+    const label = (value: string): string => value === 'completed' ? '完成' : value === 'timed_out' ? '超时' : value === 'skipped' ? '跳过' : '失败';
     const cometVersion = result.comet.success && result.comet.installedVersion ? ` (${result.comet.installedVersion})` : '';
-    return `运行时：Comet 更新 ${status(result.comet)}${cometVersion} · CodeGraph sync ${status(result.codegraphSync)} · CodeGraph index ${status(result.codegraphIndex)}\n`;
+    const failed = result.stages.filter((entry) => entry.status !== 'completed');
+    // Best-effort means the update still succeeded; saying which stage did not keeps that from reading as a clean run.
+    const partial = failed.length > 0
+        ? `\n运行时刷新为尽力而为：${failed.map((entry) => `${entry.stage} ${label(entry.status)}${entry.detail ? `（${entry.detail}）` : ''}`).join('；')}。平台安装与更新不受影响。`
+        : '';
+    return `运行时：Comet 更新 ${label(stage('comet'))}${cometVersion} · CodeGraph sync ${label(stage('codegraph-sync'))} · CodeGraph index ${label(stage('codegraph-index'))}\n${partial}`;
 }
 
 if (isCliEntrypoint()) {
