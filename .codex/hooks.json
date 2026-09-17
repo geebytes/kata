@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"/app/kata/.agents/skills/comet/scripts/comet-hook-guard.mjs\" --project-root \"/app/kata\""
+            "command": "node \"/app/kata/.agents/skills/comet/scripts/comet-hook-router.mjs\" --platform \"codex\" --project-root \"/app/kata\""
           }
         ]
       }
