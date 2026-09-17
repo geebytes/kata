@@ -71,3 +71,35 @@ export async function findWikiRecord(root: string, id: string): Promise<WikiReco
   const records = await readWikiRecords(root);
   return records.find((r) => r.id === id);
 }
+
+/**
+ * Reads the Wiki directory without letting an unrelated record decide an unrelated task.
+ *
+ * `readWikiRecords` throws on the first invalid file, and the closure gate reads every record to check its candidates —
+ * so one drifted legacy record (a field the schema does not allow) blocked **every** workflow mutation in the project,
+ * not just the task that owned the file. This variant reports the invalid ones instead: the caller decides whether they
+ * matter, and a closure fails only when a record *it names* is unreadable.
+ */
+export async function readWikiRecordsTolerant(root: string): Promise<{
+  records: WikiRecord[];
+  invalid: Array<{ path: string; message: string }>;
+}> {
+  const wikiDir = layoutWikiDir(root);
+  let files: string[];
+  try {
+    files = await readdir(wikiDir);
+  } catch {
+    return { records: [], invalid: [] };
+  }
+  const records: WikiRecord[] = [];
+  const invalid: Array<{ path: string; message: string }> = [];
+  for (const file of files.filter((f) => f.endsWith('.json')).sort()) {
+    const path = join(wikiDir, file);
+    try {
+      records.push(validateWikiRecord(JSON.parse(await readFile(path, 'utf8'))));
+    } catch (error) {
+      invalid.push({ path, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { records, invalid };
+}

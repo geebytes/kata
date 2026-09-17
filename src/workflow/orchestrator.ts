@@ -14,7 +14,7 @@ import { resolveBuildChecks } from '../quality/project-checks.js';
 import { collectSealPreflight } from './seal-preflight.js';
 import { matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
-import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
+import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
@@ -784,7 +784,7 @@ async function cmdVerify(
         success: verifyResult.result === 'PASS',
         ...(verifyResult.result === 'FAIL' ? {
             error: implementationReady && !wikiClosure.valid
-                ? `Implementation verification passed; complete Wiki closure (${wikiClosure.reason}) before review/judge.`
+                ? `Implementation verification passed; the Wiki closure is incomplete (${wikiClosure.reason}). ${wikiClosureRemedy(wikiClosure.reason, taskId)}`
                 : wikiClosure.valid
                     ? repairReason === 'rebuild_stale_evidence'
                         ? 'Verify found stale evidence; reseal checks against the current implementation before review/judge.'
@@ -793,7 +793,7 @@ async function cmdVerify(
                             : repairReason === 'resolve_repair_obligations'
                                 ? 'Verify blocked by unresolved repair obligations; supply matrix-linked evidence and mark obligations resolved.'
                                 : 'Verify failed; repair evidence or blocking findings before review/judge.'
-                    : `Verify failed; complete Wiki closure (${wikiClosure.reason}) before review/judge.`
+                    : `Verify failed; the Wiki closure is incomplete (${wikiClosure.reason}). ${wikiClosureRemedy(wikiClosure.reason, taskId)}`
         } : {}),
         diagnostics: {
             verifyResult: verifyResult.result,

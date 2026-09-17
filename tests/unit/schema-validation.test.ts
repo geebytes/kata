@@ -130,4 +130,24 @@ describe('schema-validated artefact reads', () => {
         expect(() => validate('revision', { id: 'revision-1', taskId: 'schema-task', ownedPaths: [], manifestHash: 'x', createdAt: 'now' }))
             .toThrow(/ownedPaths must include at least 1 item/);
     });
+describe('a validation failure names what the schema allows', () => {
+    it('lists the accepted top-level fields', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-schema-hint-'));
+        roots.push(root);
+        const file = join(root, 'record.json');
+        await writeFile(file, JSON.stringify({ id: 'x', unexpected: true }), 'utf8');
+
+        // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema.
+        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Allowed fields: .*id/);
+        await rm(root, { recursive: true, force: true });
+    });
+});
+
+    it('names what a schema allows when a field is not accepted', async () => {
+        const file = await tempFile('record.json', JSON.stringify({ id: 'x', unexpected: true }));
+
+        // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema.
+        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Allowed fields: .*id/);
+    });
+
 });

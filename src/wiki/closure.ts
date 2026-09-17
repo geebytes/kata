@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readWikiRecords } from './store.js';
+import { readWikiRecords, readWikiRecordsTolerant } from './store.js';
 import { wikiClosurePath as layoutWikiClosurePath, taskDir } from '../core/layout.js';
 
 export type WikiClosureDecision = 'captured' | 'not_applicable' | 'deferred';
@@ -15,7 +15,10 @@ export interface WikiClosure {
 
 export type WikiClosureEvaluation =
   | { valid: true; decision: 'captured' | 'not_applicable'; closure: WikiClosure }
-  | { valid: false; reason: 'missing' | 'deferred' | 'reason_required' | 'candidate_required' | 'candidate_missing'; closure?: WikiClosure };
+  | { valid: false; reason: WikiClosureFailureReason; closure?: WikiClosure };
+
+/** Why a closure is not complete yet. Each one has a remedy `wikiClosureRemedy` can name. */
+export type WikiClosureFailureReason = 'missing' | 'deferred' | 'reason_required' | 'candidate_required' | 'candidate_missing' | 'unevaluatable_records';
 
 export async function ensureWikiClosure(root: string, taskId: string): Promise<WikiClosure> {
   const existing = await readWikiClosure(root, taskId);
@@ -46,6 +49,32 @@ export async function writeWikiClosure(root: string, taskId: string, input: { de
   return closure;
 }
 
+/**
+ * What to run next, for each way a closure can be incomplete.
+ *
+ * The reasons used to reach the user as a bare token inside a sentence ("complete Wiki closure (candidate_required)
+ * before review/judge"), which left the remedy to be recovered from the bundle — the measured cost of a gate that knows
+ * the answer and does not say it.
+ */
+export function wikiClosureRemedy(reason: WikiClosureFailureReason, taskId: string): string {
+  switch (reason) {
+    case 'candidate_required':
+      return `Record the candidate this task captured: \`kata-cli wiki closure --task ${taskId} --decision captured --candidate <wiki-record-id> --reason "<what it taught>"\` (register the page first with \`kata-cli wiki register\`).`;
+    case 'candidate_missing':
+      return 'One recorded candidate id is not a registered Wiki record. List them with `kata-cli wiki list` and re-record the closure with an id that exists.';
+    case 'reason_required':
+      return `Record why: \`kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable|deferred> --reason "<why>"\`.`;
+    case 'deferred':
+      return `The closure is still deferred. Decide it: \`kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable> --reason "<why>"\`.`;
+    case 'missing':
+      return `No closure recorded yet: \`kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable|deferred> --reason "<why>"\`.`;
+    case 'unevaluatable_records':
+      return 'The closure names records that could not be read. `kata-cli wiki validate` lists them with the fields the schema does not allow.';
+    default:
+      return '';
+  }
+}
+
 export async function evaluateWikiClosure(root: string, taskId: string): Promise<WikiClosureEvaluation> {
   const closure = await readWikiClosure(root, taskId);
   if (!closure) return { valid: false, reason: 'missing' };
@@ -53,8 +82,12 @@ export async function evaluateWikiClosure(root: string, taskId: string): Promise
   if (closure.decision === 'deferred') return { valid: false, reason: 'deferred', closure };
   if (closure.decision === 'not_applicable') return { valid: true, decision: 'not_applicable', closure };
   if (closure.candidateIds.length === 0) return { valid: false, reason: 'candidate_required', closure };
-  const records = await readWikiRecords(root);
+  // Tolerant read: an unrelated invalid record must not decide this task's closure, but a candidate the closure names
+  // that cannot be read is a real gap and fails closed.
+  const { records, invalid } = await readWikiRecordsTolerant(root);
   const validIds = new Set(records.filter((record) => record.status === 'candidate' || record.status === 'verified').map((record) => record.id));
+  const unreadableIds = new Set(invalid.map((entry) => entry.path.replace(/^.*\//, '').replace(/\.json$/, '')));
+  if (closure.candidateIds.some((id) => unreadableIds.has(id))) return { valid: false, reason: 'unevaluatable_records', closure };
   if (closure.candidateIds.some((id) => !validIds.has(id))) return { valid: false, reason: 'candidate_missing', closure };
   return { valid: true, decision: 'captured', closure };
 }

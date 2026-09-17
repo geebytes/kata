@@ -54,6 +54,13 @@ type Schema = {
 
 const schemas = new Map<string, Schema>();
 
+/** The top-level field names a schema accepts, for error messages that name the remedy rather than the symptom. */
+function allowedTopLevelFields(schemaName: string): string[] {
+    const properties = loadSchema(schemaName).properties;
+    if (!properties || typeof properties !== 'object') return [];
+    return Object.keys(properties).sort();
+}
+
 export function validate<T>(schemaName: string, value: unknown): T {
   const schema = loadSchema(schemaName);
   assertMatches(schema, value, '$');
@@ -82,7 +89,12 @@ export async function readValidated<T>(schemaName: string, path: string): Promis
   try {
     return validate<T>(schemaName, parsed);
   } catch (error) {
-    throw new Error(`${schemaName} artefact ${path} does not match its schema: ${error instanceof Error ? error.message : String(error)}`);
+    // Name what IS allowed: an error that says "…is not allowed" without the allowed set leaves the reader (or the
+    // agent) to open the bundle and find the schema — the measured cost of the wiki record that blocked every
+    // workflow mutation.
+    const allowed = allowedTopLevelFields(schemaName);
+    const hint = allowed.length > 0 ? ` Allowed fields: ${allowed.join(', ')}.` : '';
+    throw new Error(`${schemaName} artefact ${path} does not match its schema: ${error instanceof Error ? error.message : String(error)}.${hint}`);
   }
 }
 
