@@ -1,20 +1,7 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readWikiRecords } from '../wiki/store.js';
+import type { WikiRecord, WikiStatus } from '../wiki/record.js';
 
-export type WikiStatus = 'candidate' | 'verified' | 'stale' | 'rejected';
-
-export interface WikiRecord {
-  id: string;
-  statement: string;
-  scope: string[];
-  kind: string;
-  sourceRefs: string[];
-  sourceHashes: Record<string, string>;
-  validationTaskId: string;
-  evidenceIds: string[];
-  status: WikiStatus;
-  lastVerifiedAt: string;
-}
+export type { WikiRecord, WikiStatus };
 
 export interface ContextRequest {
   root?: string;
@@ -74,26 +61,4 @@ function isRelevantWikiRecord(record: WikiRecord, requestedSourceRefs: Set<strin
     record.sourceRefs.some((sourceRef) => requestedSourceRefs.has(sourceRef)) ||
     record.scope.some((scopeRef) => requestedSourceRefs.has(scopeRef))
   );
-}
-
-async function readWikiRecords(root: string): Promise<WikiRecord[]> {
-  const wikiDirectory = join(root, '.kata/wiki');
-  let files: string[];
-  try {
-    files = await readdir(wikiDirectory);
-  } catch (error) {
-    if (isNodeError(error) && error.code === 'ENOENT') return [];
-    throw error;
-  }
-  const records = await Promise.all(
-    files
-      .filter((file) => file.endsWith('.json'))
-      .sort()
-      .map(async (file) => JSON.parse(await readFile(join(wikiDirectory, file), 'utf8')) as WikiRecord),
-  );
-  return records;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && 'code' in error;
 }

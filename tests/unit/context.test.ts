@@ -30,6 +30,9 @@ describe('Kata context manifest', () => {
       validationTaskId: 'task-context',
       evidenceIds: ['evidence-1'],
       lastVerifiedAt: '2026-07-11T00:00:00.000Z',
+      // The store reader validates records, so fixtures carry what the writer writes.
+      createdAt: '2026-07-11T00:00:00.000Z',
+      updatedAt: '2026-07-11T00:00:00.000Z',
     };
 
     await writeFile(
@@ -71,6 +74,8 @@ describe('Kata context manifest', () => {
       evidenceIds: ['evidence-1'],
       status: 'verified',
       lastVerifiedAt: '2026-07-11T00:00:00.000Z',
+      createdAt: '2026-07-11T00:00:00.000Z',
+      updatedAt: '2026-07-11T00:00:00.000Z',
     };
 
     await writeFile(

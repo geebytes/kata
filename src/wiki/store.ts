@@ -6,6 +6,10 @@ function normalizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
+/**
+ * The one reader of the Wiki store. Records are validated against `wiki-record.schema.json` where they are read: a
+ * record that drifted is reported here, not later as an `undefined` on whichever consumer happened to read it first.
+ */
 export async function readWikiRecords(root: string): Promise<WikiRecord[]> {
   const wikiDir = join(root, '.kata/wiki');
   let files: string[];
@@ -20,7 +24,11 @@ export async function readWikiRecords(root: string): Promise<WikiRecord[]> {
       .sort()
       .map(async (file) => {
         const raw = await readFile(join(wikiDir, file), 'utf8');
-        return JSON.parse(raw) as WikiRecord;
+        try {
+          return validateWikiRecord(JSON.parse(raw));
+        } catch (error) {
+          throw new Error(`Wiki record ${join(wikiDir, file)} is invalid: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }),
   );
   return records;
