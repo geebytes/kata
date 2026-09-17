@@ -323,9 +323,15 @@ export async function discoverCodeGraphCandidates(
     .filter((path) => ownedPaths.some((owned) => pathOverlaps(owned, path))))];
   if (sourcePaths.length === 0) return [];
 
+  // One query per implementation path, run concurrently: each answer attributes an affected test to the path that
+  // dragged it in, which is what the reviewer reads. A single batched `affected` call would return a flat list and lose
+  // that attribution, so the cost is paid in parallel rather than by dropping the information.
   const sourcesByCandidate = new Map<string, string[]>();
-  for (const sourcePath of sourcePaths) {
-    const affectedTests = await runAffected(root, [sourcePath]);
+  const perPath = await Promise.all(sourcePaths.map(async (sourcePath) => ({
+    sourcePath,
+    affectedTests: await runAffected(root, [sourcePath]),
+  })));
+  for (const { sourcePath, affectedTests } of perPath) {
     for (const affectedTest of affectedTests) {
       const path = normalizePath(affectedTest);
       const sources = sourcesByCandidate.get(path) ?? [];

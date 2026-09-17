@@ -154,6 +154,9 @@ describe('Context Fabric', () => {
     await createTaskRevision({ root: workspace, taskId: 'handoff-task', ownedPaths: ['owned.ts'] });
     const packet = await createContextPacket({ root: workspace, taskId: 'handoff-task', fromRole: 'implementer', toRole: 'reviewer' });
 
+    // A genuinely new revision: the owned content changed, so the revision identity changes with it. (Re-sealing
+    // identical content resolves to the same revision and must NOT invalidate the packet.)
+    await writeFile(join(workspace, 'owned.ts'), 'export const version = 2;\n');
     await createTaskRevision({ root: workspace, taskId: 'handoff-task', ownedPaths: ['owned.ts'] });
 
     await expect(verifyContextPacket({ root: workspace, taskId: 'handoff-task', id: packet.id })).resolves.toMatchObject({ valid: false, reason: 'diff_mismatch' });

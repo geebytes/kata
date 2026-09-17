@@ -15,7 +15,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
@@ -482,16 +482,40 @@ async function cmdBuild(
         }
         await writeWaivers(root, taskId, waivers);
     }
-    const revision = ownedPaths.length
-        ? await createTaskRevision({
+    const sealed = ownedPaths.length
+        ? await createTaskRevisionIfChanged({
             root,
             taskId,
             ownedPaths,
+            checkIds: checks.map((check) => check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`),
             ...(ownershipConflicts.length > 0 && options.allowOwnershipConflicts
                 ? { ownershipConflicts, ownershipConflictsAcknowledged: true }
                 : {}),
         })
         : undefined;
+    const revision = sealed?.revision;
+
+    // Reuse, and say so. A check is only reused when it previously passed against content that is still current: the
+    // revision identity matched (same owned-path manifest, same resolved check set) and every recorded envelope still
+    // describes the current tree. Anything else runs, which keeps the gate fail-closed.
+    if (sealed?.reused && revision) {
+        const currentTreeHash = await computeDiffHash(root);
+        const recorded = await readRecordedEvidence(root, taskId);
+        if (recorded.length > 0 && recorded.every((item) => item.exitCode === 0 && item.diffHash === currentTreeHash)) {
+            return {
+                command: 'build',
+                taskId,
+                phase: 'implement',
+                success: true,
+                diagnostics: {
+                    mode: 'seal',
+                    reusedRevision: revision.id,
+                    reusedEvidence: recorded.length,
+                    sealedAt: revision.createdAt,
+                },
+            };
+        }
+    }
 
     const evidence = await collectEvidence(taskId, checks, {
         ...(revision ? { revision } : {}),
@@ -757,16 +781,26 @@ async function persistTaskOwnedPaths(
     );
 }
 
+/**
+ * Records the sealed evidence set.
+ *
+ * The previous set is **archived**, not deleted: a superseded revision's evidence stays auditable, filed under the
+ * revision it belonged to. The active set stays at the top level, so readers see exactly what the current seal proved.
+ */
 async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnvelope[]): Promise<void> {
     const evidenceDir = join(root, '.kata/evidence');
     await mkdir(evidenceDir, { recursive: true });
 
-    const { readdir, unlink } = await import('node:fs/promises');
+    const { readdir, rename } = await import('node:fs/promises');
     try {
-        const files = await readdir(evidenceDir);
-        for (const file of files) {
-            if (file.startsWith(`${taskId}-`) && file.endsWith('.json')) {
-                await unlink(join(evidenceDir, file)).catch(() => { });
+        const files = (await readdir(evidenceDir)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
+        if (files.length > 0) {
+            // The revision the outgoing set was collected for, read from the envelope rather than guessed.
+            const previous = JSON.parse(await readFile(join(evidenceDir, files[0]!), 'utf8')) as { revisionId?: string };
+            const archiveDir = join(evidenceDir, 'superseded', previous.revisionId ?? 'unsealed');
+            await mkdir(archiveDir, { recursive: true });
+            for (const file of files) {
+                await rename(join(evidenceDir, file), join(archiveDir, file)).catch(() => { });
             }
         }
     } catch { }
@@ -778,7 +812,6 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
             'utf8',
         );
     }
-
 }
 
 function evidenceFileSuffix(envelope: EvidenceEnvelope): string {

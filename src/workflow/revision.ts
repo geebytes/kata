@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isIgnoredRepositoryPath, walkRepositoryFiles } from '../core/repository-identity.js';
+import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -21,18 +22,39 @@ export type RevisionStatus =
   | { status: 'current' }
   | { status: 'superseded'; expectedManifestHash: string; revisionManifestHash: string };
 
-export async function createTaskRevision(input: {
-  root: string;
-  taskId: string;
-  ownedPaths: string[];
-  ownershipConflicts?: Array<{ taskId: string; path: string }>;
-  ownershipConflictsAcknowledged?: boolean;
-}): Promise<TaskRevision> {
+/**
+ * Mints the revision that identifies this seal, or returns the one that already identifies it.
+ *
+ * A revision is content-addressed: its id derives from the task, the owned-path manifest hash and the resolved check
+ * set, and a seal over byte-identical content resolves to the existing revision instead of minting a new id and
+ * silently demoting the previous one — which used to invalidate any review or judge verdict bound to it even though
+ * nothing had changed.
+ */
+export async function createTaskRevision(input: CreateTaskRevisionInput): Promise<TaskRevision> {
+  return (await createTaskRevisionIfChanged(input)).revision;
+}
+
+/** The same call, reporting whether the revision already existed — the caller may then reuse what it recorded. */
+export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput): Promise<{ revision: TaskRevision; reused: boolean }> {
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
   const manifestHash = await computeManifestHash(input.root, ownedPaths);
+  const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? []);
+
+  const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
+  if (existing) {
+    // Identical content: the same revision, with any newly acknowledged conflicts folded in.
+    const revision: TaskRevision = {
+      ...existing,
+      ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
+      ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
+    };
+    await writeFile(join(input.root, '.kata/tasks', input.taskId, 'current-revision.json'), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
+    return { revision, reused: true };
+  }
+
   const revision: TaskRevision = {
-    id: `revision-${randomUUID()}`,
+    id,
     taskId: input.taskId,
     ownedPaths,
     manifestHash,
@@ -44,7 +66,22 @@ export async function createTaskRevision(input: {
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
   await writeFile(join(input.root, '.kata/tasks', input.taskId, 'current-revision.json'), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
-  return revision;
+  return { revision, reused: false };
+}
+
+export interface CreateTaskRevisionInput {
+  root: string;
+  taskId: string;
+  ownedPaths: string[];
+  checkIds?: string[];
+  ownershipConflicts?: Array<{ taskId: string; path: string }>;
+  ownershipConflictsAcknowledged?: boolean;
+}
+
+/** The content-derived revision id: same task, same owned-path content, same check set, same revision. */
+export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[]): string {
+  const digest = hashContent(JSON.stringify({ taskId, manifestHash, checkIds: [...checkIds].sort() }));
+  return `revision-${digest.slice(0, 16)}`;
 }
 
 export async function readTaskRevision(root: string, taskId: string, revisionId: string): Promise<TaskRevision> {
@@ -123,11 +160,47 @@ export async function findOwnershipConflicts(
       } catch { /* legacy task without state remains an active ownership claim */ }
       const task = JSON.parse(await readFile(join(tasksRoot, otherTaskId, 'task.json'), 'utf8')) as { ownedPaths?: string[] };
       for (const path of normalizeOwnedPaths(root, task.ownedPaths ?? [])) {
-        if (normalized.some((owned) => pathsOverlap(owned, path))) conflicts.push({ taskId: otherTaskId, path });
+        // Directory-granularity overlap is the cheap test and the common case; when two claims do overlap, the conflict
+        // is reported at the files both tasks actually own, so "tests/" against "tests/" does not read as a total
+        // collision when the two tasks touch different files inside it.
+        if (!normalized.some((owned) => pathsOverlap(owned, path))) continue;
+        const shared = await sharedOwnedFiles(root, normalized, path);
+        if (shared.length > 0) conflicts.push(...shared.map((file) => ({ taskId: otherTaskId, path: file })));
       }
     } catch { /* non-task directory */ }
   }
   return conflicts;
+}
+
+/** The files two ownership claims both cover, or the two claimed paths themselves when neither resolves to files. */
+async function sharedOwnedFiles(root: string, mine: string[], theirs: string): Promise<string[]> {
+  const [mineFiles, theirFiles] = await Promise.all([
+    ownedFiles(root, mine),
+    ownedFiles(root, [theirs]),
+  ]);
+  if (mineFiles.size === 0 || theirFiles.size === 0) {
+    // A path that does not exist yet (a file the task will create) has no file set: report the claim itself.
+    return [...mine, theirs].some((path) => path.length > 0) ? [theirs] : [];
+  }
+  return [...theirFiles].filter((file) => mineFiles.has(file)).sort();
+}
+
+async function ownedFiles(root: string, ownedPaths: string[]): Promise<Set<string>> {
+  const files = new Set<string>();
+  for (const ownedPath of ownedPaths) {
+    try {
+      const info = await stat(join(root, ownedPath));
+      if (info.isFile()) {
+        files.add(ownedPath);
+        continue;
+      }
+      if (!info.isDirectory()) continue;
+      for (const file of await walkRepositoryFiles(root, { under: ownedPath })) files.add(file.path);
+    } catch {
+      // A declared path that does not exist yet contributes no files.
+    }
+  }
+  return files;
 }
 
 export async function workspaceDrift(root: string, ownedPaths: string[]): Promise<string[]> {

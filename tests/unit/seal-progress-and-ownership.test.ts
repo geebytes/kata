@@ -93,11 +93,14 @@ describe('Seal progress and ownership scope', () => {
       onProgress: (event) => { events.push(event); },
     });
 
+    // Independent checks run concurrently, so the events interleave: what each check must produce is a started event
+    // and a terminal event, not a fixed position in the stream.
     expect(events.length).toBe(4);
-    expect(events[0]).toMatchObject({ type: 'quality_check_progress', check: 'check-a', state: 'started' });
-    expect(events[1]).toMatchObject({ type: 'quality_check_progress', check: 'check-a', state: 'passed', exitCode: 0 });
-    expect(events[2]).toMatchObject({ type: 'quality_check_progress', check: 'check-b', state: 'started' });
-    expect(events[3]).toMatchObject({ type: 'quality_check_progress', check: 'check-b', state: 'passed', exitCode: 0 });
+    for (const check of ['check-a', 'check-b']) {
+        const forCheck = events.filter((event) => event.check === check);
+        expect(forCheck[0]).toMatchObject({ type: 'quality_check_progress', check, state: 'started' });
+        expect(forCheck[1]).toMatchObject({ type: 'quality_check_progress', check, state: 'passed', exitCode: 0 });
+    }
     events.forEach((e) => {
       expect(e.type).toBe('quality_check_progress');
       expect(e.timeoutMs).toBeGreaterThan(0);
@@ -181,11 +184,13 @@ describe('Seal progress and ownership scope', () => {
       signal: controller.signal,
     });
 
-    expect(events.length).toBe(2);
-    expect(events[0]).toMatchObject({ state: 'started', check: 'slow' });
-    expect(events[1]).toMatchObject({ state: 'cancelled', check: 'slow' });
-    expect(result.length).toBe(1);
-    expect(result[0].log).toContain('CANCELLED');
+    // The in-flight check is cancelled; the check that had already finished keeps its result, so the count depends on
+    // scheduling rather than on the contract being asserted here.
+    expect(events).toContainEqual(expect.objectContaining({ state: 'started', check: 'slow' }));
+    expect(events).toContainEqual(expect.objectContaining({ state: 'cancelled', check: 'slow' }));
+    const cancelled = result.find((item) => item.name === 'slow');
+    expect(cancelled).toBeDefined();
+    expect(cancelled!.log).toContain('CANCELLED');
 
     const pid = parseInt((await readFile(pidFile, 'utf8')).trim(), 10);
     const waitMs = 7_000;

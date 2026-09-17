@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 import { createContentHasher } from '../core/hash.js';
+import * as os from 'node:os';
 
 export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
 
@@ -92,6 +93,29 @@ export type FreshnessResult =
 
 const maxLogLength = 20_000;
 
+/**
+ * How many checks may run at once: enough to overlap I/O-bound suites without starving the machine the checks are
+ * measuring. Overridable so a CI runner with a different shape can say so.
+ */
+export function checkConcurrency(): number {
+  const configured = Number.parseInt(process.env.KATA_CHECK_CONCURRENCY ?? '', 10);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return Math.max(1, Math.min(4, (os.availableParallelism?.() ?? 2) - 1));
+}
+
+/** Runs a mapper over items with at most `limit` in flight, preserving nothing but the results' own indexing. */
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      await worker(items[index]!, index);
+    }
+  });
+  await Promise.all(runners);
+}
+
 export async function collectEvidence(
   taskId: string,
   commands: CheckCommand[],
@@ -104,8 +128,12 @@ export async function collectEvidence(
     throw new Error('All evidence checks in one collection must use the same cwd');
   }
 
-  for (const check of commands) {
-    if (options.signal?.aborted) break;
+  // Independent checks run concurrently under a bounded pool: they are separate child processes, and a seal that runs
+  // nine of them one at a time spends the sum of their durations rather than the longest. Results are reassembled in
+  // declaration order so a caller's view of the set does not depend on scheduling.
+  const results = new Array<EvidenceEnvelope | undefined>(commands.length);
+  await runWithConcurrency(commands, checkConcurrency(), async (check, index) => {
+    if (options.signal?.aborted) return;
     const checkName = check.name ?? check.command;
     const timeoutMs = check.timeoutMs ?? 600_000;
     options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: 'started', timeoutMs });
@@ -125,7 +153,7 @@ export async function collectEvidence(
           : 'failed';
     options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: finalState, timeoutMs, exitCode: result.exitCode });
 
-    evidence.push({
+    results[index] = {
       id: `evidence-${randomUUID()}`,
       taskId,
       ...(check.id ? { checkId: check.id } : {}),
@@ -139,8 +167,9 @@ export async function collectEvidence(
       finishedAt,
       diffHash: '',
       ...(result.log ? { log: redact(truncate(result.log), redactions) } : {}),
-    });
-  }
+    };
+  });
+  evidence.push(...results.filter((item): item is EvidenceEnvelope => item !== undefined));
 
   if (evidence.length === 0) return evidence;
 
