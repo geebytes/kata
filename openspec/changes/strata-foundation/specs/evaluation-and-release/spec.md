@@ -8,10 +8,10 @@ The project SHALL test that each supported adapter installs the same command man
 - **THEN** their normalized command and protocol manifests SHALL be equivalent
 
 ### Requirement: Workflow evaluation
-The evaluation harness SHALL measure task pass rate, acceptance pass rate, repair count, escalation rate, token/cost usage, latency, and Wiki rejection rate using repeatable task fixtures.
+The evaluation harness SHALL execute the task fixtures a manifest declares and measure acceptance pass rate, repair count, latency and Wiki rejection/promotion counts from what those runs produce. Metrics the runtime cannot observe in process — token and cost usage, and model escalations, which belong to the host platform — SHALL be reported as explicitly unmeasured instead of as zero.
 
-#### Scenario: Cost regression
-- **WHEN** a workflow revision increases cost beyond its configured threshold without improving acceptance pass rate
+#### Scenario: Repair-rate regression
+- **WHEN** a workflow revision raises the measured repair rate past its configured threshold without improving the measured acceptance pass rate
 - **THEN** the release evaluation SHALL fail or mark the revision for review
 
 ### Requirement: Release safety

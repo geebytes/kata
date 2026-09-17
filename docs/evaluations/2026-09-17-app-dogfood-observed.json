@@ -1,0 +1,211 @@
+{
+  "manifest": {
+    "name": "app-dogfood-2026-07-11",
+    "root": "/app",
+    "taskFixtures": [
+      {
+        "id": "df-open",
+        "description": "Open a change with acceptance criteria",
+        "expectedAcceptances": 2,
+        "expectedRepairs": 0,
+        "expectedEscalations": 0
+      },
+      {
+        "id": "df-implement",
+        "description": "Implement with hard checks",
+        "expectedAcceptances": 2,
+        "expectedRepairs": 1,
+        "expectedEscalations": 0
+      },
+      {
+        "id": "df-verify",
+        "description": "Full verify pipeline",
+        "expectedAcceptances": 2,
+        "expectedRepairs": 0,
+        "expectedEscalations": 0
+      },
+      {
+        "id": "df-repair",
+        "description": "Bounded repair cycle",
+        "expectedAcceptances": 1,
+        "expectedRepairs": 1,
+        "expectedEscalations": 1
+      }
+    ],
+    "releaseGates": {
+      "minAcceptancePassRate": 0.7,
+      "maxRepairRate": 1,
+      "maxEscalationRate": 1,
+      "minWikiCount": 0,
+      "maxWikiRejectionRate": 0.5
+    }
+  },
+  "runs": [
+    {
+      "id": "df-open",
+      "taskId": "df-open",
+      "acceptances": 2,
+      "acceptancesPassed": 2,
+      "acceptancesFailed": 0,
+      "repairCount": 0,
+      "escalationCount": 0,
+      "tokensUsed": 0,
+      "costCredits": 0,
+      "latencyMs": 69,
+      "wikiRejected": 0,
+      "wikiPromoted": 0,
+      "expected": {
+        "acceptances": 2,
+        "repairs": 0,
+        "escalations": 0
+      },
+      "steps": [
+        "open",
+        "design",
+        "build",
+        "judge"
+      ]
+    },
+    {
+      "id": "df-implement",
+      "taskId": "df-implement",
+      "acceptances": 2,
+      "acceptancesPassed": 2,
+      "acceptancesFailed": 0,
+      "repairCount": 1,
+      "escalationCount": 0,
+      "tokensUsed": 0,
+      "costCredits": 0,
+      "latencyMs": 130,
+      "wikiRejected": 0,
+      "wikiPromoted": 0,
+      "expected": {
+        "acceptances": 2,
+        "repairs": 1,
+        "escalations": 0
+      },
+      "steps": [
+        "open",
+        "design",
+        "build",
+        "verify:FAIL",
+        "repair",
+        "judge"
+      ]
+    },
+    {
+      "id": "df-verify",
+      "taskId": "df-verify",
+      "acceptances": 2,
+      "acceptancesPassed": 2,
+      "acceptancesFailed": 0,
+      "repairCount": 0,
+      "escalationCount": 0,
+      "tokensUsed": 0,
+      "costCredits": 0,
+      "latencyMs": 65,
+      "wikiRejected": 0,
+      "wikiPromoted": 0,
+      "expected": {
+        "acceptances": 2,
+        "repairs": 0,
+        "escalations": 0
+      },
+      "steps": [
+        "open",
+        "design",
+        "build",
+        "judge"
+      ]
+    },
+    {
+      "id": "df-repair",
+      "taskId": "df-repair",
+      "acceptances": 1,
+      "acceptancesPassed": 1,
+      "acceptancesFailed": 0,
+      "repairCount": 1,
+      "escalationCount": 0,
+      "tokensUsed": 0,
+      "costCredits": 0,
+      "latencyMs": 124,
+      "wikiRejected": 0,
+      "wikiPromoted": 0,
+      "expected": {
+        "acceptances": 1,
+        "repairs": 1,
+        "escalations": 1
+      },
+      "steps": [
+        "open",
+        "design",
+        "build",
+        "verify:FAIL",
+        "repair",
+        "judge"
+      ]
+    }
+  ],
+  "metrics": {
+    "acceptancePassRate": 1,
+    "repairRate": 0.5,
+    "escalationRate": 0,
+    "avgCostPerTask": 0,
+    "avgLatencyMs": 97,
+    "wikiRejectionRate": 0,
+    "totalTasks": 4,
+    "totalAcceptances": 7,
+    "totalPassed": 7,
+    "totalFailed": 0,
+    "totalRepairs": 2,
+    "totalEscalations": 0,
+    "totalTokens": 0,
+    "totalCost": 0,
+    "totalLatencyMs": 388,
+    "totalWikiRejected": 0,
+    "totalWikiPromoted": 0
+  },
+  "releaseGates": {
+    "gates": [
+      {
+        "name": "acceptance-pass-rate",
+        "description": "Acceptance pass rate >= 80%",
+        "pass": true,
+        "details": "Pass rate: 100.0% (7/7)"
+      },
+      {
+        "name": "repair-rate",
+        "description": "Average repairs per task <= 1",
+        "pass": true,
+        "details": "Repair rate: 0.50 per task (2 repairs / 4 tasks)"
+      },
+      {
+        "name": "escalation-rate",
+        "description": "Average escalations per task <= 0.5",
+        "pass": true,
+        "details": "Escalation rate: 0.00 per task (0 escalations / 4 tasks)"
+      },
+      {
+        "name": "wiki-governance",
+        "description": "Wiki contains >= 0 records",
+        "pass": true,
+        "details": "Wiki records: 0"
+      },
+      {
+        "name": "wiki-rejection-rate",
+        "description": "Wiki rejection rate <= 50%",
+        "pass": true,
+        "details": "Wiki rejection rate: 0.0%"
+      }
+    ],
+    "allPass": true,
+    "summary": "All 5 release gates passed."
+  },
+  "timestamp": "2026-09-17T03:46:57.182Z",
+  "durationMs": 399,
+  "unmeasured": [
+    "tokensUsed",
+    "costCredits",
+    "escalationCount"
+  ]
+}

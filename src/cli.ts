@@ -40,6 +40,7 @@ import {
 } from './workflow/navigation.js';
 import { buildContextManifest } from './core/context.js';
 import { buildLlmWikiTask, ingestLlmWiki, initLlmWiki, lintLlmWiki, orientLlmWiki, queryLlmWiki, rebuildLlmWiki, registerWikiPages } from './wiki/llmwiki.js';
+import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from './eval/runner.js';
 import { verifySources } from './wiki/drift.js';
 import { promote, rejectCandidate, retireWikiRecord } from './wiki/promotion.js';
 import { readWikiRecords } from './wiki/store.js';
@@ -188,6 +189,12 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (command === 'tasks') {
         const result = await runTasksCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'eval') {
+        const result = await runEvalCommand(argv.slice(1));
         outputResult(result);
         return;
     }
@@ -1217,6 +1224,41 @@ async function readTaskContext(root: string, change: string): Promise<{
             sourceRefs: context.sourceRefs,
             warnings: context.warnings,
         },
+    };
+}
+
+async function runEvalCommand(argv: string[]): Promise<Record<string, unknown>> {
+    const [manifestPath, ...rest] = argv.filter((arg) => arg !== '--json' && arg !== '--quiet');
+    if (!manifestPath || manifestPath.startsWith('--')) {
+        throw new Error('Usage: kata-cli eval <manifest.json> [--persist <report.json>] [--root <path>]');
+    }
+    const rootIndex = rest.indexOf('--root');
+    const root = rootIndex >= 0 ? rest[rootIndex + 1] ?? resolveWorkspaceRoot() : resolveWorkspaceRoot();
+    const manifest = await loadEvaluationManifest(manifestPath);
+    const report = await runEvaluation(manifest, root);
+
+    const persistIndex = rest.indexOf('--persist');
+    const persistPath = persistIndex >= 0 ? rest[persistIndex + 1] : undefined;
+    if (persistPath) await persistEvaluationReport(report, persistPath);
+
+    return {
+        command: 'eval',
+        manifest: manifestPath,
+        fixtures: report.runs.map((run) => ({
+            id: run.id,
+            steps: run.steps,
+            expected: run.expected,
+            acceptances: run.acceptances,
+            passed: run.acceptancesPassed,
+            failed: run.acceptancesFailed,
+            repairs: run.repairCount,
+            latencyMs: run.latencyMs,
+        })),
+        metrics: report.metrics,
+        releaseGates: report.releaseGates,
+        unmeasured: report.unmeasured,
+        durationMs: report.durationMs,
+        ...(persistPath ? { report: persistPath } : {}),
     };
 }
 

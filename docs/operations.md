@@ -142,21 +142,20 @@ Any gate failure returns the task to bounded repair. Blocking reviewer findings 
 Run a workflow evaluation:
 
 ```bash
-kata-cli eval evals/my-manifest.json
+kata-cli eval evals/my-manifest.json [--persist report.json]
 ```
 
-This produces a report with metrics and release gate results.
+The harness executes every fixture the manifest declares — open, design, a sealed build, a repair round for fixtures that declare repairs, and the Judge's acceptance results for the sealed evidence — and reports what the runs produced next to the expectation each fixture was written against. `--persist` writes the full report, including per-fixture steps, to a JSON file.
 
 ### Metrics
 
 | Metric | Description |
 |--------|-------------|
-| Acceptance pass rate | Passed / total acceptance criteria |
-| Repair rate | Average repairs per task |
-| Escalation rate | Average escalations per task |
-| Cost per task | Average cost credits |
-| Latency | Average milliseconds per task |
+| Acceptance pass rate | Judge PASS criteria / total criteria, measured per run |
+| Repair rate | Repair rounds recorded in the state log / tasks |
+| Latency | Measured milliseconds per fixture |
 | Wiki rejection rate | Rejected / (promoted + rejected) |
+| Escalation rate, cost per task, tokens | **Not measured.** Model choice, cost and retries belong to the host platform, so the report lists them under `unmeasured` instead of reporting a zero |
 
 ## Release gates
 
