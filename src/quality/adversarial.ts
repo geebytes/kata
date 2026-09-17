@@ -43,6 +43,14 @@ export interface AdversarialRecord {
     node: AdversarialNode;
     status: 'recorded' | 'waived';
     revisionId: string;
+    /**
+     * The sealed revision's content identity, stamped by kata when the pass is recorded.
+     *
+     * `revisionId` alone made a re-seal of the same content expire the pass: sealing again issues a new id (the id is
+     * derived from the manifest hash *and* the check ids), so the conclusion had to be paid for twice even though the
+     * artefact had not changed. The manifest hash is what the review is actually about.
+     */
+    manifestHash?: string;
     createdAt: string;
     executedInFreshContext?: boolean;
     contextNote?: string;
@@ -198,11 +206,14 @@ export interface AdversarialGateResult {
  */
 export function evaluateAdversarialGate(
     record: AdversarialRecord | null,
-    input: { node: AdversarialNode; revisionId: string | null; briefSha256: string },
+    input: { node: AdversarialNode; revisionId: string | null; manifestHash?: string | null; briefSha256: string },
 ): AdversarialGateResult {
     if (!input.revisionId) return { satisfied: false, reason: 'no_revision', findings: [] };
     if (!record) return { satisfied: false, reason: 'missing', findings: [] };
-    if (record.revisionId !== input.revisionId) return { satisfied: false, reason: 'stale_revision', record, findings: [] };
+    // Binding: the same revision, or the same owned-path content under a new id (a re-seal that changed nothing).
+    const sameRevision = record.revisionId === input.revisionId;
+    const sameContent = Boolean(record.manifestHash) && record.manifestHash === input.manifestHash;
+    if (!sameRevision && !sameContent) return { satisfied: false, reason: 'stale_revision', record, findings: [] };
     if (record.status === 'waived') return { satisfied: true, reason: 'waived', record, findings: [] };
     // A short-circuit for the shape the gate requires beyond the schema: a recorded pass needs its attestation, its
     // brief and at least one attempt, or it has not demonstrated anything.
@@ -274,9 +285,16 @@ export async function adversarialGateFor(
     taskId: string,
     node: AdversarialNode,
 ): Promise<AdversarialGateResult> {
-    const [brief, record] = await Promise.all([
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const [brief, record, revision] = await Promise.all([
         buildAdversarialBrief(root, taskId, node),
         readAdversarialRecord(root, taskId, node),
+        readCurrentTaskRevision(root, taskId),
     ]);
-    return evaluateAdversarialGate(record, { node, revisionId: brief.revisionId, briefSha256: brief.sha256 });
+    return evaluateAdversarialGate(record, {
+        node,
+        revisionId: brief.revisionId,
+        manifestHash: revision?.manifestHash ?? null,
+        briefSha256: brief.sha256,
+    });
 }

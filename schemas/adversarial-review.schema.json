@@ -4,29 +4,93 @@
   "title": "Kata independent adversarial review record",
   "description": "One adversarial pass over a sealed revision, executed in a clean context. `status: recorded` carries what the adversarial reviewer attempted and found; `status: waived` records an explicit decision to proceed without it. Whether the pass really ran in a fresh context is attested by the executing agent — kata can gate on the attestation and on the brief it was given, not on the host's session.",
   "type": "object",
-  "required": ["node", "status", "revisionId", "createdAt"],
+  "required": [
+    "node",
+    "status",
+    "revisionId",
+    "createdAt"
+  ],
   "additionalProperties": false,
   "properties": {
-    "node": { "type": "string", "enum": ["verify", "review"] },
-    "status": { "type": "string", "enum": ["recorded", "waived"] },
-    "revisionId": { "type": "string", "minLength": 1 },
-    "createdAt": { "type": "string", "minLength": 1 },
-    "executedInFreshContext": { "type": "boolean" },
-    "contextNote": { "type": "string", "minLength": 1 },
-    "briefSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "verdict": { "type": "string", "enum": ["no_defect_found", "defects_found", "inconclusive"] },
-    "executedBy": { "type": "string", "minLength": 1 },
+    "node": {
+      "type": "string",
+      "enum": [
+        "verify",
+        "review"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "recorded",
+        "waived"
+      ]
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestHash": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "executedInFreshContext": {
+      "type": "boolean"
+    },
+    "contextNote": {
+      "type": "string",
+      "minLength": 1
+    },
+    "briefSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "no_defect_found",
+        "defects_found",
+        "inconclusive"
+      ]
+    },
+    "executedBy": {
+      "type": "string",
+      "minLength": 1
+    },
     "attempts": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["hypothesis", "method", "outcome"],
+        "required": [
+          "hypothesis",
+          "method",
+          "outcome"
+        ],
         "additionalProperties": false,
         "properties": {
-          "hypothesis": { "type": "string", "minLength": 1 },
-          "method": { "type": "string", "minLength": 1 },
-          "outcome": { "type": "string", "enum": ["refuted", "confirmed", "inconclusive"] },
-          "evidence": { "type": "string", "minLength": 1 }
+          "hypothesis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "refuted",
+              "confirmed",
+              "inconclusive"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -34,19 +98,53 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "taskId", "severity", "message"],
+        "required": [
+          "id",
+          "taskId",
+          "severity",
+          "message"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "taskId": { "type": "string", "minLength": 1 },
-          "acceptanceId": { "type": "string", "minLength": 1 },
-          "severity": { "type": "string", "enum": ["blocking", "major", "minor", "nit"] },
-          "message": { "type": "string", "minLength": 1 },
-          "path": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acceptanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "major",
+              "minor",
+              "nit"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
-    "waivedReason": { "type": "string", "minLength": 1 },
-    "waivedBy": { "type": "string", "minLength": 1 }
+    "waivedReason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "waivedBy": {
+      "type": "string",
+      "minLength": 1
+    }
   }
 }

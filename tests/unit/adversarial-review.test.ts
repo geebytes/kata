@@ -116,3 +116,45 @@ describe('independent adversarial review', () => {
         expect(renderSkill(build!, 'generic')).not.toContain('## Independent adversarial review');
     });
 });
+
+
+describe('a recorded pass is bound to the content it reviewed', () => {
+    const base = {
+        node: 'verify' as const,
+        status: 'recorded' as const,
+        revisionId: 'revision-old',
+        manifestHash: 'aa'.repeat(32),
+        createdAt: '2026-09-17T00:00:00.000Z',
+        executedInFreshContext: true,
+        briefSha256: 'brief',
+        attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' as const, evidence: 'e' }],
+    };
+
+    it('accepts a pass whose revision id changed but whose content did not', () => {
+        // A re-seal of unchanged owned paths issues a new revision id (the id covers the manifest hash and the check
+        // ids), and paying for a second adversarial pass over the same artefact is the cost this binds away.
+        expect(evaluateAdversarialGate(base, {
+            node: 'verify',
+            revisionId: 'revision-new',
+            manifestHash: 'aa'.repeat(32),
+            briefSha256: 'brief',
+        })).toMatchObject({ satisfied: true });
+    });
+
+    it('still refuses when the content moved', () => {
+        expect(evaluateAdversarialGate(base, {
+            node: 'verify',
+            revisionId: 'revision-new',
+            manifestHash: 'bb'.repeat(32),
+            briefSha256: 'brief',
+        })).toMatchObject({ satisfied: false, reason: 'stale_revision' });
+    });
+
+    it('falls back to the revision id when no content identity was stamped', () => {
+        const legacy = { ...base, manifestHash: undefined };
+        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-old', briefSha256: 'brief' }))
+            .toMatchObject({ satisfied: true });
+        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-new', manifestHash: 'aa'.repeat(32), briefSha256: 'brief' }))
+            .toMatchObject({ satisfied: false, reason: 'stale_revision' });
+    });
+});

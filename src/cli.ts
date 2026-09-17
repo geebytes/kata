@@ -1471,6 +1471,14 @@ async function runWorktreeCommand(argv: string[]): Promise<Record<string, unknow
     throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove>`);
 }
 
+
+/** The sealed revision's manifest hash, for binding a recorded pass to the content it reviewed. */
+async function currentRevisionManifest(root: string, taskId: string): Promise<{ manifestHash?: string }> {
+    const { readCurrentTaskRevision } = await import('./workflow/revision.js');
+    const revision = await readCurrentTaskRevision(root, taskId);
+    return revision?.manifestHash ? { manifestHash: revision.manifestHash } : {};
+}
+
 async function runAdversarialCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     const change = parseChangeArg(rest);
@@ -1503,6 +1511,8 @@ async function runAdversarialCommand(argv: string[]): Promise<Record<string, unk
             node,
             status: 'waived',
             revisionId: (await buildAdversarialBrief(root, change, node)).revisionId ?? '',
+            // Stamped here, not asked of the reviewer: kata knows the sealed content this pass is about.
+            ...(await currentRevisionManifest(root, change)),
             createdAt: new Date().toISOString(),
             waivedReason: reason,
             ...(argValue(rest, '--by') ? { waivedBy: argValue(rest, '--by')! } : {}),
@@ -1527,7 +1537,11 @@ async function runAdversarialCommand(argv: string[]): Promise<Record<string, unk
         } catch (error) {
             throw new Error(`adversarial record could not parse the result: ${error instanceof Error ? error.message : String(error)}`);
         }
-        const record = await writeAdversarialRecord(root, change, { ...parsed, node });
+        const record = await writeAdversarialRecord(root, change, {
+            ...parsed,
+            node,
+            ...(await currentRevisionManifest(root, change)),
+        });
         const gate = await adversarialGateFor(root, change, node);
         return {
             command: 'adversarial record',
