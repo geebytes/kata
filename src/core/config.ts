@@ -7,7 +7,10 @@ export type ResponseLanguage = 'en' | 'zh';
 export type KataConfig = {
   language?: ResponseLanguage;
   quality?: {
+    /** Whether installed documentation (AGENTS.md, `.agents/skills/**`) may define the seal gate. Defaults to true. */
+    discoverChecks?: boolean;
     buildChecks?: Array<{
+      id?: string;
       name?: string;
       kind?: EvidenceKind;
       command: string;
@@ -62,8 +65,10 @@ function parseQualityConfig(value: Record<string, unknown>): KataConfig['quality
   const buildChecks = Array.isArray(value.buildChecks)
     ? value.buildChecks.map(parseQualityCheck)
     : undefined;
+  const discoverChecks = typeof value.discoverChecks === 'boolean' ? value.discoverChecks : undefined;
   return {
     ...(buildChecks ? { buildChecks } : {}),
+    ...(discoverChecks !== undefined ? { discoverChecks } : {}),
   };
 }
 
@@ -83,6 +88,7 @@ function parseQualityCheck(value: unknown): NonNullable<NonNullable<KataConfig['
       ? value.kind
       : (() => { throw new Error('quality.buildChecks[].kind is invalid'); })();
   return {
+    ...(typeof value.id === 'string' ? { id: value.id } : {}),
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
     ...(kind ? { kind } : {}),
     command: value.command,

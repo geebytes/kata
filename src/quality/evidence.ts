@@ -20,6 +20,8 @@ export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judg
 
 export type EvidenceKind = (typeof evidenceKinds)[number];
 
+export type CheckSource = 'configured' | 'discovered' | 'fallback' | 'matrix' | 'explicit';
+
 export interface ImportedCheckResult {
   exitCode: number;
   log?: string;
@@ -27,6 +29,10 @@ export interface ImportedCheckResult {
 }
 
 export interface CheckCommand {
+  /** Stable identity of the check, so recorded evidence can name it structurally instead of by command text. */
+  id?: string;
+  /** Where the resolved check came from: the project's declaration, discovery, an explicit call, or the fallback set. */
+  source?: CheckSource;
   name?: string;
   kind: EvidenceKind;
   command: string;
@@ -48,6 +54,9 @@ export interface EvidenceCollectionOptions {
 export interface EvidenceEnvelope {
   id: string;
   taskId: string;
+  /** The resolved check that produced this evidence, and where that check came from. */
+  checkId?: string;
+  checkSource?: CheckSource;
   name?: string;
   kind: EvidenceKind;
   command: string;
@@ -119,6 +128,8 @@ export async function collectEvidence(
     evidence.push({
       id: `evidence-${randomUUID()}`,
       taskId,
+      ...(check.id ? { checkId: check.id } : {}),
+      ...(check.source ? { checkSource: check.source } : {}),
       ...(check.name ? { name: check.name } : {}),
       kind: check.kind,
       command,

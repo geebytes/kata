@@ -113,13 +113,21 @@ Kata does not hard-code host-project commands such as `make pyrightcheck`. Build
 2. Project constraints discovered from `AGENTS.md` and `.agents/skills/*/SKILL.md` `Acceptance Gate` code blocks.
 3. Kata's own fallback checks, used only when the host project declares no quality gate.
 
+Every resolved check records where it came from (`configured`, `discovered`, `matrix`, `fallback`, or `explicit` for a
+run's own `checks`), and `kata-cli build <task> --list-checks` prints the resolved set before anything runs — id, name,
+kind, command, origin, timeout, and how long the check took the last time this task recorded it. Declaring
+`quality.buildChecks` is recommended for any project that has more than a trivial suite: discovery reads files under
+`.agents/skills/**`, which `kata update` writes, so the discovered set can change without the repository changing.
+Discovery can be refused per repository with `"discoverChecks": false` in `quality`, or per run with
+`--no-discover-checks` (and forced back on with `--discover-checks`).
+
 Example explicit project configuration:
 
 ```json
 {
   "quality": {
     "buildChecks": [
-      { "name": "lint", "kind": "lint", "command": "make", "args": ["lint"] },
+      { "id": "lint", "name": "lint", "kind": "lint", "command": "make", "args": ["lint"] },
       { "name": "typecheck", "kind": "typecheck", "command": "make", "args": ["typecheck"] },
       { "name": "pyrightcheck", "kind": "typecheck", "command": "make", "args": ["pyrightcheck"] },
       { "name": "test", "kind": "test", "command": "make", "args": ["test"], "timeoutMs": 120000 }
@@ -128,7 +136,7 @@ Example explicit project configuration:
 }
 ```
 
-`name` is used in evidence file names, so two checks with the same kind do not overwrite each other. For example, `make typecheck` and `make pyrightcheck` become separate evidence files.
+`name` is used in evidence file names, so two checks with the same kind do not overwrite each other. For example, `make typecheck` and `make pyrightcheck` become separate evidence files. `id` is optional and names the check in recorded evidence; without it the resolved check's kind and command form its identity.
 
 ## Model tiers
 

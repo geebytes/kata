@@ -21,6 +21,11 @@ export interface AcceptanceCriterion {
 export type VerificationLevel = 'unit' | 'integration' | 'entrypoint';
 
 export interface MatrixEvidenceItem {
+  /**
+   * Stable identity of this declaration. The runner resolves the declaration to a check carrying this id, and the
+   * recorded evidence names it, so eligibility is structural rather than a substring match on the command text.
+   */
+  id?: string;
   kind: 'test' | 'lint' | 'typecheck' | 'integration' | 'entrypoint';
   command: string;
   testSelector?: string;

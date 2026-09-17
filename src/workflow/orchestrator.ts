@@ -54,6 +54,10 @@ export interface CommandOptions {
     confirmHostModel?: boolean;
     allowOwnershipConflicts?: boolean;
     allowOutOfScopeRepair?: boolean;
+    /** Report the resolved seal check set instead of sealing: what would run, where it came from, and what it cost last. */
+    listChecks?: boolean;
+    /** Override the config's discovery switch for this run. */
+    discoverChecks?: boolean;
     workflowProfile?: WorkflowProfile;
     ownedPaths?: string[];
     waivers?: Waiver[];
@@ -250,6 +254,14 @@ async function cmdBuild(
     root: string,
     options: CommandOptions = {},
 ): Promise<CommandResult> {
+    if (options.listChecks) {
+        const task = await readTask(root, taskId);
+        const resolved = await describeSealChecks(root, taskId, await resolveSealChecks(root, task, options));
+        return {
+            command: 'build', taskId, phase: task.phase, success: true,
+            diagnostics: { checks: resolved, checkCount: resolved.length },
+        };
+    }
     const current = JSON.parse(
         await readFile(join(root, '.kata/tasks', taskId, 'current-state.json'), 'utf8'),
     ) as { phase: Phase };
@@ -316,25 +328,16 @@ async function cmdBuild(
     }
 
     const task = await readTask(root, taskId);
-    const projectChecks = options.checks?.length
-        ? options.checks
-        : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? []);
-    let matrixDerivedChecks: CheckCommand[] = [];
-    if (!options.checks?.length && task.acceptanceMatrix) {
-        try {
-            matrixDerivedChecks = matrixChecks(root, task.acceptanceMatrix);
-        } catch (error) {
-            return {
-                command: 'build', taskId, phase: 'implement', success: false,
-                error: error instanceof Error ? error.message : String(error),
-                diagnostics: { matrixError: true },
-            };
-        }
+    let checks: CheckCommand[];
+    try {
+        checks = await resolveSealChecks(root, task, options);
+    } catch (error) {
+        return {
+            command: 'build', taskId, phase: 'implement', success: false,
+            error: error instanceof Error ? error.message : String(error),
+            diagnostics: { matrixError: true },
+        };
     }
-    const checks = dedupeCheckCommands([
-        ...projectChecks,
-        ...matrixDerivedChecks,
-    ]);
 
     if (requiresMatrix(task.workflowProfile) && !task.acceptanceMatrix) {
         return {
@@ -584,6 +587,8 @@ function resolveCheckForRow(
                 : undefined;
         const command = runtimeEntry ? process.execPath : rawCommand;
         return {
+            id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
+            source: 'matrix',
             name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
             kind: evidence.kind,
             command,
@@ -607,6 +612,8 @@ function resolveCheckForRow(
                     : undefined;
             const command = runtimeEntry === undefined && rawCommand === 'uv' ? template : (runtimeEntry ? process.execPath : rawCommand);
             return {
+                id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
+                source: 'matrix',
                 name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
                 kind: evidence.kind,
                 command: runtimeEntry ? process.execPath : rawCommand,
@@ -628,6 +635,8 @@ function resolveCheckForRow(
             : undefined;
     const command = runtimeEntry ? process.execPath : rawCommand;
     return {
+        id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${evidence.testSelector ?? evidence.command}`,
+        source: 'matrix',
         name: `${row.acceptanceId}-${evidence.kind}-${evidence.testSelector ?? evidence.command}`,
         kind: evidence.kind,
         command,
@@ -671,6 +680,44 @@ function dedupeCheckCommands(checks: CheckCommand[]): CheckCommand[] {
         && (candidate.args ?? []).join('\0') === (check.args ?? []).join('\0')
         && candidate.cwd === check.cwd,
     ) === index);
+}
+
+/**
+ * The checks a seal resolves, with each one's identity and origin stamped on. The seal and the preflight
+ * (`build --list-checks`) both call this, so the answer a caller inspects is the answer that runs.
+ */
+async function resolveSealChecks(
+    root: string,
+    task: { ownedPaths?: string[]; acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix },
+    options: CommandOptions,
+): Promise<CheckCommand[]> {
+    const projectChecks = options.checks?.length
+        ? options.checks.map((check) => ({ ...check, source: check.source ?? 'explicit' as const }))
+        : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? [], {
+            ...(options.discoverChecks !== undefined ? { discoverChecks: options.discoverChecks } : {}),
+        });
+    const matrixDerivedChecks = !options.checks?.length && task.acceptanceMatrix ? matrixChecks(root, task.acceptanceMatrix) : [];
+    return dedupeCheckCommands([...projectChecks, ...matrixDerivedChecks]);
+}
+
+/** The resolved checks as a report: identity, origin, timeout, and what each cost the last time it ran. */
+async function describeSealChecks(root: string, taskId: string, checks: CheckCommand[]) {
+    const previous = await readRecordedEvidence(root, taskId);
+    return checks.map((check) => {
+        const last = [...previous].reverse().find((envelope) => (check.id ? envelope.checkId === check.id : false)
+            || (check.name ? envelope.name === check.name : false));
+        return {
+            id: check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`,
+            ...(check.name ? { name: check.name } : {}),
+            kind: check.kind,
+            command: check.command,
+            args: check.args ?? [],
+            source: check.source ?? 'explicit',
+            timeoutMs: check.timeoutMs ?? 600_000,
+            lastDurationMs: last ? Math.max(0, Date.parse(last.finishedAt) - Date.parse(last.startedAt)) : null,
+            lastExitCode: last?.exitCode ?? null,
+        };
+    });
 }
 
 async function resolveSealOwnedPaths(

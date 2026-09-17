@@ -633,6 +633,10 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
         ...(commandToRun === 'build' ? { allowOutOfScopeRepair: argv.includes('--allow-out-of-scope-repair') } : {}),
+        ...(commandToRun === 'build' ? { listChecks: argv.includes('--list-checks') } : {}),
+        ...(commandToRun === 'build' && (argv.includes('--discover-checks') || argv.includes('--no-discover-checks'))
+            ? { discoverChecks: argv.includes('--discover-checks') && !argv.includes('--no-discover-checks') }
+            : {}),
         ...(waivers ? { waivers } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
         ...(workflowProfile ? { workflowProfile } : {}),

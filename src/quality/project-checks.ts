@@ -3,8 +3,29 @@ import { join } from 'node:path';
 import type { KataConfig } from '../core/config.js';
 import type { CheckCommand, EvidenceKind } from './evidence.js';
 
-export async function resolveBuildChecks(root: string, config: KataConfig, ownedPaths: string[] = []): Promise<CheckCommand[]> {
-  const configured = config.quality?.buildChecks?.map((check) => ({
+export interface ResolveBuildChecksOptions {
+  /** Whether installed documentation may define the gate. Recorded per check, so a seal's origin is auditable. */
+  discoverChecks?: boolean;
+}
+
+/**
+ * The checks a seal will run, each knowing where it came from.
+ *
+ * Three sources in precedence order: the project's own `quality.buildChecks` declaration, discovery from the installed
+ * documentation (the acceptance gates AGENTS.md and the skill files describe), and a TypeScript/Vitest fallback that
+ * applies only when the first two are empty. Discovery reads files inside `.agents/skills/**`, which `kata update`
+ * writes, so the set it produces can change with no change to the repository at all — which is why every check carries
+ * its source and why `build --list-checks` shows the resolved set before anything runs.
+ */
+export async function resolveBuildChecks(
+  root: string,
+  config: KataConfig,
+  ownedPaths: string[] = [],
+  options: ResolveBuildChecksOptions = {},
+): Promise<CheckCommand[]> {
+  const configured: CheckCommand[] = config.quality?.buildChecks?.map((check) => ({
+    id: check.id,
+    source: 'configured',
     name: check.name ?? inferCheckName(check.command, check.args ?? []),
     kind: check.kind ?? inferEvidenceKind(check.name ?? check.args?.[0] ?? check.command),
     command: check.command,
@@ -17,15 +38,16 @@ export async function resolveBuildChecks(root: string, config: KataConfig, owned
   // quality contract for changes confined to Kata itself (or its supporting
   // documentation); those changes have their own explicit matrix evidence.
   const kataScopedTask = ownedPaths.length > 0 && ownedPaths.every(isKataScopedPath);
-  const discovered = kataScopedTask ? [] : await discoverProjectQualityChecks(root);
+  const discover = options.discoverChecks ?? config.quality?.discoverChecks ?? true;
+  const discovered = kataScopedTask || !discover ? [] : await discoverProjectQualityChecks(root);
 
   // Explicit project configuration or discovered project gates already define
   // the baseline suite. Generic TypeScript/Vitest fallbacks apply only when a
   // project declares neither, otherwise a configured Python/Go/etc. project
   // would receive unrelated failing checks.
   const defaults: CheckCommand[] = kataScopedTask || configured.length > 0 || discovered.length > 0 ? [] : [
-    { name: 'typecheck', kind: 'typecheck', command: process.execPath, args: ['node_modules/typescript/lib/tsc.js', '--noEmit'], cwd: root, timeoutMs: 60_000 },
-    { name: 'test', kind: 'test', command: process.execPath, args: ['node_modules/vitest/dist/cli.js', 'run'], cwd: root, timeoutMs: 120_000 },
+    { source: 'fallback', name: 'typecheck', kind: 'typecheck', command: process.execPath, args: ['node_modules/typescript/lib/tsc.js', '--noEmit'], cwd: root, timeoutMs: 60_000 },
+    { source: 'fallback', name: 'test', kind: 'test', command: process.execPath, args: ['node_modules/vitest/dist/cli.js', 'run'], cwd: root, timeoutMs: 120_000 },
   ];
 
   const merged = [...configured, ...discovered, ...defaults];
@@ -95,6 +117,8 @@ function commandLineToCheck(root: string, commandLine: string): CheckCommand | n
   const [command, target] = commandLine.split(/\s+/);
   if (!command || !target) return null;
   return {
+    id: `discovered:${target}`,
+    source: 'discovered',
     name: target,
     kind: inferEvidenceKind(target),
     command,
