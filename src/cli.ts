@@ -93,19 +93,64 @@ export function getRuntimeCompatibility(manifestPath?: string): CometCompatibili
     return loadCometCompatibility(manifestPath);
 }
 
-let quietOutput = false;
-let jsonOutput = false;
+/**
+ * Where an invocation writes, and in what shape.
+ *
+ * Output behaviour used to be two mutable module booleans plus direct `process.stdout` writes, so rendering mixed
+ * JSON result serialization with update-specific human text and an in-process invocation could not supply its own
+ * streams. The context is supplied at the boundary now: `main` derives it from argv, and a caller may pass its own
+ * streams (a test, or a future transport that is not a process).
+ *
+ * It is held for the duration of one invocation rather than threaded as a parameter through every handler: that
+ * threading belongs with the handler-family extraction (L0-01), and a half-threaded context would be worse than an
+ * explicit one with a stated lifetime. `main` restores whatever was active before it, so nested calls do not leak.
+ */
+export interface OutputContext {
+    stdout: { write(text: string): void };
+    stderr: { write(text: string): void };
+    /** `json` renders results as one JSON document; `human` renders the update summary and progress text. */
+    format: 'json' | 'human';
+    quiet: boolean;
+    isTTY: boolean;
+}
 
-export async function main(argv = process.argv.slice(2)): Promise<void> {
-    const previousQuiet = quietOutput;
-    const previousJson = jsonOutput;
-    jsonOutput = previousJson || isJsonOutput(argv);
-    quietOutput = previousQuiet || isQuietOutput(argv) || isDefaultSilentInstallerCommand(argv);
+export interface OutputOverrides {
+    stdout?: { write(text: string): void };
+    stderr?: { write(text: string): void };
+    isTTY?: boolean;
+}
+
+export function createOutputContext(argv: string[], overrides: OutputOverrides = {}): OutputContext {
+    return {
+        stdout: overrides.stdout ?? process.stdout,
+        stderr: overrides.stderr ?? process.stderr,
+        format: isJsonOutput(argv) ? 'json' : 'human',
+        quiet: isQuietOutput(argv) || isDefaultSilentInstallerCommand(argv),
+        isTTY: overrides.isTTY ?? Boolean(process.stdout.isTTY),
+    };
+}
+
+let activeOutput: OutputContext = createOutputContext([]);
+
+/** The context the current invocation writes through. */
+export function currentOutput(): OutputContext {
+    return activeOutput;
+}
+
+export async function main(argv = process.argv.slice(2), overrides: OutputOverrides = {}): Promise<void> {
+    const previousOutput = activeOutput;
+    const requested = createOutputContext(argv, overrides);
+    // Flags accumulate across nested calls (an installer path may call a workflow command), which is what the previous
+    // OR-ing did.
+    activeOutput = {
+        ...requested,
+        format: previousOutput.format === 'json' ? 'json' : requested.format,
+        quiet: previousOutput.quiet || requested.quiet,
+    };
     try {
         await runMain(stripOutputModeArgs(argv));
     } finally {
-        quietOutput = previousQuiet;
-        jsonOutput = previousJson;
+        activeOutput = previousOutput;
     }
 }
 
@@ -2661,16 +2706,18 @@ function isCliEntrypoint(): boolean {
 }
 
 function outputResult(result: Record<string, unknown>): void {
-    if (quietOutput) return;
-    if (!jsonOutput && isUpdateResult(result)) {
-        process.stdout.write(renderUpdateSummary(result));
+    const output = activeOutput;
+    if (output.quiet) return;
+    if (output.format === 'human' && isUpdateResult(result)) {
+        output.stdout.write(renderUpdateSummary(result));
         return;
     }
-    process.stdout.write(JSON.stringify(result) + '\n');
+    output.stdout.write(JSON.stringify(result) + '\n');
 }
 
 function writeUpdateProgress(message: string): void {
-    if (!quietOutput && !jsonOutput) process.stdout.write(message);
+    const output = activeOutput;
+    if (!output.quiet && output.format === 'human') output.stdout.write(message);
 }
 
 function isUpdateResult(result: Record<string, unknown>): boolean {
@@ -2708,7 +2755,7 @@ function renderUpdateSummary(result: Record<string, unknown>): string {
     }), { written: 0, unchanged: 0, conflicts: 0, removed: 0 });
     const status = total.conflicts > 0 ? '完成（存在需人工处理的冲突）' : '完成';
     const runtimeRefresh = result.runtimeRefresh as RuntimeRefreshResult | undefined;
-    return `\n${status}\n平台：${reports.map((report) => report.platform).join('、')}\n变更：写入 ${total.written} · 保持 ${total.unchanged} · 冲突 ${total.conflicts} · 移除 ${total.removed}\n${runtimeRefresh ? formatRuntimeRefresh(runtimeRefresh) : ''}${jsonOutput ? '' : '提示：使用 --json 获取机器可读报告，使用 --quiet 静默执行。\n'}`;
+    return `\n${status}\n平台：${reports.map((report) => report.platform).join('、')}\n变更：写入 ${total.written} · 保持 ${total.unchanged} · 冲突 ${total.conflicts} · 移除 ${total.removed}\n${runtimeRefresh ? formatRuntimeRefresh(runtimeRefresh) : ''}${activeOutput.format === 'json' ? '' : '提示：使用 --json 获取机器可读报告，使用 --quiet 静默执行。\n'}`;
 }
 
 function formatRuntimeRefresh(result: RuntimeRefreshResult): string {
@@ -2725,7 +2772,9 @@ function formatRuntimeRefresh(result: RuntimeRefreshResult): string {
 
 if (isCliEntrypoint()) {
     main().catch((error: unknown) => {
-        console.error(error instanceof Error ? error.message : error);
+        // The same context the results went through: an error is output too.
+        const output = currentOutput();
+        output.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exitCode = 1;
     });
 }
