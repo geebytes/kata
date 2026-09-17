@@ -621,6 +621,7 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
+        ...(commandToRun === 'build' ? { allowOutOfScopeRepair: argv.includes('--allow-out-of-scope-repair') } : {}),
         ...(waivers ? { waivers } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
         ...(workflowProfile ? { workflowProfile } : {}),

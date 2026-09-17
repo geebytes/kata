@@ -2082,7 +2082,7 @@ async function runHook(
     payload: Record<string, unknown>,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-        const child = spawn('/home/work/.nvm/versions/node/v22.23.1/bin/node', [script, '--project-root', root], {
+        const child = spawn(process.execPath, [script, '--project-root', root], {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
         let stdout = '';

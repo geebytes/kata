@@ -330,6 +330,48 @@ describe('acceptance matrix closure', () => {
         expect(errors.some((e) => e.message.includes('no matrix row'))).toBe(true);
     });
 
+    it('rejects a matrix row whose declared evidence cannot satisfy its verification level', () => {
+        const acceptance = [{ id: 'AC-1', statement: 'Entrypoint behaviour is verified.' }];
+        const matrix = {
+            version: 1 as const,
+            rows: [{
+                acceptanceId: 'AC-1',
+                implementationPaths: ['src/foo.ts'],
+                testPaths: ['tests/foo.test.ts'],
+                evidence: [{ kind: 'test' as const, command: 'vitest run' }],
+                verificationLevel: 'entrypoint' as const,
+            }],
+        };
+
+        const errors = validateMatrix(acceptance, matrix);
+
+        expect(errors).toEqual([
+            expect.objectContaining({
+                acceptanceId: 'AC-1',
+                message: expect.stringContaining('only test evidence'),
+            }),
+        ]);
+    });
+
+    it('requires entrypoint-level evidence for an entrypoint row', () => {
+        const row = {
+            acceptanceId: 'AC-1',
+            implementationPaths: ['src/foo.ts'],
+            testPaths: ['tests/foo.test.ts'],
+            evidence: [{ kind: 'entrypoint' as const, command: 'node scripts/entry.mjs' }],
+            verificationLevel: 'entrypoint' as const,
+        };
+
+        expect(evidenceMatchesRow(row, 'node scripts/entry.mjs', 'entrypoint')).toBe(true);
+        expect(evidenceMatchesRow(row, 'node scripts/entry.mjs', 'test')).toBe(false);
+        expect(evidenceMatchesRow({ ...row, verificationLevel: 'integration' as const }, 'node scripts/entry.mjs', 'test')).toBe(false);
+        expect(evidenceMatchesRow({
+            ...row,
+            verificationLevel: 'integration' as const,
+            evidence: [{ kind: 'test' as const, command: 'vitest run' }],
+        }, 'node_modules/vitest/vitest.mjs run tests/foo.test.ts', 'test')).toBe(true);
+    });
+
     it('rejects matrix referencing unknown AC', () => {
         const acceptance = [{ id: 'AC-1', statement: 'Only AC' }];
         const matrix = {

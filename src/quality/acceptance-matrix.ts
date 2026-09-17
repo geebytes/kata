@@ -104,6 +104,15 @@ export function validateMatrix(
       });
     }
 
+    for (const declaration of row.evidence ?? []) {
+      if (!hasRequiredEvidenceLevel(row, declaration.kind)) {
+        errors.push({
+          acceptanceId: row.acceptanceId,
+          message: `Matrix row for ${row.acceptanceId} declares a ${row.verificationLevel}-level acceptance but only ${declaration.kind} evidence`,
+        });
+      }
+    }
+
     for (const path of [...row.implementationPaths, ...row.testPaths]) {
       if (path.includes('..') || path.startsWith('/') || path.includes(':\\')) {
         errors.push({
@@ -293,7 +302,7 @@ export function evidenceMatchesRow(
   evidenceKind: string,
 ): boolean {
   for (const decl of row.evidence) {
-    const kindMatch = decl.kind === evidenceKind;
+    const kindMatch = decl.kind === evidenceKind && hasRequiredEvidenceLevel(row, evidenceKind);
     const commandMatch = evidenceCommand.includes(decl.command)
       || (decl.command.startsWith('vitest ') && /(?:^|\/)vitest(?:\.mjs)?\s+run\b/.test(evidenceCommand))
       || (decl.command.startsWith('tsc ') && /(?:^|\/)tsc\s+/.test(evidenceCommand));

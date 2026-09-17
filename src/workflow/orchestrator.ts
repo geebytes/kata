@@ -16,7 +16,8 @@ import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask } from './navigation.js';
 import { computeManifestHash, createTaskRevision, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
-import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
+import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
+import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 
@@ -47,6 +48,7 @@ export interface CommandOptions {
     reviewEvidence?: string;
     confirmHostModel?: boolean;
     allowOwnershipConflicts?: boolean;
+    allowOutOfScopeRepair?: boolean;
     workflowProfile?: WorkflowProfile;
     ownedPaths?: string[];
     waivers?: Waiver[];
@@ -415,6 +417,30 @@ async function cmdBuild(
                 error: 'Cannot seal review repair without a changed task manifest; fix the recorded findings and tests before retrying --seal.',
                 diagnostics: { mode: 'implement', repairRequired: true },
             };
+        }
+    }
+    // Bounded repair loop: while a repair is active, the seal may not contain changes outside the acceptance
+    // criteria that repair was authorized for. Drift-authorized repairs record no scopes and are not constrained
+    // here — their whole purpose is to re-seal a revision the workspace has already moved past.
+    const activeRepair = await readActiveRepair(root, taskId);
+    if (activeRepair) {
+        const scopePaths = repairScopePaths(
+            task.acceptanceMatrix,
+            activeRepair.scopes.map((scope) => scope.id).filter((id): id is string => Boolean(id)),
+        );
+        if (scopePaths.length > 0) {
+            const unrelatedRepairPaths = outOfScopeRepairPaths(
+                taskId,
+                await inferOwnedPathsFromWorkspace(root),
+                scopePaths,
+            );
+            if (unrelatedRepairPaths.length > 0 && !options.allowOutOfScopeRepair) {
+                return {
+                    command: 'build', taskId, phase: 'implement', success: false,
+                    error: `Repair touched files outside the failed acceptance scope: ${unrelatedRepairPaths.join(', ')}. Fix only the failing acceptance criteria, or confirm with --allow-out-of-scope-repair.`,
+                    diagnostics: { mode: 'implement', unrelatedRepairPaths, repairScopePaths: scopePaths },
+                };
+            }
         }
     }
     let codeGraphCandidates: CodeGraphCandidate[] = [];
@@ -813,6 +839,33 @@ async function readActiveReviewRepairBaseline(root: string, taskId: string): Pro
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
         throw error;
     }
+}
+
+interface ActiveRepair {
+    reason?: string;
+    scopes: Array<{ id?: string; repairScope?: string }>;
+}
+
+/**
+ * The repair a task is currently working through, if any. Repairs that are done (`resolvedAt`) do not
+ * constrain the next seal: a sealed revision resolves the repair that produced it.
+ */
+async function readActiveRepair(root: string, taskId: string): Promise<ActiveRepair | null> {
+    try {
+        const repair = JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'repair.json'), 'utf8')) as {
+            reason?: string;
+            scopes?: Array<{ id?: string; repairScope?: string }>;
+            resolvedAt?: string;
+        };
+        if (repair.resolvedAt) return null;
+        return {
+            ...(repair.reason ? { reason: repair.reason } : {}),
+            scopes: Array.isArray(repair.scopes) ? repair.scopes : [],
+        };
+    } catch (error: unknown) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+        throw error;
+}
 }
 
 async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
@@ -1338,7 +1391,7 @@ function evaluateReadiness(
         if (freshPassingTestEvidence.length === 0) return { id: acceptanceId, result: 'FAIL', repairScope: 'missing_test_evidence' };
         if (matrix) {
             const row = getMatrixRowForAc(matrix, acceptanceId);
-            if (row && (row.verificationLevel === 'integration' || row.verificationLevel === 'entrypoint')) {
+            if (row && isEntrypointEvidenceKind(row.verificationLevel)) {
                 const hasRowSpecificEvidence = freshEvidence.some((item) => evidenceMatchesRow(row, item.command, item.kind));
                 if (!hasRowSpecificEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'insufficient_evidence_level' };
             }

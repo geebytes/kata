@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { AcceptanceCriterion, AcceptanceMatrix } from '../core/task.js';
 import { checkFreshness, type EvidenceEnvelope } from './evidence.js';
 import type { ReviewFinding } from './reviewer.js';
-import { getMatrixRowForAc, evidenceMatchesRow } from './acceptance-matrix.js';
+import { getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind } from './acceptance-matrix.js';
 
 export interface JudgeInput {
   root?: string;
@@ -74,7 +74,7 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
     }
     if (input.matrix) {
       const row = getMatrixRowForAc(input.matrix, acceptanceId);
-      if (row && (row.verificationLevel === 'integration' || row.verificationLevel === 'entrypoint')) {
+      if (row && isEntrypointEvidenceKind(row.verificationLevel)) {
         const hasRowSpecificEvidence = freshEvidence.some((item) => evidenceMatchesRow(row, item.command, item.kind));
         if (!hasRowSpecificEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'insufficient_evidence_level' };
       }
