@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { buildContextManifest } from '../../src/core/context.js';
+import { selectAuthoritativeContext } from '../../src/wiki/context.js';
 
 describe('Kata context manifest', () => {
   const roots: string[] = [];
@@ -116,5 +117,35 @@ describe('Kata context manifest', () => {
 
     expect(manifest.authoritativeWiki.map((record) => record.id)).toEqual(['wiki-requested-source']);
     expect(manifest.authoritativeWiki.map((record) => record.sourceRefs)).toEqual([['src/core/context.ts']]);
+  });
+
+  it('is a projection of the one authoritative-context selection', async () => {
+    const root = await tempRoot();
+    const base = {
+      statement: 'Verified and relevant Wiki shapes context.',
+      scope: ['src/core/context.ts'],
+      kind: 'implementation-note',
+      sourceRefs: ['src/core/context.ts'],
+      sourceHashes: { 'src/core/context.ts': 'a'.repeat(64) },
+      validationTaskId: 'task-context',
+      evidenceIds: ['evidence-1'],
+      lastVerifiedAt: '2026-07-11T00:00:00.000Z',
+      createdAt: '2026-07-11T00:00:00.000Z',
+      updatedAt: '2026-07-11T00:00:00.000Z',
+    };
+
+    await writeFile(join(root, '.kata/wiki/verified.json'), `${JSON.stringify({ ...base, id: 'wiki-verified', status: 'verified' })}\n`);
+    await writeFile(join(root, '.kata/wiki/candidate.json'), `${JSON.stringify({ ...base, id: 'wiki-candidate', status: 'candidate' })}\n`);
+    await writeFile(join(root, '.kata/wiki/stale.json'), `${JSON.stringify({ ...base, id: 'wiki-stale', status: 'stale' })}\n`);
+    await writeFile(join(root, '.kata/wiki/other-source.json'), `${JSON.stringify({ ...base, id: 'wiki-other', status: 'verified', scope: ['src/other.ts'], sourceRefs: ['src/other.ts'] })}\n`);
+
+    const sourceRefs = ['src/core/context.ts'];
+    const selection = await selectAuthoritativeContext(root, sourceRefs);
+    const manifest = await buildContextManifest({ root, taskId: 'task-context', sourceRefs });
+
+    // The governance suite pins the selection; the manifest agents receive must be the same answer, not a second one.
+    expect(manifest.authoritativeWiki).toEqual(selection.authoritative);
+    expect(manifest.excludedWiki).toEqual(selection.excluded);
+    expect(manifest.warnings).toEqual(selection.warnings);
   });
 });

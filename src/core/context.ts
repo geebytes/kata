@@ -1,4 +1,4 @@
-import { readWikiRecords } from '../wiki/store.js';
+import { selectAuthoritativeContext } from '../wiki/context.js';
 import type { WikiRecord, WikiStatus } from '../wiki/record.js';
 
 export type { WikiRecord, WikiStatus };
@@ -23,42 +23,19 @@ export interface ContextManifest {
   warnings: string[];
 }
 
+/**
+ * The context manifest is a projection: which knowledge is authoritative is decided once, in `wiki/context.ts`, and
+ * this adds the task metadata around it.
+ */
 export async function buildContextManifest(input: ContextRequest): Promise<ContextManifest> {
   const root = input.root ?? process.cwd();
-  const records = await readWikiRecords(root);
-  const requestedSourceRefs = new Set(input.sourceRefs);
-  const authoritativeWiki = records
-    .filter((record) => record.status === 'verified' && isRelevantWikiRecord(record, requestedSourceRefs))
-    .sort((left, right) => left.id.localeCompare(right.id));
-  const excludedWiki = records
-    .filter((record) => record.status !== 'verified')
-    .sort((left, right) => left.id.localeCompare(right.id))
-    .map((record) => ({
-      id: record.id,
-      status: record.status,
-      reason: record.status === 'stale' ? 'stale' : 'not-authoritative',
-    }) satisfies ExcludedWikiRecord);
-  const warnings = records
-    .filter((record) => record.status === 'stale')
-    .flatMap((record) =>
-      record.sourceRefs
-        .filter((sourceRef) => input.sourceRefs.includes(sourceRef))
-        .map((sourceRef) => `Source ${sourceRef} has stale Wiki record ${record.id}; read source before relying on Wiki.`),
-    )
-    .sort();
+  const selection = await selectAuthoritativeContext(root, input.sourceRefs);
 
   return {
     taskId: input.taskId,
     sourceRefs: [...input.sourceRefs],
-    authoritativeWiki,
-    excludedWiki,
-    warnings,
+    authoritativeWiki: selection.authoritative,
+    excludedWiki: selection.excluded,
+    warnings: selection.warnings,
   };
-}
-
-function isRelevantWikiRecord(record: WikiRecord, requestedSourceRefs: Set<string>): boolean {
-  return (
-    record.sourceRefs.some((sourceRef) => requestedSourceRefs.has(sourceRef)) ||
-    record.scope.some((scopeRef) => requestedSourceRefs.has(scopeRef))
-  );
 }
