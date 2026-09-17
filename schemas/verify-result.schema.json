@@ -3,25 +3,74 @@
   "$id": "https://kata.dev/schemas/verify-result.schema.json",
   "title": "Kata verify result",
   "type": "object",
-  "required": ["taskId", "result", "diffHash", "acceptance"],
+  "required": [
+    "taskId",
+    "result",
+    "diffHash",
+    "acceptance"
+  ],
   "additionalProperties": false,
   "properties": {
-    "taskId": { "type": "string", "minLength": 1 },
-    "result": { "type": "string", "enum": ["PASS", "FAIL"] },
-    "diffHash": { "type": "string", "minLength": 1 },
-    "revisionId": { "type": "string", "minLength": 1 },
-    "evidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "diffHash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestHash": {
+      "type": "string"
+    },
+    "evidenceIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "acceptance": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "result"],
+        "required": [
+          "id",
+          "result"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
-          "result": { "type": "string", "enum": ["PASS", "FAIL"] },
-          "evidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-          "repairScope": { "type": "string" }
+          "id": {
+            "type": "string",
+            "pattern": "^AC-[0-9]+$"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "repairScope": {
+            "type": "string"
+          }
         }
       }
     },
@@ -29,13 +78,29 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "statement", "sourceRef", "reason"],
+        "required": [
+          "id",
+          "statement",
+          "sourceRef",
+          "reason"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "statement": { "type": "string", "minLength": 1 },
-          "sourceRef": { "type": "string", "minLength": 1 },
-          "reason": { "type": "string" }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceRef": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string"
+          }
         }
       }
     }

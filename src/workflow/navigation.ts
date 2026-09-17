@@ -5,6 +5,8 @@ import { evaluateWikiClosure } from '../wiki/closure.js';
 import { readObligations } from '../quality/repair-obligations.js';
 import type { RepairScope } from '../quality/judge.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
+import { readCurrentTaskRevision } from './revision.js';
+import { bindsToRevision } from './verdict-binding.js';
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -118,17 +120,20 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const revisionIds = [...new Set(evidence.map((item) => item?.revisionId).filter((id): id is string => Boolean(id)))];
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : undefined;
+  // The sealed content, so a verdict that named the previous id but reviewed the same bytes still counts.
+  const sealed = await readCurrentTaskRevision(root, taskId);
+  const binding = { revisionId: currentRevisionId ?? '', manifestHash: sealed?.manifestHash ?? null };
   const review = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), currentRevisionId)
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), binding)
     : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
   const findings = review?.findings ?? [];
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), currentRevisionId)
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
     : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)) : null;
   const failedAcceptance = judge?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const verify = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)), currentRevisionId)
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)), binding)
     : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)) : null;
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
@@ -166,8 +171,19 @@ function revisionIdForEvidence(evidence: Array<{ revisionId?: string } | null>):
   return revisionIds.length === 1 ? revisionIds[0] : undefined;
 }
 
-function onlyCurrentRevision<T extends { revisionId?: string }>(artifact: T | null, currentRevisionId: string): T | null {
-  return artifact?.revisionId === currentRevisionId ? artifact : null;
+/**
+ * Keeps a verdict that speaks for the current revision — by id, or by the content it reviewed.
+ *
+ * The content half matters for the same reason it does everywhere else: a re-seal of unchanged owned paths issues a new
+ * revision id, and a reader that only knows the id reports "no verdict" for a verdict that is still exactly right.
+ */
+function onlyCurrentRevision<T extends { revisionId?: string; manifestHash?: string }>(
+  artifact: T | null,
+  current: { revisionId: string; manifestHash?: string | null },
+): T | null {
+  return artifact && bindsToRevision(artifact, { revisionId: current.revisionId, manifestHash: current.manifestHash ?? null })
+    ? artifact
+    : null;
 }
 
 /**

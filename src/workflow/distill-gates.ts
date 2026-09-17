@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { readTaskRevision, revisionStatus } from './revision.js';
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
+import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 
 /**
  * Whether a task may enter distill.
@@ -56,6 +57,7 @@ export async function evaluateReviewClearance(
     const review = await readValidatedOptional<{
         findings?: Array<{ severity?: string }>;
         revisionId?: string;
+        manifestHash?: string;
         status?: string;
         reviewEvidence?: string;
     }>('review', reviewPath(root, taskId));
@@ -65,7 +67,11 @@ export async function evaluateReviewClearance(
     if (!Array.isArray(review.findings) || review.findings.some((finding) => finding.severity === 'blocking')) {
         return { cleared: false, reason: 'blocking_findings' };
     }
-    if (revisionId && review.revisionId !== revisionId) return { cleared: false, reason: 'stale_review' };
+    // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
+    // expiring the clearance there is what made a re-seal re-run the whole review.
+    if (revisionId && !bindsToRevision(review, { revisionId, manifestHash: (await currentRevisionIdentity(root, taskId)).manifestHash })) {
+        return { cleared: false, reason: 'stale_review' };
+    }
     return { cleared: true, ...(revisionId ? { revisionId } : {}) };
 }
 
@@ -89,7 +95,10 @@ export async function evaluateJudgePass(input: {
     const judge = await readValidatedOptional<JudgeResult>('judge-result', judgePath(input.root, input.taskId));
     if (!judge || judge.taskId !== input.taskId || judge.result !== 'PASS') return { passed: false, reason: 'not_passed' };
     if (input.freshEvidence?.revisionId) {
-        if (judge.revisionId !== input.freshEvidence.revisionId) return { passed: false, reason: 'stale_judgement' };
+        const identity = await currentRevisionIdentity(input.root, input.taskId);
+        if (!bindsToRevision(judge, { revisionId: input.freshEvidence.revisionId, manifestHash: identity.manifestHash })) {
+            return { passed: false, reason: 'stale_judgement' };
+        }
     } else if (judge.diffHash !== input.currentDiffHash) {
         return { passed: false, reason: 'stale_judgement' };
     }

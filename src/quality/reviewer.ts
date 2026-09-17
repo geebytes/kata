@@ -50,7 +50,13 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
   }
 
   await mkdir(taskDir(root, input.taskId), { recursive: true });
-  await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`, 'utf8');
+  const { currentRevisionIdentity, revisionBindingFields } = await import('../workflow/verdict-binding.js');
+  const binding = revisionBindingFields(await currentRevisionIdentity(root, input.taskId));
+  await writeFile(
+    reviewPath,
+    `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...binding, findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`,
+    'utf8',
+  );
 
   if (finding.severity === 'blocking') {
     const { persistBlockingFindings } = await import('./repair-obligations.js');

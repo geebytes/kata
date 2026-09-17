@@ -3,15 +3,52 @@
   "$id": "https://kata.dev/schemas/user-choice-gate.schema.json",
   "title": "Kata user choice gate",
   "type": "object",
-  "required": ["taskId", "boundary", "createdAt"],
+  "required": [
+    "taskId",
+    "boundary",
+    "createdAt"
+  ],
   "additionalProperties": false,
   "properties": {
-    "taskId": { "type": "string", "minLength": 1 },
-    "boundary": { "type": "string", "enum": ["implementation_gate", "review_gate", "judge_gate", "archive_gate"] },
-    "revisionId": { "type": "string", "minLength": 1 },
-    "createdAt": { "type": "string", "minLength": 1 },
-    "choice": { "type": "string", "enum": ["continue_current", "switched", "delegated"] },
-    "approvedAt": { "type": "string", "minLength": 1 },
-    "consumedAt": { "type": "string", "minLength": 1 }
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "boundary": {
+      "type": "string",
+      "enum": [
+        "implementation_gate",
+        "review_gate",
+        "judge_gate",
+        "archive_gate"
+      ]
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestHash": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "choice": {
+      "type": "string",
+      "enum": [
+        "continue_current",
+        "switched",
+        "delegated"
+      ]
+    },
+    "approvedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "consumedAt": {
+      "type": "string",
+      "minLength": 1
+    }
   }
 }

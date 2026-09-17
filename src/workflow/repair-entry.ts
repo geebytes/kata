@@ -5,6 +5,7 @@ import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import type { RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionStatus } from './revision.js';
+import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, taskPath, judgePath } from '../core/layout.js';
 
 /**
@@ -102,8 +103,13 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
         .catch(() => null);
     const isStrict = task?.workflowProfile?.reviewMode === 'strict';
     const revision = await readCurrentTaskRevision(root, taskId);
-    if (review.revisionId !== revision?.id) {
-        return denial(entryPhase, 'Build cannot run from review because its findings are not bound to the current sealed revision. Re-run /kata-review.');
+    const identity = await currentRevisionIdentity(root, taskId);
+    if (!bindsToRevision(review, identity)) {
+        return denial(
+            entryPhase,
+            'Build cannot run from review because its findings are not bound to the current sealed revision (or to the same '
+            + 'content under a new revision). Re-run /kata-review.',
+        );
     }
 
     const findings = review.findings ?? [];

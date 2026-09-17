@@ -12,6 +12,7 @@ import { assertValidAcceptanceId, assertValidTaskId, requirementIdPattern } from
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { collectSealPreflight } from './seal-preflight.js';
+import { bindsToRevision, currentRevisionIdentity, revisionBindingFields } from './verdict-binding.js';
 import { matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
@@ -760,7 +761,7 @@ async function cmdVerify(
     const scopeHashes = await currentScopeHashes(root, evidence);
     const revisionId = revisionIdForEvidence(evidence);
     const review = await readReview(root, taskId);
-    const ignoredReviewFindings = revisionId && review.revisionId !== revisionId ? review.findings.length : 0;
+    const ignoredReviewFindings = revisionId && !bindsToRevision(review, await currentRevisionIdentity(root, taskId)) ? review.findings.length : 0;
     const findings = ignoredReviewFindings > 0 ? [] : review.findings;
     const revision = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
     const status = revision ? await revisionStatus(root, revision) : undefined;
@@ -787,7 +788,14 @@ async function cmdVerify(
             })),
         );
     }
-    await writeFile(verifyPath(root, taskId), `${JSON.stringify(verifyResult, null, 2)}\n`, 'utf8');
+    // The verdict names the revision it is about (id) and the content it saw (manifest hash), so a re-seal that changed
+    // nothing does not expire it.
+    const verifyBinding = await currentRevisionIdentity(root, taskId);
+    await writeFile(
+        verifyPath(root, taskId),
+        `${JSON.stringify({ ...verifyResult, ...revisionBindingFields(verifyBinding) }, null, 2)}\n`,
+        'utf8',
+    );
 
     // Verify does not decide what happens next: it asks the same resolver the dispatcher uses, over the artefacts it
     // just wrote, so both surfaces answer with one ladder, one vocabulary and the priorities the dispatcher shows.
@@ -948,10 +956,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const existing = await readReview(root, taskId);
-            if (revisionId && existing.revisionId !== revisionId) {
+            const approveBinding = await currentRevisionIdentity(root, taskId);
+            if (revisionId && !bindsToRevision(existing, approveBinding)) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: 'Review approval requires findings recorded for the same sealed revision as current evidence. Re-run /kata-review before approving.',
+                    error: 'Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence. Re-run /kata-review before approving.',
                 };
             }
             if (existing.findings.some((f) => f.severity === 'blocking' || f.severity === 'major')) {
@@ -960,7 +969,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Cannot approve review with blocking or major findings; resolve findings first.',
                 };
             }
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
             return { command: 'review', taskId, phase: 'review', success: true, diagnostics: { role: 'reviewer', approval: true, reviewEvidence, ...(revisionId ? { revisionId } : {}) } };
         }
 
@@ -983,7 +992,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 findings?: ReviewFinding[];
                 status?: string;
             };
-            if (revisionId && previous.revisionId !== revisionId) {
+            const recordBinding = await currentRevisionIdentity(root, taskId);
+            if (revisionId && !bindsToRevision(previous, recordBinding)) {
                 if (previous.findings?.length) {
                     const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
                     const historyEntry = JSON.stringify({

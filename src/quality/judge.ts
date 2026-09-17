@@ -98,8 +98,16 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
   };
 
   const root = input.root ?? process.cwd();
+  // Stamped like every other verdict: the id names the revision, the manifest hash names the content it judged, so a
+  // re-seal that changed nothing does not expire the judgement (see `workflow/verdict-binding.ts`).
+  const { currentRevisionIdentity, revisionBindingFields } = await import('../workflow/verdict-binding.js');
+  const binding = revisionBindingFields(await currentRevisionIdentity(root, input.taskId));
   await mkdir(taskDir(root, input.taskId), { recursive: true });
-  await writeFile(layoutJudgePath(root, input.taskId), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  await writeFile(
+    layoutJudgePath(root, input.taskId),
+    `${JSON.stringify({ ...result, ...binding }, null, 2)}\n`,
+    'utf8',
+  );
 
   return result;
 }
