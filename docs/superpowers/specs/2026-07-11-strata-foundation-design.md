@@ -31,7 +31,7 @@ Comet runtime
 
 Kata extension
 ├── kata-core       task/context/evidence contracts
-├── kata-policy     model tiers/budget/escalation
+├── kata-policy     role write scopes and permissions
 ├── kata-quality    checks/reviewer/judge/repair
 ├── kata-wiki       provenance/drift/conflict/promotion
 ├── kata-adapters   Comet compatibility + normalized manifests
@@ -82,9 +82,9 @@ approved policy/ADR/contract
 
 ## 5. 模型与权限
 
-模型通过 `economy`、`capable`、`frontier` capability tier 配置，不在代码中绑定具体厂商。实现者拥有任务代码和测试的有限写权限；Reviewer 只能写 findings；Judge 只能写结构化判定；Distiller 只能写 candidate；规则和 verified Wiki 的 promotion 需要显式批准。
+模型选择属于宿主平台：Kata 不配置、不路由也不记录 agent 运行在哪个模型上，也不在仓库里保存供应商凭据。Kata 自己的契约是角色协议——谁能写什么：实现者拥有任务代码和测试的有限写权限；Reviewer 只能写 findings；Judge 只能写结构化判定；Distiller 只能写 candidate；规则和 verified Wiki 的 promotion 需要显式批准。
 
-升级条件包括：连续硬验证失败、结构化输出失败、源冲突、安全敏感范围、预算/改动上限或验收歧义。Repair 只允许修复失败 acceptance 的范围，且必须重新执行 hard verification。
+当实现者用尽任务可用的修复轮次时，运行时停在对应 gate，指引用户在宿主平台自行选择模型，而不是由 Kata 切换模型。Repair 只允许修复失败 acceptance 的范围，且必须重新执行 hard verification。
 
 ## 6. 平台适配
 

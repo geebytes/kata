@@ -55,7 +55,7 @@ src/
   core/            state machine, schemas, guards, handoff
   adapters/        codex, claude-code, opencode, generic
   installer/       discovery, manifest, update/uninstall
-  policy/          model tiers, budgets, escalation
+  policy/          role write scopes and permissions
   evidence/        command/CI/reviewer envelopes
   wiki/            records, hash index, drift, promotion
   eval/            fixtures, metrics, report writers
@@ -68,7 +68,6 @@ Each consuming repository receives:
 ```text
 .kata/
   config.yaml
-  model-policy.yaml
   workflow.yaml
   rules/
   wiki/
@@ -103,11 +102,11 @@ All cross-role communication uses versioned JSON Schema documents:
 
 Invalid or extra-role outputs are rejected before state mutation. Secrets are redacted from logs and never included in manifests or Wiki records.
 
-### 5. Model policy as capability tiers
+### 5. Host-owned model selection and role write scopes
 
-`model-policy.yaml` defines `economy`, `capable`, and `frontier` roles, allowed operations, cost limits, retry limits, and escalation triggers. Provider/model names are configuration values, not code branches. Planner, reviewer, judge, and distiller default to frontier; implement/test/first-repair defaults to economy.
+Model choice belongs to the host platform: Kata does not configure, route, or record which model an agent runs on, and never stores provider credentials. The runtime's own contract is the role protocol — who may write what. The implementer has bounded write access to task code and tests, the reviewer writes findings only, the judge writes a structured verdict only, and the distiller writes candidates only; promoted rules and verified Wiki records require explicit approval.
 
-An economy worker is escalated after repeated hard-check failure, structured-output failure, source conflict, security-sensitive scope, budget overrun, or ambiguous acceptance. A repair worker can modify only the failed acceptance scope and must return to hard verification.
+When an implementer has exhausted the repair rounds available for a task, the runtime stops at the corresponding gate and instructs the user to choose the model in the host platform rather than switching models itself. A repair worker can modify only the failed acceptance scope and must return to hard verification.
 
 ### 6. Evidence before Judge; Judge before Wiki
 
@@ -159,7 +158,7 @@ Fixtures exercise success, interruption/resume, stale Wiki, source conflict, fai
 - [Judge correlated errors] → Give Judge independent evidence and prohibit it from editing the implementation; require hard checks before Judge.
 - [Platform capability variance] → Use capability manifests and generic fallback adapters; never claim unsupported hooks exist.
 - [Context or log growth] → Use manifests, bounded logs, content hashes, and references to files/artifacts rather than embedding large payloads.
-- [Cost escalation] → Set per-task budgets, role limits, retry ceilings, and auditable escalation events.
+- [Host model variance] → Keep correctness in deterministic evidence, the Reviewer/Judge gates and bounded repair rounds; model selection stays with the host platform.
 - [Sensitive data leakage] → Redact command output, exclude credentials from config, and validate paths before including source content.
 - [Single large change] → Implement by milestones with independently testable contracts and keep each milestone separately committable.
 
@@ -168,7 +167,7 @@ Fixtures exercise success, interruption/resume, stale Wiki, source conflict, fai
 1. Initialize `/app/kata` as an independent Node project and OpenSpec/Comet-compatible development workspace.
 2. Implement core schemas, state store, guards, and CLI in offline mode before any provider integration.
 3. Add Comet-compatible Skill bundle generation and Codex/Claude Code/OpenCode adapter fixtures.
-4. Add evidence collection, model policy, Reviewer/Judge contracts, and repair loop.
+4. Add evidence collection, role write scopes, Reviewer/Judge contracts, and the bounded repair loop.
 5. Add governed Wiki records, source index, drift/conflict checks, promotion flow, and task context builder.
 6. Add evaluation fixtures and release gates; run a dogfood task in `/app` without modifying the parent project's runtime.
 7. Publish/install the package only after the adapter and governance gates pass.

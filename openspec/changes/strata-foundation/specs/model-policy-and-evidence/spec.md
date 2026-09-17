@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
-### Requirement: Vendor-neutral model policy
-The runtime SHALL route roles through capability tiers, budgets, and escalation rules without requiring a specific model vendor or storing credentials in repository files.
+### Requirement: Host-owned model selection
+The runtime SHALL NOT configure, route, or record the host platform's model choice, and SHALL NOT store provider credentials in repository files. Role protocols stay Kata-owned: the implementer has bounded write access to task code and tests, the reviewer writes findings only, the judge writes a structured verdict only, and the distiller writes candidates only.
 
-#### Scenario: Economy implementation fails twice
-- **WHEN** an economy implementer reaches the configured repair limit
-- **THEN** the runtime SHALL escalate to the configured capable/frontier role or stop with a retryable failure
+#### Scenario: A role reaches its repair limit
+- **WHEN** an implementer has exhausted the repair rounds available for the task
+- **THEN** the runtime SHALL stop at the corresponding gate and instruct the user to choose the model in the host platform, instead of switching models itself
 
 ### Requirement: Immutable evidence envelopes
 The evidence subsystem SHALL record command, environment summary, exit status, timestamps, relevant diff hash, and bounded logs for lint, typecheck, tests, CI, and reviewer results.

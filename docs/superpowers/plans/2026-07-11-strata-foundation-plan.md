@@ -14,6 +14,8 @@ base-ref: dca2f22b17f1b4777c9db1f09f518ad6b8ced012
 
 **Tech Stack:** Node.js 20+、TypeScript 5+、JSON Schema、Markdown front matter、Vitest、Zod/Ajv（选定一个 schema 校验库并全局复用）、npm 打包。
 
+<!-- comet-task-authority: openspec/changes/strata-foundation/tasks.md -->
+
 ## Global Constraints
 
 - 只在 `/app/kata` 开发；不创建远程仓库或 Git submodule。
@@ -57,11 +59,11 @@ kata/
 - `CometClient { init(change: string): Promise<void>; status(change: string): Promise<CometStatus>; next(change: string): Promise<CometNext> }`
 - `CometGuard { check(change: string, phase: string): Promise<GuardResult>; apply(change: string, phase: string): Promise<GuardResult> }`
 
-- [x] **Step 1: Write failing compatibility tests** asserting public command invocation, version rejection outside range, and no import path containing `private`/`internal`.
-- [x] **Step 2: Run `npm test -- tests/unit/comet-compat.test.ts`;** expected FAIL because workspace and interfaces do not exist.
-- [x] **Step 3: Add strict package scripts**: `lint`, `typecheck`, `test`, `build`, `pack`; implement `CometClient` as a child-process boundary using argument arrays and captured JSON stdout.
-- [x] **Step 4: Run `npm run typecheck && npm test -- tests/unit/comet-compat.test.ts`;** expected PASS.
-- [x] **Step 5: Commit `chore: scaffold kata typescript workspace and comet boundary`.**
+- **Step 1: Write failing compatibility tests** asserting public command invocation, version rejection outside range, and no import path containing `private`/`internal`. <!-- comet-task-ref:1-2 -->
+- **Step 2: Run `npm test -- tests/unit/comet-compat.test.ts`;** expected FAIL because workspace and interfaces do not exist. <!-- comet-task-ref:1-2 -->
+- **Step 3: Add strict package scripts**: `lint`, `typecheck`, `test`, `build`, `pack`; implement `CometClient` as a child-process boundary using argument arrays and captured JSON stdout. <!-- comet-task-ref:1-1 -->
+- **Step 4: Run `npm run typecheck && npm test -- tests/unit/comet-compat.test.ts`;** expected PASS. <!-- comet-task-ref:1-1 -->
+- **Step 5: Commit `chore: scaffold kata typescript workspace and comet boundary`.** <!-- comet-task-ref:1-1 -->
 
 ### Task 2: 定义 schema 与 `.kata` layout
 
@@ -75,11 +77,11 @@ kata/
 - `initLayout(root: string): Promise<LayoutResult>`
 - `LayoutResult { created: string[]; existing: string[]; conflicts: string[] }`
 
-- [x] **Step 1: Write failing tests** for required task acceptance IDs, evidence task/diff hash, Wiki statuses (`candidate|verified|stale|rejected`), and creation of `.kata/{rules,wiki,tasks,evidence,schemas,runtime}`.
-- [x] **Step 2: Run `npm test -- tests/unit/layout.test.ts tests/property/schema.property.test.ts`;** expected FAIL.
-- [x] **Step 3: Implement schemas and `initLayout`;** create `.gitignore` entries for `.kata/runtime/`, use atomic file writes, and reject malformed config before creating files.
-- [x] **Step 4: Run `npm run typecheck && npm test -- tests/unit/layout.test.ts tests/property/schema.property.test.ts`;** expected PASS.
-- [x] **Step 5: Commit `feat: add kata schemas and project layout`.**
+- **Step 1: Write failing tests** for required task acceptance IDs, evidence task/diff hash, Wiki statuses (`candidate|verified|stale|rejected`), and creation of `.kata/{rules,wiki,tasks,evidence,schemas,runtime}`. <!-- comet-task-ref:1-3 -->
+- **Step 2: Run `npm test -- tests/unit/layout.test.ts tests/property/schema.property.test.ts`;** expected FAIL. <!-- comet-task-ref:1-3 -->
+- **Step 3: Implement schemas and `initLayout`;** create `.gitignore` entries for `.kata/runtime/`, use atomic file writes, and reject malformed config before creating files. <!-- comet-task-ref:1-4 -->
+- **Step 4: Run `npm run typecheck && npm test -- tests/unit/layout.test.ts tests/property/schema.property.test.ts`;** expected PASS. <!-- comet-task-ref:1-4 -->
+- **Step 5: Commit `feat: add kata schemas and project layout`.** <!-- comet-task-ref:1-4 -->
 
 ### Task 3: 实现任务状态、恢复与上下文 manifest
 
@@ -93,11 +95,11 @@ kata/
 - `recover(taskId: string): Promise<RecoveryDiagnostic>`
 - `buildContextManifest(input: ContextRequest): Promise<ContextManifest>`
 
-- [x] **Step 1: Write failing tests** for legal `intake→plan→implement→hardVerify→review→judge→distill→archive`, rejection of direct `implement→archive`, deterministic active-session pointer recovery, and exclusion of stale/candidate Wiki.
-- [x] **Step 2: Run focused Vitest commands;** expected FAIL.
-- [x] **Step 3: Implement append-only state events plus atomic current-state projection;** require acceptance IDs before `implement`, evidence/reviewer/judge gates before `distill`, and source-read warnings for stale Wiki.
-- [x] **Step 4: Run `npm run typecheck && npm test -- tests/unit/state.test.ts tests/unit/recovery.test.ts tests/unit/context.test.ts tests/property/state.property.test.ts`;** expected PASS.
-- [x] **Step 5: Commit `feat: implement task state recovery and context manifests`.**
+- **Step 1: Write failing tests** for legal `intake→plan→implement→hardVerify→review→judge→distill→archive`, rejection of direct `implement→archive`, deterministic active-session pointer recovery, and exclusion of stale/candidate Wiki. <!-- comet-task-ref:1-6 -->
+- **Step 2: Run focused Vitest commands;** expected FAIL. <!-- comet-task-ref:1-6 -->
+- **Step 3: Implement append-only state events plus atomic current-state projection;** require acceptance IDs before `implement`, evidence/reviewer/judge gates before `distill`, and source-read warnings for stale Wiki. <!-- comet-task-ref:1-5 --> <!-- comet-task-ref:3-2 -->
+- **Step 4: Run `npm run typecheck && npm test -- tests/unit/state.test.ts tests/unit/recovery.test.ts tests/unit/context.test.ts tests/property/state.property.test.ts`;** expected PASS. <!-- comet-task-ref:1-6 -->
+- **Step 5: Commit `feat: implement task state recovery and context manifests`.** <!-- comet-task-ref:1-5 -->
 
 ### Task 4: 实现 `/kata-*` Skills 与平台安装器
 
@@ -112,11 +114,11 @@ kata/
 - `install(platform: Platform, scope: InstallScope, options: InstallOptions): Promise<InstallReport>`
 - `update(...)`, `uninstall(...)`, `renderSkill(command: SkillCommand, platform: Platform): string`
 
-- [x] **Step 1: Write golden tests** requiring all first-release adapters to render the same normalized command manifest and preserve user-owned files.
-- [x] **Step 2: Run `npm test -- tests/golden/adapters.test.ts tests/unit/installer.test.ts`;** expected FAIL.
-- [x] **Step 3: Implement project/global discovery, capability flags, ownership/hash manifest, dry-run and conflict-safe writes;** add CLI commands `kata init`, `kata update`, `kata uninstall`.
-- [x] **Step 4: Run `npm run build && npm test -- tests/golden/adapters.test.ts tests/unit/installer.test.ts`;** expected PASS.
-- [x] **Step 5: Commit `feat: install kata skills across coding platforms`.**
+- **Step 1: Write golden tests** requiring all first-release adapters to render the same normalized command manifest and preserve user-owned files. <!-- comet-task-ref:2-6 -->
+- **Step 2: Run `npm test -- tests/golden/adapters.test.ts tests/unit/installer.test.ts`;** expected FAIL. <!-- comet-task-ref:2-6 -->
+- **Step 3: Implement project/global discovery, capability flags, ownership/hash manifest, dry-run and conflict-safe writes;** add CLI commands `kata init`, `kata update`, `kata uninstall`. <!-- comet-task-ref:2-2 --> <!-- comet-task-ref:2-3 --> <!-- comet-task-ref:2-4 -->
+- **Step 4: Run `npm run build && npm test -- tests/golden/adapters.test.ts tests/unit/installer.test.ts`;** expected PASS. <!-- comet-task-ref:2-5 -->
+- **Step 5: Commit `feat: install kata skills across coding platforms`.** <!-- comet-task-ref:2-1 -->
 
 ### Task 5: 模型策略、权限与 repair loop
 
@@ -130,11 +132,11 @@ kata/
 - `validateWrite(actor: Actor, path: string, task: TaskRecord): PermissionResult`
 - `enforceRepairScope(finding: Finding, diff: DiffSummary): RepairScopeResult`
 
-- [x] **Step 1: Write failing tests** for economy/capable/frontier roles, retry and diff budgets, protected rules/verified Wiki, escalation after two hard failures, and repair returning to `hardVerify`.
-- [x] **Step 2: Run focused tests;** expected FAIL.
-- [x] **Step 3: Implement policy resolution and permission checks** with vendor-neutral tiers and structured escalation events; reject unrelated repair paths.
-- [x] **Step 4: Run `npm run typecheck && npm test -- tests/unit/model-policy.test.ts tests/unit/permissions.test.ts tests/unit/repair.test.ts`;** expected PASS.
-- [x] **Step 5: Commit `feat: add model policy permissions and bounded repair`.**
+- **Step 1: Write failing tests** for economy/capable/frontier roles, retry and diff budgets, protected rules/verified Wiki, escalation after two hard failures, and repair returning to `hardVerify`. <!-- comet-task-ref:3-5 -->
+- **Step 2: Run focused tests;** expected FAIL. <!-- comet-task-ref:3-5 -->
+- **Step 3: Implement policy resolution and permission checks** with vendor-neutral tiers and structured escalation events; reject unrelated repair paths. <!-- comet-task-ref:3-3 --> <!-- comet-task-ref:3-4 -->
+- **Step 4: Run `npm run typecheck && npm test -- tests/unit/model-policy.test.ts tests/unit/permissions.test.ts tests/unit/repair.test.ts`;** expected PASS. <!-- comet-task-ref:3-5 -->
+- **Step 5: Commit `feat: add model policy permissions and bounded repair`.** <!-- comet-task-ref:3-1 -->
 
 ### Task 6: 证据、Reviewer 与 Judge 质量门
 
@@ -148,11 +150,11 @@ kata/
 - `recordFinding(input: ReviewFindingInput): Promise<ReviewFinding>`
 - `judge(input: JudgeInput): Promise<JudgeResult>`
 
-- [x] **Step 1: Write failing fixtures** for missing tests, stale evidence, blocking findings, Judge FAIL, bounded repair, and successful PASS with per-acceptance evidence references.
-- [x] **Step 2: Run `npm test -- tests/unit/evidence.test.ts tests/e2e/quality-gates.test.ts`;** expected FAIL.
-- [x] **Step 3: Implement bounded command execution with exit codes, redaction, environment summary, diff hash and CI import;** enforce read-only Judge output and no archive without fresh evidence.
-- [x] **Step 4: Run focused tests and `npm run lint`;** expected PASS.
-- [x] **Step 5: Commit `feat: enforce evidence reviewer and judge gates`.**
+- **Step 1: Write failing fixtures** for missing tests, stale evidence, blocking findings, Judge FAIL, bounded repair, and successful PASS with per-acceptance evidence references. <!-- comet-task-ref:4-5 -->
+- **Step 2: Run `npm test -- tests/unit/evidence.test.ts tests/e2e/quality-gates.test.ts`;** expected FAIL. <!-- comet-task-ref:4-5 -->
+- **Step 3: Implement bounded command execution with exit codes, redaction, environment summary, diff hash and CI import;** enforce read-only Judge output and no archive without fresh evidence. <!-- comet-task-ref:4-1 --> <!-- comet-task-ref:4-3 -->
+- **Step 4: Run focused tests and `npm run lint`;** expected PASS. <!-- comet-task-ref:4-2 -->
+- **Step 5: Commit `feat: enforce evidence reviewer and judge gates`.** <!-- comet-task-ref:4-4 -->
 
 ### Task 7: 受治理 Wiki 生命周期与联动
 
@@ -168,11 +170,11 @@ kata/
 - `promote(id: string, approval: ApprovalEvent): Promise<WikiRecord>`
 - `selectAuthoritativeContext(request: WikiContextRequest): Promise<WikiRecord[]>`
 
-- [ ] **Step 1: Write failing tests** proving failed tasks, unapproved candidates, stale sources and conflicts cannot become `verified`.
-- [ ] **Step 2: Run Wiki tests;** expected FAIL.
-- [ ] **Step 3: Implement Markdown/front-matter records** with source paths/symbols/hashes, candidate generation only from PASS tasks, `wiki verify`, conflict routing to `needs-clarification`, explicit approval events, and `wiki promote` guards.
-- [ ] **Step 4: Run `npm test -- tests/unit/wiki-governance.test.ts tests/e2e/wiki-lifecycle.test.ts`;** expected PASS.
-- [ ] **Step 5: Commit `feat: add governed wiki lifecycle and context selection`.**
+- **Step 1: Write failing tests** proving failed tasks, unapproved candidates, stale sources and conflicts cannot become `verified`. <!-- comet-task-ref:5-7 -->
+- **Step 2: Run Wiki tests;** expected FAIL. <!-- comet-task-ref:5-7 -->
+- **Step 3: Implement Markdown/front-matter records** with source paths/symbols/hashes, candidate generation only from PASS tasks, `wiki verify`, conflict routing to `needs-clarification`, explicit approval events, and `wiki promote` guards. <!-- comet-task-ref:5-1 --> <!-- comet-task-ref:5-2 --> <!-- comet-task-ref:5-3 --> <!-- comet-task-ref:5-4 --> <!-- comet-task-ref:5-6 -->
+- **Step 4: Run `npm test -- tests/unit/wiki-governance.test.ts tests/e2e/wiki-lifecycle.test.ts`;** expected PASS. <!-- comet-task-ref:5-7 -->
+- **Step 5: Commit `feat: add governed wiki lifecycle and context selection`.** <!-- comet-task-ref:5-5 -->
 
 ### Task 8: CLI workflow orchestration与 Comet handoff
 
@@ -186,11 +188,11 @@ kata/
 - `advance(taskId: string): Promise<PhaseResult>`
 - `createHandoff(taskId: string, nextRole: Role): Promise<HandoffBundle>`
 
-- [ ] **Step 1: Write an end-to-end failing test** for `/kata-open` creating a task, `/kata-build` consuming minimal context, `/kata-verify` blocking on failed checks, and resume continuing from recorded phase.
-- [ ] **Step 2: Run `npm test -- tests/e2e/workflow-resume.test.ts`;** expected FAIL.
-- [ ] **Step 3: Implement orchestration** that delegates base lifecycle operations to Comet, persists Kata contracts/evidence, and emits deterministic next-action diagnostics on compatibility failure.
-- [ ] **Step 4: Run `npm run build && npm test -- tests/e2e/workflow-resume.test.ts`;** expected PASS.
-- [ ] **Step 5: Commit `feat: orchestrate kata skills with comet lifecycle`.**
+- **Step 1: Write an end-to-end failing test** for `/kata-open` creating a task, `/kata-build` consuming minimal context, `/kata-verify` blocking on failed checks, and resume continuing from recorded phase. <!-- comet-task-ref:6-1 -->
+- **Step 2: Run `npm test -- tests/e2e/workflow-resume.test.ts`;** expected FAIL. <!-- comet-task-ref:6-1 -->
+- **Step 3: Implement orchestration** that delegates base lifecycle operations to Comet, persists Kata contracts/evidence, and emits deterministic next-action diagnostics on compatibility failure. <!-- comet-task-ref:1-5 -->
+- **Step 4: Run `npm run build && npm test -- tests/e2e/workflow-resume.test.ts`;** expected PASS. <!-- comet-task-ref:6-1 -->
+- **Step 5: Commit `feat: orchestrate kata skills with comet lifecycle`.** <!-- comet-task-ref:1-5 -->
 
 ### Task 9: 评估、发布门与文档
 
@@ -204,12 +206,12 @@ kata/
 - `computeMetrics(runs: EvaluationRun[]): EvaluationMetrics`
 - `checkReleaseGates(report: EvaluationReport): ReleaseGateResult`
 
-- [ ] **Step 1: Write failing regression fixtures** for open/resume/implement/verify/repair/judge/distill/archive, adapter smoke tests and Wiki drift/conflict.
-- [ ] **Step 2: Run `npm test -- tests/eval/workflow-regression.test.ts`;** expected FAIL.
-- [ ] **Step 3: Implement metrics** for acceptance pass rate, repair/escalation rate, cost/tokens, latency and Wiki rejection; add release gates for schemas/state, evidence freshness, adapters and governance.
-- [ ] **Step 4: Write onboarding and rollback docs** with concrete commands (`npm install`, `kata init`, `/kata-open`, `kata wiki verify`) and safety boundaries.
-- [ ] **Step 5: Run `npm run lint && npm run typecheck && npm test && npm run build`;** expected all PASS.
-- [ ] **Step 6: Commit `feat: add evaluation release gates and documentation`.**
+- **Step 1: Write failing regression fixtures** for open/resume/implement/verify/repair/judge/distill/archive, adapter smoke tests and Wiki drift/conflict. <!-- comet-task-ref:6-1 -->
+- **Step 2: Run `npm test -- tests/eval/workflow-regression.test.ts`;** expected FAIL. <!-- comet-task-ref:6-1 -->
+- **Step 3: Implement metrics** for acceptance pass rate, repair/escalation rate, cost/tokens, latency and Wiki rejection; add release gates for schemas/state, evidence freshness, adapters and governance. <!-- comet-task-ref:6-2 --> <!-- comet-task-ref:6-3 -->
+- **Step 4: Write onboarding and rollback docs** with concrete commands (`npm install`, `kata init`, `/kata-open`, `kata wiki verify`) and safety boundaries. <!-- comet-task-ref:6-5 -->
+- **Step 5: Run `npm run lint && npm run typecheck && npm test && npm run build`;** expected all PASS. <!-- comet-task-ref:6-4 -->
+- **Step 6: Commit `feat: add evaluation release gates and documentation`.** <!-- comet-task-ref:6-5 -->
 
 ### Task 10: `/app` dogfood 与首份评估报告
 
@@ -221,11 +223,11 @@ kata/
 - `loadEvaluationManifest(path: string): EvaluationManifest`
 - `persistEvaluationReport(path: string, report: EvaluationReport): Promise<void>`
 
-- [ ] **Step 1: Write a manifest test** requiring the `/app` fixture to specify acceptance IDs, hard-check commands, Wiki scope and model tiers.
-- [ ] **Step 2: Run `npm test -- tests/e2e/dogfood-config.test.ts`;** expected FAIL until the manifest exists.
-- [ ] **Step 3: Add the manifest and execute `kata eval evals/dogfood-app.yaml`;** store command outputs and metrics under the report without credentials.
-- [ ] **Step 4: Run `npm test -- tests/e2e/dogfood-config.test.ts` and inspect the report;** expected PASS with explicit failures retained as evidence if the dogfood task is not fully successful.
-- [ ] **Step 5: Commit `test: record first app dogfood evaluation`.**
+- **Step 1: Write a manifest test** requiring the `/app` fixture to specify acceptance IDs, hard-check commands, Wiki scope and model tiers. <!-- comet-task-ref:6-6 -->
+- **Step 2: Run `npm test -- tests/e2e/dogfood-config.test.ts`;** expected FAIL until the manifest exists. <!-- comet-task-ref:6-6 -->
+- **Step 3: Add the manifest and execute `kata eval evals/dogfood-app.yaml`;** store command outputs and metrics under the report without credentials. <!-- comet-task-ref:6-6 -->
+- **Step 4: Run `npm test -- tests/e2e/dogfood-config.test.ts` and inspect the report;** expected PASS with explicit failures retained as evidence if the dogfood task is not fully successful. <!-- comet-task-ref:6-6 -->
+- **Step 5: Commit `test: record first app dogfood evaluation`.** <!-- comet-task-ref:6-6 -->
 
 ## Spec 覆盖检查
 
