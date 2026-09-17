@@ -46,11 +46,71 @@ export interface CometCompatibility {
 }
 
 // =============================================================================
-// Synchronous loader (backward-compatible with v1 callers)
+// One resolution path, with a per-process snapshot for synchronous callers
 // =============================================================================
 
+/**
+ * The compatibility answer this process resolved from the freshest layer available (see
+ * `resolveCometCompatibility`). Callers that cannot await read this instead of re-deciding.
+ */
+let resolvedSnapshot: CometCompatibility | null = null;
+
+/**
+ * The freshest compatibility answer, resolved once and remembered for the rest of the process.
+ *
+ * Precedence, and the `source` each layer records:
+ *   `runtime`            — `comet compat --json` from the installed binary
+ *   `workspace-override` — `.kata/comet-compat.yaml`, recorded by an earlier install
+ *   `comet-package`      — `comet-compat.yaml` inside the installed `@rpamis/comet`
+ *   `kata-bundled`       — the manifest inlined into this bundle
+ *
+ * Every consumer that makes a version judgement asks this: it is the only path that can see a newer Comet than the
+ * one kata shipped against. `loadCometCompatibility` is the synchronous view of the same answer.
+ */
+export async function resolveCometCompatibility(
+    options: { cometBinary?: string; cometPackageRoot?: string; timeoutMs?: number; root?: string } = {},
+): Promise<CometCompatibility> {
+    // Layer 1: comet runtime probe — always freshest.
+    const runtime = await probeRuntimeCompat(options.cometBinary, options.timeoutMs);
+    if (runtime) return remember(runtime);
+
+    // Layer 2: workspace override recorded by an earlier install.
+    const workspace = readWorkspaceCompatYaml(options.root);
+    if (workspace) return remember(parseCompatYaml(workspace, 'workspace-override'));
+
+    // Layer 3: @rpamis/comet package root yaml
+    const pkgYaml = await readCometPackageYaml(options.cometPackageRoot);
+    if (pkgYaml) return remember(pkgYaml);
+
+    // Layer 4: kata bundled fallback (synchronous read of the bundled asset).
+    return remember(parseCompatYaml(bundledCompatYaml, 'kata-bundled'));
+}
+
+function remember(compatibility: CometCompatibility): CometCompatibility {
+    // Last resolution wins: each call resolves for the binary, workspace and package root it was given, so the most
+    // recent answer is the one that describes the caller's target.
+    resolvedSnapshot = compatibility;
+    return compatibility;
+}
+
+/**
+ * The answer this process resolved most recently, for callers that cannot await and for diagnostics. It describes the
+ * target of the last resolution, so a caller asking about a specific workspace should resolve (or pass its root to
+ * `loadCometCompatibility`) rather than read this.
+ */
+export function cometCompatibilitySnapshot(): CometCompatibility | null {
+    return resolvedSnapshot;
+}
+
+/**
+ * The synchronous view. An explicit manifest path wins (tests and explicit overrides); otherwise the resolved snapshot
+ * if this process has one; otherwise the workspace override and the bundled manifest. It never claims to have observed
+ * the runtime: the `source` it reports is the layer it actually read.
+ */
 export function loadCometCompatibility(manifestPath?: string, root?: string): CometCompatibility {
     if (manifestPath) return parseCompatYaml(readFileSync(manifestPath, 'utf8'), 'kata-bundled');
+    // An explicit root asks about that workspace, so it is read rather than answered from another root's snapshot.
+    if (resolvedSnapshot && root === undefined) return resolvedSnapshot;
     const workspace = readWorkspaceCompatYaml(root);
     if (workspace) return parseCompatYaml(workspace, 'workspace-override');
     return parseCompatYaml(bundledCompatYaml, 'kata-bundled');
@@ -113,27 +173,8 @@ function rewriteVersionWindow(raw: string, version: string): string {
 }
 
 // =============================================================================
-// Async multi-layer loader
+// Layer 1: the runtime probe
 // =============================================================================
-
-export async function loadCometCompatibilityAsync(
-    options: { cometBinary?: string; cometPackageRoot?: string; timeoutMs?: number; root?: string } = {},
-): Promise<CometCompatibility> {
-    // Layer 1: comet runtime probe — always freshest.
-    const runtime = await probeRuntimeCompat(options.cometBinary, options.timeoutMs);
-    if (runtime) return runtime;
-
-    // Layer 2: workspace override recorded by an earlier install.
-    const workspace = readWorkspaceCompatYaml(options.root);
-    if (workspace) return parseCompatYaml(workspace, 'workspace-override');
-
-    // Layer 3: @rpamis/comet package root yaml
-    const pkgYaml = await readCometPackageYaml(options.cometPackageRoot);
-    if (pkgYaml) return pkgYaml;
-
-    // Layer 4: kata bundled fallback (synchronous read of the bundled asset).
-    return parseCompatYaml(bundledCompatYaml, 'kata-bundled');
-}
 
 async function probeRuntimeCompat(
     binary?: string,
@@ -635,3 +676,6 @@ function compare(a: [number, number, number], b: [number, number, number]): numb
     }
     return 0;
 }
+
+/** @deprecated Use `resolveCometCompatibility`; this is the same resolution path under its old name. */
+export const loadCometCompatibilityAsync = resolveCometCompatibility;

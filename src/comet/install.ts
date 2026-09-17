@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
-import { loadCometCompatibility, assertCometVersion, flagSpecFor, isFlagSupported, persistCometCompatibilityOverride, type CometCompatibility } from './compat.js';
+import { resolveCometCompatibility, assertCometVersion, flagSpecFor, isFlagSupported, persistCometCompatibilityOverride, type CometCompatibility } from './compat.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -364,7 +364,9 @@ export async function installComet(version?: string): Promise<CometInstallResult
     }
 
     const binaryPath = await resolveCometPath();
-    const compatibility = loadCometCompatibility();
+    // The installed binary is the one thing that can answer authoritatively, so the assertion asks the resolution path
+    // (runtime probe → workspace → package → bundled) instead of judging it against the bundled baseline.
+    const compatibility = await resolveCometCompatibility({ cometBinary: binaryPath ?? undefined });
     let compatUpdated = false;
 
     try {
@@ -421,9 +423,15 @@ export async function verifyComet(): Promise<CometVerifyResult> {
     const version = exists ? await getCometVersion(binaryPath!) : null;
 
     let compatible = false;
+    let window: { minVersion: string; maxVersion: string | null; source: CometCompatibility['source'] } | null = null;
     if (version) {
+        const compatibility = await resolveCometCompatibility({ cometBinary: binaryPath ?? undefined });
+        window = {
+            minVersion: compatibility.minVersion,
+            maxVersion: compatibility.maxVersion ?? null,
+            source: compatibility.source,
+        };
         try {
-            const compatibility = loadCometCompatibility();
             assertCometVersion(version, compatibility);
             compatible = true;
         } catch {
@@ -440,24 +448,13 @@ export async function verifyComet(): Promise<CometVerifyResult> {
     };
 }
 
-export function cometVersion(): CometVersionResult {
-    try {
-        const compatibility = loadCometCompatibility();
-        return {
-            version: compatibility.minVersion,
-            path: null,
-            compatible: true,
-        };
-    } catch {
-        return { version: null, path: null, compatible: false };
-    }
-}
-
-export function readCometCompatibility(): { minVersion: string; maxVersion?: string } {
-    const compat = loadCometCompatibility();
+export async function readCometCompatibility(root?: string): Promise<{ minVersion: string; maxVersion: string | null; source: CometCompatibility['source'] }> {
+    const compat = await resolveCometCompatibility(root ? { root } : {});
     return {
         minVersion: compat.minVersion,
-        ...(compat.maxVersion ? { maxVersion: compat.maxVersion } : {}),
+        maxVersion: compat.maxVersion ?? null,
+        // Which layer answered: a runtime probe, the workspace override, the comet package, or kata's bundled baseline.
+        source: compat.source,
     };
 }
 

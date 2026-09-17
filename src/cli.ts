@@ -2321,14 +2321,17 @@ async function runCometCommand(argv: string[], root = resolveWorkspaceRoot()): P
     }
 
     if (subcommand === 'version') {
-        const compat = readCometCompatibility();
+        // The window is what kata supports; the installed version is what is actually there, and the source says which
+        // layer answered.
+        const compat = await readCometCompatibility();
         const installed = await getCometVersion();
         return {
             command: 'comet version',
             compatibility: compat,
             installed: installed ?? null,
             compatMinVersion: compat.minVersion,
-            compatMaxVersion: compat.maxVersion ?? null,
+            compatMaxVersion: compat.maxVersion,
+            compatSource: compat.source,
         };
     }
 
