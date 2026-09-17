@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { dedupeChecks, matrixChecks, matrixProjectDir, resolveCheckForRow, selectorArgs, testSelectorForRuntime } from '../../src/quality/check-resolver.js';
+import { dedupeChecks, matrixChecks, matrixProjectDir, resolveCheckForRow, sanitizeCheckName, selectorArgs, testSelectorForRuntime } from '../../src/quality/check-resolver.js';
 import type { AcceptanceMatrixRow } from '../../src/core/task.js';
 
 /**
@@ -33,7 +33,7 @@ describe('matrix check resolution', () => {
         expect(check).toMatchObject({
             id: 'matrix:AC-1:test:tests/foo.test.ts',
             source: 'matrix',
-            name: 'AC-1-test-tests/foo.test.ts',
+            name: 'AC-1-test-tests-foo.test.ts',
             kind: 'test',
             command: process.execPath,
             args: [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', 'tests/foo.test.ts'],
@@ -113,4 +113,56 @@ describe('matrix check resolution', () => {
         expect(testSelectorForRuntime('tests/x.test.ts', root, root)).toBe('tests/x.test.ts');
         expect(selectorArgs('tests/x.test.ts -t name')).toEqual(['tests/x.test.ts', '-t', 'name']);
     });
-});
+    it('names a matrix-derived check so its own evidence schema accepts it', () => {
+        // 回归：name 曾直接嵌入命令行（含空格/斜杠），而 evidence.schema.json 约束
+        // name 为 ^[A-Za-z0-9_.-]+$，于是 seal 会因为证据对自己的 schema 不合法而失败。
+        const checks = matrixChecks(root, {
+            version: 1,
+            rows: [
+                {
+                    acceptanceId: 'AC-7',
+                    implementationPaths: ['src/foo.ts'],
+                    testPaths: ['tests/foo.test.ts'],
+                    evidence: [
+                        { kind: 'test', command: 'uv run pytest tests/foo.test.ts -q' },
+                        { kind: 'integration', command: 'uv run pytest', testSelector: 'tests/a/b_test.py' },
+                    ],
+                    verificationLevel: 'integration',
+                },
+            ],
+        });
+
+        expect(checks).toHaveLength(2);
+        for (const check of checks) {
+            expect(check.name).toMatch(/^[A-Za-z0-9_.-]+$/);
+        }
+    });
+
+    it('keeps a usable name when a command sanitizes to nothing', () => {
+        // 全非法字符的命令行：清洗后为空 ⇒ 回退到「验收项-种类」，而不是产出空名字。
+        const checks = matrixChecks(root, {
+            version: 1,
+            rows: [
+                {
+                    acceptanceId: 'AC-8',
+                    implementationPaths: ['src/foo.ts'],
+                    testPaths: ['tests/foo.test.ts'],
+                    evidence: [{ kind: 'test', command: '///' }],
+                    verificationLevel: 'unit',
+                },
+            ],
+        });
+
+        const name = checks[0]?.name ?? '';
+        expect(name).toMatch(/^[A-Za-z0-9_.-]+$/);
+        expect(name.length).toBeGreaterThan(0);
+    });
+
+    it('shares one sanitizer with the artefact filename', () => {
+        expect(sanitizeCheckName('AC-1-test-uv run pytest tests/x.py -q')).toBe(
+            'AC-1-test-uv-run-pytest-tests-x.py--q',
+        );
+        expect(sanitizeCheckName('--')).toBe('');
+    });
+})
+;

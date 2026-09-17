@@ -63,11 +63,24 @@ function timeoutForKind(kind: EvidenceKind): number {
     return kind === 'test' || kind === 'integration' || kind === 'entrypoint' ? 120_000 : 60_000;
 }
 
+/**
+ * A check name that the evidence schema accepts.
+ *
+ * The name is derived from the command text, which contains spaces and slashes, while
+ * `evidence.schema.json` constrains `name` to `^[A-Za-z0-9_.-]+$`. Sanitizing here — rather than
+ * only in the artefact filename — keeps the recorded name and the file that holds it in agreement,
+ * and keeps a matrix-supplied command from producing an artefact its own schema rejects.
+ */
+export function sanitizeCheckName(value: string): string {
+    return value.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-|-$/g, '');
+}
+
 function checkIdentity(row: AcceptanceMatrixRow, evidence: MatrixEvidenceItem): { id: string; name: string } {
     const suffix = evidence.testSelector ?? evidence.command;
+    const name = sanitizeCheckName(`${row.acceptanceId}-${evidence.kind}-${suffix}`);
     return {
         id: evidence.id ?? `matrix:${row.acceptanceId}:${evidence.kind}:${suffix}`,
-        name: `${row.acceptanceId}-${evidence.kind}-${suffix}`,
+        name: name || `${row.acceptanceId}-${evidence.kind}`,
     };
 }
 

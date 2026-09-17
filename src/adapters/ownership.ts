@@ -13,7 +13,10 @@ import {
   type Platform,
 } from './manifest.js';
 import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, resolvePlatformGlobalDir } from './platforms.js';
-import { renderPolicySource } from '../policy/hook-policy.js';
+import { renderHookGuardScript } from '../policy/guard-script.js';
+
+// The guard asset lives beside the policy it encodes; re-exported here for callers that know the installer by its path.
+export { renderHookGuardScript };
 import { hashContent } from '../core/hash.js';
 import { adaptersManifestPath, skillsIndexRelativePath, taskDir as layoutTaskDir } from '../core/layout.js';
 
@@ -566,96 +569,6 @@ applyTo: "**"
 ${body}`;
   }
   return body;
-}
-
-/** The hook asset every platform installs. Exported so the guard's behaviour can be exercised directly. */
-export function renderHookGuardScript(): string {
-  return `#!/usr/bin/env node
-// Managed by Kata. Active-task hook guard.
-import { readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
-
-${renderPolicySource()}
-
-const root = resolveArg('--project-root') ?? process.cwd();
-const input = await readStdin();
-const payload = parseJson(input) ?? {};
-const targetPath = extractTargetPath(payload);
-const active = readJson(join(root, '.kata/runtime/active-task.json'));
-
-if (!active || !targetPath) process.exit(0);
-
-const taskId = typeof active.taskId === 'string' ? active.taskId : null;
-const role = typeof active.role === 'string' ? active.role : 'implementer';
-if (!taskId || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(taskId)) process.exit(0);
-
-const state = readJson(join(root, '.kata/tasks', taskId, 'current-state.json'));
-const task = readJson(join(root, '.kata/tasks', taskId, 'task.json'));
-if (!state || !task) process.exit(0);
-
-const phase = typeof state.phase === 'string' ? state.phase : task.phase;
-const normalizedPath = normalizeHookPath(root, targetPath, { resolve, relative });
-const denial = evaluateHookWrite({ role }, normalizedPath, { ...task, id: taskId, phase });
-
-if (denial) {
-  console.error(\`Kata hook blocked write to \${targetPath}: \${denial}\`);
-  console.error('Run: kata-cli orient --change ' + taskId + ' --role ' + role);
-  process.exit(2);
-}
-
-process.exit(0);
-
-function resolveArg(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : null;
-}
-
-function readStdin() {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) {
-      resolve('');
-      return;
-    }
-    process.stdin.setEncoding('utf8');
-    let data = '';
-    process.stdin.on('data', (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on('end', () => resolve(data));
-  });
-}
-
-function parseJson(value) {
-  try {
-    return value.trim() ? JSON.parse(value) : null;
-  } catch {
-    return null;
-  }
-}
-
-function readJson(path) {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function extractTargetPath(value) {
-  const candidates = [
-    value?.tool_input?.file_path,
-    value?.tool_input?.path,
-    value?.file_path,
-    value?.path,
-    value?.params?.file_path,
-    value?.params?.path,
-    value?.arguments?.file_path,
-    value?.arguments?.path,
-  ];
-  return candidates.find((candidate) => typeof candidate === 'string') ?? null;
-}
-
-`;
 }
 
 function claudeCodeHookConfig(command: string): Record<string, unknown> {

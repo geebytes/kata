@@ -12,7 +12,7 @@ import { assertValidTaskId } from '../core/ids.js';
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { collectSealPreflight } from './seal-preflight.js';
-import { matrixChecks, dedupeChecks as dedupeCheckCommands } from '../quality/check-resolver.js';
+import { matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
@@ -611,7 +611,8 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
 }
 
 function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
-    const raw = (envelope.name ?? envelope.kind).replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-|-$/g, '') || envelope.kind;
+    // 与 check name 共用同一清洗实现，避免两处规则分叉。
+    const raw = sanitizeCheckName(envelope.name ?? envelope.kind) || envelope.kind;
     // 文件名不得超过 ext4/tmpfs 的 255 字节上限（ENAMETOOLONG）；超长命令名截断并保留可辨识前缀。
     // 前缀（taskId + '-' + '.json'）约占 20 字节，截断到 200 字节留足余量。
     return raw.length > 200 ? raw.slice(0, 200) : raw;
