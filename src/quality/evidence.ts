@@ -6,7 +6,6 @@ import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 import { createContentHasher } from '../core/hash.js';
 import { runProcess } from '../process/run.js';
-import * as os from 'node:os';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
@@ -96,13 +95,18 @@ export type FreshnessResult =
 const maxLogLength = 20_000;
 
 /**
- * How many checks may run at once: enough to overlap I/O-bound suites without starving the machine the checks are
- * measuring. Overridable so a CI runner with a different shape can say so.
+ * How many checks may run at once. **Serial by default.**
+ *
+ * Concurrency is tempting — the checks are I/O-bound and one suite can take ten minutes — but the seal cannot know what
+ * the checks share. Measured in this workspace: the project's integration checks drop and recreate rows in one
+ * PostgreSQL database, so running them alongside each other (or alongside the full suite) makes them fail for reasons
+ * that have nothing to do with the change under test. A seal that reports failures it caused itself is worse than a slow
+ * one, so the concurrency is opt-in: set `KATA_CHECK_CONCURRENCY` for checks known to be independent.
  */
 export function checkConcurrency(): number {
   const configured = Number.parseInt(process.env.KATA_CHECK_CONCURRENCY ?? '', 10);
   if (Number.isFinite(configured) && configured > 0) return configured;
-  return Math.max(1, Math.min(4, (os.availableParallelism?.() ?? 2) - 1));
+  return 1;
 }
 
 /** Runs a mapper over items with at most `limit` in flight, preserving nothing but the results' own indexing. */

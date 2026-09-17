@@ -51,9 +51,14 @@ describe('seal cost and revision identity', () => {
         ...extra,
     });
 
-    it('runs independent checks concurrently', async () => {
+    it('runs checks concurrently only when the project opts in', async () => {
         const root = await tempRoot();
         await openTask(root, 'concurrent-checks');
+        // Serial by default: checks may share state the seal cannot see (a database, a port, a cache), so overlapping
+        // them is the project's decision.
+        const previousConcurrency = process.env.KATA_CHECK_CONCURRENCY;
+        process.env.KATA_CHECK_CONCURRENCY = '2';
+        try {
         // 'first' cannot finish until 'second' has started. Serial execution would time it out; concurrent execution
         // lets them hand off through the filesystem.
         const witness = join(root, 'second-started');
@@ -70,7 +75,34 @@ describe('seal cost and revision identity', () => {
             ],
         });
 
+            expect(result).toMatchObject({ success: true });
+        } finally {
+            if (previousConcurrency === undefined) delete process.env.KATA_CHECK_CONCURRENCY;
+            else process.env.KATA_CHECK_CONCURRENCY = previousConcurrency;
+        }
+    });
+
+    it('runs checks one at a time by default', async () => {
+        const root = await tempRoot();
+        await openTask(root, 'serial-checks');
+        // 'second' writes a witness file; 'first' records whether it was already there when it started. Serial execution
+        // must never see it.
+        const witness = join(root, 'second-ran');
+        const result = await seal('serial-checks', root, {
+            checks: [
+                {
+                    id: 'first', name: 'first', kind: 'test', command: process.execPath, cwd: root, timeoutMs: 10_000,
+                    args: ['-e', `const fs=require('fs');fs.writeFileSync('${join(root, 'first-saw')}',String(fs.existsSync('${witness}')));`],
+                },
+                {
+                    id: 'second', name: 'second', kind: 'test', command: process.execPath, cwd: root, timeoutMs: 10_000,
+                    args: ['-e', `require('fs').writeFileSync('${witness}','yes')`],
+                },
+            ],
+        });
+
         expect(result).toMatchObject({ success: true });
+        expect(await readFile(join(root, 'first-saw'), 'utf8')).toBe('false');
     });
 
     it('reuses an unchanged revision and its evidence instead of re-running the checks', async () => {
