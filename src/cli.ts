@@ -73,6 +73,7 @@ import {
     type RelationEndpoint,
     type TaskRelationType,
 } from './core/relations.js';
+import { hashContent } from './core/hash.js';
 
 export function getRuntimeCompatibility(manifestPath?: string): CometCompatibility {
     return loadCometCompatibility(manifestPath);
@@ -1578,7 +1579,7 @@ async function runHandoffCommand(argv: string[]): Promise<Record<string, unknown
     throw new Error(`Unknown handoff command: ${subcommand ?? ''}`);
 }
 
-function createPacketHash(packet: unknown): string { return createHash('sha256').update(JSON.stringify(packet)).digest('hex'); }
+function createPacketHash(packet: unknown): string { return hashContent(JSON.stringify(packet)); }
 
 type DelegationArgs = { change?: string; to?: string; role?: string; from?: string; root?: string; create?: boolean };
 

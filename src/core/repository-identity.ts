@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { createContentHasher } from './hash.js';
 
 /**
  * What counts as part of the repository, for identity purposes.
@@ -122,7 +123,7 @@ export async function walkRepositoryFiles(root: string, options: WalkOptions = {
 
 /** The identity of the current repository contents: a hash over the paths and contents of what the walk returned. */
 export async function repositoryTreeHash(root: string): Promise<string> {
-    const hash = createHash('sha256');
+    const hash = createContentHasher();
     for (const file of await walkRepositoryFiles(root, { maxFileBytes: maxTreeHashFileBytes })) {
         hash.update(file.path);
         hash.update('\0');

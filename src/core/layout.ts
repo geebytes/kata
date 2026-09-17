@@ -13,6 +13,7 @@ import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
 import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+import { hashContent } from './hash.js';
 
 const schemaContents: Record<string, string> = {
   'task.schema.json': taskSchema,
@@ -209,12 +210,12 @@ async function installSchemaCopies(root: string, result: LayoutResult): Promise<
   for (const schemaFile of schemaFiles) {
     const target = join(targetDirectory, schemaFile);
     const content = schemaContents[schemaFile];
-    const generatedHash = sha256(content);
+    const generatedHash = hashContent(content);
     const recordedHash = manifest.files[schemaFile]?.sha256;
 
     try {
       const existingContent = await readFile(target, 'utf8');
-      const existingHash = sha256(existingContent);
+      const existingHash = hashContent(existingContent);
       if (recordedHash === undefined) {
         result.conflicts.push(`.kata/schemas/${schemaFile}`);
         continue;
@@ -272,9 +273,7 @@ function isSchemaManifest(value: unknown): value is SchemaManifest {
   });
 }
 
-function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
+
 
 async function ensureRuntimeGitignore(root: string): Promise<void> {
   const gitignorePath = join(root, '.gitignore');

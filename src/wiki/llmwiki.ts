@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { writeWikiRecord } from './store.js';
 import { computeFileHash } from './record.js';
+import { hashContent } from '../core/hash.js';
 
 export interface LlmWikiInput {
   root?: string;
@@ -220,7 +221,7 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
         [`.llmwiki/${pagePath}`]: computeFileHash(pageContent),
       },
       validationTaskId: 'llmwiki-ingest',
-      evidenceIds: [`llmwiki-${sha256(rawContent).slice(0, 12)}`],
+      evidenceIds: [`llmwiki-${hashContent(rawContent).slice(0, 12)}`],
       status: 'candidate',
       lastVerifiedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -338,7 +339,7 @@ export async function registerWikiPages(input: LlmWikiInput = {}): Promise<LlmWi
         sourceRefs: [`.llmwiki/${relativePath}`],
         sourceHashes: { [`.llmwiki/${relativePath}`]: computeFileHash(content) },
         validationTaskId: 'llmwiki-register',
-        evidenceIds: [`llmwiki-${sha256(content).slice(0, 12)}`],
+        evidenceIds: [`llmwiki-${hashContent(content).slice(0, 12)}`],
         status: 'candidate',
         lastVerifiedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -441,7 +442,7 @@ export async function lintLlmWiki(input: LlmWikiInput = {}): Promise<LlmWikiLint
       continue;
     }
     const expectedHash = frontmatter.sha256;
-    const currentHash = sha256(frontmatter.body);
+    const currentHash = hashContent(frontmatter.body);
     if (!expectedHash || expectedHash !== currentHash) {
       issues.push({
         severity: 'high',
@@ -601,7 +602,7 @@ function instructionsForWikiTask(kind: LlmWikiTaskInput['kind']): string[] {
 }
 
 function renderRawSource(sourcePath: string, body: string): string {
-  return `---\nsource_path: ${sourcePath}\ningested: ${new Date().toISOString()}\nsha256: ${sha256(body)}\n---\n${body}`;
+  return `---\nsource_path: ${sourcePath}\ningested: ${new Date().toISOString()}\nsha256: ${hashContent(body)}\n---\n${body}`;
 }
 
 function renderSchema(now: string): string {
@@ -827,6 +828,4 @@ function scoreContent(query: string, content: string, path: string): number {
   return terms.reduce((score, term) => score + (haystack.includes(term) ? 1 : 0), 0);
 }
 
-function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
+

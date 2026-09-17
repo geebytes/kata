@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { validate } from '../core/schema.js';
+import { hashContent } from '../core/hash.js';
 
 export type WikiStatus = 'candidate' | 'verified' | 'stale' | 'rejected';
 
@@ -30,9 +31,8 @@ export interface WikiRecord {
   };
 }
 
-export function computeFileHash(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
+/** @deprecated Use `hashContent` from core/hash.js; kept so existing importers keep working. */
+export const computeFileHash = hashContent;
 
 export function validateWikiRecord(value: unknown): WikiRecord {
   return validate<WikiRecord>('wiki-record', value);

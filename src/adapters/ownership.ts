@@ -14,6 +14,7 @@ import {
 } from './manifest.js';
 import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, resolvePlatformGlobalDir } from './platforms.js';
 import { renderPolicySource } from '../policy/hook-policy.js';
+import { hashContent } from '../core/hash.js';
 
 type OwnedFile = {
   platform: Platform;
@@ -960,9 +961,8 @@ async function writeFileAtomic(path: string, content: string): Promise<void> {
   await rename(temporaryPath, path);
 }
 
-export function sha256(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
+/** @deprecated Use `hashContent` from core/hash.js; kept so existing importers keep working. */
+export const sha256 = hashContent;
 
 export async function exists(path: string): Promise<boolean> {
   try {

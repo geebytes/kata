@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { resolveTerminalTask } from '../core/relations.js';
+import { createContentHasher } from '../core/hash.js';
 
 export interface TaskRevision {
   id: string;
@@ -66,7 +67,7 @@ export async function revisionStatus(root: string, revision: TaskRevision): Prom
 }
 
 export async function computeManifestHash(root: string, ownedPaths: string[]): Promise<string> {
-  const hash = createHash('sha256');
+  const hash = createContentHasher();
   for (const path of normalizeOwnedPaths(root, ownedPaths)) {
     hash.update(path);
     hash.update('\0');

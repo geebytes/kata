@@ -4,6 +4,7 @@ import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
+import { createContentHasher } from '../core/hash.js';
 
 export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
 
@@ -195,7 +196,7 @@ export function checkFreshness(
 
 export async function computeScopeHash(root: string, paths: string[]): Promise<string> {
   const normalizedPaths = [...new Set(paths.map((path) => normalizeScopePath(root, path)))].sort();
-  const hash = createHash('sha256');
+  const hash = createContentHasher();
   for (const path of normalizedPaths) {
     hash.update(path);
     hash.update('\0');
