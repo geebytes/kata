@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { runGit as runGitCommand } from './git.js';
 
 export type GitFlowStrategy = 'git-flow' | 'manual';
 export type GitFlowStatus = 'active' | 'pending_confirmation' | 'failed';
@@ -46,12 +47,10 @@ export interface GitFlowInitializationOptions {
     executeInteractive?: (root: string, args: string[]) => Promise<void>;
 }
 
+/** Git Flow's runner contract over the shared reader: the same reads, reported rather than thrown. */
 const runGit: GitCommandRunner = (root, args) => {
-    try {
-        return { ok: true, stdout: execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).replace(/\s+$/, '') };
-    } catch {
-        return { ok: false, stdout: '' };
-    }
+    const result = runGitCommand(root, args);
+    return { ok: result.ok, stdout: result.stdout.replace(/\s+$/, '') };
 };
 
 export function inspectGitFlow(

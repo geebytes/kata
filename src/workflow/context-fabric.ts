@@ -10,6 +10,7 @@ import type { WorkflowProfile } from '../core/workflow-profile.js';
 import { computeManifestHash, readCurrentTaskRevision } from './revision.js';
 import { readValidated, readValidatedOptional } from '../core/schema.js';
 import { hashContent } from '../core/hash.js';
+import { currentGitBranch, currentGitHead } from '../core/git.js';
 
 type HandoffAnchorScope =
   | { kind: 'revision'; revisionId: string; paths: string[]; hash: string }
@@ -61,9 +62,9 @@ async function anchor(root: string, taskId: string): Promise<HandoffPacket['repo
   const scope = revision
     ? { kind: 'revision' as const, revisionId: revision.id, paths: revision.ownedPaths, hash: await computeManifestHash(root, revision.ownedPaths) }
     : { kind: 'task_context' as const, paths: taskContextPaths(root, taskId), hash: await computeManifestHash(root, taskContextPaths(root, taskId)) };
-  return { head: git(root, ['rev-parse', 'HEAD']), branch: git(root, ['branch', '--show-current']), diffHash: scope.hash, scope, worktreeRoot: '.' };
+  return { head: currentGitHead(root), branch: currentGitBranch(root), diffHash: scope.hash, scope, worktreeRoot: '.' };
 }
-function git(root: string, args: string[]): string | null { try { const value = execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); return value || null; } catch { return null; } }
+
 function existingReads(root: string, taskId: string, designRefs: string[]): string[] { return ['AGENTS.md', '.llmwiki/SCHEMA.md', '.llmwiki/index.md', '.llmwiki/log.md', `.kata/tasks/${taskId}/task.json`, `.kata/tasks/${taskId}/current-state.json`, ...designRefs].filter((path) => { try { return resolve(root, path).startsWith(resolve(root)); } catch { return false; } }); }
 function designRefsFor(root: string, taskId: string, role: Role): string[] {
   if (role !== 'implementer' && role !== 'reviewer' && role !== 'judge') return [];

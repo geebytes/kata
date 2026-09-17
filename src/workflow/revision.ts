@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isIgnoredRepositoryPath, walkRepositoryFiles } from '../core/repository-identity.js';
+import { changedGitPaths } from '../core/git.js';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
@@ -143,31 +144,9 @@ export async function inferOwnedPathsFromWorkspace(root: string): Promise<string
     .sort();
 }
 
+/** @see core/git.ts — the one reader of repository state. */
 function changedRepositoryPaths(root: string): string[] {
-  let output: string;
-  try {
-    output = execFileSync('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-  } catch {
-    return [];
-  }
-  const tokens = output.split('\0').filter(Boolean);
-  const paths: string[] = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? '';
-    const status = token.slice(0, 2);
-    const path = token.slice(3);
-    if (path) paths.push(path.replaceAll('\\', '/'));
-    if (status.includes('R') || status.includes('C')) {
-      index += 1;
-      const originalPath = tokens[index];
-      if (originalPath) paths.push(originalPath.replaceAll('\\', '/'));
-    }
-  }
-  return [...new Set(paths)];
+  return changedGitPaths(root);
 }
 
 /** Drift and ownership inference exclude exactly what the tree hash excludes: one policy, one answer. */
