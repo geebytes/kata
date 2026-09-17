@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/kata-relations.schema.json",
+  "title": "Kata relation graph",
+  "type": "object",
+  "required": ["version", "relations", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "type", "from", "to", "createdAt"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "enum": ["ownership", "lineage", "control", "context"] },
+          "type": {
+            "type": "string",
+            "enum": [
+              "superseded_by",
+              "covered_by",
+              "duplicate_of",
+              "merged_into",
+              "parent_of",
+              "spawned_from",
+              "related_to",
+              "contains",
+              "implements",
+              "repairs",
+              "depends_on",
+              "blocked_by"
+            ]
+          },
+          "from": {
+            "type": "object",
+            "required": ["type", "id"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["task", "change"] },
+              "id": { "type": "string", "minLength": 1 }
+            }
+          },
+          "to": {
+            "type": "object",
+            "required": ["type", "id"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string", "enum": ["task", "change"] },
+              "id": { "type": "string", "minLength": 1 }
+            }
+          },
+          "reason": { "type": "string", "minLength": 1 },
+          "createdAt": { "type": "string", "minLength": 1 },
+          "createdBy": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { assertValidTaskId } from './ids.js';
+import { readValidatedOptional } from './schema.js';
 
 export type TaskRelationType =
   | 'superseded_by'
@@ -105,25 +106,8 @@ export async function addTaskRelation(input: {
     ...(input.createdBy ? { createdBy: input.createdBy } : {}),
     createdAt: now,
   });
-  const current = await readTaskRelations(input.root, input.fromTaskId);
-  const relation: TaskRelation = {
-    type: input.type,
-    targetTaskId: input.toTaskId,
-    ...(input.reason ? { reason: input.reason } : {}),
-    createdAt: now,
-    ...(input.createdBy ? { createdBy: input.createdBy } : {}),
-  };
-  const next: TaskRelationsRecord = {
-    taskId: input.fromTaskId,
-    relations: [
-      ...current.relations.filter((item) => !(item.type === relation.type && item.targetTaskId === relation.targetTaskId)),
-      relation,
-    ],
-    updatedAt: now,
-  };
-  await writeTaskRelations(input.root, input.fromTaskId, next);
-  await mirrorRelationIntoTask(input.root, input.fromTaskId, next);
-  return next;
+  const record = await readTaskRelations(input.root, input.fromTaskId);
+  return record;
 }
 
 export async function addKataRelation(input: {
@@ -165,17 +149,14 @@ export async function addKataRelation(input: {
   return next;
 }
 
+/**
+ * The relation graph is the one authoritative store for task relations. An absent graph means no relations have been
+ * recorded; a graph that drifted is an error rather than an empty answer.
+ */
 export async function readKataRelations(root: string): Promise<KataRelationsGraph> {
-  try {
-    const parsed = JSON.parse(await readFile(graphPath(root), 'utf8')) as Partial<KataRelationsGraph>;
-    return {
-      version: 1,
-      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isKataRelation) : [],
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
-    };
-  } catch {
-    return { version: 1, relations: [], updatedAt: '' };
-  }
+  const graph = await readValidatedOptional<KataRelationsGraph>('kata-relations', graphPath(root));
+  if (!graph) return { version: 1, relations: [], updatedAt: '' };
+  return { version: 1, relations: graph.relations, updatedAt: graph.updatedAt };
 }
 
 export async function findKataRelations(root: string, endpoint: RelationEndpoint): Promise<{
@@ -192,21 +173,30 @@ export async function findKataRelations(root: string, endpoint: RelationEndpoint
   };
 }
 
+/**
+ * A task's relations, derived from the authoritative graph.
+ *
+ * One edge used to be written to three stores (the graph, `.kata/tasks/<id>/task-relations.json`, and `task.json`), and
+ * reads preferred the per-task file while falling back to `task.json` on any error — so a failure between the writes
+ * left the stores disagreeing and the fallback hid it. The graph is the store now; the CLI's projections are gone.
+ */
 export async function readTaskRelations(root: string, taskId: string): Promise<TaskRelationsRecord> {
   assertValidTaskId(taskId);
-  const path = relationPath(root, taskId);
-  try {
-    const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<TaskRelationsRecord>;
-    return {
-      taskId,
-      relations: Array.isArray(parsed.relations) ? parsed.relations.filter(isTaskRelation) : [],
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
-    };
-  } catch {
-    const task = await readTask(root, taskId).catch(() => null);
-    const taskRelations = Array.isArray(task?.relations) ? task.relations.filter(isTaskRelation) : [];
-    return { taskId, relations: taskRelations, updatedAt: typeof task?.updatedAt === 'string' ? task.updatedAt : '' };
-  }
+  const graph = await readKataRelations(root);
+  const relations = graph.relations
+    .filter((relation) => relation.from.type === 'task' && relation.from.id === taskId && relation.to.type === 'task')
+    .map((relation): TaskRelation => ({
+      type: relation.type,
+      targetTaskId: relation.to.id,
+      ...(relation.reason ? { reason: relation.reason } : {}),
+      createdAt: relation.createdAt,
+      ...(relation.createdBy ? { createdBy: relation.createdBy } : {}),
+    }));
+  return {
+    taskId,
+    relations,
+    updatedAt: graph.relations.reduce((latest, relation) => (relation.createdAt > latest ? relation.createdAt : latest), graph.updatedAt),
+  };
 }
 
 export async function readTerminalTaskRelation(root: string, taskId: string): Promise<TaskRelation | null> {
@@ -282,27 +272,14 @@ async function assertTaskExists(root: string, taskId: string): Promise<void> {
   await readTask(root, taskId);
 }
 
+/** The task record itself, for the existence check. Relations are no longer mirrored into it. */
 async function readTask(root: string, taskId: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(join(root, '.kata/tasks', taskId, 'task.json'), 'utf8')) as Record<string, unknown>;
 }
 
-async function writeTaskRelations(root: string, taskId: string, record: TaskRelationsRecord): Promise<void> {
-  const path = relationPath(root, taskId);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-}
 
-async function mirrorRelationIntoTask(root: string, taskId: string, record: TaskRelationsRecord): Promise<void> {
-  const path = join(root, '.kata/tasks', taskId, 'task.json');
-  const task = await readTask(root, taskId);
-  task.relations = record.relations;
-  task.updatedAt = record.updatedAt;
-  await writeFile(path, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
-}
 
-function relationPath(root: string, taskId: string): string {
-  return join(root, '.kata/tasks', taskId, 'task-relations.json');
-}
+
 
 async function writeKataRelations(root: string, graph: KataRelationsGraph): Promise<void> {
   const path = graphPath(root);

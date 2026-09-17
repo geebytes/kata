@@ -264,11 +264,19 @@ describe('Task ownership conflict warnings', () => {
     async (relationType) => {
       const root = await tempRoot();
       await addOtherTask(root, 'terminal-task', ['shared.ts'], 'implement');
+      // Relations live in one authoritative store: the graph.
       await writeFile(
-        join(root, '.kata/tasks/terminal-task/task-relations.json'),
+        join(root, '.kata/relations.json'),
         `${JSON.stringify({
-          taskId: 'terminal-task',
-          relations: [{ type: relationType, targetTaskId: 'active-target', createdAt: '2026-07-18T00:00:00.000Z' }],
+          version: 1,
+          updatedAt: '2026-07-18T00:00:00.000Z',
+          relations: [{
+            kind: 'control',
+            type: relationType,
+            from: { type: 'task', id: 'terminal-task' },
+            to: { type: 'task', id: 'active-target' },
+            createdAt: '2026-07-18T00:00:00.000Z',
+          }],
         })}\n`,
       );
       await addOtherTask(root, 'active-target', []);

@@ -13,6 +13,7 @@ import revisionSchema from 'kata-asset:schemas/revision.schema.json';
 import userChoiceGateSchema from 'kata-asset:schemas/user-choice-gate.schema.json';
 import reviewSchema from 'kata-asset:schemas/review.schema.json';
 import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
+import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
 import { readFile } from 'node:fs/promises';
 
 const schemaText: Record<string, string> = {
@@ -31,6 +32,7 @@ const schemaText: Record<string, string> = {
   'user-choice-gate': userChoiceGateSchema,
   review: reviewSchema,
   'verify-result': verifyResultSchema,
+  'kata-relations': kataRelationsSchema,
 };
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };

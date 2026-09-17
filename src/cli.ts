@@ -1472,7 +1472,7 @@ async function runTasksCommand(argv: string[]): Promise<Record<string, unknown>>
             fromTaskId: args.from,
             toTaskId: args.to,
             type: args.type,
-            relationPath: `.kata/tasks/${args.from}/task-relations.json`,
+            relationPath: '.kata/relations.json',
             relations: record.relations,
             ...(terminal.taskId !== args.from ? { redirectsTo: terminal.taskId, relationRedirects: terminal.redirects } : {}),
             nextAction: {

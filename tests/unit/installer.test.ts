@@ -1655,8 +1655,9 @@ describe('Kata platform installer', () => {
             ],
         });
 
-        await expect(readFile(join(root, '.kata/tasks/fix-code-style-arch-boundaries/task-relations.json'), 'utf8')).resolves.toContain('covered_by');
-        await expect(readFile(join(root, '.kata/tasks/fix-code-style-arch-boundaries/task.json'), 'utf8')).resolves.toContain('repair-code-standards-boundaries');
+        // The relation is recorded once, in the authoritative graph.
+        await expect(readFile(join(root, '.kata/relations.json'), 'utf8')).resolves.toContain('covered_by');
+        await expect(readFile(join(root, '.kata/relations.json'), 'utf8')).resolves.toContain('repair-code-standards-boundaries');
 
         const orient = await captureJsonOutput(() =>
             main(['orient', '--root', root, '--change', 'fix-code-style-arch-boundaries', '--role', 'implementer']),

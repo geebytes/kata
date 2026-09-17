@@ -369,10 +369,17 @@ describe('quality evidence collection', () => {
       await mkdir(join(root, '.kata/tasks/active-target'), { recursive: true });
       await writeFile(join(root, '.kata/tasks/terminal-owner/task.json'), `${JSON.stringify({ ownedPaths: ['shared.ts'] })}\n`);
       await writeFile(
-        join(root, '.kata/tasks/terminal-owner/task-relations.json'),
+        join(root, '.kata/relations.json'),
         `${JSON.stringify({
-          taskId: 'terminal-owner',
-          relations: [{ type: relationType, targetTaskId: 'active-target', createdAt: '2026-07-16T00:00:00.000Z' }],
+          version: 1,
+          updatedAt: '2026-07-16T00:00:00.000Z',
+          relations: [{
+            kind: 'control',
+            type: relationType,
+            from: { type: 'task', id: 'terminal-owner' },
+            to: { type: 'task', id: 'active-target' },
+            createdAt: '2026-07-16T00:00:00.000Z',
+          }],
         })}\n`,
       );
       await writeFile(join(root, '.kata/tasks/active-target/task.json'), `${JSON.stringify({ ownedPaths: [] })}\n`);
@@ -395,10 +402,17 @@ describe('quality evidence collection', () => {
       `${JSON.stringify({ taskId: 'merged-task', phase: 'hardVerify', actor: { id: 'tester', role: 'tester' }, updatedAt: '2026-07-16T00:00:00.000Z' })}\n`,
     );
     await writeFile(
-      join(root, '.kata/tasks/merged-task/task-relations.json'),
+      join(root, '.kata/relations.json'),
       `${JSON.stringify({
-        taskId: 'merged-task',
-        relations: [{ type: 'merged_into', targetTaskId: 'archived-target', createdAt: '2026-07-16T00:00:00.000Z' }],
+        version: 1,
+        updatedAt: '2026-07-16T00:00:00.000Z',
+        relations: [{
+          kind: 'control',
+          type: 'merged_into',
+          from: { type: 'task', id: 'merged-task' },
+          to: { type: 'task', id: 'archived-target' },
+          createdAt: '2026-07-16T00:00:00.000Z',
+        }],
       })}\n`,
     );
     await writeFile(join(root, '.kata/tasks/archived-target/task.json'), `${JSON.stringify({ ownedPaths: ['shared.ts'] })}\n`);
