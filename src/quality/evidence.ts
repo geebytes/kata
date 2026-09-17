@@ -1,8 +1,9 @@
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
+import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 
 export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
 
@@ -214,30 +215,13 @@ export async function computeScopeHash(root: string, paths: string[]): Promise<s
   return hash.digest('hex');
 }
 
+/** Directory hashing for a scope shares the repository's ignore policy; only the walk's size budget differs. */
 async function hashDirectoryRecursive(dirPath: string, root: string, hash: Hash): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (shouldIgnore(entry.name)) continue;
-    const absolutePath = join(dirPath, entry.name);
-    const relativePath = relative(root, absolutePath).replaceAll('\\', '/');
-    if (shouldIgnorePath(relativePath)) continue;
-    if (entry.isDirectory()) {
-      await hashDirectoryRecursive(absolutePath, root, hash);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    hash.update(relativePath);
+  const relativeDir = relative(root, dirPath).replaceAll('\\', '/');
+  for (const file of await walkRepositoryFiles(root, relativeDir ? { under: relativeDir } : {})) {
+    hash.update(file.path);
     hash.update('\0');
-    try {
-      hash.update(await readFile(absolutePath));
-    } catch {
-      hash.update('[missing]');
-    }
+    hash.update(file.content);
     hash.update('\0');
   }
 }
@@ -252,15 +236,8 @@ function normalizeScopePath(root: string, path: string): string {
 }
 
 export async function computeDiffHash(root: string = process.cwd()): Promise<string> {
-  const entries = await collectFileSnapshot(root);
-  const hash = createHash('sha256');
-  for (const entry of entries) {
-    hash.update(entry.path);
-    hash.update('\0');
-    hash.update(entry.content);
-    hash.update('\0');
-  }
-  return hash.digest('hex');
+  // One identity definition: the walk and its ignore policy live in core/repository-identity.ts.
+  return repositoryTreeHash(root);
 }
 
 const graceMs = 5_000;
@@ -357,61 +334,6 @@ async function runBoundedCommand(
   });
 }
 
-async function collectFileSnapshot(root: string): Promise<Array<{ path: string; content: Buffer }>> {
-  const files: Array<{ path: string; content: Buffer }> = [];
-
-  async function visit(directory: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      if (shouldIgnore(entry.name)) continue;
-      const absolutePath = join(directory, entry.name);
-      const relativePath = relative(root, absolutePath).replaceAll('\\', '/');
-      if (shouldIgnorePath(relativePath)) continue;
-      if (entry.isDirectory()) {
-        await visit(absolutePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const info = await stat(absolutePath);
-      if (info.size > 2_000_000) continue;
-      files.push({ path: relativePath, content: await readFile(absolutePath) });
-    }
-  }
-
-  await visit(root);
-  return files.sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function shouldIgnore(name: string): boolean {
-  return name === '.git'
-    || name === '.kata'
-    || name === '.llmwiki'
-    || name === '.pytest_cache'
-    || name === '.mypy_cache'
-    || name === '.ruff_cache'
-    || name === '.coverage'
-    || name === '__pycache__'
-    || name === 'node_modules'
-    || name === 'dist'
-    || name === '.codex'
-    || name === '.claude'
-    || name === '.opencode';
-}
-
-function shouldIgnorePath(path: string): boolean {
-  return path === '.github/hooks'
-    || path.startsWith('.github/hooks/')
-    || path === '.github/skills'
-    || path.startsWith('.github/skills/')
-    || path === '.github/instructions'
-    || path.startsWith('.github/instructions/');
-}
 
 function collectRedactions(check: CheckCommand): string[] {
   return [

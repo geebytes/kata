@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isIgnoredRepositoryPath, walkRepositoryFiles } from '../core/repository-identity.js';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
@@ -87,58 +88,17 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
   return hash.digest('hex');
 }
 
+/** Owned-path hashing shares the repository's ignore policy, and reads what it is responsible for (no size cap). */
 async function hashDirectoryRecursive(dirPath: string, root: string, hash: ReturnType<typeof createHash>): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(dirPath, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (shouldIgnore(entry.name)) continue;
-    const absolutePath = join(dirPath, entry.name);
-    const relativePath = relative(root, absolutePath).replaceAll('\\', '/');
-    if (shouldIgnorePath(relativePath)) continue;
-    if (entry.isDirectory()) {
-      await hashDirectoryRecursive(absolutePath, root, hash);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    hash.update(relativePath);
+  const relativeDir = relative(root, dirPath).replaceAll('\\', '/');
+  for (const file of await walkRepositoryFiles(root, relativeDir ? { under: relativeDir } : {})) {
+    hash.update(file.path);
     hash.update('\0');
-    try {
-      hash.update(await readFile(absolutePath));
-    } catch {
-      hash.update('[missing]');
-    }
+    hash.update(file.content);
     hash.update('\0');
   }
 }
 
-function shouldIgnore(name: string): boolean {
-  return name === '.git'
-    || name === '.kata'
-    || name === '.llmwiki'
-    || name === '.pytest_cache'
-    || name === '.mypy_cache'
-    || name === '.ruff_cache'
-    || name === '.coverage'
-    || name === '__pycache__'
-    || name === 'node_modules'
-    || name === 'dist'
-    || name === '.codex'
-    || name === '.claude'
-    || name === '.opencode';
-}
-
-function shouldIgnorePath(path: string): boolean {
-  return path === '.github/hooks'
-    || path.startsWith('.github/hooks/')
-    || path === '.github/skills'
-    || path.startsWith('.github/skills/')
-    || path === '.github/instructions'
-    || path.startsWith('.github/instructions/');
-}
 
 export async function findOwnershipConflicts(
   root: string,
@@ -209,29 +169,9 @@ function changedRepositoryPaths(root: string): string[] {
   return [...new Set(paths)];
 }
 
+/** Drift and ownership inference exclude exactly what the tree hash excludes: one policy, one answer. */
 function isIgnoredWorkspacePath(path: string): boolean {
-  return path === '.kata'
-    || path.startsWith('.kata/')
-    || path === '.llmwiki'
-    || path.startsWith('.llmwiki/')
-    || path === '.codex'
-    || path.startsWith('.codex/')
-    || path === '.claude'
-    || path.startsWith('.claude/')
-    || path === '.opencode'
-    || path.startsWith('.opencode/')
-    || path.includes('/.opencode/')
-    || path.endsWith('/.opencode')
-    || path === '.github/hooks'
-    || path.startsWith('.github/hooks/')
-    || path === '.github/skills'
-    || path.startsWith('.github/skills/')
-    || path === '.github/instructions'
-    || path.startsWith('.github/instructions/')
-    || path === 'node_modules'
-    || path.startsWith('node_modules/')
-    || path === 'dist'
-    || path.startsWith('dist/');
+  return isIgnoredRepositoryPath(path);
 }
 
 function pathsOverlap(left: string, right: string): boolean {
