@@ -69,6 +69,10 @@
       "type": "string",
       "minLength": 1
     },
+    "elapsedMs": {
+      "description": "How long the pass took, reported by the executor. Recorded so a delta pass can be compared with the full pass it narrowed (design §11: the saving had never been measured).",
+      "type": "integer"
+    },
     "executedInFreshContext": {
       "type": "boolean"
     },

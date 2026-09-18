@@ -73,6 +73,14 @@ export interface AdversarialRecord {
     scope?: { kind: 'full' | 'delta'; from?: string; changedPaths?: string[] };
     /** For a delta pass: the manifest hash whose change surface it measured. */
     baseManifestHash?: string;
+    /**
+     * How long the pass took, reported by whoever ran it.
+     *
+     * The design's §11 admitted the saving had never been measured. It cannot be measured from outside — the pass is an
+     * agent's wall clock — so the record carries it, and `status` compares a delta pass against the full pass it
+     * narrowed. A self-reported number is still a number, and the design's whole premise is that it was invisible.
+     */
+    elapsedMs?: number;
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -264,7 +272,24 @@ export async function readAdversarialRecord(root: string, taskId: string, node: 
 
 export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
     const validated = validate<AdversarialRecord>('adversarial-review', record);
-    await writeFile(adversarialReviewPath(root, taskId, record.node), `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
+    const path = adversarialReviewPath(root, taskId, record.node);
+    // The previous pass is snapshotted before it is replaced, so the comparison the design asked for (what did a delta
+    // pass save against the full pass it narrowed?) has both sides. Without this the number is unrecoverable the moment
+    // the record is overwritten — which is exactly why §11 could not be answered.
+    try {
+        const previous = JSON.parse(await readFile(path, 'utf8')) as { scope?: { kind?: string }; elapsedMs?: number; createdAt?: string };
+        if (previous.elapsedMs || previous.scope?.kind === 'full') {
+            const { mkdir } = await import('node:fs/promises');
+            const { join } = await import('node:path');
+            const directory = join(root, '.kata/tasks', taskId, 'passes');
+            await mkdir(directory, { recursive: true });
+            const stamp = previous.createdAt?.replace(/[:.]/g, '-') ?? `pass-${Date.now()}`;
+            await writeFile(join(directory, `${record.node}-${stamp}.json`), `${JSON.stringify(previous, null, 2)}\n`, 'utf8');
+        }
+    } catch {
+        // No previous record, or an unreadable one: nothing to snapshot, and replacing the record is still correct.
+    }
+    await writeFile(path, `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
     return validated;
 }
 

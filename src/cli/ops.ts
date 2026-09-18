@@ -78,6 +78,47 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
  * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
  * checkout) and carries the task's state into the checkout.
  */
+/**
+ * The saving a delta pass actually delivered, against the full pass it narrowed (design §11).
+ *
+ * The design's largest unverified assumption was that a delta pass costs a fraction of a full one, and it could not be
+ * measured because nothing recorded how long a pass took. Now the passes do; this reports the comparison, and reports
+ * that it is *not yet measurable* rather than inventing an answer when only one side exists.
+ */
+async function deltaSaving(
+    root: string,
+    taskId: string,
+    node: 'verify' | 'review',
+    record: AdversarialRecord | null,
+): Promise<Record<string, unknown>> {
+    if (!record || record.scope?.kind !== 'delta' || !record.elapsedMs) return {};
+    const { readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    // Every recorded pass for this node lives in `.kata/tasks/<id>/adversarial-<node>.json`; the previous full pass is
+    // whatever that file held before, so the comparison the design wants needs the historical snapshot — which the
+    // workspace keeps only for the current record. Where it is absent, say so plainly.
+    const directory = join(root, '.kata/tasks', taskId, 'passes');
+    const snapshots = await readdir(directory).catch(() => [] as string[]);
+    const full = [];
+    for (const file of snapshots.filter((name) => name.includes(node) && name.endsWith('.json'))) {
+        const previous = JSON.parse(await readFile(join(directory, file), 'utf8')) as { scope?: { kind?: string }; elapsedMs?: number };
+        if (previous.scope?.kind === 'full' && previous.elapsedMs) full.push(previous.elapsedMs);
+    }
+    if (full.length === 0) {
+        return { deltaSaving: { measurable: false, note: 'the previous full pass recorded no elapsed time, so the saving cannot be computed yet' } };
+    }
+    const baseline = full.reduce((sum, value) => sum + value, 0) / full.length;
+    return {
+        deltaSaving: {
+            measurable: true,
+            fullMs: Math.round(baseline),
+            deltaMs: record.elapsedMs,
+            savedMs: Math.round(baseline - record.elapsedMs),
+            factor: baseline > 0 ? Number((baseline / record.elapsedMs).toFixed(2)) : null,
+        },
+    };
+}
+
 /** `kata-cli revision digests --change <task> [--since <revision-id|manifestHash>]` — the per-path content table. */
 export async function runRevisionCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
@@ -252,7 +293,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...(await currentRevisionManifest(root, change)),
             // A delta pass's scope is what the gate checks it against, so a pass that names `--since` is recorded with
             // the change surface kata itself measured — not with whatever the reviewer typed.
-            ...(since ? { scope: await currentDeltaScope(root, change, since) } : {}),
+            ...(since ? { scope: await currentDeltaScope(root, change, since) } : { scope: { kind: 'full' as const } }),
+            // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
+            // design is precisely that nobody had the number.
+            ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
         });
         const gate = await adversarialGateFor(root, change, node);
         return {
@@ -279,6 +323,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 revisionId: record?.revisionId ?? null,
                 verdict: record?.verdict ?? null,
                 executedInFreshContext: record?.executedInFreshContext ?? null,
+                scope: record?.scope?.kind ?? null,
+                ...(record?.elapsedMs ? { elapsedMs: record.elapsedMs } : {}),
+                ...(await deltaSaving(root, change, candidate, record)),
                 blockingFindings: blockingAdversarialFindings(record).length,
                 satisfied: gate.satisfied,
                 reason: gate.reason ?? null,

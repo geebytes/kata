@@ -163,3 +163,41 @@ describe('the delta gate refuses a scope that does not cover the change', () => 
         });
     });
 });
+
+describe('a pass records its own duration so the saving becomes measurable (design §11)', () => {
+    it('reports the comparison as not-yet-measurable without a previous full pass, and computes it with one', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-delta-saving-'));
+        const { mkdir: mk } = await import('node:fs/promises');
+        const { writeAdversarialRecord, readAdversarialRecord } = await import('../../src/quality/adversarial.js');
+        const taskId = 'saving-task';
+        await mk(join(root, '.kata/tasks', taskId), { recursive: true });
+
+        const base = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
+            findings: [],
+        };
+
+        // A full pass that took 20 minutes.
+        await writeAdversarialRecord(root, taskId, { ...base, scope: { kind: 'full' }, elapsedMs: 1_200_000 });
+        // A delta pass that took 3.
+        await writeAdversarialRecord(root, taskId, {
+            ...base,
+            createdAt: '2026-09-18T11:00:00.000Z',
+            scope: { kind: 'delta', from: 'revision-0', changedPaths: ['src/a.ts'] },
+            elapsedMs: 180_000,
+        });
+
+        // The overwritten pass was snapshotted, so both sides of the comparison exist.
+        const snapshotDir = join(root, '.kata/tasks', taskId, 'passes');
+        const snapshots = await (await import('node:fs/promises')).readdir(snapshotDir);
+        expect(snapshots).toHaveLength(1);
+        const previous = JSON.parse(await (await import('node:fs/promises')).readFile(join(snapshotDir, snapshots[0]!), 'utf8')) as { elapsedMs?: number };
+        expect(previous.elapsedMs).toBe(1_200_000);
+        expect((await readAdversarialRecord(root, taskId, 'verify'))?.elapsedMs).toBe(180_000);
+    });
+});
