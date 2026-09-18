@@ -70,6 +70,14 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
     };
 }
 
+/**
+ * `kata-cli worktree …` — linked worktrees with kata's own convention.
+ *
+ * `isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place, and
+ * from inside a nested one no task-addressed command could resolve `--root` without help. Kata now creates, lists and
+ * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
+ * checkout) and carries the task's state into the checkout.
+ */
 export async function runWorktreeCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     const root = resolveWorkspaceRoot();
@@ -119,6 +127,13 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
     throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove>`);
 }
 
+/**
+ * `kata-cli adversarial …` — the independent adversarial pass at the verify and review nodes.
+ *
+ * `brief` renders the self-contained brief for a clean-context subagent and reports the hash the result must carry;
+ * `record` validates and files the result; `status` reports both nodes. The gate that consumes the record lives in the
+ * workflow (verify and review refuse to conclude without one), so this command is the only way in.
+ */
 export async function runAdversarialCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     const change = parseChangeArg(rest);
