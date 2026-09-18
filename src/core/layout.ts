@@ -386,6 +386,24 @@ export function adversarialReviewPath(root: string, taskId: string, node: string
     return join(taskDir(root, taskId), `adversarial-${node}.json`);
 }
 
+/**
+ * Where the briefs kata has **issued** for a node are kept (D2, second fix).
+ *
+ * The gate used to validate a recorded pass by *re-deriving* the brief and comparing hashes, which made the record
+ * depend on state a pass — or another node's round — can rewrite: the framing of the next round, the reading set
+ * derived from the working tree, the findings `kata-cli review` resets. Recording a pass could therefore reject the very
+ * brief it answered. The brief is now stored as it was issued, and the record binds to that copy.
+ */
+export function adversarialBriefsDir(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'adversarial-briefs');
+}
+
+/** One issued brief log, keyed by the revision the brief named — the binding the record has to match. */
+export function adversarialBriefPath(root: string, taskId: string, node: string, revisionId: string): string {
+    const safe = revisionId.replace(/[^A-Za-z0-9._-]/g, '_');
+    return join(adversarialBriefsDir(root, taskId), `${node}-${safe}.json`);
+}
+
 export function repairObligationsPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'repair-obligations.json');
 }

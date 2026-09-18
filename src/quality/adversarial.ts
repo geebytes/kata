@@ -1,7 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hashContent } from '../core/hash.js';
-import { adversarialReviewPath, evidenceDir } from '../core/layout.js';
+import { adversarialBriefPath, adversarialBriefsDir, adversarialReviewPath, evidenceDir } from '../core/layout.js';
 import { readValidatedOptional, validate } from '../core/schema.js';
 import type { EvidenceEnvelope } from './evidence.js';
 
@@ -459,29 +460,43 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
             findings?: Array<Record<string, unknown>>;
         };
         // D1: the dispositions live on this record, so replacing it resurrected every deferred finding and left its id
-        // with nothing to defer. A decision is carried forward onto the finding of the same id when the new record does
-        // not state one itself.
-        const decided = new Map<string, Record<string, unknown>>();
+        // with nothing to defer. A decision belongs to the finding, not to the pass that reported it, so it is carried
+        // forward onto the finding of the same id when the new record does not state one itself.
+        const decided = new Map<string, { previous: Record<string, unknown>; decision: Record<string, unknown> }>();
         for (const finding of previous.findings ?? []) {
-            if (finding.disposition && finding.disposition !== 'open') {
-                decided.set(String(finding.id), {
-                    disposition: finding.disposition,
+            const disposition = String(finding.disposition ?? 'open');
+            // Only the dispositions a command will actually accept are carried. `blocking`/`major` cannot be deferred
+            // (I1), so a decision attached to one could only have been hand-written, and carrying it forward would pin
+            // the node forever: a repair pass clears a blocking finding by no longer reporting it.
+            if (disposition !== 'deferred' && disposition !== 'accepted') continue;
+            decided.set(String(finding.id), {
+                previous: finding,
+                decision: {
+                    disposition,
                     ...(finding.dispositionReason ? { dispositionReason: finding.dispositionReason } : {}),
                     ...(finding.dispositionBy ? { dispositionBy: finding.dispositionBy } : {}),
                     ...(finding.dispositionAt ? { dispositionAt: finding.dispositionAt } : {}),
-                });
-            }
+                },
+            });
         }
         if (decided.size > 0) {
+            const stated = new Set((record.findings ?? []).map((finding) => String(finding.id)));
             for (const finding of record.findings ?? []) {
                 if (finding.disposition && finding.disposition !== 'open') continue;
-                const carried = decided.get(finding.id);
+                const carried = decided.get(finding.id)?.decision;
                 if (carried) Object.assign(finding, carried);
             }
+            // D1, the half the first fix missed: a later pass that simply stops re-reporting a deferred nit — because
+            // the deferral *is* the decision — used to delete the decision with it, and `findings defer --id <id>` could
+            // then not even find the id. The decision is re-attached to the record that superseded it.
+            record.findings = [
+                ...(record.findings ?? []),
+                ...[...decided.entries()]
+                    .filter(([id]) => !stated.has(id))
+                    .map(([, { previous: carried, decision }]) => ({ ...carried, ...decision }) as unknown as AdversarialFinding),
+            ];
         }
         if (previous.elapsedMs || previous.scope?.kind === 'full') {
-            const { mkdir } = await import('node:fs/promises');
-            const { join } = await import('node:path');
             const directory = join(root, '.kata/tasks', taskId, 'passes');
             await mkdir(directory, { recursive: true });
             const stamp = previous.createdAt?.replace(/[:.]/g, '-') ?? `pass-${Date.now()}`;
@@ -500,6 +515,10 @@ export type AdversarialGateReason =
     | 'stale_revision'
     | 'not_fresh_context'
     | 'brief_mismatch'
+    /** The record's hash belongs to no brief kata issued for this node and revision. */
+    | 'brief_not_issued'
+    /** A recorded pass with no attempt: a conclusion that demonstrates nothing. */
+    | 'incomplete'
     | 'waived'
     /** A delta pass whose declared paths do not cover the change it claims to cover. */
     | 'delta_stale'
@@ -524,13 +543,6 @@ export interface AdversarialGateResult {
     reverificationCost?: { passScope: 'delta' | 'full'; supersedesReceipt: boolean; reason: string };
 }
 
-/**
- * Whether a node may conclude.
- *
- * A recorded pass has to be about *this* revision, has to attest a fresh context, and has to have been run against the
- * brief kata renders now — a pass against an older brief was answering a different question. A waiver satisfies the
- * gate explicitly and is reported as such rather than hidden.
- */
 /**
  * The delta check, applied before the content check: a pass that says "I re-derived only these paths" is accepted only
  * when those paths **are** the whole difference between the revision it reviewed and the revision it replaces.
@@ -576,18 +588,24 @@ export async function evaluateDeltaScope(
 }
 
 /**
- * Which inputs a brief is allowed to be derived from (K3, and the rule D2 taught).
+ * How a pass is bound to the brief it answered (D2, fixed properly on the second attempt).
  *
- * "Bind the brief as issued" sounds like it needs a stored copy. It does not — it is a **property of the brief's inputs**.
  * The 2026-09-18 defect was that the brief embedded the disposition section *of the pass's own record*, so recording the
- * pass changed the text, and the gate's recomputation rejected the record it had just accepted.
+ * pass changed the text and the gate rejected the record it had just accepted. The first fix narrowed the brief's inputs
+ * and declared re-deriving it an identity function. That claim was false: the text still moves with the round framing
+ * (`resolveBriefMode` reads the previous pass), with the reading set (derived from the working tree) and with
+ * `review.json`, which the review node resets — so a recomputed hash rejected a pass for reasons the pass did not
+ * cause, including on every delta round.
  *
- * Now the brief derives only from state a pass cannot change, which makes re-deriving it an *identity* function. That is
- * exactly what lets a retry continue a partial pass: the same brief, the same `briefSha256`, even though a record was
- * written in between.
+ * The binding is therefore the **issued copy**: `kata-cli adversarial brief` stores the text and its hash under
+ * `.kata/tasks/<task>/adversarial-briefs/<node>-<revision>.json`, and a record satisfies the gate only when its
+ * `briefSha256` matches one of those copies for this node and this revision (or for the same content under a re-seal).
+ * A hash kata never issued — invented, or issued for another revision — is refused exactly as before, so the
+ * anti-forgery property is unchanged; what is gone is a later action's ability to invalidate a brief that was really
+ * given out.
  *
- * The list is data so a reviewer of this code can see the whole input surface at once — and so a future addition that
- * brings in something volatile has to be added here, deliberately, next to the rule it would break.
+ * This is also half of what makes a partial pass resumable (K3): the issued copy stays on disk while a draft record is
+ * written, so a retry continues against the same binding instead of re-deriving fifteen minutes of work.
  */
 /**
  * Which framing the next round should use (M2), and why.
@@ -625,25 +643,56 @@ export async function resolveBriefMode(
     };
 }
 
+/**
+ * What a brief may be derived from: state a pass can neither write nor move.
+ *
+ * Kept as data so a reader sees the whole input surface at once. Since the record binds to the *issued* copy (above)
+ * these lists no longer decide whether a pass is accepted — they decide what the brief *says*, and the volatile ones
+ * are named because a brief that carries them reads differently the moment the pass is recorded.
+ */
 export const BRIEF_DURABLE_INPUTS = [
     'task acceptance criteria',
     'the sealed revision and its owned-path digests',
     'recorded evidence envelopes',
-    'the review record and its findings (durable)',
     "the project's declared checks",
-    'the change surface since a base revision',
 ] as const;
 
-/** Inputs a brief must never be derived from, because recording a pass rewrites them. */
+/**
+ * Inputs the brief text really does move with, which is why a stored copy — and not a recomputation — is the binding.
+ *
+ * Each of these was a way for recording a pass, running another node, or touching the working tree to change the hash
+ * of a brief that had already been handed to a reviewer. `test/unit/adversarial-brief-binding.test.ts` reproduces all
+ * three; `kata-cli adversarial record` now refuses a hash that was never issued rather than re-deriving one.
+ */
 export const BRIEF_VOLATILE_INPUTS = [
-    'the adversarial record of the pass being recorded',
-    'the dispositions it stores',
+    'the adversarial record of the pass being recorded (its `mode`, its attempts, its dispositions)',
+    "the review record's findings, which the review node resets at the start of a round",
+    'the reading set, derived from the working tree and therefore from whatever the author has edited since',
     'anything whose value changes between issuing and recording a pass',
 ] as const;
 
+/**
+ * Whether a node may conclude.
+ *
+ * A recorded pass has to be about *this* revision, has to attest a fresh context, and has to answer a brief kata really
+ * issued for this node and revision — the issued copy, not a recomputation of it. A waiver satisfies the gate explicitly
+ * and is reported as such rather than hidden.
+ */
 export function evaluateAdversarialGate(
     record: AdversarialRecord | null,
-    input: { node: AdversarialNode; revisionId: string | null; manifestHash?: string | null; briefSha256: string },
+    input: {
+        node: AdversarialNode;
+        revisionId: string | null;
+        manifestHash?: string | null;
+        /**
+         * The hashes of every brief kata issued for this node and revision — or for the same owned-path content under a
+         * re-seal. A pass is bound to one of those copies. It is never matched against a brief re-derived now: that
+         * recomputation was exactly what let a later action invalidate a brief that had really been handed out.
+         */
+        issuedBriefSha256s: string[];
+        /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
+        otherRevisionBriefSha256s?: string[];
+    },
 ): AdversarialGateResult {
     if (!input.revisionId) return { satisfied: false, reason: 'no_revision', findings: [] };
     if (!record) return { satisfied: false, reason: 'missing', findings: [] };
@@ -655,8 +704,14 @@ export function evaluateAdversarialGate(
     // A short-circuit for the shape the gate requires beyond the schema: a recorded pass needs its attestation, its
     // brief and at least one attempt, or it has not demonstrated anything.
     if (record.executedInFreshContext !== true) return { satisfied: false, reason: 'not_fresh_context', record, findings: [] };
-    if (record.briefSha256 !== input.briefSha256) return { satisfied: false, reason: 'brief_mismatch', record, findings: [] };
-    if (!record.attempts || record.attempts.length === 0) return { satisfied: false, reason: 'brief_mismatch', record, findings: [] };
+    if (!record.briefSha256) return { satisfied: false, reason: 'brief_not_issued', record, findings: [] };
+    if (!input.issuedBriefSha256s.includes(record.briefSha256)) {
+        // Two refusals, two remedies: an invented hash means no brief was ever issued for this node, while a hash from
+        // another revision means the round answered a different round's question.
+        const anotherRound = (input.otherRevisionBriefSha256s ?? []).includes(record.briefSha256);
+        return { satisfied: false, reason: anotherRound ? 'brief_mismatch' : 'brief_not_issued', record, findings: [] };
+    }
+    if (!record.attempts || record.attempts.length === 0) return { satisfied: false, reason: 'incomplete', record, findings: [] };
 
     // The pass ran and is binding: confirmed defects travel with it, and the node that receives them must resolve them.
     return { satisfied: true, record, findings: record.findings ?? [] };
@@ -674,7 +729,9 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined):
         case 'no_revision': return 'No revision is sealed yet, so there is nothing to attack independently.';
         case 'stale_revision': return 'The recorded adversarial pass is about a different revision.';
         case 'not_fresh_context': return 'The recorded adversarial pass does not attest a fresh context.';
-        case 'brief_mismatch': return 'The recorded adversarial pass answered a different brief.';
+        case 'brief_mismatch': return 'The recorded adversarial pass answered a brief kata issued for a different revision.';
+        case 'brief_not_issued': return 'The recorded adversarial pass carries a brief hash kata never issued for this node and revision — run `kata-cli adversarial brief --change <task-id> --node <verify|review>`, hand that brief to the clean-context reviewer, and record the hash it reports.';
+        case 'incomplete': return 'The recorded adversarial pass carries no falsification attempt, so it demonstrates nothing; record the round with at least one attempt.';
         case 'waived': return 'The independent adversarial pass was explicitly waived.';
         case 'delta_stale': return 'The pass is a delta, and the paths it declared do not cover everything that changed since its base revision — widen the range or run a full pass.';
         case 'delta_unavailable': return 'A delta pass was recorded against a revision that has no per-path digests, so the change surface cannot be verified; run a full pass.';
@@ -691,12 +748,27 @@ export async function readBriefFile(path: string): Promise<string> {
  * The brief for a node, together with the hash the recorded result must carry. Reads the task's acceptance, the sealed
  * revision and the recorded evidence itself, so every caller renders the same brief for the same state.
  */
+export interface AdversarialBrief {
+    node: AdversarialNode;
+    revisionId: string | null;
+    /**
+     * The sealed revision's content identity, stored with the issued copy so that a re-seal of unchanged content (a new
+     * revision id, the same bytes) still matches the brief that was handed out.
+     */
+    manifestHash?: string;
+    text: string;
+    sha256: string;
+    mode: 'verify' | 'cold';
+    modeReason: string;
+    delta: { from: string; changedPaths: string[] } | { unavailable: string } | null;
+}
+
 export async function buildAdversarialBrief(
     root: string,
     taskId: string,
     node: AdversarialNode,
     options: { since?: string; mode?: 'verify' | 'cold' } = {},
-): Promise<{ node: AdversarialNode; revisionId: string | null; text: string; sha256: string; mode: 'verify' | 'cold'; modeReason: string; delta: { from: string; changedPaths: string[] } | { unavailable: string } | null }> {
+): Promise<AdversarialBrief> {
     const { readTask } = await import('../core/task.js');
     const { readRecordedEvidence } = await import('./evidence.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
@@ -763,6 +835,7 @@ export async function buildAdversarialBrief(
     return {
         node,
         revisionId: revision?.id ?? null,
+        ...(revision?.manifestHash ? { manifestHash: revision.manifestHash } : {}),
         text,
         sha256: adversarialBriefSha256(text),
         // The mode is a property of the brief, not an input to it: recording it on the pass cannot change the text.
@@ -772,10 +845,121 @@ export async function buildAdversarialBrief(
     };
 }
 
+/**
+ * One brief as it was handed out. Kept verbatim — text and hash — because the record is bound to this copy, and a
+ * reviewer asking "which brief did this pass answer?" should be able to read the answer instead of re-deriving it.
+ */
+export interface IssuedAdversarialBrief {
+    briefSha256: string;
+    revisionId: string;
+    manifestHash?: string;
+    mode: 'verify' | 'cold';
+    since?: string;
+    issuedAt: string;
+    text: string;
+}
+
+/**
+ * How many issued briefs are kept per node and revision. A pass, its retry and a re-read fit well inside this; a
+ * transcript of every brief ever rendered does not belong in a task's state.
+ */
+export const ADVERSARIAL_BRIEF_HISTORY = 10;
+
+const UNSEALED_REVISION = 'unsealed';
+
+function revisionKey(revisionId: string | null | undefined): string {
+    return revisionId && revisionId.length > 0 ? revisionId : UNSEALED_REVISION;
+}
+
+/** The briefs issued for one node and revision, newest first. A missing log is an empty list, not a failure. */
+export async function readIssuedBriefs(root: string, taskId: string, node: AdversarialNode, revisionId: string | null | undefined): Promise<IssuedAdversarialBrief[]> {
+    try {
+        const raw = JSON.parse(await readFile(adversarialBriefPath(root, taskId, node, revisionKey(revisionId)), 'utf8')) as { briefs?: IssuedAdversarialBrief[] };
+        return Array.isArray(raw.briefs) ? raw.briefs.filter((entry) => typeof entry?.briefSha256 === 'string') : [];
+    } catch {
+        return [];
+    }
+}
+
+/** What a record's brief hash is matched against: copies issued for this binding, and copies issued for other revisions. */
+export interface IssuedBriefPool {
+    /** Issued for this node and this revision, or for the same owned-path content under a re-seal. */
+    accepted: IssuedAdversarialBrief[];
+    /** Issued for this node, but for another revision: a pass that answered one of these answered another round. */
+    otherRevision: IssuedAdversarialBrief[];
+}
+
+/**
+ * Every brief issued for one node, classified against a binding.
+ *
+ * The pool spans revisions on purpose: an issued brief may name a revision that a later re-seal replaced while the
+ * content — the thing the pass is actually about — stayed identical, and the record's own content binding covers that
+ * case. Classification is by revision first (the explicit match) and by manifest hash second.
+ */
+export async function issuedBriefPool(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    binding: { revisionIds?: Array<string | null | undefined>; manifestHashes?: Array<string | null | undefined> },
+): Promise<IssuedBriefPool> {
+    const revisionIds = new Set((binding.revisionIds ?? []).filter((id): id is string => Boolean(id)));
+    const manifestHashes = new Set((binding.manifestHashes ?? []).filter((hash): hash is string => Boolean(hash)));
+    const accepted: IssuedAdversarialBrief[] = [];
+    const otherRevision: IssuedAdversarialBrief[] = [];
+    const directory = adversarialBriefsDir(root, taskId);
+    const files = await readdir(directory).catch(() => [] as string[]);
+    for (const file of files.filter((name) => name.startsWith(`${node}-`) && name.endsWith('.json'))) {
+        let entries: IssuedAdversarialBrief[] = [];
+        try {
+            const raw = JSON.parse(await readFile(join(directory, file), 'utf8')) as { briefs?: IssuedAdversarialBrief[] };
+            entries = Array.isArray(raw.briefs) ? raw.briefs.filter((entry) => typeof entry?.briefSha256 === 'string') : [];
+        } catch {
+            continue;
+        }
+        for (const entry of entries) {
+            const sameRevision = revisionIds.has(entry.revisionId);
+            const sameContent = Boolean(entry.manifestHash) && manifestHashes.has(entry.manifestHash as string);
+            (sameRevision || sameContent ? accepted : otherRevision).push(entry);
+        }
+    }
+    return { accepted, otherRevision };
+}
+
+/**
+ * Renders the brief **and keeps the copy the gate will bind a record to**.
+ *
+ * This is the only place a brief becomes binding, which is what makes the binding mean something: a hash satisfies the
+ * gate only if kata handed that brief out for this node and revision. Issuing is deliberately separate from rendering —
+ * the gate renders nothing at all now — so a recomputation cannot silently mint a hash the gate would accept.
+ */
+export async function issueAdversarialBrief(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    options: { since?: string; mode?: 'verify' | 'cold' } = {},
+): Promise<AdversarialBrief> {
+    const brief = await buildAdversarialBrief(root, taskId, node, options);
+    const revisionId = revisionKey(brief.revisionId);
+    const existing = await readIssuedBriefs(root, taskId, node, revisionId);
+    const entry: IssuedAdversarialBrief = {
+        briefSha256: brief.sha256,
+        revisionId,
+        ...(brief.manifestHash ? { manifestHash: brief.manifestHash } : {}),
+        mode: brief.mode,
+        ...(options.since ? { since: options.since } : {}),
+        issuedAt: new Date().toISOString(),
+        text: brief.text,
+    };
+    // Issuing one brief twice (a retry, or a reader re-reading it) must not multiply the log: the hash is its identity.
+    const briefs = [entry, ...existing.filter((item) => item.briefSha256 !== entry.briefSha256)].slice(0, ADVERSARIAL_BRIEF_HISTORY);
+    const path = adversarialBriefPath(root, taskId, node, revisionId);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify({ version: 1, node, revisionId, briefs }, null, 2)}\n`, 'utf8');
+    return brief;
+}
+
 /** Resolves a `--since` argument that named a manifest hash rather than a revision id. */
 async function findRevisionByManifest(root: string, taskId: string, target: string): Promise<Awaited<ReturnType<typeof import('../workflow/revision.js').readTaskRevision>> | null> {
-    const { readdir, readFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
     const { revisionsDir } = await import('../core/layout.js');
     const directory = revisionsDir(root, taskId);
     const files = await readdir(directory).catch(() => [] as string[]);
@@ -938,22 +1122,32 @@ export async function adversarialGateFor(
     node: AdversarialNode,
 ): Promise<AdversarialGateResult> {
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
-    const [brief, record, revision] = await Promise.all([
-        buildAdversarialBrief(root, taskId, node),
+    // Deliberately no brief render here. The gate used to re-derive the brief and compare hashes, which made a recorded
+    // pass depend on state that recording it, running another node, or editing the working tree could change — and
+    // rejected passes for reasons they did not cause. It now matches the record against the briefs kata really issued.
+    const [record, revision] = await Promise.all([
         readAdversarialRecord(root, taskId, node),
         readCurrentTaskRevision(root, taskId),
     ]);
+    const revisionId = revision?.id ?? null;
+    // The record's own revision id is offered too: a re-seal of unchanged content issues a new id, and the brief the
+    // pass answered was issued under the old one.
+    const pool = await issuedBriefPool(root, taskId, node, {
+        revisionIds: [revisionId, record?.revisionId],
+        manifestHashes: [revision?.manifestHash, record?.manifestHash],
+    });
     const gate = evaluateAdversarialGate(record, {
         node,
-        revisionId: brief.revisionId,
+        revisionId,
         manifestHash: revision?.manifestHash ?? null,
-        briefSha256: brief.sha256,
+        issuedBriefSha256s: pool.accepted.map((entry) => entry.briefSha256),
+        otherRevisionBriefSha256s: pool.otherRevision.map((entry) => entry.briefSha256),
     });
     if (!gate.satisfied) return gate;
 
     // A satisfied pass still has to be honest about its scope: a delta that does not cover the change is refused here,
     // before any node treats the pass as a conclusion.
-    const scope = await evaluateDeltaScope(root, taskId, gate.record ?? record, brief.revisionId);
+    const scope = await evaluateDeltaScope(root, taskId, gate.record ?? record, revisionId);
     if (!scope.ok) {
         return { satisfied: false, reason: scope.reason, detail: scope.detail, ...(gate.record ? { record: gate.record } : {}), findings: [] };
     }

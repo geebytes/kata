@@ -65,21 +65,28 @@ describe('independent adversarial review', () => {
     });
 
     it('satisfies the gate only for a fresh-context pass over this revision and this brief', () => {
-        const current = { node: 'verify' as const, revisionId: 'revision-abc', briefSha256: adversarialBriefSha256(brief) };
+        const issued = adversarialBriefSha256(brief);
+        const current = { node: 'verify' as const, revisionId: 'revision-abc', issuedBriefSha256s: [issued] };
 
         expect(evaluateAdversarialGate(record(), current)).toMatchObject({ satisfied: true });
         expect(evaluateAdversarialGate(null, current)).toMatchObject({ satisfied: false, reason: 'missing' });
         expect(evaluateAdversarialGate(record({ revisionId: 'revision-older' }), current)).toMatchObject({ satisfied: false, reason: 'stale_revision' });
         expect(evaluateAdversarialGate(record({ executedInFreshContext: false }), current)).toMatchObject({ satisfied: false, reason: 'not_fresh_context' });
-        expect(evaluateAdversarialGate(record({ briefSha256: 'f'.repeat(64) }), current)).toMatchObject({ satisfied: false, reason: 'brief_mismatch' });
-        expect(evaluateAdversarialGate(record({ attempts: [] }), current)).toMatchObject({ satisfied: false, reason: 'brief_mismatch' });
+        // A hash kata never issued for this node — invented, mistyped, or absent — is refused, and the refusal names
+        // what to run instead of pretending the pass answered a different brief.
+        expect(evaluateAdversarialGate(record({ briefSha256: 'f'.repeat(64) }), current)).toMatchObject({ satisfied: false, reason: 'brief_not_issued' });
+        expect(evaluateAdversarialGate(record({ briefSha256: undefined }), current)).toMatchObject({ satisfied: false, reason: 'brief_not_issued' });
+        // A hash that *was* issued, but for another revision, is a different refusal: the round answered another round's question.
+        expect(evaluateAdversarialGate(record({ briefSha256: 'a'.repeat(64) }), { ...current, otherRevisionBriefSha256s: ['a'.repeat(64)] }))
+            .toMatchObject({ satisfied: false, reason: 'brief_mismatch' });
+        expect(evaluateAdversarialGate(record({ attempts: [] }), current)).toMatchObject({ satisfied: false, reason: 'incomplete' });
         expect(evaluateAdversarialGate(record(), { ...current, revisionId: null })).toMatchObject({ satisfied: false, reason: 'no_revision' });
     });
 
     it('reports a waiver as a waiver rather than hiding it', () => {
         const waived = record({ status: 'waived', waivedReason: 'No subagent facility on this host.', waivedBy: 'reviewer' });
 
-        expect(evaluateAdversarialGate(waived, { node: 'verify', revisionId: 'revision-abc', briefSha256: 'anything' }))
+        expect(evaluateAdversarialGate(waived, { node: 'verify', revisionId: 'revision-abc', issuedBriefSha256s: [] }))
             .toMatchObject({ satisfied: true, reason: 'waived' });
         expect(blockingAdversarialFindings(waived)).toEqual([]);
     });
@@ -93,7 +100,7 @@ describe('independent adversarial review', () => {
             ],
         });
 
-        expect(evaluateAdversarialGate(withDefects, { node: 'verify', revisionId: 'revision-abc', briefSha256: adversarialBriefSha256(brief) }))
+        expect(evaluateAdversarialGate(withDefects, { node: 'verify', revisionId: 'revision-abc', issuedBriefSha256s: [adversarialBriefSha256(brief)] }))
             .toMatchObject({ satisfied: true });
         expect(blockingAdversarialFindings(withDefects).map((finding) => finding.id)).toEqual(['F-1']);
     });
@@ -137,7 +144,7 @@ describe('a recorded pass is bound to the content it reviewed', () => {
             node: 'verify',
             revisionId: 'revision-new',
             manifestHash: 'aa'.repeat(32),
-            briefSha256: 'brief',
+            issuedBriefSha256s: ['brief'],
         })).toMatchObject({ satisfied: true });
     });
 
@@ -146,15 +153,15 @@ describe('a recorded pass is bound to the content it reviewed', () => {
             node: 'verify',
             revisionId: 'revision-new',
             manifestHash: 'bb'.repeat(32),
-            briefSha256: 'brief',
+            issuedBriefSha256s: ['brief'],
         })).toMatchObject({ satisfied: false, reason: 'stale_revision' });
     });
 
     it('falls back to the revision id when no content identity was stamped', () => {
         const legacy = { ...base, manifestHash: undefined };
-        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-old', briefSha256: 'brief' }))
+        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-old', issuedBriefSha256s: ['brief'] }))
             .toMatchObject({ satisfied: true });
-        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-new', manifestHash: 'aa'.repeat(32), briefSha256: 'brief' }))
+        expect(evaluateAdversarialGate(legacy, { node: 'verify', revisionId: 'revision-new', manifestHash: 'aa'.repeat(32), issuedBriefSha256s: ['brief'] }))
             .toMatchObject({ satisfied: false, reason: 'stale_revision' });
     });
 });

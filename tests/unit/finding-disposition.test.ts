@@ -189,6 +189,68 @@ describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () =>
         expect(deferredFindings(after).map((f) => f.id)).toEqual(['a-1']);
     });
 
+    it('D1: a pass that simply stops re-reporting a deferred nit keeps the decision (and the id) alive', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-d1-silent-'));
+        roots.push(root);
+        await taskWithFinding(root);
+        const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+        const { applyDisposition, readTrackedFindings, deferredFindings } = await import('../../src/quality/finding-disposition.js');
+
+        const base = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            scope: { kind: 'full' as const },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
+        };
+        await writeAdversarialRecord(root, 'd-task', { ...base, findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }] });
+        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+            disposition: 'deferred',
+            reason: 'not now',
+            by: 'reviewer-1',
+            at: '2026-09-18T10:05:00.000Z',
+        });
+
+        // The next pass reports nothing at all — the deferral *is* the decision, so the reviewer has no reason to repeat
+        // it. It used to delete the decision with the unreported finding, and `findings defer --id a-1` then failed with
+        // 'was not found in the review record or an adversarial pass'.
+        await writeAdversarialRecord(root, 'd-task', { ...base, createdAt: '2026-09-18T11:00:00.000Z', findings: [] });
+
+        const after = await readTrackedFindings(root, 'd-task');
+        expect(after.find((finding) => finding.id === 'a-1'))
+            .toMatchObject({ disposition: 'deferred', dispositionReason: 'not now', source: 'verify' });
+        expect(deferredFindings(after).map((finding) => finding.id)).toEqual(['a-1']);
+    });
+
+    it('D1: a repair pass that no longer reports a blocking finding still clears it', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-d1-blocking-'));
+        roots.push(root);
+        await taskWithFinding(root);
+        const { blockingAdversarialFindings, readAdversarialRecord, writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+
+        const base = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            scope: { kind: 'full' as const },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
+        };
+        await writeAdversarialRecord(root, 'd-task', {
+            ...base,
+            findings: [{ id: 'b-1', taskId: 'd-task', severity: 'blocking', message: 'the boundary is unhandled' }],
+        });
+        expect(blockingAdversarialFindings(await readAdversarialRecord(root, 'd-task', 'verify')).map((finding) => finding.id)).toEqual(['b-1']);
+
+        // A blocking finding can never be dispositioned (I1), so it must not be carried like a decision: a repair pass
+        // clears it precisely by no longer reporting it.
+        await writeAdversarialRecord(root, 'd-task', { ...base, createdAt: '2026-09-18T11:00:00.000Z', findings: [] });
+        expect(blockingAdversarialFindings(await readAdversarialRecord(root, 'd-task', 'verify'))).toEqual([]);
+    });
+
     it('D2: recording a pass does not change the brief it answered', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-d2-'));
         roots.push(root);

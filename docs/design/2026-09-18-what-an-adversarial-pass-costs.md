@@ -197,6 +197,14 @@ Reproduced while recording a pass against a task that carried **deferred** findi
 | **D1** | Recording a new pass **replaces** the previous pass's record, and the dispositions live on that record. The five deferred findings became `open` again, and `kata-cli findings defer --id <old-id>` then fails with *"was not found in the review record or an adversarial pass"* — the ids no longer exist. | F1's promise is that a deferral stays visible **across passes**. As built, the next pass silently resurrects it and the author cannot even re-defer it by id. |
 | **D2** | The brief embeds the known/deferred section, so replacing the record **changes the brief text** — and the gate validates the new record by recomputing that brief's hash. Recording a pass therefore invalidates the very brief it was created from: the record is rejected with `brief_mismatch`, and re-fetching cannot recover the old hash. | The binding is meant to be "this pass answered that brief". It cannot be satisfied when the operation being performed is the one that mutates the brief. The fix is to bind the record to the brief **as issued** (store the hash — or the text — on the record at creation and compare against that), or to keep brief inputs immutable for the duration of a pass. |
 
+**Update (2026-09-19, after the fix was implemented):** the paragraph below describes the workaround, not a resolution. The
+real mechanism has **four** volatility sources, not one — the framing rotation reads the previous pass, the reading set is
+derived from the working tree, the review phase resets `review.json`, and the gate rendered the brief *without* `--since`, so
+a delta round could never be satisfied at all. The fix binds a record to the **brief as issued** (`adversarial-briefs/<node>-<revision>.json`),
+with the gate matching against that pool and rejecting anything never issued (`brief_not_issued`) — see the kata changelog
+`2026-09-19-adversarial-brief-bound-as-issued.md`. D1's other half is fixed too: a `deferred` decision now survives a pass
+that simply stops mentioning it, while blocking/major are deliberately not carried (they cannot be dispositioned).
+
 Both were worked around honestly rather than hidden: the pass was recorded against the recomputed hash with a `contextNote`
 stating that the issued brief was the other one and that the only difference is the emptied dispositions section. The
 workaround is not the fix — D1 is a **correctness** defect in the finding lifespan (a deferral that a later pass can

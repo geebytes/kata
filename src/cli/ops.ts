@@ -9,6 +9,8 @@ import {
     adversarialReasonFor,
     blockingAdversarialFindings,
     buildAdversarialBrief,
+    issueAdversarialBrief,
+    issuedBriefPool,
     readAdversarialRecord,
     writeAdversarialRecord,
     type AdversarialNode,
@@ -235,7 +237,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (subcommand === 'brief') {
         const since = argValue(rest, '--since');
         const requestedMode = argValue(rest, '--mode');
-        const brief = await buildAdversarialBrief(root, change, node, {
+        // Issued, not merely rendered: this is the copy the recorded pass will be bound to (D2, second fix).
+        const brief = await issueAdversarialBrief(root, change, node, {
             ...(since ? { since } : {}),
             ...(requestedMode === 'cold' || requestedMode === 'verify' ? { mode: requestedMode } : {}),
         });
@@ -337,29 +340,60 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         } catch (error) {
             throw new Error(`adversarial record could not parse the result: ${error instanceof Error ? error.message : String(error)}`);
         }
+        const binding = await currentRevisionManifest(root, change);
+        // The record is bound to the brief kata **issued** (D2). An unissued hash is refused before anything is
+        // written: it could never satisfy the gate, and writing it would destroy whatever pass is already recorded.
+        const pool = await issuedBriefPool(root, change, node, {
+            revisionIds: [binding.revisionId, parsed.revisionId],
+            manifestHashes: [binding.manifestHash, parsed.manifestHash],
+        });
+        const issued = pool.accepted.find((entry) => entry.briefSha256 === parsed.briefSha256) ?? null;
+        if (!issued) {
+            const reason = parsed.briefSha256 && pool.otherRevision.some((entry) => entry.briefSha256 === parsed.briefSha256)
+                ? 'brief_mismatch' as const
+                : 'brief_not_issued' as const;
+            return {
+                command: 'adversarial record',
+                taskId: change,
+                node,
+                recorded: false,
+                claimedStatus: parsed.status ?? null,
+                gate: { satisfied: false, reason },
+                error: `${adversarialReasonFor(reason)} Nothing was recorded, so any earlier pass for this node is untouched.`
+                    + ` The hash on the result must be the one \`kata-cli adversarial brief --change ${change} --node ${node}\` reported.`,
+            };
+        }
         const record = await writeAdversarialRecord(root, change, {
             ...parsed,
             node,
-            ...(await currentRevisionManifest(root, change)),
+            ...binding,
             // A delta pass's scope is what the gate checks it against, so a pass that names `--since` is recorded with
             // the change surface kata itself measured — not with whatever the reviewer typed.
             ...(since ? { scope: await currentDeltaScope(root, change, since) } : { scope: { kind: 'full' as const } }),
             // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
             // design is precisely that nobody had the number.
             ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
-            // M2: the record remembers the framing, because the next rotation reads it from here.
-            ...(argValue(rest, '--mode') === 'cold' || argValue(rest, '--mode') === 'verify'
-                ? { mode: argValue(rest, '--mode') as 'cold' | 'verify' }
-                : {}),
+            // M2: the framing is the one the *issued* brief carried — the round answered that brief, and the next
+            // rotation reads the mode from here. Taken from a flag instead, the record could contradict the brief.
+            mode: issued.mode,
             // M3: the turn term alongside the clock, so the two halves of a pass's cost are separable in the record.
             ...(argValue(rest, '--tool-uses') ? { toolUses: Number(argValue(rest, '--tool-uses')) } : {}),
         });
         const gate = await adversarialGateFor(root, change, node);
+        // `--mode` is accepted but never authoritative: the round answered the issued brief, so a flag that disagrees
+        // is reported rather than allowed to misdescribe the round (M2's rotation reads the mode from here).
+        const claimedMode = argValue(rest, '--mode');
+        const modeConflict = (claimedMode === 'cold' || claimedMode === 'verify') && claimedMode !== issued.mode ? claimedMode : null;
         return {
             command: 'adversarial record',
             taskId: change,
             node,
             status: record.status,
+            // The framing and the binding are reported back: both were taken from the issued brief, so a caller can
+            // see which round it just recorded rather than infer it.
+            mode: record.mode ?? null,
+            briefSha256: record.briefSha256 ?? null,
+            ...(modeConflict ? { modeNote: `--mode ${modeConflict} was ignored: the issued brief framed this round as ${issued.mode}, and the record follows the brief it answered.` } : {}),
             verdict: record.verdict ?? null,
             findings: (record.findings ?? []).map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
             ...(parsed.findingOrigins ? { findingOrigins: parsed.findingOrigins } : {}),
@@ -599,8 +633,12 @@ async function currentDeltaScope(root: string, taskId: string, since: string): P
     };
 }
 
-async function currentRevisionManifest(root: string, taskId: string): Promise<{ manifestHash?: string }> {
+/** The sealed revision's id and content hash, for binding a recorded pass to the revision it reviewed. */
+async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId?: string; manifestHash?: string }> {
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
     const revision = await readCurrentTaskRevision(root, taskId);
-    return revision?.manifestHash ? { manifestHash: revision.manifestHash } : {};
+    return {
+        ...(revision ? { revisionId: revision.id } : {}),
+        ...(revision?.manifestHash ? { manifestHash: revision.manifestHash } : {}),
+    };
 }

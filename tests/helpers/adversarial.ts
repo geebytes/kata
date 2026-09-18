@@ -1,4 +1,4 @@
-import { writeAdversarialRecord, buildAdversarialBrief, type AdversarialNode } from '../../src/quality/adversarial.js';
+import { writeAdversarialRecord, issueAdversarialBrief, type AdversarialNode } from '../../src/quality/adversarial.js';
 
 /**
  * Records an independent adversarial pass for a node, the way the workflow now requires.
@@ -19,7 +19,9 @@ export async function recordAdversarialPass(
         briefSha256?: string;
     } = {},
 ): Promise<void> {
-    const brief = await buildAdversarialBrief(root, taskId, node);
+    // Issued, not merely rendered: the gate binds the record to a brief kata handed out, so a fixture that only
+    // rendered one would be testing a path the CLI cannot produce any more.
+    const brief = await issueAdversarialBrief(root, taskId, node);
     await writeAdversarialRecord(root, taskId, {
         node,
         status: 'recorded',
