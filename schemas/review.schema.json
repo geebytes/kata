@@ -31,6 +31,14 @@
       "type": "string",
       "minLength": 1
     },
+    "reviewedPaths": {
+      "description": "The owned paths this review actually read (design §F5). Optional; when absent the review is treated as covering the whole revision, which is the conservative reading.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "approvedAt": {
       "type": "string",
       "minLength": 1

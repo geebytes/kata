@@ -191,6 +191,22 @@
         }
       }
     },
+    "findingOrigins": {
+      "description": "How many of this pass's findings were caused by the previous repair (design §F3): recorded so the marginal cost of fixing is on the same account as the cost of finding.",
+      "type": "object",
+      "required": [
+        "causedByPreviousRepair"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "causedByPreviousRepair": {
+          "type": "integer"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
     "waivedReason": {
       "type": "string",
       "minLength": 1

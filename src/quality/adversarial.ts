@@ -59,6 +59,20 @@ export interface AdversarialRecord {
     executedBy?: string;
     attempts?: AdversarialAttempt[];
     findings?: AdversarialFinding[];
+    /**
+     * How many of this pass's findings the previous repair caused or left uncovered (design §F3).
+     *
+     * Recorded by the reviewer, because only the reviewer knows whether a defect is new or a consequence of the last
+     * change — and recorded at all so that "fix one, grow two" is a number in the record rather than an impression.
+     */
+    findingOrigins?: { causedByPreviousRepair: number; note?: string };
+    /**
+     * What this pass covered: everything, or everything with only the changed paths re-derived (design §F2.3). A delta
+     * scope is *verified* by the gate against the recorded digests, never taken on trust.
+     */
+    scope?: { kind: 'full' | 'delta'; from?: string; changedPaths?: string[] };
+    /** For a delta pass: the manifest hash whose change surface it measured. */
+    baseManifestHash?: string;
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -274,6 +288,14 @@ export interface AdversarialGateResult {
     findings: AdversarialFinding[];
     /** Why a delta pass was refused: what the pass claimed to cover and what actually changed. */
     detail?: string;
+    /**
+     * What fixing a finding here would cost in re-verification (design §F3).
+     *
+     * The design's third problem: "fix one, grow two" was invisible because the marginal cost of a repair was never on
+     * the same account as the value of the finding. This makes it explicit at the moment a reviewer is choosing what to
+     * report and an implementer is choosing what to fix.
+     */
+    reverificationCost?: { passScope: 'delta' | 'full'; supersedesReceipt: boolean; reason: string };
 }
 
 /**
@@ -470,6 +492,37 @@ async function findRevisionByManifest(root: string, taskId: string, target: stri
 }
 
 /** The gate for a node, asked the same way by the workflow and by the CLI's status report. */
+/**
+ * What a repair would cost from here (design §F3).
+ *
+ * The answer is derived, not guessed: if the current seal has per-path digests, a later pass can be a delta over exactly
+ * what changed — so the cost is a delta pass, and the receipt survives (it binds to content, `bcfe671`). Without digests
+ * there is nothing to measure a change surface against, so the honest answer is a full pass.
+ */
+export async function reverificationCostFor(root: string, taskId: string): Promise<{
+    passScope: 'delta' | 'full';
+    supersedesReceipt: boolean;
+    reason: string;
+}> {
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const revision = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    if (!revision) {
+        return { passScope: 'full', supersedesReceipt: true, reason: 'no revision is sealed yet, so the first pass is a full one' };
+    }
+    if (!revision.pathDigests) {
+        return {
+            passScope: 'full',
+            supersedesReceipt: false,
+            reason: `revision ${revision.id} records no per-path digests, so a change surface cannot be measured; the next pass is full`,
+        };
+    }
+    return {
+        passScope: 'delta',
+        supersedesReceipt: false,
+        reason: 'owned-path digests are recorded, so the next pass can re-derive only what changed (the receipt binds to content, so it survives)',
+    };
+}
+
 export async function adversarialGateFor(
     root: string,
     taskId: string,

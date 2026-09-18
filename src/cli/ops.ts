@@ -194,12 +194,15 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (subcommand === 'brief') {
         const since = argValue(rest, '--since');
         const brief = await buildAdversarialBrief(root, change, node, since ? { since } : {});
+        const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
             command: 'adversarial brief',
             taskId: change,
             node,
             revisionId: brief.revisionId,
             briefSha256: brief.sha256,
+            // Design §F3: what acting on this brief will cost in re-verification, stated where the decision is made.
+            reverificationCost: await reverificationCostFor(root, change),
             ...(since ? { since } : {}),
             // A requested delta that could not be measured is reported as such: the caller is never handed a full brief
             // that quietly pretends to be the narrower pass it asked for.
@@ -259,6 +262,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             status: record.status,
             verdict: record.verdict ?? null,
             findings: (record.findings ?? []).map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
+            ...(parsed.findingOrigins ? { findingOrigins: parsed.findingOrigins } : {}),
             gate: { satisfied: gate.satisfied, reason: gate.reason ?? null },
             ...(gate.satisfied ? {} : { error: adversarialReasonFor(gate.reason) }),
         };
@@ -464,7 +468,7 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
  * verify the claim without trusting the reviewer. If the change surface cannot be measured the scope says so, and the
  * gate refuses the pass as `delta_unavailable` rather than accepting a delta nobody can check.
  */
-async function currentDeltaScope(root: string, taskId: string, since: string): Promise<Record<string, unknown>> {
+async function currentDeltaScope(root: string, taskId: string, since: string): Promise<{ kind: 'full' | 'delta'; from?: string; changedPaths?: string[] }> {
     const { readTaskRevision } = await import('../workflow/revision.js');
     const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
     const base = await readTaskRevision(root, taskId, since).catch(() => null);

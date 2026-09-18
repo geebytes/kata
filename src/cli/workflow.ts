@@ -103,6 +103,9 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
+        // F5: the review may state which paths it read. Repeated `--reviewed-path` flags; absent means "the whole
+        // revision", which is the conservative reading and the behaviour that existed before the field did.
+        ...(command === 'review' ? { reviewedPaths: repeatedValues(argv, '--reviewed-path') } : {}),
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
         // Closing a task with deferred findings names where they go (`finding-disposition`): the archive refuses an
         // uncarried deferral, so the decision to live with a known problem is recorded rather than implied.
@@ -293,6 +296,17 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
 export function valueAfter(argv: string[], flag: string): string | undefined {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
+}
+
+export /** Every value a repeated flag carries, in order. */
+function repeatedValues(argv: string[], flag: string): string[] {
+    const values: string[] = [];
+    for (let index = 0; index < argv.length; index += 1) {
+        if (argv[index] !== flag) continue;
+        const value = argv[index + 1];
+        if (value && !value.startsWith('--')) values.push(value);
+    }
+    return values;
 }
 
 export async function requireWorkflowReceipt(root: string, taskId: string, role: HandoffRole): Promise<void> {

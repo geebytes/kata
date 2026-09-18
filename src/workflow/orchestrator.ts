@@ -79,6 +79,13 @@ export interface CommandOptions {
     findingsCarriedTo?: string;
     /** Override the config's discovery switch for this run. */
     discoverChecks?: boolean;
+    /**
+     * Run the whole check set regardless of the change surface, for the points where the artefact is frozen. The tier
+     * mechanism already covers declared expensive checks; this covers the derivation itself.
+     */
+    fullChecks?: boolean;
+    /** The owned paths a review actually read (F5). Absent means "the whole revision", the conservative reading. */
+    reviewedPaths?: string[];
     workflowProfile?: WorkflowProfile;
     ownedPaths?: string[];
     waivers?: Waiver[];
@@ -509,7 +516,12 @@ async function cmdBuild(
     const deferredChecks = options.frozen === true
         ? []
         : checks.filter((check) => check.tier === 'frozen' && !check.coveredBy).map((check) => check.name ?? check.command);
-    const evidence = await collectEvidence(taskId, checks, {
+    // F4: which of those checks this change actually touches is **derived**, not declared by the project. The freeze
+    // points still require everything (`--frozen` / `missingFrozenTierEvidence`), and a derivation that cannot be made
+    // falls back to the full set — so "cheap" can never mean "silently under-run".
+    const relevant = await deriveSealRelevantChecks(root, taskId, checks, revision ?? null, options);
+    const checksToRun = relevant.checks ?? checks;
+    const evidence = await collectEvidence(taskId, checksToRun, {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.frozen === true ? { includeFrozen: true } : {}),
@@ -581,6 +593,7 @@ async function cmdBuild(
             // Checks that were not executed because another check covers them: named here so "not run" is a decision the
             // reader can audit, never an absence they have to notice.
             ...(coveredChecks.length > 0 ? { coveredChecks } : {}),
+            ...(relevant.derivation ? { derivedChecks: relevant.derivation } : {}),
             // Named, not silent: a check declared `tier: 'frozen'` did not run here, and the reader can see that this
             // was the seal's decision (run `--seal --frozen` to include them).
             ...(deferredChecks.length > 0 ? { deferredChecks } : {}),
@@ -796,6 +809,56 @@ async function missingFrozenTierEvidence(
         .map((check) => check.name ?? check.command);
 }
 
+
+/**
+ * The checks this seal will actually run, derived from the change surface (F4).
+ *
+ * When the derivation excludes anything, the excluded checks are **named** in the result and recorded as `skipped`
+ * progress events — the same discipline `coveredBy` and the frozen tier already use, because a run that quietly does less
+ * than it used to is indistinguishable from a run that does the same work twice.
+ */
+async function deriveSealRelevantChecks(
+    root: string,
+    taskId: string,
+    checks: CheckCommand[],
+    revision: { id: string; pathDigests?: Record<string, string> } | null,
+    options: CommandOptions,
+): Promise<{ checks?: CheckCommand[]; derivation?: Record<string, unknown> }> {
+    // Only a re-seal can be narrowed: the first seal has nothing to compare against, and the freeze points must see
+    // everything regardless.
+    if (options.frozen === true || options.fullChecks === true) return {};
+    const { readCurrentTaskRevision } = await import('./revision.js');
+    const previous = revision ? null : await readCurrentTaskRevision(root, taskId).catch(() => null);
+    const base = revision ?? previous;
+    if (!base?.pathDigests) return {};
+    const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
+    const surface = await changeSurfaceAgainstWorkspace(root, base as never);
+    if (surface.status !== 'available') return {};
+
+    const task = await readTask(root, taskId).catch(() => null);
+    const { deriveRelevantChecks } = await import('../quality/relevant-checks.js');
+    const derivation = deriveRelevantChecks({
+        root,
+        matrix: (task as { acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix } | null)?.acceptanceMatrix,
+        changedPaths: surface.changedPaths,
+        full: checks,
+    });
+    if (derivation.fellBackToFull) {
+        return { derivation: { changedPaths: surface.changedPaths, fellBackToFull: true, fallbackReason: derivation.fallbackReason ?? null } };
+    }
+    return {
+        // Only the relevant set runs; the rest is named in `diagnostics.derivedChecks.excludedChecks` and never silently
+        // dropped. A check the derivation excluded still has its declaration, its id and its place in `--list-checks`.
+        checks: [...derivation.relevant, ...checks.filter((check) => check.coveredBy)],
+        derivation: {
+            changedPaths: surface.changedPaths,
+            acceptanceIds: derivation.acceptanceIds,
+            relevantCount: derivation.relevant.length,
+            excludedChecks: derivation.excluded.map((check) => check.name ?? check.command),
+            fellBackToFull: false,
+        },
+    };
+}
 
 async function cmdVerify(
     taskId: string,
@@ -1029,6 +1092,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     },
                 };
             }
+            const { suggestedReviewedPaths } = await import('../quality/review-scope.js');
+            const approvalTask = await readTask(root, taskId);
             const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const existing = await readReview(root, taskId);
@@ -1045,8 +1110,39 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Cannot approve review with blocking or major findings; resolve findings first.',
                 };
             }
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
-            return { command: 'review', taskId, phase: 'review', success: true, diagnostics: { role: 'reviewer', approval: true, reviewEvidence, ...(revisionId ? { revisionId } : {}) } };
+            // F5: the reviewer may state which paths they read; absent, the review is read as covering the whole revision
+            // (the conservative direction). When none was stated, the matrix's suggestion is *offered* in the result
+            // rather than written behind the reviewer's back — the design's F5 rests on their honesty, not on kata's.
+            const reviewedPaths = options.reviewedPaths?.length ? options.reviewedPaths : undefined;
+            const suggestion = reviewedPaths
+                ? []
+                : suggestedReviewedPaths(
+                    approvalTask.acceptanceMatrix,
+                    existing.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
+                );
+            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+            return {
+                command: 'review',
+                taskId,
+                phase: 'review',
+                success: true,
+                diagnostics: {
+                    role: 'reviewer',
+                    approval: true,
+                    reviewEvidence,
+                    ...(revisionId ? { revisionId } : {}),
+                    ...(reviewedPaths ? { reviewedPaths } : {}),
+                    ...(suggestion.length > 0
+                        ? {
+                            reviewScope: {
+                                recorded: false,
+                                suggestion,
+                                note: 'No --reviewed-path was given, so this review is read as covering the whole revision (any change invalidates it). Pass --reviewed-path for each path you actually read to narrow that.',
+                            },
+                        }
+                        : {}),
+                },
+            };
         }
 
         if (!options.confirmHostModel) {
