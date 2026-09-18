@@ -12,7 +12,7 @@ import { readObligations } from '../quality/repair-obligations.js';
 import type { RepairScope } from '../quality/judge.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 import { readCurrentTaskRevision } from './revision.js';
-import { bindsToRevision } from './verdict-binding.js';
+import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 
 export type UpstreamSummary = {
@@ -186,9 +186,10 @@ function revisionIdForEvidence(evidence: Array<{ revisionId?: string } | null>):
  */
 function onlyCurrentRevision<T extends { revisionId?: string; manifestHash?: string }>(
   artifact: T | null,
-  current: { revisionId: string; manifestHash?: string | null },
+  current: { revisionId: string; manifestHash?: string | null; codeManifestHash?: string | null },
+  options: { scope?: VerdictScope } = {},
 ): T | null {
-  return artifact && bindsToRevision(artifact, { revisionId: current.revisionId, manifestHash: current.manifestHash ?? null })
+  return artifact && bindsToRevision(artifact, { revisionId: current.revisionId, manifestHash: current.manifestHash ?? null, codeManifestHash: current.codeManifestHash ?? null }, options)
     ? artifact
     : null;
 }

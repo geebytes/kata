@@ -645,11 +645,15 @@ async function scopeForIssuedBrief(
 }
 
 
-async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId?: string; manifestHash?: string }> {
+async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId?: string; manifestHash?: string; codeManifestHash?: string }> {
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const { codeManifestHash } = await import('../quality/code-surface.js');
     const revision = await readCurrentTaskRevision(root, taskId);
+    const codeHash = revision ? codeManifestHash(revision) : null;
     return {
         ...(revision ? { revisionId: revision.id } : {}),
         ...(revision?.manifestHash ? { manifestHash: revision.manifestHash } : {}),
+        // C2: the code-only identity, stamped beside the full manifest so a text-only re-seal can be recognised later.
+        ...(codeHash ? { codeManifestHash: codeHash } : {}),
     };
 }

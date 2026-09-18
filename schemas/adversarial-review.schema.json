@@ -33,6 +33,10 @@
     "manifestHash": {
       "type": "string"
     },
+    "codeManifestHash": {
+      "description": "Content identity of the revision's code paths only (C2). Stamped beside manifestHash so a code-scoped verdict can outlive a governance-text edit; absent when the split cannot be derived, in which case a code-scoped binding refuses to match.",
+      "type": "string"
+    },
     "baseManifestHash": {
       "type": "string",
       "description": "For a delta pass: the manifest hash whose change surface this pass measured."

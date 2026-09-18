@@ -104,6 +104,14 @@ export interface AdversarialRecord {
     toolUses?: number;
     /** How this round was framed (M2): `verify` (the author's claims) or `cold` (no claims). */
     mode?: 'verify' | 'cold';
+    /**
+     * The content identity of the revision's **code** paths when the pass was recorded (C2).
+     *
+     * Stamped by kata beside `manifestHash`, and consulted only to answer the narrow question a governance-text edit
+     * raises: *did anything the pass verified actually change?* It never stands alone — see the claims precondition in
+     * `evaluateAdversarialGate`, which is what makes it safe to act on.
+     */
+    codeManifestHash?: string;
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -678,6 +686,27 @@ export const BRIEF_VOLATILE_INPUTS = [
  * issued for this node and revision — the issued copy, not a recomputation of it. A waiver satisfies the gate explicitly
  * and is reported as such rather than hidden.
  */
+/**
+ * Whether the acceptance statement's claims were checked **against the revision now sealed** (C2's precondition).
+ *
+ * Read from the recorded evidence rather than from a flag: a claim's check carries `claim:<acceptanceId>:<claimId>` as its
+ * id, so its envelope proves it ran — and its `revisionId` proves *which* revision it ran against. A revision with no
+ * declared claims is trivially satisfied (nothing to re-read), which is the honest answer for a task whose statements are
+ * still prose.
+ */
+async function claimsVerifiedForRevision(root: string, taskId: string, revisionId: string | null): Promise<boolean> {
+    const { readTask } = await import('../core/task.js');
+    const { readRecordedEvidence } = await import('./evidence.js');
+    const task = await readTask(root, taskId).catch(() => null);
+    const declared = (task?.acceptance ?? []).flatMap((item) => (item.claims ?? []).map((claim) => `claim:${item.id}:${claim.id}`));
+    if (declared.length === 0) return true;
+    const evidence = await readRecordedEvidence(root, taskId).catch(() => []);
+    return declared.every((checkId) =>
+        evidence.some((envelope) => envelope.checkId === checkId && envelope.exitCode === 0 && (!revisionId || envelope.revisionId === revisionId)),
+    );
+}
+
+
 export function evaluateAdversarialGate(
     record: AdversarialRecord | null,
     input: {
@@ -692,6 +721,17 @@ export function evaluateAdversarialGate(
         issuedBriefSha256s: string[];
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
+        /** The current revision's code-only content identity, when it can be derived (C2). */
+        codeManifestHash?: string | null;
+        /**
+         * Whether the acceptance statement's claims were verified **on the current revision** (C2 + C3).
+         *
+         * This is the precondition that makes sparing a pass safe. A governance-text edit changes the sentences, and the
+         * sentences are what the claims check; if the claims have not been re-checked, a text edit could leave a truth
+         * claim standing that the code no longer satisfies — so the pass is **not** spared. Defaults to `false`, which is
+         * the strict and correct answer for every caller that has not thought about it.
+         */
+        claimsVerified?: boolean;
     },
 ): AdversarialGateResult {
     if (!input.revisionId) return { satisfied: false, reason: 'no_revision', findings: [] };
@@ -699,7 +739,19 @@ export function evaluateAdversarialGate(
     // Binding: the same revision, or the same owned-path content under a new id (a re-seal that changed nothing).
     const sameRevision = record.revisionId === input.revisionId;
     const sameContent = Boolean(record.manifestHash) && record.manifestHash === input.manifestHash;
-    if (!sameRevision && !sameContent) return { satisfied: false, reason: 'stale_revision', record, findings: [] };
+    // C2: a revision whose manifest differs **only in non-code paths** need not expire a pass that verified the code.
+    //
+    // Two conditions, both required, because the alternative is a stale truth claim:
+    //   1. both sides can name the code surface and they agree (an underivable surface falls through to stale), and
+    //   2. the acceptance statement's claims were re-verified on this revision — a text edit changes the sentences, so
+    //      sparing the code pass is only honest while something cheap has re-read them.
+    const textOnly = !sameRevision
+        && !sameContent
+        && Boolean(record.codeManifestHash)
+        && Boolean(input.codeManifestHash)
+        && record.codeManifestHash === input.codeManifestHash
+        && input.claimsVerified === true;
+    if (!sameRevision && !sameContent && !textOnly) return { satisfied: false, reason: 'stale_revision', record, findings: [] };
     if (record.status === 'waived') return { satisfied: true, reason: 'waived', record, findings: [] };
     // A short-circuit for the shape the gate requires beyond the schema: a recorded pass needs its attestation, its
     // brief and at least one attempt, or it has not demonstrated anything.
@@ -1136,12 +1188,15 @@ export async function adversarialGateFor(
         revisionIds: [revisionId, record?.revisionId],
         manifestHashes: [revision?.manifestHash, record?.manifestHash],
     });
+    const { codeManifestHash } = await import('./code-surface.js');
     const gate = evaluateAdversarialGate(record, {
         node,
         revisionId,
         manifestHash: revision?.manifestHash ?? null,
         issuedBriefSha256s: pool.accepted.map((entry) => entry.briefSha256),
         otherRevisionBriefSha256s: pool.otherRevision.map((entry) => entry.briefSha256),
+        codeManifestHash: revision ? codeManifestHash(revision) : null,
+        claimsVerified: await claimsVerifiedForRevision(root, taskId, revisionId),
     });
     if (!gate.satisfied) return gate;
 

@@ -127,7 +127,7 @@ export async function requireUserChoiceGate(input: { root: string; taskId: strin
   // No decision at this boundary: reuse the task-level one if the human recorded it and it still speaks for this
   // content. Reported, not silent — the caller (and the operator reading the result) can see that it was reused.
   const taskChoice = await readTaskChoice(input.root, input.taskId);
-  if (taskChoice && bindsToRevision(taskChoice, { revisionId: input.revisionId ?? identity.revisionId, manifestHash: identity.manifestHash })) {
+  if (taskChoice && bindsToRevision(taskChoice, { ...identity, revisionId: input.revisionId ?? identity.revisionId })) {
     const reused: UserChoiceGate = {
       taskId: input.taskId,
       boundary: input.boundary,

@@ -69,7 +69,7 @@ export async function evaluateReviewClearance(
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
     // expiring the clearance there is what made a re-seal re-run the whole review.
-    if (revisionId && !bindsToRevision(review, { revisionId, manifestHash: (await currentRevisionIdentity(root, taskId)).manifestHash })) {
+    if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentity(root, taskId)), revisionId })) {
         return { cleared: false, reason: 'stale_review' };
     }
     return { cleared: true, ...(revisionId ? { revisionId } : {}) };
@@ -95,8 +95,10 @@ export async function evaluateJudgePass(input: {
     const judge = await readValidatedOptional<JudgeResult>('judge-result', judgePath(input.root, input.taskId));
     if (!judge || judge.taskId !== input.taskId || judge.result !== 'PASS') return { passed: false, reason: 'not_passed' };
     if (input.freshEvidence?.revisionId) {
+        // The id is the revision the fresh evidence was sealed under; the content fields come from the current revision,
+        // because a re-seal of unchanged content issues a new id and the content is what a verdict is really about.
         const identity = await currentRevisionIdentity(input.root, input.taskId);
-        if (!bindsToRevision(judge, { revisionId: input.freshEvidence.revisionId, manifestHash: identity.manifestHash })) {
+        if (!bindsToRevision(judge, { ...identity, revisionId: input.freshEvidence.revisionId })) {
             return { passed: false, reason: 'stale_judgement' };
         }
     } else if (judge.diffHash !== input.currentDiffHash) {
