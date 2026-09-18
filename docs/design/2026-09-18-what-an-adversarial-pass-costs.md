@@ -187,3 +187,17 @@ without running the full suite (seeded by the implementer, as a test).
 
 The last line is why M1 is written as *"stop re-running the suite"* and **not** as *"shorten the round"*: the round that
 found the most ran longest because it read code deeply, not because it ran tests.
+
+## 10. Addendum (2026-09-18, after the proposal was written) — two defects the proposal's own mechanism exposed
+
+Reproduced while recording a pass against a task that carried **deferred** findings (F1):
+
+| # | What happens | Why it matters |
+|---|---|---|
+| **D1** | Recording a new pass **replaces** the previous pass's record, and the dispositions live on that record. The five deferred findings became `open` again, and `kata-cli findings defer --id <old-id>` then fails with *"was not found in the review record or an adversarial pass"* — the ids no longer exist. | F1's promise is that a deferral stays visible **across passes**. As built, the next pass silently resurrects it and the author cannot even re-defer it by id. |
+| **D2** | The brief embeds the known/deferred section, so replacing the record **changes the brief text** — and the gate validates the new record by recomputing that brief's hash. Recording a pass therefore invalidates the very brief it was created from: the record is rejected with `brief_mismatch`, and re-fetching cannot recover the old hash. | The binding is meant to be "this pass answered that brief". It cannot be satisfied when the operation being performed is the one that mutates the brief. The fix is to bind the record to the brief **as issued** (store the hash — or the text — on the record at creation and compare against that), or to keep brief inputs immutable for the duration of a pass. |
+
+Both were worked around honestly rather than hidden: the pass was recorded against the recomputed hash with a `contextNote`
+stating that the issued brief was the other one and that the only difference is the emptied dispositions section. The
+workaround is not the fix — D1 is a **correctness** defect in the finding lifespan (a deferral that a later pass can
+silently undo), and D2 makes the record binding unverifiable exactly when a task has deferred findings.
