@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { hashContent } from '../core/hash.js';
-import { adversarialReviewPath } from '../core/layout.js';
+import { adversarialReviewPath, evidenceDir } from '../core/layout.js';
 import { readValidatedOptional, validate } from '../core/schema.js';
 import type { EvidenceEnvelope } from './evidence.js';
 
@@ -92,6 +92,14 @@ export interface AdversarialRecord {
      * narrowed. A self-reported number is still a number, and the design's whole premise is that it was invisible.
      */
     elapsedMs?: number;
+    /**
+     * How many tool calls the pass made, reported by the executor.
+     *
+     * The design measured the cost of a pass as two terms — running things, and the reviewer's own turn loop — and found
+     * the turn loop dominant (5–12 of the ~16 median minutes). `elapsedMs` alone cannot show which term moved; this is the
+     * first half of the second term to become visible in the record.
+     */
+    toolUses?: number;
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -103,6 +111,24 @@ export interface AdversarialBriefInput {
     acceptance: Array<{ id?: string; statement?: string }>;
     evidence: EvidenceEnvelope[];
     ownedPaths: string[];
+    /**
+     * Where each piece of sealed evidence lives on disk, so the reviewer can *read* it (M1).
+     *
+     * Without this the reviewer re-derives what the gate already recorded: logs sit in `.kata/evidence/*.json` and were
+     * never pointed at, so a pass would spend minutes re-running a check whose green result is already sealed against this
+     * very revision.
+     */
+    evidencePaths?: Array<{ id: string; checkId?: string; path: string }>;
+    /** The task's real checks from config, so the brief can name what must not be re-run. */
+    declaredChecks?: Array<{ id: string; name: string }>;
+    /**
+     * Where to start reading (M4): the changed paths and their collaborators from the acceptance matrix.
+     *
+     * Every pass spends its first 10–20 reads orienting itself. The brief already knows the changed paths from F2 and the
+     * matrix knows which files implement the same acceptance criteria, so the orientation can be handed over instead of
+     * rediscovered. It is framed as a **starting set, not a boundary** — the sentence that gives it says so.
+     */
+    readingSet?: Array<{ path: string; why: string }>;
     reviewFindings?: Array<{ severity?: string; message?: string }>;
     /**
      * The change surface since a previous pass (F2 of the finding-lifecycle design): when present, the brief asks the
@@ -144,6 +170,17 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
             .join('\n')
         : '- (no evidence has been recorded for this revision)';
 
+    const declared = new Set((input.declaredChecks ?? []).map((check) => check.name));
+    const sealedEvidence = input.evidence.length > 0
+        ? input.evidence
+            .map((item) => {
+                const where = (input.evidencePaths ?? []).find((entry) => entry.id === item.id)?.path;
+                const worthReading = item.checkId && declared.has(item.checkId);
+                return `- ${item.checkId ?? item.id} | exit=${item.exitCode} | ${item.command}${where ? ` | read: ${where}` : ''}${worthReading ? ' | **this is a project-declared check: read its result, do not re-run it**' : ''}`;
+            })
+            .join('\n')
+        : '- (nothing is sealed yet, so there is nothing to read)';
+
     const findings = (input.reviewFindings ?? []).length > 0
         ? (input.reviewFindings ?? []).map((finding) => `- ${finding.severity ?? 'unknown'}: ${finding.message ?? ''}`).join('\n')
         : '- (none recorded yet)';
@@ -154,6 +191,10 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
             .map((finding) => `- ${finding.severity} ${finding.id} [${finding.disposition}${finding.dispositionReason ? `: ${finding.dispositionReason}` : ''}${finding.dispositionBy ? ` by ${finding.dispositionBy}` : ''}] (${finding.source}): ${finding.message}`)
             .join('\n')
         : '- (nothing has been dispositioned for this task)';
+
+    const readingSet = (input.readingSet ?? []).length > 0
+        ? (input.readingSet ?? []).map((entry) => `- ${entry.path} — ${entry.why}`).join('\n')
+        : '- (the brief cannot name a starting set for this task; explore freely)';
 
     const deltaSection = input.delta
         ? `## This is a delta pass
@@ -210,6 +251,36 @@ ${claims}
 ## Evidence the author recorded
 
 ${evidence}
+
+## Sealed evidence you may read instead of re-running
+
+The gate already ran these against **this** revision, and their envelopes are on disk — read them rather than paying for
+them twice:
+
+${sealedEvidence}
+
+**Do not re-run a check whose sealed evidence already covers this revision** — the full suite above all. A green suite
+result is schedule-dependent luck; the sealed one is bound to the revision you are reviewing, and re-running it costs
+minutes of your own turns while proving nothing the gate has not already recorded.
+
+*Exception, narrow and explicit:* when this round's focus **is** suite-global behaviour (order dependence, worker
+isolation, a claim about the suite as a whole), say so and run it once. If you believe the sealed evidence is wrong, say
+so and show why — that is a finding, not a reason to re-run it.
+
+*What this costs, stated rather than hidden:* you can no longer independently falsify "the whole suite is green" by
+running it. You may inspect it, and the gate re-runs it at seal time on this revision — but a global claim's independence
+drops from *re-derived* to *inspected*, and that is the trade.
+
+## Where to start reading
+
+A starting set, **not a boundary** — reading beyond it is expected whenever a claim reaches further than these paths:
+
+${readingSet}
+
+## Pacing yourself
+
+Independent commands belong in **one** invocation: run them together and read the outputs together. Every separate
+invocation is a full turn of yours, and the turn loop — not the CPU — is what a pass mostly costs.
 
 ## Findings recorded so far
 
@@ -522,6 +593,10 @@ export async function buildAdversarialBrief(
         ownedPaths: revision?.ownedPaths ?? task.ownedPaths ?? [],
         reviewFindings: review.findings,
         knownFindings: decidedReviewFindings(review.findings),
+        // M1: point at the envelopes and name the project's own checks, so the reviewer can read rather than re-derive.
+        evidencePaths: await evidenceEnvelopePaths(root, taskId, evidence),
+        declaredChecks: (await readProjectQualityChecks(root)).map((check) => ({ id: check.name, name: check.name })),
+        readingSet: await buildReadingSet(root, taskId, revision),
     });
     return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text), delta: deltaReport };
 }
@@ -541,6 +616,95 @@ async function findRevisionByManifest(root: string, taskId: string, target: stri
         }
     }
     return null;
+}
+
+/**
+ * The starting set for a pass (M4): what changed, plus the files the matrix ties to the same acceptance criteria.
+ *
+ * Derived, not authored — the same principle as F4's check derivation and for the same reason: an author who has to hand
+ * a reviewer a reading list will hand over their own framing, and the largest defect of the measured session was in a file
+ * the author had not mentioned.
+ */
+async function buildReadingSet(
+    root: string,
+    taskId: string,
+    revision: { id: string; pathDigests?: Record<string, string>; ownedPaths: string[] } | null,
+): Promise<Array<{ path: string; why: string }>> {
+    if (!revision?.pathDigests) return [];
+    const { changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
+    const surface = await changeSurfaceAgainstWorkspace(root, revision as never);
+    // The sealed revision's content *is* the unit under review, so a clean working tree is not "nothing to read": the
+    // owned set is the reading set's floor, and the change surface (when there is one) says what moved.
+    const moved = surface.status === 'available' ? surface.changedPaths : [];
+    const surfaceInfo = surface.status === 'available' ? surface : null;
+
+    const set = new Map<string, string>();
+    const owned = Object.keys(revision.pathDigests);
+    // Everything that moved comes first: it is where a hypothesis starts.
+    for (const path of moved) set.set(path, surfaceInfo?.added.includes(path) ? 'added in this change' : surfaceInfo?.modified.includes(path) ? 'changed in this change' : 'part of this change');
+    const changedPaths = moved.length > 0 ? moved : owned;
+
+    // The matrix ties acceptance criteria to implementation and test paths; the collaborators of a changed path are the
+    // other files under the same criteria.
+    try {
+        const { readTask } = await import('../core/task.js');
+        const { rowsForChangedPaths } = await import('./relevant-checks.js');
+        const task = await readTask(root, taskId);
+        const matrix = (task as { acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix }).acceptanceMatrix;
+        if (matrix) {
+            for (const row of rowsForChangedPaths(matrix, changedPaths)) {
+                for (const declared of [...row.implementationPaths, ...row.testPaths]) {
+                    if (set.has(declared)) continue;
+                    set.set(declared, `implements the same acceptance criterion as this change (${row.acceptanceId})`);
+                }
+            }
+        }
+    } catch {
+        // A task without a matrix simply gets the changed paths: less help, same instruction.
+    }
+
+    // An owned set can be hundreds of files; a reading list of hundreds is not orientation, it is a wall of tokens. The
+    // set is bounded and clearly labelled a sample, so it stays an aid rather than a boundary or a cost.
+    const MAX_ENTRIES = 40;
+    const shaped = [...set.entries()].sort(([a], [b]) => a.localeCompare(b));
+    if (shaped.length === 0) {
+        return owned.slice(0, MAX_ENTRIES).map((path) => ({
+            path,
+            why: `owned by this task and part of the sealed revision under review (a sample of ${owned.length})`,
+        }));
+    }
+    return shaped.slice(0, MAX_ENTRIES).map(([path, why]) => ({ path, why }));
+}
+
+/** Where each recorded envelope lives, by id — the reading list for M1. */
+async function evidenceEnvelopePaths(root: string, taskId: string, evidence: EvidenceEnvelope[]): Promise<Array<{ id: string; checkId?: string; path: string }>> {
+    const { readdir } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const directory = evidenceDir(root);
+    const files = await readdir(directory).catch(() => [] as string[]);
+    const paths: Array<{ id: string; checkId?: string; path: string }> = [];
+    for (const item of evidence) {
+        // `writeEvidence` names each envelope `${taskId}-${checkId ?? id}.json`, and archived ones are not pointed at.
+        const match = files.find((file) => file === `${item.id}.json` || file === `${taskId}-${item.checkId ?? item.id}.json`);
+        if (!match) continue;
+        paths.push({
+            id: item.id,
+            ...(item.checkId ? { checkId: item.checkId } : {}),
+            path: join(directory, match),
+        });
+    }
+    return paths;
+}
+
+/** The checks the project declares, which are the ones a reviewer is most tempted to re-run. */
+async function readProjectQualityChecks(root: string): Promise<Array<{ name: string }>> {
+    try {
+        const { loadConfig } = await import('../core/config.js');
+        const configured = await loadConfig(root);
+        return (configured.quality?.buildChecks ?? []).map((check: { name?: string; command: string }) => ({ name: check.name ?? check.command }));
+    } catch {
+        return [];
+    }
 }
 
 /**

@@ -73,6 +73,10 @@
       "description": "How long the pass took, reported by the executor. Recorded so a delta pass can be compared with the full pass it narrowed (design §11: the saving had never been measured).",
       "type": "integer"
     },
+    "toolUses": {
+      "description": "How many tool calls the pass made, reported by the executor. The turn loop, not the CPU, is what a pass mostly costs (design §1), so this is the first term of that cost to become visible.",
+      "type": "integer"
+    },
     "executedInFreshContext": {
       "type": "boolean"
     },

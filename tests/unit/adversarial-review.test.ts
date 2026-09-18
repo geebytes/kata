@@ -158,3 +158,76 @@ describe('a recorded pass is bound to the content it reviewed', () => {
             .toMatchObject({ satisfied: false, reason: 'stale_revision' });
     });
 });
+
+describe('the brief points at sealed evidence instead of asking for it again (M1)', () => {
+    it('names the envelopes on disk and the project-declared checks that must not be re-run', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'm1-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'x' }],
+            evidence: [
+                { id: 'e-1', kind: 'lint', command: 'make', args: ['lint'], exitCode: 0, startedAt: '', finishedAt: '', checkId: 'lint' },
+                { id: 'e-2', kind: 'test', command: 'make', args: ['test'], exitCode: 0, startedAt: '', finishedAt: '', checkId: 'matrix:AC-1:test' },
+            ] as never,
+            ownedPaths: ['src'],
+            declaredChecks: [{ id: 'lint', name: 'lint' }, { id: 'test', name: 'test' }],
+            evidencePaths: [{ id: 'e-1', checkId: 'lint', path: '/w/.kata/evidence/m1-task-lint.json' }],
+        });
+
+        // The reading list, the "do not re-run" rule, and the price of the trade are all stated.
+        expect(text).toContain('## Sealed evidence you may read instead of re-running');
+        expect(text).toContain('/w/.kata/evidence/m1-task-lint.json');
+        expect(text).toMatch(/Do not re-run a check whose sealed evidence already covers this revision/);
+        expect(text).toMatch(/drops from \*re-derived\* to \*inspected\*/);
+        // The narrow exception is stated, so a suite-global round is still possible.
+        expect(text).toMatch(/Exception, narrow and explicit/);
+        // And the batched-execution line, which is the largest lever on the turn term.
+        expect(text).toContain('## Pacing yourself');
+        expect(text).toMatch(/one\*\* invocation/);
+        // A declared check is flagged; a matrix check is listed without the flag.
+        expect(text).toMatch(/lint \| exit=0.*do not re-run it/);
+        expect(text).not.toMatch(/matrix:AC-1:test \| exit=0.*do not re-run it/);
+    });
+});
+
+describe('the brief hands over a starting set, bounded (M4)', () => {
+    it('lists the changed paths first, then the matrix collaborators, and says it is not a boundary', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'm4-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'x' }],
+            evidence: [],
+            ownedPaths: ['src'],
+            readingSet: [
+                { path: 'src/a.ts', why: 'changed in this change' },
+                { path: 'src/b.ts', why: 'implements the same acceptance criterion as this change (AC-1)' },
+            ],
+        });
+
+        expect(text).toContain('## Where to start reading');
+        // The framing matters as much as the list: a starting set that reads as a boundary hides defects outside it.
+        expect(text).toMatch(/starting set, \*\*not a boundary\*\*/);
+        expect(text).toMatch(/src\/a\.ts — changed in this change/);
+        expect(text).toMatch(/src\/b\.ts — implements the same acceptance criterion/);
+    });
+
+    it('says so plainly when it cannot name a starting set', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+        const text = renderAdversarialBrief({
+            taskId: 'm4-empty',
+            node: 'verify',
+            revisionId: null,
+            acceptance: [],
+            evidence: [],
+            ownedPaths: [],
+        });
+
+        expect(text).toMatch(/cannot name a starting set/);
+    });
+});

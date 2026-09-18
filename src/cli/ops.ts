@@ -303,6 +303,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
             // design is precisely that nobody had the number.
             ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
+            // M3: the turn term alongside the clock, so the two halves of a pass's cost are separable in the record.
+            ...(argValue(rest, '--tool-uses') ? { toolUses: Number(argValue(rest, '--tool-uses')) } : {}),
         });
         const gate = await adversarialGateFor(root, change, node);
         return {
@@ -331,6 +333,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 executedInFreshContext: record?.executedInFreshContext ?? null,
                 scope: record?.scope?.kind ?? null,
                 ...(record?.elapsedMs ? { elapsedMs: record.elapsedMs } : {}),
+                ...(record?.toolUses ? { toolUses: record.toolUses } : {}),
                 ...(await deltaSaving(root, change, candidate, record)),
                 blockingFindings: blockingAdversarialFindings(record).length,
                 satisfied: gate.satisfied,
