@@ -451,7 +451,23 @@ Implementation reveals concrete constraints that design alone cannot foresee:
 
 3. Don't wait for archive. Mid-task capture means the knowledge is available for the verification phase and for future tasks.`
                     : command.id === 'kata-verify'
-                        ? `## Repair loop
+                        ? `## Frozen-tier checks
+
+A project may declare verification it wants when the artefact is frozen rather than on every seal — a check with
+\`tier: "frozen"\` in \`.kata-config.json\`'s \`quality.buildChecks\`. Check before concluding this node:
+
+\`\`\`bash
+kata-cli build --change <taskId> --list-checks
+\`\`\`
+
+If any check is listed with \`"tier": "frozen"\`, seal the frozen tier before verifying — Verify refuses to conclude
+while a frozen check has no passing evidence for the current revision, and says so:
+
+\`\`\`bash
+kata-cli build --change <taskId> --seal --frozen
+\`\`\`
+
+## Repair loop
 
 If Judge returns FAIL for any acceptance criterion:
 

@@ -764,6 +764,32 @@ async function reenterImplementForRepairEntry(
     await transitionForRepair({ taskId, actor, entryPhase, repair: authorization.repair, root });
 }
 
+
+/**
+ * The frozen-tier checks that have no passing evidence for what is currently sealed.
+ *
+ * Kata cannot know which of a project's commands is "the full suite"; the project says so by declaring a tier, and this
+ * is where that declaration is held to: a seal may defer a frozen check (and name it), but the node that concludes the
+ * change may not conclude without it.
+ */
+async function missingFrozenTierEvidence(
+    root: string,
+    taskId: string,
+    task: { ownedPaths?: string[] },
+    evidence: EvidenceEnvelope[],
+): Promise<string[]> {
+    const config = await loadConfig(root);
+    const checks = await resolveBuildChecks(root, config, task.ownedPaths ?? []);
+    const frozen = checks.filter((check) => check.tier === 'frozen');
+    if (frozen.length === 0) return [];
+    const passing = evidence.filter((envelope) => envelope.exitCode === 0);
+    return frozen
+        .filter((check) => !passing.some((envelope) => (check.id ? envelope.checkId === check.id : false)
+            || (check.name ? envelope.name === check.name : false)))
+        .map((check) => check.name ?? check.command);
+}
+
+
 async function cmdVerify(
     taskId: string,
     root: string,
@@ -791,6 +817,21 @@ async function cmdVerify(
     const obligations = await readObligations(root, taskId);
     const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
     const matrix = task.acceptanceMatrix;
+    // A project that declared `tier: 'frozen'` checks asked for that verification at the point the artefact is frozen —
+    // which is here. Refusing while one has no passing evidence for this revision makes the declaration real instead of
+    // advice, and the refusal names the command that fixes it.
+    const frozenGaps = await missingFrozenTierEvidence(root, taskId, task as { ownedPaths?: string[] }, evidence);
+    if (frozenGaps.length > 0) {
+        return {
+            command: 'verify',
+            taskId,
+            phase: 'hardVerify',
+            success: false,
+            error: `Frozen-tier checks have no passing evidence for the sealed revision: ${frozenGaps.join(', ')}. `
+                + `Run: kata-cli build --change ${taskId} --seal --frozen`,
+            diagnostics: { mode: 'verify', frozenTierMissing: frozenGaps },
+        };
+    }
     const verifyResult = status?.status === 'superseded'
         ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id)
         : evaluateReadiness(taskId, task.acceptance, evidence, findings, currentDiffHash, scopeHashes, matrix, unresolvedObligations, task.workflowProfile?.reviewMode);

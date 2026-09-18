@@ -130,4 +130,32 @@ describe('seal check preflight', () => {
         const evidence = await readRecordedEvidence(root, 'preflight-evidence');
         expect(evidence).toEqual([expect.objectContaining({ checkId: 'declared-check', checkSource: 'explicit' })]);
     });
+
+    it('refuses to conclude while a frozen check has no passing evidence, and names the command', async () => {
+        const root = await tempRoot();
+        await writeFile(
+            join(root, '.kata-config.json'),
+            `${JSON.stringify({ quality: { buildChecks: [
+                { id: 'frozen-suite', name: 'frozen-suite', kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], tier: 'frozen' },
+            ] } })}\n`,
+            'utf8',
+        );
+        await openTask(root, 'frozen-tier-verify');
+        await runCommand('build', 'frozen-tier-verify', root, {
+            seal: true,
+            checks: [
+                { id: 'quick', name: 'quick', kind: 'lint', command: process.execPath, cwd: root, timeoutMs: 10_000, args: ['-e', 'process.exit(0)'] },
+            ],
+        });
+
+        // The seal deferred the frozen check and said so…
+        const listed = await runCommand('build', 'frozen-tier-verify', root, { listChecks: true });
+        expect(JSON.stringify(listed.diagnostics)).toContain('"tier":"frozen"');
+
+        // …and verify refuses to conclude without it.
+        const verified = await runCommand('verify', 'frozen-tier-verify', root, {});
+        expect(verified).toMatchObject({ success: false });
+        expect(verified.error).toContain('--seal --frozen');
+        expect(verified.diagnostics).toMatchObject({ frozenTierMissing: ['frozen-suite'] });
+    });
 });
