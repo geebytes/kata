@@ -497,3 +497,45 @@ describe('workflow guidance', () => {
     });
   });
 });
+
+describe('lifecycle prompts resolve through the catalogue (L2-08)', () => {
+    it('returns one language per rendered surface', async () => {
+        const { statusActionPrompts } = await import('../../src/workflow/navigation.js');
+        const suggestion = { nextSkill: '/kata-build', reason: 'continue_implementation' as const, role: 'implementer' };
+
+        const zh = statusActionPrompts(suggestion, 'zh');
+        const en = statusActionPrompts(suggestion, 'en');
+
+        expect(zh).toHaveLength(1);
+        expect(en).toHaveLength(1);
+        // One language of prose per surface: commands and vocabulary tokens (RED, GREEN, /kata-build, --seal) are
+        // identifiers and stay as they are, which is why this looks for prose words rather than any Latin character.
+        expect(zh[0]).not.toMatch(/\b(the|and|with|your|run)\b/i);
+        expect(en[0]).not.toMatch(/[\u4e00-\u9fff]/);
+        expect(zh[0]).not.toBe(en[0]);
+    });
+
+    it('covers every reason, so a new one cannot fall back to a language-specific sentence', async () => {
+        const { nextActionReasons } = await import('../../src/workflow/navigation.js');
+        const { statusPrompts, statusPromptFor } = await import('../../src/workflow/prompt-catalogue.js');
+
+        for (const reason of nextActionReasons) {
+            const entry = statusPromptFor(reason, 'en', { nextSkill: '/kata', role: 'dispatcher' });
+            expect(entry.length, reason).toBeGreaterThan(0);
+            expect(entry, reason).not.toMatch(/[\u4e00-\u9fff]/);
+            if (statusPrompts[reason]) expect(statusPrompts[reason]!.zh.length).toBeGreaterThan(0);
+        }
+    });
+
+    it('renders the boundary instructions in both languages, with no English-only one left', async () => {
+        const { boundaryPromptFor } = await import('../../src/workflow/prompt-catalogue.js');
+
+        for (const boundary of ['implementation_gate', 'review_gate', 'judge_gate', 'archive_gate'] as const) {
+            const en = boundaryPromptFor(boundary, 'en');
+            const zh = boundaryPromptFor(boundary, 'zh');
+            expect(en).not.toMatch(/[\u4e00-\u9fff]/);
+            expect(zh).not.toMatch(/Stop after Judge/);
+            expect(zh).not.toBe(en);
+        }
+    });
+});
