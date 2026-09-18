@@ -442,3 +442,61 @@ Steps 1 and 2 are independent and can proceed in parallel tonight; 3 lands on to
 2. For C2, is the code/non-code split derived from the owned-path globs, or declared per path?
 3. For C1, is a batch an explicit state transition (`repair batch start|close`) or an implicit window between two seals?
 4. For C5, which hosts can report tokens at all — or is `toolUses` the only portable signal?
+
+## 17. Methodology: why these changes, and when the loop is allowed to stop
+
+§14 says what to change and §16 says who does it. This section says why the changes are the *right* ones in the language of established practice, and it defines the exit condition the workflow currently lacks — because the measurements in §1 describe a loop that ran six times in a day without a definition of done.
+
+### 17.1 Each symptom is a violated principle
+
+| Observed | Principle violated | Practice | Change |
+|---|---|---|---|
+| A twenty-word text edit cost the same as a refactor (both node passes + a seal) | Verification effort should track **risk and change surface** (risk-based testing, change-impact analysis) | tiered verification: delta by default, claims-only for text, global invariants always | C2, C4 |
+| One finding per cycle; three cycles spent only because findings arrived in batches | **Batch size** (lean, theory of constraints: throughput is set by the stage with fixed setup cost) | batch the repairs; one seal and one delta round per node per batch | C1 |
+| A false sentence passed the seal *and* verify, and needed a twenty-minute pass to falsify | **Specification should be executable** (BDD, doc-tests, property tests) | every checkable clause becomes a command that runs in the gate | C3, and the project-side checker already installed |
+| Fixing a sentence produced the next round's finding | **Narration is not an artifact** — verification holds for what can be tested | a statement about the repository must be produced or checked by a command, or it does not belong in the record | C3, P1 |
+| `hardVerify → hardVerify` was an illegal transition; the brief invalidated itself | **Gates are pure functions** (build-system thinking: verdict = f(artifact, policy), cacheable, replayable) | idempotent transitions, content-addressed verdicts, resume = replay | C6 (below) |
+| The review gate gained a requirement mid-task; brief modes appeared while passes were running | **A controlled process needs a versioned engine** (release engineering: pin the toolchain) | record the engine version on the task; land engine changes between tasks | C7 (below) |
+| The same invariant was punctured in four shapes in one day | **Root cause, not instance** (5 Whys, class fixing) | enumerate the shapes of a category, guard the category, and mutation-test the guard | project-side P3 |
+| No `toolUses`, no heartbeat, a lost pass, errors without remedies | **Observability and actionable failure** (SRE) | cost on the record, heartbeats, errors that name the next command | C5 |
+| Only two or three rounds found nothing, and the next commit reopened the question | **Definition of done** | see 17.3 | DoD below |
+
+### 17.2 The redefined flow
+
+```
+① intake      requirement → acceptance statement + claims[] (a clause and its command) + risk tier
+② implement   TDD; class-level guards; every guard demonstrated able to fail
+③ batch       one idempotent, replayable seal + one delta round per node (scope = change surface)
+④ judge       0 blocking/major ∧ all claims pass ∧ the code pass bound to the code sub-manifest
+⑤ archive     deferred findings land in the *next* batch; engine changes only between batches
+```
+
+Three differences from today's flow: the verification unit is a **batch plus its delta**, not the whole revision (while the frozen tier still runs in full); **text and code are accounted separately**; and the exit test is **stability**, not one more round.
+
+### 17.3 Definition of done (formalised)
+
+A task may proceed past a gate when all three hold:
+
+1. **Claims**: every `claims[]` entry's command exits successfully, and the claim check itself is demonstrated able to fail (a seeded false claim must red).
+2. **Code**: the checks derived from the code sub-manifest pass; frozen-tier checks always included.
+3. **Findings**: zero `blocking`/`major`. `minor`/`nit` are recorded with a disposition; they do not gate, and they are not silently dropped — they are carried into the next batch.
+
+And the loop terminates on **stability**: the manifest has not changed since the last verdict. "One more round found nothing" is a stopping *heuristic*; "the artifact is the one that was judged" is a stopping *condition*, and the platform already has the hash to express it.
+
+### 17.4 Two changes this section adds
+
+- **C6 — idempotent seal.** Entering `hardVerify` from `hardVerify` must be a no-op that re-evaluates, not an error: phase transitions are idempotent operations over content-addressed artifacts, and re-running a gate on unchanged content must be free. Found the hard way (an interrupted seal left the phase set; the re-run failed with `Illegal transition from hardVerify to hardVerify` while all six checks passed).
+- **C7 — versioned engine.** The task record carries the engine version, and a gate whose behaviour changed mid-task reports that fact instead of silently applying new rules. Today the review gate gained a node requirement and the brief gained a framing mode while passes were in flight; both were improvements, and both cost a diagnostic cycle because the flow could not tell "the rules changed" from "I did something wrong".
+
+### 17.5 What methodology says must not be optimised away
+
+Independent verification, evidence bound to the artifact, and fail-closed severity gating are not overhead — they are the reason a verdict means anything, and today they were the only reason several silent failures were caught at all (§15 lists them). Every optimisation here changes **when** a check runs, **who** runs it, or **how much** of it runs; none changes **whether** a claim gets falsified.
+
+### 17.6 Names for the anti-patterns, so they are recognisable next time
+
+- **Narration as artifact** — prose about the work verified as if it were the work.
+- **Gate ceremony** — a full independent audit for a typo, because the unit of verification is the artifact rather than the change.
+- **Verification amplification** — each fix enlarging the surface the next verification must cover.
+- **Instance fixing** — repairing the discovered shape and leaving the category open.
+- **Moving platform** — the process engine changing while the process runs.
+- **Unbounded review loop** — iterating until a round happens to find nothing, instead of until the artifact is stable.
