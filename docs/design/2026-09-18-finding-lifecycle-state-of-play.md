@@ -1,6 +1,9 @@
 # Where the finding-lifecycle design stands, and what is left open
 
-Closing note for the 2026-09-18 design work, so the next reader does not have to reconstruct it from the changelogs.
+> Status: **standing document**, not a changelog entry — it answers "what exists and what is deliberately absent" for the
+> 2026-09-18 design (`2026-09-18-finding-lifecycle-and-proportional-reverification.md`), with the measurements in
+> `2026-09-18-finding-lifecycle-measurements.md`. Moved here from `docs/changelog/` because a reader looking for the state
+> of a design should not have to find the commit that happened to record it.
 
 ## Delivered, in the design's own priority order
 
