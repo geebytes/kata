@@ -419,6 +419,17 @@ export function sealProgressPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'seal-progress.jsonl');
 }
 
+/**
+ * The pass heartbeat (K1): one line per batch of an adversarial pass's work.
+ *
+ * Mirrors `sealProgressPath` on purpose — the seal has had a heartbeat since a long operation was found to be invisible
+ * while it ran, and a pass is the same kind of operation with a single write point at the end, which is why a crash used to
+ * take all of its work with it.
+ */
+export function adversarialProgressPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'adversarial-progress.jsonl');
+}
+
 export function taskProfilePath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'workflow-profile.json');
 }

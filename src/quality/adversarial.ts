@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { hashContent } from '../core/hash.js';
 import { adversarialReviewPath, evidenceDir } from '../core/layout.js';
 import { readValidatedOptional, validate } from '../core/schema.js';
@@ -277,6 +278,25 @@ A starting set, **not a boundary** — reading beyond it is expected whenever a 
 
 ${readingSet}
 
+## Writing as you go
+
+You do **not** have to hold everything until the end. A pass that dies mid-run keeps whatever it already wrote:
+
+- record a batch of work as you finish it — one line per **batch**, in the same invocation that ran the check:
+  \`\`\`bash
+  kata-cli adversarial note --change <task-id> --node ${input.node} --from-file <line.json>
+  \`\`\`
+  (\`{"hypothesis": "…", "method": "…", "outcome": "refuted|confirmed|inconclusive"}\`)
+- report a finding the moment you confirm it, rather than in the final file:
+  \`\`\`bash
+  kata-cli adversarial finding add --change <task-id> --node ${input.node} --from-file <finding.json>
+  \`\`\`
+- \`record\` at the end seals the verdict and the revision binding. It is the conclusion, not the container.
+
+**Batching rule, and it matters more than the feature:** one append per *batch of work*, never one per hypothesis. Every
+separate invocation is a full turn of yours, and the turn loop is what this pass mostly costs — writing a line after every
+thought would eat far more than a crashed pass ever loses.
+
 ## Pacing yourself
 
 Independent commands belong in **one** invocation: run them together and read the outputs together. Every separate
@@ -350,6 +370,59 @@ export function adversarialBriefSha256(brief: string): string {
 
 export async function readAdversarialRecord(root: string, taskId: string, node: AdversarialNode): Promise<AdversarialRecord | null> {
     return readValidatedOptional<AdversarialRecord>('adversarial-review', adversarialReviewPath(root, taskId, node));
+}
+
+/**
+ * The revision binding stamped onto a pass: which revision it answered, and what that revision's content is.
+ *
+ * Kata stamps both — `revisionId` from the caller, `manifestHash` from the sealed revision — because a verdict is about
+ * content, and the id alone changes on a re-seal of unchanged content.
+ */
+async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId: string; manifestHash: string }> {
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const revision = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    return {
+        revisionId: revision?.id ?? 'unsealed',
+        manifestHash: revision?.manifestHash ?? '',
+    };
+}
+
+/**
+ * Records one finding on the node's record as it is confirmed (K2).
+ *
+ * The proposal's §11: a pass has exactly one write point — the record at the end — so a crash leaves nothing. Findings are
+ * the part of a pass's work that is worth keeping even when the verdict never arrives, so they land one at a time; `record`
+ * then only has to seal the verdict and the revision binding.
+ *
+ * A record that does not exist yet is created as a draft: `status: 'recorded'` with no verdict, and the gate refuses it
+ * exactly as it refuses a missing pass (no verdict is no conclusion). That keeps "partial" from ever reading as "passed".
+ */
+export async function addAdversarialFinding(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    finding: Record<string, unknown>,
+): Promise<AdversarialFinding> {
+    const candidate = {
+        ...finding,
+        taskId: (finding.taskId as string | undefined) ?? taskId,
+    } as AdversarialFinding;
+    if (!candidate.id) candidate.id = `finding-${randomUUID()}`;
+
+    const existing = await readAdversarialRecord(root, taskId, node).catch(() => null);
+    const revisionId = existing?.revisionId ?? (await currentRevisionManifest(root, taskId)).revisionId ?? 'unsealed';
+    const draft: AdversarialRecord = existing ?? {
+        node,
+        status: 'recorded',
+        revisionId,
+        createdAt: new Date().toISOString(),
+        attempts: [],
+        findings: [],
+        scope: { kind: 'full' },
+    };
+    const findings = [...(draft.findings ?? []).filter((entry) => entry.id !== candidate.id), candidate];
+    await writeAdversarialRecord(root, taskId, { ...draft, findings });
+    return candidate;
 }
 
 export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
@@ -481,6 +554,36 @@ export async function evaluateDeltaScope(
     }
     return { ok: true };
 }
+
+/**
+ * Which inputs a brief is allowed to be derived from (K3, and the rule D2 taught).
+ *
+ * "Bind the brief as issued" sounds like it needs a stored copy. It does not — it is a **property of the brief's inputs**.
+ * The 2026-09-18 defect was that the brief embedded the disposition section *of the pass's own record*, so recording the
+ * pass changed the text, and the gate's recomputation rejected the record it had just accepted.
+ *
+ * Now the brief derives only from state a pass cannot change, which makes re-deriving it an *identity* function. That is
+ * exactly what lets a retry continue a partial pass: the same brief, the same `briefSha256`, even though a record was
+ * written in between.
+ *
+ * The list is data so a reviewer of this code can see the whole input surface at once — and so a future addition that
+ * brings in something volatile has to be added here, deliberately, next to the rule it would break.
+ */
+export const BRIEF_DURABLE_INPUTS = [
+    'task acceptance criteria',
+    'the sealed revision and its owned-path digests',
+    'recorded evidence envelopes',
+    'the review record and its findings (durable)',
+    "the project's declared checks",
+    'the change surface since a base revision',
+] as const;
+
+/** Inputs a brief must never be derived from, because recording a pass rewrites them. */
+export const BRIEF_VOLATILE_INPUTS = [
+    'the adversarial record of the pass being recorded',
+    'the dispositions it stores',
+    'anything whose value changes between issuing and recording a pass',
+] as const;
 
 export function evaluateAdversarialGate(
     record: AdversarialRecord | null,

@@ -282,6 +282,43 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         };
     }
 
+    if (subcommand === 'note') {
+        // K1: one line per batch of work, meant to ride along with a check the pass is already running.
+        const fromFile = argValue(rest, '--from-file');
+        const { appendProgressLine } = await import('../quality/adversarial-progress.js');
+        const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
+        if (!raw.trim()) throw new Error('adversarial note requires a JSON line on stdin or via --from-file');
+        let parsed: { hypothesis?: string; method?: string; outcome?: 'refuted' | 'confirmed' | 'inconclusive'; type?: string; findingId?: string; message?: string };
+        try {
+            parsed = JSON.parse(raw) as typeof parsed;
+        } catch (error) {
+            throw new Error(`adversarial note could not parse the line: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const written = await appendProgressLine(root, change, {
+            type: parsed.type === 'finding' ? 'finding' : 'attempt',
+            at: new Date().toISOString(),
+            node,
+            ...(parsed.hypothesis ? { hypothesis: parsed.hypothesis } : {}),
+            ...(parsed.method ? { method: parsed.method } : {}),
+            ...(parsed.outcome ? { outcome: parsed.outcome } : {}),
+            ...(parsed.findingId ? { findingId: parsed.findingId } : {}),
+            ...(parsed.message ? { message: parsed.message } : {}),
+        });
+        return { command: 'adversarial note', taskId: change, node, written };
+    }
+
+    if (subcommand === 'finding') {
+        // K2: a finding lands as it is confirmed, so a crash costs the unfinished tail rather than the finished part.
+        const action = rest[0];
+        if (action !== 'add') throw new Error('Usage: kata-cli adversarial finding add --change <task-id> --node verify --from-file <finding.json>');
+        const fromFile = argValue(rest, '--from-file');
+        const { addAdversarialFinding } = await import('../quality/adversarial.js');
+        const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
+        if (!raw.trim()) throw new Error('adversarial finding add requires the finding JSON on stdin or via --from-file');
+        const finding = await addAdversarialFinding(root, change, node, JSON.parse(raw) as Record<string, unknown>);
+        return { command: 'adversarial finding add', taskId: change, node, findingId: finding.id, severity: finding.severity, findings: 'stored on the node record; `record` seals the verdict and the revision binding' };
+    }
+
     if (subcommand === 'record') {
         const fromFile = argValue(rest, '--from-file');
         const since = argValue(rest, '--since');
@@ -321,6 +358,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     }
 
     if (subcommand === 'status') {
+        const { progressSummary } = await import('../quality/adversarial-progress.js');
+        const progress = await progressSummary(root, change);
         const nodes: Record<string, unknown> = {};
         for (const candidate of adversarialNodes) {
             const record = await readAdversarialRecord(root, change, candidate);
@@ -340,7 +379,18 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 reason: gate.reason ?? null,
             };
         }
-        return { command: 'adversarial status', taskId: change, nodes };
+        // K1's read side: "is a pass alive, and where is it" must be answerable from outside — the same reason the seal
+        // got a heartbeat — and a pass that died mid-way is visible here as lines whose verdict never arrived.
+        return {
+            command: 'adversarial status',
+            taskId: change,
+            nodes,
+            progress: {
+                lines: progress.lines,
+                lastAt: progress.lastAt,
+                last: progress.last,
+            },
+        };
     }
 
     throw new Error(`Unknown adversarial command: ${subcommand ?? ''}. Usage: kata-cli adversarial <brief|record|waive|status>`);
