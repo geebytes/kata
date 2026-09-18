@@ -36,27 +36,27 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
   };
 
   const reviewPath = layoutReviewPath(root, input.taskId);
-  let findings: ReviewFinding[] = [];
-  let revisionId: string | undefined;
-  let status: string | undefined;
-  try {
-    const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: unknown[]; revisionId?: string; status?: string };
-    // findings are validated against review-finding.schema.json: a drifted finding is rejected where it is read.
-    findings = (parsed.findings ?? []).map((record) => validate<ReviewFinding>('review-finding', record));
-    revisionId = parsed.revisionId;
-    status = parsed.status;
-  } catch (error) {
-    if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
-  }
-
   await mkdir(taskDir(root, input.taskId), { recursive: true });
   const { currentRevisionIdentity, revisionBindingFields } = await import('../workflow/verdict-binding.js');
+  const { mutateTaskArtefact } = await import('../core/state.js');
+  // Appending a finding is a read-modify-write of `review.json` — the file that carries the review binding — so it goes
+  // through the task lock (L3-09): a concurrent command must not lose either side's findings.
   const binding = revisionBindingFields(await currentRevisionIdentity(root, input.taskId));
-  await writeFile(
-    reviewPath,
-    `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...binding, findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`,
-    'utf8',
-  );
+  await mutateTaskArtefact(root, input.taskId, reviewPath, async () => {
+    let findings: ReviewFinding[] = [];
+    let revisionId: string | undefined;
+    let status: string | undefined;
+    try {
+      const parsed = JSON.parse(await readFile(reviewPath, 'utf8')) as { findings?: unknown[]; revisionId?: string; status?: string };
+      // findings are validated against review-finding.schema.json: a drifted finding is rejected where it is read.
+      findings = (parsed.findings ?? []).map((record) => validate<ReviewFinding>('review-finding', record));
+      revisionId = parsed.revisionId;
+      status = parsed.status;
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') throw error;
+    }
+    return `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...binding, findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`;
+  });
 
   if (finding.severity === 'blocking') {
     const { persistBlockingFindings } = await import('./repair-obligations.js');

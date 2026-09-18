@@ -1,4 +1,5 @@
 import { taskPath } from './layout.js';
+import { mutateTaskArtefact } from './state.js';
 export const isolationModes = ['current_worktree', 'isolated_worktree', 'git_flow', 'user_decides'] as const;
 export const developmentModes = ['tdd', 'standard'] as const;
 export const reviewModes = ['std', 'strict', 'security'] as const;
@@ -42,26 +43,38 @@ export function isWorkflowProfile(value: unknown): value is WorkflowProfile {
 
 
 export async function acknowledgeCometOpen(root: string, taskId: string): Promise<WorkflowProfile> {
-  const { readFile, writeFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
-  const path = taskPath(root, taskId);
-  const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
-  const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
-  const next: WorkflowProfile = { ...profile, comet: { ...profile.comet, openStatus: 'acknowledged' } };
-  task.workflowProfile = next;
-  await writeFile(path, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
-  return next;
+  return updateProfile(root, taskId, (profile) => ({
+    ...profile,
+    comet: { ...profile.comet, openStatus: 'acknowledged' },
+  }));
 }
 
 export async function updateGitFlowProfile(root: string, taskId: string, gitFlow: GitFlowState): Promise<WorkflowProfile> {
-  const { readFile, writeFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
+  return updateProfile(root, taskId, (profile) => ({ ...profile, gitFlow }));
+}
+
+/**
+ * The one way a profile change reaches `task.json`: read, change and write inside the task lock, atomically.
+ *
+ * The two writers above used to be plain read-modify-writes outside any lock, so two commands on one task could lose an
+ * update (L3-09). The lock has to cover the read as well as the write, which is why the change is expressed as a
+ * function rather than as the new profile.
+ */
+async function updateProfile(
+  root: string,
+  taskId: string,
+  change: (profile: WorkflowProfile) => WorkflowProfile,
+): Promise<WorkflowProfile> {
+  const { readFile } = await import('node:fs/promises');
   const path = taskPath(root, taskId);
-  const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
-  const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
-  const next: WorkflowProfile = { ...profile, gitFlow };
-  task.workflowProfile = next;
-  await writeFile(path, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+  let next: WorkflowProfile = defaultWorkflowProfile();
+  await mutateTaskArtefact(root, taskId, path, async () => {
+    const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
+    const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
+    next = change(profile);
+    task.workflowProfile = next;
+    return `${JSON.stringify(task, null, 2)}\n`;
+  });
   return next;
 }
 

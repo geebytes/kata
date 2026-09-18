@@ -164,6 +164,32 @@ export async function transitionForRepair(input: {
 }
 
 /** Serialize a task mutation across local processes; a conflicting command fails closed. */
+
+/**
+ * Mutates a task-scoped artefact under the task lock, atomically.
+ *
+ * L3-09: `withTaskLock` guarded exactly two call sites — `transition` and the review-repair re-entry — while every other
+ * task-artefact mutation was an unlocked read-modify-write (`task.json` by `acknowledgeCometOpen` and
+ * `updateGitFlowProfile`, `review.json` by the reviewer, `repair-obligations.json` by its own module, `repair.json` by
+ * the orchestrator). Two concurrent commands on one task could therefore lose an update in exactly the files that carry
+ * the review and judge bindings.
+ *
+ * One discipline: read, decide and write inside the lock, and land the write through the atomic replace the state
+ * transition already used. Callers pass a mutator that returns the bytes to write, so the lock covers the read as well as
+ * the write — a helper that took the new content would not close the window it exists to close.
+ */
+export async function mutateTaskArtefact(
+    root: string,
+    taskId: string,
+    path: string,
+    mutate: () => Promise<string>,
+): Promise<void> {
+    await withTaskLock(root, taskId, async () => {
+        const content = await mutate();
+        await writeFileAtomic(path, content);
+    });
+}
+
 export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {
     assertValidTaskId(taskId);
     const lockPath = transitionLockPath(root, taskId);
@@ -240,7 +266,7 @@ function stateEventsPath(root: string, taskId: string): string {
     return layoutStateEventsPath(root, taskId);
 }
 
-async function writeFileAtomic(path: string, content: string): Promise<void> {
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
     const temporaryPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, content, 'utf8');
     await rename(temporaryPath, path);
