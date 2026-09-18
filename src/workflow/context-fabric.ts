@@ -42,11 +42,66 @@ export async function createContextPacket(input: { root: string; taskId: string;
   const task = JSON.parse(await readFile(taskPath(input.root, input.taskId), 'utf8')) as HandoffPacket['task'];
   const context = await buildContextManifest({ root: input.root, taskId: input.taskId, sourceRefs: handoff.context.sourceRefs });
   const designRefs = designRefsFor(input.root, input.taskId, input.toRole);
-  const packet: HandoffPacket = { protocolVersion: 1, id: `handoff-${randomUUID().slice(0, 12)}`, taskId: input.taskId, createdAt: new Date().toISOString(), from: { role: input.fromRole, ...(input.platform ? { platform: safePlatform(input.platform) } : {}) }, to: { role: input.toRole }, phase: handoff.fromPhase, repository: await anchor(input.root, input.taskId), task, context: { requiredReads: existingReads(input.root, input.taskId, designRefs), designRefs, sourceRefs: [...handoff.context.sourceRefs].sort(), authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })), excludedWiki: context.excludedWiki.map((record) => ({ id: record.id, reason: record.reason })), evidencePaths: handoff.context.evidenceIds.map((id) => `.kata/evidence/${id}`), priorArtifacts: roleArtifacts(input.root, input.taskId) }, permissions: { allowedWrites: allowedWrites(input.toRole, input.taskId, input.root), guardInstructions: handoff.guardInstructions }, nextAction: `Perform ${input.toRole} work after verifying this handoff.` };
+  const packet: HandoffPacket = {
+    protocolVersion: 1,
+    id: `handoff-${randomUUID().slice(0, 12)}`,
+    taskId: input.taskId,
+    createdAt: new Date().toISOString(),
+    from: { role: input.fromRole, ...(input.platform ? { platform: safePlatform(input.platform) } : {}) },
+    to: { role: input.toRole },
+    phase: handoff.fromPhase,
+    repository: await anchor(input.root, input.taskId),
+    task,
+    context: {
+      // What the receiving role has to read, what the task's design references are, the sources the Wiki was consulted
+      // for, and which records are authoritative vs excluded — the whole point of a context packet is that this list is
+      // explicit rather than implied.
+      requiredReads: existingReads(input.root, input.taskId, designRefs),
+      designRefs,
+      sourceRefs: [...handoff.context.sourceRefs].sort(),
+      authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })),
+      excludedWiki: context.excludedWiki.map((record) => ({ id: record.id, reason: record.reason })),
+      evidencePaths: handoff.context.evidenceIds.map((id) => `.kata/evidence/${id}`),
+      priorArtifacts: roleArtifacts(input.root, input.taskId),
+    },
+    permissions: {
+      allowedWrites: allowedWrites(input.toRole, input.taskId, input.root),
+      guardInstructions: handoff.guardInstructions,
+    },
+    nextAction: `Perform ${input.toRole} work after verifying this handoff.`,
+  };
   await writePacket(input.root, packet); return packet;
 }
 export async function readContextPacket(root: string, taskId: string, id: string): Promise<HandoffPacket> { assertValidTaskId(taskId); safeId(id); return readValidated<HandoffPacket>('handoff-packet', packetPath(root, taskId, id)); }
-export async function acknowledgeContextPacket(input: { root: string; taskId: string; id: string; platform: string; role: Role }): Promise<HandoffReceipt> { const packet = await readContextPacket(input.root, input.taskId, input.id); assertRole(input.role); if (packet.to.role !== input.role) throw new Error(`Handoff role ${input.role} does not match packet recipient ${packet.to.role}.`); const verification = await verifyContextPacket({ root: input.root, taskId: input.taskId, id: input.id }); if (!verification.valid) throw new Error(`Cannot acknowledge invalid handoff packet: ${verification.reason}`); const receipt: HandoffReceipt = { protocolVersion: 1, taskId: input.taskId, handoffId: input.id, platform: safePlatform(input.platform), role: input.role, packetSha256: hashContent(JSON.stringify(packet)), acknowledgedAt: new Date().toISOString(), repository: await anchor(input.root, input.taskId) }; await writeFile(receiptPath(input.root, input.taskId, input.id), `${JSON.stringify(receipt, null, 2)}\n`); return receipt; }
+export async function acknowledgeContextPacket(input: {
+  root: string;
+  taskId: string;
+  id: string;
+  platform: string;
+  role: Role;
+}): Promise<HandoffReceipt> {
+  const packet = await readContextPacket(input.root, input.taskId, input.id);
+  assertRole(input.role);
+  if (packet.to.role !== input.role) {
+    throw new Error(`Handoff role ${input.role} does not match packet recipient ${packet.to.role}.`);
+  }
+  // The receipt is written only for a packet that still speaks for the current state; the verification reasons are the
+  // contract, and the order below is the order they are reported in.
+  const verification = await verifyContextPacket({ root: input.root, taskId: input.taskId, id: input.id });
+  if (!verification.valid) throw new Error(`Cannot acknowledge invalid handoff packet: ${verification.reason}`);
+  const receipt: HandoffReceipt = {
+    protocolVersion: 1,
+    taskId: input.taskId,
+    handoffId: input.id,
+    platform: safePlatform(input.platform),
+    role: input.role,
+    packetSha256: hashContent(JSON.stringify(packet)),
+    acknowledgedAt: new Date().toISOString(),
+    repository: await anchor(input.root, input.taskId),
+  };
+  await writeFile(receiptPath(input.root, input.taskId, input.id), `${JSON.stringify(receipt, null, 2)}\n`);
+  return receipt;
+}
 /**
  * Enforce the receipt at a workflow mutation boundary.  Packet verification is
  * deliberately usable before acknowledgement for inspection; mutation is not.
@@ -66,7 +121,33 @@ export async function requireAcknowledgedContextPacket(input: { root: string; ta
   }
   return receipt;
 }
-export async function verifyContextPacket(input: { root: string; taskId: string; id: string }): Promise<ContextPacketVerification> { const packet = await readContextPacket(input.root, input.taskId, input.id); const current = await anchor(input.root, input.taskId); if (packet.repository.branch !== current.branch) return { valid: false, reason: 'branch_mismatch' }; if (packet.repository.scope && !sameScopeIdentity(packet.repository.scope, current.scope!)) return { valid: false, reason: 'diff_mismatch' }; if (packet.repository.diffHash !== current.diffHash) return { valid: false, reason: 'diff_mismatch' }; try { const receipt = await readValidatedOptional<HandoffReceipt>('handoff-receipt', receiptPath(input.root, input.taskId, input.id)); if (receipt && receipt.packetSha256 !== hashContent(JSON.stringify(packet))) return { valid: false, reason: 'packet_hash_mismatch' }; } catch (error) { if (!isMissingFile(error)) throw error; } return { valid: true }; }
+export async function verifyContextPacket(input: {
+  root: string;
+  taskId: string;
+  id: string;
+}): Promise<ContextPacketVerification> {
+  const packet = await readContextPacket(input.root, input.taskId, input.id);
+  const current = await anchor(input.root, input.taskId);
+  // A readable sequence, one reason per check, in the order the reasons are documented: branch, then what the task owns,
+  // then the receipt's own hash. Reordering these changes which mismatch a caller is told about.
+  if (packet.repository.branch !== current.branch) return { valid: false, reason: 'branch_mismatch' };
+  if (packet.repository.scope && !sameScopeIdentity(packet.repository.scope, current.scope!)) {
+    return { valid: false, reason: 'diff_mismatch' };
+  }
+  if (packet.repository.diffHash !== current.diffHash) return { valid: false, reason: 'diff_mismatch' };
+  try {
+    const receipt = await readValidatedOptional<HandoffReceipt>(
+      'handoff-receipt',
+      receiptPath(input.root, input.taskId, input.id),
+    );
+    if (receipt && receipt.packetSha256 !== hashContent(JSON.stringify(packet))) {
+      return { valid: false, reason: 'packet_hash_mismatch' };
+    }
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+  }
+  return { valid: true };
+}
 async function anchor(root: string, taskId: string): Promise<HandoffPacket['repository']> {
   const revision = await readCurrentTaskRevision(root, taskId);
   const scope = revision
