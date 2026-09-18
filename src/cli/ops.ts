@@ -252,6 +252,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // M2: the framing and why it was chosen, so the rotation is visible rather than silent.
             mode: brief.mode,
             modeReason: brief.modeReason,
+            // C4: the scope and why, so a delta default is never something the reader has to infer.
+            scopeReason: brief.scopeReason,
             // Design §F3: what acting on this brief will cost in re-verification, stated where the decision is made.
             reverificationCost: await reverificationCostFor(root, change),
             ...(since ? { since } : {}),

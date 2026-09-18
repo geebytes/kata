@@ -694,6 +694,34 @@ export const BRIEF_VOLATILE_INPUTS = [
  * declared claims is trivially satisfied (nothing to re-read), which is the honest answer for a task whose statements are
  * still prose.
  */
+/**
+ * Which scope the next round gets by default (C4), and why.
+ *
+ * The measurement: delta rounds ran 11–18 min against 15–35 min for full-scope rounds, and the mechanism already existed —
+ * it was simply never the default, so a bounded repair was followed by a full re-derivation of everything it had not
+ * touched.
+ *
+ * A delta default is only honest when there is a base worth measuring *from*, and when the change since it is the repair
+ * rather than something structural. So the answer is `full` — with its reason — unless a batch has closed and its base
+ * revision still exists: the first round after intake has nothing to narrow against, a design-level change invalidates the
+ * question the previous round answered, and the freeze point requires everything.
+ */
+async function defaultBriefScope(root: string, taskId: string): Promise<{ since?: string; reason: string }> {
+    const { readBatches } = await import('./repair-batch.js');
+    const batches = await readBatches(root, taskId).catch(() => []);
+    const closed = batches.filter((batch) => batch.closedAt).at(-1);
+    if (!closed) {
+        return { reason: 'no repair batch has closed, so there is nothing to narrow against' };
+    }
+    if (!closed.closedByRevisionId) {
+        return { reason: `batch ${closed.id} closed without naming a revision, so the change surface cannot be derived` };
+    }
+    return {
+        since: closed.closedByRevisionId,
+        reason: `repair batch ${closed.id} closed on ${closed.closedByRevisionId}: the round after a bounded repair measures what the repair changed`,
+    };
+}
+
 async function claimsVerifiedForRevision(root: string, taskId: string, revisionId: string | null): Promise<boolean> {
     const { readTask } = await import('../core/task.js');
     const { readRecordedEvidence } = await import('./evidence.js');
@@ -812,6 +840,13 @@ export interface AdversarialBrief {
     sha256: string;
     mode: 'verify' | 'cold';
     modeReason: string;
+    /**
+     * Why this round got the scope it got (C4).
+     *
+     * Reported rather than implied: a delta default that arrived silently would be indistinguishable from a round that
+     * narrowed for the wrong reason, and the two call for different reactions.
+     */
+    scopeReason: string;
     delta: { from: string; changedPaths: string[] } | { unavailable: string } | null;
 }
 
@@ -835,14 +870,22 @@ export async function buildAdversarialBrief(
     // sealed before per-path digests existed yields `delta_unavailable` — the caller is told, never handed a guess.
     let delta: { from: string; changedPaths: string[]; added: string[]; modified: string[]; removed: string[]; attempts?: Array<Record<string, string>>; findings?: Array<{ id: string; severity: string; message: string; disposition: string }> } | undefined;
     let deltaReport: { from: string; changedPaths: string[] } | { unavailable: string } | null = null;
-    if (options.since) {
+    // C4: what scope this round gets by default. A batch that just closed leaves a base revision to measure against, and
+    // re-deriving the whole surface after a bounded repair is the cost the measurement called out; the full-scope cases
+    // are named rather than implied.
+    const resolvedScope = options.since
+        ? { since: options.since, reason: 'requested explicitly (--since)' }
+        : await defaultBriefScope(root, taskId);
+
+    const scopeBase = resolvedScope.since;
+    if (scopeBase) {
         const { readTaskRevision } = await import('../workflow/revision.js');
         const { changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
-        const base = await readTaskRevision(root, taskId, options.since).catch(() => null)
-            ?? await findRevisionByManifest(root, taskId, options.since)
+        const base = await readTaskRevision(root, taskId, scopeBase).catch(() => null)
+            ?? await findRevisionByManifest(root, taskId, scopeBase)
             ?? null;
         if (!base) {
-            deltaReport = { unavailable: `no revision matching '${options.since}' was found for task '${taskId}'` };
+            deltaReport = { unavailable: `no revision matching '${scopeBase}' was found for task '${taskId}'` };
         } else {
             const surface = await changeSurfaceAgainstWorkspace(root, base);
             if (surface.status === 'delta_unavailable') {
@@ -893,6 +936,7 @@ export async function buildAdversarialBrief(
         // The mode is a property of the brief, not an input to it: recording it on the pass cannot change the text.
         mode: resolvedMode.mode,
         modeReason: resolvedMode.reason,
+        scopeReason: resolvedScope.reason,
         delta: deltaReport,
     };
 }

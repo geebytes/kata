@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -82,5 +82,74 @@ describe('a repair batch', () => {
         const { writeFile } = await import('node:fs/promises');
         await writeFile(join(root, '.kata/tasks/b-task/repair-batch.json'), JSON.stringify({ batches: [{ id: 'x' }] }), 'utf8');
         await expect(readBatches(root, 'b-task')).rejects.toThrow();
+    });
+});
+
+describe('C4: the round after a closed batch measures what the repair changed', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    async function workspace(): Promise<string> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-scope-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 's-task', title: 'S', ownedPaths: ['src/'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        const { mkdir } = await import('node:fs/promises');
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src/a.py'), 'x = 1\n', 'utf8');
+        return root;
+    }
+
+    it('defaults to full until a batch closes, and says why', async () => {
+        const root = await workspace();
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const before = await buildAdversarialBrief(root, 's-task', 'verify');
+        expect(before.delta).toBeNull();
+        expect(before.scopeReason).toMatch(/no repair batch has closed/);
+    });
+
+    it('narrows to the batch base once a batch closes on a revision', async () => {
+        const root = await workspace();
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+        const { createTaskRevision } = await import('../../src/workflow/revision.js');
+
+        const base = await createTaskRevision({ root, taskId: 's-task', ownedPaths: ['src/a.py'], checkIds: [] });
+        await writeFile(join(root, 'src/a.py'), 'x = 2\n', 'utf8');
+
+        await openRepairBatch(root, 's-task', [{ id: 'f-1', severity: 'minor', source: 'review', message: 'naming' }]);
+        await closeRepairBatch(root, 's-task', { revisionId: base.id, answered: ['f-1'] });
+
+        const after = await buildAdversarialBrief(root, 's-task', 'verify');
+        expect(after.delta).toMatchObject({ from: base.id, changedPaths: ['src/a.py'] });
+        expect(after.scopeReason).toMatch(/batch batch-1 closed on/);
+    });
+
+    it('lets an explicit --since win over the batch default', async () => {
+        const root = await workspace();
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+        const { createTaskRevision } = await import('../../src/workflow/revision.js');
+
+        const older = await createTaskRevision({ root, taskId: 's-task', ownedPaths: ['src/a.py'], checkIds: [] });
+        await writeFile(join(root, 'src/a.py'), 'x = 2\n', 'utf8');
+        const newer = await createTaskRevision({ root, taskId: 's-task', ownedPaths: ['src/a.py'], checkIds: [] });
+        await openRepairBatch(root, 's-task', [{ id: 'f-1', severity: 'minor', source: 'review', message: 'naming' }]);
+        await closeRepairBatch(root, 's-task', { revisionId: newer.id, answered: ['f-1'] });
+
+        const explicit = await buildAdversarialBrief(root, 's-task', 'verify', { since: older.id });
+        expect(explicit.delta).toMatchObject({ from: older.id });
+        expect(explicit.scopeReason).toMatch(/requested explicitly/);
+    });
+
+    it('falls back to full, with the reason, when the batch named no revision', async () => {
+        const root = await workspace();
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        await openRepairBatch(root, 's-task', [{ id: 'f-1', severity: 'minor', source: 'review', message: 'naming' }]);
+        await closeRepairBatch(root, 's-task', { answered: ['f-1'] });
+
+        const brief = await buildAdversarialBrief(root, 's-task', 'verify');
+        expect(brief.delta).toBeNull();
+        expect(brief.scopeReason).toMatch(/closed without naming a revision/);
     });
 });
