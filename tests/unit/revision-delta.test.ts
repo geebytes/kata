@@ -144,7 +144,7 @@ describe('the delta gate refuses a scope that does not cover the change', () => 
             status: 'recorded' as const,
             revisionId: current.id,
             createdAt: '2026-09-18T12:00:00.000Z',
-            scope: { kind: 'delta', from: base.id, changedPaths: declared },
+            scope: { kind: 'delta' as const, from: base.id, changedPaths: declared },
         });
 
         await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), current.id)).resolves.toMatchObject({ ok: true });
