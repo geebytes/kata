@@ -65,6 +65,11 @@ export interface CommandOptions {
     allowOutOfScopeRepair?: boolean;
     /** Report the resolved seal check set instead of sealing: what would run, where it came from, and what it cost last. */
     listChecks?: boolean;
+    /**
+     * Run the checks a project declared `tier: 'frozen'` as well. Off by default: those are the expensive whole-project
+     * verifications a project wants at the point the artefact is frozen, and a seal that deferred them says so.
+     */
+    frozen?: boolean;
     /** Override the config's discovery switch for this run. */
     discoverChecks?: boolean;
     workflowProfile?: WorkflowProfile;
@@ -494,9 +499,13 @@ async function cmdBuild(
     const coveredChecks = checks
         .filter((check) => check.coveredBy)
         .map((check) => ({ name: check.name ?? check.command, coveredBy: check.coveredBy as string }));
+    const deferredChecks = options.frozen === true
+        ? []
+        : checks.filter((check) => check.tier === 'frozen' && !check.coveredBy).map((check) => check.name ?? check.command);
     const evidence = await collectEvidence(taskId, checks, {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.frozen === true ? { includeFrozen: true } : {}),
         onProgress: (event) => {
             progress(event);
             options.onProgress?.(event);
@@ -565,6 +574,9 @@ async function cmdBuild(
             // Checks that were not executed because another check covers them: named here so "not run" is a decision the
             // reader can audit, never an absence they have to notice.
             ...(coveredChecks.length > 0 ? { coveredChecks } : {}),
+            // Named, not silent: a check declared `tier: 'frozen'` did not run here, and the reader can see that this
+            // was the seal's decision (run `--seal --frozen` to include them).
+            ...(deferredChecks.length > 0 ? { deferredChecks } : {}),
             wikiClosure,
             ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : 'build-option' } : {}),
             ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
@@ -606,6 +618,10 @@ async function describeSealChecks(root: string, taskId: string, checks: CheckCom
             command: check.command,
             args: check.args ?? [],
             source: check.source ?? 'explicit',
+            // What the preflight has to say about whether this will run: its tier, and (when it is covered) which check
+            // stands in for it. Both are decisions the reader should see before sealing, not after.
+            ...(check.tier ? { tier: check.tier } : {}),
+            ...(check.coveredBy ? { coveredBy: check.coveredBy } : {}),
             timeoutMs: check.timeoutMs ?? 600_000,
             lastDurationMs: last ? Math.max(0, Date.parse(last.finishedAt) - Date.parse(last.startedAt)) : null,
             lastExitCode: last?.exitCode ?? null,

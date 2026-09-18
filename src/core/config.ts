@@ -17,9 +17,21 @@ export type KataConfig = {
       command: string;
       args?: string[];
       timeoutMs?: number;
+      /**
+       * When this check runs.
+       *
+       * `seal` (the default) runs on every seal; `frozen` is for the expensive whole-project verification a project
+       * wants at the point the artefact is frozen (judge/archive) rather than on every seal. Nothing is deferred
+       * unless a project says so — the default keeps every check running exactly where it ran before — and a deferred
+       * check is always named in the seal's report.
+       */
+      tier?: CheckTier;
     }>;
   };
 };
+
+/** When a declared check runs: every seal, or only when the artefact is frozen. */
+export type CheckTier = 'seal' | 'frozen';
 
 export async function loadConfig(root: string): Promise<KataConfig> {
   const parsed = await readConfigObject(root);
@@ -88,10 +100,16 @@ function parseQualityCheck(value: unknown): NonNullable<NonNullable<KataConfig['
     : isEvidenceKind(value.kind)
       ? value.kind
       : (() => { throw new Error('quality.buildChecks[].kind is invalid'); })();
+  const tier = value.tier === undefined
+    ? undefined
+    : value.tier === 'seal' || value.tier === 'frozen'
+      ? value.tier
+      : (() => { throw new Error('quality.buildChecks[].tier must be "seal" or "frozen"'); })();
   return {
     ...(typeof value.id === 'string' ? { id: value.id } : {}),
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
     ...(kind ? { kind } : {}),
+    ...(tier ? { tier } : {}),
     command: value.command,
     ...(args ? { args } : {}),
     ...(typeof value.timeoutMs === 'number' ? { timeoutMs: value.timeoutMs } : {}),

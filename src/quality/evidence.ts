@@ -18,6 +18,8 @@ export interface CheckProgressEvent {
   exitCode?: number | null;
   /** Set when the state is `covered`: the check that stands in for this one, which is not executed. */
   coveredBy?: string;
+  /** Set when the state is `skipped`: why (currently only `frozen_tier` — the project runs it when freezing). */
+  reason?: string;
 }
 
 export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security', 'integration', 'entrypoint'] as const;
@@ -52,6 +54,12 @@ export interface CheckCommand {
    * artefact and reported by the seal, so "not run because something else covers it" is visible rather than silent.
    */
   coveredBy?: string;
+  /**
+   * When this check runs: `seal` (the default, and what every check does unless a project says otherwise) or `frozen`,
+   * for verification a project wants when the artefact is frozen rather than on every seal. A deferred check is named in
+   * the seal's report, so "declared but not run" is never silent.
+   */
+  tier?: 'seal' | 'frozen';
 }
 
 export interface EvidenceCollectionOptions {
@@ -59,6 +67,11 @@ export interface EvidenceCollectionOptions {
   revision?: TaskRevision;
   signal?: AbortSignal;
   onProgress?: (event: CheckProgressEvent) => void;
+  /**
+   * Run the checks a project marked `tier: 'frozen'` as well. Default false: those are the expensive whole-project
+   * verifications a project wants at the point the artefact is frozen, and a seal that deferred them names them.
+   */
+  includeFrozen?: boolean;
 }
 
 export interface EvidenceEnvelope {
@@ -140,7 +153,8 @@ export async function collectEvidence(
   // evidence. Keeping the skip here (rather than dropping the check upstream) means every consumer still sees the check
   // — in `--list-checks`, in the artefact and in the seal's report — and only its execution is elided.
   const covered = commands.filter((check) => check.coveredBy);
-  const toRun = commands.filter((check) => !check.coveredBy);
+  const deferred = options.includeFrozen ? [] : commands.filter((check) => check.tier === 'frozen' && !check.coveredBy);
+  const toRun = commands.filter((check) => !check.coveredBy && !deferred.includes(check));
   const cwd = toRun[0]?.cwd ?? commands[0]?.cwd ?? process.cwd();
 
   if (commands.some((check) => (check.cwd ?? process.cwd()) !== cwd)) {
@@ -162,6 +176,16 @@ export async function collectEvidence(
       coveredBy: check.coveredBy,
     });
     results[index] = undefined;
+  }
+  // Deferred checks say why they are not running, in the same stream as everything else about the seal.
+  for (const check of deferred) {
+    options.onProgress?.({
+      type: 'quality_check_progress',
+      check: check.name ?? check.command,
+      state: 'skipped',
+      timeoutMs: check.timeoutMs ?? 0,
+      reason: 'frozen_tier',
+    });
   }
   await runWithConcurrency(toRun, checkConcurrency(), async (check) => {
     const index = commands.indexOf(check);

@@ -32,6 +32,7 @@ export async function resolveBuildChecks(
     args: check.args ?? [],
     cwd: root,
     timeoutMs: check.timeoutMs ?? defaultTimeoutMs(check.name ?? check.args?.[0] ?? check.command),
+    ...(check.tier ? { tier: check.tier } : {}),
   })) ?? [];
 
   // Root instructions describe the host project. They are not an implicit

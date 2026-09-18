@@ -567,6 +567,8 @@ async function runWorkflowCommand(command: KataCommand, change: string, root: st
             : {}),
         ...(platform ? { platform } : {}),
         ...(commandToRun === 'build' ? { seal: argv.includes('--seal') } : {}),
+        // The frozen tier is opt-in per run: a seal defers `tier: 'frozen'` checks and names them unless asked.
+        ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
