@@ -1,6 +1,6 @@
 # What an adversarial pass costs, and how to brief one
 
-> Status: **proposal** (2026-09-18). Scope: the *pass itself* — how `kata-cli adversarial brief` scopes one, and what the
+> Status: **M1, M3, M4 delivered; M2 delivered; K1–K4 delivered** (2026-09-18, kata `ca2b212`, `f624bae`, `c57e943`). The two-round measurement they enable exists as a test (`e616f85`) — see §14. Scope: the *pass itself* — how `kata-cli adversarial brief` scopes one, and what the
 > brief tells its reviewer. It builds on the delivered finding-lifecycle design
 > (`2026-09-18-finding-lifecycle-and-proportional-reverification.md`, state in `…-state-of-play.md`): F2 already gives a
 > delta brief, `--since` and `--elapsed-ms`, and F3 already prices a repair. Nothing here re-proposes those.
@@ -318,3 +318,23 @@ learned, the mechanism costs more than it saves.
 **Sequence:** K1 (with the batching rule) and M3's `toolUses` first — both are small, neither changes what counts as
 evidence, and together they make the rest measurable. K2/K3 follow once D2 is fixed, since "resume" is meaningless while
 the binding can be invalidated by the write itself.
+
+## 14. What was delivered, and what the loop does not yet prove (2026-09-18)
+
+| Mechanism | Where it landed | What changed in practice |
+|---|---|---|
+| **M1** read sealed evidence | `ca2b212` | the brief lists each envelope with its path and flags the project-declared checks; on the real task: 16 evidence lines, 4 flagged |
+| **M3** cost signal | `ca2b212` | `toolUses` beside `elapsedMs` on the record (`--tool-uses`), so the two terms of §1 are separable; one "Pacing yourself" line in the brief |
+| **M4** reading set | `ca2b212` | derived from the change surface and the matrix's collaborators; bounded to 40 and framed as *a starting set, not a boundary* — a clean working tree is not "nothing to read", and 702 entries is a wall, not orientation (both corrections measured, not guessed) |
+| **M2** framing rotation | `c57e943` | `verify` / `cold`, rotated by default with the reason written into the brief; **refuses to rotate while a `blocking`/`major` finding is unrepaired** — a deploy-time decision recorded in the code rather than left open |
+| **K1–K4** a pass survives its death | `f624bae` | `adversarial-progress.jsonl` (one line per **batch**, the trap from §12) reported by `status`; `adversarial finding add` lands findings as they are confirmed, and a record created that way is a **draft with no verdict**, so partial can never read as passed; the brief says so (K4) |
+| **K3** resumable | `f624bae` | binding the brief *as issued* needed no stored copy: after the D2 fix the brief derives only from durable state, so re-deriving it is an identity function. `BRIEF_DURABLE_INPUTS` / `BRIEF_VOLATILE_INPUTS` write the input surface down |
+
+**The loop exists** (`e616f85`): a test drives two rounds on a fixture whose checks are shell commands — evidence → per-path
+digests → revision → one file changes → the delta names exactly that file → the derived set falls back to full with its
+reason → both rounds land on the record with the baseline snapshotted, so the saving computes (**540 s and 29 turns** on the
+fixture).
+
+**What it still does not prove:** the §11 projection. The fixture's rounds are constructed costs, and the real saving needs
+a real pass — the mechanism only makes the number *obtainable* rather than remembered. Two rounds of real data decide the
+rest far better than §12's arithmetic, which is what §12 itself says.
