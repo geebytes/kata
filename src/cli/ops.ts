@@ -263,9 +263,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // scope itself) and report the pass's duration, which is the only place that number exists.
             recordCommand: [
                 `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
-                since ? `--since ${since}` : '',
                 '--elapsed-ms <milliseconds the pass took>',
-            ].filter(Boolean).join(' '),
+                '--tool-uses <how many tool calls the pass made>',
+            ].join(' '),
         };
     }
 
@@ -331,7 +331,6 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
 
     if (subcommand === 'record') {
         const fromFile = argValue(rest, '--from-file');
-        const since = argValue(rest, '--since');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial record requires the result JSON on stdin or via --from-file');
         let parsed: AdversarialRecord;
@@ -367,9 +366,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...parsed,
             node,
             ...binding,
-            // A delta pass's scope is what the gate checks it against, so a pass that names `--since` is recorded with
-            // the change surface kata itself measured — not with whatever the reviewer typed.
-            ...(since ? { scope: await currentDeltaScope(root, change, since) } : { scope: { kind: 'full' as const } }),
+            // The scope comes from the **brief that was answered**, never from a flag on this command: a delta round's
+            // surface was fixed when kata issued it, and re-deriving it here would let the two disagree.
+            scope: await scopeForIssuedBrief(root, change, issued),
             // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
             // design is precisely that nobody had the number.
             ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
@@ -634,6 +633,18 @@ async function currentDeltaScope(root: string, taskId: string, since: string): P
 }
 
 /** The sealed revision's id and content hash, for binding a recorded pass to the revision it reviewed. */
+/** The scope a pass is judged against: whatever the brief it answered was issued with. */
+async function scopeForIssuedBrief(
+    root: string,
+    taskId: string,
+    issued: { since?: string },
+): Promise<{ kind: 'full' } | { kind: 'delta'; from: string; changedPaths: string[] }> {
+    if (!issued.since) return { kind: 'full' };
+    const scope = await currentDeltaScope(root, taskId, issued.since);
+    return { kind: 'delta', from: scope.from ?? issued.since, changedPaths: scope.changedPaths ?? [] };
+}
+
+
 async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId?: string; manifestHash?: string }> {
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
     const revision = await readCurrentTaskRevision(root, taskId);

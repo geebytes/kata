@@ -23,12 +23,14 @@ describe('the adversarial procedure is stated, not implied', () => {
         expect(text).toMatch(/§11|not measurable yet/);
     });
 
-    it('tells the reviewer how a delta pass is recorded, and not to hand-write the scope', () => {
+    it('tells the reviewer to name the brief it answered, and that the scope comes from it', () => {
         const text = adversarialGuidanceFor({ id: 'kata-review', cli: 'kata-cli review --change <change-id>' });
 
-        expect(text).toContain('--since');
+        // The binding is the issued brief, so the instruction is about the hash — not about re-passing a flag the
+        // command no longer takes, which would be an invitation to disagree with the brief.
+        expect(text).toMatch(/brief's hash on the result/);
+        expect(text).toMatch(/never pass a \`--since\` and never hand-write \`scope\`/);
         expect(text).toContain('delta_stale');
-        expect(text).toMatch(/Never hand-write/);
     });
 
     it('tells the reviewer that a finding has a disposition, and that blocking/major cannot have one', () => {

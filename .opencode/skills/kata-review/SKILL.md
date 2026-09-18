@@ -102,11 +102,11 @@ Do this:
    nothing recorded a pass's duration, and the baseline is destroyed the moment the next pass overwrites the record.
    `kata-cli adversarial status --change <task-id>` then reports `deltaSaving` (the previous full pass, this one, the
    difference) — or says plainly that it is not measurable yet, which is the honest answer for the first passes.
-4. **If the brief was a delta brief** (`--since` was used, and its result reported a change surface rather than
-   `delta_unavailable`), pass the same `--since` to `record`. Kata measures the change surface itself and stamps the
-   pass's `scope`; the gate then verifies that the declared paths cover **every** difference between the two revisions
-   and refuses the pass as `delta_stale` otherwise. Never hand-write `scope`: a scope kata did not measure is a scope
-   the gate will refuse, and it is right to.
+4. **Put the brief's hash on the result**, whatever kind of round it was. `record` binds the pass to the brief kata
+   **issued** — a hash kata never handed out is refused, and so is one issued for another revision — and it takes the
+   round's scope from that brief, so you never pass a `--since` and never hand-write `scope`. For a delta brief the gate
+   then checks the declared paths cover **every** difference between the two revisions and refuses `delta_stale` if they
+   do not.
 5. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
    repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
    (`kata-cli adversarial status --change <task-id>` shows both nodes).
