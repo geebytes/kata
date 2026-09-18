@@ -78,6 +78,51 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
  * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
  * checkout) and carries the task's state into the checkout.
  */
+/** `kata-cli revision digests --change <task> [--since <revision-id|manifestHash>]` — the per-path content table. */
+export async function runRevisionCommand(argv: string[]): Promise<Record<string, unknown>> {
+    const [subcommand, ...rest] = argv;
+    const { readCurrentTaskRevision, readTaskRevision, computePathDigests } = await import('../workflow/revision.js');
+    const { changeSurface, changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
+
+    if (subcommand !== 'digests') {
+        throw new Error('Usage: kata-cli revision digests --change <task-id> [--since <revision-id|manifestHash>]');
+    }
+    const taskId = parseChangeArg(rest);
+    if (!taskId) throw new Error('Usage: kata-cli revision digests --change <task-id> [--since <revision-id|manifestHash>]');
+    const root = resolveWorkspaceRoot();
+    const revision = await readCurrentTaskRevision(root, taskId);
+    if (!revision) return { command: 'revision digests', taskId, revisionId: null, digestCount: 0, note: 'no revision is sealed for this task' };
+
+    const since = argValue(rest, '--since');
+    if (!since) {
+        return {
+            command: 'revision digests',
+            taskId,
+            revisionId: revision.id,
+            manifestHash: revision.manifestHash,
+            digestCount: Object.keys(revision.pathDigests ?? {}).length,
+            pathDigests: revision.pathDigests ?? await computePathDigests(root, revision.ownedPaths),
+        };
+    }
+
+    const base = await readTaskRevision(root, taskId, since).catch(() => null);
+    const surface = base
+        ? await changeSurface(root, base, revision)
+        : revision.pathDigests
+            ? await changeSurfaceAgainstWorkspace(root, revision)
+            : { status: 'delta_unavailable' as const, reason: `no revision matching '${since}'` };
+    return {
+        command: 'revision digests',
+        taskId,
+        revisionId: revision.id,
+        since,
+        ...(surface.status === 'available' ? { changedPaths: surface.changedPaths, added: surface.added, modified: surface.modified, removed: surface.removed } : {}),
+        ...(surface.status === 'unchanged' ? { changedPaths: [] } : {}),
+        ...(surface.status === 'delta_unavailable' ? { deltaUnavailable: surface.reason } : {}),
+        status: surface.status,
+    };
+}
+
 export async function runWorktreeCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     const root = resolveWorkspaceRoot();
@@ -147,13 +192,18 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (!isAdversarialNode(node)) throw new Error(`Unknown adversarial node: ${nodeArg}. Expected one of: ${adversarialNodes.join('|')}`);
 
     if (subcommand === 'brief') {
-        const brief = await buildAdversarialBrief(root, change, node);
+        const since = argValue(rest, '--since');
+        const brief = await buildAdversarialBrief(root, change, node, since ? { since } : {});
         return {
             command: 'adversarial brief',
             taskId: change,
             node,
             revisionId: brief.revisionId,
             briefSha256: brief.sha256,
+            ...(since ? { since } : {}),
+            // A requested delta that could not be measured is reported as such: the caller is never handed a full brief
+            // that quietly pretends to be the narrower pass it asked for.
+            ...(brief.delta ? { delta: brief.delta } : {}),
             brief: brief.text,
             recordCommand: `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
         };
@@ -184,6 +234,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
 
     if (subcommand === 'record') {
         const fromFile = argValue(rest, '--from-file');
+        const since = argValue(rest, '--since');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial record requires the result JSON on stdin or via --from-file');
         let parsed: AdversarialRecord;
@@ -196,6 +247,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...parsed,
             node,
             ...(await currentRevisionManifest(root, change)),
+            // A delta pass's scope is what the gate checks it against, so a pass that names `--since` is recorded with
+            // the change surface kata itself measured — not with whatever the reviewer typed.
+            ...(since ? { scope: await currentDeltaScope(root, change, since) } : {}),
         });
         const gate = await adversarialGateFor(root, change, node);
         return {
@@ -401,6 +455,26 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
         }
     }
     return args;
+}
+
+/**
+ * The scope a `--since` pass is recorded with: the base revision and the paths kata measured as changed (F2.3).
+ *
+ * The reviewer declares *that* it is a delta pass; the platform declares *over what*, because the gate has to be able to
+ * verify the claim without trusting the reviewer. If the change surface cannot be measured the scope says so, and the
+ * gate refuses the pass as `delta_unavailable` rather than accepting a delta nobody can check.
+ */
+async function currentDeltaScope(root: string, taskId: string, since: string): Promise<Record<string, unknown>> {
+    const { readTaskRevision } = await import('../workflow/revision.js');
+    const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
+    const base = await readTaskRevision(root, taskId, since).catch(() => null);
+    if (!base) return { kind: 'delta', from: since, changedPaths: [] };
+    const surface = await changeSurfaceAgainstWorkspace(root, base);
+    return {
+        kind: 'delta',
+        from: base.id,
+        changedPaths: surface.status === 'available' ? surface.changedPaths : [],
+    };
 }
 
 async function currentRevisionManifest(root: string, taskId: string): Promise<{ manifestHash?: string }> {

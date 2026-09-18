@@ -33,6 +33,38 @@
     "manifestHash": {
       "type": "string"
     },
+    "baseManifestHash": {
+      "type": "string",
+      "description": "For a delta pass: the manifest hash whose change surface this pass measured."
+    },
+    "scope": {
+      "description": "What the pass covered: full means every path was re-derived; delta means only changedPaths were.",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "full",
+            "delta"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "createdAt": {
       "type": "string",
       "minLength": 1

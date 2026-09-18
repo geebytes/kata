@@ -13,6 +13,15 @@ export interface TaskRevision {
   taskId: string;
   ownedPaths: string[];
   manifestHash: string;
+  /**
+   * Per-path content digests of the owned set (F2.1 of the finding-lifecycle design).
+   *
+   * `manifestHash` stays what it was — a single rolling digest, so every historical binding keeps working (I4). This is
+   * added *beside* it because a rolling digest cannot answer the question re-verification actually asks: **which files
+   * changed since the last pass**. Absent on revisions sealed before the field existed; readers must report that honestly
+   * rather than guess a diff.
+   */
+  pathDigests?: Record<string, string>;
   createdAt: string;
   ownershipConflicts?: Array<{ taskId: string; path: string }>;
   ownershipConflictsAcknowledged?: boolean;
@@ -39,6 +48,9 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
   const manifestHash = await computeManifestHash(input.root, ownedPaths);
+  // The id derives from the manifest hash and the check set only: the per-path table is *added* by this seal (F2.1), it
+  // never participates in the identity — otherwise adding the field would renumber every revision (I4).
+  const pathDigests = await computePathDigests(input.root, ownedPaths);
   const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? []);
 
   const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
@@ -46,6 +58,8 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     // Identical content: the same revision, with any newly acknowledged conflicts folded in.
     const revision: TaskRevision = {
       ...existing,
+      // A revision sealed before the field existed gains it here, without being renumbered.
+      ...(existing.pathDigests ? {} : { pathDigests }),
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
       ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
     };
@@ -58,6 +72,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     taskId: input.taskId,
     ownedPaths,
     manifestHash,
+    pathDigests,
     createdAt: new Date().toISOString(),
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
     ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
@@ -125,6 +140,57 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
     hash.update('\0');
   }
   return hash.digest('hex');
+}
+
+/**
+ * The per-file digest of one owned path, or its whole tree when the path is a directory.
+ *
+ * Same ignore policy and same no-size-cap rule as `computeManifestHash`, so the two agree about what "the owned content"
+ * is; the difference is only the granularity of the bookkeeping.
+ */
+export async function computePathDigest(root: string, path: string): Promise<string> {
+  const hash = createContentHasher();
+  try {
+    const fullPath = join(root, path);
+    const entry = await stat(fullPath);
+    if (entry.isDirectory()) {
+      await hashDirectoryRecursive(fullPath, root, hash);
+    } else if (entry.isFile()) {
+      hash.update(await readFile(fullPath));
+    } else {
+      hash.update('[unsupported]');
+    }
+  } catch {
+    hash.update('[missing]');
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * The owned set as a path → digest map, ordered so the result is deterministic.
+ *
+ * A directory owned path is expanded to the files it contains: a single digest per directory would answer "something in
+ * here changed" and nothing more, which is precisely the question this exists to answer precisely.
+ */
+export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
+  const digests: Record<string, string> = {};
+  for (const path of normalizeOwnedPaths(root, ownedPaths)) {
+    const fullPath = join(root, path);
+    let entry: Awaited<ReturnType<typeof stat>> | null = null;
+    try {
+      entry = await stat(fullPath);
+    } catch {
+      entry = null;
+    }
+    if (entry?.isDirectory()) {
+      for (const file of await walkRepositoryFiles(root, path ? { under: path } : {})) {
+        digests[file.path] = hashContent(file.content);
+      }
+      continue;
+    }
+    digests[path] = await computePathDigest(root, path);
+  }
+  return digests;
 }
 
 /** Owned-path hashing shares the repository's ignore policy, and reads what it is responsible for (no size cap). */

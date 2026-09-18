@@ -72,6 +72,20 @@ export interface AdversarialBriefInput {
     ownedPaths: string[];
     reviewFindings?: Array<{ severity?: string; message?: string }>;
     /**
+     * The change surface since a previous pass (F2 of the finding-lifecycle design): when present, the brief asks the
+     * reviewer to re-derive only the conclusions that touch these paths, and states why that is sufficient — the paths
+     * are the *complete* difference between the two revisions, checked mechanically by the gate.
+     */
+    delta?: {
+        from: string;
+        changedPaths: string[];
+        added: string[];
+        modified: string[];
+        removed: string[];
+        attempts?: Array<{ hypothesis?: string; method?: string; outcome?: string }>;
+        findings?: Array<{ id: string; severity: string; message: string; disposition: string }>;
+    };
+    /**
      * Findings that already have a disposition, from every record the task keeps.
      *
      * The design's I2: a review that is honestly reported is not the same as one with an empty findings list, and a
@@ -108,6 +122,43 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
             .join('\n')
         : '- (nothing has been dispositioned for this task)';
 
+    const deltaSection = input.delta
+        ? `## This is a delta pass
+
+Sealed revision ${input.revisionId ?? '(none)'} differs from ${input.delta.from} only in the paths listed below — that is
+the **complete** difference, and the gate verifies the claim before accepting this pass. Everything else was reviewed by an
+earlier pass and has not changed since.
+
+Added:
+${input.delta.added.length > 0 ? input.delta.added.map((path) => `- ${path}`).join('\n') : '- (none)'}
+
+Modified:
+${input.delta.modified.length > 0 ? input.delta.modified.map((path) => `- ${path}`).join('\n') : '- (none)'}
+
+Removed:
+${input.delta.removed.length > 0 ? input.delta.removed.map((path) => `- ${path}`).join('\n') : '- (none)'}
+
+What to re-derive:
+
+- For every claim that touches one of those paths, form and run a falsification attempt as usual;
+- for a claim whose earlier conclusion rests on a path that **has changed**, re-check whether the conclusion still holds
+  — the code it rested on is not the code it was derived from;
+- a claim that was refuted earlier, on paths that did **not** change, does not need to be re-proved. If you have a reason
+  to doubt it anyway, say so — that is a finding, and it is welcome.
+
+Earlier attempts, for reference rather than re-execution:
+${(input.delta.attempts ?? []).length > 0
+    ? (input.delta.attempts ?? []).map((attempt) => `- ${attempt.hypothesis ?? '(no hypothesis)'} → ${attempt.outcome ?? '(no outcome)'} (${attempt.method ?? 'no method'})`).join('\n')
+    : '- (none recorded)'}
+
+Earlier findings and what was decided about them:
+${(input.delta.findings ?? []).length > 0
+    ? (input.delta.findings ?? []).map((finding) => `- ${finding.severity} ${finding.id} [${finding.disposition}]: ${finding.message}`).join('\n')
+    : '- (none recorded)'}
+
+`
+        : '';
+
     return `# Independent adversarial review — ${input.node} node
 
 You are an independent adversarial reviewer. **You have no prior context.** Everything you are allowed to assume is in
@@ -138,7 +189,7 @@ ${known}
 If you believe one of those decisions is wrong, say so as a finding **against the decision**, with your reasoning: a
 decision can be wrong, but re-reporting it as a new discovery wastes the pass and hides the fact that it was decided.
 
-## What to do
+${deltaSection}## What to do
 
 For each claim above, and for the change as a whole:
 
@@ -209,7 +260,11 @@ export type AdversarialGateReason =
     | 'stale_revision'
     | 'not_fresh_context'
     | 'brief_mismatch'
-    | 'waived';
+    | 'waived'
+    /** A delta pass whose declared paths do not cover the change it claims to cover. */
+    | 'delta_stale'
+    /** A delta was asked for against a revision that records no per-path digests. */
+    | 'delta_unavailable';
 
 export interface AdversarialGateResult {
     satisfied: boolean;
@@ -217,6 +272,8 @@ export interface AdversarialGateResult {
     record?: AdversarialRecord;
     /** Findings the node must resolve, when the pass confirmed defects. */
     findings: AdversarialFinding[];
+    /** Why a delta pass was refused: what the pass claimed to cover and what actually changed. */
+    detail?: string;
 }
 
 /**
@@ -226,6 +283,50 @@ export interface AdversarialGateResult {
  * brief kata renders now — a pass against an older brief was answering a different question. A waiver satisfies the
  * gate explicitly and is reported as such rather than hidden.
  */
+/**
+ * The delta check, applied before the content check: a pass that says "I re-derived only these paths" is accepted only
+ * when those paths **are** the whole difference between the revision it reviewed and the revision it replaces.
+ *
+ * The gate cannot take the reviewer's word for the scope any more than it takes it for the verdict, so this recomputes
+ * the change surface from the recorded digests. A delta whose declared set misses a changed path is `delta_stale` — a
+ * refusal, not a narrowed review.
+ */
+export async function evaluateDeltaScope(
+    root: string,
+    taskId: string,
+    record: AdversarialRecord | null,
+    currentRevisionId: string | null,
+): Promise<{ ok: true } | { ok: false; reason: 'delta_stale' | 'delta_unavailable'; detail: string }> {
+    const scope = (record as AdversarialRecord & { scope?: { kind?: string; from?: string; changedPaths?: string[] } } | null)?.scope;
+    if (!scope || scope.kind !== 'delta') return { ok: true };
+
+    const { readTaskRevision, readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const { changeSurface, deltaCoversChange } = await import('./revision-delta.js');
+    const base = scope.from ? await readTaskRevision(root, taskId, scope.from).catch(() => null) : null;
+    if (!base) {
+        return { ok: false, reason: 'delta_unavailable', detail: `the base revision '${scope.from ?? '(none)'}' is not recorded for this task` };
+    }
+    // Measure against the revision under review (the pass's own revision), falling back to what is sealed now.
+    const current = (currentRevisionId ? await readTaskRevision(root, taskId, currentRevisionId).catch(() => null) : null)
+        ?? await readCurrentTaskRevision(root, taskId);
+    if (!current) return { ok: false, reason: 'delta_unavailable', detail: 'no current revision to compare against' };
+
+    const surface = await changeSurface(root, base, current);
+    if (surface.status === 'delta_unavailable') return { ok: false, reason: 'delta_unavailable', detail: surface.reason };
+    if (surface.status === 'unchanged') return { ok: true };
+
+    const declared = scope.changedPaths ?? [];
+    const { covered, missing } = deltaCoversChange(declared, surface);
+    if (!covered) {
+        return {
+            ok: false,
+            reason: 'delta_stale',
+            detail: `the delta covered ${declared.length} path(s) but ${missing.length} changed path(s) are missing from it: ${missing.join(', ')}`,
+        };
+    }
+    return { ok: true };
+}
+
 export function evaluateAdversarialGate(
     record: AdversarialRecord | null,
     input: { node: AdversarialNode; revisionId: string | null; manifestHash?: string | null; briefSha256: string },
@@ -261,6 +362,8 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined):
         case 'not_fresh_context': return 'The recorded adversarial pass does not attest a fresh context.';
         case 'brief_mismatch': return 'The recorded adversarial pass answered a different brief.';
         case 'waived': return 'The independent adversarial pass was explicitly waived.';
+        case 'delta_stale': return 'The pass is a delta, and the paths it declared do not cover everything that changed since its base revision — widen the range or run a full pass.';
+        case 'delta_unavailable': return 'A delta pass was recorded against a revision that has no per-path digests, so the change surface cannot be verified; run a full pass.';
         default: return 'The independent adversarial pass is not satisfied.';
     }
 }
@@ -278,7 +381,8 @@ export async function buildAdversarialBrief(
     root: string,
     taskId: string,
     node: AdversarialNode,
-): Promise<{ node: AdversarialNode; revisionId: string | null; text: string; sha256: string }> {
+    options: { since?: string } = {},
+): Promise<{ node: AdversarialNode; revisionId: string | null; text: string; sha256: string; delta: { from: string; changedPaths: string[] } | { unavailable: string } | null }> {
     const { readTask } = await import('../core/task.js');
     const { readRecordedEvidence } = await import('./evidence.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
@@ -289,7 +393,43 @@ export async function buildAdversarialBrief(
     const evidence = await readRecordedEvidence(root, taskId).catch(() => []);
     const review = await readReview(root, taskId);
 
+    // F2: a `--since` brief is a delta brief, and it is only honest when the change surface is knowable. A revision
+    // sealed before per-path digests existed yields `delta_unavailable` — the caller is told, never handed a guess.
+    let delta: { from: string; changedPaths: string[]; added: string[]; modified: string[]; removed: string[]; attempts?: Array<Record<string, string>>; findings?: Array<{ id: string; severity: string; message: string; disposition: string }> } | undefined;
+    let deltaReport: { from: string; changedPaths: string[] } | { unavailable: string } | null = null;
+    if (options.since) {
+        const { readTaskRevision } = await import('../workflow/revision.js');
+        const { changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
+        const base = await readTaskRevision(root, taskId, options.since).catch(() => null)
+            ?? await findRevisionByManifest(root, taskId, options.since)
+            ?? null;
+        if (!base) {
+            deltaReport = { unavailable: `no revision matching '${options.since}' was found for task '${taskId}'` };
+        } else {
+            const surface = await changeSurfaceAgainstWorkspace(root, base);
+            if (surface.status === 'delta_unavailable') {
+                deltaReport = { unavailable: surface.reason };
+            } else if (surface.status === 'unchanged') {
+                deltaReport = { from: base.id, changedPaths: [] };
+            } else {
+                const previous = await readAdversarialRecord(root, taskId, node);
+                const { readTrackedFindings } = await import('./finding-disposition.js');
+                delta = {
+                    from: base.id,
+                    changedPaths: surface.changedPaths,
+                    added: surface.added,
+                    modified: surface.modified,
+                    removed: surface.removed,
+                    attempts: (previous?.attempts ?? []) as unknown as Array<Record<string, string>>,
+                    findings: (await readTrackedFindings(root, taskId)).map(({ id, severity, message, disposition }) => ({ id, severity, message, disposition })),
+                };
+                deltaReport = { from: base.id, changedPaths: surface.changedPaths };
+            }
+        }
+    }
+
     const text = renderAdversarialBrief({
+        ...(delta ? { delta } : {}),
         taskId,
         node,
         revisionId: revision?.id ?? null,
@@ -309,7 +449,24 @@ export async function buildAdversarialBrief(
             source,
         })),
     });
-    return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text) };
+    return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text), delta: deltaReport };
+}
+
+/** Resolves a `--since` argument that named a manifest hash rather than a revision id. */
+async function findRevisionByManifest(root: string, taskId: string, target: string): Promise<Awaited<ReturnType<typeof import('../workflow/revision.js').readTaskRevision>> | null> {
+    const { readdir, readFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { revisionsDir } = await import('../core/layout.js');
+    const directory = revisionsDir(root, taskId);
+    const files = await readdir(directory).catch(() => [] as string[]);
+    for (const file of files.filter((name) => name.endsWith('.json'))) {
+        const raw = JSON.parse(await readFile(join(directory, file), 'utf8')) as { manifestHash?: string };
+        if (raw.manifestHash) {
+            if (raw.manifestHash !== target) continue;
+            return await (await import('../workflow/revision.js')).readTaskRevision(root, taskId, file.replace(/\.json$/, ''));
+        }
+    }
+    return null;
 }
 
 /** The gate for a node, asked the same way by the workflow and by the CLI's status report. */
@@ -324,10 +481,19 @@ export async function adversarialGateFor(
         readAdversarialRecord(root, taskId, node),
         readCurrentTaskRevision(root, taskId),
     ]);
-    return evaluateAdversarialGate(record, {
+    const gate = evaluateAdversarialGate(record, {
         node,
         revisionId: brief.revisionId,
         manifestHash: revision?.manifestHash ?? null,
         briefSha256: brief.sha256,
     });
+    if (!gate.satisfied) return gate;
+
+    // A satisfied pass still has to be honest about its scope: a delta that does not cover the change is refused here,
+    // before any node treats the pass as a conclusion.
+    const scope = await evaluateDeltaScope(root, taskId, gate.record ?? record, brief.revisionId);
+    if (!scope.ok) {
+        return { satisfied: false, reason: scope.reason, detail: scope.detail, ...(gate.record ? { record: gate.record } : {}), findings: [] };
+    }
+    return gate;
 }
