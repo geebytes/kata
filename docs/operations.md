@@ -20,6 +20,13 @@
 | `kata-cli status <change>` | Show Comet change status |
 | `kata-cli next <change>` | Show next Comet action |
 | `kata-cli eval <manifest>` | Run evaluation from manifest |
+| `kata-cli adversarial brief <task-id> [--since <rev>] [--mode verify\|cold]` | Render the independent pass's brief and store it; only a stored brief's hash satisfies the gate |
+| `kata-cli adversarial record <task-id> --from-file <result.json>` | Seal a pass's verdict and its revision binding (see *Independent adversarial review*) |
+| `kata-cli adversarial note <task-id> --from-file <line.json>` | Append one heartbeat line — the work a killed pass would otherwise take with it |
+| `kata-cli adversarial finding add <task-id> --from-file <finding.json>` | Record one finding as it is confirmed, before the verdict |
+| `kata-cli adversarial status <task-id>` | Both nodes' gate state, the heartbeat, and a delta round's measured saving |
+| `kata-cli findings list \| defer \| accept \| carry <task-id>` | Give a finding a disposition (`blocking`/`major` cannot be deferred or accepted) |
+| `kata-cli revision digests <task-id> [--since <rev>]` | The per-path content table a delta round is measured against |
 | `kata-cli comet install [--version <ver>]` | Install or update Comet binary via npm |
 | `kata-cli comet update` | Update Comet to latest npm version |
 | `kata-cli comet version` | Show compatibility range and installed version |
