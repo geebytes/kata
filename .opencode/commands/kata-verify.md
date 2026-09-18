@@ -91,14 +91,30 @@ Do this:
    conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
    do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
    every claim, to run the attempts, and to return one JSON object.
-3. Record what came back, unchanged:
+3. Record what came back, unchanged — **and report how long the pass took**:
    ```bash
-   kata-cli adversarial record --change <task-id> --node verify --from-file <result.json>
+   kata-cli adversarial record --change <task-id> --node verify --from-file <result.json> --elapsed-ms <milliseconds the pass took>
    ```
-4. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
+   Report the wall-clock time of the whole pass honestly, including the subagent's runtime. This is the only place the
+   number exists: the design's own §11 could not answer "what does a narrower re-verification actually save?" because
+   nothing recorded a pass's duration, and the baseline is destroyed the moment the next pass overwrites the record.
+   `kata-cli adversarial status --change <task-id>` then reports `deltaSaving` (the previous full pass, this one, the
+   difference) — or says plainly that it is not measurable yet, which is the honest answer for the first passes.
+4. **If the brief was a delta brief** (`--since` was used, and its result reported a change surface rather than
+   `delta_unavailable`), pass the same `--since` to `record`. Kata measures the change surface itself and stamps the
+   pass's `scope`; the gate then verifies that the declared paths cover **every** difference between the two revisions
+   and refuses the pass as `delta_stale` otherwise. Never hand-write `scope`: a scope kata did not measure is a scope
+   the gate will refuse, and it is right to.
+5. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
    repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
    (`kata-cli adversarial status --change <task-id>` shows both nodes).
-5. Then run this Skill's own command again (`kata-cli verify --change --change <task-id>`).
+6. If the pass confirmed findings, decide what each one is worth: `kata-cli findings defer --change <task-id> --id <id>
+   --reason "<why not now>"` records a decision to live with a minor finding (and it stays visible at verify and
+   archive); `blocking` and `major` must be repaired — the command refuses them. And tell the truth about where your
+   findings came from: a pass whose findings were caused by the previous repair says so in
+   `findingOrigins.causedByPreviousRepair`, so "fix one, grow two" is a number in the record rather than an impression.
+7. Then run this Skill's own command again — the one printed in the command result as `nextAction.slashCommand`
+   (this Skill's own CLI form is `kata-cli verify --change <change-id>`).
 
 If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
 decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:

@@ -468,6 +468,20 @@ ${responseLanguage ? `\n${responseLanguage}` : ''}
 `;
 }
 
+/**
+ * The OpenCode command wrapper, exported so the guard test can regenerate it (L1-08 follow-up).
+ *
+ * A generated asset is whatever `update` writes: the skill file *and* the command file. The first version of the guard
+ * checked only the skills, and the command files drifted on the same commit that fixed the skills.
+ */
+export function renderPlatformCommand(
+    platform: Platform,
+    command: (typeof skillCommands)[number],
+    language?: 'en' | 'zh',
+): string | null {
+    return platform === 'opencode' ? renderOpenCodeCommand(command, language) : null;
+}
+
 function renderOpenCodeCommand(command: (typeof skillCommands)[number], language?: 'en' | 'zh'): string {
   const body = stripSkillFrontmatter(renderSkillFor('opencode', command, { language }));
   return `---
