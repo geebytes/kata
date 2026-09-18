@@ -444,7 +444,8 @@ Do this:
    archive); \`blocking\` and \`major\` must be repaired — the command refuses them. And tell the truth about where your
    findings came from: a pass whose findings were caused by the previous repair says so in
    \`findingOrigins.causedByPreviousRepair\`, so "fix one, grow two" is a number in the record rather than an impression.
-7. Then run this Skill's own command again (\`${command.cli.replace(' <change-id>', ' --change <task-id>')}\`).
+7. Then run this Skill's own command again — the one printed in the command result as \`nextAction.slashCommand\`
+   (this Skill's own CLI form is \`${command.cli}\`).
 
 If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
 decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:

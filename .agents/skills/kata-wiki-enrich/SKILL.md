@@ -5,7 +5,7 @@ description: Uses the coding agent LLM capability to enrich .llmwiki from determ
 
 # /kata-wiki-enrich
 
-platform: codex
+platform: pi
 
 ## Response language
 
@@ -24,8 +24,8 @@ Before doing task work, run the project orientation command:
 
 ```bash
 kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform codex --task-kind <read|implementation|security>
-kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform codex
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
 Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
@@ -58,7 +58,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform codex --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform pi --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -115,7 +115,7 @@ guard enforcement: CLI/CI-only
 
 Kata does not configure or route host-platform models. If this phase needs a different model, use the host platform's own selector before continuing; model choice is outside Kata state and does not create a route artifact.
 
-请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。
+Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
 ## Coding-agent Wiki enrichment
 

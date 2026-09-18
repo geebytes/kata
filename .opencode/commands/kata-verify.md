@@ -70,6 +70,47 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Independent adversarial review (clean context)
+
+Both nodes below must answer to a **different context than the one that wrote the change**. The same context that
+implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own
+confirmation is the weakest possible evidence that the change is sound.
+
+Before this Skill's node can conclude — before `kata-cli verify` reports success, and before
+`kata-cli review --approve` records an approval — kata requires a recorded adversarial pass over the sealed revision,
+or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+
+Do this:
+
+1. Render the brief. It is self-contained and states the revision, the claims under test, the recorded evidence and
+   the exact result shape:
+   ```bash
+   kata-cli adversarial brief --change <task-id> --node verify
+   ```
+2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
+   conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
+   do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
+   every claim, to run the attempts, and to return one JSON object.
+3. Record what came back, unchanged:
+   ```bash
+   kata-cli adversarial record --change <task-id> --node verify --from-file <result.json>
+   ```
+4. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
+   repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
+   (`kata-cli adversarial status --change <task-id>` shows both nodes).
+5. Then run this Skill's own command again (`kata-cli verify --change --change <task-id>`).
+
+If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
+decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:
+
+```bash
+kata-cli adversarial waive --change <task-id> --node verify --reason "<why this node proceeds without an independent pass>"
+```
+
+Kata cannot start a subagent or inspect the host's session: it renders the brief, checks the result against the revision
+and that brief, and holds the gate. Who ran it, in which context, is reported by the executing agent in
+`executedInFreshContext`/`contextNote` — the same way host model confirmation is reported.
+
 ## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
@@ -143,16 +184,35 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。
 
+## Frozen-tier checks
+
+A project may declare verification it wants when the artefact is frozen rather than on every seal — a check with
+`tier: "frozen"` in `.kata-config.json`'s `quality.buildChecks`. Check before concluding this node:
+
+```bash
+kata-cli build --change <taskId> --list-checks
+```
+
+If any check is listed with `"tier": "frozen"`, seal the frozen tier before verifying — Verify refuses to conclude
+while a frozen check has no passing evidence for the current revision, and says so:
+
+```bash
+kata-cli build --change <taskId> --seal --frozen
+```
+
 ## Repair loop
 
 If Judge returns FAIL for any acceptance criterion:
 
 1. **Read** the `repairScope` in the judge result — it tells you which evidence categories failed and what to fix:
    - `missing_test_evidence` — write a test for the acceptance criterion
-   - `revision_superseded` — a declared task-owned path changed after sealing; rebuild to create the next revision
    - `stale_evidence` — legacy repository-scoped evidence changed after collection; rebuild
    - `failing_evidence` — tests or checks failed
    - `blocking_review_finding` — a reviewer blocked this acceptance
+   - `revision_superseded` — a declared task-owned path changed after sealing; rebuild to create the next revision
+   - `cross_revision_evidence` — the acceptance is covered by evidence from more than one revision; seal one revision
+   - `insufficient_evidence_level` — the acceptance requires integration or entrypoint evidence that is missing; add it
+   - `unresolved_repair_obligation` — a repair obligation from the review or the Judge is still unresolved
 
 2. **Fix only the scoped files** — Judge reports which acceptance criteria failed. Don't touch unrelated code. Unrelated changes will be rejected by `enforceRepairScope`.
 

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \".codex/hooks/kata-hook-guard.mjs\" --project-root \"/app/kata\""
+            "command": "node \".codex/hooks/kata-hook-guard.mjs\" --project-root \"/data/work/ahaeureka/k2skills/kata\""
           }
         ]
       }

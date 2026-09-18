@@ -1,22 +1,22 @@
 ---
-name: kata-design
-description: Creates or refines the technical design and acceptance contract. Use when requirements, architecture, acceptance criteria, or project constraints need clarification before implementation.
+name: kata-collect
+description: Use when collecting work back from another coding platform after delegated Kata implementation or repair.
 ---
 
-# /kata-design
+# /kata-collect
 
-platform: codex
+platform: pi
 
 ## Response language
 
 所有面向用户的自然语言响应必须使用中文。代码、命令、文件路径、API 名称、日志和协议字段可以保留原文。
 
 
-Use this skill to inspect the Kata design workflow entrypoint.
+Use this skill to inspect the Kata collect workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-design` Skill as the human-facing interface. Use `kata-cli design --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-collect` Skill as the human-facing interface. Use `kata-cli collect` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -24,8 +24,8 @@ Before doing task work, run the project orientation command:
 
 ```bash
 kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform codex --task-kind <read|implementation|security>
-kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform codex
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
 Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
@@ -58,7 +58,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform codex --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform pi --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -66,43 +66,43 @@ The packet's allowed writes and guard instructions are authoritative. Model sele
 
 ```json kata-command-manifest
 {
-  "id": "kata-design",
-  "slashCommand": "/kata-design",
-  "cli": "kata-cli design --change <change-id>",
-  "phase": "design",
-  "summary": "Creates or refines the technical design and acceptance contract. Use when requirements, architecture, acceptance criteria, or project constraints need clarification before implementation."
+  "id": "kata-collect",
+  "slashCommand": "/kata-collect",
+  "cli": "kata-cli collect",
+  "phase": "collect",
+  "summary": "Use when collecting work back from another coding platform after delegated Kata implementation or repair."
 }
 ```
 
 ## Trigger scenarios
 
-- User asks for technical design or implementation plan.
-- Acceptance criteria or constraints are not yet concrete enough to build.
-- Agent must align design with AGENTS.md and .llmwiki before editing code.
+- User says another platform has finished implementation or repair.
+- Agent needs to inspect returned evidence before review, judge, archive, or repair.
+- Delegated work must be reconciled into the current branch and Kata lifecycle.
 
 ## Input signals
 
 Keywords and intents that should trigger this skill:
 
-- `design`
-- `plan`
-- `proposal`
-- `architecture`
-- `acceptance`
-- `requirements`
-- `方案`
-- `技术设计`
+- `collect`
+- `return`
+- `done in opencode`
+- `回收`
+- `做完了`
+- `交回`
+- `审计另一个平台`
+- `OpenCode 完成`
 
 ## Output goals
 
-- Produce a bounded design.
-- Clarify acceptance criteria.
-- Capture durable decisions into wiki candidates where useful.
+- Discover the returned task and evidence state.
+- Ask the user to confirm the task/platform when ambiguous.
+- Run reviewer/judge/archive or produce scoped repair instructions.
 
 ## Invocation
 
 ```bash
-kata-cli design --change <change-id>
+kata-cli collect
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -115,21 +115,21 @@ guard enforcement: CLI/CI-only
 
 Kata does not configure or route host-platform models. If this phase needs a different model, use the host platform's own selector before continuing; model choice is outside Kata state and does not create a route artifact.
 
-请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。
+Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
-## Knowledge capture during design
+## Interactive collection
 
-Design decisions often establish lasting constraints and norms. Capture them as you go:
+Do not ask the user for CLI parameters first. Discover the likely returned task, inspect upstream outputs, then ask for confirmation.
 
-1. After accepting or rejecting an approach, run:
+1. Run `kata-cli collect` first. It returns same-branch candidates, upstream summaries, and a `recommended` task/action.
+2. If the recommendation says `repair_blocking_review_findings`, `repair_failed_judge`, or `repair_failing_evidence`, ask the user to confirm repair and then act as implementer.
+3. If the recommendation says `review_fresh_implementation`, ask the user to confirm review and then run reviewer flow.
+4. If the recommendation says `judge_reviewed_change`, ask the user to confirm Judge and then run judge flow.
+5. Read task state, review/judge/evidence files, and relevant handoff receipts before editing or judging.
+6. If evidence is ready and user confirms higher-trust gates, run:
    ```bash
-   kata-cli wiki ingest --from docs/decisions/<decision-log>.md
+   kata-cli review --change <task-id>
+   kata-cli judge --change <task-id>
    ```
-   This creates a `candidate` wiki record linking the decision to source evidence.
-
-2. If you identify new rules, conventions, or architectural constraints, write a brief summary page and ingest it:
-   ```bash
-   kata-cli wiki ingest --from .llmwiki/concepts/<topic>.md
-   ```
-
-3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.
+7. If Judge passes and archive is appropriate, ask for confirmation, then run archive and perform wiki distillation.
+8. If Judge fails, return the repair scope and a ready-to-send prompt for the delegated platform.

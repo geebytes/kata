@@ -1,22 +1,22 @@
 ---
-name: kata-verify
-description: Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping.
+name: kata-review
+description: Use when an independent Reviewer must record review findings without running Judge.
 ---
 
-# /kata-verify
+# /kata-review
 
-platform: opencode
+platform: pi
 
 ## Response language
 
 所有面向用户的自然语言响应必须使用中文。代码、命令、文件路径、API 名称、日志和协议字段可以保留原文。
 
 
-Use this skill to inspect the Kata verify workflow entrypoint.
+Use this skill to inspect the Kata review workflow entrypoint.
 
 ## Skill-first operating rule
 
-Prefer the `/kata-verify` Skill as the human-facing interface. Use `kata-cli verify --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
+Prefer the `/kata-review` Skill as the human-facing interface. Use `kata-cli review --change <change-id>` as the deterministic fallback inside the Skill or in non-interactive scripts. If the user passes an explicit task id (e.g. "/kata-build my-task"), use it as the immutable anchor for all subsequent operations; do not re-discover via `kata-cli status` or same-branch resolution. If the user gives a short instruction, natural-language hint, or no parameters, discover the active/same-branch task with `kata-cli status`, follow relation redirects, and ask for a concise confirmation only when multiple choices remain.
 
 ## Startup checklist
 
@@ -24,8 +24,8 @@ Before doing task work, run the project orientation command:
 
 ```bash
 kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform opencode --task-kind <read|implementation|security>
-kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform opencode
+kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
 Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
@@ -58,7 +58,7 @@ Use CodeGraph to find likely source files, call paths, dependents, and affected 
 
 Before accepting work from another agent or platform, create or verify the canonical repository packet, read every path in its requiredReads field, then acknowledge the packet with the actual platform and role.
 
-Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform opencode --role <role>.
+Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli handoff show --task <change-id> --id <handoff-id>, then kata-cli handoff acknowledge --task <change-id> --id <handoff-id> --platform pi --role <role>.
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
@@ -77,42 +77,26 @@ Do this:
 1. Render the brief. It is self-contained and states the revision, the claims under test, the recorded evidence and
    the exact result shape:
    ```bash
-   kata-cli adversarial brief --change <task-id> --node verify
+   kata-cli adversarial brief --change <task-id> --node review
    ```
 2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
    conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
    do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
    every claim, to run the attempts, and to return one JSON object.
-3. Record what came back, unchanged — **and report how long the pass took**:
+3. Record what came back, unchanged:
    ```bash
-   kata-cli adversarial record --change <task-id> --node verify --from-file <result.json> --elapsed-ms <milliseconds the pass took>
+   kata-cli adversarial record --change <task-id> --node review --from-file <result.json>
    ```
-   Report the wall-clock time of the whole pass honestly, including the subagent's runtime. This is the only place the
-   number exists: the design's own §11 could not answer "what does a narrower re-verification actually save?" because
-   nothing recorded a pass's duration, and the baseline is destroyed the moment the next pass overwrites the record.
-   `kata-cli adversarial status --change <task-id>` then reports `deltaSaving` (the previous full pass, this one, the
-   difference) — or says plainly that it is not measurable yet, which is the honest answer for the first passes.
-4. **If the brief was a delta brief** (`--since` was used, and its result reported a change surface rather than
-   `delta_unavailable`), pass the same `--since` to `record`. Kata measures the change surface itself and stamps the
-   pass's `scope`; the gate then verifies that the declared paths cover **every** difference between the two revisions
-   and refuses the pass as `delta_stale` otherwise. Never hand-write `scope`: a scope kata did not measure is a scope
-   the gate will refuse, and it is right to.
-5. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
+4. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
    repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
    (`kata-cli adversarial status --change <task-id>` shows both nodes).
-6. If the pass confirmed findings, decide what each one is worth: `kata-cli findings defer --change <task-id> --id <id>
-   --reason "<why not now>"` records a decision to live with a minor finding (and it stays visible at verify and
-   archive); `blocking` and `major` must be repaired — the command refuses them. And tell the truth about where your
-   findings came from: a pass whose findings were caused by the previous repair says so in
-   `findingOrigins.causedByPreviousRepair`, so "fix one, grow two" is a number in the record rather than an impression.
-7. Then run this Skill's own command again — the one printed in the command result as `nextAction.slashCommand`
-   (this Skill's own CLI form is `kata-cli verify --change <change-id>`).
+5. Then run this Skill's own command again (`kata-cli review --change --change <task-id>`).
 
 If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
 decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:
 
 ```bash
-kata-cli adversarial waive --change <task-id> --node verify --reason "<why this node proceeds without an independent pass>"
+kata-cli adversarial waive --change <task-id> --node review --reason "<why this node proceeds without an independent pass>"
 ```
 
 Kata cannot start a subagent or inspect the host's session: it renders the brief, checks the result against the revision
@@ -131,7 +115,7 @@ Skill-first means the slash command is the agent interface and the CLI is the in
 4. Run `kata-cli orient` without `--change` when using the active/single discovered task, or with `--change <id>` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
 5. Run kata-cli handoff verify for that id; stop on an invalid result.
 6. Read every requiredReads path from the packet.
-7. Run kata-cli handoff acknowledge with platform opencode and the current role.
+7. Run kata-cli handoff acknowledge with platform pi and the current role.
 8. Run this Skill's phase command and collect normal evidence. The next phase creates a fresh packet.
 9. After the phase command returns, read `completion.userMessage` first, then `nextAction.slashCommand`, `nextAction.cliCommand`, `recommended.reason`, and `askUser` from the command result. Always tell the user the current phase and the next recommended operation. For every successful phase command—especially `/kata-build <task> --seal`—the final user-facing response MUST end with `completion.userMessage` verbatim. This is not optional: never finish with only a test summary, and never wait for the user to ask “what next”. If `completion` is absent, explicitly render the current phase and `nextAction.slashCommand`. Prefer the slash command, for example `/kata-verify <change-id>`; show the CLI command only as fallback.
 10. Stop after this Skill's own phase command. A Skill invocation has exactly one phase-command authority: Build may invoke only `kata build`; it MUST NOT invoke verify, review, judge, archive, or any other `/kata-*` command after Build returns. The same rule applies to every phase Skill: render its next action for the user, then end the invocation. If the returned `nextAction.requiresUserConfirmation=true`, do not invoke the next /kata-* skill. At model trust boundaries, wait for the user to use the host platform's own selector before continuing.
@@ -140,44 +124,37 @@ Do not create a receipt for read-only search, explanation, or orientation-only w
 
 ```json kata-command-manifest
 {
-  "id": "kata-verify",
-  "slashCommand": "/kata-verify",
-  "cli": "kata-cli verify --change <change-id>",
-  "phase": "verify",
-  "summary": "Runs reviewer/judge-oriented verification against task acceptance. Use when implementation needs review, CI/test evidence, judge gating, or repair scoping."
+  "id": "kata-review",
+  "slashCommand": "/kata-review",
+  "cli": "kata-cli review --change <change-id>",
+  "phase": "review",
+  "summary": "Use when an independent Reviewer must record review findings without running Judge."
 }
 ```
 
 ## Trigger scenarios
 
-- User asks to verify, review, audit, or judge a completed implementation.
-- The current phase is hardVerify/review/judge.
-- A previous judge/reviewer result requires scoped repair.
+- User asks for an independent code review before judgment.
+- A completed implementation has fresh evidence.
 
 ## Input signals
 
 Keywords and intents that should trigger this skill:
 
-- `verify`
 - `review`
-- `judge`
-- `audit`
-- `test`
-- `CI`
-- `检查`
 - `审查`
-- `验证`
+- `code review`
 
 ## Output goals
 
-- Evaluate acceptance criteria against evidence.
-- Record reviewer/judge results.
-- Return scoped repair instructions on failure.
+- Enter reviewer phase.
+- Record review findings only.
+- Prepare the task for an independent Judge.
 
 ## Invocation
 
 ```bash
-kata-cli verify --change <change-id>
+kata-cli review --change <change-id>
 ```
 
 The invocation is the deterministic CLI fallback for scripts and CI. In normal agent use, prefer conversation: discover candidates, recommend defaults, ask for confirmation, then run the resolved command.
@@ -190,68 +167,5 @@ guard enforcement: CLI/CI-only
 
 Kata does not configure or route host-platform models. If this phase needs a different model, use the host platform's own selector before continuing; model choice is outside Kata state and does not create a route artifact.
 
-OpenCode：如需切换模型，先执行 `/models` 并在其交互界面完成选择，再运行本次委托的 Kata 命令。
+Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
-## Frozen-tier checks
-
-A project may declare verification it wants when the artefact is frozen rather than on every seal — a check with
-`tier: "frozen"` in `.kata-config.json`'s `quality.buildChecks`. Check before concluding this node:
-
-```bash
-kata-cli build --change <taskId> --list-checks
-```
-
-If any check is listed with `"tier": "frozen"`, seal the frozen tier before verifying — Verify refuses to conclude
-while a frozen check has no passing evidence for the current revision, and says so:
-
-```bash
-kata-cli build --change <taskId> --seal --frozen
-```
-
-## Repair loop
-
-If Judge returns FAIL for any acceptance criterion:
-
-1. **Read** the `repairScope` in the judge result — it tells you which evidence categories failed and what to fix:
-   - `missing_test_evidence` — write a test for the acceptance criterion
-   - `stale_evidence` — legacy repository-scoped evidence changed after collection; rebuild
-   - `failing_evidence` — tests or checks failed
-   - `blocking_review_finding` — a reviewer blocked this acceptance
-   - `revision_superseded` — a declared task-owned path changed after sealing; rebuild to create the next revision
-   - `cross_revision_evidence` — the acceptance is covered by evidence from more than one revision; seal one revision
-   - `insufficient_evidence_level` — the acceptance requires integration or entrypoint evidence that is missing; add it
-   - `unresolved_repair_obligation` — a repair obligation from the review or the Judge is still unresolved
-
-2. **Fix only the scoped files** — Judge reports which acceptance criteria failed. Don't touch unrelated code. Unrelated changes will be rejected by `enforceRepairScope`.
-
-3. **Rebuild** — first repair and test the scoped implementation, then collect fresh evidence:
-   ```bash
-   kata-cli build --change <taskId> --seal
-   ```
-
-4. **Re-verify**:
-   ```bash
-   kata-cli verify --change <taskId>
-   ```
-
-## Wiki closure is a governance action, not an implementation repair
-
-When Verify reports implementationReady: true, governanceReady: false, and reason: resolve_wiki_closure, do **not** run build or modify implementation. Read the task acceptance, design artifacts, changed source, and existing Wiki candidates, then decide the closure yourself.
-
-- Choose `captured` when the task establishes a reusable capability, architecture rule, workflow constraint, or domain convention. Create and register the grounded candidate first, then reference its id.
-- Choose `not_applicable` when the task is a local mechanical change and establishes no reusable project knowledge.
-- Only ask the user when the task artifacts are genuinely ambiguous or contradictory. Do not invoke bare `kata-cli wiki closure` and make the user classify an otherwise clear task.
-
-After making the decision, record it non-interactively and re-verify:
-
-```bash
-kata-cli wiki closure --task <taskId> --decision captured --reason "<durable rule>" --candidate <wiki-id>
-kata-cli wiki closure --task <taskId> --decision not_applicable --reason "<why no reusable knowledge changed>"
-kata-cli verify --change <taskId>
-```
-
-The deferred decision intentionally blocks review and archive, but it does not mean acceptance criteria, tests, or evidence failed.
-
-## Escalation
-
-If repair fails repeatedly, use the host platform's own selector to choose a more capable model before continuing. Kata does not prescribe or record that choice.
