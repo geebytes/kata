@@ -11,6 +11,7 @@ import { CometGuard } from '../comet/guard.js';
 import { assertValidAcceptanceId, assertValidTaskId, requirementIdPattern } from '../core/ids.js';
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
+import { describeClaimFailure, evaluateClaims, resolveClaimChecks, validateClaims } from '../quality/claims.js';
 import { collectSealPreflight } from './seal-preflight.js';
 import { bindsToRevision, currentRevisionIdentity, revisionBindingFields } from './verdict-binding.js';
 import { matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
@@ -516,6 +517,24 @@ async function cmdBuild(
     const deferredChecks = options.frozen === true
         ? []
         : checks.filter((check) => check.tier === 'frozen' && !check.coveredBy).map((check) => check.name ?? check.command);
+    // C3: a claim whose check could never fail is refused up front — a decorative check is exactly what a false sentence
+    // hides behind — and the run's claims are evaluated against the evidence once it is collected.
+    const claimRefusals = validateClaims(task.acceptance ?? []);
+    if (claimRefusals.length > 0) {
+        // Refused before anything runs: a claim whose check cannot fail would otherwise sit in the set as decoration,
+        // and the sentence it was supposed to prove would look checked.
+        return {
+            command: 'build',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Acceptance claims cannot be checked: ${claimRefusals.map((refusal) => refusal.detail).join('; ')}`,
+            diagnostics: {
+                claimRefusals,
+                remedy: 'Give each claim a check with an expected exit code (a check that cannot fail is not evidence).',
+            },
+        };
+    }
     // F4: which of those checks this change actually touches is **derived**, not declared by the project. The freeze
     // points still require everything (`--frozen` / `missingFrozenTierEvidence`), and a derivation that cannot be made
     // falls back to the full set — so "cheap" can never mean "silently under-run".
@@ -532,18 +551,33 @@ async function cmdBuild(
     });
     await progress.finish();
     await writeEvidence(root, taskId, evidence);
+    // C3: what the claims did, against the evidence just collected. A claim whose evidence is absent counts as failed —
+    // the sentence declared itself checkable, and nothing checked it.
+    const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
     if (evidence.some((item) => item.exitCode !== 0)) {
         return {
             command: 'build',
             taskId,
             phase: 'implement',
             success: false,
-            error: 'Evidence sealing failed; fix the failing checks before retrying --seal.',
+            error: claimSummary.failures.length > 0
+                ? `Evidence sealing failed, and ${claimSummary.failures.length} acceptance claim(s) are contradicted: ${claimSummary.failures
+                    .map((failure) => describeClaimFailure(failure))
+                    .join('; ')}`
+                : 'Evidence sealing failed; fix the failing checks before retrying --seal.',
             diagnostics: {
                 mode: 'seal',
                 evidenceCount: evidence.length,
                 passing: evidence.filter((item) => item.exitCode === 0).length,
                 failing: evidence.filter((item) => item.exitCode !== 0).length,
+                // Which checks failed, by id, so "sealing failed" is answerable without re-reading the evidence files.
+                failingChecks: evidence
+                    .filter((item) => item.exitCode !== 0)
+                    .map((item) => ({ checkId: item.checkId ?? null, name: item.name ?? null, command: item.command, exitCode: item.exitCode })),
+                ...(claimSummary.ran.length > 0 ? { claims: claimSummary.ran.map((claim) => claim.checkId) } : {}),
+                ...(claimSummary.failures.length > 0
+                    ? { claimFailures: claimSummary.failures.map((failure) => ({ ...failure, description: describeClaimFailure(failure) })) }
+                    : {}),
             },
         };
     }
@@ -594,6 +628,12 @@ async function cmdBuild(
             // reader can audit, never an absence they have to notice.
             ...(coveredChecks.length > 0 ? { coveredChecks } : {}),
             ...(relevant.derivation ? { derivedChecks: relevant.derivation } : {}),
+            // C3: a claim is reported by id rather than only as a red run, so the sentence that failed is visible in the
+            // seal's own output — and a claim with no evidence counts as failed, because it declared itself checkable.
+            ...(claimSummary.ran.length > 0 ? { claims: claimSummary.ran.map((claim) => claim.checkId) } : {}),
+            ...(claimSummary.failures.length > 0
+                ? { claimFailures: claimSummary.failures.map((failure) => ({ ...failure, description: describeClaimFailure(failure) })) }
+                : {}),
             // Named, not silent: a check declared `tier: 'frozen'` did not run here, and the reader can see that this
             // was the seal's decision (run `--seal --frozen` to include them).
             ...(deferredChecks.length > 0 ? { deferredChecks } : {}),
@@ -613,7 +653,11 @@ async function cmdBuild(
  */
 async function resolveSealChecks(
     root: string,
-    task: { ownedPaths?: string[]; acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix },
+    task: {
+        ownedPaths?: string[];
+        acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
+        acceptance?: import('../core/task.js').AcceptanceCriterion[];
+    },
     options: CommandOptions,
 ): Promise<CheckCommand[]> {
     const projectChecks = options.checks?.length
@@ -622,7 +666,11 @@ async function resolveSealChecks(
             ...(options.discoverChecks !== undefined ? { discoverChecks: options.discoverChecks } : {}),
         });
     const matrixDerivedChecks = !options.checks?.length && task.acceptanceMatrix ? matrixChecks(root, task.acceptanceMatrix) : [];
-    return dedupeCheckCommands([...projectChecks, ...matrixDerivedChecks]);
+    // C3: the clauses of the acceptance statements that declared themselves checkable. They join the seal's set as
+    // ordinary checks — same resolver, same collector, same evidence binding — so a false claim fails *here*, on the
+    // revision it describes, rather than being caught by the next independent round.
+    const claims = options.checks?.length ? [] : resolveClaimChecks(root, task.acceptance ?? []);
+    return dedupeCheckCommands([...projectChecks, ...matrixDerivedChecks, ...claims]);
 }
 
 /** The resolved checks as a report: identity, origin, timeout, and what each cost the last time it ran. */

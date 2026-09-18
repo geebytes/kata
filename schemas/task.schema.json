@@ -55,6 +55,64 @@
           "statement": {
             "type": "string",
             "minLength": 1
+          },
+          "claims": {
+            "description": "Checkable clauses of the statement (C3). Each is executed by the seal as an ordinary check, so a sentence that contradicts the code fails the gate on the revision it describes rather than waiting for the next independent round.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "statement",
+                "check"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                "statement": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "check": {
+                  "type": "object",
+                  "required": [
+                    "command"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "expect": {
+                      "type": "object",
+                      "required": [
+                        "exitCode"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "exitCode": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "timeoutMs": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

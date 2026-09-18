@@ -71,10 +71,19 @@ describe('acceptance claims', () => {
         expect(describeClaimFailure(failures[0]!)).toContain('expected exit 1, got exit 0');
     });
 
-    it('a claim with no evidence at all is a failure, not a pass', () => {
-        const { failures } = evaluateClaims(acceptance, []);
+    it('a claim whose evidence is absent is a failure, not a pass', () => {
+        // Evidence exists for *other* checks, so this seal did run its own set — the claim's check should have run too.
+        const { failures } = evaluateClaims(acceptance, [{ checkId: 'noop', exitCode: 0 }]);
         expect(failures[0]).toMatchObject({ missing: true });
         expect(describeClaimFailure(failures[0]!)).toContain('no evidence was recorded');
+    });
+
+    it('says nothing about claims when the seal ran a set that never included them', () => {
+        // An explicit `options.checks` set is a narrow debug run; reading its silence as "the sentence is false" would make
+        // a debug seal report the project's statements as contradicted, which is the wrong signal C3 exists to remove.
+        const { ran, failures } = evaluateClaims(acceptance, []);
+        expect(ran).toEqual([]);
+        expect(failures).toEqual([]);
     });
 
     it('a satisfied claim passes, and its identity follows the statement so a rewrite is visible', () => {

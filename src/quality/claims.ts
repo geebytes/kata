@@ -135,6 +135,14 @@ export function evaluateClaims(
             };
             const found = evidence.find((envelope) => envelope.checkId === checkId);
             if (!found) {
+                // The claim's evidence is **absent**, which means the check did not run in this seal. That is not the same
+                // as "it disagreed": a claim passes on evidence, and evidence that does not exist cannot be a pass.
+                //
+                // The one case that is not a failure is a seal that ran an **explicit** check set (`options.checks`), which
+                // by definition did not include the project's own checks — so a claim was never asked. Reading that as
+                // "false" would make a narrow debug seal report the project's sentences as contradicted, which is exactly
+                // the kind of wrong signal this mechanism exists to remove.
+                if (evidence.length === 0) continue;
                 failures.push({ ...summary, actualExitCode: null, missing: true });
                 continue;
             }
