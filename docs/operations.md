@@ -225,30 +225,47 @@ Kata cannot start a subagent or inspect the host's session. What it does is rend
 the revision and that brief, and hold the gate:
 
 ```bash
-kata-cli adversarial brief  --change <task-id> --node verify|review   # self-contained brief + its hash
-kata-cli adversarial record --change <task-id> --node verify|review --from-file <result.json>
+kata-cli adversarial brief  --change <task-id> --node verify|review [--since <revision-id>] [--mode verify|cold]
+kata-cli adversarial record --change <task-id> --node verify|review --from-file <result.json> \
+    --elapsed-ms <how long the pass took> [--tool-uses <how many tool calls>]
+kata-cli adversarial note   --change <task-id> --node verify|review --from-file <line.json>      # heartbeat, one line per batch
+kata-cli adversarial finding add --change <task-id> --node verify|review --from-file <finding.json>  # as confirmed
 kata-cli adversarial waive  --change <task-id> --node verify|review --reason "<why>"
-kata-cli adversarial status --change <task-id>                        # both nodes
+kata-cli adversarial status --change <task-id>                        # both nodes, plus the heartbeat
 ```
 
-The brief states the sealed revision, the acceptance criteria under test, the evidence the author recorded, the
-findings recorded so far, and the exact JSON result shape. It instructs the reviewer to read the repository rather than
-the brief, to form and run at least one **falsification attempt per claim**, and to report a finding for every defect it
-confirmed.
+The brief states the sealed revision, the **round framing** (`verify` lists the author's claims; `cold` withholds them so
+the reviewer forms its own hypothesis), the acceptance criteria under test, the sealed evidence with the paths to read it
+and the project-declared checks **not** to re-run, a bounded starting set of files to read, and the exact JSON result
+shape. It instructs the reviewer to read the repository rather than the brief, to form and run at least one
+**falsification attempt per claim**, and to report a finding for every defect it confirmed.
+
+`--since <revision-id>` renders a **delta brief**: the brief names only what changed since that revision, and the gate
+then requires the round to cover the whole change surface (`delta_stale` otherwise). `--mode` overrides the framing for one
+round; by default it **rotates**, and it will not rotate into `cold` while a `blocking`/`major` finding is unrepaired.
+
+**A pass writes as it goes.** `note` appends one heartbeat line per *batch* of work (not per hypothesis — every separate
+invocation is a full turn of the reviewer's own loop, which is what a pass mostly costs), and `finding add` records a
+finding the moment it is confirmed. A pass that dies mid-run therefore keeps its work: `status` reports the heartbeat, and
+a `record` later in the round keeps the findings that arrived separately. Until `record` runs there is no verdict, so a
+partial pass can never read as a passed one.
 
 The gate:
 
 - `kata-cli verify` succeeds only with a recorded pass for the current revision, or an explicit waiver.
 - `kata-cli review --approve` likewise — an approval is the review's conclusion.
-- A pass recorded against another revision, without the fresh-context attestation, or against a different brief does not
-  satisfy the gate; `status` reports which of those it was.
+- A pass recorded against another revision, without the fresh-context attestation, or against a brief kata did not issue
+  does not satisfy the gate; `status` reports which of those it was. `brief` stores every brief it hands out, and `record`
+  accepts only a hash from that store — a brief it renders but never issued does not count, and neither does one issued for
+  another revision. The refusal happens before anything is written, so a bad record cannot damage a good one.
 - Findings at `blocking` or `major` severity from the pass stop the node until they are repaired, exactly as reviewer
   findings do.
 - A waiver satisfies the gate and is reported as a waiver, never hidden.
 
 `executedInFreshContext`/`contextNote` are attested by the executing agent, in the same way host model confirmation is.
-Kata checks everything else: that the pass names this revision, that it answered the brief kata renders now, and that it
-actually attempted something.
+Kata checks everything else: that the pass names this revision, that it answered a brief kata **issued** for this node and
+revision, and that it actually attempted something. The scope a delta round is judged against comes from that issued brief,
+never from a flag on `record` — so the surface the gate checks is the surface the reviewer was given.
 
 ## Evaluation
 
