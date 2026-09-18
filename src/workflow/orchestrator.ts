@@ -70,6 +70,13 @@ export interface CommandOptions {
      * verifications a project wants at the point the artefact is frozen, and a seal that deferred them says so.
      */
     frozen?: boolean;
+    /**
+     * Where a task's deferred findings are handed over, for `archive`.
+     *
+     * Closing a task with known problems stays possible — the design does not pretend otherwise — but it is a recorded
+     * decision naming where the finding goes, rather than a list that quietly stops being printed.
+     */
+    findingsCarriedTo?: string;
     /** Override the config's discovery switch for this run. */
     discoverChecks?: boolean;
     workflowProfile?: WorkflowProfile;
@@ -817,6 +824,10 @@ async function cmdVerify(
     const obligations = await readObligations(root, taskId);
     const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
     const matrix = task.acceptanceMatrix;
+    // F1.4: what has already been decided about this task's findings is printed here, so "known and deferred" is visible
+    // at the node that concludes the implementation. It changes nothing about the gates: severity decides those (I1).
+    const { deferredFindings: deferred, readTrackedFindings } = await import('../quality/finding-disposition.js');
+    const deferredForDiagnostics = deferred(await readTrackedFindings(root, taskId));
     // A project that declared `tier: 'frozen'` checks asked for that verification at the point the artefact is frozen —
     // which is here. Refusing while one has no passing evidence for this revision makes the declaration real instead of
     // advice, and the refusal names the command that fixes it.
@@ -887,6 +898,7 @@ async function cmdVerify(
                 implementationReady,
                 governanceReady: wikiClosure.valid,
                 adversarial: { node: 'verify', required: true, satisfied: false, reason: adversarial.reason ?? null },
+                ...(deferredForDiagnostics.length > 0 ? { deferredFindings: deferredForDiagnostics } : {}),
                 nextAction: nextActionForTask(taskId, '/kata-verify', 'reviewer', 'adversarial_verify_pending'),
             },
         };
@@ -909,6 +921,7 @@ async function cmdVerify(
                     satisfied: true,
                     findings: adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, path: finding.path })),
                 },
+                ...(deferredForDiagnostics.length > 0 ? { deferredFindings: deferredForDiagnostics } : {}),
                 nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
             },
         };
@@ -1309,6 +1322,36 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         }
     } else if (current.phase !== 'distill' && current.phase !== 'archive') {
         return { command: 'archive', taskId, phase: current.phase, success: false, error: `Archive cannot run from ${current.phase}` };
+    }
+
+    // F1.4: archiving with known problems is allowed, but it is a signed act — the findings are listed, and a deferral
+    // that has not been carried anywhere is refused until it is (I2: a silent disappearance is worse than a deferral).
+    const { readTrackedFindings: readFindings, unfixed: unfixedFindings } = await import('../quality/finding-disposition.js');
+    const tracked = await readFindings(root, taskId);
+    const stillUnfixed = unfixedFindings(tracked);
+    const openBlocking = stillUnfixed.filter((finding) => finding.disposition === 'open'
+        && (finding.severity === 'blocking' || finding.severity === 'major'));
+    if (openBlocking.length > 0) {
+        return {
+            command: 'archive',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Archive blocked; ${openBlocking.length} unfixed blocking/major finding(s) remain: ${openBlocking.map((finding) => finding.id).join(', ')}. Repair them, or record evidence that they do not hold.`,
+            diagnostics: { openFindings: openBlocking.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, source: finding.source })) },
+        };
+    }
+    const carriedTo = options.findingsCarriedTo;
+    const deferredUncarried = stillUnfixed.filter((finding) => finding.disposition === 'deferred' || finding.disposition === 'accepted');
+    if (deferredUncarried.length > 0 && !carriedTo) {
+        return {
+            command: 'archive',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Archive blocked; ${deferredUncarried.length} known finding(s) were not carried anywhere: ${deferredUncarried.map((finding) => finding.id).join(', ')}. Close the task with \`kata-cli findings carry --change ${taskId} --to <task-or-ticket>\` (or with --findings-carried-to) so that living with a known problem is a recorded decision.`,
+            diagnostics: { deferredFindings: deferredUncarried.map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition, message: finding.message, source: finding.source })) },
+        };
     }
 
     const distillation = await distillPassedTaskKnowledge(root, taskId);

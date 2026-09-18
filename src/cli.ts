@@ -109,6 +109,7 @@ import {
     runWorktreeCommand,
 } from './cli/ops.js';
 import { parseDelegationArgs, runDelegateCommand, runHandoffCommand, type DelegationArgs } from './cli/handoff.js';
+import { runFindingsCommand } from './cli/findings.js';
 import {
     isResumableWorkflowCommand,
     isWorkflowCommand,
@@ -280,6 +281,12 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (command === 'worktree') {
         const result = await runWorktreeCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'findings') {
+        const result = await runFindingsCommand(argv.slice(1));
         outputResult(result);
         return;
     }

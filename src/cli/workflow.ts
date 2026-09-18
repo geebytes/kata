@@ -104,6 +104,11 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
+        // Closing a task with deferred findings names where they go (`finding-disposition`): the archive refuses an
+        // uncarried deferral, so the decision to live with a known problem is recorded rather than implied.
+        ...(command === 'archive' && valueAfter(argv, '--findings-carried-to')
+            ? { findingsCarriedTo: valueAfter(argv, '--findings-carried-to') as string }
+            : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
         ...(commandToRun === 'build' ? { allowOutOfScopeRepair: argv.includes('--allow-out-of-scope-repair') } : {}),
         ...(commandToRun === 'build' ? { listChecks: argv.includes('--list-checks') } : {}),

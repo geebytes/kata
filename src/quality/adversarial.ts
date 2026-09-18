@@ -71,6 +71,14 @@ export interface AdversarialBriefInput {
     evidence: EvidenceEnvelope[];
     ownedPaths: string[];
     reviewFindings?: Array<{ severity?: string; message?: string }>;
+    /**
+     * Findings that already have a disposition, from every record the task keeps.
+     *
+     * The design's I2: a review that is honestly reported is not the same as one with an empty findings list, and a
+     * reviewer that cannot see what was already decided re-reports it as new — a whole review round spent on a decision
+     * somebody already made.
+     */
+    knownFindings?: Array<{ id: string; severity: string; message: string; disposition: string; dispositionReason?: string; dispositionBy?: string; source: string }>;
 }
 
 /**
@@ -92,6 +100,13 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
     const findings = (input.reviewFindings ?? []).length > 0
         ? (input.reviewFindings ?? []).map((finding) => `- ${finding.severity ?? 'unknown'}: ${finding.message ?? ''}`).join('\n')
         : '- (none recorded yet)';
+
+    const decided = (input.knownFindings ?? []).filter((finding) => finding.disposition !== 'open');
+    const known = decided.length > 0
+        ? decided
+            .map((finding) => `- ${finding.severity} ${finding.id} [${finding.disposition}${finding.dispositionReason ? `: ${finding.dispositionReason}` : ''}${finding.dispositionBy ? ` by ${finding.dispositionBy}` : ''}] (${finding.source}): ${finding.message}`)
+            .join('\n')
+        : '- (nothing has been dispositioned for this task)';
 
     return `# Independent adversarial review — ${input.node} node
 
@@ -115,6 +130,13 @@ ${evidence}
 ## Findings recorded so far
 
 ${findings}
+
+## Already known, already decided — do not re-report these
+
+${known}
+
+If you believe one of those decisions is wrong, say so as a finding **against the decision**, with your reasoning: a
+decision can be wrong, but re-reporting it as a new discovery wastes the pass and hides the fact that it was decided.
 
 ## What to do
 
@@ -275,6 +297,17 @@ export async function buildAdversarialBrief(
         evidence,
         ownedPaths: revision?.ownedPaths ?? task.ownedPaths ?? [],
         reviewFindings: review.findings,
+        knownFindings: (await import('./finding-disposition.js')).deferredFindings(
+            await (await import('./finding-disposition.js')).readTrackedFindings(root, taskId),
+        ).map(({ id, severity, message, disposition, dispositionReason, dispositionBy, source }) => ({
+            id,
+            severity,
+            message,
+            disposition,
+            ...(dispositionReason ? { dispositionReason } : {}),
+            ...(dispositionBy ? { dispositionBy } : {}),
+            source,
+        })),
     });
     return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text) };
 }

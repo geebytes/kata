@@ -127,6 +127,27 @@
               "nit"
             ]
           },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "open",
+              "fixed",
+              "deferred",
+              "accepted"
+            ]
+          },
+          "dispositionReason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dispositionBy": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dispositionAt": {
+            "type": "string",
+            "minLength": 1
+          },
           "message": {
             "type": "string",
             "minLength": 1
