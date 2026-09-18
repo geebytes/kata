@@ -186,6 +186,19 @@ So a check declares how much of the machine it takes:
 exceeds the limit — **runs alone**, which is what it needs: it is already using every core it was going to get. A nonsense
 weight is rejected at the config boundary with the reason, rather than silently treated as a licence to run unbounded.
 
+## Environment variables
+
+Everything kata reads from the environment, and what each one changes. All are optional: the default is the documented
+behaviour of each surface, and nothing here is needed for an ordinary run.
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `KATA_CHECK_CONCURRENCY` | `1` (serial) | How many checks a seal may run at once. Serial by default because the platform cannot know what two checks share; raise it only for checks known to be independent, and prefer a check's own `weight` (see *Giving a check its own weight*) |
+| `KATA_CODEGRAPH_INDEX_TIMEOUT_MS` | `300000` | Budget for the `codegraph index` stage of `update`. It is a full rebuild — measured at 35–46 s on a 972-file index — so it does **not** share the smaller budget the incremental `sync` stage uses; a stage that exceeds its budget is reported as `timed_out` with the budget it had |
+| `KATA_RUNTIME_REFRESH_TIMEOUT_MS` | `30000` | Budget for the runtime refresh's non-index stages (`comet`, `codegraph sync`). The refresh is best-effort: no stage failure aborts the platform update |
+| `KATA_GITFLOW_TIMEOUT_MS` | `300000` | Budget for a Git Flow subcommand. Both the interactive and non-interactive paths are bounded by it, so a git operation cannot hang an unattended run |
+| `KATA_LANGUAGE` | `zh` | Language for the prompts kata renders into a task's status and pause instructions (`en`/`zh`). An explicit language on the call wins over it; a task's own record does not override it |
+
 ## Worktrees
 
 `isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place
