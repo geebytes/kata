@@ -48,6 +48,9 @@ export async function proposeFromPassedTask(root: string, taskId: string, input:
     sourceRefs: [...input.sourceRefs],
     sourceHashes: { ...(input.sourceHashes ?? {}) },
     validationTaskId: taskId,
+    // A task distilled this from sources it cites (L4-07): the provenance is the fact that makes it authority about
+    // those sources, and stating it here is what the promotion gate reads.
+    provenance: 'distilled',
     evidenceIds,
     status: 'candidate',
     lastVerifiedAt: new Date().toISOString(),

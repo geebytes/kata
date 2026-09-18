@@ -222,6 +222,8 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
         [`.llmwiki/${pagePath}`]: computeFileHash(pageContent),
       },
       validationTaskId: 'llmwiki-ingest',
+      // A summary of a page, not knowledge about the code (L4-07): say so where it is written.
+      provenance: 'ingested',
       evidenceIds: [`llmwiki-${hashContent(rawContent).slice(0, 12)}`],
       status: 'candidate',
       lastVerifiedAt: new Date().toISOString(),
@@ -340,6 +342,7 @@ export async function registerWikiPages(input: LlmWikiInput = {}): Promise<LlmWi
         sourceRefs: [`.llmwiki/${relativePath}`],
         sourceHashes: { [`.llmwiki/${relativePath}`]: computeFileHash(content) },
         validationTaskId: 'llmwiki-register',
+        provenance: 'ingested',
         evidenceIds: [`llmwiki-${hashContent(content).slice(0, 12)}`],
         status: 'candidate',
         lastVerifiedAt: new Date().toISOString(),

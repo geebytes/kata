@@ -1,10 +1,10 @@
 import { readWikiRecordsWithIssues } from './store.js';
-import type { WikiRecord, WikiStatus } from './record.js';
+import { inferProvenance, type WikiRecord, type WikiStatus } from './record.js';
 
 export interface ExcludedWikiEntry {
   id: string;
   status?: WikiStatus;
-  reason: 'not-authoritative' | 'stale' | 'invalid';
+  reason: 'not-authoritative' | 'stale' | 'invalid' | 'ingested-summary';
 }
 
 export interface AuthoritativeContext {
@@ -20,17 +20,24 @@ export async function selectAuthoritativeContext(
   const { records, invalid } = await readWikiRecordsWithIssues(root);
   const requestedRefs = new Set(requestedSourceRefs);
 
+  // A record whose provenance is `ingested` summarises a documentation page (L4-07): it may be read, but it is not
+  // authority about the source it happens to cite, and serving it as such was how a self-referential summary entered the
+  // authority set. Only records whose provenance resolves to sources can be authoritative.
   const authoritative = records
-    .filter((r) => r.status === 'verified' && isRelevant(r, requestedRefs))
+    .filter((r) => r.status === 'verified' && inferProvenance(r) !== 'ingested' && isRelevant(r, requestedRefs))
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const excluded = records
-    .filter((r) => r.status !== 'verified')
+    .filter((r) => r.status !== 'verified' || inferProvenance(r) === 'ingested')
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((r) => ({
       id: r.id,
       status: r.status,
-      reason: (r.status === 'stale' ? 'stale' : 'not-authoritative') as ExcludedWikiEntry['reason'],
+      reason: (r.status === 'stale'
+        ? 'stale'
+        : inferProvenance(r) === 'ingested'
+          ? 'ingested-summary'
+          : 'not-authoritative') as ExcludedWikiEntry['reason'],
     }));
 
   // An unreadable record cannot be authoritative, and it must not be silent either: it is named here (and in the

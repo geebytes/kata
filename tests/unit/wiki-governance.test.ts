@@ -624,5 +624,46 @@ describe('Wiki governance', () => {
             expect(promoted.status).toBe('verified');
         });
 
+        it('never serves an ingested summary as authority about the code', async () => {
+            const root = await tempRoot();
+            const { writeWikiRecord } = await import('../../src/wiki/store.js');
+            const { selectAuthoritativeContext } = await import('../../src/wiki/context.js');
+            const { mkdir } = await import('node:fs/promises');
+            await mkdir(join(root, 'src'), { recursive: true });
+            await writeFile(join(root, 'src/thing.ts'), 'export const thing = 1;\n', 'utf8');
+
+            const shared = {
+                scope: ['src/thing.ts'],
+                kind: 'implementation-note',
+                sourceRefs: ['src/thing.ts'],
+                sourceHashes: {},
+                evidenceIds: ['evidence-1'],
+                status: 'verified' as const,
+                lastVerifiedAt: new Date().toISOString(),
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            };
+            // A distilled record: authority about the source it cites.
+            await writeWikiRecord(root, { ...shared, id: 'wiki-distilled', statement: 'Distilled.', validationTaskId: 'task-1', provenance: 'distilled' });
+            // An ingested summary: same status, but its provenance says it summarises a page.
+            await writeWikiRecord(root, { ...shared, id: 'wiki-ingested', statement: 'Summary of a page.', validationTaskId: 'llmwiki-ingest', provenance: 'ingested' });
+
+            const selection = await selectAuthoritativeContext(root, ['src/thing.ts']);
+
+            expect(selection.authoritative.map((record) => record.id)).toEqual(['wiki-distilled']);
+            expect(selection.excluded).toContainEqual({ id: 'wiki-ingested', status: 'verified', reason: 'ingested-summary' });
+        });
+
+        it('reads the provenance of a record that never declared one', async () => {
+            const { inferProvenance } = await import('../../src/wiki/record.js');
+
+            // The convention the two stores used, read as what it meant — no migration, no rewriting.
+            expect(inferProvenance({ validationTaskId: 'llmwiki-ingest', sourceRefs: ['.llmwiki/x.md'] })).toBe('ingested');
+            expect(inferProvenance({ validationTaskId: 'task-1', sourceRefs: ['.llmwiki/x.md'] })).toBe('ingested');
+            expect(inferProvenance({ validationTaskId: 'task-1', sourceRefs: ['src/a.ts'] })).toBe('distilled');
+            // …and a record that declares one is believed.
+            expect(inferProvenance({ validationTaskId: 'task-1', sourceRefs: ['src/a.ts'], provenance: 'verified' })).toBe('verified');
+        });
+
     });
 });

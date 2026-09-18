@@ -13,7 +13,7 @@ export interface ExcludedWikiRecord {
   id: string;
   /** Absent when the record could not be read at all — there is no trustworthy status to report. */
   status?: WikiStatus;
-  reason: 'not-authoritative' | 'stale' | 'invalid';
+  reason: 'not-authoritative' | 'stale' | 'invalid' | 'ingested-summary';
 }
 
 export interface ContextManifest {

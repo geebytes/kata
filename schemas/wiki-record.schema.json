@@ -19,41 +19,136 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "statement": { "type": "string", "minLength": 1 },
-    "scope": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-    "kind": { "type": "string", "minLength": 1 },
-    "sourceRefs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "sourceHashes": {
       "type": "object",
-      "additionalProperties": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-fA-F0-9]{64}$"
+      }
     },
-    "validationTaskId": { "type": "string", "minLength": 1 },
-    "evidenceIds": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-    "status": { "type": "string", "enum": ["candidate", "verified", "stale", "rejected"] },
-    "lastVerifiedAt": { "type": "string" },
-    "createdAt": { "type": "string", "minLength": 1 },
-    "updatedAt": { "type": "string", "minLength": 1 },
+    "validationTaskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance": [
+      {
+        "type": "string",
+        "enum": [
+          "source",
+          "ingested",
+          "verified",
+          "distilled"
+        ]
+      }
+    ],
+    "evidenceIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "candidate",
+        "verified",
+        "stale",
+        "rejected"
+      ]
+    },
+    "lastVerifiedAt": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    },
     "approvalEvent": {
       "type": "object",
-      "required": ["approvedBy", "role", "approvedAt"],
+      "required": [
+        "approvedBy",
+        "role",
+        "approvedAt"
+      ],
       "additionalProperties": false,
       "properties": {
-        "approvedBy": { "type": "string", "minLength": 1 },
-        "role": { "type": "string", "minLength": 1 },
-        "approvedAt": { "type": "string", "minLength": 1 },
-        "notes": { "type": "string" }
+        "approvedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approvedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        }
       }
     },
     "rejectionEvent": {
       "type": "object",
-      "required": ["rejectedBy", "role", "rejectedAt", "reason"],
+      "required": [
+        "rejectedBy",
+        "role",
+        "rejectedAt",
+        "reason"
+      ],
       "additionalProperties": false,
       "properties": {
-        "rejectedBy": { "type": "string", "minLength": 1 },
-        "role": { "type": "string", "minLength": 1 },
-        "rejectedAt": { "type": "string", "minLength": 1 },
-        "reason": { "type": "string", "minLength": 1 }
+        "rejectedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rejectedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }
