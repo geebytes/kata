@@ -204,4 +204,49 @@ describe('kata-cli adversarial: the issued copy is the way in', () => {
             process.chdir(previousCwd);
         }
     });
+
+
+    it('records a delta round through the CLI by naming the brief it answered', async () => {
+        const root = await fixture();
+        const previousCwd = process.cwd();
+        process.chdir(root);
+        try {
+            // Round one: full, recorded.
+            const full = await runAdversarialCommand(['brief', '--change', 'binding', '--node', 'verify']);
+            const resultFor = (briefSha256: string, scope: Record<string, unknown>): string =>
+                JSON.stringify({
+                    node: 'verify',
+                    status: 'recorded',
+                    revisionId: '',
+                    executedInFreshContext: true,
+                    contextNote: 'Subagent with no prior conversation.',
+                    createdAt: new Date().toISOString(),
+                    briefSha256,
+                    verdict: 'no_defect_found',
+                    attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
+                    findings: [],
+                    scope,
+                });
+            const first = join(root, 'first.json');
+            await writeFile(first, resultFor(String(full.briefSha256), { kind: 'full' }), 'utf8');
+            await runAdversarialCommand(['record', '--change', 'binding', '--node', 'verify', '--from-file', first]);
+
+            // One file changes, and round two asks for the delta.
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 2;\n', 'utf8');
+            const delta = await runAdversarialCommand(['brief', '--change', 'binding', '--node', 'verify', '--since', String(full.revisionId)]);
+            expect(delta.delta).toMatchObject({ changedPaths: ['src/a.ts'] });
+
+            // A pass is pointed at the brief it answered — not at a flag the platform would have to re-derive.
+            const second = join(root, 'second.json');
+            await writeFile(second, resultFor(String(delta.briefSha256), { kind: 'delta', from: full.revisionId, changedPaths: ['src/a.ts'] }), 'utf8');
+            const recorded = await runAdversarialCommand(['record', '--change', 'binding', '--node', 'verify', '--from-file', second]);
+            expect(recorded).toMatchObject({ briefSha256: delta.briefSha256, gate: { satisfied: true } });
+            // And the second round reports the cost terms the measurement depends on.
+            const status = await runAdversarialCommand(['status', '--change', 'binding']);
+            const node = (status.nodes as Record<string, Record<string, unknown>>).verify!;
+            expect(node.mode).toBe(delta.mode);
+        } finally {
+            process.chdir(previousCwd);
+        }
+    });
 });
