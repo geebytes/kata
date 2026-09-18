@@ -196,6 +196,10 @@ export async function runLocalStatusCommand(change: string, resolved?: ResolvedT
         }
         : resolved;
     const taskContext = await readTaskContext(root, change);
+    // C7: a gate that asks for something it never asked for before is an engine change, not a mistake in this run, and
+    // saying so costs one line where the absence of it cost a diagnostic cycle.
+    const { engineChangeNote, engineVersion } = await import('../core/engine-version.js');
+    const engineNote = engineChangeNote(taskContext.engine);
     const upstream = await readUpstreamSummary(root, change);
     const suggestion = suggestCandidateAction(state.phase, upstream);
     const phaseNextSkill = nextSkillForPhase(state.phase);
@@ -236,6 +240,8 @@ export async function runLocalStatusCommand(change: string, resolved?: ResolvedT
         ...(state.activeSession ? { activeSession: state.activeSession } : {}),
         task: taskContext.task,
         state,
+        engine: { running: engineVersion(), ...(taskContext.engine ? { task: taskContext.engine } : {}) },
+        ...(engineNote ? { engineNote } : {}),
         requiredReads: taskContext.requiredReads,
         context: taskContext.context,
     };
@@ -272,9 +278,10 @@ export async function readTaskContext(root: string, change: string): Promise<{
     task: { title: string; acceptance: Array<{ id?: string; statement: string }> };
     requiredReads: string[];
     context: Record<string, unknown>;
+    engine?: { version: string; stampedAt: string };
 }> {
     const taskRaw = await readFile(taskPath(root, change), 'utf8');
-    const task = JSON.parse(taskRaw) as { title: string; acceptance: Array<{ id?: string; statement: string }> };
+    const task = JSON.parse(taskRaw) as { title: string; acceptance: Array<{ id?: string; statement: string }>; engine?: { version: string; stampedAt: string } };
     let context: Awaited<ReturnType<typeof buildContextManifest>>;
     try {
         context = await buildContextManifest({ root, taskId: change, sourceRefs: [] });
@@ -282,6 +289,7 @@ export async function readTaskContext(root: string, change: string): Promise<{
         context = { taskId: change, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], warnings: [] };
     }
     return {
+        ...(task.engine ? { engine: task.engine } : {}),
         task: {
             title: task.title,
             acceptance: task.acceptance,

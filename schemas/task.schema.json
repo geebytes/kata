@@ -34,6 +34,25 @@
         "archive"
       ]
     },
+    "engine": {
+      "description": "The kata version this task last ran under (C7). Last seen, not first seen: it is restamped as the task advances, so a reader asking why a gate suddenly wants something new gets the answer the field exists for. Absent on tasks created before it existed, which is reported as unknown rather than as a change.",
+      "type": "object",
+      "required": [
+        "version",
+        "stampedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stampedAt": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "branch": {
       "type": "string",
       "minLength": 1

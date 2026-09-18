@@ -132,6 +132,10 @@ export async function transition(
             ...(options.activeSession ? { activeSession: options.activeSession } : {}),
         });
         await writeCurrentState(root, next);
+        // C7: the engine stamp moves with the runs, which is what makes "did the engine change since I last ran this?"
+        // answerable. Done here because this is the one place that already holds the lock and every advance goes through
+        // it — a separate `mutateTaskArtefact` would re-take a non-blocking lock and throw.
+        await stampEngineUnlocked(root, taskId);
 
         return next;
     });
@@ -204,12 +208,37 @@ export async function mutateTaskArtefact(
     root: string,
     taskId: string,
     path: string,
-    mutate: () => Promise<string>,
+    mutate: (current: string) => Promise<string>,
 ): Promise<void> {
     await withTaskLock(root, taskId, async () => {
-        const content = await mutate();
+        // The read happens *inside* the lock. A helper that only locked the write would leave the read-modify-write window
+        // open — which is the window this exists to close (L3-09).
+        const current = await readFile(path, 'utf8').catch(() => '');
+        const content = await mutate(current);
         await writeFileAtomic(path, content);
     });
+}
+
+/**
+ * Restamps the task record with the running engine version (C7), for callers that already hold the task lock.
+ *
+ * Best-effort by design: the version is a diagnostic, and a task must not fail to advance because a stamp could not be
+ * written. Absent or malformed task files are skipped rather than repaired here.
+ */
+async function stampEngineUnlocked(root: string, taskId: string): Promise<boolean> {
+    const { engineVersion } = await import('./engine-version.js');
+    const path = taskPath(root, taskId);
+    try {
+        const task = JSON.parse(await readFile(path, 'utf8')) as { engine?: { version?: string; stampedAt?: string } };
+        const running = engineVersion();
+        // A task created before the field existed is stamped now; one whose version is unchanged is left untouched.
+        if (task.engine?.version === running) return false;
+        task.engine = { version: running, stampedAt: new Date().toISOString() };
+        await writeFileAtomic(path, `${JSON.stringify(task, null, 2)}\n`);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {

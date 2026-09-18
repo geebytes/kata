@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appendStateEvent, writeCurrentState, type Phase, type StateRecord } from './state.js';
 import { readValidated } from './schema.js';
+import { mutateTaskArtefact } from './state.js';
 import { assertValidTaskId } from './ids.js';
+import { engineVersion, type EngineStamp } from './engine-version.js';
 import { currentGitBranch } from './git.js';
 import type { TaskRelation } from './relations.js';
 import type { WorkflowProfile } from './workflow-profile.js';
@@ -119,6 +121,14 @@ export interface TaskRecord {
   id: string;
   title: string;
   phase: Phase;
+  /**
+   * The kata version this task last ran under (C7).
+   *
+   * "Last seen", not "first seen": it is restamped as the task advances, so a reader asking why a gate suddenly wants
+   * something new gets the answer the field exists for — *did the engine change since I last ran this?* Absent on tasks
+   * created before it existed, which is reported as "unknown" rather than as a change.
+   */
+  engine?: EngineStamp;
   acceptance: AcceptanceCriterion[];
   relations?: TaskRelation[];
   branch?: string;
@@ -141,6 +151,8 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
     id,
     title: input.title,
     phase: 'intake',
+    // C7: the engine version travels with the task from the moment it exists, so a mid-task change is comparable later.
+    engine: { version: engineVersion(), stampedAt: now },
     acceptance: input.acceptance.map((criterion) => ({ ...criterion })),
     ...(branch ? { branch } : {}),
     createdAt: now,
@@ -189,4 +201,25 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 /** Reads a task record against its schema. Every caller that used to parse task.json by hand should use this. */
 export async function readTask(root: string, taskId: string): Promise<TaskRecord> {
   return readValidated<TaskRecord>('task', taskPath(root, taskId));
+}
+
+/**
+ * Restamps a task with the running engine version (C7).
+ *
+ * Called as a task advances rather than on every read: the field answers "did the engine change since I last ran this?",
+ * so it has to move with the runs. A no-op when the version is already current, so it costs nothing on the common path.
+ */
+export async function stampEngineVersion(root: string, taskId: string): Promise<{ changed: boolean; previous?: string; running: string }> {
+  const running = engineVersion();
+  let changed = false;
+  let previous: string | undefined;
+  await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (current) => {
+    const task = JSON.parse(current) as TaskRecord;
+    previous = task.engine?.version;
+    changed = Boolean(previous) && previous !== running;
+    if (task.engine?.version === running) return current;
+    task.engine = { version: running, stampedAt: new Date().toISOString() };
+    return `${JSON.stringify(task, null, 2)}\n`;
+  });
+  return { changed, ...(previous ? { previous } : {}), running };
 }
