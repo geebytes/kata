@@ -11,27 +11,56 @@ export function normalizeId(id: string): string {
  * The one reader of the Wiki store. Records are validated against `wiki-record.schema.json` where they are read: a
  * record that drifted is reported here, not later as an `undefined` on whichever consumer happened to read it first.
  */
-export async function readWikiRecords(root: string): Promise<WikiRecord[]> {
+/**
+ * The Wiki as it can be read: valid records, with the invalid ones reported instead of thrown.
+ *
+ * Measured failure this replaces: one legacy record carrying a field the schema no longer allows (`revalidatedBy`)
+ * blocked **every** workflow mutation in the project, because the handoff path read the whole Wiki and the reader threw
+ * on the first file it could not validate. A record that cannot be read cannot be authoritative either, so the rule is
+ * one: **reading the Wiki never fails** — an invalid record is skipped and named, and refusing is the business of the
+ * Wiki's own reporting surfaces (`kata-cli wiki audit`, `lint`), which is where a drifted record has to be fixed.
+ */
+export async function readWikiRecordsWithIssues(root: string): Promise<{
+  records: WikiRecord[];
+  invalid: Array<{ path: string; message: string }>;
+}> {
   const wikiDir = layoutWikiDir(root);
   let files: string[];
   try {
     files = await readdir(wikiDir);
   } catch {
-    return [];
+    return { records: [], invalid: [] };
   }
-  const records = await Promise.all(
-    files
-      .filter((f) => f.endsWith('.json'))
-      .sort()
-      .map(async (file) => {
-        const raw = await readFile(join(wikiDir, file), 'utf8');
-        try {
-          return validateWikiRecord(JSON.parse(raw));
-        } catch (error) {
-          throw new Error(`Wiki record ${join(wikiDir, file)} is invalid: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }),
-  );
+  const records: WikiRecord[] = [];
+  const invalid: Array<{ path: string; message: string }> = [];
+  for (const file of files.filter((f) => f.endsWith('.json')).sort()) {
+    const path = join(wikiDir, file);
+    try {
+      records.push(validateWikiRecord(JSON.parse(await readFile(path, 'utf8'))));
+    } catch (error) {
+      invalid.push({ path, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { records, invalid };
+}
+
+/** The valid records. Invalid ones are skipped — see `readWikiRecordsWithIssues` for why that cannot fail. */
+export async function readWikiRecords(root: string): Promise<WikiRecord[]> {
+  return (await readWikiRecordsWithIssues(root)).records;
+}
+
+/**
+ * Read every record, refusing on the first invalid one.
+ *
+ * Nothing calls this any more, and that is the point: a drifted record is a thing to report and repair, not a reason for
+ * every task in the project to stop. Kept as the named behaviour it always was, so the difference between the two is
+ * legible rather than an accident of which reader a caller happened to import.
+ */
+export async function readWikiRecordsStrict(root: string): Promise<WikiRecord[]> {
+  const { records, invalid } = await readWikiRecordsWithIssues(root);
+  if (invalid.length > 0) {
+    throw new Error(`Wiki record ${invalid[0]!.path} is invalid: ${invalid[0]!.message}`);
+  }
   return records;
 }
 
@@ -72,34 +101,3 @@ export async function findWikiRecord(root: string, id: string): Promise<WikiReco
   return records.find((r) => r.id === id);
 }
 
-/**
- * Reads the Wiki directory without letting an unrelated record decide an unrelated task.
- *
- * `readWikiRecords` throws on the first invalid file, and the closure gate reads every record to check its candidates —
- * so one drifted legacy record (a field the schema does not allow) blocked **every** workflow mutation in the project,
- * not just the task that owned the file. This variant reports the invalid ones instead: the caller decides whether they
- * matter, and a closure fails only when a record *it names* is unreadable.
- */
-export async function readWikiRecordsTolerant(root: string): Promise<{
-  records: WikiRecord[];
-  invalid: Array<{ path: string; message: string }>;
-}> {
-  const wikiDir = layoutWikiDir(root);
-  let files: string[];
-  try {
-    files = await readdir(wikiDir);
-  } catch {
-    return { records: [], invalid: [] };
-  }
-  const records: WikiRecord[] = [];
-  const invalid: Array<{ path: string; message: string }> = [];
-  for (const file of files.filter((f) => f.endsWith('.json')).sort()) {
-    const path = join(wikiDir, file);
-    try {
-      records.push(validateWikiRecord(JSON.parse(await readFile(path, 'utf8'))));
-    } catch (error) {
-      invalid.push({ path, message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  return { records, invalid };
-}

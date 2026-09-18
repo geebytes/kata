@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { computeFileHash } from './record.js';
-import { normalizeId, readWikiRecords, readWikiRecordsTolerant, updateWikiRecord } from './store.js';
+import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
 
 export interface DriftEntry {
@@ -94,10 +94,10 @@ export interface RevalidationResult {
  * other. That keeps the state machine's meaning intact instead of adding a bypass for the case that mattered today.
  */
 export async function revalidateWikiRecord(root: string, id: string): Promise<RevalidationResult> {
-  const records = await readWikiRecordsTolerant(root);
-  const record = records.records.find((entry) => entry.id === normalizeId(id));
+  const { records, invalid: invalidRecords } = await readWikiRecordsWithIssues(root);
+  const record = records.find((entry) => entry.id === normalizeId(id));
   if (!record) {
-    const invalid = records.invalid.find((entry) => entry.path.endsWith(`${normalizeId(id)}.json`));
+    const invalid = invalidRecords.find((entry) => entry.path.endsWith(`${normalizeId(id)}.json`));
     throw new Error(
       invalid
         ? `Wiki record ${id} cannot be revalidated because it does not match its schema: ${invalid.message}`

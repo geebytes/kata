@@ -11,8 +11,9 @@ export interface ContextRequest {
 
 export interface ExcludedWikiRecord {
   id: string;
-  status: WikiStatus;
-  reason: 'not-authoritative' | 'stale';
+  /** Absent when the record could not be read at all — there is no trustworthy status to report. */
+  status?: WikiStatus;
+  reason: 'not-authoritative' | 'stale' | 'invalid';
 }
 
 export interface ContextManifest {

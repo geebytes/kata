@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readWikiRecords, readWikiRecordsTolerant } from './store.js';
+import { readWikiRecordsWithIssues } from './store.js';
 import { wikiClosurePath as layoutWikiClosurePath, taskDir } from '../core/layout.js';
 
 export type WikiClosureDecision = 'captured' | 'not_applicable' | 'deferred';
@@ -69,7 +69,7 @@ export function wikiClosureRemedy(reason: WikiClosureFailureReason, taskId: stri
     case 'missing':
       return `No closure recorded yet: \`kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable|deferred> --reason "<why>"\`.`;
     case 'unevaluatable_records':
-      return 'The closure names records that could not be read. `kata-cli wiki validate` lists them with the fields the schema does not allow.';
+      return 'The closure names records that could not be read. `kata-cli wiki audit` lists every unreadable record with the field the schema rejects; fix that record (or record the closure with an id that reads) and re-run.';
     default:
       return '';
   }
@@ -84,7 +84,7 @@ export async function evaluateWikiClosure(root: string, taskId: string): Promise
   if (closure.candidateIds.length === 0) return { valid: false, reason: 'candidate_required', closure };
   // Tolerant read: an unrelated invalid record must not decide this task's closure, but a candidate the closure names
   // that cannot be read is a real gap and fails closed.
-  const { records, invalid } = await readWikiRecordsTolerant(root);
+  const { records, invalid } = await readWikiRecordsWithIssues(root);
   const validIds = new Set(records.filter((record) => record.status === 'candidate' || record.status === 'verified').map((record) => record.id));
   const unreadableIds = new Set(invalid.map((entry) => entry.path.replace(/^.*\//, '').replace(/\.json$/, '')));
   if (closure.candidateIds.some((id) => unreadableIds.has(id))) return { valid: false, reason: 'unevaluatable_records', closure };

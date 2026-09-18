@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lintLlmWiki } from './llmwiki.js';
 import { verifySources } from './drift.js';
-import { readWikiRecords } from './store.js';
+import { readWikiRecords, readWikiRecordsWithIssues } from './store.js';
 import type { WikiRecord } from './record.js';
 import { taskDir, taskPath } from '../core/layout.js';
 
@@ -32,14 +32,17 @@ export type WikiLifecycleAction = {
 };
 
 export type WikiAudit = {
-  generatedAt: string; pageCount: number; staleIds: string[]; reviewDueIds: string[]; duplicateGroups: string[][]; overBudgetTasks: Array<{ taskId: string; candidates: number; limit: number }>; lintOk: boolean; lintIssues: number; recommendedActions: WikiLifecycleAction[];
+  generatedAt: string; pageCount: number; invalidRecords: Array<{ path: string; message: string }>; staleIds: string[]; reviewDueIds: string[]; duplicateGroups: string[][]; overBudgetTasks: Array<{ taskId: string; candidates: number; limit: number }>; lintOk: boolean; lintIssues: number; recommendedActions: WikiLifecycleAction[];
 };
 
 export async function auditWiki(root: string): Promise<WikiAudit> {
-  const recordsBeforeDrift = await readWikiRecords(root);
+  // Reported here rather than thrown: this is the surface whose job is to say what needs fixing, so it has to survive
+  // reading a record it cannot repair (see `store.readWikiRecordsWithIssues`).
+  const { records: recordsWithIssues, invalid: invalidRecords } = await readWikiRecordsWithIssues(root);
+  const recordsBeforeDrift = recordsWithIssues;
   const sources = await verifySources(root);
   const lint = await lintLlmWiki({ root });
-  const records = await readWikiRecords(root);
+  const records = recordsWithIssues;
   const now = Date.now();
   const reviewDueIds = recordsBeforeDrift.filter((record) => record.status === 'verified' && now - Date.parse(record.lastVerifiedAt) > reviewAfterDays * 86_400_000).map((record) => record.id).sort();
   const duplicates = new Map<string, string[]>();
@@ -59,7 +62,7 @@ export async function auditWiki(root: string): Promise<WikiAudit> {
     overBudgetTaskIds: new Set(overBudgetTasks.map((entry) => entry.taskId)),
     originalStatusById: new Map(recordsBeforeDrift.map((record) => [record.id, record.status])),
   });
-  return { generatedAt: new Date().toISOString(), pageCount: pages, staleIds: sources.stale.map((entry) => entry.id).sort(), reviewDueIds, duplicateGroups, overBudgetTasks, lintOk: lint.ok, lintIssues: lint.issues.length, recommendedActions };
+  return { generatedAt: new Date().toISOString(), invalidRecords, pageCount: pages, staleIds: sources.stale.map((entry) => entry.id).sort(), reviewDueIds, duplicateGroups, overBudgetTasks, lintOk: lint.ok, lintIssues: lint.issues.length, recommendedActions };
 }
 
 export async function createRefreshPacket(root: string, taskId: string): Promise<{ path: string; audit: WikiAudit }> {
