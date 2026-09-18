@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { commandManifest, platformCapabilities, renderSkill, skillCommands, type Platform } from '../../src/adapters/manifest.js';
+import { renderSkillFor } from '../../src/adapters/facade.js';
+// The named platform wrappers are kept for external consumers, and asserted below to be the facade with a default.
 import { renderSkill as renderCodexSkill } from '../../src/adapters/codex.js';
 import { renderSkill as renderClaudeCodeSkill } from '../../src/adapters/claude-code.js';
 import { renderSkill as renderOpenCodeSkill } from '../../src/adapters/opencode.js';
@@ -7,13 +9,33 @@ import { renderSkill as renderPiSkill } from '../../src/adapters/pi.js';
 import { renderSkill as renderGenericSkill } from '../../src/adapters/generic.js';
 import { platformDefinitions } from '../../src/adapters/platforms.js';
 
+// One entry point for every platform: the facade that production writes its skill files through (L1-08). The
+// per-platform wrappers are covered separately, by an assertion that they are this facade with their own default.
 const renderers: Partial<Record<Platform, (command: (typeof skillCommands)[number], platform: Platform) => string>> = {
-  codex: renderCodexSkill,
-  'claude-code': renderClaudeCodeSkill,
-  opencode: renderOpenCodeSkill,
-  pi: renderPiSkill,
-  generic: renderGenericSkill,
+  codex: (command, platform) => renderSkillFor(platform, command),
+  'claude-code': (command, platform) => renderSkillFor(platform, command),
+  opencode: (command, platform) => renderSkillFor(platform, command),
+  pi: (command, platform) => renderSkillFor(platform, command),
+  generic: (command, platform) => renderSkillFor(platform, command),
 };
+
+describe('the per-platform wrappers are the facade with a platform default', () => {
+  it('renders exactly what the facade renders when asked for that platform', () => {
+    const command = skillCommands.find((entry) => entry.id === 'kata-build')!;
+    const wrappers = {
+      codex: renderCodexSkill,
+      'claude-code': renderClaudeCodeSkill,
+      opencode: renderOpenCodeSkill,
+      pi: renderPiSkill,
+      generic: renderGenericSkill,
+    } as const;
+
+    for (const [platform, render] of Object.entries(wrappers)) {
+      // The default argument is the whole difference; the rendered text must be identical.
+      expect(render(command), platform).toBe(renderSkillFor(platform as Platform, command));
+    }
+  });
+});
 const platforms = platformDefinitions.map((platform) => platform.id);
 
 describe('platform adapter golden output', () => {

@@ -3,9 +3,9 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, writeConfigPatch } from '../core/config.js';
 import { initLlmWiki, buildLlmWikiTask } from '../wiki/llmwiki.js';
+import { renderSkillFor } from './facade.js';
 import {
   commandManifest,
-  renderSkill,
   skillCommands,
   type InstallOptions,
   type InstallReport,
@@ -140,7 +140,8 @@ async function writeSkills(
   for (const command of skillCommands) {
     const relativePath = platformSkillPath(platform, scope, command.id, baseRoot);
     const absolutePath = join(baseRoot, relativePath);
-    const content = renderSkill(command, platform, { language: effectiveOptions.language });
+    // Through the facade, so the surface the tests exercise is the surface that writes the files (L1-08).
+    const content = renderSkillFor(platform, command, { language: effectiveOptions.language });
     const nextHash = sha256(content);
     const previous = manifest.files[relativePath];
 
@@ -468,7 +469,7 @@ ${responseLanguage ? `\n${responseLanguage}` : ''}
 }
 
 function renderOpenCodeCommand(command: (typeof skillCommands)[number], language?: 'en' | 'zh'): string {
-  const body = stripSkillFrontmatter(renderSkill(command, 'opencode', { language }));
+  const body = stripSkillFrontmatter(renderSkillFor('opencode', command, { language }));
   return `---
 description: Run the ${command.id} Kata workflow
 ---
