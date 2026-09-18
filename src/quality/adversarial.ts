@@ -37,6 +37,17 @@ export interface AdversarialFinding {
     severity: 'blocking' | 'major' | 'minor' | 'nit';
     message: string;
     path?: string;
+    /**
+     * What has been decided about this finding (F1): `open` when omitted.
+     *
+     * Held on the record that reported the finding, which is why `writeAdversarialRecord` carries a decision forward when
+     * a later pass replaces that record — otherwise the next pass resurrects every deferral, which is exactly what
+     * happened the first time this was used.
+     */
+    disposition?: 'open' | 'fixed' | 'deferred' | 'accepted';
+    dispositionReason?: string;
+    dispositionBy?: string;
+    dispositionAt?: string;
 }
 
 export interface AdversarialRecord {
@@ -277,7 +288,33 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
     // pass save against the full pass it narrowed?) has both sides. Without this the number is unrecoverable the moment
     // the record is overwritten — which is exactly why §11 could not be answered.
     try {
-        const previous = JSON.parse(await readFile(path, 'utf8')) as { scope?: { kind?: string }; elapsedMs?: number; createdAt?: string };
+        const previous = JSON.parse(await readFile(path, 'utf8')) as {
+            scope?: { kind?: string };
+            elapsedMs?: number;
+            createdAt?: string;
+            findings?: Array<Record<string, unknown>>;
+        };
+        // D1: the dispositions live on this record, so replacing it resurrected every deferred finding and left its id
+        // with nothing to defer. A decision is carried forward onto the finding of the same id when the new record does
+        // not state one itself.
+        const decided = new Map<string, Record<string, unknown>>();
+        for (const finding of previous.findings ?? []) {
+            if (finding.disposition && finding.disposition !== 'open') {
+                decided.set(String(finding.id), {
+                    disposition: finding.disposition,
+                    ...(finding.dispositionReason ? { dispositionReason: finding.dispositionReason } : {}),
+                    ...(finding.dispositionBy ? { dispositionBy: finding.dispositionBy } : {}),
+                    ...(finding.dispositionAt ? { dispositionAt: finding.dispositionAt } : {}),
+                });
+            }
+        }
+        if (decided.size > 0) {
+            for (const finding of record.findings ?? []) {
+                if (finding.disposition && finding.disposition !== 'open') continue;
+                const carried = decided.get(finding.id);
+                if (carried) Object.assign(finding, carried);
+            }
+        }
         if (previous.elapsedMs || previous.scope?.kind === 'full') {
             const { mkdir } = await import('node:fs/promises');
             const { join } = await import('node:path');
@@ -484,17 +521,7 @@ export async function buildAdversarialBrief(
         evidence,
         ownedPaths: revision?.ownedPaths ?? task.ownedPaths ?? [],
         reviewFindings: review.findings,
-        knownFindings: (await import('./finding-disposition.js')).deferredFindings(
-            await (await import('./finding-disposition.js')).readTrackedFindings(root, taskId),
-        ).map(({ id, severity, message, disposition, dispositionReason, dispositionBy, source }) => ({
-            id,
-            severity,
-            message,
-            disposition,
-            ...(dispositionReason ? { dispositionReason } : {}),
-            ...(dispositionBy ? { dispositionBy } : {}),
-            source,
-        })),
+        knownFindings: decidedReviewFindings(review.findings),
     });
     return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text), delta: deltaReport };
 }
@@ -514,6 +541,28 @@ async function findRevisionByManifest(root: string, taskId: string, target: stri
         }
     }
     return null;
+}
+
+/**
+ * The decisions a brief may carry: the review record's findings that are no longer open.
+ *
+ * A one-line filter over a durable source, on purpose — see the note on `knownFindings` for what happens when a brief
+ * carries state that recording a pass rewrites.
+ */
+function decidedReviewFindings(
+    findings: Array<{ id: string; severity: string; message: string; disposition?: string; dispositionReason?: string; dispositionBy?: string }>,
+): Array<{ id: string; severity: string; message: string; disposition: string; dispositionReason?: string; dispositionBy?: string; source: string }> {
+    return findings
+        .filter((finding) => (finding.disposition ?? 'open') !== 'open')
+        .map((finding) => ({
+            id: finding.id,
+            severity: finding.severity,
+            message: finding.message,
+            disposition: finding.disposition ?? 'open',
+            ...(finding.dispositionReason ? { dispositionReason: finding.dispositionReason } : {}),
+            ...(finding.dispositionBy ? { dispositionBy: finding.dispositionBy } : {}),
+            source: 'review',
+        }));
 }
 
 /** The gate for a node, asked the same way by the workflow and by the CLI's status report. */

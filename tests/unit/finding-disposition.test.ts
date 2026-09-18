@@ -130,3 +130,96 @@ describe('a finding has a disposition', () => {
         expect(findings.find((finding) => finding.id === 'a-nit')?.source).toBe('verify');
     });
 });
+
+describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    async function taskWithFinding(root: string): Promise<void> {
+        await initLayout(root);
+        await createTask({ root, id: 'd-task', title: 'D', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        await mkdir(join(root, '.kata/tasks/d-task'), { recursive: true });
+        await writeFile(join(root, '.kata/tasks/d-task/review.json'), JSON.stringify({
+            taskId: 'd-task',
+            status: 'pending',
+            findings: [{ id: 'keep-me', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
+        }), 'utf8');
+    }
+
+    it('D1: a later pass does not resurrect a deferred finding, and its id stays deferrable', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-d1-'));
+        roots.push(root);
+        await taskWithFinding(root);
+        const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+
+        const base = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            scope: { kind: 'full' as const },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
+        };
+
+        // The first pass reports the finding and it is deferred.
+        await writeAdversarialRecord(root, 'd-task', {
+            ...base,
+            findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
+        });
+        const { applyDisposition, readTrackedFindings, deferredFindings } = await import('../../src/quality/finding-disposition.js');
+        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+            disposition: 'deferred',
+            reason: 'not now',
+            by: 'reviewer-1',
+            at: '2026-09-18T10:05:00.000Z',
+        });
+        expect(deferredFindings(await readTrackedFindings(root, 'd-task')).map((f) => f.id)).toEqual(['a-1']);
+
+        // A second pass replaces the record and re-reports the same finding, saying nothing about its disposition.
+        await writeAdversarialRecord(root, 'd-task', {
+            ...base,
+            createdAt: '2026-09-18T11:00:00.000Z',
+            findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
+        });
+
+        const after = await readTrackedFindings(root, 'd-task');
+        // The decision survives the pass that replaced the record, so the finding is still deferred and still findable.
+        expect(after.find((finding) => finding.id === 'a-1')).toMatchObject({ disposition: 'deferred', dispositionReason: 'not now' });
+        expect(deferredFindings(after).map((f) => f.id)).toEqual(['a-1']);
+    });
+
+    it('D2: recording a pass does not change the brief it answered', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-d2-'));
+        roots.push(root);
+        await taskWithFinding(root);
+        const { buildAdversarialBrief, writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+        const { applyDisposition } = await import('../../src/quality/finding-disposition.js');
+
+        const before = await buildAdversarialBrief(root, 'd-task', 'verify');
+
+        // A pass is recorded that reports a finding, which is then dispositioned — both mutate the pass record.
+        await writeAdversarialRecord(root, 'd-task', {
+            node: 'verify',
+            status: 'recorded',
+            revisionId: before.revisionId ?? 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            briefSha256: before.sha256,
+            scope: { kind: 'full' },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' }],
+            findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
+        });
+        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+            disposition: 'deferred',
+            reason: 'not now',
+            by: 'reviewer-1',
+            at: '2026-09-18T10:05:00.000Z',
+        });
+
+        const after = await buildAdversarialBrief(root, 'd-task', 'verify');
+        // The brief's hash is what the gate recomputes; recording a pass must not move it.
+        expect(after.sha256).toBe(before.sha256);
+        expect(after.text).toBe(before.text);
+    });
+});
