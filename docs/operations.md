@@ -155,6 +155,30 @@ The verification pipeline enforces strict ordering:
 
 Any gate failure returns the task to bounded repair. Blocking reviewer findings in `review.json` route the task back through `/kata-build`, which records `review → implement → hardVerify` in `state-events.jsonl` and `.kata/tasks/<id>/repair.json`. Judge FAIL follows the same repair discipline from `judge → implement → hardVerify`. These backward links are recognized repair returns: recovery replays them as chain links, so the projection keeps the post-repair `hardVerify` instead of rewinding to the phase the repair started from.
 
+## Giving a check its own weight
+
+Checks run **serially by default**, because the platform cannot know what they share: in one measured project the
+integration checks drop and recreate rows in a single PostgreSQL database, so running them together fails for reasons the
+change under test did not cause. A project that knows its checks are independent opts into concurrency with
+`KATA_CHECK_CONCURRENCY`.
+
+That switch is per-project and blunt, though. A project whose checks are *themselves* parallel (`pytest -n auto`) sizes each
+one for a whole machine, so running N of them at once multiplies the load by N — measured in this workspace as
+`4 × -n auto` oversubscribing 48 cores and making the checks **slower and flakier than serial**.
+
+So a check declares how much of the machine it takes:
+
+```json
+{ "quality": { "buildChecks": [
+  { "id": "lint", "command": "make", "args": ["lint"] },
+  { "id": "suite", "command": "make", "args": ["test-parallel"], "weight": 8 }
+] } }
+```
+
+`weight` defaults to `1`. With `KATA_CHECK_CONCURRENCY=4` the lint check still shares a slot, and the suite — whose weight
+exceeds the limit — **runs alone**, which is what it needs: it is already using every core it was going to get. A nonsense
+weight is rejected at the config boundary with the reason, rather than silently treated as a licence to run unbounded.
+
 ## Worktrees
 
 `isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place
@@ -465,3 +489,5 @@ When a verification loop exhausts its retry budget, diagnostics include:
 ```
 
 After escalation, re-run the phase command with the resolved model tier.
+
+

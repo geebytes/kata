@@ -26,6 +26,14 @@ export type KataConfig = {
        * check is always named in the seal's report.
        */
       tier?: CheckTier;
+      /**
+       * How many slots this check occupies when checks run concurrently. Default 1.
+       *
+       * For a check that is itself parallel (`pytest -n auto`): it then declares a weight above the limit and runs alone.
+       * A project's checks are sized for one machine each, so running several of them at once multiplies the load by
+       * several — measured as 4 × `-n auto` oversubscribing 48 cores and making the checks slower and flakier than serial.
+       */
+      weight?: number;
     }>;
   };
 };
@@ -100,6 +108,11 @@ function parseQualityCheck(value: unknown): NonNullable<NonNullable<KataConfig['
     : isEvidenceKind(value.kind)
       ? value.kind
       : (() => { throw new Error('quality.buildChecks[].kind is invalid'); })();
+  const weight = value.weight === undefined
+    ? undefined
+    : typeof value.weight === 'number' && Number.isFinite(value.weight) && value.weight > 0
+      ? value.weight
+      : (() => { throw new Error('quality.buildChecks[].weight must be a positive number'); })();
   const tier = value.tier === undefined
     ? undefined
     : value.tier === 'seal' || value.tier === 'frozen'
@@ -110,6 +123,7 @@ function parseQualityCheck(value: unknown): NonNullable<NonNullable<KataConfig['
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
     ...(kind ? { kind } : {}),
     ...(tier ? { tier } : {}),
+    ...(weight ? { weight } : {}),
     command: value.command,
     ...(args ? { args } : {}),
     ...(typeof value.timeoutMs === 'number' ? { timeoutMs: value.timeoutMs } : {}),

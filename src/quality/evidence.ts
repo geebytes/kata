@@ -60,6 +60,16 @@ export interface CheckCommand {
    * the seal's report, so "declared but not run" is never silent.
    */
   tier?: 'seal' | 'frozen';
+  /**
+   * How many slots this check occupies when checks run concurrently. Default **1**.
+   *
+   * The reason this exists came from another session's report, and it is now measured rather than asserted: a project
+   * whose checks are *themselves* parallel (`pytest -n auto`) sizes each one for a whole machine, so running N of them at
+   * once multiplies the load by N — `4 x -n auto` oversubscribes 48 cores and makes the checks slower *and* flakier than
+   * serial. A check like that declares a weight above the concurrency limit (`"weight": 8`) and runs alone, without the
+   * project having to give up concurrency for its cheap checks.
+   */
+  weight?: number;
 }
 
 export interface EvidenceCollectionOptions {
@@ -123,6 +133,9 @@ const maxLogLength = 20_000;
  * PostgreSQL database, so running them alongside each other (or alongside the full suite) makes them fail for reasons
  * that have nothing to do with the change under test. A seal that reports failures it caused itself is worse than a slow
  * one, so the concurrency is opt-in: set `KATA_CHECK_CONCURRENCY` for checks known to be independent.
+ *
+ * A check's own `weight` is the finer instrument, and the one a project should reach for: a check that is itself parallel
+ * (`pytest -n auto`) declares a weight above the limit and runs alone, while the cheap checks beside it still share slots.
  */
 export function checkConcurrency(): number {
   const configured = Number.parseInt(process.env.KATA_CHECK_CONCURRENCY ?? '', 10);
@@ -130,17 +143,69 @@ export function checkConcurrency(): number {
   return 1;
 }
 
-/** Runs a mapper over items with at most `limit` in flight, preserving nothing but the results' own indexing. */
-async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>): Promise<void> {
+/** The slots a check occupies: its declared weight, or one. */
+export function checkWeight(check: CheckCommand): number {
+  const weight = check.weight;
+  return Number.isFinite(weight) && (weight as number) > 0 ? (weight as number) : 1;
+}
+
+/**
+ * Runs a mapper over items with at most `limit` slots in flight, where each item may occupy more than one slot.
+ *
+ * Weighted rather than uniform because the thing being bounded is machine capacity, not check count: one check that runs
+ * `-n auto` is already a whole machine's worth of work, and starting a second beside it is how a seal ends up reporting
+ * failures it caused itself.
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  weightOf: (item: T) => number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  const workers = Math.max(1, Math.min(limit, items.length));
+  const inFlight: number[] = [];
   let next = 0;
-  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      await worker(items[index]!, index);
-    }
-  });
-  await Promise.all(runners);
+  // A release wakes every waiter; each re-checks capacity and either takes a slot or waits again. Simpler than a
+  // semaphore and it cannot spin: a waiter only runs when something changed.
+  let release: (() => void) | null = null;
+  const wake = (): void => {
+    const pending = release;
+    release = null;
+    pending?.();
+  };
+  const waitForSlot = (): Promise<void> =>
+    new Promise((resolve) => {
+      const previous = release;
+      release = () => {
+        previous?.();
+        resolve();
+      };
+    });
+  const free = (): number => limit - inFlight.reduce((sum, weight) => sum + weight, 0);
+
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      for (;;) {
+        const index = next;
+        if (index >= items.length) return;
+        // A check may ask for more slots than the limit; it then occupies the whole budget and runs alone, which is what a
+        // `pytest -n auto` check needs rather than an error.
+        const weight = Math.max(1, Math.min(weightOf(items[index]!), limit));
+        if (weight > free()) {
+          await waitForSlot();
+          continue;
+        }
+        next += 1;
+        inFlight.push(weight);
+        try {
+          await worker(items[index]!, index);
+        } finally {
+          inFlight.splice(inFlight.indexOf(weight), 1);
+          wake();
+        }
+      }
+    }),
+  );
 }
 
 export async function collectEvidence(
@@ -187,7 +252,9 @@ export async function collectEvidence(
       reason: 'frozen_tier',
     });
   }
-  await runWithConcurrency(toRun, checkConcurrency(), async (check) => {
+  // A check whose weight fills the budget runs alone: the scheduler cannot fit anything beside it, which is exactly what
+  // a `pytest -n auto` check needs — it is already using every core it was going to get.
+  await runWithConcurrency(toRun, checkConcurrency(), checkWeight, async (check) => {
     const index = commands.indexOf(check);
     if (options.signal?.aborted) return;
     const checkName = check.name ?? check.command;
