@@ -1,4 +1,5 @@
 import { findWikiRecord, updateWikiRecord } from './store.js';
+import { checkPromotionProvenance, provenanceRefusal } from './provenance-gate.js';
 import type { WikiRecord } from './record.js';
 
 export interface ApprovalEvent {
@@ -23,6 +24,14 @@ export async function promote(root: string, id: string, approval: ApprovalEvent)
 
   if (record.status !== 'candidate') {
     throw new Error(`Cannot promote record '${id}': current status is '${record.status}', expected 'candidate'`);
+  }
+
+  // L4-06: the ladder is climbed here, not by writing a candidate. A record becomes authoritative only when the task it
+  // names passed Judge, its sources still hash as recorded, and it carries evidence — checked against the repository,
+  // not against the record's own claims.
+  const provenance = await checkPromotionProvenance(root, record);
+  if (!provenance.ok) {
+    throw new Error(provenanceRefusal(record, provenance));
   }
 
   const updated = await updateWikiRecord(root, id, {

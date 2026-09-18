@@ -198,16 +198,13 @@ describe('LLM Wiki', () => {
     const verify = await captureJsonOutput(() => main(['wiki', 'verify', '--root', root]));
     expect(verify).toMatchObject({ command: 'wiki verify', checked: 1, stale: [] });
 
-    const promote = await captureJsonOutput(() =>
+    // A record minted by ingestion names no task and carries no evidence, so it cannot become authoritative: that is
+    // the ladder L4-06 restored — and the refusal says what is missing instead of climbing on a status field.
+    await expect(
       main(['wiki', 'promote', 'llmwiki-gateway', '--root', root, '--by', 'reviewer-1', '--role', 'reviewer']),
-    );
-    expect(promote).toMatchObject({
-      command: 'wiki promote',
-      id: 'llmwiki-gateway',
-      status: 'verified',
-      approvedBy: 'reviewer-1',
-      role: 'reviewer',
-    });
+    ).rejects.toThrow(/provenance does not hold/);
+    const { findWikiRecord } = await import('../../src/wiki/store.js');
+    expect((await findWikiRecord(root, 'llmwiki-gateway'))?.status).toBe('candidate');
   });
 
   it('emits deterministic wiki task packets for coding-agent LLM enrichment', async () => {

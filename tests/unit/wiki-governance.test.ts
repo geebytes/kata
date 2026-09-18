@@ -382,16 +382,28 @@ describe('Wiki governance', () => {
     });
 
     describe('5.5 Explicit approval and wiki promote', () => {
-        it('promotes a candidate to verified with valid approval event', async () => {
+        it('promotes a candidate to verified when its provenance holds', async () => {
             const root = await tempRoot();
             const { writeWikiRecord } = await import('../../src/wiki/store.js');
+            // The candidate names a task that passed Judge and evidence, and its source hash matches the file it cites —
+            // which is what promotion now checks before the record becomes authoritative (L4-06).
+            const { createTaskRevision } = await import('../../src/workflow/revision.js');
+            const { mkdir, writeFile } = await import('node:fs/promises');
+            await createTask({ root, id: 'task-promote', title: 'Promote me', acceptance: [{ id: 'AC-1', statement: 'It holds.' }] });
+            await createTaskRevision({ root, taskId: 'task-promote', ownedPaths: ['src/wiki/promotion.ts'], checkIds: ['test'] });
+            await writeFile(join(root, '.kata/tasks/task-promote/judge.json'), JSON.stringify({
+                taskId: 'task-promote', result: 'PASS', diffHash: 'a'.repeat(64), acceptance: [{ id: 'AC-1', result: 'PASS' }],
+            }), 'utf8');
+            await mkdir(join(root, 'src/wiki'), { recursive: true });
+            await writeFile(join(root, 'src/wiki/promotion.ts'), 'export const promotion = 1;\n', 'utf8');
+            const { computeFileHash } = await import('../../src/wiki/record.js');
             await writeWikiRecord(root, {
                 id: 'wiki-promote',
                 statement: 'Approved Wiki knowledge.',
                 scope: ['src/wiki/promotion.ts'],
                 kind: 'implementation-note',
                 sourceRefs: ['src/wiki/promotion.ts'],
-                sourceHashes: {},
+                sourceHashes: { 'src/wiki/promotion.ts': computeFileHash('export const promotion = 1;\n') },
                 validationTaskId: 'task-promote',
                 evidenceIds: ['evidence-7'],
                 status: 'candidate',
@@ -559,5 +571,58 @@ describe('Wiki governance', () => {
             expect(ctx.warnings.length).toBeGreaterThan(0);
             expect(ctx.warnings[0]).toContain('stale');
         });
+        it('refuses to promote when the provenance does not hold', async () => {
+            const root = await tempRoot();
+            const { writeWikiRecord } = await import('../../src/wiki/store.js');
+            const { computeFileHash } = await import('../../src/wiki/record.js');
+            const { mkdir } = await import('node:fs/promises');
+            await mkdir(join(root, 'src/wiki'), { recursive: true });
+            await writeFile(join(root, 'src/wiki/promotion.ts'), 'export const promotion = 1;\n', 'utf8');
+
+            const base = {
+                id: 'wiki-refuse',
+                statement: 'Candidate whose provenance does not hold.',
+                scope: ['src/wiki/promotion.ts'],
+                kind: 'implementation-note',
+                sourceRefs: ['src/wiki/promotion.ts'],
+                sourceHashes: { 'src/wiki/promotion.ts': computeFileHash('export const promotion = 1;\n') },
+                evidenceIds: ['evidence-1'],
+                status: 'candidate' as const,
+                lastVerifiedAt: '',
+                createdAt: '2026-07-11T00:00:00.000Z',
+                updatedAt: '2026-07-11T00:00:00.000Z',
+            };
+            const approval = { approvedBy: 'reviewer-1', role: 'reviewer', approvedAt: '2026-07-11T12:00:00.000Z' };
+
+            // 1. A validation task that is not a task at all — the shape ingestion mints.
+            await writeWikiRecord(root, { ...base, validationTaskId: 'llmwiki-ingest' });
+            await expect(promote(root, 'wiki-refuse', approval)).rejects.toThrow(/unknown_validation_task/);
+
+            // 2. A task that exists but never passed Judge.
+            await createTask({ root, id: 'task-unjudged', title: 'Unjudged', acceptance: [{ id: 'AC-1', statement: 'It holds.' }] });
+            await writeWikiRecord(root, { ...base, validationTaskId: 'task-unjudged' });
+            await expect(promote(root, 'wiki-refuse', approval)).rejects.toThrow(/validation_task_not_passed/);
+
+            // 3. A source that no longer hashes as recorded.
+            await createTask({ root, id: 'task-judged', title: 'Judged', acceptance: [{ id: 'AC-1', statement: 'It holds.' }] });
+            await writeFile(join(root, '.kata/tasks/task-judged/judge.json'), JSON.stringify({
+                taskId: 'task-judged', result: 'PASS', diffHash: 'a'.repeat(64), acceptance: [{ id: 'AC-1', result: 'PASS' }],
+            }), 'utf8');
+            await writeWikiRecord(root, {
+                ...base,
+                validationTaskId: 'task-judged',
+                sourceHashes: { 'src/wiki/promotion.ts': 'f'.repeat(64) },
+            });
+            await expect(promote(root, 'wiki-refuse', approval)).rejects.toThrow(/source_hash_mismatch/);
+
+            // (A record with no evidence cannot even be written — the schema requires at least one id — so the
+            // no_evidence rule is a second line of defence behind the record shape rather than the only one.)
+
+            // …and with all four satisfied, it promotes.
+            await writeWikiRecord(root, { ...base, validationTaskId: 'task-judged' });
+            const promoted = await promote(root, 'wiki-refuse', approval);
+            expect(promoted.status).toBe('verified');
+        });
+
     });
 });
