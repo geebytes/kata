@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "repair-batch",
+  "type": "object",
+  "required": [
+    "batches",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "openedAt",
+          "findings"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "openedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "closedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "closedByRevisionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deferred": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "reason"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "severity",
+                "source",
+                "message"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "blocking",
+                    "major",
+                    "minor",
+                    "nit"
+                  ]
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "review",
+                    "judge",
+                    "adversarial-verify",
+                    "adversarial-review"
+                  ]
+                },
+                "acceptanceId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

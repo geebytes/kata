@@ -404,6 +404,11 @@ export function adversarialBriefPath(root: string, taskId: string, node: string,
     return join(adversarialBriefsDir(root, taskId), `${node}-${safe}.json`);
 }
 
+/** Where a task's repair batches live (C1): findings opened together and closed together. */
+export function repairBatchPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'repair-batch.json');
+}
+
 export function repairObligationsPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'repair-obligations.json');
 }
