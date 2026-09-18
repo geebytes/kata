@@ -104,3 +104,66 @@ describe('a pass leaves recoverable work when it dies', () => {
         expect(after.sha256).toBe(before.sha256);
     });
 });
+
+describe('the default framing rotates, and stops rotating at an unrepaired blocker (M2)', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    async function workspace(): Promise<string> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-mode-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'm-task', title: 'M', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        return root;
+    }
+
+    it('opens cold on a task with no pass yet, then alternates', async () => {
+        const root = await workspace();
+        const { resolveBriefMode, writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+
+        expect(await resolveBriefMode(root, 'm-task', 'verify')).toMatchObject({ mode: 'cold' });
+
+        const base = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            scope: { kind: 'full' as const },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
+            findings: [],
+        };
+        await writeAdversarialRecord(root, 'm-task', { ...base, mode: 'cold' });
+        expect(await resolveBriefMode(root, 'm-task', 'verify')).toMatchObject({ mode: 'verify' });
+
+        await writeAdversarialRecord(root, 'm-task', { ...base, mode: 'verify', createdAt: '2026-09-18T11:00:00.000Z' });
+        expect(await resolveBriefMode(root, 'm-task', 'verify')).toMatchObject({ mode: 'cold' });
+    });
+
+    it('refuses to rotate into cold while a blocking or major finding is unrepaired', async () => {
+        const root = await workspace();
+        const { resolveBriefMode, writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+        await writeAdversarialRecord(root, 'm-task', {
+            node: 'verify',
+            status: 'recorded',
+            revisionId: 'revision-1',
+            createdAt: '2026-09-18T10:00:00.000Z',
+            executedInFreshContext: true,
+            scope: { kind: 'full' },
+            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'confirmed' }],
+            mode: 'cold',
+            verdict: 'defects_found',
+            findings: [{ id: 'blocker', taskId: 'm-task', severity: 'major', message: 'must be repaired' }],
+        });
+
+        const resolved = await resolveBriefMode(root, 'm-task', 'verify');
+        expect(resolved.mode).toBe('verify');
+        expect(resolved.reason).toMatch(/open major finding \(blocker\) is unrepaired/);
+    });
+
+    it('honours an explicit --mode over the rotation', async () => {
+        const root = await workspace();
+        const { resolveBriefMode } = await import('../../src/quality/adversarial.js');
+        expect(await resolveBriefMode(root, 'm-task', 'verify', 'verify')).toMatchObject({ mode: 'verify', reason: expect.stringContaining('requested explicitly') });
+    });
+});

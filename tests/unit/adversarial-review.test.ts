@@ -231,3 +231,44 @@ describe('the brief hands over a starting set, bounded (M4)', () => {
         expect(text).toMatch(/cannot name a starting set/);
     });
 });
+
+describe('the framing rotates, and never rotates past an unrepaired blocker (M2)', () => {
+    it('cold mode carries no author claims and says why there are none', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'm2-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'the author thinks this is what matters' }],
+            evidence: [],
+            ownedPaths: ['src'],
+            mode: 'cold',
+            modeReason: 'the previous verify round was verify',
+        });
+
+        expect(text).toContain('Round framing: cold');
+        expect(text).toMatch(/no author claims are given/);
+        // The claim text itself must not appear: withholding the framing is the whole point of a cold round.
+        expect(text).not.toContain('the author thinks this is what matters');
+        expect(text).toMatch(/Decide what to attack first/);
+    });
+
+    it('verify mode lists the claims, and still requires the whole delta to be walked', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'm2-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'the author thinks this is what matters' }],
+            evidence: [],
+            ownedPaths: ['src'],
+            mode: 'verify',
+        });
+
+        expect(text).toContain('Round framing: verify');
+        expect(text).toContain('the author thinks this is what matters');
+        expect(text).toMatch(/falsification attempt per claim/);
+    });
+});

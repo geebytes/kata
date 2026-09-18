@@ -74,16 +74,26 @@ or an explicit recorded waiver. The gate is not advisory: the command fails whil
 
 Do this:
 
-1. Render the brief. It is self-contained and states the revision, the claims under test, the recorded evidence and
-   the exact result shape:
+1. Render the brief. It is self-contained and states the revision, its **round framing** (`verify` or `cold`), the sealed
+   evidence you may read instead of re-running, where to start reading, and the exact result shape:
    ```bash
    kata-cli adversarial brief --change <task-id> --node review
    ```
+   Read the framing before dispatching: a **cold** round withholds the author's claims on purpose, so do not add them —
+   and a round that says it is cold because the previous one was not is doing its job, not asking you to fix it.
 2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
    conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
    do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
    every claim, to run the attempts, and to return one JSON object.
-3. Record what came back, unchanged — **and report how long the pass took**:
+3. Record what came back, unchanged — **and report how long the pass took**. Two things write as the pass proceeds, so a
+   pass that dies mid-run keeps its work rather than taking all of it down:
+   ```bash
+   kata-cli adversarial note --change <task-id> --node review --from-file <line.json>        # one line per BATCH of work
+   kata-cli adversarial finding add --change <task-id> --node review --from-file <finding.json>   # as each is confirmed
+   ```
+   One append per batch, never per hypothesis: every separate invocation is a full turn of the reviewer's own loop, which
+   is what a pass mostly costs. `record` at the end seals the verdict and the revision binding — it is the conclusion, not
+   the container.
    ```bash
    kata-cli adversarial record --change <task-id> --node review --from-file <result.json> --elapsed-ms <milliseconds the pass took>
    ```

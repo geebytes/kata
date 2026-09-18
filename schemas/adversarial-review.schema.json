@@ -77,6 +77,14 @@
       "description": "How many tool calls the pass made, reported by the executor. The turn loop, not the CPU, is what a pass mostly costs (design §1), so this is the first term of that cost to become visible.",
       "type": "integer"
     },
+    "mode": {
+      "description": "How the round was framed (M2): verify lists the author's claims, cold lists none. The platform rotates the default and records it here, because the next rotation reads it.",
+      "type": "string",
+      "enum": [
+        "verify",
+        "cold"
+      ]
+    },
     "executedInFreshContext": {
       "type": "boolean"
     },

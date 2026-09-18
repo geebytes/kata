@@ -101,6 +101,8 @@ export interface AdversarialRecord {
      * first half of the second term to become visible in the record.
      */
     toolUses?: number;
+    /** How this round was framed (M2): `verify` (the author's claims) or `cold` (no claims). */
+    mode?: 'verify' | 'cold';
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -122,6 +124,18 @@ export interface AdversarialBriefInput {
     evidencePaths?: Array<{ id: string; checkId?: string; path: string }>;
     /** The task's real checks from config, so the brief can name what must not be re-run. */
     declaredChecks?: Array<{ id: string; name: string }>;
+    /**
+     * How this round is framed (M2): `verify` lists the author's claims and requires the whole delta to be walked;
+     * `cold` lists **none**, and asks the reviewer to decide what to attack.
+     *
+     * Deploy-time decision, recorded here rather than in a design note: **the platform rotates the default, and refuses
+     * to rotate into `cold` while the task has an open `blocking`/`major` finding** — rotation must never make a round
+     * blinder to a known defect it has not yet repaired. A `cold` round is otherwise slower and less predictable on
+     * purpose, because the largest defect of the measured session was in a file the author had not mentioned.
+     */
+    mode?: 'verify' | 'cold';
+    /** Why this mode was chosen, written into the brief so the rotation is never silent. */
+    modeReason?: string;
     /**
      * Where to start reading (M4): the changed paths and their collaborators from the acceptance matrix.
      *
@@ -161,6 +175,7 @@ export interface AdversarialBriefInput {
  * and the exact result shape — is in the text.
  */
 export function renderAdversarialBrief(input: AdversarialBriefInput): string {
+    const mode = input.mode ?? 'verify';
     const claims = input.acceptance.length > 0
         ? input.acceptance.map((criterion) => `- ${criterion.id ?? '(no id)'}: ${criterion.statement ?? ''}`).join('\n')
         : '- (this task declares no acceptance criteria)';
@@ -242,12 +257,17 @@ you try to break them.
 
 Task: ${input.taskId}
 Node under review: ${input.node}
+Round framing: ${mode}${input.modeReason ? ` — ${input.modeReason}` : ''}
 Sealed revision: ${input.revisionId ?? '(none sealed yet)'}
 Paths under review: ${input.ownedPaths.length > 0 ? input.ownedPaths.join(', ') : '(none declared)'}
 
 ## The claims under test
 
-${claims}
+${mode === 'cold'
+    ? `**This is a cold round: no author claims are given.** Nobody has framed the search for you — decide what to attack from
+the acceptance criteria, the change, the sealed evidence and the previous pass's attempts below. The author's framing is
+deliberately withheld, because a reviewer asked to check someone's claims checks only those claims.`
+    : claims}
 
 ## Evidence the author recorded
 
@@ -318,7 +338,7 @@ ${deltaSection}## What to do
 For each claim above, and for the change as a whole:
 
 1. Read the actual repository — the implementation, its tests and the recorded evidence — rather than this brief.
-2. Form at least one **falsification attempt per claim**: a specific way the claim could be false (a missing edge case,
+${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: form your own hypothesis about where this change is wrong, then falsify it.' : '2. Form at least one **falsification attempt per claim**: a specific way the claim could be false (a missing edge case,'}
    a test that passes for the wrong reason, an assertion that does not exercise the claim, an unhandled input, a
    regression outside the declared paths, a claim that only holds because the evidence is stale).
 3. Run the attempt: execute the test, read the code path, construct the counterexample. Report what actually happened,
@@ -569,6 +589,42 @@ export async function evaluateDeltaScope(
  * The list is data so a reviewer of this code can see the whole input surface at once — and so a future addition that
  * brings in something volatile has to be added here, deliberately, next to the rule it would break.
  */
+/**
+ * Which framing the next round should use (M2), and why.
+ *
+ * The rule, decided here: **rotate by default**, because a task whose reviews always arrive in the author's framing only
+ * ever has the author's blind spots examined. Two limits make the rotation safe rather than blind:
+ *
+ *   - an open `blocking`/`major` finding forces `verify`: a repair round must check the repair, and rotating into `cold`
+ *     would let a known defect go unexamined simply because the coin came up that way;
+ *   - the choice and its reason are written into the brief, so the rotation is never something the reader has to guess.
+ */
+export async function resolveBriefMode(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    requested?: 'verify' | 'cold',
+): Promise<{ mode: 'verify' | 'cold'; reason: string }> {
+    if (requested) return { mode: requested, reason: `requested explicitly (--mode ${requested})` };
+
+    const open = (await import('./finding-disposition.js'))
+        .unfixed(await (await import('./finding-disposition.js')).readTrackedFindings(root, taskId))
+        .filter((finding) => finding.disposition === 'open' && (finding.severity === 'blocking' || finding.severity === 'major'));
+    if (open.length > 0) {
+        return { mode: 'verify', reason: `an open ${open[0].severity} finding (${open[0].id}) is unrepaired, so this round checks the repair rather than opening a new search` };
+    }
+
+    const previous = await readAdversarialRecord(root, taskId, node).catch(() => null);
+    const previousMode = (previous as { mode?: string } | null)?.mode;
+    const mode = previousMode === 'cold' ? 'verify' : 'cold';
+    return {
+        mode,
+        reason: previousMode
+            ? `the previous ${node} round was ${previousMode}; the task alternates so that not every round is framed by the author`
+            : `this task has not run a ${node} round yet, so it opens with the independent framing`,
+    };
+}
+
 export const BRIEF_DURABLE_INPUTS = [
     'task acceptance criteria',
     'the sealed revision and its owned-path digests',
@@ -639,8 +695,8 @@ export async function buildAdversarialBrief(
     root: string,
     taskId: string,
     node: AdversarialNode,
-    options: { since?: string } = {},
-): Promise<{ node: AdversarialNode; revisionId: string | null; text: string; sha256: string; delta: { from: string; changedPaths: string[] } | { unavailable: string } | null }> {
+    options: { since?: string; mode?: 'verify' | 'cold' } = {},
+): Promise<{ node: AdversarialNode; revisionId: string | null; text: string; sha256: string; mode: 'verify' | 'cold'; modeReason: string; delta: { from: string; changedPaths: string[] } | { unavailable: string } | null }> {
     const { readTask } = await import('../core/task.js');
     const { readRecordedEvidence } = await import('./evidence.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
@@ -686,7 +742,10 @@ export async function buildAdversarialBrief(
         }
     }
 
+    const resolvedMode = await resolveBriefMode(root, taskId, node, options.mode);
     const text = renderAdversarialBrief({
+        mode: resolvedMode.mode,
+        modeReason: resolvedMode.reason,
         ...(delta ? { delta } : {}),
         taskId,
         node,
@@ -701,7 +760,16 @@ export async function buildAdversarialBrief(
         declaredChecks: (await readProjectQualityChecks(root)).map((check) => ({ id: check.name, name: check.name })),
         readingSet: await buildReadingSet(root, taskId, revision),
     });
-    return { node, revisionId: revision?.id ?? null, text, sha256: adversarialBriefSha256(text), delta: deltaReport };
+    return {
+        node,
+        revisionId: revision?.id ?? null,
+        text,
+        sha256: adversarialBriefSha256(text),
+        // The mode is a property of the brief, not an input to it: recording it on the pass cannot change the text.
+        mode: resolvedMode.mode,
+        modeReason: resolvedMode.reason,
+        delta: deltaReport,
+    };
 }
 
 /** Resolves a `--since` argument that named a manifest hash rather than a revision id. */

@@ -234,7 +234,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
 
     if (subcommand === 'brief') {
         const since = argValue(rest, '--since');
-        const brief = await buildAdversarialBrief(root, change, node, since ? { since } : {});
+        const requestedMode = argValue(rest, '--mode');
+        const brief = await buildAdversarialBrief(root, change, node, {
+            ...(since ? { since } : {}),
+            ...(requestedMode === 'cold' || requestedMode === 'verify' ? { mode: requestedMode } : {}),
+        });
         const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
             command: 'adversarial brief',
@@ -242,6 +246,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             node,
             revisionId: brief.revisionId,
             briefSha256: brief.sha256,
+            // M2: the framing and why it was chosen, so the rotation is visible rather than silent.
+            mode: brief.mode,
+            modeReason: brief.modeReason,
             // Design §F3: what acting on this brief will cost in re-verification, stated where the decision is made.
             reverificationCost: await reverificationCostFor(root, change),
             ...(since ? { since } : {}),
@@ -340,6 +347,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
             // design is precisely that nobody had the number.
             ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
+            // M2: the record remembers the framing, because the next rotation reads it from here.
+            ...(argValue(rest, '--mode') === 'cold' || argValue(rest, '--mode') === 'verify'
+                ? { mode: argValue(rest, '--mode') as 'cold' | 'verify' }
+                : {}),
             // M3: the turn term alongside the clock, so the two halves of a pass's cost are separable in the record.
             ...(argValue(rest, '--tool-uses') ? { toolUses: Number(argValue(rest, '--tool-uses')) } : {}),
         });
@@ -371,6 +382,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 verdict: record?.verdict ?? null,
                 executedInFreshContext: record?.executedInFreshContext ?? null,
                 scope: record?.scope?.kind ?? null,
+                mode: record?.mode ?? null,
                 ...(record?.elapsedMs ? { elapsedMs: record.elapsedMs } : {}),
                 ...(record?.toolUses ? { toolUses: record.toolUses } : {}),
                 ...(await deltaSaving(root, change, candidate, record)),
