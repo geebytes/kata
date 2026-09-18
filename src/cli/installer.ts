@@ -48,6 +48,8 @@ type RefreshStageOutcome = {
     stage: 'comet' | 'codegraph-sync' | 'codegraph-index';
     status: RefreshStageStatus;
     durationMs: number;
+    /** The budget this stage actually had, which differs per stage: a full rebuild is not an incremental sync. */
+    timeoutMs?: number;
     /** Whatever the stage printed, for the stages that run a child process. */
     output?: string;
     /** Why a stage failed, timed out or was skipped. */
@@ -92,14 +94,15 @@ export async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshRes
         const stage = subcommand === 'sync' ? 'codegraph-sync' : 'codegraph-index';
         const invocation = codeGraphInvocation(root);
         const stageStart = started();
+        const stageTimeoutMs = codegraphStageTimeoutMs(subcommand);
         const result = await runProcess(invocation.command, [subcommand], {
             cwd: invocation.cwd,
             env: invocation.env,
-            timeoutMs,
+            timeoutMs: stageTimeoutMs,
         });
         const output = result.stdout.trim();
         const detail = result.failure === 'timeout'
-            ? `codegraph ${subcommand} timed out after ${timeoutMs}ms`
+            ? `codegraph ${subcommand} timed out after ${stageTimeoutMs}ms`
             : result.failure === 'spawn_failed'
                 ? `codegraph is not installed (or not executable) at ${invocation.command}`
                 : result.stderr.trim() || `codegraph ${subcommand} exited ${result.exitCode}`;
@@ -116,6 +119,7 @@ export async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshRes
                         ? 'skipped'
                         : 'failed',
             durationMs: started() - stageStart,
+            timeoutMs: stageTimeoutMs,
             ...(output ? { output } : {}),
             ...(result.ok ? {} : { detail }),
         });
@@ -132,6 +136,22 @@ export async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshRes
 function runtimeRefreshTimeoutMs(): number {
     const configured = Number.parseInt(process.env.KATA_RUNTIME_REFRESH_TIMEOUT_MS ?? '', 10);
     return Number.isSafeInteger(configured) && configured >= 1_000 && configured <= 120_000 ? configured : 30_000;
+}
+
+/**
+ * How long each CodeGraph stage may take.
+ *
+ * `codegraph index` is a full rebuild, and on a real project it takes longer than the stage budget that was fine for the
+ * other stages: measured at **35–46s** on this repository (972 indexed files; `.models/` is git-ignored and not indexed),
+ * against a fixed 30_000ms — so the stage reported `timed_out` on every run, which is a failure that says nothing about
+ * the project and trains the reader to ignore the one line that would matter. `sync` is incremental and finishes in under
+ * a second, so the two stages do not share a budget: `index` gets a rebuild budget, `sync` keeps the refresh's own.
+ */
+function codegraphStageTimeoutMs(stage: 'sync' | 'index'): number {
+    if (stage === 'sync') return runtimeRefreshTimeoutMs();
+    const configured = Number.parseInt(process.env.KATA_CODEGRAPH_INDEX_TIMEOUT_MS ?? '', 10);
+    if (Number.isSafeInteger(configured) && configured >= 1_000 && configured <= 3_600_000) return configured;
+    return 300_000;
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
