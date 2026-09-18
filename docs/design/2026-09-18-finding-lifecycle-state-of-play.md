@@ -30,3 +30,11 @@
 
 Nothing in this note changes any code: it is the index the changelogs would otherwise require reading a dozen of to
 rebuild.
+
+## Also open: the cost of the pass itself
+
+`2026-09-18-what-an-adversarial-pass-costs.md` is the proposal for the **reviewer loop** rather than for findings: it
+measures seven passes on one task (median ≈16 min, machine idle, cost dominated by reviewer turns, not by the checks it
+runs), and asks for the brief to hand over the sealed evidence, to rotate between an author-claims mode and a cold mode,
+and to carry a cost signal in both directions. It builds on F2/F3 and proposes nothing that replaces them.
+
