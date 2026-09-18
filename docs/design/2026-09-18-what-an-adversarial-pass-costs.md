@@ -236,6 +236,85 @@ mirrors the seal:
 4. **K4 — say it in the brief**: if a pass is expected to write incrementally, the brief must say so; today it cannot,
    because there is nothing to write to.
 
+The exact shapes, the batching rule that keeps K1 from *costing* turns, and the acceptance tests are in §13; §12 prices
+every mechanism in this document before anyone implements one.
+
 Until K1/K2 exist, the honest description of the current state is: **a pass that dies takes its evidence with it, and the
 only mitigation is a human telling the reviewer to save early** — which is exactly the kind of instruction that should
 belong to the platform.
+
+## 12. What each mechanism costs (measure this before adopting)
+
+Every proposal here trades something. The numbers are from the seven passes in §1 (median ≈940s, 38–132 turns per pass,
+≈17s per turn including the command wait), so they describe the *shape* of the trade rather than a benchmark:
+
+| Mechanism | Wall clock | Tokens | Condition that flips it |
+|---|---|---|---|
+| **M4** reading set in the brief | **saves** | **saves most** | Orientation is 10–20 reads per pass (a 500-line file is ≈5–15k tokens each) ⇒ roughly **−75–200k tokens per pass**; the brief itself grows by a few KB |
+| **M3** batched execution + cost signal | **saves** | **saves** | The turn term is the dominant cost (5–12 min); one extra invocation is one extra turn. The signal itself is a few hundred bytes |
+| **M1** read sealed evidence, do not re-run | **saves ~3–4 min** | roughly neutral | Measured on the round that spent ~205s of 935s on two full suites; reading the same log costs one turn and the log it would have read anyway |
+| **M2** `verify`/`cold` rotation | **costs on `cold` rounds** | **costs on `cold` rounds** | A `cold` brief removes the author's claims, so the reviewer orients itself: estimate **+20–40%** against a comparable `verify` round. This is the price of independence, paid deliberately |
+| **D1** dispositions survive a new pass | saves | saves | A resurrected nit invites another round, and its id can no longer even be deferred (reproduced in §10) |
+| **D2** bind the brief as issued | saves | saves | Today it costs a rejected record plus a re-derivation |
+| **K3** resumable pass | saves only when a pass dies | same | On the happy path: zero. After a crash: an entire re-run (15–25 min, millions of tokens) |
+| **K2** incremental findings | +1–3 turns | slightly up | Buys "a crash costs the unfinished tail, not the finished part" |
+| **K1** heartbeat | **can cost 5–15 turns** | **can cost** | **The trap.** One append per hypothesis = one extra invocation per hypothesis. It must be written **in the same invocation as the check it accompanies**, one line per batch (§13). Implemented naively it eats most of what M3/M4 save |
+| **K4** brief says "write incrementally" | 0 | 0 | One line |
+
+**Summary:** on the ordinary path the mechanisms should take a pass from ≈16 min to ≈8–10 min and cut tokens by 20–40%,
+because what they remove is waste (re-running what is already sealed, re-orienting from scratch) rather than depth.
+`cold` rounds get *more* expensive on purpose. Everything above is arithmetic on turn counts — kata records only
+`elapsedMs` today, which is why **M3's `toolUses` should land first and alone**: two rounds of real data decide the rest
+far better than this table does.
+
+**The one cost that is not in the table:** cutting turns also cuts the room to *stumble* onto an unclaimed defect (the
+largest catch in §9 was found in a file nobody had named). That is why M1/M3/M4 only remove waste, and why M2 keeps the
+`cold` round long and broad instead of making every round cheaper.
+
+## 13. K1–K4 as an implementable spec
+
+**Shared rule (the trap from §12):** every incremental write MUST ride along with a command the pass is already running —
+one append per batch, never one per hypothesis. If a reviewer must make a separate invocation to record what it just
+learned, the mechanism costs more than it saves.
+
+### K1 — heartbeat
+
+- **Where:** `.kata/tasks/<taskId>/adversarial-progress.jsonl` (mirrors `seal-progress.jsonl`).
+- **Line shape:** `{"type":"attempt","at":"<ISO>","node":"verify","hypothesis":"…","method":"…","outcome":"refuted|confirmed|inconclusive"}`,
+  append-only, one line per **batch** of work (the batch that just ran), not per hypothesis.
+- **How it is written:** the same invocation that runs the reviewer's checks may append the line (a small `kata-cli
+  adversarial note --change <id> --from-file <line.json>` is enough); a pass that finishes normally may write it in one
+  call at the end.
+- **Read side:** `adversarial status` reports the heartbeat's line count and last line, so "a pass is alive and where it
+  is" is answerable from outside — the same reason the seal got one.
+- **Acceptance:** kill a pass after its first batch; the file holds that batch, and `adversarial status` shows it.
+
+### K2 — incremental findings
+
+- **Command:** `kata-cli adversarial finding add --change <taskId> --node verify --from-file <finding.json>` — same
+  finding shape and validation as `record` today (severity enum, non-empty message/path).
+- **Storage:** findings land in the node's record as they arrive; the record is **append-only** for findings until
+  `record` seals it.
+- **`record` becomes:** verdict + revision binding + `briefSha256` + `scope` + `elapsedMs`/`toolUses`; it no longer has to
+  carry the findings (it validates that at least one attempt exists, exactly as today).
+- **Acceptance:** add two findings, kill the pass, run `record` with a verdict ⇒ both findings survive; the gate evaluates
+  them the same way it evaluates findings that arrived in one file.
+
+### K3 — resumable pass
+
+- **Depends on D2**: the record binds the brief **as issued** (store `briefSha256` at creation and validate against that,
+  never against a freshly recomputed brief).
+- **Behaviour:** if a partial record exists for the current revision and brief, a retry continues it — it may add findings
+  and attempts, and `record` seals whatever is there.
+- **Acceptance:** a partial record + a second pass produces one record with both passes' attempts, and the gate reports a
+  single `scope` for it.
+
+### K4 — the brief says so
+
+- The brief's output contract gains one sentence: findings and attempts may be written **as the pass proceeds** (the
+  commands above), and a pass that dies mid-way keeps whatever it wrote.
+- It also states the batching rule verbatim, so the reviewer does not trade 15 turns for crash-resilience.
+
+**Sequence:** K1 (with the batching rule) and M3's `toolUses` first — both are small, neither changes what counts as
+evidence, and together they make the rest measurable. K2/K3 follow once D2 is fixed, since "resume" is meaningless while
+the binding can be invalidated by the write itself.
