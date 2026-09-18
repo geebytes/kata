@@ -12,14 +12,37 @@ import { taskDir, tasksDir, taskPath } from './layout.js';
 export interface AcceptanceCriterionInput {
   id?: string;
   statement: string;
+  /** Checkable clauses of the statement (C3). Optional: a statement with no claims is simply prose, as before. */
+  claims?: ClaimDeclaration[];
 }
 
 export interface AcceptanceCriterion {
   id?: string;
   statement: string;
+  claims?: ClaimDeclaration[];
 }
 
 export type VerificationLevel = 'unit' | 'integration' | 'entrypoint';
+
+/**
+ * A clause of an acceptance statement that a command can check (C3 of the pass-cost proposal).
+ *
+ * Twice in one day a false sentence in the acceptance text passed the seal *and* verify, because prose has no test. The
+ * declaration keeps the statement and the command together on purpose: editing the sentence is editing the thing the check
+ * is attached to, so the two cannot drift.
+ */
+export interface ClaimDeclaration {
+    /** Stable within its acceptance item: the claim's check carries `claim:<acceptanceId>:<claimId>` as its id. */
+    id: string;
+    statement: string;
+    check: {
+        command: string;
+        args?: string[];
+        /** What the check must do for the sentence to be true. A claim without one is refused — it could not fail. */
+        expect: { exitCode: number };
+        timeoutMs?: number;
+    };
+}
 
 export interface MatrixEvidenceItem {
   /**

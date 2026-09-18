@@ -39,7 +39,8 @@
         "judge",
         "security",
         "integration",
-        "entrypoint"
+        "entrypoint",
+        "claim"
       ]
     },
     "command": {

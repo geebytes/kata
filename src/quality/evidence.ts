@@ -22,7 +22,7 @@ export interface CheckProgressEvent {
   reason?: string;
 }
 
-export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security', 'integration', 'entrypoint'] as const;
+export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security', 'integration', 'entrypoint', 'claim'] as const;
 
 export type EvidenceKind = (typeof evidenceKinds)[number];
 
@@ -60,6 +60,13 @@ export interface CheckCommand {
    * the seal's report, so "declared but not run" is never silent.
    */
   tier?: 'seal' | 'frozen';
+  /**
+   * The exit code this check must produce for the claim attached to it to be true (C3).
+   *
+   * Absent for every ordinary check, whose outcome is whatever the project's command does. Present on a claim's check,
+   * where "it ran" is not the question — "the sentence holds" is.
+   */
+  expectExitCode?: number;
   /**
    * How many slots this check occupies when checks run concurrently. Default **1**.
    *
