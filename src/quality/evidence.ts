@@ -8,7 +8,7 @@ import { createContentHasher } from '../core/hash.js';
 import { runProcess } from '../process/run.js';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
-export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled';
+export type CheckProgressState = 'started' | 'passed' | 'failed' | 'timed_out' | 'cancelled' | 'covered' | 'skipped';
 
 export interface CheckProgressEvent {
   type: 'quality_check_progress';
@@ -16,6 +16,8 @@ export interface CheckProgressEvent {
   state: CheckProgressState;
   timeoutMs: number;
   exitCode?: number | null;
+  /** Set when the state is `covered`: the check that stands in for this one, which is not executed. */
+  coveredBy?: string;
 }
 
 export const evidenceKinds = ['lint', 'typecheck', 'test', 'ci', 'review', 'judge', 'security', 'integration', 'entrypoint'] as const;
@@ -44,6 +46,12 @@ export interface CheckCommand {
   timeoutMs?: number;
   redact?: string[];
   importResult?: ImportedCheckResult;
+  /**
+   * Another check's id that covers this one. A covered check is **not executed**: the covering check runs, and the
+   * declaration is credited with its evidence (`quality/acceptance-matrix.ts` matches the pointer). Recorded in the
+   * artefact and reported by the seal, so "not run because something else covers it" is visible rather than silent.
+   */
+  coveredBy?: string;
 }
 
 export interface EvidenceCollectionOptions {
@@ -128,7 +136,12 @@ export async function collectEvidence(
   options: EvidenceCollectionOptions = {},
 ): Promise<EvidenceEnvelope[]> {
   const evidence: EvidenceEnvelope[] = [];
-  const cwd = commands[0]?.cwd ?? process.cwd();
+  // A declaration covered by another check is not executed; the covering check runs and the row is credited with its
+  // evidence. Keeping the skip here (rather than dropping the check upstream) means every consumer still sees the check
+  // — in `--list-checks`, in the artefact and in the seal's report — and only its execution is elided.
+  const covered = commands.filter((check) => check.coveredBy);
+  const toRun = commands.filter((check) => !check.coveredBy);
+  const cwd = toRun[0]?.cwd ?? commands[0]?.cwd ?? process.cwd();
 
   if (commands.some((check) => (check.cwd ?? process.cwd()) !== cwd)) {
     throw new Error('All evidence checks in one collection must use the same cwd');
@@ -138,7 +151,20 @@ export async function collectEvidence(
   // nine of them one at a time spends the sum of their durations rather than the longest. Results are reassembled in
   // declaration order so a caller's view of the set does not depend on scheduling.
   const results = new Array<EvidenceEnvelope | undefined>(commands.length);
-  await runWithConcurrency(commands, checkConcurrency(), async (check, index) => {
+  // Covered checks report themselves so a monitoring reader sees why they produced nothing, then are skipped.
+  for (const [index, check] of commands.entries()) {
+    if (!check.coveredBy) continue;
+    options.onProgress?.({
+      type: 'quality_check_progress',
+      check: check.name ?? check.command,
+      state: 'covered',
+      timeoutMs: check.timeoutMs ?? 0,
+      coveredBy: check.coveredBy,
+    });
+    results[index] = undefined;
+  }
+  await runWithConcurrency(toRun, checkConcurrency(), async (check) => {
+    const index = commands.indexOf(check);
     if (options.signal?.aborted) return;
     const checkName = check.name ?? check.command;
     const timeoutMs = check.timeoutMs ?? 600_000;

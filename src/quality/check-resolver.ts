@@ -75,6 +75,16 @@ export function sanitizeCheckName(value: string): string {
     return value.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-|-$/g, '');
 }
 
+/**
+ * The declaration's pointer to a covering check, when it names one.
+ *
+ * A covered row keeps its own id and name (so the evidence artefact, the report and any old reference still line up) but
+ * is not executed: `collectEvidence` skips it, and `evidenceMatchesRow` credits it with the covering check's envelope.
+ */
+function coveredByOf(evidence: MatrixEvidenceItem): { coveredBy?: string } {
+    return evidence.coveredBy ? { coveredBy: evidence.coveredBy } : {};
+}
+
 function checkIdentity(row: AcceptanceMatrixRow, evidence: MatrixEvidenceItem): { id: string; name: string } {
     const suffix = evidence.testSelector ?? evidence.command;
     const name = sanitizeCheckName(`${row.acceptanceId}-${evidence.kind}-${suffix}`);
@@ -110,6 +120,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
             source: 'matrix',
             name,
             kind: evidence.kind,
+            ...coveredByOf(evidence),
             command: runtimeEntry ? process.execPath : rawCommand!,
             args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
             cwd: runtimeProjectDir,
@@ -131,6 +142,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
                 source: 'matrix',
                 name,
                 kind: evidence.kind,
+                ...coveredByOf(evidence),
                 command: runtimeEntry ? process.execPath : rawCommand!,
                 args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
                 cwd: runtimeProjectDir,
@@ -149,6 +161,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
         source: 'matrix',
         name,
         kind: evidence.kind,
+        ...coveredByOf(evidence),
         command: runtimeEntry ? process.execPath : rawCommand!,
         args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
         cwd: runtimeProjectDir,

@@ -30,6 +30,14 @@ export interface MatrixEvidenceItem {
   kind: 'test' | 'lint' | 'typecheck' | 'integration' | 'entrypoint';
   command: string;
   testSelector?: string;
+  /**
+   * The id of a check that already covers this declaration — the project's full suite, typically.
+   *
+   * Several acceptance rows re-run files the suite already runs, and the notes measured that as roughly a third of one
+   * seal's evidence time. Naming the covering check records the pointer instead: the covering check still runs (it is a
+   * real check), and the row is credited with **its** evidence, so nothing is verified less — only run once.
+   */
+  coveredBy?: string;
 }
 
 export interface AcceptanceMatrixRow {

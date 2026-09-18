@@ -491,6 +491,9 @@ async function cmdBuild(
     // A readable heartbeat. Monitoring a seal used to mean `pgrep`-ing for a process — which false-positives on the
     // agent's own command line — or waiting blind, so the seal writes what it is doing, when, and for how long.
     const progress = await sealProgressWriter(root, taskId);
+    const coveredChecks = checks
+        .filter((check) => check.coveredBy)
+        .map((check) => ({ name: check.name ?? check.command, coveredBy: check.coveredBy as string }));
     const evidence = await collectEvidence(taskId, checks, {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
@@ -559,6 +562,9 @@ async function cmdBuild(
             evidenceCount: evidence.length,
             passing: evidence.filter((e) => e.exitCode === 0).length,
             failing: evidence.filter((e) => e.exitCode !== 0).length,
+            // Checks that were not executed because another check covers them: named here so "not run" is a decision the
+            // reader can audit, never an absence they have to notice.
+            ...(coveredChecks.length > 0 ? { coveredChecks } : {}),
             wikiClosure,
             ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : 'build-option' } : {}),
             ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),

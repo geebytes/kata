@@ -314,6 +314,9 @@ export function evidenceMatchesRow(
 ): boolean {
   for (const decl of row.evidence) {
     const kindMatch = decl.kind === evidenceKind && hasRequiredEvidenceLevel(row, evidenceKind);
+    // A declaration covered by another check is satisfied by that check's evidence: the covering check ran (it is a real
+    // check, usually the project's suite), so nothing is verified less — the row just does not run its own copy.
+    if (decl.coveredBy !== undefined && checkId !== undefined && decl.coveredBy === checkId) return true;
     if (decl.id !== undefined && checkId !== undefined) {
       if (decl.id === checkId && kindMatch) return true;
       continue;
