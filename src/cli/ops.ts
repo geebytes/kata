@@ -249,7 +249,13 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // that quietly pretends to be the narrower pass it asked for.
             ...(brief.delta ? { delta: brief.delta } : {}),
             brief: brief.text,
-            recordCommand: `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
+            // The printed command carries the procedure the skill text states: pass the same --since (kata measures the
+            // scope itself) and report the pass's duration, which is the only place that number exists.
+            recordCommand: [
+                `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
+                since ? `--since ${since}` : '',
+                '--elapsed-ms <milliseconds the pass took>',
+            ].filter(Boolean).join(' '),
         };
     }
 
