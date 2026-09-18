@@ -208,3 +208,34 @@ silently undo), and D2 makes the record binding unverifiable exactly when a task
 > `review.json`, the durable record, never from the pass's own record — so the rule it teaches is **a brief may contain
 > only state that recording a pass cannot change**, which is a sharper statement of what a brief is: the question the pass
 > answers.
+
+## 11. Addendum — a lost pass: whose defect is it (2026-09-18)
+
+A review pass was dispatched and **vanished**: the job registry no longer lists it, the transcript stops mid-`read` with no
+error and no completion, and `review.json` was never written. Everything the reviewer had established in its three minutes
+was lost. The instruction that followed — *"write your findings early rather than last"* — is a **workaround at the
+delegation layer**, and it has the shape this repository keeps flagging: a human convention standing in for a missing
+platform mechanism. Splitting the blame honestly:
+
+| Layer | Share of the defect | Why |
+|---|---|---|
+| the host runtime | **lost the job** | kata cannot prevent a subagent from dying; nothing in the repository can |
+| **kata** | **made the loss total** | a pass has exactly one write point — the record at the end — so a crash leaves nothing recoverable. Meanwhile the **seal**, which is the other long-running operation, already writes a heartbeat (`seal-progress.jsonl`) for exactly this reason. The inconsistency is kata's, not the host's |
+| the brief | **asked for everything at the end** | the pass's output contract is a single JSON: verdict, attempts, findings, all or nothing |
+
+So: not a host bug that kata should absorb, but a **kata gap with an existing precedent in kata's own code**. The fix
+mirrors the seal:
+
+1. **K1 — heartbeat**: a pass appends one line per hypothesis to `.kata/tasks/<task>/adversarial-progress.jsonl`
+   (`hypothesis / method / outcome`), so a crash leaves the reviewer's *work* recoverable even when its verdict is not.
+2. **K2 — incremental findings**: findings can land one at a time (`adversarial finding add --change … --node … --json`),
+   with the final `record` only sealing the verdict and the revision binding. A crash then costs the unfinished tail, not
+   the finished part.
+3. **K3 — resumable pass**: once D2 is fixed (the record binds the brief *as issued*), a partial record is a valid
+   starting point, so a retry continues instead of re-deriving fifteen minutes of work.
+4. **K4 — say it in the brief**: if a pass is expected to write incrementally, the brief must say so; today it cannot,
+   because there is nothing to write to.
+
+Until K1/K2 exist, the honest description of the current state is: **a pass that dies takes its evidence with it, and the
+only mitigation is a human telling the reviewer to save early** — which is exactly the kind of instruction that should
+belong to the platform.
