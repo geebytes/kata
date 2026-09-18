@@ -201,3 +201,10 @@ Both were worked around honestly rather than hidden: the pass was recorded again
 stating that the issued brief was the other one and that the only difference is the emptied dispositions section. The
 workaround is not the fix — D1 is a **correctness** defect in the finding lifespan (a deferral that a later pass can
 silently undo), and D2 makes the record binding unverifiable exactly when a task has deferred findings.
+
+> **Resolution (2026-09-18).** Both are fixed in kata, each with its reproduction as a test. **D1:** `writeAdversarialRecord`
+> carries a decision forward onto the finding of the same id when the new record does not state one — a decision belongs to
+> the finding, not to the pass that reported it. **D2:** the brief's known-and-decided section is derived *only* from
+> `review.json`, the durable record, never from the pass's own record — so the rule it teaches is **a brief may contain
+> only state that recording a pass cannot change**, which is a sharper statement of what a brief is: the question the pass
+> answers.
