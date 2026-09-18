@@ -346,3 +346,52 @@ fixture).
 **What it still does not prove:** the §11 projection. The fixture's rounds are constructed costs, and the real saving needs
 a real pass — the mechanism only makes the number *obtainable* rather than remembered. Two rounds of real data decide the
 rest far better than §12's arithmetic, which is what §12 itself says.
+
+## 14. The five changes today's measurements justify
+
+Measured on one task in one day: **79 commits, 26 revision snapshots, 22 completed seals, 20 adversarial passes, 6 fix→seal→pass cycles**, at **1.2–2 hours per cycle** (each cycle = one repair round + one seal + one pass per node; seals are 3–6 min, passes 11–35 min). Every number below is from that run; §12 prices the mechanisms, this section is the施工 order.
+
+### C1 — Repair in batches, not per finding
+
+- **Evidence.** Three of the six cycles existed only because findings arriving from the two nodes were repaired in separate batches: every batch produced a new revision, which invalidated **both** node passes, so the second batch paid a full re-verification for work that was discovered during the first.
+- **Change.** Give the task a repair-batch concept: findings accumulate as `open`; a batch is opened, repaired, and closed; **the seal and one delta round per node happen at batch close**, not per finding. `findings defer|carry` already exist for what the batch does not answer.
+- **Acceptance.** On a task with ≥3 findings from two nodes, the number of seals between two judgements is ≤2, and the record states which findings the batch answered.
+- **Invariant.** The severity gate is unchanged: blocking (and major in strict) must still be repaired before progression, and a batch may not silently drop one.
+
+### C2 — A text-only revision must not invalidate code-verifying passes
+
+- **Evidence.** Three cycles today were pure governance-text edits (one acceptance statement, three rewrites); each cost ≈1 hour of re-verification for ~20 words.
+- **Change.** Classify owned paths (code vs docs/governance) and bind the code pass to the **code sub-manifest**. A revision whose manifest differs only in non-code paths invalidates a *claims pass*, not the code pass.
+- **Acceptance.** Editing only a docs/acceptance statement ⇒ one seal + one claims pass, with the code pass still satisfied; editing code still invalidates both.
+- **Invariant.** A text edit may never leave a **stale truth claim** satisfied — which is exactly why the claims pass exists (C3). If the claims pass cannot be derived, the change falls back to full invalidation and says so.
+
+### C3 — Machine-checkable acceptance statements (`claims[]`)
+
+- **Evidence.** A false sentence in the acceptance text passed the seal **and** verify, and was caught only by the next adversarial round — twice. Prose has no test; code does.
+- **Change.** Schema: `acceptance[].claims[] = {id, statement, check: {command, expect}}`; the seal executes claim checks like any other check and records evidence; a failing claim is a blocking-class failure. The generated evidence table (statement → counts → file:line) is the check's payload, so the sentence and the command cannot drift.
+- **Acceptance.** A seeded false claim (statement contradicting the code) fails the seal; a true one passes; editing the statement forces its check to re-run.
+- **Invariant.** Claims are **additional** evidence: they never replace the adversarial pass, and every claim check must be demonstrated able to fail (mutation-tested).
+
+### C4 — Delta re-verification as the default after a batch
+
+- **Evidence.** Delta rounds today ran 11–18 min against 15–35 min for full-scope rounds, and the mechanism (`--since`, F2) already existed but was not the default.
+- **Change.** After a repair batch the default brief is delta-scoped; full scope is reserved for the first round after intake, after a design-level change, and at freeze/judge. The brief states its scope and what it excluded.
+- **Acceptance.** Post-batch briefs carry `scope.kind = delta` with the change surface; `adversarial status` reports the saving.
+- **Invariant.** Frozen-tier checks always run; an underivable surface falls back to full **and says so** (F4 already behaves this way).
+
+### C5 — Cost telemetry and a pass heartbeat
+
+- **Evidence.** Records carry `elapsedMs` but no `toolUses`/tokens, so every cost claim in this document is arithmetic on turn counts; and one pass today vanished mid-run with nothing on disk, where the seal has had `seal-progress.jsonl` for exactly this reason.
+- **Change.** `toolUses` (and tokens where the host reports them) on the record; an `adversarial-progress.jsonl` heartbeat written **in the same invocation as a check** — never one write per hypothesis (§12 measures why); `adversarial status` shows both.
+- **Acceptance.** A killed pass leaves ≥1 heartbeat line and `status` reports it; two consecutive passes report their turn counts.
+- **Invariant.** The heartbeat must not cost a turn per hypothesis — an incremental write that needs its own invocation costs more than it saves.
+
+## 15. What must not change
+
+Today's cheapest-looking optimizations are the ones that would hurt most. Concretely, keep:
+
+- **The independent pass itself.** It found, on the same day: a candidate identity still carrying runtime handles through *four* further routes, a publish gate that skipped and therefore proved nothing, three false statements in the acceptance text, a guard whose claim of testing order did not hold, and three majors in a review round. Several would have shipped silently.
+- **Evidence↔revision binding.** It has already caught evidence that outlived the tree it described.
+- **Severity-gated repair authorization and fail-closed gates.** Both were exercised today; both are why a "green" run could not be trusted into a wrong conclusion.
+- **No verdict without an executed counterexample, and destructive falsification where it applies.** Every real defect above came from someone running something, not from reading.
+- **The rule that optimisation may change *when* a check runs and *who* runs it — never *whether* a claim is falsified.**
