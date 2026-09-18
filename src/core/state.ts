@@ -58,6 +58,22 @@ export function isLegalPhaseTransition(from: Phase, to: Phase): boolean {
 }
 
 /**
+ * Whether a request to enter `to` is really a **re-evaluation of the phase already reached** (C6).
+ *
+ * §17.4 of the pass-cost design found this the hard way: an interrupted seal left the phase set at `hardVerify`, and the
+ * re-run failed with `Illegal transition from hardVerify to hardVerify` while all six checks passed. Re-entering the phase
+ * you are already in is not a transition at all — it is the gate being asked to answer again about artifacts that are
+ * content-addressed, and for unchanged content the answer is free.
+ *
+ * Deliberately **not** folded into `isLegalPhaseTransition`: that function is also what recovery replays events against,
+ * and a self-transition that appeared legal there would let a corrupt event log look like a legitimate chain. This is a
+ * separate question asked by `transition()`, and it answers it by doing nothing.
+ */
+export function isIdempotentPhaseEntry(from: Phase, to: Phase): boolean {
+    return from === to;
+}
+
+/**
  * Repair entrypoints (verify/review/judge repair) deliberately return to `implement`
  * from a later phase. Those backward links bypass `transition()`, so the state
  * event log records them directly and the replay must accept them as chain links —
@@ -86,6 +102,12 @@ export async function transition(
     return withTaskLock(root, taskId, async () => {
         const current = await readCurrentState(root, taskId);
 
+        if (isIdempotentPhaseEntry(current.phase, to)) {
+            // C6: no event, no state write, nothing to report — the phase is where the caller asked for it to be. The
+            // return value is the state as it stands, so a caller cannot tell the difference between "moved" and
+            // "already there", which is the point: re-running a gate on unchanged content must be free.
+            return current;
+        }
         if (!isLegalPhaseTransition(current.phase, to)) {
             throw new Error(`Illegal transition from ${current.phase} to ${to}`);
         }
