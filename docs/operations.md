@@ -126,6 +126,24 @@ Conversation-derived knowledge is captured only when the user explicitly asks to
 
 ## Quality gates
 
+### What a seal runs, and what it can defer
+
+`kata-cli build <task> --seal` resolves the check set from, in order: an explicit `--check`, the project's
+`.kata-config.json` `quality.buildChecks`, the `## Acceptance Gate` block an installed skill documents, then the built-in
+fallback. `kata-cli build <task> --list-checks` prints that set — each check's id, kind, command, source, timeout and what
+it cost last — **without running anything**, so the cost of a seal is visible before paying it.
+
+A declared check may carry a **tier**:
+
+- `tier: "seal"` (the default, and what every check does when the field is absent) runs on every seal;
+- `tier: "frozen"` is deferred at seal and run when the artefact is frozen — `build --seal --frozen`, which is what the
+  freeze points use. Deferred checks are named in the result (`diagnostics.deferredChecks`), in progress events
+  (`skipped`, `reason: "frozen_tier"`) and in `--list-checks`, so "declared but not run" is never silent.
+
+A declaration may also name the check that **covers** it (`coveredBy: "<check id>"`, typically the project's suite):
+the covering check still runs, and the declaration is credited with its evidence instead of running its own second copy
+of the same work. It appears under `diagnostics.coveredChecks`.
+
 The verification pipeline enforces strict ordering:
 
 1. **Model route artifact** — configured reviewer/judge routes are recorded before role transitions, including both recommendation and user/agent decision
