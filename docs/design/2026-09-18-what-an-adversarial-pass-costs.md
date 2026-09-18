@@ -395,3 +395,50 @@ Today's cheapest-looking optimizations are the ones that would hurt most. Concre
 - **Severity-gated repair authorization and fail-closed gates.** Both were exercised today; both are why a "green" run could not be trusted into a wrong conclusion.
 - **No verdict without an executed counterexample, and destructive falsification where it applies.** Every real defect above came from someone running something, not from reading.
 - **The rule that optimisation may change *when* a check runs and *who* runs it — never *whether* a claim is falsified.**
+
+## 16. Handoff: who does what, in what order
+
+§14 lists the five changes and §15 what may not move. This section is the handoff — it says which side owns each piece, in which order, with what interface, and how the owner proves it.
+
+**Owners.** `K` = the kata implementer (this repository). `P` = the project side (the repository consuming kata; today k2skills). Anything a project can do without platform support is `P`, and anything that must hold for *every* project is `K` — a project-specific branch or flag is a rejected design (see §4 M4's boundary rule).
+
+### Order, with dependencies
+
+| Step | Owner | Deliverable | Depends on |
+|---|---|---|---|
+| **1** | K | **C5 cost signal**: `toolUses` on the adversarial record + schema; `adversarial-progress.jsonl` heartbeat; `adversarial status` shows both | — |
+| **2** | P | **Claim checker** (`scripts/assert_acceptance_claims.py`): the checkable clauses of an acceptance statement executed as commands; wired into the project's check set | — |
+| **3** | K | **C3 claim checks**: `acceptance[].claims[]` in the task schema; the seal runs them; a failing claim is a blocking-class failure; brief/verify surface it | 2 (the shape P already uses) |
+| **4** | K | **C4 delta by default after a repair batch**; full scope only after intake, a design-level change, or at freeze/judge | 1 (needs the scope in the record) |
+| **5** | K | **C1 repair batch**: findings accumulate; a batch is opened/repaired/closed; one seal + one delta round per node per batch | 4 |
+| **6** | K | **C2 text-only revisions invalidate the claims pass, not the code pass** (code pass bound to the code sub-manifest) | 3 (the claims pass is what keeps a text edit honest) |
+
+Steps 1 and 2 are independent and can proceed in parallel tonight; 3 lands on top of the shape 2 establishes; 6 is only safe once 3 exists — otherwise a text edit could leave a stale truth claim satisfied.
+
+### Interfaces (exact)
+
+- **Claims.** `acceptance[].claims[] = {id, statement, check: {command, expect?}}`. The seal executes `check.command`; a non-zero exit or an `expect` mismatch is a **blocking-class** failure bound to that acceptance. The generated evidence table (clause → measured counts → `file:line`) is the check's payload, so the sentence and the command cannot drift.
+- **Claim failure surfaces.** A failing claim must be visible in the brief, in `verify`, and in the seal report **by claim id**, not only as a red run.
+- **`coveredBy`.** The resolver already honours it (a covered check is not executed, its declaration is credited, and the seal lists `coveredChecks`). The **generated** copy at `<project>/.kata/schemas/task.schema.json` is stale and rejects the field (`additionalProperties: false`) while `kata/schemas/task.schema.json:333` allows it — so refreshing the generated copy is a prerequisite for projects to declare coverage without failing their own schema check.
+- **Telemetry.** `toolUses` (and tokens where the host reports them) on the adversarial record; a heartbeat whose **contract is one line per batch, written in the same invocation as the check it accompanies** — a write that needs its own invocation costs a turn and eats the saving (§12).
+- **Record safety.** `record` must validate before writing (it already does after today's fix): a rejected record must never destroy a valid one. Keep that property when adding claims.
+
+### Verification each owner owes
+
+- **Every new gate must be demonstrated able to fail** (mutation evidence: revert the fix, watch it red, restore). Two guards today were caught claiming a property they did not test — a dictionary comparison that ignores insertion order, and a shape check that could not fail. Treat "this guard tests X" as a claim requiring evidence.
+- **Every claim check must be seeded false once** (a statement contradicting the code) and observed failing the seal.
+- Acceptance for the batch itself: on a task with ≥3 findings from two nodes, seals between two judgements ≤2, and the record states which findings the batch answered.
+
+### Known traps (measured today)
+
+- `kata-cli` runs `dist/cli.js`: any `src/` edit needs `node scripts/build.mjs`.
+- The generated `.kata/schemas/*` copy can lag the kata package; a project then fails its own schema validation for a field the platform supports.
+- Two agents can share one working tree: stage explicit paths only, never `git add -A`.
+- The brief must never embed state that the act of recording mutates (the four sources are listed in §10's update).
+
+### Open questions for the kata owner
+
+1. Can a claim check be **derived** from the statement mechanically for the common shapes ("no caller in category X", "no subcommand named Y", "path matches template Z"), or does every project keep its own script? (P's script is the proof of the common shapes.)
+2. For C2, is the code/non-code split derived from the owned-path globs, or declared per path?
+3. For C1, is a batch an explicit state transition (`repair batch start|close`) or an implicit window between two seals?
+4. For C5, which hosts can report tokens at all — or is `toolUses` the only portable signal?
