@@ -7,6 +7,7 @@ import type { RepairScope } from '../quality/judge.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision } from './verdict-binding.js';
+import { orderedPhases } from '../core/state.js';
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -203,6 +204,16 @@ export const activeRoleByPhase: Record<Phase, string> = {
 
 export function activeRoleForPhase(phase: Phase): string {
   return activeRoleByPhase[phase];
+}
+
+/**
+ * The role a task in this phase is activated as — the same table the hook guard accepts.
+ *
+ * It lived in the CLI while the table it reads lived here, which is the arrangement L2-01 removed everywhere else: a
+ * reader in one module and its data in another, with nothing but convention keeping them in step.
+ */
+export function roleForPhase(phase: Phase | string): string {
+    return (orderedPhases as readonly string[]).includes(phase) ? activeRoleForPhase(phase as Phase) : 'approver';
 }
 
 /**

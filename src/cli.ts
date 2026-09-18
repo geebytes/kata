@@ -132,14 +132,13 @@ import {
     runHooksCommand,
     runLocalStatusCommand,
     runOrientCommand,
-    roleForPhase,
     runTasksCommand,
     type ResolvedTask,
     type TaskCandidate,
 } from './cli/tasks.js';
 
 // The role table is part of the task family now; re-exported so callers that know the entry point keep working.
-export { roleForPhase } from './cli/tasks.js';
+export { roleForPhase } from './workflow/navigation.js';
 import { parseTaskRelationType, runGitFlowCommand, runRelationsCommand } from './cli/relations.js';
 
 // The output context is the CLI's public boundary; re-exported so callers (and tests) that know the entry point keep

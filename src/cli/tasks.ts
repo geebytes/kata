@@ -19,6 +19,7 @@ import { readTask } from '../core/task.js';
 import { readActiveHookTask, activateHookTask, deactivateHookTask, type ActiveHookTask } from '../hooks/runtime.js';
 import {
     activeRoleForPhase,
+    roleForPhase,
     nextActionForTask,
     nextSkillForPhase,
     readUpstreamSummary,
@@ -111,9 +112,11 @@ export async function resolveTaskForCurrentBranch(root: string): Promise<Resolve
     return discoverSingleTaskForCurrentBranch(root);
 }
 
-export function roleForPhase(phase: Phase | string): string {
-    return (orderedPhases as readonly string[]).includes(phase) ? activeRoleForPhase(phase as Phase) : 'approver';
-}
+/**
+ * The role a task in this phase is activated as, which is also the role the hook guard accepts. It is the phase table's
+ * `activeRoleByPhase`, shared with the hook, so activation and enforcement cannot disagree.
+ */
+
 
 export async function resolveActiveTaskForCurrentBranch(root: string): Promise<ActiveHookTask | null> {
     const active = await readActiveHookTask(root);

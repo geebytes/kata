@@ -1,7 +1,8 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Phase, Actor } from '../core/state.js';
-import { profileGuardInstructions, type WorkflowProfile } from '../core/workflow-profile.js';
+import { buildGuardInstructions, profileGuardInstructions } from '../policy/guard-instructions.js';
+import type { WorkflowProfile } from '../core/workflow-profile.js';
 import { taskPath, currentStatePath, evidenceDir as evidenceDirPath } from '../core/layout.js';
 
 export type Role = 'designer' | 'implementer' | 'reviewer' | 'judge' | 'distiller' | 'approver';
@@ -74,42 +75,4 @@ export async function createHandoff(
   };
 }
 
-function buildGuardInstructions(phase: Phase, nextRole: Role): string[] {
-  const instructions: string[] = [];
 
-  if (nextRole === 'implementer') {
-    instructions.push('Write only to src/, tests/, and task-owned .kata paths.');
-    instructions.push('All acceptance criteria must have stable AC-[0-9]+ ids before implement.');
-    instructions.push('Do not modify .kata/schemas/, docs/superpowers/rules/, or wiki/verified/.');
-  }
-
-  if (nextRole === 'designer') {
-    instructions.push('Write only to task design artifacts, docs/, and task-owned .kata paths.');
-    instructions.push('Clarify acceptance criteria before implementation.');
-    instructions.push('Do not modify implementation files during design.');
-  }
-
-  if (nextRole === 'reviewer') {
-    instructions.push('You may only write review findings to review.json.');
-    instructions.push('Check that acceptance criteria are met by the implementation.');
-    instructions.push('Assign severity: blocking (must fix), major, minor, note.');
-  }
-
-  if (nextRole === 'judge') {
-    instructions.push('You may only write the judge result to judge.json.');
-    instructions.push('Evaluate each acceptance criterion independently.');
-    instructions.push('Return PASS only if all criteria have fresh passing test evidence and no blocking findings.');
-  }
-
-  if (nextRole === 'distiller') {
-    instructions.push('You may only write Wiki candidates to .kata/wiki/.');
-    instructions.push('Only promote candidates from tasks with Judge PASS.');
-    instructions.push('Include source references, hashes, and evidence links.');
-  }
-
-  if (phase === 'hardVerify' && nextRole !== 'judge') {
-    instructions.push('Fresh evidence must be collected after any repair.');
-  }
-
-  return instructions;
-}

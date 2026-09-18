@@ -1,3 +1,4 @@
+import { HOST_MODEL_POLICY_SENTENCE } from '../policy/guard-instructions.js';
 import { createContextPacket, type HandoffPacket } from './context-fabric.js';
 
 export async function createWorkflowHandoff(input: {
@@ -35,6 +36,7 @@ export function renderDelegationPrompt(taskId: string, handoffId: string, platfo
     '',
     `Role: ${role}`,
     'Platform: choose the receiving host platform.',
+    HOST_MODEL_POLICY_SENTENCE,
     `Handoff: ${handoffId}`,
     '',
     '先执行：',

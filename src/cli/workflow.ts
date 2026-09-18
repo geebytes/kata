@@ -25,6 +25,7 @@ import { runCommand } from '../workflow/orchestrator.js';
 import { resolveWorkspaceRootForTask } from '../core/layout.js';
 import {
     nextActionForTask,
+    roleForPhase,
     nextSkillForPhase,
     type NextActionReason,
     phaseFallbackAction,
@@ -36,7 +37,7 @@ import {
 import { createContextPacket, requireAcknowledgedContextPacket } from '../workflow/context-fabric.js';
 import { createWorkflowHandoff } from '../workflow/delegation-prompt.js';
 import { activateHookTask } from '../hooks/runtime.js';
-import { createPacketHash, roleForPhase } from './tasks.js';
+import { createPacketHash } from './tasks.js';
 import { type KataCommand } from '../workflow/orchestrator.js';
 import { validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';

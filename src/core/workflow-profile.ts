@@ -39,18 +39,7 @@ export function isWorkflowProfile(value: unknown): value is WorkflowProfile {
     && (candidate.gitFlow === undefined || isGitFlowState(candidate.gitFlow));
 }
 
-export function profileGuardInstructions(profile: WorkflowProfile | undefined, role: string): string[] {
-  if (!profile) return [];
-  const instructions: string[] = [];
-  if (profile.isolationMode === 'isolated_worktree') instructions.push('Use the isolated worktree: run `kata-cli worktree create --change <task>` (linked worktrees live under .kata/worktrees/) and work there; do not silently move or recreate the current session worktree.');
-  if (profile.isolationMode === 'git_flow' && profile.gitFlow?.status === 'active') instructions.push(`Work on ${profile.gitFlow.branch}; do not start, finish, or switch Git Flow branches outside the recorded task action.`);
-  if (profile.isolationMode === 'git_flow' && profile.gitFlow?.status !== 'active') instructions.push('Git Flow branch creation is pending or failed; do not start, finish, or switch branches until the recorded task action succeeds.');
-  if (profile.isolationMode === 'user_decides') instructions.push('Ask the user to choose current versus isolated worktree before implementation changes; `kata-cli worktree create --change <task>` creates kata\'s isolated worktree, and `kata-cli worktree list` shows the existing ones.');
-  if (role === 'implementer' && profile.developmentMode === 'tdd') instructions.push('Use TDD: write a focused failing test, verify RED, implement the minimum, then verify GREEN.');
-  if (role === 'reviewer' && profile.reviewMode === 'strict') instructions.push('Strict review: inspect architecture boundaries, regression risk, and missing focused tests.');
-  if (role === 'reviewer' && profile.reviewMode === 'security') instructions.push('Security review: inspect trust boundaries, secrets, dependency changes, input validation, and authorization effects.');
-  return instructions;
-}
+
 
 export async function acknowledgeCometOpen(root: string, taskId: string): Promise<WorkflowProfile> {
   const { readFile, writeFile } = await import('node:fs/promises');
@@ -98,3 +87,5 @@ function isGitFlowInstallation(value: unknown): boolean {
     ));
 }
 import type { GitFlowState } from './git-flow.js';
+
+export { profileGuardInstructions } from '../policy/guard-instructions.js';
