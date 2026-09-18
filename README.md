@@ -259,3 +259,4 @@ Tasks may include an `acceptanceMatrix` that maps each acceptance criterion to c
 - [Platform adapters](./docs/platform-adapters.md) — per-platform adapter implementation
 - [Operations](./docs/operations.md) — CLI reference, eval, release gates
 - [Troubleshooting](./docs/troubleshooting.md) — common issues and recovery
+- [Design: finding lifespan and proportional re-verification](./docs/design/2026-09-18-finding-lifecycle-and-proportional-reverification.md) — why a finding has a disposition, how a delta pass is verified, what the measurements say (and what they contradict)
