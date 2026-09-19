@@ -500,3 +500,63 @@ Independent verification, evidence bound to the artifact, and fail-closed severi
 - **Instance fixing** — repairing the discovered shape and leaving the category open.
 - **Moving platform** — the process engine changing while the process runs.
 - **Unbounded review loop** — iterating until a round happens to find nothing, instead of until the artifact is stable.
+
+## 18. Token economics of an adversarial pass, and the levers that actually move it
+
+§12 priced a pass in wall-clock and §14–§17 say what to change. This section prices it in **tokens**, because that is the number an implementer will be judged on, and because the mechanism is not obvious: a pass does not cost "how much it thought", it costs **how many round-trips it made while carrying an already-large context**.
+
+### 18.1 Measured
+
+| Round | Tokens | Tool uses | Duration | Node |
+|---|---|---|---|---|
+| r22 | 27.5M | 242 | 5550s | verify (delta) |
+| r22 | 23.5M | 221 | 6584s | review (delta) |
+| r23 | 20.1M | 214 | 3756s | verify (delta) |
+| r23 | 20.6M | 162 | 3239s | review (delta) |
+| earlier | 11.2M / 11.8M / 10.3M / 5.7M / 5.7M / 4.0M / 2.7M | 49–132 | 619–1724s | mixed |
+
+⇒ **≈110–130k tokens per tool call** across the recent rounds. That ratio is the whole story.
+
+### 18.2 The mechanism: cost ≈ turns × context, i.e. ~quadratic in turns
+
+Every turn re-sends the current context. With ~200 turns and a context that grows to roughly 100k, cumulative input ≈ Σ(context) ≈ turns × average-context ≈ **20M tokens** — arithmetic, not judgement. Two multipliers:
+
+- **Turns**: each read, each command, each probe run, each output inspection is a turn.
+- **Context size**: what the turn has to carry — the audited artifact, the brief, the task record, the sealed evidence, the probe outputs.
+
+Both were large in the rounds above: the artifact under audit was a ~1200-line script (≈15k tokens **per read**, read 4–5 times per hypothesis set), the acceptance statement is ~12KB, the brief ~12KB, and the sealed full-suite logs are tens of thousands of characters. Probe rework (a probe that fails, is fixed, re-run) costs 3–5 turns each time; it happened several times in one round, to the author as well as the reviewer.
+
+### 18.3 What the tokens bought, and what they wasted
+
+**Bought (do not trade away).** Independent derivation of the same facts by two nodes; a counterexample for every conclusion; mutation evidence that each guard can fail; 32 receiver shapes checked for counting equivalence; the clean-checkout proof that the test module actually runs in CI. Every real defect in §15 was found this way, and the *duplication is the independence* — a reviewer that reuses the author's conclusions is not a reviewer.
+
+**Wasted.** Turns that could have been one turn (probes written and run one at a time instead of batched); re-reading a large artifact per hypothesis instead of quoting the region; re-verifying the previous round's fixes in full because the artifact changed; probe rework caused by under-specified probes; and an audited artifact whose size reflects a wrong design choice rather than necessary complexity.
+
+### 18.4 Levers, ranked by measured or structural impact
+
+| Lever | Why it works | Expected effect | Verification |
+|---|---|---|---|
+| **Batch commands into one invocation** | cost is ≈ turns × context, so cutting turns cuts both factors | total tokens **3–5×** | two consecutive rounds report tool uses; must be lower |
+| **Hand a starting reading set with line regions** | removes 10–20 orientation turns | 1–2M tokens/round | the brief carries the set; `cold` rounds must not |
+| **Cap attempts (e.g. ≤6 unless a reproduction exists), delta-scope by default** | round length is set by hypothesis count, not delta size | ~2× | attempt counts in the record |
+| **Hand over sealed evidence instead of re-running/re-reading** (M1) | the full suite is already sealed and hash-bound | −3–4 minutes, tokens neutral | reviewer cites sealed evidence ids |
+| **Keep the audited artifact small** | a 1200-line helper is read many times | context an order of magnitude smaller | artifact size on the path under review |
+| **Cheap model for mechanical stages, strong model for judgement** | orientation and probing are pattern work | large, model-dependent | per-agent model on the record |
+| **Fewer rounds** (C1 batching, C2 text-only revisions) | 6 cycles × 2 nodes × ~20M ≫ any single-round saving | **halves the total** | seals between two judgements ≤2 |
+
+The last row dominates: the largest term is the **number of rounds**, and rounds are produced by the structure ("every fix re-verifies everything"), not by any single pass being slow.
+
+### 18.5 Contract for a brief (concrete, so it can be implemented)
+
+A brief must carry: the delta surface with file paths; the **starting reading set** with line regions; the instruction to **batch commands into one invocation**; an attempt cap with the escape hatch ("exceed it only with a reproduction"); the **sealed evidence ids** for anything already verified; and the statement of what this round does *not* cover. It must not carry: the author's conclusions, or mutable state that the act of recording rewrites (§10).
+
+### 18.6 What may not be traded for tokens
+
+Independence, per-conclusion counterexamples, mutation evidence for guards, and the fail-closed gates. §15 lists what each of them caught; a cheaper pass that reuses the author's reasoning, or that concludes from reading rather than running, is not a cheaper pass — it is a different, weaker instrument wearing the same name.
+
+### 18.7 Open questions for the implementer
+
+1. Can `toolUses` (C5) be recorded per **attempt** rather than per pass, so a costly hypothesis is visible while it runs?
+2. Is the reading set derivable from the delta + the frozen tier, or must the author curate it?
+3. For the attempt cap, is the reproduction escape hatch checkable (the round must show the reproduction), or advisory?
+4. Do hosts report tokens at all, or is per-turn tool use the only portable signal?
