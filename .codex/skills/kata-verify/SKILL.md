@@ -202,6 +202,20 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。
 
+## Findings about a declared instrument
+
+A finding whose target is one of this task's **declared instruments** is judged differently from one about the deliverable:
+an adversarial search on a guard always finds the dimension it does not cover, so a guard is answerable for what its
+declaration **says** it covers and nothing more.
+
+- **Within** the declared coverage: a real gap — repair it like any other finding.
+- **Beyond** it: close it with the declaration as the reason (`kata-cli findings defer --id <id> --reason "<why the
+  declaration already excludes this>"`). This is the **one** case where a blocking/major finding may be closed instead of
+  repaired; it requires the finding to **quote a dimension declared in advance**, and the closure is displayed at review,
+  judge and archive.
+- **No declaration means no exclusions**: declare the boundary (`kata-cli scope boundary …`) rather than arguing it
+  finding by finding.
+
 ## Frozen-tier checks
 
 A project may declare verification it wants when the artefact is frozen rather than on every seal — a check with

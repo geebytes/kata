@@ -133,6 +133,38 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 请在当前平台的模型选择器或平台配置中完成切换，然后继续本次 Kata 命令。
 
+## Repair batches, and growing the audited surface
+
+Both are recorded by the platform, and both change what the next round costs — so they belong here, where the work happens.
+
+**A batch, not a finding.** When a pass or a gate reports blocking/major findings, repair them **together** and seal
+**once**: the platform opens a repair batch when findings are recorded and closes it after the seal, and that batch is what
+makes the next round a delta instead of a full re-verification. Do not seal per finding — that is the shape this exists to
+remove. Check where you are:
+
+```bash
+kata-cli adversarial status --change <task-id>   # the open batch, its findings, its base revision, what batching saved
+```
+
+**Growing the audited surface is a decision.** Adding an owned path expands what the gate re-verifies **and** invalidates
+evidence, restarting the search. Say so, with a reason; the platform records the base the next round narrows against:
+
+```bash
+kata-cli scope change --change <task-id> --add <path> --reason "<why the surface has to grow>"
+```
+
+If you wrote tooling during this task to check its own deliverables (a claim checker, a probe harness, a shadow runner),
+**declare it as an instrument** — that is what stops an adversarial search against it from becoming an arms race, because it
+is then judged against a **declared** boundary instead of being audited like a deliverable:
+
+```bash
+kata-cli scope declare --change <task-id> --instrument <path>
+kata-cli scope boundary --change <task-id> --instrument <path> --statement <doc>   --covers "<what it does check>" --excludes "<what it does not>: <why not>"
+```
+
+The `--statement` document is the **single** canonical description of that boundary, it must exist, and a finding is only
+closeable against it when the finding quotes a dimension declared in advance.
+
 ## Knowledge capture during implementation
 
 Implementation reveals concrete constraints that design alone cannot foresee:
