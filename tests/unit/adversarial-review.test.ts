@@ -279,3 +279,36 @@ describe('the framing rotates, and never rotates past an unrepaired blocker (M2)
         expect(text).toMatch(/falsification attempt per claim/);
     });
 });
+
+describe('the brief contract of §18.5', () => {
+    it('carries a starting reading set with sizes, an attempt cap, and what the round does not cover', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'contract-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'x' }],
+            evidence: [],
+            ownedPaths: ['src'],
+            mode: 'verify',
+            scopeReason: 'repair batch batch-1 closed on revision-0',
+            readingSet: [
+                { path: 'src/big.ts', why: 'changed in this change', lines: 1200 },
+                { path: 'src/gone.ts', why: 'owned by this task', lines: null },
+            ],
+        });
+
+        // The size turns "read this file" into a decision about whether to read a region instead.
+        expect(text).toContain('src/big.ts (~1200 lines)');
+        // …and an unreadable path says nothing about a size rather than claiming zero.
+        expect(text).toContain('src/gone.ts —');
+        expect(text).not.toContain('src/gone.ts (~0 lines)');
+        // The cap, with its escape hatch named as a reproduction rather than as permission to keep going.
+        expect(text).toContain('at most six attempts');
+        expect(text).toMatch(/Exceed that only with a \*\*reproduction\*\*/);
+        // And the scope's reason is stated in the brief, so an unexamined area is never read as verified.
+        expect(text).toContain('repair batch batch-1 closed on revision-0');
+        expect(text).toMatch(/What this round does not cover/);
+    });
+});

@@ -145,6 +145,8 @@ export interface AdversarialBriefInput {
     mode?: 'verify' | 'cold';
     /** Why this mode was chosen, written into the brief so the rotation is never silent. */
     modeReason?: string;
+    /** Why this round has the scope it has (C4), rendered into the brief so an unexamined area is never read as verified. */
+    scopeReason?: string;
     /**
      * Where to start reading (M4): the changed paths and their collaborators from the acceptance matrix.
      *
@@ -152,7 +154,7 @@ export interface AdversarialBriefInput {
      * matrix knows which files implement the same acceptance criteria, so the orientation can be handed over instead of
      * rediscovered. It is framed as a **starting set, not a boundary** — the sentence that gives it says so.
      */
-    readingSet?: Array<{ path: string; why: string }>;
+    readingSet?: Array<{ path: string; why: string; lines?: number | null }>;
     reviewFindings?: Array<{ severity?: string; message?: string }>;
     /**
      * The change surface since a previous pass (F2 of the finding-lifecycle design): when present, the brief asks the
@@ -218,7 +220,9 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
         : '- (nothing has been dispositioned for this task)';
 
     const readingSet = (input.readingSet ?? []).length > 0
-        ? (input.readingSet ?? []).map((entry) => `- ${entry.path} — ${entry.why}`).join('\n')
+        ? (input.readingSet ?? [])
+            .map((entry) => `- ${entry.path}${entry.lines === null || entry.lines === undefined ? '' : ` (~${entry.lines} lines)`} — ${entry.why}`)
+            .join('\n')
         : '- (the brief cannot name a starting set for this task; explore freely)';
 
     const deltaSection = input.delta
@@ -267,6 +271,7 @@ you try to break them.
 Task: ${input.taskId}
 Node under review: ${input.node}
 Round framing: ${mode}${input.modeReason ? ` — ${input.modeReason}` : ''}
+Scope: ${input.delta ? 'delta' : 'full'}${input.scopeReason ? ` — ${input.scopeReason}` : ''}
 Sealed revision: ${input.revisionId ?? '(none sealed yet)'}
 Paths under review: ${input.ownedPaths.length > 0 ? input.ownedPaths.join(', ') : '(none declared)'}
 
@@ -330,6 +335,16 @@ thought would eat far more than a crashed pass ever loses.
 
 Independent commands belong in **one** invocation: run them together and read the outputs together. Every separate
 invocation is a full turn of yours, and the turn loop — not the CPU — is what a pass mostly costs.
+
+**How long this round should run.** The measurement behind this brief: round length is set by the **number of hypotheses**,
+not by the size of the delta, and a round's cost grows with the square of its turns — so the last few attempts are the most
+expensive ones you will make. Aim for **at most six attempts** per round. Exceed that only with a **reproduction**: a
+concrete command, input or sequence that shows a defect and can be repeated. What this rules out is not thoroughness, it is
+attempt number nine that restates attempt number two.
+
+**What this round does not cover** is stated above — the scope, its reason, and (for a delta round) the paths it excluded.
+Do not treat an unexamined area as verified: if the scope line says this round is a delta, everything outside it was
+covered by an earlier round **on an earlier revision**, and the gate is what decides whether that is still enough.
 
 ## Findings recorded so far
 
@@ -913,6 +928,7 @@ export async function buildAdversarialBrief(
     const text = renderAdversarialBrief({
         mode: resolvedMode.mode,
         modeReason: resolvedMode.reason,
+        scopeReason: resolvedScope.reason,
         ...(delta ? { delta } : {}),
         taskId,
         node,
@@ -1118,13 +1134,31 @@ async function buildReadingSet(
     // set is bounded and clearly labelled a sample, so it stays an aid rather than a boundary or a cost.
     const MAX_ENTRIES = 40;
     const shaped = [...set.entries()].sort(([a], [b]) => a.localeCompare(b));
-    if (shaped.length === 0) {
-        return owned.slice(0, MAX_ENTRIES).map((path) => ({
-            path,
-            why: `owned by this task and part of the sealed revision under review (a sample of ${owned.length})`,
-        }));
+    const entries = shaped.length === 0
+        ? owned.slice(0, MAX_ENTRIES).map((path) => ({ path, why: `owned by this task and part of the sealed revision under review (a sample of ${owned.length})` }))
+        : shaped.slice(0, MAX_ENTRIES).map(([path, why]) => ({ path, why }));
+
+    // §18.5's contract asks for the set **with line regions**, because the measured round re-read a ~1200-line helper four
+    // to five times per hypothesis set at ~15k tokens a read. Sizes are cheap to obtain and turn "read this file" into
+    // "this file is ~40 lines, ~1200 lines, …" — which is what lets a reviewer decide to read a region rather than the
+    // whole thing. Deliberately sizes and not line *numbers*: a region of interest cannot be known without reading the
+    // file, and a fabricated one would be worse than none.
+    return Promise.all(entries.map(async (entry) => ({ ...entry, lines: await countLines(root, entry.path) })));
+}
+
+/**
+ * How many lines a file has, or `null` when it cannot be read (a directory-shaped owned path, or a file since removed).
+ *
+ * `null` rather than `0`: "empty" and "not readable" are different claims, and a reading set that conflated them would
+ * teach a reviewer to trust a size that was never measured.
+ */
+async function countLines(root: string, path: string): Promise<number | null> {
+    try {
+        const content = await readFile(join(root, path), 'utf8');
+        return content.length === 0 ? 0 : content.split('\n').length;
+    } catch {
+        return null;
     }
-    return shaped.slice(0, MAX_ENTRIES).map(([path, why]) => ({ path, why }));
 }
 
 /** Where each recorded envelope lives, by id — the reading list for M1. */
