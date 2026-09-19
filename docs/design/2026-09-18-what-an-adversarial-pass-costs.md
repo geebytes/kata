@@ -919,6 +919,10 @@ and have a single canonical statement** or it is refused.
 
 ### 24.3 Gap 1 — this task declares no instruments, so the closure is unavailable to it
 
+> **Status (2026-09-19):** the mechanism exists (`instruments[]`, `validateBoundaries`, `classifyFindingCoverage`, and
+> `kata-cli scope declare|boundary`). Declaring them is a **project-side** act — it edits that task's record — so it is not
+> done here. The acceptance test below is implemented.
+
 `validateBoundaries` refuses a boundary for an instrument that is not declared
 (`undeclared_instrument`), and this task has no `instruments[]`. Nothing is broken; the mechanism is simply
 not switched on, which is why the boundary-attack findings from r22–r24 had nowhere to close except
@@ -930,6 +934,12 @@ the declaration stays `within` and must be repaired.
 
 ### 24.4 Gap 2 — instruments fall into the code bucket
 
+> **Status (2026-09-19): closed** (`4cd31a9`). `splitOwnedPaths` now returns three classes with instruments subtracted before
+> the code/governance split; `surfaceDigests` stamps all three on every binding artefact and on the adversarial record; and a
+> change confined to a declared instrument no longer expires the deliverable pass. The first attempt at the sparing rule was
+> unsound — it keyed on the *instrument* surface being unchanged, which is trivially true when code changed — and was
+> corrected to the single rule *the deliverable pass stands while the code surface it verified is unchanged*.
+
 `splitOwnedPaths` has exactly two outputs, so a script under an owned path is "code" and its edits
 invalidate the code pass. That is the structural cause of four wasted rounds in one day: the rounds
 audited an instrument, and the instrument's edits kept invalidating passes about the deliverable.
@@ -939,6 +949,10 @@ instrument edits invalidate the instrument surface only.
 instrument surface as the one that changed.
 
 ### 24.5 Gap 3 — non-path inputs are invisible, so "unchanged" can be false safety
+
+> **Status (2026-09-19): open, deliberately.** Provider/model identities, container images and environment variables are
+> **project-specific**; a kata-side constant enumerating them would be the false safety this gap is about. The acceptance
+> test below is the shape it should take, and it belongs to whoever owns the project's environment declaration.
 
 `manifestHash` and `codeManifestHash` hash **paths**. A remote model revision, a container image, an
 environment variable or a service contract can change behaviour with every digest unchanged — and this is
