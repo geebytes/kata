@@ -689,6 +689,10 @@ the unguarded dimension, so it terminates only when the guard is deleted or its 
 and let the adversarial gate treat their findings as advisory unless the finding contradicts a
 **declaration** (see 21.2). Deliverable-grade rules continue to apply to the deliverable.
 
+**Status (verified 2026-09-19): implemented.** `src/quality/code-surface.ts` exports `instrumentPaths`,
+`isInstrumentPath` and `findingLayer`; the task schema carries `instruments`; and this task simply has
+not declared any (§24.3).
+
 ### 21.2 A declared coverage boundary makes boundary-attacks closeable
 
 Today a finding is either repaired or — for blocking/major — not deferrable at all. But "your guard
@@ -701,6 +705,12 @@ not, and where the single canonical statement of that lives), and classify findi
 closeable with the declaration as the reason, and the closing reason is displayed at review/judge/archive
 so it cannot be used to bury anything silently. Without this, an adversarial search against any guard
 has no terminating condition.
+
+**Status (verified 2026-09-19): implemented.** `src/quality/instrument-boundary.ts` validates
+declarations (`InstrumentBoundary` with `covers` / `doesNotCover` / `canonicalStatement`; refusals
+`undeclared_instrument`, `missing_canonical_statement`, `empty_boundary`, `not_a_list`) and classifies
+findings `within-declared-coverage` or `beyond-declared-coverage`. Its docstring cites 21.2 and the
+measured loop, so this section is now a record of the design rather than a request.
 
 ### 21.3 Scope growth must re-enter design, not drift
 
@@ -874,7 +884,78 @@ needed is merely expensive. So the default when uncertain is **invalidate** — 
 side must be **derived mechanically** (surface digest plus a proof that the diff is non-semantic), never
 asserted.
 
-## 24. Handoff index (for whoever picks this up)
+## 24. How the change classification is actually determined, and the three gaps that remain
+
+§23 asked how a change should be classified. This section answers with what the platform **actually does**
+(verified by reading the source, line references below), corrects one claim in §22, and names the three
+gaps that survive.
+
+### 24.1 Correction to §22
+
+§22.2 A said the adversarial record "still binds the whole revision". That is not accurate: records bind
+`(revisionId, manifestHash, codeManifestHash)`, where `codeManifestHash` is a **code-only sub-manifest**
+(`src/quality/code-surface.ts:103`, stamped in `src/quality/adversarial.ts:122/1333` and consulted in
+`825–852`). A governance-text edit therefore already spares the code pass, which is C2 working. What §22
+should have said is narrower and still true: **the split has two classes, not three, and the second
+digest covers `script`-shaped instruments only if they are excluded from the code bucket — which they are
+not** (`splitOwnedPaths` at `code-surface.ts:42` divides owned paths into exactly `code` and `nonCode`).
+
+### 24.2 The mechanism, verified
+
+| step | implementation |
+|---|---|
+| per-path content digests | every revision stores `pathDigests` (696 entries for this task) |
+| split into classes | `splitOwnedPaths(ownedPaths)` → `{code, nonCode}`; `isNonCodePath` = extension list + the directory prefixes `docs/`, `wiki/`, `.llmwiki/` |
+| code sub-manifest | `codeManifestHash(revision)` over the code subset |
+| binding | verdict artifacts and adversarial records carry `revisionId` + `manifestHash` + `codeManifestHash`; the second digest answers only the governance-text question |
+| checks | selected by `tier` (`frozen` always runs at freeze points) and `coveredBy`, and what did not run is **named** rather than silent |
+| instruments | **declared** (`instruments[]` in the task schema), reached by `instrumentPaths` / `isInstrumentPath` / `findingLayer` |
+| boundary closure | `validateBoundaries` + `classifyFindingCoverage`: `within` is repaired, `beyond` closes against the declaration, and the reason is displayed |
+
+**Assessment: reasonable, and further along than §22 assumed.** Three properties are the right ones —
+the classification is **derived** from content and path patterns rather than self-reported; running less is
+**visible** (frozen tier and `coveredBy` both name what they skipped); and a boundary must be **specific
+and have a single canonical statement** or it is refused.
+
+### 24.3 Gap 1 — this task declares no instruments, so the closure is unavailable to it
+
+`validateBoundaries` refuses a boundary for an instrument that is not declared
+(`undeclared_instrument`), and this task has no `instruments[]`. Nothing is broken; the mechanism is simply
+not switched on, which is why the boundary-attack findings from r22–r24 had nowhere to close except
+"repair" — and repairing a guard's declared boundary is an infinite game.
+**Fix**: declare `instruments: ["scripts/assert_acceptance_claims.py", "tests/test_assert_acceptance_claims.py"]`
+plus the boundary (§21.2 shape). **Acceptance**: a finding that attacks the declared boundary classifies
+`beyond-declared-coverage` and is closeable with the declaration as its reason; a finding that contradicts
+the declaration stays `within` and must be repaired.
+
+### 24.4 Gap 2 — instruments fall into the code bucket
+
+`splitOwnedPaths` has exactly two outputs, so a script under an owned path is "code" and its edits
+invalidate the code pass. That is the structural cause of four wasted rounds in one day: the rounds
+audited an instrument, and the instrument's edits kept invalidating passes about the deliverable.
+**Fix**: subtract `instruments` before splitting, and bind a **third** digest for them, so that
+instrument edits invalidate the instrument surface only.
+**Acceptance**: editing the checker ⇒ the code-surface record stays valid and `status` names the
+instrument surface as the one that changed.
+
+### 24.5 Gap 3 — non-path inputs are invisible, so "unchanged" can be false safety
+
+`manifestHash` and `codeManifestHash` hash **paths**. A remote model revision, a container image, an
+environment variable or a service contract can change behaviour with every digest unchanged — and this is
+not hypothetical: the design requires a different representation identity for the same PDF when the OCR
+provider or model changes (AC-R2/AC-R3), which is exactly a change that no path would record.
+**Fix**: an `environmentInputs` digest (toolchain, provider/model identities, relevant config), included
+in the Tier-0 decision; when it cannot be derived, the classification fails closed (invalidate and say why).
+**Acceptance**: a seeded change to a provider model identity invalidates the affected surface even though
+no owned path changed.
+
+### 24.6 What is left of §22 after this
+
+§22.2 B still stands: both nodes bind the same pair of digests, so they cannot have different scopes — and
+in practice they converged on identical findings twice in one day, buying one fact twice. 24.4 (a third
+surface) is also what makes per-node surfaces meaningful.
+
+## 25. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -891,7 +972,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found — **all four implemented 2026-09-19** (`1325b9e`): `instruments[]` + `findingLayer`, `boundaries[]` with the one I1 exception and its anti-loophole rule, `scope-changes.json` with the base read rather than supplied, and `findings list --byLayer` |
 | **22** | **When the two nodes run: per-node surface digests, why the two nodes duplicate, seal binding, and the invariant that survives** | the trigger design |
 | **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
-| 24 | This index | orientation |
+| **24** | **How classification is actually determined today (verified), the §22 correction, and the three gaps: instruments undeclared, instruments in the code bucket, non-path inputs invisible** | the mechanism as built |
+| 25 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
