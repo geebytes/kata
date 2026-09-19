@@ -33,10 +33,18 @@ because deriving it is the only way that mistake cannot be made.
 the opposite of what it does, on the one path in the module whose job is to refuse. Renamed `noLongerReported`, with the
 three ways a terminal finding is accounted for spelled out: repaired, deferred with a reason, or no longer reported.
 
+## And it is visible
+
+`adversarial status` reports the batch the platform now opens and closes on the task's behalf — its id, its findings, its
+base revision, and what batching saved — because a mechanism that acts for the user without saying so is the same failure
+in a friendlier costume.
+
 ## Verification
 
-`tests/e2e/repair-batch-is-wired.test.ts` (3) drives the chain the report asked for — **record a pass with a blocking
+`tests/e2e/repair-batch-is-wired.test.ts` (4) drives the chain the report asked for — **record a pass with a blocking
 finding → the batch opens with the base stamped → repair → seal → the batch closes → the next brief carries a delta with
 `reason` no longer "no repair batch has closed"** — plus the property that the base is never the revision just sealed, and
 the reverse case (no closed batch ⇒ still full, with its reason) which already existed in `tests/unit/repair-batch.test.ts`
-(9 cases). Full kata suite: 789 tests in 98 files; `tsc` clean; `dist/cli.js` rebuilt with the producers present.
+(9 cases), and the last case asserts that `adversarial status` reports the open batch and then the counted saving (**2
+findings in one batch ⇒ 1 seal avoided**). Full kata suite: 790 tests in 98 files; `tsc` clean; `dist/cli.js` rebuilt with
+the producers present.

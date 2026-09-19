@@ -411,6 +411,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (subcommand === 'status') {
         const { progressSummary } = await import('../quality/adversarial-progress.js');
         const progress = await progressSummary(root, change);
+        // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
+        // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
+        const { batchSaving, openBatch } = await import('../quality/repair-batch.js');
+        const batch = await openBatch(root, change);
+        const saving = await batchSaving(root, change);
         const nodes: Record<string, unknown> = {};
         for (const candidate of adversarialNodes) {
             const record = await readAdversarialRecord(root, change, candidate);
@@ -441,6 +446,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 lines: progress.lines,
                 lastAt: progress.lastAt,
                 last: progress.last,
+            },
+            repairBatch: {
+                open: batch ? { id: batch.id, openedAt: batch.openedAt, findings: batch.findings.map((finding) => finding.id), baseRevisionId: batch.baseRevisionId ?? null } : null,
+                ...saving,
             },
         };
     }

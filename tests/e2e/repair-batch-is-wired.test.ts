@@ -122,3 +122,35 @@ describe('a repair batch opens, closes, and makes the next round narrow', () => 
         expect(closed.baseRevisionId).not.toBe(after.id);
     });
 });
+
+describe('the batch the platform acts on is visible', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    it('adversarial status reports the open batch and what batching saved', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-batch-status-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'vis', title: 'Vis', ownedPaths: ['src/'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        const { openRepairBatch, closeRepairBatch } = await import('../../src/quality/repair-batch.js');
+        const { runAdversarialCommand } = await import('../../src/cli/ops.js');
+
+        const previousCwd = process.cwd();
+        process.chdir(root);
+        try {
+            await openRepairBatch(root, 'vis', [
+                { id: 'f-1', severity: 'major', source: 'review', message: 'a' },
+                { id: 'f-2', severity: 'major', source: 'review', message: 'b' },
+            ]);
+            const open = await runAdversarialCommand(['status', '--change', 'vis']);
+            expect(open.repairBatch).toMatchObject({ open: { id: 'batch-1', findings: ['f-1', 'f-2'] }, batches: 1, closed: 0 });
+
+            await closeRepairBatch(root, 'vis', { answered: ['f-1', 'f-2'] });
+            const closed = await runAdversarialCommand(['status', '--change', 'vis']);
+            // Two findings in one batch means one seal where a per-finding repair would have sealed twice.
+            expect(closed.repairBatch).toMatchObject({ open: null, batches: 1, closed: 1, findingsBatched: 2, sealsAvoided: 1 });
+        } finally {
+            process.chdir(previousCwd);
+        }
+    });
+});
