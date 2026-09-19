@@ -110,6 +110,7 @@ import {
 } from './cli/ops.js';
 import { parseDelegationArgs, runDelegateCommand, runHandoffCommand, type DelegationArgs } from './cli/handoff.js';
 import { runFindingsCommand } from './cli/findings.js';
+import { runScopeCommand } from './cli/scope.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
     isResumableWorkflowCommand,
@@ -298,6 +299,12 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
+    if (command === 'scope') {
+        const result = await runScopeCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
     if (command === 'adversarial') {
         const result = await runAdversarialCommand(argv.slice(1));
         outputResult(result);
@@ -366,7 +373,7 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval> [change|--change change]',
         );
     }
     if (command === 'status') {

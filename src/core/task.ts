@@ -112,6 +112,10 @@ export interface CreateTaskInput {
   acceptance: AcceptanceCriterionInput[];
   workflowProfile?: WorkflowProfile;
   ownedPaths?: string[];
+  /** See `TaskRecord['instruments']`. Accepted at creation so a task can be born knowing what it is allowed to build. */
+  instruments?: string[];
+  /** See `TaskRecord['boundaries']`. */
+  boundaries?: Array<{ instrument: string; covers: string[]; doesNotCover: Array<{ dimension: string; reason: string }>; canonicalStatement: string }>;
   acceptanceMatrix?: AcceptanceMatrix;
   requirements?: RequirementItem[];
   upstreamCoverage?: UpstreamCoverage;
@@ -129,6 +133,15 @@ export interface TaskRecord {
    * created before it existed, which is reported as "unknown" rather than as a change.
    */
   engine?: EngineStamp;
+  /**
+   * Verification tooling this task wrote to check its own deliverables (§21.1).
+   *
+   * Declared, never inferred. A task that has not decided whether a path is an instrument has not yet had the conversation
+   * that stops the arms race — and five consecutive rounds of one real task were that arms race.
+   */
+  instruments?: string[];
+  /** Per-instrument coverage boundaries (§21.2), which is what gives an adversarial search a terminating condition. */
+  boundaries?: Array<{ instrument: string; covers: string[]; doesNotCover: Array<{ dimension: string; reason: string }>; canonicalStatement: string }>;
   acceptance: AcceptanceCriterion[];
   relations?: TaskRelation[];
   branch?: string;
@@ -158,6 +171,8 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
     createdAt: now,
     updatedAt: now,
     ...(input.workflowProfile ? { workflowProfile: input.workflowProfile } : {}),
+    ...(input.instruments?.length ? { instruments: [...new Set(input.instruments)].sort() } : {}),
+    ...(input.boundaries?.length ? { boundaries: input.boundaries } : {}),
     ...(input.ownedPaths?.length ? { ownedPaths: [...new Set(input.ownedPaths)].sort() } : {}),
     ...(input.acceptanceMatrix ? { acceptanceMatrix: input.acceptanceMatrix } : {}),
     ...(input.requirements?.length ? { requirements: input.requirements } : {}),

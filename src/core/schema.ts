@@ -10,6 +10,7 @@ import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json
 import repairSchema from 'kata-asset:schemas/repair.schema.json';
 import repairObligationsSchema from 'kata-asset:schemas/repair-obligations.schema.json';
 import repairBatchSchema from 'kata-asset:schemas/repair-batch.schema.json';
+import scopeChangesSchema from 'kata-asset:schemas/scope-changes.schema.json';
 import revisionSchema from 'kata-asset:schemas/revision.schema.json';
 import userChoiceGateSchema from 'kata-asset:schemas/user-choice-gate.schema.json';
 import taskChoiceSchema from 'kata-asset:schemas/task-choice.schema.json';
@@ -32,6 +33,7 @@ const schemaText: Record<string, string> = {
   repair: repairSchema,
   'repair-obligations': repairObligationsSchema,
   'repair-batch': repairBatchSchema,
+  'scope-changes': scopeChangesSchema,
   revision: revisionSchema,
   'user-choice-gate': userChoiceGateSchema,
     'task-choice': taskChoiceSchema,

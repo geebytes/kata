@@ -47,6 +47,53 @@ export function splitOwnedPaths(ownedPaths: string[]): { code: string[]; nonCode
 }
 
 /**
+ * The owned paths that are **instruments** (§21.1), or the empty array when the task declares none.
+ *
+ * An instrument is verification tooling written *during* the task to check its deliverables — a claim checker, a probe
+ * harness, a shadow runner. Measured: **five consecutive rounds became an arms race against a guard's coverage boundary**,
+ * because an instrument owned like a deliverable is audited like one, and an adversarial search on a guard always finds the
+ * unguarded dimension. It terminates only when the guard is deleted or its boundary is *declared*.
+ *
+ * **Declared, never inferred.** Inferring "this script looks like tooling" would re-open the very question the declaration
+ * exists to settle, and a task that has not decided whether a path is an instrument has not yet had the conversation that
+ * makes the arms race stop. The upstream proposal offered "ownedPaths tiers, or an `instruments: []` list"; this is the
+ * list, because a tier would have to be guessed per path while a list is a decision someone made.
+ */
+export function instrumentPaths(task: { instruments?: string[] }): string[] {
+    return [...new Set(task.instruments ?? [])].sort();
+}
+
+/** Whether a path is one of the task's declared instruments. */
+export function isInstrumentPath(task: { instruments?: string[] }, path: string): boolean {
+    const normalized = path.replace(/^\.\//, '');
+    return instrumentPaths(task).some((instrument) => instrument === normalized || normalized.startsWith(`${instrument.replace(/\/$/, '')}/`));
+}
+
+/**
+ * Which **layer** a finding is about (§21.4): the deliverable, governance text, or an instrument.
+ *
+ * The measurement behind it: assembling the by-layer table took reading ~10 round records by hand, and the answer — *the
+ * product stopped producing findings after r18 and every round after was about the tooling* — was visible only in
+ * hindsight. Reported per finding so "are we converging, and on what" is one command while the loop is happening.
+ */
+export type FindingLayer = 'deliverable' | 'governance' | 'instrument';
+
+/**
+ * The layer a finding sits in, from the path it names.
+ *
+ * A finding that names no path is `deliverable`: that is the default the whole gate is built for, and guessing otherwise
+ * would let an unlocated finding escape to the advisory layer. When a task declares no instruments, nothing is classified
+ * as one — the layer only exists for tasks that asked for it.
+ */
+export function findingLayer(task: { instruments?: string[]; ownedPaths?: string[] }, path: string | undefined): FindingLayer {
+    if (path) {
+        if (isInstrumentPath(task, path)) return 'instrument';
+        if (isNonCodePath(path)) return 'governance';
+    }
+    return 'deliverable';
+}
+
+/**
  * The content identity of a revision's **code** paths, or `null` when it cannot be derived.
  *
  * `null` is the honest answer, not a fallback: a revision sealed before per-path digests existed cannot say which of its

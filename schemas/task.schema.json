@@ -53,6 +53,65 @@
         }
       }
     },
+    "instruments": {
+      "description": "Verification tooling this task wrote to check its own deliverables (§21.1): a claim checker, a probe harness, a shadow runner. Declared, never inferred — a task that has not decided whether a path is an instrument has not yet had the conversation that stops the arms race. Findings about these are advisory unless they contradict a declared boundary.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "boundaries": {
+      "description": "Per-instrument coverage boundaries (§21.2): what each instrument covers, what it does not, and where the single canonical statement of that lives. A finding outside a declared dimension is closeable with the declaration as its reason, and the reason is displayed at review/judge/archive — a boundary may never bury something silently.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "instrument",
+          "covers",
+          "doesNotCover",
+          "canonicalStatement"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "instrument": {
+            "type": "string",
+            "minLength": 1
+          },
+          "covers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "doesNotCover": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "dimension",
+                "reason"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "dimension": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "canonicalStatement": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "branch": {
       "type": "string",
       "minLength": 1

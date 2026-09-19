@@ -32,6 +32,22 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
         const findings = await readTrackedFindings(root, taskId);
         const filter = valueAfter(rest, '--disposition');
         const shown = filter ? findings.filter((finding) => finding.disposition === filter) : findings;
+
+        // §21.4: convergence as a query. Assembling the by-layer table took reading ~10 round records by hand, and the
+        // answer — the product stopped producing findings and every round after was about the tooling — was visible only
+        // in hindsight. Layer × severity, computed, so a loop of that kind is visible while it is happening.
+        const { findingLayer } = await import('../quality/code-surface.js');
+        const { readTask } = await import('../core/task.js');
+        const task = await readTask(root, taskId).catch(() => null);
+        const byLayer: Record<string, { total: number; open: number; bySeverity: Record<string, number> }> = {};
+        for (const finding of shown) {
+            const layer = findingLayer(task ?? {}, finding.path);
+            const entry = (byLayer[layer] ??= { total: 0, open: 0, bySeverity: {} });
+            entry.total += 1;
+            if (finding.disposition === 'open') entry.open += 1;
+            entry.bySeverity[finding.severity] = (entry.bySeverity[finding.severity] ?? 0) + 1;
+        }
+
         return {
             command: 'findings list',
             taskId,
@@ -39,7 +55,9 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
             open: shown.filter((finding) => finding.disposition === 'open').length,
             deferred: shown.filter((finding) => finding.disposition === 'deferred').length,
             accepted: shown.filter((finding) => finding.disposition === 'accepted').length,
-            findings: shown,
+            byLayer,
+            ...(task?.instruments?.length ? { instruments: task.instruments } : {}),
+            findings: shown.map((finding) => ({ ...finding, layer: findingLayer(task ?? {}, finding.path) })),
         };
     }
 
@@ -75,15 +93,30 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
     const finding = findings.find((entry) => entry.id === id);
     if (!finding) throw new Error(`Finding '${id}' was not found in the review record or an adversarial pass of task '${taskId}'.`);
 
-    const denial = dispositionDenial(finding, disposition, reason);
+    // §21.2: is this finding outside a dimension the instrument's declaration excludes? Computed here, where the task's
+    // declarations are in hand, and passed in as evidence rather than as a permission.
+    const { readTask } = await import('../core/task.js');
+    const { classifyFindingCoverage } = await import('../quality/instrument-boundary.js');
+    const task = await readTask(root, taskId).catch(() => null);
+    const coverage = task
+        ? classifyFindingCoverage(task, task.boundaries ? { boundaries: task.boundaries } : null, finding)
+        : null;
+
+    const denial = dispositionDenial(finding, disposition, reason, coverage);
     if (denial) throw new Error(denial);
+
+    // A boundary closure is reported with the dimension and the canonical statement, so it is auditable rather than a
+    // finding that quietly acquired a reason.
+    const closure = coverage?.classification === 'beyond-declared-coverage'
+        ? { closedByBoundary: coverage.dimension, canonicalStatement: coverage.canonicalStatement ?? null }
+        : {};
 
     const by = valueAfter(rest, '--by') ?? 'user';
     const at = new Date().toISOString();
     const written = await applyDisposition(root, taskId, finding.source, id, { disposition, reason, by, at });
     if (!written) throw new Error(`Finding '${id}' could not be written back to ${finding.source}.`);
 
-    return { command: `findings ${subcommand}`, taskId, id, disposition, reason, by, at };
+    return { command: `findings ${subcommand}`, taskId, id, disposition, reason, by, at, ...closure };
 }
 
 function valueAfter(argv: string[], flag: string): string | undefined {

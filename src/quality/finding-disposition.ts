@@ -111,10 +111,26 @@ export function dispositionDenial(
     finding: TrackedFinding,
     disposition: FindingDisposition,
     reason: string | undefined,
+    /**
+     * The coverage verdict, when the finding is about a declared instrument (§21.2).
+     *
+     * This is the one thing that may relax I1, and it is deliberately narrow: a `blocking`/`major` finding **outside a
+     * dimension the instrument's declaration excludes** is not a defect to repair but a boundary to record, and without
+     * this the adversarial search against any guard has no terminating condition — it finds the unguarded dimension every
+     * round until someone deletes the guard.
+     *
+     * It is not a loophole: the classification requires the finding to **quote a dimension someone declared in advance**
+     * (`classifyFindingCoverage` refuses otherwise), the reason still has to be given, and the closure is displayed at
+     * review/judge/archive.
+     */
+    coverage?: { classification: string; dimension?: string; canonicalStatement?: string } | null,
 ): string | null {
-    if (!mayBeDispositioned(finding.severity)) {
+    const beyondDeclared = coverage?.classification === 'beyond-declared-coverage';
+    if (!mayBeDispositioned(finding.severity) && !beyondDeclared) {
         return `Finding ${finding.id} is '${finding.severity}' and must be repaired: only minor and nit findings can be `
-            + `deferred or accepted. Fix it, or record evidence that it does not hold.`;
+            + `deferred or accepted. Fix it, or record evidence that it does not hold.`
+            + (finding.path ? ` (A finding about a declared instrument, outside a declared dimension, is the one exception — `
+                + `see the instrument's boundary declaration.)` : '');
     }
     if ((disposition === 'deferred' || disposition === 'accepted') && !reason?.trim()) {
         return `Dispositioning ${finding.id} as '${disposition}' requires --reason: a decision to live with a finding is `
