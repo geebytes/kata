@@ -142,6 +142,11 @@
           "evidence": {
             "type": "string",
             "minLength": 1
+          },
+          "toolUses": {
+            "description": "How many tool calls this attempt took (§18.7). Per attempt rather than per pass so a costly hypothesis is visible while it runs, which is when the decision to stop is made.",
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

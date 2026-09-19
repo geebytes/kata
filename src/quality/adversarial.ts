@@ -30,6 +30,14 @@ export interface AdversarialAttempt {
     method: string;
     outcome: 'refuted' | 'confirmed' | 'inconclusive';
     evidence?: string;
+    /**
+     * How many tool calls this attempt took (§18.7's first question).
+     *
+     * Recorded per attempt rather than only per pass so a costly hypothesis is visible **while it runs** — the pass total
+     * arrived too late to inform the next attempt, which is precisely when the decision to stop is made. Reported by
+     * `adversarial note`, where the line is already being written for the heartbeat, so it costs no extra turn.
+     */
+    toolUses?: number;
 }
 
 export interface AdversarialFinding {
@@ -167,7 +175,7 @@ export interface AdversarialBriefInput {
         added: string[];
         modified: string[];
         removed: string[];
-        attempts?: Array<{ hypothesis?: string; method?: string; outcome?: string }>;
+        attempts?: Array<{ hypothesis?: string; method?: string; outcome?: string; toolUses?: number }>;
         findings?: Array<{ id: string; severity: string; message: string; disposition: string }>;
     };
     /**
@@ -251,7 +259,9 @@ What to re-derive:
 
 Earlier attempts, for reference rather than re-execution:
 ${(input.delta.attempts ?? []).length > 0
-    ? (input.delta.attempts ?? []).map((attempt) => `- ${attempt.hypothesis ?? '(no hypothesis)'} → ${attempt.outcome ?? '(no outcome)'} (${attempt.method ?? 'no method'})`).join('\n')
+    ? (input.delta.attempts ?? [])
+        .map((attempt) => `- ${attempt.hypothesis ?? '(no hypothesis)'} → ${attempt.outcome ?? '(no outcome)'} (${attempt.method ?? 'no method'}${attempt.toolUses === undefined ? '' : `, ${attempt.toolUses} calls`})`)
+        .join('\n')
     : '- (none recorded)'}
 
 Earlier findings and what was decided about them:

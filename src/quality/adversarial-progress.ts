@@ -26,6 +26,13 @@ export interface ProgressLine {
     outcome?: 'refuted' | 'confirmed' | 'inconclusive';
     /** For a `finding` line: the finding id, so a partial pass's work is readable. */
     findingId?: string;
+    /**
+     * Tool calls this batch of work took (§18.7).
+     *
+     * On the heartbeat as well as on the recorded attempt, so a pass's cost curve is readable **while** it runs: the
+     * recorded total says a round was expensive, and this says which of its batches was.
+     */
+    toolUses?: number;
     message?: string;
 }
 

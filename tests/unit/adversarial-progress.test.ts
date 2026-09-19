@@ -167,3 +167,52 @@ describe('the default framing rotates, and stops rotating at an unrepaired block
         expect(await resolveBriefMode(root, 'm-task', 'verify', 'verify')).toMatchObject({ mode: 'verify', reason: expect.stringContaining('requested explicitly') });
     });
 });
+
+describe('§18.7: a costly attempt is visible while the round runs', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    it('records tool uses on the heartbeat line, not only on the pass total', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-per-attempt-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'cost-task', title: 'C', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+
+        await appendProgressLine(root, 'cost-task', {
+            type: 'attempt',
+            at: '2026-09-19T00:00:00.000Z',
+            node: 'verify',
+            hypothesis: 'the second instance of the merged-stream defect',
+            method: 'grep for the sentinel across the partition boundary',
+            outcome: 'confirmed',
+            toolUses: 17,
+        });
+
+        const summary = await progressSummary(root, 'cost-task');
+        // The pass total says a round was expensive; this says which of its batches was — and it is readable mid-round.
+        expect(summary.last).toMatchObject({ toolUses: 17, hypothesis: 'the second instance of the merged-stream defect' });
+    });
+
+    it('accepts an attempt with no count, and the recorded attempt schema allows one', async () => {
+        const { validate } = await import('../../src/core/schema.js');
+        // Optional on purpose: a reviewer that does not count is not blocked, it is merely less measurable.
+        expect(() => validate('adversarial-review', {
+            node: 'verify',
+            status: 'recorded',
+            revisionId: 'revision-1',
+            createdAt: '2026-09-19T00:00:00.000Z',
+            executedInFreshContext: true,
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted', toolUses: 4 }],
+            findings: [],
+        })).not.toThrow();
+        expect(() => validate('adversarial-review', {
+            node: 'verify',
+            status: 'recorded',
+            revisionId: 'revision-1',
+            createdAt: '2026-09-19T00:00:00.000Z',
+            executedInFreshContext: true,
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
+            findings: [],
+        })).not.toThrow();
+    });
+});

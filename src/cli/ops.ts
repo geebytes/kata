@@ -300,7 +300,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const { appendProgressLine } = await import('../quality/adversarial-progress.js');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial note requires a JSON line on stdin or via --from-file');
-        let parsed: { hypothesis?: string; method?: string; outcome?: 'refuted' | 'confirmed' | 'inconclusive'; type?: string; findingId?: string; message?: string };
+        let parsed: { hypothesis?: string; method?: string; outcome?: 'refuted' | 'confirmed' | 'inconclusive'; type?: string; findingId?: string; message?: string; toolUses?: number };
         try {
             parsed = JSON.parse(raw) as typeof parsed;
         } catch (error) {
@@ -315,6 +315,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...(parsed.outcome ? { outcome: parsed.outcome } : {}),
             ...(parsed.findingId ? { findingId: parsed.findingId } : {}),
             ...(parsed.message ? { message: parsed.message } : {}),
+            ...(typeof parsed.toolUses === 'number' ? { toolUses: parsed.toolUses } : {}),
         });
         return { command: 'adversarial note', taskId: change, node, written };
     }
