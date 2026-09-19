@@ -441,6 +441,10 @@ Steps 1 and 2 are independent and can proceed in parallel tonight; 3 lands on to
 1. Can a claim check be **derived** from the statement mechanically for the common shapes ("no caller in category X", "no subcommand named Y", "path matches template Z"), or does every project keep its own script? (P's script is the proof of the common shapes.)
 2. For C2, is the code/non-code split derived from the owned-path globs, or declared per path?
 3. For C1, is a batch an explicit state transition (`repair batch start|close`) or an implicit window between two seals?
+   — **Answered (2026-09-19): explicit, and the window is a seal.** A batch is opened by a write
+   (`adversarial record`, a node's refusal, or a Judge FAIL) and closed by a successful seal, which is the batch's own
+   contract: one seal and one delta round per node per batch. No `repair batch` subcommand is needed, and asking the user to
+   run one would make the saving depend on them remembering to.
 4. For C5, which hosts can report tokens at all — or is `toolUses` the only portable signal?
 
 ## 17. Methodology: why these changes, and when the loop is allowed to stop
@@ -581,7 +585,7 @@ the row's *what it actually does* is what a reader should check rather than the 
 
 | # | Change | Commit | What it actually does |
 |---|---|---|---|
-| **C1** | Repair batching | `a013925` | `repair-batch.json`; opening a batch **extends** the open one (one seal per batch, not per finding); closing is **refused** while a terminal finding it opened for is unaccounted — repaired, deferred **with a reason**, or no longer reported; `batchSaving` counts the seals avoided from the record |
+| **C1** | Repair batching | `a013925`, **wired `409b8db`** | `repair-batch.json`; opening a batch **extends** the open one (one seal per batch, not per finding); closing is **refused** while a terminal finding it opened for is unaccounted — repaired, deferred **with a reason**, or no longer reported; `batchSaving` counts the seals avoided from the record. **Correction (2026-09-19, reported from outside and reproduced): the first version had no producer** — `openRepairBatch`/`closeRepairBatch` were called from tests only, so C4's delta default could never fire. Producers now sit at the write (`adversarial record`), at the node refusals, and at a Judge FAIL; the closer runs after a successful seal; and the base revision is **stamped when the batch opens**, under the name `baseRevisionId` (not `closedByRevisionId`, which read as "the revision it closed on" and would have made every delta empty) |
 | **C2** | Text-only revisions spare the code pass | `0684cf5` + `0d77a90` | `codeManifestHash` stamped beside `manifestHash` on every binding artefact; `bindsToRevision` gains an **opt-in** `code` scope and its default stays `full`; the adversarial gate spares a pass only when both sides name the same code surface **and** `claimsVerified` — read from evidence, defaulting to `false` |
 | **C3** | Machine-checkable acceptance statements | `7eee82e` + `76649a0` | `acceptance[].claims[]`; the seal **runs** them as ordinary checks; an unfalsifiable claim is a preflight blocker; failures are reported **by claim id** in both the passing and failing paths |
 | **C4** | Delta by default after a batch | `6661f3c` | `defaultBriefScope`: a batch closed on a revision ⇒ delta from it; no closed batch, or one that named no revision ⇒ full **with its reason**; an explicit `--since` still wins; the reason travels as `scopeReason` |
