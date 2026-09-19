@@ -192,7 +192,7 @@ describe('the brief points at sealed evidence instead of asking for it again (M1
         // The narrow exception is stated, so a suite-global round is still possible.
         expect(text).toMatch(/Exception, narrow and explicit/);
         // And the batched-execution line, which is the largest lever on the turn term.
-        expect(text).toContain('## Pacing yourself');
+        expect(text).toContain('## How to spend a turn');
         expect(text).toMatch(/one\*\* invocation/);
         // A declared check is flagged; a matrix check is listed without the flag.
         expect(text).toMatch(/lint \| exit=0.*do not re-run it/);
@@ -310,5 +310,38 @@ describe('the brief contract of §18.5', () => {
         // And the scope's reason is stated in the brief, so an unexamined area is never read as verified.
         expect(text).toContain('repair batch batch-1 closed on revision-0');
         expect(text).toMatch(/What this round does not cover/);
+    });
+});
+
+describe('§19: the brief requires promotion, not re-probing (§19.4)', () => {
+    it('states all five required instructions, and the two instruments they rest on', async () => {
+        const { renderAdversarialBrief } = await import('../../src/quality/adversarial.js');
+
+        const text = renderAdversarialBrief({
+            taskId: 'promote-task',
+            node: 'verify',
+            revisionId: 'revision-1',
+            acceptance: [{ id: 'AC-1', statement: 'x' }],
+            evidence: [],
+            ownedPaths: ['src'],
+        });
+
+        // 1. Ask the suite first, then mutate rather than write.
+        expect(text).toMatch(/Ask whether an existing test already encodes this property/);
+        expect(text).toMatch(/mutate the code and watch it fail/);
+        // 2. State the prediction before running.
+        expect(text).toMatch(/state your prediction before running it/);
+        // 3. Assert the injection landed — the measured zero-hit failure mode.
+        expect(text).toMatch(/Assert the injection landed/);
+        expect(text).toMatch(/zero-hit mutation is a probe failure,\s*\n?\s*not a finding/i);
+        // 4. Promote and name the test.
+        expect(text).toMatch(/Promote\*{0,2} anything permanent into the suite and \*{0,2}name the test/);
+        // 5. Batch, with the concretely actionable half (§18.5).
+        expect(text).toMatch(/merge several queries against the same file into one/);
+        expect(text).toMatch(/prefer one test invocation over several/);
+        // And the measurement that makes the batching instruction credible rather than a preference.
+        expect(text).toMatch(/57\.5 s/);
+        expect(text).toMatch(/cost is in process launches and unpacking, not in case\s*\n?\s*count/i);
+        expect(text).toMatch(/at most six attempts/);
     });
 });

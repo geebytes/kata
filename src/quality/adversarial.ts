@@ -342,10 +342,53 @@ You do **not** have to hold everything until the end. A pass that dies mid-run k
 separate invocation is a full turn of yours, and the turn loop is what this pass mostly costs — writing a line after every
 thought would eat far more than a crashed pass ever loses.
 
-## Pacing yourself
+## How to spend a turn
 
-Independent commands belong in **one** invocation: run them together and read the outputs together. Every separate
-invocation is a full turn of yours, and the turn loop — not the CPU — is what a pass mostly costs.
+Both halves of this section are measured, and they are the difference between a cheap round and an expensive one. A turn is
+what a round is made of: **merging work into fewer turns is the single largest lever**, and a great deal of it is avoidable
+without giving up any verification at all.
+
+**Batch the commands — concretely.** Independent commands belong in **one** invocation: run them together and read the
+outputs together. Specifically:
+
+- **merge several queries against the same file into one** — five reads of one artifact are five turns carrying a context
+  that already contains it, not five faster reads;
+- **prefer one test invocation over several**, and prefer *reading a file the tool already opened* over re-opening it;
+- the same goes for \`grep\`/\`find\` sweeps: one invocation with several patterns, not one per pattern.
+
+Measured on the project side of this workflow: one focused \`pytest\` invocation of 38 cases took **57.5 s**, and four of
+them — 13.8 / 8.6 / 8.3 / 8.0 s — accounted for 39 of those seconds, while a 0.14 s case differed only by launching a
+**subprocess** (one of them also unpacked a git archive). **The cost is in process launches and unpacking, not in case
+count** — so the fix is fewer launches per observation, never fewer observations.
+
+## Use the cheapest instrument that can answer
+
+The other half of the cost is *which* instrument the turn spends itself on. There are two, and they answer different
+questions:
+
+| | a test case | a probe |
+|---|---|---|
+| asserts | the intended behaviour | **sensitivity** — if this breaks, does anything object? |
+| expectation from | the specification, fixed in advance | your **prediction**, formed now, allowed to be wrong |
+| a failure means | the code violates the spec | the code is wrong **or your experiment is** (wrong seam, injection missed) |
+| lifetime | permanent | discarded once answered |
+
+Because a probe's expectation is a prediction, its failure is ambiguous until you separate *"the code is wrong"* from
+*"my experiment is wrong"* — and that separation is most of a round's motion. So, in this order:
+
+1. **Ask whether an existing test already encodes this property.** If it does, **mutate the code and watch it fail**: two
+   commands, no new code. Do not re-probe a property the suite already holds.
+2. Only then write a probe — and **state your prediction before running it**, so a wrong prediction is diagnostic rather
+   than ambiguous.
+3. **Assert the injection landed.** A mutation whose target no longer exists runs **zero** times and exits 0; read naively
+   it says "the guard does not fire" when it says "the probe never fired it". **A zero-hit mutation is a probe failure,
+   not a finding.**
+4. **Promote** anything permanent into the suite and **name the test**; discard the rest.
+
+Why this is in the brief and not just in a design note: **three consecutive rounds rewrote experiments for the same class of
+property** (a checker's own guards) because the properties were re-probed instead of promoted. Promotion is what makes the
+*next* round cheaper — the round after a promotion writes no experiment at all, it mutates and observes. It also changes the
+kind of work that remains: only "the property is fixed, the sensitivity deepens" is left, and that one is worth paying for.
 
 **How long this round should run.** The measurement behind this brief: round length is set by the **number of hypotheses**,
 not by the size of the delta, and a round's cost grows with the square of its turns — so the last few attempts are the most
