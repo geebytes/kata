@@ -661,7 +661,80 @@ is the only one worth paying for.
 - Promote permanent properties and say which; the round's cost should fall next time.
 - Batch commands, and cap attempts.
 
-## 20. Handoff index (for whoever picks this up)
+## 21. What a real loop looked like, and the three things it says the platform is missing
+
+One task ran into a loop that every round refreshed. The rounds are the evidence, grouped by **which
+layer** their findings were about:
+
+| rounds | layer the findings were about |
+|---|---|
+| r17–r18 | the **product** (candidate identity through ordering; cluster identity as a positional index) and one governance statement |
+| r19–r20 | a governance statement (the same one, twice) and a test guard that claimed an ordered comparison while comparing a dict |
+| r21 | a document claiming an instrument existed |
+| r22–r24 | **only** the instrument: `scripts/assert_acceptance_claims.py`, its carrier, its mirror, its tests |
+
+Product-layer findings **stopped after r18**; everything after was the tooling introduced to satisfy a
+process rule mid-task. That is a platform-shaped failure, not a discipline failure, and it has three
+causes worth fixing in kata.
+
+### 21.1 Owned paths need a third class: the instrument
+
+C2 split code from governance text. A task also carries **instruments** — verification tooling written
+during the task to check the deliverables (a claim checker, a probe harness, a shadow runner). Treated
+as a deliverable, an instrument is audited to the same standard, which is how five consecutive rounds
+became an arms race against a guard's coverage boundary: an adversarial search on a guard always finds
+the unguarded dimension, so it terminates only when the guard is deleted or its boundary is *declared*.
+
+**Change.** Declare instruments in the task record (`ownedPaths` tiers, or an `instruments: []` list),
+and let the adversarial gate treat their findings as advisory unless the finding contradicts a
+**declaration** (see 21.2). Deliverable-grade rules continue to apply to the deliverable.
+
+### 21.2 A declared coverage boundary makes boundary-attacks closeable
+
+Today a finding is either repaired or — for blocking/major — not deferrable at all. But "your guard
+does not cover dimension X" is often a *design boundary*, not a defect: the guard was never meant to
+cover X, and saying so is the resolution.
+
+**Change.** Let a task carry a **boundary declaration** for an instrument (what it covers, what it does
+not, and where the single canonical statement of that lives), and classify findings as
+`within-declared-coverage` or `beyond-declared-coverage`. The first must be repaired; the second is
+closeable with the declaration as the reason, and the closing reason is displayed at review/judge/archive
+so it cannot be used to bury anything silently. Without this, an adversarial search against any guard
+has no terminating condition.
+
+### 21.3 Scope growth must re-enter design, not drift
+
+This task's audited surface grew silently: a script, then a carrier, then a mirror, then tests for all
+three — each addition expanding what the gate considered in scope, with no decision point where the
+cost was visible. Every addition also invalidated the evidence, restarting the search.
+
+**Change.** Adding a path (or an instrument) mid-task requires a recorded scope change with its reason,
+and it resets the delta base. The cost is then a decision the task makes on purpose rather than a drift
+the rounds absorb. This is the missing half of C1: batching controls how often a round happens, and this
+controls what a round is *about*.
+
+### 21.4 Convergence must be a query, not a reconstruction
+
+Assembling the table at the top of this section required reading ~10 round records by hand. C5 puts cost
+on the record; the same treatment belongs to findings: **layer** (deliverable / governance / instrument)
+and **severity** per revision, so "are we converging, and on what" is answerable in one command — and so
+a loop of the kind described here is visible while it is happening rather than in hindsight.
+
+### 21.5 When the platform ships what a task hand-rolled, say so
+
+C3 (machine-checkable acceptance claims, executed by the seal) landed *after* this task wrote its own
+checker — the same capability, built twice, and the second build is what the rounds then attacked. A task
+holding a hand-rolled equivalent of a shipped capability should be told (a migration note on the task),
+because the alternative is exactly what happened here: an instrument maintained under adversarial fire
+until someone decides to freeze it.
+
+### 21.6 What this does not excuse
+
+The loop had two other ingredients that no platform change fixes: repairs that reintroduced the class of
+defect they were fixing (four of six), and single-finding rounds instead of batches (three cycles of
+six). 21.1–21.5 remove the structural amplifier; C1 and the definition of done in 17.3 address the rest.
+
+## 22. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -675,7 +748,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **17** | **Methodology: symptom → violated principle → practice; redefined flow; Definition of Done; C6/C7; anti-pattern names** | why, and when the loop may stop |
 | **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract; §18.8 the measured cost of one focused invocation and its two fixes** | the efficiency work |
 | **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
-| 20 | This index | orientation |
+| **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found |
+| 22 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
