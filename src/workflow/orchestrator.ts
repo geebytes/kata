@@ -554,6 +554,12 @@ async function cmdBuild(
     // C3: what the claims did, against the evidence just collected. A claim whose evidence is absent counts as failed —
     // the sentence declared itself checkable, and nothing checked it.
     const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
+    // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
+    // The base revision was stamped when the batch opened, so nothing here supplies one.
+    if (evidence.every((item) => item.exitCode === 0)) {
+        const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
+        await closeBatchAfterSeal(root, taskId).catch(() => null);
+    }
     if (evidence.some((item) => item.exitCode !== 0)) {
         return {
             command: 'build',
@@ -1016,6 +1022,14 @@ async function cmdVerify(
     }
     const adversarialFindings = adversarial?.satisfied ? blockingAdversarialFindings(adversarial.record ?? null) : [];
     if (adversarialFindings.length > 0) {
+        // C1: same producer, on the verify node.
+        const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
+        await recordFindingsForBatching(
+            root,
+            taskId,
+            adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
+            'adversarial-verify',
+        ).catch(() => null);
         return {
             command: 'verify',
             taskId,
@@ -1126,6 +1140,15 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
             const adversarialFindings = blockingAdversarialFindings(adversarial.record ?? null);
             if (adversarialFindings.length > 0) {
+                // C1: findings that gate a node belong to a repair batch, opened when they are recorded (not when they are
+                // repaired) — which is what lets C4 narrow the round after the batch closes.
+                const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
+                await recordFindingsForBatching(
+                    root,
+                    taskId,
+                    adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
+                    'adversarial-review',
+                ).catch(() => null);
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
                     error: `The independent adversarial pass confirmed ${adversarialFindings.length} defect(s) at blocking or major severity; resolve them before approving.`,
@@ -1301,11 +1324,21 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     } as import('../quality/judge.js').JudgeInput);
 
     if (judgeResult.result === 'FAIL') {
-        await persistBlockingJudgeResult(
+        const failed = judgeResult.acceptance.filter((a) => a.result === 'FAIL');
+        await persistBlockingJudgeResult(root, taskId, failed.map((a) => ({ id: a.id, result: a.result })));
+        // C1: a Judge FAIL gates the node for the same reason a blocking finding does, and it belongs to the same batch.
+        const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
+        await recordFindingsForBatching(
             root,
             taskId,
-            judgeResult.acceptance.filter((a) => a.result === 'FAIL').map((a) => ({ id: a.id, result: a.result })),
-        );
+            failed.map((criterion) => ({
+                id: `judge-fail-${criterion.id}`,
+                severity: 'blocking',
+                message: `Judge FAIL on ${criterion.id}`,
+                acceptanceId: criterion.id,
+            })),
+            'judge',
+        ).catch(() => null);
     }
 
     let judgePhase: Phase = 'judge';

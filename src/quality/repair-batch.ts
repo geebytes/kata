@@ -34,8 +34,16 @@ export interface RepairBatch {
     openedAt: string;
     closedAt?: string;
     findings: RepairBatchFinding[];
-    /** The revision the batch was closed on, so it is answerable which round resolved it. */
-    closedByRevisionId?: string;
+    /**
+     * The revision the batch **started from** — what the next round narrows against (C4).
+     *
+     * Named `baseRevisionId`, not `closedByRevisionId`, because the plausible reading of "closed by" is the revision the
+     * batch closed *on*, and passing that would make the next delta empty: the base and the new revision would be the same
+     * content. The distinction is the whole point of C4, so it is carried by the field's name.
+     */
+    baseRevisionId?: string;
+    /** The content identity of that base, so C4 can still narrow after a re-seal of unchanged content. */
+    baseManifestHash?: string;
     /** Findings the batch answered by repairing them, named at closure. */
     answered?: string[];
     /** Findings the author explicitly decided not to answer, with the reason (`findings defer` semantics). */
@@ -58,11 +66,19 @@ export async function openRepairBatch(
     taskId: string,
     findings: RepairBatchFinding[],
 ): Promise<RepairBatch> {
+    // The base is the revision that was current when the batch **opened** — the artifact the repair starts from. Reading it
+    // here rather than accepting it at close is the difference C4 depends on: at close the revision has already moved, and
+    // a caller-supplied "the revision we closed on" would make the next round's delta empty.
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const base = await readCurrentTaskRevision(root, taskId).catch(() => null);
+
     let opened: RepairBatch | null = null;
     await mutateTaskArtefact(root, taskId, repairBatchPath(root, taskId), async () => {
         const record = await readBatchRecord(root, taskId);
         const open = record.batches.find((batch) => !batch.closedAt);
         if (open) {
+            // Extending, never duplicating: the base stays the one this batch opened from, which is what the next round
+            // must narrow against.
             const known = new Set(open.findings.map((finding) => finding.id));
             for (const finding of findings) if (!known.has(finding.id)) open.findings.push(finding);
             opened = open;
@@ -70,6 +86,7 @@ export async function openRepairBatch(
             opened = {
                 id: `batch-${record.batches.length + 1}`,
                 openedAt: new Date().toISOString(),
+                ...(base ? { baseRevisionId: base.id, baseManifestHash: base.manifestHash } : {}),
                 findings: [...findings],
             };
             record.batches.push(opened);
@@ -87,11 +104,29 @@ export type CloseRefusal = { refused: true; reason: 'open_terminal_findings'; fi
  *
  * The refusal is the invariant: closing a batch is when the platform stops asking for a re-verification, so it is exactly
  * the moment a dropped obligation would become invisible.
+ *
+ * A terminal finding is accounted for in one of exactly three ways, and the option names say which:
+ *   - `answered` — it was repaired;
+ *   - `deferred` — the author decided not to answer it, with a **reason** (the `findings defer` semantics);
+ *   - `noLongerReported` — a re-run of the node did not report it again.
+ *
+ * Anything else terminal and still open **refuses the close**. (The third option was called `stillOpen` when this module
+ * landed, which is the opposite of what it does: it lists findings that no longer block. A name that inverts its own
+ * meaning on the one path whose job is to refuse is worse than a longer name.)
  */
 export async function closeRepairBatch(
     root: string,
     taskId: string,
-    options: { revisionId?: string; answered?: string[]; deferred?: Array<{ id: string; reason: string }>; stillOpen?: string[] },
+    options: {
+        /**
+         * The revision the batch started from, i.e. the one the *next* round should narrow against. Omit only when it
+         * cannot be known — C4 then falls back to full scope and says so rather than measuring against a guess.
+         */
+        baseRevisionId?: string;
+        answered?: string[];
+        deferred?: Array<{ id: string; reason: string }>;
+        noLongerReported?: string[];
+    },
 ): Promise<RepairBatch | CloseRefusal> {
     let outcome: RepairBatch | CloseRefusal | null = null;
     await mutateTaskArtefact(root, taskId, repairBatchPath(root, taskId), async () => {
@@ -110,14 +145,14 @@ export async function closeRepairBatch(
                 isTerminalSeverity(finding.severity) &&
                 !answered.has(finding.id) &&
                 !deferred.has(finding.id) &&
-                !(options.stillOpen ?? []).includes(finding.id),
+                !(options.noLongerReported ?? []).includes(finding.id),
         );
         if (unaccounted.length > 0) {
             outcome = { refused: true, reason: 'open_terminal_findings', findings: unaccounted };
             return `${JSON.stringify(record, null, 2)}\n`;
         }
         open.closedAt = new Date().toISOString();
-        if (options.revisionId) open.closedByRevisionId = options.revisionId;
+        if (options.baseRevisionId) open.baseRevisionId = options.baseRevisionId;
         if (options.answered?.length) open.answered = [...options.answered];
         if (options.deferred?.length) open.deferred = [...options.deferred];
         outcome = open;
@@ -168,4 +203,96 @@ async function readBatchRecord(root: string, taskId: string): Promise<RepairBatc
 /** Validates a record on read, so a malformed batch file is reported rather than silently treated as "no batches". */
 export function validateBatchRecord(value: unknown): RepairBatchRecord {
     return validate<RepairBatchRecord>('repair-batch', value);
+}
+
+/**
+ * Opens (or extends) the batch a set of decided findings belongs to — the wiring C1 was missing.
+ *
+ * The defect this closes: `openRepairBatch` and `closeRepairBatch` had **no production caller**, so no batch was ever
+ * opened, so `defaultBriefScope` always found none and C4's delta default always fell back to full scope with the reason
+ * *"no repair batch has closed"*. The mechanism was reachable and inert — the same shape as the write-policy string copy
+ * and the four drift sources before it.
+ *
+ * Called where the findings are **recorded**, not where they are repaired: the point is that a set of findings discovered
+ * together is repaired together, and the record of that begins the moment they are known.
+ */
+export async function recordFindingsForBatching(
+    root: string,
+    taskId: string,
+    findings: Array<{ id: string; severity: string; message: string; acceptanceId?: string }>,
+    source: RepairBatchFinding['source'],
+): Promise<RepairBatch | null> {
+    // Only findings that actually gate a node: a nit has no batch to belong to, and recording one would inflate the
+    // saving the batch is supposed to measure.
+    const gating = findings
+        .filter((finding) => isTerminalSeverity(finding.severity))
+        .map((finding) => ({
+            id: finding.id,
+            severity: finding.severity,
+            message: finding.message,
+            source,
+            ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
+        }));
+    if (gating.length === 0) return null;
+    return openRepairBatch(root, taskId, gating);
+}
+
+/**
+ * Closes the open batch once a seal has answered it — the other half of the wiring.
+ *
+ * Called **after a successful seal**, because that is the moment the platform has re-verified the repaired artifact: the
+ * batch's own contract is "one seal and one delta round per node per batch", so the seal is what ends it.
+ *
+ * The base revision is **not** a parameter. It was stamped when the batch opened, and accepting one here would let a caller
+ * pass the revision that was just sealed — the base and the new revision would then be identical content, and the next
+ * round would narrow to nothing. Deriving it is the only way that mistake cannot be made.
+ *
+ * Findings are marked accounted for by asking the obligations store, not by trusting a list: a batch closes when its
+ * findings are genuinely resolved, deferred with a reason, or no longer reported by the node that raised them.
+ */
+export async function closeBatchAfterSeal(
+    root: string,
+    taskId: string,
+): Promise<RepairBatch | CloseRefusal | null> {
+    const batch = await openBatch(root, taskId);
+    if (!batch) return null;
+
+    const { readObligations } = await import('./repair-obligations.js');
+    const obligations = await readObligations(root, taskId).catch(() => []);
+    const resolved = new Set(obligations.filter((obligation) => obligation.resolvedAt).map((obligation) => obligation.findingId).filter(Boolean) as string[]);
+    const { readTrackedFindings } = await import('./finding-disposition.js');
+    const tracked = await readTrackedFindings(root, taskId).catch(() => []);
+    const deferred = tracked
+        .filter((finding) => finding.disposition === 'deferred' || finding.disposition === 'accepted')
+        .map((finding) => ({ id: finding.id, reason: finding.dispositionReason ?? 'no reason recorded' }));
+
+    const answered = batch.findings.filter((finding) => resolved.has(finding.id)).map((finding) => finding.id);
+    // A finding the current run no longer reports is accounted for by absence — the batch's third way, and the reason the
+    // option is named for what it means rather than for the state it is in.
+    const stillTracked = new Set(tracked.map((finding) => finding.id));
+    const noLongerReported = batch.findings.filter((finding) => !stillTracked.has(finding.id)).map((finding) => finding.id);
+
+    return closeRepairBatch(root, taskId, { answered, deferred, noLongerReported });
+}
+
+/**
+ * Records the gating findings of a freshly recorded pass into the batch — the producer at the write.
+ *
+ * Placed here rather than only at the node's refusal because *this* is where a pass's findings are written, and it is
+ * reached whether or not the node goes on to refuse: a `verify` command can stop earlier for its own reasons (evidence,
+ * obligations, the Wiki closure) and never reach the gate that reports the same findings. Hooking the write makes the batch
+ * independent of which refusal happened to come first.
+ */
+export async function recordPassFindingsForBatching(
+    root: string,
+    taskId: string,
+    node: 'verify' | 'review',
+    findings: Array<{ id: string; severity: string; message: string; path?: string }>,
+): Promise<RepairBatch | null> {
+    return recordFindingsForBatching(
+        root,
+        taskId,
+        findings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
+        node === 'verify' ? 'adversarial-verify' : 'adversarial-review',
+    );
 }

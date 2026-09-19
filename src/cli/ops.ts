@@ -381,6 +381,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // M3: the turn term alongside the clock, so the two halves of a pass's cost are separable in the record.
             ...(argValue(rest, '--tool-uses') ? { toolUses: Number(argValue(rest, '--tool-uses')) } : {}),
         });
+        // C1: a recorded pass's gating findings open (or join) this task's repair batch — the write is where they become
+        // known, and it is reached regardless of which refusal the node reports first.
+        const { recordPassFindingsForBatching } = await import('../quality/repair-batch.js');
+        await recordPassFindingsForBatching(root, change, node, record.findings ?? []).catch(() => null);
         const gate = await adversarialGateFor(root, change, node);
         // `--mode` is accepted but never authoritative: the round answered the issued brief, so a flag that disagrees
         // is reported rather than allowed to misdescribe the round (M2's rotation reads the mode from here).

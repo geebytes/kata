@@ -59,12 +59,12 @@ describe('a repair batch', () => {
 
         // Deferred with a reason is accounting for it; so is "a re-run no longer reports it".
         const closed = await closeRepairBatch(root, 'b-task', {
-            revisionId: 'revision-1',
+            baseRevisionId: 'revision-1',
             deferred: [{ id: 'major-1', reason: 'fixed by the same change, not worth a separate round' }],
-            stillOpen: [],
+            noLongerReported: [],
             answered: ['minor-1'],
         });
-        expect(closed).toMatchObject({ id: 'batch-1', closedByRevisionId: 'revision-1', answered: ['minor-1'] });
+        expect(closed).toMatchObject({ id: 'batch-1', baseRevisionId: 'revision-1', answered: ['minor-1'] });
         expect(await openBatch(root, 'b-task')).toBeNull();
     });
 
@@ -118,11 +118,11 @@ describe('C4: the round after a closed batch measures what the repair changed', 
         await writeFile(join(root, 'src/a.py'), 'x = 2\n', 'utf8');
 
         await openRepairBatch(root, 's-task', [{ id: 'f-1', severity: 'minor', source: 'review', message: 'naming' }]);
-        await closeRepairBatch(root, 's-task', { revisionId: base.id, answered: ['f-1'] });
+        await closeRepairBatch(root, 's-task', { baseRevisionId: base.id, answered: ['f-1'] });
 
         const after = await buildAdversarialBrief(root, 's-task', 'verify');
         expect(after.delta).toMatchObject({ from: base.id, changedPaths: ['src/a.py'] });
-        expect(after.scopeReason).toMatch(/batch batch-1 closed on/);
+        expect(after.scopeReason).toMatch(/batch batch-1 started from/);
     });
 
     it('lets an explicit --since win over the batch default', async () => {
@@ -134,7 +134,7 @@ describe('C4: the round after a closed batch measures what the repair changed', 
         await writeFile(join(root, 'src/a.py'), 'x = 2\n', 'utf8');
         const newer = await createTaskRevision({ root, taskId: 's-task', ownedPaths: ['src/a.py'], checkIds: [] });
         await openRepairBatch(root, 's-task', [{ id: 'f-1', severity: 'minor', source: 'review', message: 'naming' }]);
-        await closeRepairBatch(root, 's-task', { revisionId: newer.id, answered: ['f-1'] });
+        await closeRepairBatch(root, 's-task', { baseRevisionId: newer.id, answered: ['f-1'] });
 
         const explicit = await buildAdversarialBrief(root, 's-task', 'verify', { since: older.id });
         expect(explicit.delta).toMatchObject({ from: older.id });
@@ -150,6 +150,6 @@ describe('C4: the round after a closed batch measures what the repair changed', 
 
         const brief = await buildAdversarialBrief(root, 's-task', 'verify');
         expect(brief.delta).toBeNull();
-        expect(brief.scopeReason).toMatch(/closed without naming a revision/);
+        expect(brief.scopeReason).toMatch(/has no base revision/);
     });
 });

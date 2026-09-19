@@ -739,12 +739,15 @@ async function defaultBriefScope(root: string, taskId: string): Promise<{ since?
     if (!closed) {
         return { reason: 'no repair batch has closed, so there is nothing to narrow against' };
     }
-    if (!closed.closedByRevisionId) {
-        return { reason: `batch ${closed.id} closed without naming a revision, so the change surface cannot be derived` };
+    // A batch's base survives a re-seal of unchanged content as a hash even when its id is gone, so the hash is accepted
+    // too — the same id-versus-content rule every other binding in this repository follows.
+    const base = closed.baseRevisionId ?? closed.baseManifestHash;
+    if (!base) {
+        return { reason: `batch ${closed.id} has no base revision, so the change surface cannot be derived` };
     }
     return {
-        since: closed.closedByRevisionId,
-        reason: `repair batch ${closed.id} closed on ${closed.closedByRevisionId}: the round after a bounded repair measures what the repair changed`,
+        since: base,
+        reason: `repair batch ${closed.id} started from ${base}: the round after a bounded repair measures what the repair changed`,
     };
 }
 

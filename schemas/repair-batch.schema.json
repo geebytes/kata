@@ -31,7 +31,13 @@
             "type": "string",
             "minLength": 1
           },
-          "closedByRevisionId": {
+          "baseRevisionId": {
+            "description": "The revision the batch started from — what the next round narrows against (C4). Named for its meaning rather than for when it is written, because \"closed by\" invites the revision sealed at close, which would make the next delta empty.",
+            "type": "string",
+            "minLength": 1
+          },
+          "baseManifestHash": {
+            "description": "The content identity of the base revision, so C4 can still narrow after a re-seal of unchanged content.",
             "type": "string",
             "minLength": 1
           },
