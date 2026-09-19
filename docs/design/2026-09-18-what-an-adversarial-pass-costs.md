@@ -565,7 +565,73 @@ Independence, per-conclusion counterexamples, mutation evidence for guards, and 
 3. For the attempt cap, is the reproduction escape hatch checkable (the round must show the reproduction), or advisory?
 4. Do hosts report tokens at all, or is per-turn tool use the only portable signal?
 
-## 19. Handoff index (for whoever picks this up)
+## 19. A probe is not a test case, and the difference explains most of a round's motion
+
+A round writes probes, runs them, and rewrites them. That motion looks like thrash; it is partly
+necessary and partly avoidable, and the rule that separates the two is worth stating because it is
+also what makes later rounds cheaper.
+
+### 19.1 The two instruments answer different questions
+
+| | test case | probe |
+|---|---|---|
+| what it asserts | the intended behaviour | **sensitivity** — if this condition breaks, does anything object? |
+| where the expectation comes from | the specification, fixed in advance | the reviewer's **prediction**, formed at that moment, allowed to be wrong |
+| what a failure means | the code violates the spec | one of two things: the code is wrong, **or the experiment is** (wrong seam, wrong interface, injection missed) |
+| lifetime | permanent; runs in CI | discarded once it has answered |
+| typical action | invoke normally, assert the result | **destructive**: inject the old implementation, change a number, delete a marker, corrupt a file |
+
+Because a probe's expectation is a prediction rather than a requirement, an error is ambiguous until
+the reviewer separates "the code is wrong" from "my experiment is wrong". That separation is most of
+the motion in a round, and it is not visible in a plan — only in the transcript.
+
+### 19.2 Why a probe changes, ranked by whether the change was avoidable
+
+1. **Learning the interface — legitimate, and avoidable by a reading set.** The first probe encodes a
+   guess about how to drive the system; an error means the guess was wrong, not that the code is.
+   Measured example: reaching a candidate row requires `register_source → ingest_text →
+   SegmentAdapter → CompilePipeline` before anything can be asserted.
+2. **The property is fixed, the sensitivity deepens — legitimate.** "Is the count independent of how
+   the receiver is spelled?" needed thirty-two receiver shapes only after the first probe revealed
+   that counting keyed on a name pattern. The question never changed; the experiment did.
+3. **Wrong seam — legitimate and necessary.** Calling the entry point in-process and running the real
+   CLI subprocess can disagree, and for an exit-code contract only the second answers the question.
+4. **Destructive scaffolding — necessary and error-prone.** Temporary copies, restores, and an
+   assertion that the injection actually landed. Measured failure: an injection whose target string
+   no longer existed ran **zero** times and exited 0 — read naively it says "the guard does not fire"
+   when it says "the probe never fired it". The fix is to assert the hit count.
+5. **Environment friction — pure waste.** Working directory, `PATH` for `uv`/`node`, an ignored
+   `.kata` directory that makes a test unrunnable, a shared database schema colliding under
+   concurrency.
+
+### 19.3 The rule that makes later rounds cheaper: promote
+
+A probe that reveals a **permanent** property should become a test case. Then the next round writes no
+experiment at all — it mutates the code under the existing test and observes. Order:
+
+1. **Ask whether an existing test already encodes the property.** If it does, mutate the code and
+   watch it fail: two commands, no new code.
+2. Otherwise write a probe — but **state the prediction before running**, so a wrong prediction is
+   diagnostic instead of ambiguous.
+3. **Assert the injection hit.** A no-op mutation must be impossible to mistake for an insensitive
+   guard.
+4. **Promote** anything permanent into the suite and name it; discard the rest.
+
+The consequence belongs in a cost document: motion and tokens per round should **decline** as
+properties accumulate as tests. Today they did not — three consecutive rounds rewrote experiments for
+the same class of property (the checker's own guards), because the properties were re-probed instead of
+promoted. A promoted property also changes the *kind* of work left: only 19.2 case 2 remains, and that
+is the only one worth paying for.
+
+### 19.4 What the brief must therefore require
+
+- Is there an existing test for this property? If yes, **mutate rather than write**.
+- State the prediction before running the probe.
+- Assert the injection landed; a zero-hit mutation is a probe failure, not a finding.
+- Promote permanent properties and say which; the round's cost should fall next time.
+- Batch commands, and cap attempts.
+
+## 20. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -578,7 +644,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **16** | **Handoff: owners (K/P), order, dependencies, interfaces, traps, open questions** | the施工 order |
 | **17** | **Methodology: symptom → violated principle → practice; redefined flow; Definition of Done; C6/C7; anti-pattern names** | why, and when the loop may stop |
 | **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract** | the efficiency work |
-| 19 | This index | orientation |
+| **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
+| 20 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
