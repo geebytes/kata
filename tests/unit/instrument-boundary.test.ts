@@ -230,6 +230,9 @@ describe('§24.4: the instrument surface, so an instrument edit does not expire 
     });
 
     it('splits three ways, and subtracts instruments before the code/governance split', async () => {
+        // Note: `splitOwnedPaths` classifies *owned paths*, and a realistic owned set is directory-shaped — so this is the
+        // path-level view only. `surface-digest-expansion.test.ts` covers the level the digests are computed over, which is
+        // where an instrument declared inside an owned directory has to be recognised.
         const { splitOwnedPaths, surfaceDigests } = await import('../../src/quality/code-surface.js');
         const task = { instruments: ['scripts/checker.py'] };
         const split = splitOwnedPaths(['src/a.ts', 'docs/b.md', 'scripts/checker.py'], task);

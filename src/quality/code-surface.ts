@@ -114,56 +114,102 @@ export function findingLayer(task: { instruments?: string[]; ownedPaths?: string
  * paths are code, and a caller that needs the sub-manifest must then treat the code as unverified rather than assume it is
  * unchanged. Every consumer of this is required to fall back to full invalidation when it gets `null`.
  */
+/**
+ * The digest keys an owned path covers.
+ *
+ * An owned path is frequently a **directory** (`scripts`, `packages/x/src/…`), while `pathDigests` is keyed by **files**
+ * (699 entries on the measured task, keyed `scripts/assert_acceptance_claims.py`, `tests/test_x.py`, …). Matching the two
+ * by string equality therefore found *nothing* for a directory-shaped owned path, so every surface digest was computed over
+ * the two documentation files and looked healthy.
+ *
+ * The consequence was not a slow gate but a **silent one**: the code surface did not move when code moved, so a pass could
+ * have been spared for a change it had never seen — the exact failure mode §15 forbids, arrived at by a plausible-looking
+ * implementation. The match is a prefix on a path boundary, and a file path also matches itself.
+ */
+function digestKeysFor(ownedPath: string, key: string): boolean {
+    if (key === ownedPath) return true;
+    const prefix = ownedPath.endsWith('/') ? ownedPath : `${ownedPath}/`;
+    return key.startsWith(prefix);
+}
+
+/**
+ * The content identity of one surface: the owned paths in it, expanded to the digest entries they cover.
+ *
+ * `null` when the surface has no entries, or when the revision has no digest table — the honest answer, and the one every
+ * consumer must treat as "cannot be spared" rather than "unchanged".
+ */
+function surfaceDigest(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    paths: string[],
+): string | null {
+    if (!revision.pathDigests) return null;
+    const digests = revision.pathDigests;
+    // Expansion is required, not a convenience: an owned *directory* has no digest of its own, so matching paths literally
+    // would compute over nothing. Reported per covered key so a change inside a directory is visible.
+    const covered = Object.keys(digests)
+        .filter((key) => paths.some((path) => digestKeysFor(path, key)))
+        .sort();
+    if (covered.length === 0) return null;
+    return hashContent(covered.map((key) => `${key}\u0000${digests[key]}`).join('\u0001'));
+}
+
+/**
+ * Every digest key, classified into the three surfaces.
+ *
+ * **By key, not by owned path.** The measured task owns `scripts/` and `tests/` as *directories* and declares
+ * `scripts/assert_acceptance_claims.py` as an instrument — so classifying the *owned path* finds no instrument at all, and
+ * the instrument's file stays inside the code surface where its every edit expires the deliverable's pass. That is the
+ * defect §24.4 was written to fix, surviving one level down.
+ *
+ * A key belongs to an instrument when the declaration names it (or a directory above it), and otherwise is split by the
+ * code/governance rule. Keys are what the digests are computed over, so this is the level at which the three surfaces
+ * actually differ.
+ */
+export function classifyDigestKeys(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    task: { instruments?: string[] } = {},
+): { instruments: string[]; code: string[]; nonCode: string[] } {
+    const instruments: string[] = [];
+    const code: string[] = [];
+    const nonCode: string[] = [];
+    for (const key of Object.keys(revision.pathDigests ?? {})) {
+        if (isInstrumentPath(task, key)) instruments.push(key);
+        else if (isNonCodePath(key)) nonCode.push(key);
+        else code.push(key);
+    }
+    return { instruments: instruments.sort(), code: code.sort(), nonCode: nonCode.sort() };
+}
+
+function digestOver(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    keys: string[],
+): string | null {
+    const digests = revision.pathDigests;
+    if (!digests) return null;
+    // A declared surface with no digest entries cannot be spoken for: `null` is "cannot be spared", never "unchanged".
+    if (keys.length === 0) return null;
+    return hashContent(keys.map((key) => `${key}\u0000${digests[key]}`).join('\u0001'));
+}
+
 export function codeManifestHash(
     revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
     task: { instruments?: string[] } = {},
 ): string | null {
-    if (!revision.pathDigests) return null;
-    const { code } = splitOwnedPaths(revision.ownedPaths, task);
-    if (code.length === 0) return null;
-    // Deterministic over the sorted paths, so the same content always gives the same identity.
-    const payload = code
-        .map((path) => `${path}\u0000${revision.pathDigests?.[path] ?? ''}`)
-        .sort()
-        .join('\u0001');
-    return hashContent(payload);
+    return digestOver(revision, classifyDigestKeys(revision, task).code);
 }
 
-/**
- * The content identity of a revision's declared **instruments** (§24.4).
- *
- * `null` when there are none, or when the digests cannot speak for them — the honest answer, and the one every consumer
- * must treat as "cannot be spared" rather than "unchanged".
- */
 export function instrumentManifestHash(
     revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
     task: { instruments?: string[] } = {},
 ): string | null {
-    if (!revision.pathDigests) return null;
-    const { instruments } = splitOwnedPaths(revision.ownedPaths, task);
-    // An instrument declared but not owned has no recorded digest, so its surface cannot be derived — reported as `null`
-    // rather than folded into "empty, therefore unchanged".
-    if (instruments.length === 0) return null;
-    const payload = instruments
-        .map((path) => `${path}\u0000${revision.pathDigests?.[path] ?? ''}`)
-        .sort()
-        .join('\u0001');
-    return hashContent(payload);
+    return digestOver(revision, classifyDigestKeys(revision, task).instruments);
 }
 
-/** The governance-text surface, as its own digest, so the three are symmetric. */
 export function governanceManifestHash(
     revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
     task: { instruments?: string[] } = {},
 ): string | null {
-    if (!revision.pathDigests) return null;
-    const { nonCode } = splitOwnedPaths(revision.ownedPaths, task);
-    if (nonCode.length === 0) return null;
-    const payload = nonCode
-        .map((path) => `${path}\u0000${revision.pathDigests?.[path] ?? ''}`)
-        .sort()
-        .join('\u0001');
-    return hashContent(payload);
+    return digestOver(revision, classifyDigestKeys(revision, task).nonCode);
 }
 
 /**
