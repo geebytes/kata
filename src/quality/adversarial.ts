@@ -120,6 +120,10 @@ export interface AdversarialRecord {
      * `evaluateAdversarialGate`, which is what makes it safe to act on.
      */
     codeManifestHash?: string;
+    /** The declared-instrument surface at the time of the pass (§24.4). */
+    instrumentManifestHash?: string;
+    /** The governance-text surface at the time of the pass. */
+    governanceManifestHash?: string;
     waivedReason?: string;
     waivedBy?: string;
 }
@@ -823,6 +827,10 @@ export function evaluateAdversarialGate(
         otherRevisionBriefSha256s?: string[];
         /** The current revision's code-only content identity, when it can be derived (C2). */
         codeManifestHash?: string | null;
+        /** The declared-instrument surface (§24.4): an instrument edit answers only to this surface. */
+        instrumentManifestHash?: string | null;
+        /** The governance-text surface (§22/§24). */
+        governanceManifestHash?: string | null;
         /**
          * Whether the acceptance statement's claims were verified **on the current revision** (C2 + C3).
          *
@@ -845,13 +853,25 @@ export function evaluateAdversarialGate(
     //   1. both sides can name the code surface and they agree (an underivable surface falls through to stale), and
     //   2. the acceptance statement's claims were re-verified on this revision — a text edit changes the sentences, so
     //      sparing the code pass is only honest while something cheap has re-read them.
-    const textOnly = !sameRevision
+    // The deliverable pass stands while **the surface it verified** is unchanged. That is one rule, not two:
+    //
+    //   - a governance-text edit does not move the code surface (C2);
+    //   - an instrument edit does not move it either, because a declared instrument is subtracted from the code surface
+    //     before it is hashed (§24.4) — which is what four wasted rounds were about.
+    //
+    // An earlier draft of this had a second branch keyed on the *instrument* surface being unchanged, and it was unsound:
+    // "the instrument did not change" is true whenever code changed, so it spared passes it should have expired. The
+    // surface a verdict answers to is the code surface; the other two are stamped for reporting, not for sparing.
+    const surfaceUnchanged = !sameRevision
         && !sameContent
         && Boolean(record.codeManifestHash)
         && Boolean(input.codeManifestHash)
-        && record.codeManifestHash === input.codeManifestHash
-        && input.claimsVerified === true;
-    if (!sameRevision && !sameContent && !textOnly) return { satisfied: false, reason: 'stale_revision', record, findings: [] };
+        && record.codeManifestHash === input.codeManifestHash;
+    // The precondition, unchanged in kind: a governance or instrument edit changes *what verifies the sentences*, so the
+    // sentences have to have been re-read before the pass may stand. Defaults to false — the strict answer.
+    if (!sameRevision && !sameContent && !(surfaceUnchanged && input.claimsVerified === true)) {
+        return { satisfied: false, reason: 'stale_revision', record, findings: [] };
+    }
     if (record.status === 'waived') return { satisfied: true, reason: 'waived', record, findings: [] };
     // A short-circuit for the shape the gate requires beyond the schema: a recorded pass needs its attestation, its
     // brief and at least one attempt, or it has not demonstrated anything.
@@ -1323,14 +1343,21 @@ export async function adversarialGateFor(
         revisionIds: [revisionId, record?.revisionId],
         manifestHashes: [revision?.manifestHash, record?.manifestHash],
     });
-    const { codeManifestHash } = await import('./code-surface.js');
+    // §24.4: the surfaces are computed from the task's declaration, so a declared instrument is subtracted from the code
+    // surface instead of invalidating it.
+    const { surfaceDigests } = await import('./code-surface.js');
+    const { readTask } = await import('../core/task.js');
+    const task = await readTask(root, taskId).catch(() => null);
+    const surfaces = surfaceDigests(revision, task ?? {});
     const gate = evaluateAdversarialGate(record, {
         node,
         revisionId,
         manifestHash: revision?.manifestHash ?? null,
         issuedBriefSha256s: pool.accepted.map((entry) => entry.briefSha256),
         otherRevisionBriefSha256s: pool.otherRevision.map((entry) => entry.briefSha256),
-        codeManifestHash: revision ? codeManifestHash(revision) : null,
+        codeManifestHash: surfaces.code,
+        instrumentManifestHash: surfaces.instrument,
+        governanceManifestHash: surfaces.governance,
         claimsVerified: await claimsVerifiedForRevision(root, taskId, revisionId),
     });
     if (!gate.satisfied) return gate;

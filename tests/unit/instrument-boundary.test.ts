@@ -219,3 +219,84 @@ describe('the scope surface (§21.1–§21.3), through the command handlers', ()
         }
     });
 });
+
+describe('§24.4: the instrument surface, so an instrument edit does not expire the deliverable pass', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    const revisionWith = (digests: Record<string, string>): { ownedPaths: string[]; pathDigests: Record<string, string> } => ({
+        ownedPaths: Object.keys(digests),
+        pathDigests: digests,
+    });
+
+    it('splits three ways, and subtracts instruments before the code/governance split', async () => {
+        const { splitOwnedPaths, surfaceDigests } = await import('../../src/quality/code-surface.js');
+        const task = { instruments: ['scripts/checker.py'] };
+        const split = splitOwnedPaths(['src/a.ts', 'docs/b.md', 'scripts/checker.py'], task);
+        expect(split).toEqual({ instruments: ['scripts/checker.py'], code: ['src/a.ts'], nonCode: ['docs/b.md'] });
+
+        // An instrument written in Markdown is still an instrument: the declaration is the more specific statement.
+        expect(splitOwnedPaths(['docs/checker.md'], { instruments: ['docs/checker.md'] }).instruments).toEqual(['docs/checker.md']);
+
+        const before = surfaceDigests(revisionWith({ 'src/a.ts': 'h1', 'docs/b.md': 'd1', 'scripts/checker.py': 'c1' }), task);
+        const instrumentEdited = surfaceDigests(revisionWith({ 'src/a.ts': 'h1', 'docs/b.md': 'd1', 'scripts/checker.py': 'c2' }), task);
+        // Editing the checker moves the instrument surface only — the code surface is what a deliverable pass binds to.
+        expect(instrumentEdited.instrument).not.toBe(before.instrument);
+        expect(instrumentEdited.code).toBe(before.code);
+        expect(instrumentEdited.governance).toBe(before.governance);
+    });
+
+    it('spares a pass when only the instrument surface moved, and still requires the claims to be re-read', async () => {
+        const { evaluateAdversarialGate } = await import('../../src/quality/adversarial.js');
+        const record = {
+            node: 'verify' as const,
+            status: 'recorded' as const,
+            revisionId: 'revision-1',
+            manifestHash: 'manifest-1',
+            codeManifestHash: 'code-1',
+            instrumentManifestHash: 'inst-1',
+            governanceManifestHash: 'gov-1',
+            createdAt: '2026-09-19T00:00:00.000Z',
+            executedInFreshContext: true,
+            briefSha256: 'brief-1',
+            verdict: 'no_defect_found' as const,
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' as const }],
+            findings: [],
+            scope: { kind: 'full' as const },
+        };
+        const gate = (overrides: Record<string, unknown> = {}): ReturnType<typeof evaluateAdversarialGate> =>
+            evaluateAdversarialGate(record, {
+                node: 'verify',
+                revisionId: 'revision-2',
+                manifestHash: 'manifest-2',
+                codeManifestHash: 'code-1',
+                instrumentManifestHash: 'inst-1',
+                governanceManifestHash: 'gov-2',
+                issuedBriefSha256s: ['brief-1'],
+                claimsVerified: true,
+                ...overrides,
+            });
+
+        // Governance text moved, code and instrument identical: the code pass stands (C2's path).
+        expect(gate()).toMatchObject({ satisfied: true });
+        // Only the instrument moved: same answer, and that is §24.4.
+        expect(gate({ governanceManifestHash: 'gov-1', instrumentManifestHash: 'inst-2' })).toMatchObject({ satisfied: true });
+        // The deliverable moved: nothing is spared.
+        expect(gate({ codeManifestHash: 'code-2' })).toMatchObject({ satisfied: false, reason: 'stale_revision' });
+        // And the precondition is the same on both paths.
+        expect(gate({ instrumentManifestHash: 'inst-2', governanceManifestHash: 'gov-1', claimsVerified: false }))
+            .toMatchObject({ satisfied: false, reason: 'stale_revision' });
+    });
+
+    it('binds per surface through bindsToRevision', async () => {
+        const { bindsToRevision } = await import('../../src/workflow/verdict-binding.js');
+        const current = { revisionId: 'r2', manifestHash: 'm2', codeManifestHash: 'c1', instrumentManifestHash: 'i2', governanceManifestHash: 'g1' };
+        const artifact = { codeManifestHash: 'c1', instrumentManifestHash: 'i1', governanceManifestHash: 'g1' };
+
+        expect(bindsToRevision(artifact, current, { scope: 'code' })).toBe(true);
+        expect(bindsToRevision(artifact, current, { scope: 'instrument' })).toBe(false);
+        expect(bindsToRevision(artifact, current, { scope: 'governance' })).toBe(true);
+        // The default is unchanged: still `full`, so no existing caller is loosened by the new scopes.
+        expect(bindsToRevision(artifact, current)).toBe(false);
+    });
+});

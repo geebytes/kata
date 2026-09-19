@@ -1,5 +1,5 @@
 import { readCurrentTaskRevision } from './revision.js';
-import { codeManifestHash } from '../quality/code-surface.js';
+import { surfaceDigests } from '../quality/code-surface.js';
 
 /**
  * How a verdict about a revision is bound to that revision.
@@ -24,6 +24,10 @@ export interface VerdictBinding {
      * and **consulted only by the scopes that ask for it** — see `bindsToRevision`'s `scope`.
      */
     codeManifestHash?: string;
+    /** The governance-text surface (§22/§24): what a text-only edit may expire, and nothing more. */
+    governanceManifestHash?: string;
+    /** The declared-instrument surface (§24.4): what an instrument edit may expire, and nothing more. */
+    instrumentManifestHash?: string;
 }
 
 /**
@@ -36,7 +40,7 @@ export interface VerdictBinding {
  * The default is deliberately `full` — **no existing caller is loosened by this interface**. A gate opts in by asking for
  * `code` scope, one call site at a time, with its own test.
  */
-export type VerdictScope = 'full' | 'code';
+export type VerdictScope = 'full' | 'code' | 'instrument' | 'governance';
 
 export interface RevisionIdentity {
     revisionId: string | null;
@@ -47,15 +51,29 @@ export interface RevisionIdentity {
      * match when either side is missing — the full invalidation the proposal requires.
      */
     codeManifestHash?: string | null;
+    /** The governance-text surface (§22/§24): a text-only edit invalidates what this surface was verified for. */
+    governanceManifestHash?: string | null;
+    /** The declared-instrument surface (§24.4): instrument edits invalidate the instrument surface only. */
+    instrumentManifestHash?: string | null;
 }
 
-/** The identity a verdict should be stamped with, read from one place so no writer re-derives it. */
+/**
+ * The identity a verdict should be stamped with, read from one place so no writer re-derives it.
+ *
+ * The task is read for its `instruments[]` declaration (§24.4): without it, a declared instrument falls into the code
+ * bucket and its edits invalidate a pass about the deliverable — the structural cause of four wasted rounds in one day.
+ */
 export async function currentRevisionIdentity(root: string, taskId: string): Promise<RevisionIdentity> {
     const revision = await readCurrentTaskRevision(root, taskId);
+    const { readTask } = await import('../core/task.js');
+    const task = await readTask(root, taskId).catch(() => null);
+    const surfaces = surfaceDigests(revision, task ?? {});
     return {
         revisionId: revision?.id ?? null,
         manifestHash: revision?.manifestHash ?? null,
-        codeManifestHash: revision ? codeManifestHash(revision) : null,
+        codeManifestHash: surfaces.code,
+        governanceManifestHash: surfaces.governance,
+        instrumentManifestHash: surfaces.instrument,
     };
 }
 
@@ -65,6 +83,8 @@ export function revisionBindingFields(identity: RevisionIdentity): VerdictBindin
         ...(identity.revisionId ? { revisionId: identity.revisionId } : {}),
         ...(identity.manifestHash ? { manifestHash: identity.manifestHash } : {}),
         ...(identity.codeManifestHash ? { codeManifestHash: identity.codeManifestHash } : {}),
+        ...(identity.governanceManifestHash ? { governanceManifestHash: identity.governanceManifestHash } : {}),
+        ...(identity.instrumentManifestHash ? { instrumentManifestHash: identity.instrumentManifestHash } : {}),
     };
 }
 
@@ -92,6 +112,18 @@ export function bindsToRevision(
         return Boolean(artifact.codeManifestHash)
             && Boolean(current.codeManifestHash)
             && artifact.codeManifestHash === current.codeManifestHash;
+    }
+    // §24.4: the instrument surface, so editing the checker does not invalidate a pass about the deliverable — which is
+    // what happened four times in one day when those edits landed in the code bucket.
+    if (scope === 'instrument') {
+        return Boolean(artifact.instrumentManifestHash)
+            && Boolean(current.instrumentManifestHash)
+            && artifact.instrumentManifestHash === current.instrumentManifestHash;
+    }
+    if (scope === 'governance') {
+        return Boolean(artifact.governanceManifestHash)
+            && Boolean(current.governanceManifestHash)
+            && artifact.governanceManifestHash === current.governanceManifestHash;
     }
     return false;
 }

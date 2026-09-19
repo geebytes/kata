@@ -38,12 +38,26 @@ export function isNonCodePath(path: string): boolean {
     return NON_CODE_EXTENSIONS.some((extension) => normalized.endsWith(extension));
 }
 
-/** The owned paths that are code, and the ones that are not. */
-export function splitOwnedPaths(ownedPaths: string[]): { code: string[]; nonCode: string[] } {
+/**
+ * The owned paths, split three ways: **instrument**, **code**, and **governance text**.
+ *
+ * Two outputs were one short (design §24.4): a script under an owned path was "code", so an *instrument's* edits
+ * invalidated a pass about the *deliverable* — the structural cause of four wasted rounds in one day. A declared
+ * instrument is subtracted first, so its edits invalidate the instrument surface only.
+ *
+ * The instrument class is checked **before** the code/governance split on purpose: an instrument written in Markdown is
+ * still an instrument, and the declaration is the more specific statement of what the path is for.
+ */
+export function splitOwnedPaths(ownedPaths: string[], task: { instruments?: string[] } = {}): { instruments: string[]; code: string[]; nonCode: string[] } {
+    const instruments: string[] = [];
     const code: string[] = [];
     const nonCode: string[] = [];
-    for (const path of ownedPaths) (isNonCodePath(path) ? nonCode : code).push(path);
-    return { code, nonCode };
+    for (const path of ownedPaths) {
+        if (isInstrumentPath(task, path)) instruments.push(path);
+        else if (isNonCodePath(path)) nonCode.push(path);
+        else code.push(path);
+    }
+    return { instruments, code, nonCode };
 }
 
 /**
@@ -100,9 +114,12 @@ export function findingLayer(task: { instruments?: string[]; ownedPaths?: string
  * paths are code, and a caller that needs the sub-manifest must then treat the code as unverified rather than assume it is
  * unchanged. Every consumer of this is required to fall back to full invalidation when it gets `null`.
  */
-export function codeManifestHash(revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>): string | null {
+export function codeManifestHash(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    task: { instruments?: string[] } = {},
+): string | null {
     if (!revision.pathDigests) return null;
-    const { code } = splitOwnedPaths(revision.ownedPaths);
+    const { code } = splitOwnedPaths(revision.ownedPaths, task);
     if (code.length === 0) return null;
     // Deterministic over the sorted paths, so the same content always gives the same identity.
     const payload = code
@@ -110,6 +127,60 @@ export function codeManifestHash(revision: Pick<TaskRevision, 'ownedPaths' | 'pa
         .sort()
         .join('\u0001');
     return hashContent(payload);
+}
+
+/**
+ * The content identity of a revision's declared **instruments** (§24.4).
+ *
+ * `null` when there are none, or when the digests cannot speak for them — the honest answer, and the one every consumer
+ * must treat as "cannot be spared" rather than "unchanged".
+ */
+export function instrumentManifestHash(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    task: { instruments?: string[] } = {},
+): string | null {
+    if (!revision.pathDigests) return null;
+    const { instruments } = splitOwnedPaths(revision.ownedPaths, task);
+    // An instrument declared but not owned has no recorded digest, so its surface cannot be derived — reported as `null`
+    // rather than folded into "empty, therefore unchanged".
+    if (instruments.length === 0) return null;
+    const payload = instruments
+        .map((path) => `${path}\u0000${revision.pathDigests?.[path] ?? ''}`)
+        .sort()
+        .join('\u0001');
+    return hashContent(payload);
+}
+
+/** The governance-text surface, as its own digest, so the three are symmetric. */
+export function governanceManifestHash(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
+    task: { instruments?: string[] } = {},
+): string | null {
+    if (!revision.pathDigests) return null;
+    const { nonCode } = splitOwnedPaths(revision.ownedPaths, task);
+    if (nonCode.length === 0) return null;
+    const payload = nonCode
+        .map((path) => `${path}\u0000${revision.pathDigests?.[path] ?? ''}`)
+        .sort()
+        .join('\u0001');
+    return hashContent(payload);
+}
+
+/**
+ * Every surface a revision has, as one object — the shape a record binds to (§22/§24).
+ *
+ * One reader instead of three call sites, so a surface cannot be bound by one writer and forgotten by another.
+ */
+export function surfaceDigests(
+    revision: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'> | null,
+    task: { instruments?: string[] } = {},
+): { code: string | null; governance: string | null; instrument: string | null } {
+    if (!revision) return { code: null, governance: null, instrument: null };
+    return {
+        code: codeManifestHash(revision, task),
+        governance: governanceManifestHash(revision, task),
+        instrument: instrumentManifestHash(revision, task),
+    };
 }
 
 /**

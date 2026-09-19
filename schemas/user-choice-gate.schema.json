@@ -34,6 +34,14 @@
       "description": "Content identity of the revision's code paths only (C2). Stamped beside manifestHash so a code-scoped verdict can outlive a governance-text edit; absent when the split cannot be derived, in which case a code-scoped binding refuses to match.",
       "type": "string"
     },
+    "governanceManifestHash": {
+      "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
+      "type": "string"
+    },
+    "instrumentManifestHash": {
+      "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
+      "type": "string"
+    },
     "createdAt": {
       "type": "string",
       "minLength": 1
