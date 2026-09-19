@@ -560,3 +560,22 @@ Independence, per-conclusion counterexamples, mutation evidence for guards, and 
 2. Is the reading set derivable from the delta + the frozen tier, or must the author curate it?
 3. For the attempt cap, is the reproduction escape hatch checkable (the round must show the reproduction), or advisory?
 4. Do hosts report tokens at all, or is per-turn tool use the only portable signal?
+
+## 19. Handoff index (for whoever picks this up)
+
+Read in this order; each section stands alone but the numbering is the argument.
+
+| § | Content | Use |
+|---|---|---|
+| 1–12 | Measurements: what a pass costs in wall-clock; where the minutes go; the mechanisms priced one by one | the evidence base |
+| 13 | Per-round audits of what each expensive round bought | calibrate scepticism against data, not vibes |
+| **14** | **The five changes (C1–C5), each with evidence, acceptance test, invariant** | the work list |
+| **15** | **What must not change, with the defects each thing caught** | the guard rails |
+| **16** | **Handoff: owners (K/P), order, dependencies, interfaces, traps, open questions** | the施工 order |
+| **17** | **Methodology: symptom → violated principle → practice; redefined flow; Definition of Done; C6/C7; anti-pattern names** | why, and when the loop may stop |
+| **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract** | the efficiency work |
+| 19 | This index | orientation |
+
+Current status of the C-list (as of 2026-09-19): **C2** (code vs governance classification, code sub-manifest) and **C3** (acceptance claims machine-checkable, seal runs them and refuses an unfalsifiable one) are **implemented**; **C1** (repair batching), **C4** (delta by default after a batch), **C5** (cost telemetry + heartbeat) are **open**; **C6** (idempotent phase transitions — `hardVerify → hardVerify` currently errors with `Illegal transition`) and **C7** (versioned engine reported on the record) are **added by §17 and open**.
+
+Two project-side notes, for context rather than as kata requirements: a project may install an interim checker of its own (k2skills did, for one acceptance statement) — it is explicitly a stopgap with a stated retirement condition once C3's claims cover the same clauses; and a handoff of this document does not authorise changes to any project's repository, only to this one.
