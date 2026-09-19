@@ -576,6 +576,30 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract** | the efficiency work |
 | 19 | This index | orientation |
 
-Current status of the C-list (as of 2026-09-19): **C2** (code vs governance classification, code sub-manifest) and **C3** (acceptance claims machine-checkable, seal runs them and refuses an unfalsifiable one) are **implemented**; **C1** (repair batching), **C4** (delta by default after a batch), **C5** (cost telemetry + heartbeat) are **open**; **C6** (idempotent phase transitions — `hardVerify → hardVerify` currently errors with `Illegal transition`) and **C7** (versioned engine reported on the record) are **added by §17 and open**.
+Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
+the row's *what it actually does* is what a reader should check rather than the commit message.
+
+| # | Change | Commit | What it actually does |
+|---|---|---|---|
+| **C1** | Repair batching | `a013925` | `repair-batch.json`; opening a batch **extends** the open one (one seal per batch, not per finding); closing is **refused** while a terminal finding it opened for is unaccounted — repaired, deferred **with a reason**, or no longer reported; `batchSaving` counts the seals avoided from the record |
+| **C2** | Text-only revisions spare the code pass | `0684cf5` + `0d77a90` | `codeManifestHash` stamped beside `manifestHash` on every binding artefact; `bindsToRevision` gains an **opt-in** `code` scope and its default stays `full`; the adversarial gate spares a pass only when both sides name the same code surface **and** `claimsVerified` — read from evidence, defaulting to `false` |
+| **C3** | Machine-checkable acceptance statements | `7eee82e` + `76649a0` | `acceptance[].claims[]`; the seal **runs** them as ordinary checks; an unfalsifiable claim is a preflight blocker; failures are reported **by claim id** in both the passing and failing paths |
+| **C4** | Delta by default after a batch | `6661f3c` | `defaultBriefScope`: a batch closed on a revision ⇒ delta from it; no closed batch, or one that named no revision ⇒ full **with its reason**; an explicit `--since` still wins; the reason travels as `scopeReason` |
+| **C5** | Cost telemetry and a pass heartbeat | `ca2b212` + `f624bae` | `toolUses` beside `elapsedMs`; `adversarial-progress.jsonl`, one line per **batch** (the §12 trap); `adversarial status` reports both; a partial pass is a draft with **no verdict**, so it can never read as passed |
+| **C6** | Idempotent phase entry | `cf3e19d` | re-entering the phase a task is in returns the state unchanged, writes no event, and is a **separate question** from `isLegalPhaseTransition` (which recovery replays against) |
+| **C7** | Versioned engine | `dd3eb38` | the task record carries the kata version, restamped inside the state transition; `status` reports a mismatch and says it is an engine change — **reported, never enforced** |
+
+Also implemented, from §18's levers rather than the C-list: the brief's **starting reading set** with a bounded size (M4),
+its instruction to **read sealed evidence instead of re-running it** (M1), and the **`verify`/`cold` framing rotation**
+(M2), which refuses to rotate while a `blocking`/`major` finding is unrepaired.
+
+Four platform defects fixed the same day, kept here as reference implementations of the shape these changes keep taking —
+*a mechanism that exists but is not wired*: `cfe616a` and `be7b196` (review→build and judge→build repair re-entry from a
+superseded revision), `aed3006` (an evidence name its own schema rejected), `49d1aae` (a recorded pass invalidated by the
+act of recording it — four independent drift sources), `dd3eb38` (C7).
+
+Still open, and deliberately not done here: §18.7's four questions (per-attempt `toolUses`; whether the reading set is
+derivable or curated; whether the attempt cap's reproduction escape hatch is checkable; whether any host reports tokens at
+all — today `toolUses` is the only portable signal).
 
 Two project-side notes, for context rather than as kata requirements: a project may install an interim checker of its own (k2skills did, for one acceptance statement) — it is explicitly a stopgap with a stated retirement condition once C3's claims cover the same clauses; and a handoff of this document does not authorise changes to any project's repository, only to this one.
