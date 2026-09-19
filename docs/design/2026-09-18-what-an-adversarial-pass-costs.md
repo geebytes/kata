@@ -955,7 +955,117 @@ no owned path changed.
 in practice they converged on identical findings twice in one day, buying one fact twice. 24.4 (a third
 surface) is also what makes per-node surfaces meaningful.
 
-## 25. Handoff index (for whoever picks this up)
+## 25. Implementation items for the three gaps in §24
+
+Each item states the gap it closes, the evidence that the gap is real, the change, an acceptance test that
+can fail, the invariants it may not break, and whether it can ship alone. IDs are `G1`–`G3` to stay clear of
+`C*` (changes) and `K*` (crash evidence).
+
+### G1 — make a task declare its instruments, or refuse the boundary
+
+**Gap (§24.3).** `validateBoundaries` refuses a boundary for an instrument the task has not declared, and
+this task declared none — so the instruments it wrote mid-flight could only be attacked, never bounded.
+The capability exists and is unused.
+
+**Evidence.** `src/quality/instrument-boundary.ts` (refusal `undeclared_instrument`); this task's
+`task.json` has no `instruments` key while owning a 1186-line checker and its tests.
+
+**Change.**
+1. In the preflight that already runs before a seal, **name instrument-shaped owned paths that are not
+   declared**: a path under `scripts/`, or a test file, or any path whose content is a program rather than
+   prose, that is not in `instruments[]`. Name it, print the one-line fix, do not fail the seal on it
+   (a warning is enough to make it a decision rather than a drift).
+2. Document `instruments[]` and its boundary shape where tasks are authored (task schema description plus
+   the `kata-open`/`kata-design` guidance), so the first time a task writes a checker it also declares it.
+3. Pass the instrument list into the adversarial brief, so a round knows which of what it audits is an
+   instrument.
+
+**Acceptance.** A fixture task owning an undeclared `scripts/*.py` produces a warning naming that path and
+the exact declaration to add; adding the declaration makes a finding that attacks its boundary classify
+`beyond-declared-coverage` and close with the declaration as the reason, while a finding that contradicts
+the declaration stays `within` and must be repaired.
+
+**Invariants.** A boundary may never be claimed for an undeclared instrument; a boundary whose canonical
+statement is missing or empty stays refused (the four existing refusals are not relaxed).
+
+**Ships alone.** Yes, and it is the cheapest of the three: it is validation plus documentation.
+
+### G2 — subtract instruments before splitting, and bind a digest per surface
+
+**Gap (§24.4).** `splitOwnedPaths` returns exactly `{code, nonCode}`, so a script under an owned path is
+"code" and **its edits invalidate the pass about the deliverable**. Four rounds in one day were spent on
+exactly this, and the surface that kept changing was an instrument.
+
+**Evidence.** `src/quality/code-surface.ts:42` (two outputs), `:103` (`codeManifestHash` over the code
+subset), `src/quality/adversarial.ts:825-852` (the binding consults only `codeManifestHash`).
+
+**Change.**
+1. `splitOwnedPaths` subtracts `instruments` first → `{code, instrument, nonCode}`. `codeManifestHash`
+   keeps its present meaning (code only), so existing bindings do not silently change force.
+2. Emit `surfaceDigests: { code, instrument, governance }` on the revision, and carry it on the adversarial
+   record and on the verify / review / judge artifacts.
+3. `bindsToRevision` compares the surface that the artifact is about: a record about the deliverable stays
+   valid while only the instrument surface moved, and **always** invalidates when its own surface moved.
+4. A **missing** surface digest is not "unchanged": it fails closed to full invalidation with the reason.
+5. `status` reports, per node, which surface its record covers and which surface changed.
+
+**Acceptance.** (a) Editing the checker leaves the code-surface record valid and `status` names the
+instrument surface as the one that changed; (b) editing a file inside the code surface still invalidates
+immediately; (c) a record written before this change (no `surfaceDigests`) is treated as covering
+everything, and says so.
+
+**Invariants.** `codeManifestHash`'s meaning is preserved; the frozen tier still runs at every judgement
+point; no verdict about a surface may survive a change to that surface.
+
+**Ships alone.** Yes — this is the item with the largest measured saving and needs no new declaration
+surface beyond G1's `instruments[]`.
+
+### G3 — hash the inputs that are not paths
+
+**Gap (§24.5).** Both digests hash paths only, so a remote model revision, an image tag, a toolchain version
+or a service contract can change behaviour with every digest unchanged. Not hypothetical: the design
+requires the same PDF to have a different representation identity when the OCR provider or model changes,
+and no path records that.
+
+**Evidence.** `manifestHash` / `codeManifestHash` are computed from `pathDigests` alone
+(`revision.ts`, `code-surface.ts:103`); the product's own `TransformContract` exists precisely because the
+provider/model identity changes the *output*, not the source files.
+
+**Change.**
+1. Let a task (or the project config) declare `environmentInputs`: each entry names a fact (toolchain
+   version, provider, model, model_revision, contract version, image id) and **how to obtain it** — a
+   command whose output is recorded, never a hand-written constant.
+2. Compute an `environmentDigest` over those observations and include it in the Tier-0 decision: unchanged
+   paths plus changed environment ⇒ the affected surface invalidates.
+3. Derivation failure on a declared input ⇒ fail closed (invalidate, name the input) rather than assume
+   unchanged.
+4. Reuse the product's vocabulary where it already exists (`TransformContract` fields), so the platform
+   digest and the product's identity do not drift apart.
+
+**Acceptance.** With a declared provider/model identity, a seeded change to that identity invalidates the
+affected surface **although no owned path changed**; removing the declaration makes the digest
+underivable, which invalidates and names the input rather than passing.
+
+**Invariants.** An environment input may never be a self-reported constant without a command behind it
+(the derived-not-declared rule); a declared-but-underivable input fails closed.
+
+**Ships alone.** Yes, but it is the most invasive: it needs a declaration surface and evidence before it can
+gate anything.
+
+### Order, and what may not change
+
+| order | item | why this order | can ship alone |
+|---|---|---|---|
+| 1 | **G2** | largest measured saving; four rounds in one day came from instruments landing in the code bucket | yes |
+| 2 | **G1** | cheap; makes the boundary closure usable, and it is what G2's instrument class needs to be declared at all | yes |
+| 3 | **G3** | removes the false-safety case, but needs a declaration surface and command-backed evidence to be honest | yes |
+
+Unchanged by all three: the frozen tier runs at every judgement point; a surface whose digest cannot be
+derived invalidates everything **and says so**; `codeManifestHash` keeps its present meaning; and the
+document's own claims about what is implemented are updated when each item lands, because a stale claim
+about the repository is the defect class this document has recorded most often.
+
+## 26. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -973,7 +1083,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **22** | **When the two nodes run: per-node surface digests, why the two nodes duplicate, seal binding, and the invariant that survives** | the trigger design |
 | **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
 | **24** | **How classification is actually determined today (verified), the §22 correction, and the three gaps: instruments undeclared, instruments in the code bucket, non-path inputs invisible** | the mechanism as built |
-| 25 | This index | orientation |
+| **25** | **Implementation items G1–G3: declare instruments, per-surface digests, environment inputs — each with acceptance, invariants, and what may not change** | the work list for §24 |
+| 26 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
