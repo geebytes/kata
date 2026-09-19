@@ -888,7 +888,7 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **17** | **Methodology: symptom → violated principle → practice; redefined flow; Definition of Done; C6/C7; anti-pattern names** | why, and when the loop may stop |
 | **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract; §18.8 the measured cost of one focused invocation and its two fixes** | the efficiency work |
 | **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
-| **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found |
+| **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found — **all four implemented 2026-09-19** (`1325b9e`): `instruments[]` + `findingLayer`, `boundaries[]` with the one I1 exception and its anti-loophole rule, `scope-changes.json` with the base read rather than supplied, and `findings list --byLayer` |
 | **22** | **When the two nodes run: per-node surface digests, why the two nodes duplicate, seal binding, and the invariant that survives** | the trigger design |
 | **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
 | 24 | This index | orientation |
@@ -905,6 +905,12 @@ the row's *what it actually does* is what a reader should check rather than the 
 | **C5** | Cost telemetry and a pass heartbeat | `ca2b212` + `f624bae` | `toolUses` beside `elapsedMs`; `adversarial-progress.jsonl`, one line per **batch** (the §12 trap); `adversarial status` reports both; a partial pass is a draft with **no verdict**, so it can never read as passed |
 | **C6** | Idempotent phase entry | `cf3e19d` | re-entering the phase a task is in returns the state unchanged, writes no event, and is a **separate question** from `isLegalPhaseTransition` (which recovery replays against) |
 | **C7** | Versioned engine | `dd3eb38` | the task record carries the kata version, restamped inside the state transition; `status` reports a mismatch and says it is an engine change — **reported, never enforced** |
+
+Implemented from §21 (the platform gaps a real 24-round loop exposed), delivered after the C-list: **instruments as a third
+path class** (`instruments[]`, `findingLayer`), **declared coverage boundaries** (`boundaries[]`, the `beyond-declared-coverage`
+closure that is the one exception to I1), **recorded scope changes** (`scope-changes.json`, C1's missing half: batching
+controls how *often* a round happens and this controls what a round is *about*), and **layer × severity on `findings list`**
+so convergence is a query rather than a hand-assembled table.
 
 Also implemented, from §18's levers rather than the C-list: the brief's **starting reading set** with a bounded size (M4),
 its instruction to **read sealed evidence instead of re-running it** (M1), and the **`verify`/`cold` framing rotation**
