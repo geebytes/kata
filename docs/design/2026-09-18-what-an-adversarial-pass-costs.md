@@ -795,7 +795,86 @@ to survive a change to that code.
 3. Should a node's record be invalidated by *any* change to its surface, or only by a change to the
    **claims and evidence** it verified (i.e. a digest over assertions rather than files)?
 
-## 23. Handoff index (for whoever picks this up)
+## 23. Which changes may trigger a pass: not "small" and not "chore", but "did a surface change"
+
+§22 said a pass should bind to a surface rather than to the revision. This section answers the follow-up:
+may a small change, or a chore-type change, avoid triggering one at all?
+
+### 23.1 Two intuitions that do not survive contact with the evidence
+
+**Size is not a safety signal.** Every product-layer defect found in one day came from a *small* change: a
+sort key that ordered clusters by a runtime handle, a statement that passed the model's own name into an
+atom's identity, a single `.value` read that made two fingerprints of the same method unequal. The change
+that costs a round is not the large one.
+
+**Commit type is self-declared, and therefore not a trigger.** The same day produced a commit labelled
+`docs(plan): …` that also added a 1186-line script under an owned path. Any rule of the form "a `chore`
+does not need a pass" hands the decision to the party being audited.
+
+The question that does work is: **does this change alter the meaning of anything that was verified?**
+
+### 23.2 The platform already has the primitive — for checks
+
+`orchestrator.ts` selects checks by the change surface and always includes the ones a project declared
+`tier: 'frozen'` (line 519), names the frozen checks that did not run where the artefact is frozen (643),
+and reports frozen-tier checks with no passing evidence for what is sealed (843), with the comment that
+the full set runs "regardless of the change surface … at the points where the artefact is frozen".
+
+So surface-scoped execution exists. What does **not** exist is an adversarial record bound to the same
+surface — those still bind the whole revision (§22.2 A, D). The change here is to reuse the primitive
+rather than invent one.
+
+### 23.3 Classification
+
+| change | invalidates? | mechanism |
+|---|---|---|
+| documentation / changelog outside a declared surface | no | surface digest unchanged |
+| formatting, comments, import order | no — **but proven** | normalise both sides and compare; "non-semantic" is a **claim to check**, not a label to trust |
+| tests added, production untouched | no for the code surface; the claims surface only if a claim names those tests | surface digest |
+| claim or evidence files | the claims surface only | surface digest |
+| instrument (checker, probe harness) | the instrument surface only | surface digest + §21.1 tiers |
+| byte-identical move or rename | no | content digest |
+| dependency or toolchain bump | **depends** — it can change behaviour | measured example: changing the OCR/ASR model must change the identity of the same PDF |
+| semantics of the deliverable | **yes** — every surface that touches it, plus the frozen tier | surface digest must change |
+| **a new path entering the audited surface** | not a re-audit but a **new audit** | re-enter design (§21.3) |
+| reaching a judgement point (judge / archive) | **yes, once, full scope** | frozen tier |
+
+### 23.4 Three tiers of trigger
+
+```
+Tier 0  no trigger        every declared surface digest is unchanged (and "non-semantic" is proven)
+Tier 1  surface-scoped    one digest changed ⇒ only that surface's record invalidates; its delta runs (C4) + frozen tier
+Tier 2  full              deliverable semantics changed / a new surface entered / a judgement point reached
+```
+
+*Acceptance*: editing only documentation or an instrument ⇒ `status` reports the code-surface record as
+still valid; changing **one token inside** a surface ⇒ that surface invalidates immediately (no misses);
+when the classification cannot be derived ⇒ treat it as invalidating and say why (fail-closed).
+
+### 23.5 Chores: route them, do not label them
+
+The platform already has lighter lanes — `kata-cli tweak` and `kata-cli hotfix`, both taking
+`--review <mode>`, with hotfix stating that expansive brainstorming is skipped and the repair scope is
+preserved. A chore belongs there rather than pretending to be light inside the heavy lane.
+
+But routing is not the safety net: **the digest decides**, so a "chore" that touches an identity key
+cannot slip through on its label. Both halves are needed — the lane for the common case, the digest for
+the case that is not what it says it is.
+
+### 23.6 The cost calculus, written down
+
+```
+one pass            15–110 minutes, 5–27M tokens
+one documentation edit   seconds
+⇒ invalidate iff  P(changes a verified fact) × cost(of being wrong)  >  cost(of a pass)
+```
+
+The asymmetry matters: missing a pass that was needed is the dangerous error; running one that was not
+needed is merely expensive. So the default when uncertain is **invalidate** — while the "no pass needed"
+side must be **derived mechanically** (surface digest plus a proof that the diff is non-semantic), never
+asserted.
+
+## 24. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -811,7 +890,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
 | **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found |
 | **22** | **When the two nodes run: per-node surface digests, why the two nodes duplicate, seal binding, and the invariant that survives** | the trigger design |
-| 23 | This index | orientation |
+| **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
+| 24 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
