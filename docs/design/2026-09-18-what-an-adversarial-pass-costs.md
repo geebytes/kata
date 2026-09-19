@@ -734,7 +734,68 @@ The loop had two other ingredients that no platform change fixes: repairs that r
 defect they were fixing (four of six), and single-finding rounds instead of batches (three cycles of
 six). 21.1–21.5 remove the structural amplifier; C1 and the definition of done in 17.3 address the rest.
 
-## 22. Handoff index (for whoever picks this up)
+## 22. When the two nodes run: the trigger is too coarse, not too frequent
+
+The gate asks for a fresh independent pass on both the verify and the review node **whenever the
+revision changes**, and a pass costs 15–110 minutes and 5–27M tokens (§1, §18). The mismatch is in
+granularity: the trigger is the whole revision, while the cost is priced as an audit of a `surface`.
+
+### 22.1 The evidence, from one day
+
+| Observation | Measured |
+|---|---|
+| The trigger is "the revision changed" | Any commit — including a documentation edit, a test-only fix, or an edit to an **instrument** — invalidates both nodes' records at once |
+| The two nodes audit **the same thing** | r24 verify and r24 review independently found the same two defects (a false claim in a generated block's header; a mirror path reported as missing); r24b reproduced both again. One audit, paid twice |
+| The trigger is over-sensitive to instruments | Four consecutive rounds (r21–r24) audited only `scripts/assert_acceptance_claims.py`, its carrier, its mirror and their tests |
+| The marginal value was front-loaded | **Zero product-layer findings after r18**; every later finding was about an instrument or governance text |
+| Volume | ~10 rounds (15–110 min each) and 7 seals in the day; at least **4 rounds were repeats of an audit already performed** on the same surface |
+
+### 22.2 What the trigger should bind to
+
+**A — a per-node surface digest.** Each node declares the surface it audits (verify: the acceptance
+clauses, evidence freshness, and the implementation paths that serve them; review: the contract and the
+diff's code). The record carries that surface's digest. **An unchanged digest keeps the record valid.**
+A documentation edit, an instrument edit, or a change to paths the node never examined stops
+invalidating a pass it never made.
+*Acceptance*: editing only docs or an instrument ⇒ no invalidation of the code-surface record, and
+`status` says which surface the record covers. *Invariant*: a change **inside** the surface always
+invalidates, and an underivable surface falls back to invalidating everything and says so.
+
+**B — the two nodes must differ, or be one.** Today's briefs were near-isomorphic and the nodes
+converged on identical findings — two audits bought one fact. Either merge them into a single
+independent audit (cheap, honest) or give them **disjoint** scopes: verify = *does the implementation
+satisfy the acceptance, with fresh evidence*; review = *is the contract sound, and is the diff
+well-built*. Disjoint scopes also make the surface digests (A) genuinely different, which is what makes
+per-surface validity meaningful.
+*Acceptance*: a task shows a finding attributed to exactly one node, or explains why both reported it.
+
+**C — the frozen tier runs at every judgement point.** Unchanged from C4: whatever the surface is, the
+global invariants run before anything is accepted.
+
+**D — the seal binds to the same surface digest.** Today's sequence was self-defeating: seal → verify →
+review, where the seal itself changed the tree and invalidated the records it had just been used to
+produce. A seal that binds its own surface digest removes the "audit, then invalidate, then audit again"
+cycle.
+*Acceptance*: a seal followed by a judgement shows no revision-invalidated record in between.
+
+### 22.3 What may not change, and why the binding exists at all
+
+Evidence must not outlive the artifact it describes. That rule earned its place twice today: it caught a
+pass whose record predated the tree it claimed to describe, and it caught my own audit of a tree that had
+since been reverted. So the binding stays — **what changes is the object it binds to**: from "the whole
+revision" to "the semantic surface the node actually audited". Nothing here allows a verdict about code
+to survive a change to that code.
+
+### 22.4 Open questions
+
+1. Is a surface digest derivable from the owned-path tiers (deliverable / governance / instrument, §21.1),
+   or must the node declare its surface in the brief?
+2. Does merging the two nodes lose anything that disjoint scopes would keep — and which is cheaper in
+   practice given that today's value was front-loaded?
+3. Should a node's record be invalidated by *any* change to its surface, or only by a change to the
+   **claims and evidence** it verified (i.e. a digest over assertions rather than files)?
+
+## 23. Handoff index (for whoever picks this up)
 
 Read in this order; each section stands alone but the numbering is the argument.
 
@@ -749,7 +810,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract; §18.8 the measured cost of one focused invocation and its two fixes** | the efficiency work |
 | **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
 | **21** | **The loop: findings by layer per round; the three missing platform pieces — instrument class, declared boundaries, scope-change re-entry; convergence telemetry** | the platform gaps this task found |
-| 22 | This index | orientation |
+| **22** | **When the two nodes run: per-node surface digests, why the two nodes duplicate, seal binding, and the invariant that survives** | the trigger design |
+| 23 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
 the row's *what it actually does* is what a reader should check rather than the commit message.
