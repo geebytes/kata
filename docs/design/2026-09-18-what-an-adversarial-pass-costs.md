@@ -552,7 +552,8 @@ The last row dominates: the largest term is the **number of rounds**, and rounds
 
 ### 18.5 Contract for a brief (concrete, so it can be implemented)
 
-A brief must carry: the delta surface with file paths; the **starting reading set** with line regions; the instruction to **batch commands into one invocation**; an attempt cap with the escape hatch ("exceed it only with a reproduction"); the **sealed evidence ids** for anything already verified; and the statement of what this round does *not* cover. It must not carry: the author's conclusions, or mutable state that the act of recording rewrites (§10).
+A brief must carry: the delta surface with file paths; the **starting reading set** with line regions; the instruction to **batch commands into one invocation** — concretely, to **merge several queries
+against the same file into one** and to prefer **one test invocation over several**; an attempt cap with the escape hatch ("exceed it only with a reproduction"); the **sealed evidence ids** for anything already verified; and the statement of what this round does *not* cover. It must not carry: the author's conclusions, or mutable state that the act of recording rewrites (§10).
 
 ### 18.6 What may not be traded for tokens
 
@@ -564,6 +565,35 @@ Independence, per-conclusion counterexamples, mutation evidence for guards, and 
 2. Is the reading set derivable from the delta + the frozen tier, or must the author curate it?
 3. For the attempt cap, is the reproduction escape hatch checkable (the round must show the reproduction), or advisory?
 4. Do hosts report tokens at all, or is per-turn tool use the only portable signal?
+
+### 18.8 Measured: why one focused invocation costs more than its tests
+
+| command | wall |
+|---|---|
+| `pytest <one file> --collect-only` (warm) | 2.6s |
+| `pytest tests/test_canonical.py` (13 tests) | 2.7s |
+| `pytest tests/test_candidate_key_production_identity.py` (14 tests) | 9.0s |
+| `pytest tests/test_assert_acceptance_claims.py` (**38 tests**) | **57.5s** |
+| first invocation of a session (cold `uv`/import cache) | 22.5s |
+
+Inside those 38, the five slowest are **13.83 / 8.63 / 8.25 / 8.00 / 0.14 s** — four tests account for
+39 of the 40 seconds, and what separates them from the 0.14 s one is that they **spawn a Python
+subprocess** (one of them also extracts a `git archive` and copies files). The number of tests is
+irrelevant; the number of process launches and tree extractions is the cost.
+
+Two fixes, both cheap, neither weakening what is verified:
+
+- **F1 — amortise the launch inside the suite.** A module-scoped fixture performs the expensive setup
+  once: one extracted tree, and one subprocess driven through several observations instead of several
+  subprocesses. **Acceptance**: the file runs in ≤15 s **and the mutations it exists to catch still
+  fail** (revert the exit-code guard ⇒ red; change a count ⇒ red). The subprocess must remain — it is
+  what makes the check exercise the real entry point, which is the property being bought.
+- **F2 — batch at the brief level.** "Batch the commands" is too coarse to act on; say *merge several
+  queries against the same file into one invocation* and *prefer one test invocation over several*.
+  **Acceptance**: consecutive rounds report lower tool uses (C5) at the same attempt counts.
+
+The asymmetry matters: F1 lives in the repository and makes **every** future round cheaper; F2 only
+helps while it is obeyed. Both remove waiting, not verification.
 
 ## 19. A probe is not a test case, and the difference explains most of a round's motion
 
@@ -643,7 +673,7 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **15** | **What must not change, with the defects each thing caught** | the guard rails |
 | **16** | **Handoff: owners (K/P), order, dependencies, interfaces, traps, open questions** | the施工 order |
 | **17** | **Methodology: symptom → violated principle → practice; redefined flow; Definition of Done; C6/C7; anti-pattern names** | why, and when the loop may stop |
-| **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract** | the efficiency work |
+| **18** | **Token economics: turns × context; what was bought vs wasted; ranked levers; brief contract; §18.8 the measured cost of one focused invocation and its two fixes** | the efficiency work |
 | **19** | **Probes vs test cases: why an experiment changes while a property must not; the promotion rule; what a brief must require** | the verification work |
 | 20 | This index | orientation |
 
