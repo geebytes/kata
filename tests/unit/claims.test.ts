@@ -35,6 +35,11 @@ describe('acceptance claims', () => {
             expectExitCode: 1,
         });
         expect(claimCheckId('AC-1', 'no-caller')).toBe(checks[0]!.id);
+        // The recorded name must satisfy `evidence.schema.json` (`^[A-Za-z0-9_.-]+$`). The colon form did not:
+        // the seal wrote an artefact its own schema rejects, and the next seal — which reads prior evidence for
+        // reuse — refused the run. The check's `id` keeps the colon identity the adversarial gate matches on.
+        expect(checks[0]!.name).toMatch(/^[A-Za-z0-9_.-]+$/);
+        expect(checks[0]!.name).toBe('claim-AC-1-no-caller');
     });
 
     it('refuses a claim whose check cannot fail, which is what a false sentence hides behind', () => {

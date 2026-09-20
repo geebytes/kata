@@ -1,4 +1,5 @@
 import { hashContent } from '../core/hash.js';
+import { sanitizeCheckName } from './check-resolver.js';
 import type { AcceptanceCriterion, ClaimDeclaration } from '../core/task.js';
 import type { CheckCommand } from './evidence.js';
 
@@ -96,7 +97,12 @@ export function resolveClaimChecks(root: string, acceptance: AcceptanceCriterion
             checks.push({
                 id: claimCheckId(item.id, claim.id),
                 source: 'configured',
-                name: `claim:${item.id}:${claim.id}`,
+                // Sanitized like every other check name: `evidence.schema.json` constrains `name` to
+                // `^[A-Za-z0-9_.-]+$`, and the colon form violated it — so the seal wrote an artefact its own
+                // schema rejects, and the *next* seal (which reads prior evidence for reuse) refused the whole run.
+                // The check's identity is still `claim:<AC>:<id>` (`id`/`claimCheckId`), which is what the
+                // adversarial gate matches on, so binding is unchanged; only the recorded name is conformant.
+                name: sanitizeCheckName(claimCheckId(item.id, claim.id)) || claimCheckId(item.id, claim.id),
                 kind: 'claim',
                 command: claim.check.command,
                 args: claim.check.args ?? [],
