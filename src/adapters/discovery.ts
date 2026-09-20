@@ -13,10 +13,10 @@ import {
   type SkillCommand,
   skillCommands as allSkillCommands,
 } from './manifest.js';
-import { exists, install, listManagedPlatforms, uninstall, update } from './ownership.js';
+import { exists, install, isManagedPlatformSurfacePresent, listManagedPlatforms, uninstall, update } from './ownership.js';
 import { platformConfigDir, platformDefinitionById, platformDefinitions, platformSkillPath, platformSkillsDir, resolvePlatformGlobalDir } from './platforms.js';
 
-export { install, listManagedPlatforms, uninstall, update };
+export { install, isManagedPlatformSurfacePresent, listManagedPlatforms, uninstall, update };
 
 export async function discoverPlatforms(options: InstallOptions = {}): Promise<PlatformInfo[]> {
   const root = options.root ?? resolveWorkspaceRoot();
@@ -49,6 +49,11 @@ async function isDetected(platform: Platform, scope: InstallScope, root: string)
   }
 
   const paths = definition.detectionPaths ?? [platformSkillsDir(platform, scope)];
+  // Codex's project surface is also signalled by the shared `AGENTS.md` contract, which kata writes for every platform
+  // and which therefore survives removing `.codex` itself. Detection keeps that signal — the platform is installed —
+  // but the aggregate update decides from the directory: an `AGENTS.md` that outlives the surface is a mention, not a
+  // request to rebuild it. Without the AGENTS.md path Codex would go undetected in a project that only drifted, and
+  // the wizard would stop offering it.
   if (platform === 'codex' && scope === 'project') paths.push('AGENTS.md');
   if (platform === 'claude-code' && scope === 'global') paths.push('.claude.json');
   for (const relativePath of paths) {

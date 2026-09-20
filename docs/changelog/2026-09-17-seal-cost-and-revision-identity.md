@@ -6,11 +6,13 @@ with no content dedupe, over directory-granularity ownership).
 
 ## Cost (L3-02)
 
-- **Checks run concurrently under a bounded pool.** `collectEvidence` ran a plain `for` loop: one child process at a
-  time. It now runs up to `min(4, availableParallelism - 1)` checks at once (`KATA_CHECK_CONCURRENCY` overrides it),
-  reassembling results in declaration order so a caller's view of the set does not depend on scheduling. The progress
-  contract is unchanged; a test asserts the contract per check rather than a global event order, and the abort test
-  asserts the cancelled check rather than how many checks happened to start.
+- **Checks run one at a time by default.** `collectEvidence` ran a plain `for` loop: one child process at a time. This
+  change briefly made it run up to `min(4, availableParallelism - 1)` checks at once (`KATA_CHECK_CONCURRENCY`
+  overriding it), reassembling results in declaration order so a caller's view of the set does not depend on
+  scheduling. **That default was reverted the same day** — see `2026-09-17-check-concurrency-opt-in.md`: a seal ran
+  four to five concurrent checks that shared one PostgreSQL database, three failed, and re-running them alone passed. A
+  seal that reports failures it created is worse than a slow one, so `checkConcurrency()` returns **1** unless
+  `KATA_CHECK_CONCURRENCY` is set. The progress contract is unchanged; a check's own `weight` is the finer instrument.
 - **CodeGraph queries run concurrently.** `discoverCodeGraphCandidates` awaited one `codegraph affected` per
   implementation path in a serial loop. The per-path attribution it produces — which implementation path dragged each
   affected test in — is a product behaviour with its own test, and a single batched call returns a flat list without it,
@@ -38,12 +40,13 @@ with no content dedupe, over directory-granularity ownership).
 
 ## Verification
 
-- `tests/e2e/seal-cost-and-revision-identity.test.ts` — two checks that can only both pass if they run concurrently
-  (the first waits for a file the second writes); a second seal over unchanged content reports `reusedEvidence` and the
-  check's marker file proves it did not run twice; the revision id is stable across an identical re-seal and changes
-  when the content does; the previous evidence is readable under `superseded/<revisionId>/` while the active set holds
-  only the current seal's; and ownership conflicts are reported per file (no conflict for different files, a conflict
-  naming the shared file otherwise).
+- `tests/e2e/seal-cost-and-revision-identity.test.ts` — the concurrency case **opts in** with
+  `KATA_CHECK_CONCURRENCY`, and a second test pins the serial default; the first waits for a marker file the second
+  writes, so both can only pass if they really ran concurrently. A second seal over unchanged content reports
+  `reusedEvidence` and the check's marker file proves it did not run twice; the revision id is stable across an
+  identical re-seal and changes when the content does; the previous evidence is readable under
+  `superseded/<revisionId>/` while the active set holds only the current seal's; and ownership conflicts are reported
+  per file (no conflict for different files, a conflict naming the shared file otherwise).
 - `tests/unit/context-fabric.test.ts`'s "rejects a revision-anchored packet after the task seals a new revision" now
   seals *changed* content, since an identical re-seal is deliberately the same revision.
 - Full suite: 513 tests in 58 files, all passing; `tsc --noEmit` clean; `dist/cli.js` rebuilt.

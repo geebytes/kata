@@ -28,7 +28,7 @@
       "description": "Bounded repair cycle",
       "expectedAcceptances": 1,
       "expectedRepairs": 1,
-      "expectedEscalations": 1
+      "expectedEscalations": 0
     }
   ],
   "releaseGates": {

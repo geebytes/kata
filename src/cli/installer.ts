@@ -1,6 +1,6 @@
 import { platformDefinitionById } from '../adapters/platforms.js';
 import { doctor } from '../adapters/doctor.js';
-import { discoverPlatforms, listManagedPlatforms, update } from '../adapters/discovery.js';
+import { discoverPlatforms, isManagedPlatformSurfacePresent, listManagedPlatforms, update } from '../adapters/discovery.js';
 import { mergeInstallReports } from '../init-wizard.js';
 import type { InstallOptions, InstallScope, Platform } from '../adapters/manifest.js';
 import { updateComet } from '../comet/install.js';
@@ -20,16 +20,34 @@ import { currentOutput, writeProgress } from './output.js';
 export async function runAggregateUpdate(
     scope: InstallScope,
     options: InstallOptions,
+    policy: RefreshPolicy = 'auto',
 ): Promise<Record<string, unknown>> {
     const managed = await listManagedPlatforms(scope, options);
     const detected = (await discoverPlatforms(options))
         .filter((platform) => platform.scope === scope)
         .map((platform) => platform.platform);
-    const realPlatforms: Platform[] = [...new Set<Platform>([...managed, ...detected])]
+    // A platform that was installed and then had its directory removed by hand is not managed-for-update any more, and
+    // it is also not "detected" in the sense that mattered: Codex's project signal includes the shared `AGENTS.md`,
+    // which kata writes for every platform and which therefore outlives `.codex` itself. Removing the directory is how
+    // a user says "not this one"; an aggregate update that reinstalls it makes that decision last exactly one command.
+    //
+    // The test is the platform's own skills directory — the one path every managed artefact lives under — and it is
+    // applied to *both* sources, because a signal that survives the removal (a mention in `AGENTS.md`) is not a
+    // request to rebuild the surface. A platform never installed by kata has no manifest entry and no directory, so
+    // this only ever drops what kata itself put there and the user took away.
+    const candidates: Platform[] = [...new Set<Platform>([...managed, ...detected])]
         .filter((platform) => platform !== 'generic')
         .sort();
-    const targets: Platform[] = [...realPlatforms];
+    const targets: Platform[] = [];
+    const removedByUser: Platform[] = [];
+    for (const platform of candidates) {
+        if (await isManagedPlatformSurfacePresent(platform, scope, options)) targets.push(platform);
+        else removedByUser.push(platform);
+    }
     if (targets.length === 0 || managed.includes('generic')) targets.push('generic');
+    for (const platform of removedByUser) {
+        writeProgress(`跳过 ${platform}：其目录已被移除，更新不再重建（要恢复请用 --platform ${platform} 显式安装）\n`);
+    }
     writeProgress(`Kata update · ${scope === 'project' ? '当前项目' : '全局安装'}\n`);
     const reports = [];
     for (const platform of targets) {
@@ -38,9 +56,52 @@ export async function runAggregateUpdate(
         reports.push(report);
         writeProgress(formatUpdateReport(report));
     }
-    const runtimeRefresh = await runRuntimeRefresh(options.root!);
+    // ...unchanged until the reports are collected...
+    const changed = reports.some((report) => report.written.length > 0 || report.removed.length > 0);
+    const reason = policy === 'never'
+        ? 'refresh disabled by --no-refresh'
+        : 'no managed artefact changed; nothing the runtime tracks can be stale';
+    const runtimeRefresh = policy === 'always' || changed
+        ? await runRuntimeRefresh(options.root!)
+        : skipRuntimeRefresh(reason);
     writeProgress(formatRuntimeRefresh(runtimeRefresh));
     return { ...mergeInstallReports({ command: 'update', mode: 'auto', scope, reports }), runtimeRefresh };
+}
+
+/**
+ * A refresh that did not run, reported as one.
+ *
+ * The three compatibility fields stay present so every existing reader keeps working; each says `skipped`, and the
+ * top-level `reason` is what a human reads. `success: false` here means "did not run", which is why `skipped` exists —
+ * a reader must not have to infer the difference from an empty stage list.
+ */
+function skipRuntimeRefresh(reason: string): RuntimeRefreshResult {
+    const notRun = { success: false as const, skipped: true as const, error: reason };
+    return {
+        policy: 'best-effort',
+        skipped: true,
+        reason,
+        stages: [],
+        comet: { ...notRun },
+        codegraphSync: { ...notRun },
+        codegraphIndex: { ...notRun },
+    };
+}
+
+/**
+ * When the runtime refresh runs after an aggregate update (L0-02).
+ *
+ * `auto` (the default) refreshes only when the update actually wrote or removed a managed artefact. An update that
+ * changed nothing used to still pay a Comet check plus a full CodeGraph index rebuild — measured at 35–46s on this
+ * repository — for a run that could not have invalidated either. `always` stays available for recovery, and `never`
+ * for a caller that maintains the runtime itself.
+ */
+export type RefreshPolicy = 'auto' | 'always' | 'never';
+
+export function refreshPolicyFromArgs(argv: string[]): RefreshPolicy {
+    if (argv.includes('--refresh')) return 'always';
+    if (argv.includes('--no-refresh')) return 'never';
+    return 'auto';
 }
 
 type RefreshStageStatus = 'completed' | 'failed' | 'timed_out' | 'skipped';
@@ -67,11 +128,15 @@ type RefreshStageOutcome = {
  */
 type RuntimeRefreshResult = {
     policy: 'best-effort';
+    /** True when no stage ran at all, by policy — distinct from every stage having failed. */
+    skipped?: true;
+    /** Why it did not run. Always present when `skipped` is set, so the report never leaves a reader guessing. */
+    reason?: string;
     stages: RefreshStageOutcome[];
     // The per-stage fields the update report and `--json` consumers already read, kept as the compatibility surface.
-    comet: { success: boolean; previousVersion?: string | null; installedVersion?: string | null; error?: string };
-    codegraphSync: { success: boolean; output?: string; error?: string };
-    codegraphIndex: { success: boolean; output?: string; error?: string };
+    comet: { success: boolean; skipped?: boolean; previousVersion?: string | null; installedVersion?: string | null; error?: string };
+    codegraphSync: { success: boolean; skipped?: boolean; output?: string; error?: string };
+    codegraphIndex: { success: boolean; skipped?: boolean; output?: string; error?: string };
 };
 
 export async function runRuntimeRefresh(root: string): Promise<RuntimeRefreshResult> {
@@ -249,6 +314,8 @@ export function parseInstallerArgs(
             options.noWiki = true;
         } else if (settings.allowWizard && arg === '--yes') {
             yes = true;
+        } else if (arg === '--refresh' || arg === '--no-refresh') {
+            // Consumed by `refreshPolicyFromArgs`; accepted here so the parser does not reject it.
         } else if (arg !== undefined) {
             throw new Error(`Unknown installer option: ${arg}`);
         }
@@ -305,6 +372,7 @@ export function renderUpdateSummary(result: Record<string, unknown>): string {
 }
 
 function formatRuntimeRefresh(result: RuntimeRefreshResult): string {
+    if (result.skipped) return `运行时刷新：跳过（${result.reason ?? 'no reason recorded'}）\n`;
     const stage = (name: RefreshStageOutcome['stage']): string => result.stages.find((entry) => entry.stage === name)?.status ?? '';
     const label = (value: string): string => value === 'completed' ? '完成' : value === 'timed_out' ? '超时' : value === 'skipped' ? '跳过' : '失败';
     const cometVersion = result.comet.success && result.comet.installedVersion ? ` (${result.comet.installedVersion})` : '';

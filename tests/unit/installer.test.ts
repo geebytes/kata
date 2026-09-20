@@ -700,7 +700,9 @@ describe('Kata platform installer', () => {
         const previousCwd = process.cwd();
         process.chdir(root);
         try {
-            const status = await captureJsonOutput(() => main(['status']));
+            // The rich projection is opt-in now (L0-01/D1); the light default is pinned in
+            // `tests/unit/cli-status-light.test.ts`.
+            const status = await captureJsonOutput(() => main(['status', '--with-context']));
             expect(status).toMatchObject({
                 command: 'status',
                 taskId: 'handoff-active-task',
@@ -958,6 +960,39 @@ describe('Kata platform installer', () => {
         expect(directed).toMatchObject({ platform: 'opencode', scope: 'project' });
     });
 
+    it('does not reinstall a managed platform whose directory was removed by hand, and reinstalls it when asked directly', async () => {
+        const root = await tempRoot();
+        // Two managed platforms, so the removal is visible as "one of them is gone" rather than "nothing is left".
+        await install('opencode', 'project', { root });
+        await install('codex', 'project', { root });
+        await rm(join(root, '.codex'), { recursive: true, force: true });
+
+        const aggregate = await captureJsonOutput(() => main(['update', '--json', '--root', root]));
+
+        // The manifest still records codex — that is exactly the disagreement being resolved, so the assertion has to be
+        // about the directory rather than about what kata remembers installing.
+        await expect(listManagedPlatforms('project', { root })).resolves.toContain('codex');
+        await expect(stat(join(root, '.codex/skills', skillCommands[0].id, 'SKILL.md'))).rejects.toThrow();
+        expect(aggregate.selectedPlatforms).toContain('opencode');
+        expect(aggregate.selectedPlatforms).not.toContain('codex');
+
+        // The removal is a default, not a veto: naming the platform is the explicit way back.
+        await captureJsonOutput(() => main(['update', '--json', '--platform', 'codex', '--root', root]));
+        await expect(stat(join(root, '.codex/skills', skillCommands[0].id, 'SKILL.md'))).resolves.toBeDefined();
+    });
+
+    it('still reinstalls a managed platform whose directory is present but whose skills were partly deleted', async () => {
+        const root = await tempRoot();
+        await install('codex', 'project', { root });
+        await rm(join(root, '.codex/skills/kata-build'), { recursive: true, force: true });
+
+        const aggregate = await captureJsonOutput(() => main(['update', '--json', '--root', root]));
+
+        // Absence of the whole surface is a decision; a gap inside it is damage, and damage is what update repairs.
+        expect(aggregate.selectedPlatforms).toContain('codex');
+        await expect(stat(join(root, '.codex/skills/kata-build/SKILL.md'))).resolves.toBeDefined();
+    });
+
     it('updates files at the scope selected during initialization instead of defaulting to project', async () => {
         const projectRoot = await tempRoot('kata-update-project-');
         const globalRoot = await tempRoot('kata-update-global-');
@@ -1130,7 +1165,7 @@ describe('Kata platform installer', () => {
         process.chdir(nested);
         try {
             const status = await captureJsonOutput(() =>
-                main(['status', '--root', root, '--change', 'rooted-status-task']),
+                main(['status', '--root', root, '--change', 'rooted-status-task', '--with-context']),
             );
 
             expect(status).toMatchObject({
@@ -1162,7 +1197,7 @@ describe('Kata platform installer', () => {
         try {
             await main(['hooks', 'activate', '--change', 'active-status-task', '--role', 'designer', '--platform', 'codex']);
 
-            const status = await captureJsonOutput(() => main(['status']));
+            const status = await captureJsonOutput(() => main(['status', '--with-context']));
 
             expect(status).toMatchObject({
                 command: 'status',
@@ -1235,7 +1270,7 @@ describe('Kata platform installer', () => {
         const previousCwd = process.cwd();
         process.chdir(root);
         try {
-            const status = await captureJsonOutput(() => main(['status']));
+            const status = await captureJsonOutput(() => main(['status', '--with-context']));
             expect(status).toMatchObject({
                 command: 'status',
                 taskId: 'branch-discovered-task',
@@ -1802,6 +1837,34 @@ describe('Kata platform installer', () => {
         });
     });
 
+
+    it('skips the runtime refresh when the update changed nothing, and says why', async () => {
+        const root = await tempRoot();
+        // No `--platform`: the policy lives on the aggregate update path, which is the one an operator runs. Installing
+        // a platform is itself enough to make the next aggregate update discover one more, so convergence in a fresh
+        // root takes a couple of runs. The run under test is the *no-op* one, which is the run that used to pay for the
+        // refresh anyway.
+        let last;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            last = await captureJsonOutput(() => main(['update', '--json', '--scope', 'project', '--root', root]));
+        }
+        const second = last!;
+
+        expect(second.runtimeRefresh).toMatchObject({ skipped: true });
+        expect(String((second.runtimeRefresh as { reason?: string }).reason)).toContain('no managed artefact changed');
+        // Skipped is not failed: the update itself still succeeded.
+        expect(second).not.toHaveProperty('error');
+    });
+
+    it('refreshes anyway when the operator asked for it', async () => {
+        const root = await tempRoot();
+        await captureJsonOutput(() => main(['update', '--json', '--scope', 'project', '--root', root]));
+        await captureJsonOutput(() => main(['update', '--json', '--scope', 'project', '--root', root]));
+        const forced = await captureJsonOutput(() => main(['update', '--json', '--scope', 'project', '--root', root, '--refresh']));
+
+        // The override is not concealed by the policy: the stages ran (or were attempted) rather than skipped.
+        expect((forced.runtimeRefresh as { skipped?: boolean }).skipped).toBeUndefined();
+    });
     it('renders a readable update report by default and preserves JSON output on request', async () => {
         const root = await tempRoot();
 

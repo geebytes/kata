@@ -12,7 +12,7 @@ import {
   type InstallScope,
   type Platform,
 } from './manifest.js';
-import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, resolvePlatformGlobalDir } from './platforms.js';
+import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, platformSkillsDir, resolvePlatformGlobalDir } from './platforms.js';
 import { renderHookGuardScript } from '../policy/guard-script.js';
 import { hookConfigForPlatform, mergeHookConfig, removeManagedHookConfig } from './hook-configs.js';
 
@@ -73,6 +73,28 @@ export async function listManagedPlatforms(
       .map((file) => file.platform),
   )].sort();
 }
+/**
+ * Whether a managed platform's project surface is still on disk at all.
+ *
+ * An aggregate `update` used to reinstall every platform the manifest records, so removing a platform's directory by
+ * hand lasted until the next `kata-cli update` and then came back. The manifest entry and the directory disagree, and
+ * the directory is what the user actually asked for.
+ *
+ * The platform's own skills directory is the probe: it is the one path every managed artefact lives under, so a
+ * surviving file (say `.codex/rules/…`) without it is not a surface anyone is using. An `entrypoint` install's files
+ * are the only thing the manifest can vouch for, and a platform whose directory is present but empty still reads as
+ * present — absence has to be a deliberate removal, not a gap.
+ */
+export async function isManagedPlatformSurfacePresent(
+  platform: Platform,
+  scope: InstallScope,
+  options: InstallOptions = {},
+): Promise<boolean> {
+  const effective = await resolveGlobalInstallRoot(platform, scope, options);
+  const baseRoot = installationRoot(scope, effective);
+  return exists(join(baseRoot, platformSkillsDir(platform, scope)));
+}
+
 
 export async function uninstall(
   platform: Platform,

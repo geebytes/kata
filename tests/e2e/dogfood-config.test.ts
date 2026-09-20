@@ -42,7 +42,7 @@ describe('Dogfood evaluation', () => {
       `Dogfood evaluation: ${report.metrics.totalTasks} fixtures`,
       `  Acceptance pass rate: ${(report.metrics.acceptancePassRate * 100).toFixed(1)}%`,
       `  Repair rate: ${report.metrics.repairRate.toFixed(2)}`,
-      `  Escalation rate: ${report.metrics.escalationRate.toFixed(2)}`,
+      `  Escalation rate: ${report.metrics.escalationRate === null ? 'not measured' : report.metrics.escalationRate.toFixed(2)}`,
       `  Release gates: ${report.releaseGates.allPass ? 'PASS' : 'FAIL'}`,
       `  ${report.releaseGates.summary}`,
       ];
