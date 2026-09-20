@@ -119,6 +119,52 @@ describe('the change surface between revisions', () => {
         // A pass that declared both covers it.
         expect(deltaCoversChange(['src/a.ts', 'src/b.ts'], { status: 'available', ...diff })).toEqual({ covered: true, missing: [] });
     });
+
+    it('produces byte-identical digests from one traversal, for a directory-owned path', async () => {
+        const root = await workspace();
+        const { computeBothOwnedDigests, computeManifestHash, computePathDigests } = await import('../../src/workflow/revision.js');
+
+        const manifestAlone = await computeManifestHash(root, ['src']);
+        const digestsAlone = await computePathDigests(root, ['src']);
+        const both = await computeBothOwnedDigests(root, ['src']);
+
+        // L1-02: one walk must produce exactly what two walks produced. The historical break was not the digest
+        // algorithm but the *key shape* — a directory-owned path looked up in a file-keyed table — so the fixture is
+        // a directory that owns declared files, not a file-shaped owned path.
+        expect(both.manifestHash).toBe(manifestAlone);
+        expect(both.pathDigests).toEqual(digestsAlone);
+        expect(Object.keys(both.pathDigests).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('produces byte-identical digests from one traversal for a file path and for a missing path', async () => {
+        const root = await workspace();
+        const { computeBothOwnedDigests, computeManifestHash, computePathDigests } = await import('../../src/workflow/revision.js');
+
+        // The two paths that do not go through the directory walk: they must agree too, or the equivalence is partial.
+        for (const owned of [['src/a.ts'], ['src/not-here.ts']]) {
+            const manifestAlone = await computeManifestHash(root, owned);
+            const digestsAlone = await computePathDigests(root, owned);
+            const both = await computeBothOwnedDigests(root, owned);
+
+            expect(both.manifestHash).toBe(manifestAlone);
+            expect(both.pathDigests).toEqual(digestsAlone);
+        }
+    });
+
+    it('keeps the whole-tree tree hash unchanged while streaming it', async () => {
+        const root = await workspace();
+        const { repositoryTreeHash } = await import('../../src/core/repository-identity.js');
+
+        const first = await repositoryTreeHash(root);
+        await writeFile(join(root, 'src/a.ts'), 'export const a = 9;\n', 'utf8');
+        const second = await repositoryTreeHash(root);
+
+        // A stable digest over unchanged content is what every sealed revision rests on; streaming must not move it.
+        expect(first).toMatch(/^[a-f0-9]{64}$/);
+        expect(second).not.toBe(first);
+        await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
+        await expect(repositoryTreeHash(root)).resolves.toBe(first);
+    });
 });
 
 describe('the delta gate refuses a scope that does not cover the change', () => {

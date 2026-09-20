@@ -99,4 +99,48 @@ describe('process facility', () => {
         const timedOut = runProcessSync(process.execPath, ['-e', 'setTimeout(()=>{}, 5000)'], { cwd: root, timeoutMs: 200 });
         expect(timedOut).toMatchObject({ ok: false, exitCode: 124, failure: 'timeout' });
     });
+
+    it('keeps the default capture unbounded, so parsers still see the whole stream', async () => {
+        const root = await tempRoot();
+
+        const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("x".repeat(50000))'], { cwd: root });
+
+        // L4-02: four callers parse the complete stdout, so the default cannot change under them.
+        expect(result.stdout).toHaveLength(50_000);
+        expect(result.captureTruncated).toBe(false);
+        expect(result.capturedBytes).toBe(50_000);
+    });
+
+    it('bounds the capture when asked, keeps head and tail, and reports what it dropped', async () => {
+        const root = await tempRoot();
+
+        const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("a".repeat(10000) + "z".repeat(10000))'], {
+            cwd: root,
+            maxCaptureBytes: 200,
+        });
+
+        expect(result.captureTruncated).toBe(true);
+        expect(result.capturedBytes).toBe(20_000);
+        expect(result.stdout.startsWith('a'.repeat(100))).toBe(true);
+        expect(result.stdout.endsWith('z'.repeat(100))).toBe(true);
+        // The middle is named, not hidden: a reader must never mistake an excerpt for the whole log.
+        expect(result.stdout).toMatch(/\[\d+ bytes omitted\]/);
+    });
+
+    it('tees the complete output to an artifact when one is declared', async () => {
+        const root = await tempRoot();
+        const artifact = join(root, 'full.log');
+        const { readFile } = await import('node:fs/promises');
+
+        const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("a".repeat(10000) + "z".repeat(10000))'], {
+            cwd: root,
+            maxCaptureBytes: 200,
+            captureArtifact: artifact,
+        });
+
+        // The bound is a memory bound, not a diagnostic one: the transcript is still recoverable, and it is complete
+        // by the time the promise settles.
+        expect(result.captureTruncated).toBe(true);
+        expect(await readFile(artifact, 'utf8')).toHaveLength(20_000);
+    });
 });

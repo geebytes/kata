@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { isIgnoredRepositoryPath, walkRepositoryFiles } from '../core/repository-identity.js';
+import { createHash, randomUUID, type Hash } from 'node:crypto';
+import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -47,10 +47,9 @@ export async function createTaskRevision(input: CreateTaskRevisionInput): Promis
 export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput): Promise<{ revision: TaskRevision; reused: boolean }> {
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
-  const manifestHash = await computeManifestHash(input.root, ownedPaths);
-  // The id derives from the manifest hash and the check set only: the per-path table is *added* by this seal (F2.1), it
-  // never participates in the identity — otherwise adding the field would renumber every revision (I4).
-  const pathDigests = await computePathDigests(input.root, ownedPaths);
+  // One traversal for both digests (L1-02). The id still derives from the manifest hash and the check set only:
+  // the per-path table is *added* by this seal (F2.1) and never participates in the identity (I4).
+  const { manifestHash, pathDigests } = await computeBothOwnedDigests(input.root, ownedPaths);
   const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? []);
 
   const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
@@ -119,27 +118,74 @@ export async function revisionStatus(root: string, revision: TaskRevision): Prom
     : { status: 'superseded', expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
 }
 
-export async function computeManifestHash(root: string, ownedPaths: string[]): Promise<string> {
-  const hash = createContentHasher();
+/**
+ * Feeds one owned-path traversal into the rolling manifest digest and, when asked, the per-path table.
+ *
+ * `computeManifestHash` and `computePathDigests` each walked the same tree, so a seal read and hashed every owned
+ * file twice before a single check started (L1-02). The traversal and the order are identical, so asking for both
+ * costs one walk and produces byte-identical output for each. Callers that need only one of the two still pay for
+ * only one.
+ *
+ * The walk is `walkRepositoryEntries` (one file at a time) rather than `walkRepositoryFiles`: the owned set used to be
+ * materialised in full just to hash it. Same ignore policy, same size rule (owned-path hashing has no size cap), same
+ * `localeCompare` order — so the digests do not move.
+ */
+async function feedOwnedTree(
+  root: string,
+  ownedPaths: string[],
+  manifest: Hash,
+  pathDigests: Record<string, string> | null,
+): Promise<void> {
   for (const path of normalizeOwnedPaths(root, ownedPaths)) {
-    hash.update(path);
-    hash.update('\0');
+    manifest.update(path);
+    manifest.update('\0');
+    const fullPath = join(root, path);
+    let entry: Awaited<ReturnType<typeof stat>> | null = null;
     try {
-      const fullPath = join(root, path);
-      const entry = await stat(fullPath);
-      if (entry.isDirectory()) {
-        await hashDirectoryRecursive(fullPath, root, hash);
-      } else if (entry.isFile()) {
-        hash.update(await readFile(fullPath));
-      } else {
-        hash.update('[unsupported]');
-      }
+      entry = await stat(fullPath);
     } catch {
-      hash.update('[missing]');
+      entry = null;
     }
-    hash.update('\0');
+
+    if (entry?.isDirectory()) {
+      const relativeDir = relative(root, fullPath).replaceAll('\\', '/');
+      for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
+        manifest.update(file.path);
+        manifest.update('\0');
+        manifest.update(file.content);
+        manifest.update('\0');
+        if (pathDigests) pathDigests[file.path] = hashContent(file.content);
+      }
+    } else if (entry?.isFile()) {
+      const content = await readFile(fullPath);
+      manifest.update(content);
+      if (pathDigests) pathDigests[path] = hashContent(content);
+    } else if (entry) {
+      manifest.update('[unsupported]');
+      if (pathDigests) pathDigests[path] = hashContent('[unsupported]');
+    } else {
+      manifest.update('[missing]');
+      if (pathDigests) pathDigests[path] = hashContent('[missing]');
+    }
+    manifest.update('\0');
   }
-  return hash.digest('hex');
+}
+
+/** Both owned-tree digests from one traversal — what a seal needs. */
+export async function computeBothOwnedDigests(
+  root: string,
+  ownedPaths: string[],
+): Promise<{ manifestHash: string; pathDigests: Record<string, string> }> {
+  const pathDigests: Record<string, string> = {};
+  const manifest = createContentHasher();
+  await feedOwnedTree(root, ownedPaths, manifest, pathDigests);
+  return { manifestHash: manifest.digest('hex'), pathDigests };
+}
+
+export async function computeManifestHash(root: string, ownedPaths: string[]): Promise<string> {
+  const manifest = createContentHasher();
+  await feedOwnedTree(root, ownedPaths, manifest, null);
+  return manifest.digest('hex');
 }
 
 /**
@@ -173,24 +219,9 @@ export async function computePathDigest(root: string, path: string): Promise<str
  * here changed" and nothing more, which is precisely the question this exists to answer precisely.
  */
 export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
-  const digests: Record<string, string> = {};
-  for (const path of normalizeOwnedPaths(root, ownedPaths)) {
-    const fullPath = join(root, path);
-    let entry: Awaited<ReturnType<typeof stat>> | null = null;
-    try {
-      entry = await stat(fullPath);
-    } catch {
-      entry = null;
-    }
-    if (entry?.isDirectory()) {
-      for (const file of await walkRepositoryFiles(root, path ? { under: path } : {})) {
-        digests[file.path] = hashContent(file.content);
-      }
-      continue;
-    }
-    digests[path] = await computePathDigest(root, path);
-  }
-  return digests;
+  const pathDigests: Record<string, string> = {};
+  await feedOwnedTree(root, ownedPaths, createContentHasher(), pathDigests);
+  return pathDigests;
 }
 
 /** Owned-path hashing shares the repository's ignore policy, and reads what it is responsible for (no size cap). */

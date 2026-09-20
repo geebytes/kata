@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStateEvents, type Actor } from '../core/state.js';
 import { readCurrentTaskRevision } from '../workflow/revision.js';
-import { collectEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
+import { collectEvidence, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { judge } from '../quality/judge.js';
 import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
@@ -26,9 +26,47 @@ export interface EvaluationManifest {
   taskFixtures: EvaluationFixture[];
 }
 
+/**
+ * What a fixture declared, what the run produced, and every place they disagree (L5-02).
+ *
+ * `expectedEscalations` used to be recorded and never compared, so a fixture could assert anything and still
+ * contribute a passing aggregate. The comparison is deliberately literal: an expectation that is not observed is not
+ * a pass.
+ */
+export interface FixtureExpectationVerdict {
+  expected: { acceptances: number; repairs: number; escalations: number };
+  observed: { acceptances: number; repairs: number; escalations: number | null };
+  mismatches: string[];
+  matched: boolean;
+}
+
+export function compareExpectation(
+  declared: { acceptances: number; repairs: number; escalations: number },
+  observed: { acceptances: number; repairs: number; escalations: number | null },
+): FixtureExpectationVerdict {
+  const mismatches: string[] = [];
+  if (observed.acceptances !== declared.acceptances) {
+    mismatches.push(`acceptances: declared ${declared.acceptances}, observed ${observed.acceptances}`);
+  }
+  if (observed.repairs !== declared.repairs) {
+    mismatches.push(`repairs: declared ${declared.repairs}, observed ${observed.repairs}`);
+  }
+  if (observed.escalations === null) {
+    // The harness cannot observe escalations. Declaring none is a claim it agrees with; declaring some is a claim
+    // no run can confirm, and *that* is the mismatch worth failing on.
+    if (declared.escalations !== 0) {
+      mismatches.push(`escalations: declared ${declared.escalations}, unobservable in this harness`);
+    }
+  } else if (observed.escalations !== declared.escalations) {
+    mismatches.push(`escalations: declared ${declared.escalations}, observed ${observed.escalations}`);
+  }
+  return { expected: { ...declared }, observed: { ...observed }, mismatches, matched: mismatches.length === 0 };
+}
+
 /** A run records what the fixture actually produced, next to the expectation it was written against. */
 export interface EvaluationRunObservation extends EvaluationRun {
   expected: { acceptances: number; repairs: number; escalations: number };
+  expectation: FixtureExpectationVerdict;
   steps: string[];
 }
 
@@ -41,6 +79,20 @@ export interface EvaluationReport {
   durationMs: number;
   /** Recorded so a reader never mistakes an unmeasured `0` for a measurement. */
   unmeasured: string[];
+  /** The concurrency the fixtures actually ran at, so a report cannot be mistaken for a serial one. */
+  concurrency: number;
+}
+
+/**
+ * How many fixtures run at once (L5-03). **Serial by default.**
+ *
+ * Each fixture already gets its own temporary root, so the isolation the parallel case needs is real rather than
+ * assumed — but the default is still one at a time, because the boundary the review set for every fan-out in this plan
+ * is that the conservative value is the default and the fast one is explicit.
+ */
+export function evaluationConcurrency(): number {
+  const configured = Number.parseInt(process.env.KATA_EVAL_CONCURRENCY ?? '', 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : 1;
 }
 
 export async function runEvaluation(
@@ -54,14 +106,23 @@ export async function runEvaluation(
   } = {},
 ): Promise<EvaluationReport> {
   const startedAt = Date.now();
-  const runs: EvaluationRunObservation[] = [];
-
-  for (const fixture of manifest.taskFixtures) {
-    runs.push(await runFixture(fixture, options));
-  }
+  // Results are written by index, not appended, so the report is byte-identical whatever the concurrency: a reader must
+  // not be able to tell from the output whether the run was parallel.
+  const runs = new Array<EvaluationRunObservation>(manifest.taskFixtures.length);
+  const concurrency = evaluationConcurrency();
+  const order = manifest.taskFixtures.map((_, index) => index);
+  await runWithConcurrency(order, concurrency, () => 1, async (index) => {
+    runs[index] = await runFixture(manifest.taskFixtures[index]!, options);
+  });
 
   const metrics = computeMetrics(runs);
-  const releaseGates = await checkReleaseGates(root, metrics, options);
+  const releaseGates = await checkReleaseGates(root, metrics, {
+    ...options,
+    expectations: runs.map((run) => ({ id: run.id, matched: run.expectation.matched, mismatches: run.expectation.mismatches })),
+    // Recorded rather than inferred: resource-related fixture failures are the reason the default is serial, so a report
+    // that shows a parallel run must say so where the reader is already looking for what happened.
+    concurrency,
+  });
 
   return {
     manifest,
@@ -71,6 +132,7 @@ export async function runEvaluation(
     timestamp: new Date().toISOString(),
     durationMs: Date.now() - startedAt,
     unmeasured: [...unmeasuredMetrics],
+    concurrency,
   };
 }
 
@@ -140,6 +202,11 @@ async function runFixture(
     ).length;
     const wikiRecords = await readWikiRecords(root).catch(() => []);
 
+    const expectation = compareExpectation(
+      { acceptances: fixture.expectedAcceptances, repairs: fixture.expectedRepairs, escalations: fixture.expectedEscalations },
+      { acceptances: judgeResult.acceptance.length, repairs: repairCount, escalations: null },
+    );
+
     return {
       id: fixture.id,
       taskId: fixture.id,
@@ -147,17 +214,16 @@ async function runFixture(
       acceptancesPassed: judgeResult.acceptance.filter((criterion) => criterion.result === 'PASS').length,
       acceptancesFailed: judgeResult.acceptance.filter((criterion) => criterion.result === 'FAIL').length,
       repairCount,
-      escalationCount: 0,
-      tokensUsed: 0,
-      costCredits: 0,
+      // The host platform owns model choice, cost and retries, so this harness records that it did not observe
+      // them rather than a zero a reader could mistake for a measurement (L5-01).
+      escalationCount: null,
+      tokensUsed: null,
+      costCredits: null,
       latencyMs: Date.now() - startedAt,
       wikiRejected: wikiRecords.filter((record) => record.status === 'rejected').length,
       wikiPromoted: wikiRecords.filter((record) => record.status === 'verified').length,
-      expected: {
-        acceptances: fixture.expectedAcceptances,
-        repairs: fixture.expectedRepairs,
-        escalations: fixture.expectedEscalations,
-      },
+      expected: expectation.expected,
+      expectation,
       steps,
     };
   } finally {

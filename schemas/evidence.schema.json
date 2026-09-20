@@ -108,6 +108,39 @@
         "matrix",
         "explicit"
       ]
+    },
+    "logBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "logTruncated": {
+      "type": "boolean"
+    },
+    "logArtifact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expectExitCode": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "checkInput": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "coveredAcceptanceIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reusedFrom": {
+      "type": "string",
+      "minLength": 1
     }
   }
 }

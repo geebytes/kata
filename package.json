@@ -30,7 +30,8 @@
         "vitest": "^2.1.0"
     },
     "dependencies": {
-        "@inquirer/prompts": "^8.5.2"
+        "@inquirer/prompts": "^8.5.2",
+        "ajv": "^8.20.0"
     },
     "publishConfig": {
         "access": "public"

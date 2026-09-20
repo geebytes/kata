@@ -1,6 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildContextManifest } from '../core/context.js';
+import { buildContextManifest, summarizeExcludedWiki } from '../core/context.js';
 import { currentGitBranch } from '../core/git.js';
 import { hashContent } from '../core/hash.js';
 import {
@@ -153,10 +153,38 @@ export async function discoverSingleTaskForCurrentBranch(root: string): Promise<
     return { taskId: matches[0]!, source: 'discovered', branch };
 }
 
-export async function runLocalStatusCommand(change: string, resolved?: ResolvedTask | null, root = resolveWorkspaceRoot()): Promise<Record<string, unknown>> {
+export interface StatusOptions {
+    /**
+     * Include the full context projection (`task`, `requiredReads`, `context`).
+     *
+     * Default false (L0-01). An explicitly anchored task used to build that projection here and build equivalent
+     * context again inside the authoritative `orient` packet, so one invocation paid for two discovery passes over
+     * the same task. `orient` answers "what is this task and what must I read"; `status` answers "which phase is
+     * this and what runs next", and has to stay cheap enough to run before a confirmation prompt.
+     */
+    withContext?: boolean;
+}
+
+/** The engine stamp a task carries (C7), read without building the whole task context. */
+async function readTaskEngine(root: string, change: string): Promise<{ version: string; stampedAt: string } | undefined> {
+    try {
+        const task = JSON.parse(await readFile(taskPath(root, change), 'utf8')) as { engine?: { version: string; stampedAt: string } };
+        return task.engine;
+    } catch {
+        return undefined;
+    }
+}
+
+export async function runLocalStatusCommand(
+    change: string,
+    resolved?: ResolvedTask | null,
+    root = resolveWorkspaceRoot(),
+    options: StatusOptions = {},
+): Promise<Record<string, unknown>> {
     const terminal = await resolveTerminalTask(root, change);
     if (terminal.taskId !== change) {
-        const targetStatus = await runLocalStatusCommand(terminal.taskId, resolved, root);
+        // A relation redirect is answerable without any context — the caller's next question is about the target.
+        const targetStatus = await runLocalStatusCommand(terminal.taskId, resolved, root, options);
         return {
             ...targetStatus,
             command: 'status',
@@ -195,11 +223,15 @@ export async function runLocalStatusCommand(change: string, resolved?: ResolvedT
             ...(autoActive.origin ? { origin: autoActive.origin } : {}),
         }
         : resolved;
-    const taskContext = await readTaskContext(root, change);
+    const withContext = options.withContext === true;
+    // L0-01: build the context manifest only when it was asked for. `orient` is the packet that carries it, so a
+    // status call that is about to be followed by an orient must not build it twice.
+    const taskContext = withContext ? await readTaskContext(root, change) : null;
+    const engine = taskContext?.engine ?? await readTaskEngine(root, change);
     // C7: a gate that asks for something it never asked for before is an engine change, not a mistake in this run, and
     // saying so costs one line where the absence of it cost a diagnostic cycle.
     const { engineChangeNote, engineVersion } = await import('../core/engine-version.js');
-    const engineNote = engineChangeNote(taskContext.engine);
+    const engineNote = engineChangeNote(engine);
     const upstream = await readUpstreamSummary(root, change);
     const suggestion = suggestCandidateAction(state.phase, upstream);
     const phaseNextSkill = nextSkillForPhase(state.phase);
@@ -238,12 +270,15 @@ export async function runLocalStatusCommand(change: string, resolved?: ResolvedT
         ...(state.updatedAt ? { updatedAt: state.updatedAt } : {}),
         ...(state.actor ? { actor: state.actor } : {}),
         ...(state.activeSession ? { activeSession: state.activeSession } : {}),
-        task: taskContext.task,
         state,
-        engine: { running: engineVersion(), ...(taskContext.engine ? { task: taskContext.engine } : {}) },
+        // `light` is stated rather than implied: a reader must be able to tell "no context because none was asked
+        // for" from "no context because the task has none".
+        ...(withContext ? {} : { light: true }),
+        engine: { running: engineVersion(), ...(engine ? { task: engine } : {}) },
         ...(engineNote ? { engineNote } : {}),
-        requiredReads: taskContext.requiredReads,
-        context: taskContext.context,
+        ...(taskContext
+            ? { task: taskContext.task, requiredReads: taskContext.requiredReads, context: taskContext.context }
+            : {}),
     };
 }
 
@@ -286,7 +321,7 @@ export async function readTaskContext(root: string, change: string): Promise<{
     try {
         context = await buildContextManifest({ root, taskId: change, sourceRefs: [] });
     } catch {
-        context = { taskId: change, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], warnings: [] };
+        context = { taskId: change, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], excludedWikiSummary: { relevant: [], unrelated: { count: 0, byReason: {} } }, warnings: [] };
     }
     return {
         ...(task.engine ? { engine: task.engine } : {}),
@@ -305,7 +340,11 @@ export async function readTaskContext(root: string, change: string): Promise<{
         ],
         context: {
             authoritativeWikiCount: context.authoritativeWiki.length,
+            // L3-03: the relevant records keep their reasons; the rest is a count with a pointer at the Wiki's own audit,
+            // so one task's handoff no longer carries the repository's whole history of drift. `excludedWikiCount` stays
+            // as the total, because a caller comparing totals should not have to add the split back up.
             excludedWikiCount: context.excludedWiki.length,
+            excludedWiki: context.excludedWikiSummary ?? summarizeExcludedWiki(context.excludedWiki),
             sourceRefs: context.sourceRefs,
             warnings: context.warnings,
         },
@@ -476,6 +515,13 @@ export async function runOrientCommand(argv: string[]): Promise<Record<string, u
         task: taskContext.task,
         state,
         requiredReads: taskContext.requiredReads,
+        // The packet's own read sets, so the receiver can see the split rather than guess which of thirteen paths is new.
+        ...(contextPacket.context.continuedReads?.length
+            ? {
+                continuedReads: contextPacket.context.continuedReads,
+                continuedReadsNote: 'Already acknowledged by this role at this content hash: listed for auditability, not required again.',
+            }
+            : {}),
         context: taskContext.context,
         guardInstructions: handoff.guardInstructions,
         handoff: { id: contextPacket.id, path: `.kata/tasks/${change}/handoffs/${contextPacket.id}.json`, sha256: createPacketHash(contextPacket), verificationCommand: `kata-cli handoff verify --task ${change} --id ${contextPacket.id}` },

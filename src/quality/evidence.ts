@@ -4,7 +4,7 @@ import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
-import { createContentHasher } from '../core/hash.js';
+import { createContentHasher, hashContent } from '../core/hash.js';
 import { runProcess } from '../process/run.js';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
@@ -32,6 +32,12 @@ export interface ImportedCheckResult {
   exitCode: number;
   log?: string;
   environment?: string;
+  /** Bytes the check produced, whether or not the log below holds all of them. */
+  logBytes?: number;
+  /** True when the log is a head/tail excerpt rather than the whole output. */
+  logTruncated?: boolean;
+  /** The complete output, as a path. Present only when the capture dropped something. */
+  logArtifact?: string;
 }
 
 export interface CheckCommand {
@@ -68,6 +74,14 @@ export interface CheckCommand {
    */
   expectExitCode?: number;
   /**
+   * The test selector this check runs, when it is a test check that names one.
+   *
+   * Recorded rather than left inside `args` because two things need it structurally: the input fingerprint (which must
+   * change when the selector does, or a reuse would credit the wrong test) and the rule that Verify and Review may
+   * only execute declared selectors (L0-04/L2-04).
+   */
+  testSelector?: string;
+  /**
    * How many slots this check occupies when checks run concurrently. Default **1**.
    *
    * The reason this exists came from another session's report, and it is now measured rather than asserted: a project
@@ -77,6 +91,14 @@ export interface CheckCommand {
    * project having to give up concurrency for its cheap checks.
    */
   weight?: number;
+  /**
+   * The envelope this check's outcome was carried forward from, when a seal reused it instead of running it.
+   *
+   * On `CheckCommand` rather than only on the envelope because `planCheckReuse` expresses a reuse by setting
+   * `importResult` on the *check*; the collector then needs somewhere to read the provenance from when it stamps the
+   * new envelope. An unknown field here is a compile error, which is the point.
+   */
+  reusedFrom?: string;
 }
 
 export interface EvidenceCollectionOptions {
@@ -89,6 +111,20 @@ export interface EvidenceCollectionOptions {
    * verifications a project wants at the point the artefact is frozen, and a seal that deferred them names them.
    */
   includeFrozen?: boolean;
+  /**
+   * Where a check's complete output is written when its capture exceeded the in-memory bound.
+   *
+   * Absent means "keep only what the bounded capture holds" — which is what a caller with no task-scoped place to put
+   * the file should pass. The orchestrator passes `evidenceDir(root)` so the record survives beside the envelope.
+   */
+  checkLogDir?: string;
+  /**
+   * The acceptance criteria each declared check id proves, built from the task's acceptance matrix.
+   *
+   * Passed in rather than read here: the collector knows checks, the matrix belongs to the task, and the mapping is
+   * what lets a reused envelope stay answerable for the rows it was declared against.
+   */
+  acceptanceByCheckId?: Record<string, string[]>;
 }
 
 export interface EvidenceEnvelope {
@@ -108,6 +144,55 @@ export interface EvidenceEnvelope {
   revisionId?: string;
   scope?: EvidenceScope;
   log?: string;
+  /** Bytes the check produced before any cap applied. */
+  logBytes?: number;
+  /** True when `log` is an excerpt. A reader must never mistake a truncated log for a silent check. */
+  logTruncated?: boolean;
+  /** Where the complete log was written, when the capture was bounded. */
+  logArtifact?: string;
+  /**
+   * The exit code this check declared it must produce (claims only). Absent for an ordinary check.
+   *
+   * Recorded on the envelope rather than only on the declaration, because the envelope is what a later reader has: a
+   * bare `exitCode: 1` cannot be told from a failure without it.
+   */
+  expectExitCode?: number;
+  /**
+   * Whether the check produced the outcome it declared: `exitCode === (expectExitCode ?? 0)`.
+   *
+   * This exists because the collector and the claim evaluator disagreed: a claim declaring `expectExitCode: 1` passed on
+   * exit 1 in `evaluateClaims` while the seal's own predicate (`exitCode === 0`) called it a failure. One field, one
+   * answer. Optional on disk so envelopes written before it still validate; read it through `isPassing()`.
+   */
+  passed?: boolean;
+  /** sha256 over the inputs that decide what this check executes. Absent means "cannot be reused", never "unchanged". */
+  checkInput?: string;
+  /** The acceptance criteria this check was declared to prove, from the matrix. */
+  coveredAcceptanceIds?: string[];
+  /** The envelope this one was carried forward from, when the check was not re-run. */
+  reusedFrom?: string;
+}
+
+/** A passing envelope under the outcome contract, tolerating envelopes written before the field existed. */
+export function isPassing(evidence: EvidenceEnvelope): boolean {
+  return evidence.passed ?? evidence.exitCode === 0;
+}
+
+/**
+ * What decides what a check executes.
+ *
+ * Environment *keys* only, never values: a value is a secret far more often than it is a predictor of behaviour, and
+ * the key set is what actually changes a command's behaviour. `importResult` is excluded on purpose — it is how a reuse
+ * is expressed, not part of the input.
+ */
+export function checkInputFingerprint(check: CheckCommand): string {
+  return hashContent(JSON.stringify({
+    command: check.command,
+    args: check.args ?? [],
+    cwd: check.cwd ?? '',
+    envKeys: Object.keys(check.env ?? {}).sort(),
+    ...(check.testSelector ? { testSelector: check.testSelector } : {}),
+  }));
 }
 
 export interface EvidenceScope {
@@ -130,7 +215,26 @@ export type FreshnessResult =
       evidenceScopeHash: string;
     };
 
+/** Characters of a check's output kept inline in the envelope. Enough for the failure, not for a megabyte of noise. */
 const maxLogLength = 20_000;
+
+/**
+ * The bound the process facility is given for a check's capture (L4-02).
+ *
+ * Larger than `maxLogLength` on purpose: the inline log is what a reader sees first, and the capture bound only exists
+ * so a check that prints for ten minutes cannot make the *seal* hold the whole transcript while it waits. The complete
+ * text still lands in the artifact file below.
+ */
+const maxCaptureBytes = 2_000_000;
+
+// Which envelope a reused check was carried forward from, so the new evidence names its provenance.
+function reuseSourceMap(commands: CheckCommand[]): Map<CheckCommand, string> {
+  const reuseSource = new Map<CheckCommand, string>();
+  for (const check of commands) {
+    if (check.reusedFrom) reuseSource.set(check, check.reusedFrom);
+  }
+  return reuseSource;
+}
 
 /**
  * How many checks may run at once. **Serial by default.**
@@ -162,8 +266,11 @@ export function checkWeight(check: CheckCommand): number {
  * Weighted rather than uniform because the thing being bounded is machine capacity, not check count: one check that runs
  * `-n auto` is already a whole machine's worth of work, and starting a second beside it is how a seal ends up reporting
  * failures it caused itself.
+ *
+ * Exported because it is the one bounded scheduler in the codebase: the seal preflight and the CodeGraph fan-out both
+ * need "bounded fan-out, declaration order preserved", and a second implementation of that is how the two drift.
  */
-async function runWithConcurrency<T>(
+export async function runWithConcurrency<T>(
   items: T[],
   limit: number,
   weightOf: (item: T) => number,
@@ -237,6 +344,7 @@ export async function collectEvidence(
   // nine of them one at a time spends the sum of their durations rather than the longest. Results are reassembled in
   // declaration order so a caller's view of the set does not depend on scheduling.
   const results = new Array<EvidenceEnvelope | undefined>(commands.length);
+  const reuseSource = reuseSourceMap(commands);
   // Covered checks report themselves so a monitoring reader sees why they produced nothing, then are skipped.
   for (const [index, check] of commands.entries()) {
     if (!check.coveredBy) continue;
@@ -270,16 +378,28 @@ export async function collectEvidence(
 
     const startedAt = new Date().toISOString();
     const redactions = collectRedactions(check);
+    const declaredCheckId = check.id;
+    const checkInput = checkInputFingerprint(check);
+    const expected = check.expectExitCode ?? 0;
+    // A reused check never reaches `runBoundedCommand`: `importResult` short-circuits it, which is the existing seam for
+    // "this outcome is already known". Stamping happens after, so a reused envelope is indistinguishable in shape from a
+    // fresh one — except for `reusedFrom`, which says so.
     const command = redact(renderCommand(check.command, check.args ?? []), redactions);
-    const result = check.importResult ?? (await runBoundedCommand(check, { onProgress: options.onProgress, signal: options.signal }));
+    const result = check.importResult ?? (await runBoundedCommand(check, {
+      onProgress: options.onProgress,
+      signal: options.signal,
+      ...(options.checkLogDir
+        ? { logArtifactPath: join(options.checkLogDir, `${taskId}-${check.id ?? checkName}.log`) }
+        : {}),
+    }));
     const finishedAt = new Date().toISOString();
 
     const finalState: CheckProgressState = options.signal?.aborted
       ? 'cancelled'
-      : result.exitCode === 0
-        ? 'passed'
-        : result.exitCode === 124
-          ? 'timed_out'
+      : result.exitCode === 124
+        ? 'timed_out'
+        : result.exitCode === expected
+          ? 'passed'
           : 'failed';
     options.onProgress?.({ type: 'quality_check_progress', check: checkName, state: finalState, timeoutMs, exitCode: result.exitCode });
 
@@ -293,10 +413,21 @@ export async function collectEvidence(
       command,
       environment: redact(result.environment ?? environmentSummary(cwd), redactions),
       exitCode: result.exitCode,
+      // The outcome contract, stated once, where the exit code is known.
+      ...(check.expectExitCode !== undefined ? { expectExitCode: check.expectExitCode } : {}),
+      passed: result.exitCode === expected,
+      checkInput,
+      ...(declaredCheckId && options.acceptanceByCheckId?.[declaredCheckId]
+        ? { coveredAcceptanceIds: [...options.acceptanceByCheckId[declaredCheckId]!].sort() }
+        : {}),
+      ...(reuseSource.get(check) ? { reusedFrom: reuseSource.get(check)! } : {}),
       startedAt,
       finishedAt,
       diffHash: '',
       ...(result.log ? { log: redact(truncate(result.log), redactions) } : {}),
+      ...(result.logBytes !== undefined ? { logBytes: result.logBytes } : {}),
+      ...(result.logTruncated || (result.log?.length ?? 0) > maxLogLength ? { logTruncated: true } : {}),
+      ...(result.logArtifact ? { logArtifact: result.logArtifact } : {}),
     };
   });
   evidence.push(...results.filter((item): item is EvidenceEnvelope => item !== undefined));
@@ -419,7 +550,7 @@ const graceMs = 5_000;
  */
 async function runBoundedCommand(
   check: CheckCommand,
-  options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal },
+  options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal; logArtifactPath?: string },
 ): Promise<ImportedCheckResult> {
   const cwd = check.cwd ?? process.cwd();
   const result = await runProcess(check.command, check.args ?? [], {
@@ -427,6 +558,11 @@ async function runBoundedCommand(
     env: { ...process.env, ...(check.env ?? {}) },
     ...(check.timeoutMs !== undefined ? { timeoutMs: check.timeoutMs } : {}),
     ...(options?.signal ? { signal: options.signal } : {}),
+    // L4-02: bound what the child can make us hold. The bound is upstream of the evidence cap, so a megabyte of test
+    // noise is dropped while it is read rather than after it has been held — and the complete text goes to the
+    // artifact beside the envelope, whose path (not payload) is what the evidence records.
+    maxCaptureBytes,
+    ...(options?.logArtifactPath ? { captureArtifact: options.logArtifactPath } : {}),
   });
 
   const note = result.failure === 'timeout'
@@ -434,11 +570,21 @@ async function runBoundedCommand(
     : result.failure === 'aborted'
       ? 'CANCELLED'
       : undefined;
+  // The terminal note is appended before the cap so it survives truncation; the log itself is capped once, at the
+  // envelope, which is where readers look.
   const log = [result.stdout, result.stderr].filter(Boolean).join('');
+  const withNote = note ? `${log}\n[${note}]` : log;
 
   return {
     exitCode: result.exitCode,
-    log: note ? `${truncate(log)}\n[${note}]` : truncate(log),
+    log: withNote,
+    logBytes: result.capturedBytes,
+    ...(result.captureTruncated || withNote.length > maxLogLength
+      ? {
+          logTruncated: true,
+          ...(options?.logArtifactPath ? { logArtifact: options.logArtifactPath } : {}),
+        }
+      : {}),
     environment: result.environment,
   };
 }

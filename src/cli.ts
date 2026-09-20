@@ -91,6 +91,7 @@ import { currentStatePath, handoffDir, taskPath, tasksDir } from './core/layout.
 import { createOutputContext, currentOutput, isDefaultSilentInstallerCommand, isJsonOutput, isQuietOutput, outputResult, setOutput, writeProgress, type OutputContext, type OutputOverrides } from './cli/output.js';
 import {
     parseInstallerArgs,
+    refreshPolicyFromArgs,
     renderUpdateSummary,
     runAggregateUpdate,
     runDoctorCommand,
@@ -110,6 +111,7 @@ import {
 } from './cli/ops.js';
 import { parseDelegationArgs, runDelegateCommand, runHandoffCommand, type DelegationArgs } from './cli/handoff.js';
 import { runFindingsCommand } from './cli/findings.js';
+import { runBaselineCommand } from './cli/baseline.js';
 import { runScopeCommand } from './cli/scope.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
@@ -214,7 +216,7 @@ async function runMain(argv: string[]): Promise<void> {
             }
         }
         if (command === 'update' && !argv.includes('--platform')) {
-            outputResult(await runAggregateUpdate(args.scope, args.options), { human: renderUpdateSummary });
+            outputResult(await runAggregateUpdate(args.scope, args.options, refreshPolicyFromArgs(argv)), { human: renderUpdateSummary });
             return;
         }
         const report =
@@ -290,6 +292,11 @@ async function runMain(argv: string[]): Promise<void> {
     if (command === 'revision') {
         const result = await runRevisionCommand(argv.slice(1));
         outputResult(result);
+        return;
+    }
+
+    if (command === 'baseline') {
+        outputResult(await runBaselineCommand(argv.slice(1)) as unknown as Record<string, unknown>);
         return;
     }
 
@@ -373,11 +380,15 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval|baseline> [change|--change change]',
         );
     }
     if (command === 'status') {
-        outputResult(await runLocalStatusCommand(change, resolved, workspaceRoot));
+        // `--with-context` is the only way to ask for the context projection now; the default answers the dispatch
+        // question without building it (L0-01). It is not a rendering mode, so `stripOutputModeArgs` leaves it alone.
+        outputResult(await runLocalStatusCommand(change, resolved, workspaceRoot, {
+            withContext: argv.includes('--with-context'),
+        }));
         return;
     }
 

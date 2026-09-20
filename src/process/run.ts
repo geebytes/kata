@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { appendFile } from 'node:fs/promises';
 
 /**
  * The one place kata spawns a child process.
@@ -18,6 +19,61 @@ import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
  * that leaks a worker would otherwise keep the seal hanging on a pipe that never closes.
  */
 
+/**
+ * A bounded capture: the head, the tail, and a count of everything that went past.
+ *
+ * A check that prints a megabyte of progress must not make the *seal* hold a megabyte — and today the only cap is
+ * downstream (`quality/evidence.ts` truncates the joined log to 20 000 characters, after the whole thing has already
+ * been held). The default here is no bound, which is what every existing caller gets: four of them parse the complete
+ * stream (`git … -z` splitting, CodeGraph's affected-test lines, the Comet compat probe, an operator-facing echo), so
+ * bounding the *result* would silently change their answers.
+ *
+ * The length arithmetic is in UTF-16 units while the reported total is in bytes: the bound is a memory guard, not a
+ * byte-exact contract, and the count is what a reader is told.
+ */
+class BoundedCapture {
+    private head = '';
+    private tail = '';
+    private bytes = 0;
+    private truncated = false;
+
+    constructor(private readonly limit: number | undefined) {}
+
+    push(chunk: string): void {
+        this.bytes += Buffer.byteLength(chunk, 'utf8');
+        if (this.limit === undefined) {
+            this.head += chunk;
+            return;
+        }
+        const headLimit = Math.ceil(this.limit / 2);
+        let rest = chunk;
+        if (this.head.length < headLimit) {
+            const room = headLimit - this.head.length;
+            this.head += chunk.slice(0, room);
+            rest = chunk.slice(room);
+            if (!rest) return;
+        }
+        this.truncated = true;
+        const tailLimit = Math.max(this.limit - headLimit, 1);
+        this.tail = `${this.tail}${rest}`.slice(-tailLimit);
+    }
+
+    /** What was kept. A dropped middle is named, never hidden. */
+    value(): string {
+        if (!this.truncated) return this.head;
+        const omitted = Math.max(this.bytes - this.head.length - this.tail.length, 0);
+        return `${this.head}\n[${omitted} bytes omitted]\n${this.tail}`;
+    }
+
+    totalBytes(): number {
+        return this.bytes;
+    }
+
+    wasTruncated(): boolean {
+        return this.truncated;
+    }
+}
+
 export type ProcessFailure = 'timeout' | 'aborted' | 'spawn_failed';
 
 export interface ProcessResult {
@@ -32,6 +88,10 @@ export interface ProcessResult {
     failure?: ProcessFailure;
     /** A short summary of the environment the child ran in, for the evidence record. */
     environment: string;
+    /** Bytes the child wrote to stdout and stderr, whether or not they were kept. */
+    capturedBytes: number;
+    /** True when `maxCaptureBytes` was reached and the middle of a stream was dropped. */
+    captureTruncated: boolean;
 }
 
 export interface RunProcessOptions {
@@ -50,6 +110,22 @@ export interface RunProcessOptions {
      * in this mode: there is nothing captured to report.
      */
     inheritOutput?: boolean;
+    /**
+     * Keep at most roughly this many characters of each stream in the result, as head + tail.
+     *
+     * Absent (the default) keeps everything, which is what every caller that parses output needs. A caller that
+     * *persists* output instead of parsing it sets this and gets an honest account of what it dropped.
+     */
+    maxCaptureBytes?: number;
+    /**
+     * Append every chunk to this file as it arrives, in addition to capturing it.
+     *
+     * The capture bound is a memory bound, not a diagnostic one: the complete output is still the record of last
+     * resort, so when the bound is set the full text goes here and the caller keeps a path instead of a payload.
+     * The file is created or appended to, and it is flushed before the promise settles. `inheritOutput` captures
+     * nothing, so nothing is written when both are set.
+     */
+    captureArtifact?: string;
 }
 
 const defaultKillGraceMs = 5_000;
@@ -66,8 +142,15 @@ export async function runProcess(command: string, args: string[], options: RunPr
             stdio: options.inheritOutput ? 'inherit' : ['ignore', 'pipe', 'pipe'],
         });
 
-        let stdout = '';
-        let stderr = '';
+        const stdout = new BoundedCapture(options.maxCaptureBytes);
+        const stderr = new BoundedCapture(options.maxCaptureBytes);
+        // Chunks are appended in arrival order; `finish` waits for the queue so a caller that reads the artifact
+        // after awaiting `runProcess` sees the whole log rather than a prefix of it.
+        let artifactQueue: Promise<void> = Promise.resolve();
+        const tee = (text: string): void => {
+            if (!options.captureArtifact) return;
+            artifactQueue = artifactQueue.then(() => appendFile(options.captureArtifact!, text, 'utf8')).catch(() => undefined);
+        };
         let settled = false;
         let failure: ProcessFailure | undefined;
         let killTimer: NodeJS.Timeout | undefined;
@@ -78,15 +161,17 @@ export async function runProcess(command: string, args: string[], options: RunPr
             if (killTimer) clearTimeout(killTimer);
             clearTimeout(timeoutTimer);
             options.signal?.removeEventListener('abort', onAbort);
-            resolve({
+            void artifactQueue.then(() => resolve({
                 ok: exitCode === 0 && !failure,
                 exitCode,
                 signal,
-                stdout,
-                stderr,
+                stdout: stdout.value(),
+                stderr: stderr.value(),
+                capturedBytes: stdout.totalBytes() + stderr.totalBytes(),
+                captureTruncated: stdout.wasTruncated() || stderr.wasTruncated(),
                 ...(failure ? { failure } : {}),
                 environment: environmentSummary(options.cwd),
-            });
+            }));
         };
 
         const kill = (reason: ProcessFailure): void => {
@@ -117,7 +202,7 @@ export async function runProcess(command: string, args: string[], options: RunPr
         if (options.inheritOutput) {
             child.on('error', (error) => {
                 failure = failure ?? 'spawn_failed';
-                stderr += error.message;
+                stderr.push(error.message);
                 finish(127, null);
             });
             child.on('close', (code, signal) => {
@@ -131,17 +216,19 @@ export async function runProcess(command: string, args: string[], options: RunPr
         child.stdout?.setEncoding('utf8');
         child.stderr?.setEncoding('utf8');
         child.stdout?.on('data', (chunk: string) => {
-            stdout += chunk;
+            stdout.push(chunk);
+            tee(chunk);
             options.onOutput?.({ stream: 'stdout', text: chunk });
         });
         child.stderr?.on('data', (chunk: string) => {
-            stderr += chunk;
+            stderr.push(chunk);
+            tee(chunk);
             options.onOutput?.({ stream: 'stderr', text: chunk });
         });
 
         child.on('error', (error) => {
             failure = failure ?? 'spawn_failed';
-            stderr += error.message;
+            stderr.push(error.message);
             finish(127, null);
         });
 
@@ -186,6 +273,8 @@ export function runProcessSync(command: string, args: string[], options: SyncPro
         stdout: typeof result.stdout === 'string' ? result.stdout : '',
         stderr: stderr || (result.error?.message ?? ''),
         ...(timedOut ? { failure: 'timeout' as const } : {}),
+        capturedBytes: Buffer.byteLength(`${typeof result.stdout === 'string' ? result.stdout : ''}${stderr}`, 'utf8'),
+        captureTruncated: false, // `spawnSync` has its own `maxBuffer`; it truncates nothing.
         environment: environmentSummary(options.cwd),
         ...(result.error ? { error: result.error as NodeJS.ErrnoException } : {}),
     };

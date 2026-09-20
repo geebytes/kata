@@ -86,8 +86,14 @@ export interface WalkOptions {
  * The size budget is the caller's decision and is stated at the call site: the tree hash caps it so it never reads a
  * model file to discover it is one, while owned-path hashing reads what it is responsible for.
  */
-export async function walkRepositoryFiles(root: string, options: WalkOptions = {}): Promise<RepositoryFile[]> {
-    const files: RepositoryFile[] = [];
+/**
+ * The included repository-relative paths, sorted, **without reading a single file's content**.
+ *
+ * The path list is what an identity consumer actually needs in order; the bytes can be read one at a time
+ * afterwards. Separating the two is what lets a whole-tree hash hold one file instead of the whole tree.
+ */
+export async function listRepositoryFiles(root: string, options: WalkOptions = {}): Promise<string[]> {
+    const paths: string[] = [];
 
     async function visit(directory: string): Promise<void> {
         let entries;
@@ -111,20 +117,48 @@ export async function walkRepositoryFiles(root: string, options: WalkOptions = {
                 const info = await stat(absolutePath);
                 if (info.size > options.maxFileBytes) continue;
             }
-            files.push({ path: repositoryPath, absolutePath, content: await readFile(absolutePath) });
+            paths.push(repositoryPath);
         }
     }
 
     const start = options.under ? join(root, options.under) : root;
     if (options.under && isIgnoredRepositoryPath(options.under)) return [];
     await visit(start);
-    return files.sort((left, right) => left.path.localeCompare(right.path));
+    return paths.sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * The same walk, one file at a time.
+ *
+ * Yields exactly what `walkRepositoryFiles` returns — same ignore policy, same size budget, same `localeCompare`
+ * order — but reads each file only when the consumer is ready for it, so hashing a repository is O(one file) in
+ * memory instead of O(the tree). Callers that need the bytes all at once keep using `walkRepositoryFiles`.
+ */
+export async function* walkRepositoryEntries(root: string, options: WalkOptions = {}): AsyncGenerator<RepositoryFile> {
+    for (const path of await listRepositoryFiles(root, options)) {
+        yield { path, absolutePath: join(root, path), content: await readFile(join(root, path)) };
+    }
+}
+
+/**
+ * Walks the repository with the shared ignore policy, sorted by path.
+ *
+ * The size budget is the caller's decision and is stated at the call site: the tree hash caps it so it never reads a
+ * model file to discover it is one, while owned-path hashing reads what it is responsible for.
+ *
+ * This is the materialising shape, kept for callers that genuinely want every file's bytes at once; it is a thin
+ * wrapper over the streaming walk so the two can never disagree about what the repository contains.
+ */
+export async function walkRepositoryFiles(root: string, options: WalkOptions = {}): Promise<RepositoryFile[]> {
+    const files: RepositoryFile[] = [];
+    for await (const file of walkRepositoryEntries(root, options)) files.push(file);
+    return files;
 }
 
 /** The identity of the current repository contents: a hash over the paths and contents of what the walk returned. */
 export async function repositoryTreeHash(root: string): Promise<string> {
     const hash = createContentHasher();
-    for (const file of await walkRepositoryFiles(root, { maxFileBytes: maxTreeHashFileBytes })) {
+    for await (const file of walkRepositoryEntries(root, { maxFileBytes: maxTreeHashFileBytes })) {
         hash.update(file.path);
         hash.update('\0');
         hash.update(file.content);

@@ -12,3 +12,6 @@ openspec/changes/*/.comet/*
 openspec/changes/archive/*/.comet/*
 !openspec/changes/archive/*/.comet/handoff/
 !openspec/changes/archive/*/.comet/subagent-progress.md
+
+# Scratch artifacts (AGENTS.md: evidence and working files live under tmp/)
+tmp/
