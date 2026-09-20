@@ -294,6 +294,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1000 + upstream.blockingFindings,
     };
   }
+  // Strict mode, deliberately: the severity gate is "blocking, and major in strict" (design
+  // `2026-09-18-what-an-adversarial-pass-costs.md`). In std a major finding is reported and does not hold the task back.
   if (phase === 'review' && upstream.reviewMode === 'strict' && upstream.majorFindings > 0) {
     return {
       nextSkill: '/kata-build',

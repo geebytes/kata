@@ -43,3 +43,19 @@ because the previous layer let the next seal run far enough to fail.
   default task shape. Closing it means deciding when an obligation may be answered by evidence the current run is about to
   produce, which changes what the seal means and does not belong in this change. What this change does is stop the
   platform passing silently: the seal now refuses instead of leaving the batch open forever. <!-- comet-task:6-2 -->
+
+## 7. The second review round
+
+Recorded in `docs/design/2026-09-20-major-finding-closure.md`; the review attacked the change's claim (that the terminal
+rule now decides every severity gate) by sweeping the sites that still write the pair out by hand.
+
+- [x] 7.1 **The approval guard refused `major` unconditionally** while the documented gate is "blocking, and major in
+  strict" and the ladder gates the major-to-repair branch on strict. In std a task with one major finding could be
+  neither approved nor routed to its repair. The guard now reads the mode. <!-- comet-task:7-1 -->
+- [x] 7.2 **My first fix went the wrong way** — widening the ladder to match the guard, contradicting the stated
+  invariant. The existing test `standard review mode does not route major findings to Build` caught it and the design doc
+  settled which side was authoritative. Recorded because a disagreement does not say which site is wrong. <!-- comet-task:7-2 -->
+- [x] 7.3 **The review pass found the design's own failure mode** in `repair-obligation-deadlock`: the dry run counted a
+  deferred (frozen-tier) check as evidence the run would produce, so the seal passed while the obligation stayed open. <!-- comet-task:7-3 -->
+- [x] 7.4 Three remaining hardcoded pairs are equivalent to the rule by construction, and `distill-gates`' blocking-only
+  check is unreachable with an unpaid major. Recorded, not refactored. <!-- comet-task:7-4 -->

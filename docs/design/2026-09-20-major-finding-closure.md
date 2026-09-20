@@ -142,3 +142,29 @@ where it previously passed silently and left the batch open forever.
 **What this does not break, verified:** with a matrix present and the criterion unsatisfied, an obligation stays
 unresolved exactly as before (`hasMappedEvidence` is untouched); with a matrix and matching evidence it resolves exactly
 as before; and a `minor` finding still creates no obligation.
+
+## The second review round: the gate and the ladder disagreed
+
+The change's claim is that the terminal-severity rule now decides every gate that a severity decides. The review pass
+swept every site that still writes the pair out by hand and found one that disagreed with its own documentation.
+
+**The approval guard refused a `major` finding unconditionally**, while the severity gate is *"blocking, and major in
+strict"* — stated in `docs/design/2026-09-18-what-an-adversarial-pass-costs.md:359` — and the navigation ladder gates the
+major-to-repair branch on `reviewMode === 'strict'`. In std, the default, a task with one major review finding could be
+**neither approved nor routed to the repair that clears it**: the ladder answered `/kata-review`
+(`complete_review_conclusion`) while the approval error said to resolve the finding. Measured before the fix:
+`majorFindings: 1`, `reviewMode: undefined`, ladder reason `complete_review_conclusion`, approval refused with
+*"Cannot approve review with blocking or major findings"*.
+
+The repair makes the guard read the mode, so the gate is stated once and both sides follow it.
+
+**Worth recording as process, not outcome:** the first fix went the wrong way. I widened the *ladder* to match the guard,
+which made std behave like strict and contradicted the stated invariant. The existing test
+`standard review mode does not route major findings to Build` caught it, and the design doc settled which side was
+authoritative. A disagreement between two sites does not tell you which one is wrong — the repository's own statement of
+the rule does, and looking for it first would have been cheaper than picking the side that made the sweep tidy.
+
+The other three sites that still write the pair out (`resolveBriefMode`, `blockingAdversarialFindings`,
+`evidence-adequacy`) are equivalent to the rule by construction, and `distill-gates`' blocking-only check is unreachable
+with an unpaid major because an approved review cannot carry one. They are duplicated literals, not holes — recorded
+because the sweep found them, and deliberately not "fixed" into a refactor this change does not need.

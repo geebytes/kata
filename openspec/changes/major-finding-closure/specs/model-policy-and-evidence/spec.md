@@ -33,6 +33,15 @@ A finding whose severity is terminal SHALL create a repair obligation, and a bat
 - **WHEN** a task has no acceptance matrix and carries an unresolved repair obligation
 - **THEN** the seal SHALL refuse and name the obligations, rather than passing silently while the batch stays open
 
+#### Scenario: A major finding is recorded in a verdict
+- **WHEN** an adversarial pass records a finding of terminal severity
+- **THEN** the repair batch it opens SHALL have an obligation for that finding, so the batch can account for it
+
+#### Scenario: The severities that block approval
+- **WHEN** review approval reads existing findings
+- **THEN** it SHALL block on the severities the gate names for the task's review mode — blocking, and major in strict —
+  so that a finding which does not block approval is not described as if it did
+
 ### Requirement: Adversarial pass reporting surface
 The commands the review and verify Skills instruct a reviewer to use SHALL work as documented, including reporting a finding while a round is in progress.
 

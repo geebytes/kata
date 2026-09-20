@@ -1258,10 +1258,17 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence. Re-run /kata-review before approving.',
                 };
             }
-            if (existing.findings.some((f) => f.severity === 'blocking' || f.severity === 'major')) {
+            // Severity decides by the mode, not by a single unconditional pair: the gate is "blocking, and major in
+            // strict" (design `2026-09-18-what-an-adversarial-pass-costs.md`). Refusing a major finding in std made this
+            // guard disagree with the navigation ladder, which does not send a std major finding to repair — so a task
+            // with one could be neither approved nor routed to the repair that clears it.
+            const blockingSeverities = approvalTask.workflowProfile?.reviewMode === 'strict'
+                ? ['blocking', 'major']
+                : ['blocking'];
+            if (existing.findings.some((finding) => blockingSeverities.includes(finding.severity))) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: 'Cannot approve review with blocking or major findings; resolve findings first.',
+                    error: `Cannot approve review with ${blockingSeverities.join(' or ')} findings; resolve findings first.`,
                 };
             }
             // F5: the reviewer may state which paths they read; absent, the review is read as covering the whole revision
