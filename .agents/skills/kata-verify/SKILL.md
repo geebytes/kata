@@ -20,15 +20,30 @@ Prefer the `/kata-verify` Skill as the human-facing interface. Use `kata-cli ver
 
 ## Startup checklist
 
-Before doing task work, run the project orientation command:
+Before doing task work, resolve the task and read its authoritative packet. `kata-cli status` reports the phase, the
+next skill and the candidates; it is deliberately **light** and does not build task context.
+
+**If the user already supplied an explicit task id, skip `status` entirely.** The id is the anchor, and `orient`
+builds the one authoritative context:
 
 ```bash
-kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli orient --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
 kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Otherwise discover the task first — `status` is enough to decide whether there is one candidate or a choice to put
+to the user — and then run both commands above with the resolved values:
+
+```bash
+kata-cli status
+```
+
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or
+same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After
+confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files,
+guard instructions, relation redirects, and next skill before editing. Pass `--with-context` to `kata-cli status` only
+when you want that projection without a packet. The hook activation links platform write hooks to the active Kata task so
+phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -68,9 +83,20 @@ Both nodes below must answer to a **different context than the one that wrote th
 implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own
 confirmation is the weakest possible evidence that the change is sound.
 
-Before this Skill's node can conclude — before `kata-cli verify` reports success, and before
-`kata-cli review --approve` records an approval — kata requires a recorded adversarial pass over the sealed revision,
-or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+Review concludes a change with one independent look, so its pass is mandatory on every run. Verify establishes that
+the evidence is current, complete and attributable, which is a deterministic question, so it carries a mandatory pass
+only in `strict` and `security` review modes — where the extra look is the point. `kata-cli adversarial status --change
+<task-id>` reports each node as required, satisfied, or `not_required`, so the difference is visible rather than
+inferred from an absent record.
+
+Where a pass is required, the node cannot conclude without one — before `kata-cli verify` reports success in an
+escalated mode, and before `kata-cli review --approve` records an approval, kata requires a recorded pass over the
+sealed revision or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+Tests are **not** this pass's to write. Run the change's own declared checks — the brief names the check ids and
+selectors, and the record must carry `testPolicy: "reuse_declared_tests_only"` — and when a claim can only be falsified
+by a test that does not exist, report that as a `missing-test` finding rather than authoring one here. Build owns the
+test: a counterexample written in this context has no author, no RED step and no place in the acceptance matrix, which
+is what made "Verify and Review each wrote their own test" cost twice and prove once.
 
 Do this:
 
@@ -135,7 +161,10 @@ The Skill MUST run these commands itself. Do not ask the user to copy or type th
 
 Skill-first means the slash command is the agent interface and the CLI is the internal execution layer. The user may provide no task id, a natural-language task hint, or only "continue"; the Skill must discover candidates and ask for a short confirmation only when needed.
 
-1. Run `kata-cli status` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
+1. Run `kata-cli status` to read the active or current-branch discovered task, its relation redirects, the phase and
+   the next skill. Status is light: it reports the dispatch decision, not task context — step 4's `orient` is the
+   packet that carries `task`, `state`, `requiredReads` and `context`. **When the user supplied an explicit task id,
+   skip this step and go straight to step 4.** Do not add `--with-context` here; the packet already carries it.
 2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the `recommended` task/action from `kata-cli status` or `kata-cli collect`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
 3. Resolve role and task-kind from phase and user intent; if ambiguous, present recommended options and ask for confirmation. Do not default across trust boundaries without confirmation.
 4. Run `kata-cli orient` without `--change` when using the active/single discovered task, or with `--change <id>` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
@@ -202,6 +231,13 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
+## What Verify validates, and what it does not write
+
+Verify validates declared evidence: that it is current, complete and attributable to the acceptance criteria it was
+declared against. It never authors the test that would produce evidence it is missing — a test written here would have no
+RED step, no owner and no place in the acceptance matrix. Missing coverage is reported as a `missing-test` finding and
+becomes a **Build repair obligation**, so the fix lands in the phase that owns tests.
+
 ## Findings about a declared instrument
 
 A finding whose target is one of this task's **declared instruments** is judged differently from one about the deliverable:
@@ -245,6 +281,7 @@ If Judge returns FAIL for any acceptance criterion:
    - `cross_revision_evidence` — the acceptance is covered by evidence from more than one revision; seal one revision
    - `insufficient_evidence_level` — the acceptance requires integration or entrypoint evidence that is missing; add it
    - `unresolved_repair_obligation` — a repair obligation from the review or the Judge is still unresolved
+   - `no_acceptance_matrix_row` — the acceptance criterion has no row in the acceptance matrix; declare one
 
 2. **Fix only the scoped files** — Judge reports which acceptance criteria failed. Don't touch unrelated code. Unrelated changes will be rejected by `enforceRepairScope`.
 

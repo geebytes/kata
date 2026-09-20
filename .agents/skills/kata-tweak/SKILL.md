@@ -20,15 +20,30 @@ Prefer the `/kata-tweak` Skill as the human-facing interface. Use `kata-cli twea
 
 ## Startup checklist
 
-Before doing task work, run the project orientation command:
+Before doing task work, resolve the task and read its authoritative packet. `kata-cli status` reports the phase, the
+next skill and the candidates; it is deliberately **light** and does not build task context.
+
+**If the user already supplied an explicit task id, skip `status` entirely.** The id is the anchor, and `orient`
+builds the one authoritative context:
 
 ```bash
-kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli orient --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
 kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Otherwise discover the task first — `status` is enough to decide whether there is one candidate or a choice to put
+to the user — and then run both commands above with the resolved values:
+
+```bash
+kata-cli status
+```
+
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or
+same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After
+confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files,
+guard instructions, relation redirects, and next skill before editing. Pass `--with-context` to `kata-cli status` only
+when you want that projection without a packet. The hook activation links platform write hooks to the active Kata task so
+phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 

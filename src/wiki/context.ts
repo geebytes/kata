@@ -5,6 +5,15 @@ export interface ExcludedWikiEntry {
   id: string;
   status?: WikiStatus;
   reason: 'not-authoritative' | 'stale' | 'invalid' | 'ingested-summary';
+  /**
+   * Whether this record touches a source the asking task declared.
+   *
+   * Decided **here**, where the record is still in hand: a wiki record id is `wiki-<taskId>` (`wiki/provenance.ts`), so
+   * it carries no path and a downstream substring test against an id can never be right. An invalid record is
+   * `relevant: false` because it could not be read — there are no `sourceRefs` to judge it by, and guessing would put
+   * repository noise back into every task.
+   */
+  relevant: boolean;
 }
 
 export interface AuthoritativeContext {
@@ -38,13 +47,14 @@ export async function selectAuthoritativeContext(
         : inferProvenance(r) === 'ingested'
           ? 'ingested-summary'
           : 'not-authoritative') as ExcludedWikiEntry['reason'],
+      relevant: isRelevant(r, requestedRefs),
     }));
 
   // An unreadable record cannot be authoritative, and it must not be silent either: it is named here (and in the
   // handoff packet's excluded list), so the reader knows a page's record needs repair rather than believing the Wiki
   // simply has nothing to say about it.
   const invalidExcluded: ExcludedWikiEntry[] = invalid
-    .map((entry) => ({ id: entry.path.replace(/^.*\//, '').replace(/\.json$/, ''), reason: 'invalid' as const }))
+    .map((entry) => ({ id: entry.path.replace(/^.*\//, '').replace(/\.json$/, ''), reason: 'invalid' as const, relevant: false }))
     .sort((a, b) => a.id.localeCompare(b.id));
   const invalidWarnings = invalid.map((entry) => `Wiki record ${entry.path} is invalid and was skipped: ${entry.message}`);
 

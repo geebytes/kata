@@ -20,15 +20,30 @@ Prefer the `/kata-judge` Skill as the human-facing interface. Use `kata-cli judg
 
 ## Startup checklist
 
-Before doing task work, run the project orientation command:
+Before doing task work, resolve the task and read its authoritative packet. `kata-cli status` reports the phase, the
+next skill and the candidates; it is deliberately **light** and does not build task context.
+
+**If the user already supplied an explicit task id, skip `status` entirely.** The id is the anchor, and `orient`
+builds the one authoritative context:
 
 ```bash
-kata-cli status
-kata-cli orient --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
+kata-cli orient --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi --task-kind <read|implementation|security>
 kata-cli hooks activate --change <change-id> --role <designer|implementer|reviewer|judge|distiller> --platform pi
 ```
 
-Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files, guard instructions, relation redirects, and next skill before editing. The hook activation links platform write hooks to the active Kata task so phase/role scope is enforced while you work.
+Otherwise discover the task first — `status` is enough to decide whether there is one candidate or a choice to put
+to the user — and then run both commands above with the resolved values:
+
+```bash
+kata-cli status
+```
+
+Treat skill use as an interactive agent workflow, not a parameter-only command. First discover the active or
+same-branch task and any relation redirects; if the task, role, task kind, or target platform is ambiguous, present concise options and ask the user to confirm or type a value. Do not make the user remember command-line flags. After
+confirmation, run `kata-cli orient` with the resolved values, then read the returned task, state, context, required files,
+guard instructions, relation redirects, and next skill before editing. Pass `--with-context` to `kata-cli status` only
+when you want that projection without a packet. The hook activation links platform write hooks to the active Kata task so
+phase/role scope is enforced while you work.
 
 ## Phase-boundary pause
 
@@ -68,7 +83,10 @@ The Skill MUST run these commands itself. Do not ask the user to copy or type th
 
 Skill-first means the slash command is the agent interface and the CLI is the internal execution layer. The user may provide no task id, a natural-language task hint, or only "continue"; the Skill must discover candidates and ask for a short confirmation only when needed.
 
-1. Run `kata-cli status` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
+1. Run `kata-cli status` to read the active or current-branch discovered task, its relation redirects, the phase and
+   the next skill. Status is light: it reports the dispatch decision, not task context — step 4's `orient` is the
+   packet that carries `task`, `state`, `requiredReads` and `context`. **When the user supplied an explicit task id,
+   skip this step and go straight to step 4.** Do not add `--with-context` here; the packet already carries it.
 2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the `recommended` task/action from `kata-cli status` or `kata-cli collect`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
 3. Resolve role and task-kind from phase and user intent; if ambiguous, present recommended options and ask for confirmation. Do not default across trust boundaries without confirmation.
 4. Run `kata-cli orient` without `--change` when using the active/single discovered task, or with `--change <id>` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.
@@ -127,3 +145,18 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
+## Deciding from evidence scoped to each criterion
+
+The Judge does not re-derive the match between a criterion and the evidence. It reads the same AC-scoped answer Verify
+reads, so the ladder, the vocabulary and the priorities are shared rather than restated — and a criterion passes on
+evidence for *that* criterion, never on an unrelated passing test.
+
+## Naming the repair owner
+
+A criterion that fails for a reason only a test can close — `missing_test_evidence`, `insufficient_evidence_level` or
+`no_acceptance_matrix_row` — carries `repairOwner: "build"` in `judge.json`. The owner is the phase that owns tests:
+a counterexample written here has no RED step, no owner and no place in the acceptance matrix. Report the missing
+coverage; do not author the test that would close it.
+
+Read `kata-cli repair-scope --scope <repairScope>` for the guided repair when a scope needs one, and let the reported
+owner decide where the repair is sent rather than inferring it from the scope name.

@@ -175,7 +175,14 @@ Implementation reveals concrete constraints that design alone cannot foresee:
 3. Don't wait for archive. Mid-task capture means the knowledge is available for the verification phase and for future tasks.`;
 
         case 'kata-verify':
-            return `## Findings about a declared instrument
+            return `## What Verify validates, and what it does not write
+
+Verify validates declared evidence: that it is current, complete and attributable to the acceptance criteria it was
+declared against. It never authors the test that would produce evidence it is missing — a test written here would have no
+RED step, no owner and no place in the acceptance matrix. Missing coverage is reported as a \`missing-test\` finding and
+becomes a **Build repair obligation**, so the fix lands in the phase that owns tests.
+
+## Findings about a declared instrument
 
 A finding whose target is one of this task's **declared instruments** is judged differently from one about the deliverable:
 an adversarial search on a guard always finds the dimension it does not cover, so a guard is answerable for what its
@@ -245,6 +252,23 @@ The deferred decision intentionally blocks review and archive, but it does not m
 ## Escalation
 
 If repair fails repeatedly, use the host platform's own selector to choose a more capable model before continuing. Kata does not prescribe or record that choice.`;
+
+        case 'kata-judge':
+            return `## Deciding from evidence scoped to each criterion
+
+The Judge does not re-derive the match between a criterion and the evidence. It reads the same AC-scoped answer Verify
+reads, so the ladder, the vocabulary and the priorities are shared rather than restated — and a criterion passes on
+evidence for *that* criterion, never on an unrelated passing test.
+
+## Naming the repair owner
+
+A criterion that fails for a reason only a test can close — \`missing_test_evidence\`, \`insufficient_evidence_level\` or
+\`no_acceptance_matrix_row\` — carries \`repairOwner: "build"\` in \`judge.json\`. The owner is the phase that owns tests:
+a counterexample written here has no RED step, no owner and no place in the acceptance matrix. Report the missing
+coverage; do not author the test that would close it.
+
+Read \`kata-cli repair-scope --scope <repairScope>\` for the guided repair when a scope needs one, and let the reported
+owner decide where the repair is sent rather than inferring it from the scope name.`;
 
         case 'kata-archive':
             return `## Knowledge distillation
@@ -454,9 +478,20 @@ Both nodes below must answer to a **different context than the one that wrote th
 implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own
 confirmation is the weakest possible evidence that the change is sound.
 
-Before this Skill's node can conclude — before \`kata-cli verify\` reports success, and before
-\`kata-cli review --approve\` records an approval — kata requires a recorded adversarial pass over the sealed revision,
-or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+Review concludes a change with one independent look, so its pass is mandatory on every run. Verify establishes that
+the evidence is current, complete and attributable, which is a deterministic question, so it carries a mandatory pass
+only in \`strict\` and \`security\` review modes — where the extra look is the point. \`kata-cli adversarial status --change
+<task-id>\` reports each node as required, satisfied, or \`not_required\`, so the difference is visible rather than
+inferred from an absent record.
+
+Where a pass is required, the node cannot conclude without one — before \`kata-cli verify\` reports success in an
+escalated mode, and before \`kata-cli review --approve\` records an approval, kata requires a recorded pass over the
+sealed revision or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
+Tests are **not** this pass's to write. Run the change's own declared checks — the brief names the check ids and
+selectors, and the record must carry \`testPolicy: "reuse_declared_tests_only"\` — and when a claim can only be falsified
+by a test that does not exist, report that as a \`missing-test\` finding rather than authoring one here. Build owns the
+test: a counterexample written in this context has no author, no RED step and no place in the acceptance matrix, which
+is what made \"Verify and Review each wrote their own test\" cost twice and prove once.
 
 Do this:
 
@@ -527,7 +562,10 @@ The Skill MUST run these commands itself. Do not ask the user to copy or type th
 
 Skill-first means the slash command is the agent interface and the CLI is the internal execution layer. The user may provide no task id, a natural-language task hint, or only "continue"; the Skill must discover candidates and ask for a short confirmation only when needed.
 
-1. Run \`kata-cli status\` to read the active or current-branch discovered task, relation redirects, phase, next skill, task title, acceptance criteria, and context summary.
+1. Run \`kata-cli status\` to read the active or current-branch discovered task, its relation redirects, the phase and
+   the next skill. Status is light: it reports the dispatch decision, not task context — step 4's \`orient\` is the
+   packet that carries \`task\`, \`state\`, \`requiredReads\` and \`context\`. **When the user supplied an explicit task id,
+   skip this step and go straight to step 4.** Do not add \`--with-context\` here; the packet already carries it.
 2. Do not require the user to pass parameters. Resolve the task id from active task, same-branch task, relation redirects, or the \`recommended\` task/action from \`kata-cli status\` or \`kata-cli collect\`. If multiple plausible tasks remain, show concise options and ask the user to choose or type a value.
 3. Resolve role and task-kind from phase and user intent; if ambiguous, present recommended options and ask for confirmation. Do not default across trust boundaries without confirmation.
 4. Run \`kata-cli orient\` without \`--change\` when using the active/single discovered task, or with \`--change <id>\` after the user confirms a task id. Parse its relation redirects, handoff id, state, task, requiredReads, nextAction, and context fields.

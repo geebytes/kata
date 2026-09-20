@@ -87,8 +87,10 @@ describe('platform adapter golden output', () => {
         expect(rendered).toContain('Skill-first operating rule');
         expect(rendered).toContain('Prefer the `');
         expect(rendered).toContain('as the human-facing interface');
-        expect(rendered).toContain('kata-cli orient --role');
-        expect(rendered).toContain('task, state, context');
+        expect(rendered).toContain('kata-cli orient --change <change-id> --role');
+        expect(rendered).toContain('skip `status` entirely');
+        expect(rendered).toContain('does not build task context');
+        expect(rendered).toContain('then read the returned task, state, context, required files');
         expect(rendered).toContain('interactive agent workflow');
         expect(rendered).toContain('ask the user to confirm or type a value');
         expect(rendered).toContain('Do not make the user remember command-line flags');
@@ -107,7 +109,8 @@ describe('platform adapter golden output', () => {
         if (['kata-build', 'kata-review', 'kata-judge', 'kata-verify', 'kata-archive'].includes(command.id)) {
           expect(rendered).toContain('Skill automation contract');
           expect(rendered).toContain('The Skill MUST run these commands itself');
-          expect(rendered).toContain('task title, acceptance criteria, and context summary');
+          expect(rendered).toContain('Status is light');
+          expect(rendered).toContain('skip this step and go straight to step 4');
           expect(rendered).toContain('slash command is the agent interface');
           if (command.id === 'kata-build') {
             expect(rendered).toContain('先完成 TDD 与聚焦测试');
