@@ -56,9 +56,14 @@ describe('Kata context manifest', () => {
     });
 
     expect(manifest.authoritativeWiki.map((record) => record.id)).toEqual(['wiki-verified']);
+    // `relevant` is the Phase 6 addition: relevance is decided here, while the record's own `sourceRefs` are still
+    // readable, because a wiki record id carries no path for a downstream caller to match against.
+    // `relevant` is the Phase 6 addition, decided here while the record's own `sourceRefs` are still readable (a wiki
+    // record id carries no path for a downstream caller to match against). Both fixtures cite `src/core/context.ts`,
+    // which is the ref being asked about, so both are relevant — the candidate for status, the stale one for staleness.
     expect(manifest.excludedWiki).toEqual([
-      { id: 'wiki-candidate', status: 'candidate', reason: 'not-authoritative' },
-      { id: 'wiki-stale', status: 'stale', reason: 'stale' },
+      { id: 'wiki-candidate', status: 'candidate', reason: 'not-authoritative', relevant: true },
+      { id: 'wiki-stale', status: 'stale', reason: 'stale', relevant: true },
     ]);
     expect(manifest.warnings).toContain(
       'Source src/core/context.ts has stale Wiki record wiki-stale; read source before relying on Wiki.',

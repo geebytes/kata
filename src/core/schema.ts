@@ -19,6 +19,8 @@ import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
 import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
 import adversarialReviewSchema from 'kata-asset:schemas/adversarial-review.schema.json';
 import { readFile } from 'node:fs/promises';
+import { Ajv2020 } from 'ajv/dist/2020.js';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 
 const schemaText: Record<string, string> = {
   task: taskSchema,
@@ -43,34 +45,85 @@ const schemaText: Record<string, string> = {
   'adversarial-review': adversarialReviewSchema,
 };
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+/**
+ * One Ajv instance for the whole process, from the 2020-12 entry point.
+ *
+ * Every bundled schema declares `https://json-schema.org/draft/2020-12/schema`, so the instance must be the one that
+ * carries that meta-schema; a draft-07 instance refuses to compile them. `strict: false` because these schemas predate
+ * strict mode and are hand-written data assets. `allErrors` and `verbose` are on so an error can name the path and the
+ * allowed set — the two things an operator-facing gate error has to say.
+ */
+const ajv = new Ajv2020({ allErrors: true, verbose: true, strict: false });
 
-type Schema = {
-  type?: string | string[];
-  enum?: Json[];
-  required?: string[];
-  additionalProperties?: boolean | Schema;
-  properties?: Record<string, Schema>;
-  items?: Schema;
-  pattern?: string;
-  minItems?: number;
-  minLength?: number;
-  minimum?: number;
-};
+const compiled = new Map<string, ValidateFunction>();
 
-const schemas = new Map<string, Schema>();
-
-/** The top-level field names a schema accepts, for error messages that name the remedy rather than the symptom. */
-function allowedTopLevelFields(schemaName: string): string[] {
-    const properties = loadSchema(schemaName).properties;
-    if (!properties || typeof properties !== 'object') return [];
-    return Object.keys(properties).sort();
+/** `/relations/3/type` → `$.relations[3].type`, with JSON Pointer unescaping. */
+function toJsonPath(pointer: string): string {
+    if (pointer === '') return '$';
+    return '$' + pointer
+        .split('/')
+        .slice(1)
+        .map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'))
+        .map((segment) => (/^[0-9]+$/.test(segment) ? `[${segment}]` : `.${segment}`))
+        .join('');
 }
 
+/**
+ * One violation, in the wording the existing tests and readers already expect.
+ *
+ * The strings are not cosmetic: `tests/unit/schema-validation.test.ts` pins them, and an operator-facing gate error
+ * that stops naming the offending path and the allowed set is the failure this module exists to avoid. Two keywords
+ * the hand-written interpreter silently ignored now render too: `const` and `uniqueItems`.
+ */
+function renderError(error: ErrorObject): string {
+    const path = toJsonPath(error.instancePath);
+    const params = error.params as Record<string, unknown>;
+    switch (error.keyword) {
+        case 'enum':
+            return `${path} must be one of ${(params.allowedValues as unknown[]).join(', ')}`;
+        case 'const':
+            return `${path} must be ${JSON.stringify(params.allowedValue)}`;
+        case 'type': {
+            const declared = (error.schema as { type?: string | string[] } | undefined)?.type;
+            const types = Array.isArray(declared) ? declared.join(' or ') : String(params.type).split(',').join(' or ');
+            return `${path} must be ${types}`;
+        }
+        case 'required':
+            return `${path}.${String(params.missingProperty)} is required`;
+        case 'additionalProperties':
+            return `${path}.${String(params.additionalProperty)} is not allowed`;
+        case 'uniqueItems':
+            return `${path} must not contain duplicate items`;
+        case 'minItems':
+            return `${path} must include at least ${String(params.limit)} item(s)`;
+        case 'minLength':
+            return `${path} must be at least ${String(params.limit)} characters`;
+        case 'minimum':
+            return `${path} must be >= ${String(params.limit)}`;
+        case 'pattern':
+            return `${path} must match ${String(params.pattern)}`;
+        default:
+            return `${path} ${error.message ?? 'is invalid'}`;
+    }
+}
+
+function compile(schemaName: string): ValidateFunction {
+    if (!/^[a-z][a-z0-9-]*$/.test(schemaName)) throw new Error(`Invalid schema name: ${schemaName}`);
+    const cached = compiled.get(schemaName);
+    if (cached) return cached;
+    const text = schemaText[schemaName];
+    if (text === undefined) throw new Error(`Unknown schema: ${schemaName}`);
+    const validate = ajv.compile(JSON.parse(text) as object);
+    compiled.set(schemaName, validate);
+    return validate;
+}
+
+// ── validate() keeps its signature and throws one line, so every caller is untouched ───────────────────────
+
 export function validate<T>(schemaName: string, value: unknown): T {
-  const schema = loadSchema(schemaName);
-  assertMatches(schema, value, '$');
-  return value as T;
+  const check = compile(schemaName);
+  if (check(value)) return value as T;
+  throw new Error(renderError((check.errors ?? [])[0] as ErrorObject));
 }
 
 /**
@@ -118,87 +171,12 @@ export async function readValidatedOptional<T>(schemaName: string, path: string)
   }
 }
 
-function loadSchema(schemaName: string): Schema {
-  if (!/^[a-z][a-z0-9-]*$/.test(schemaName)) {
-    throw new Error(`Invalid schema name: ${schemaName}`);
-  }
-  const cached = schemas.get(schemaName);
-  if (cached) return cached;
-
-  const text = schemaText[schemaName];
-  if (text === undefined) {
-    throw new Error(`Unknown schema: ${schemaName}`);
-  }
-  const parsed = JSON.parse(text) as Schema;
-  schemas.set(schemaName, parsed);
-  return parsed;
-}
-
-function assertMatches(schema: Schema, value: unknown, path: string): void {
-  if (schema.enum && !schema.enum.some((allowed) => allowed === value)) {
-    throw new Error(`${path} must be one of ${schema.enum.join(', ')}`);
-  }
-
-  if (schema.type) {
-    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
-    if (!types.some((type) => matchesType(type, value))) {
-      throw new Error(`${path} must be ${types.join(' or ')}`);
-    }
-  }
-
-  if (schema.type === 'string' && typeof value === 'string') {
-    if (schema.minLength !== undefined && value.length < schema.minLength) {
-      throw new Error(`${path} must be at least ${schema.minLength} characters`);
-    }
-    if (schema.pattern && !new RegExp(schema.pattern).test(value)) {
-      throw new Error(`${path} must match ${schema.pattern}`);
-    }
-  }
-
-  if (schema.type === 'integer' && typeof value === 'number' && schema.minimum !== undefined) {
-    if (value < schema.minimum) throw new Error(`${path} must be >= ${schema.minimum}`);
-  }
-
-  if (schema.type === 'array' && Array.isArray(value)) {
-    if (schema.minItems !== undefined && value.length < schema.minItems) {
-      throw new Error(`${path} must include at least ${schema.minItems} item(s)`);
-    }
-    if (schema.items) {
-      value.forEach((item, index) => assertMatches(schema.items as Schema, item, `${path}[${index}]`));
-    }
-  }
-
-  if (schema.type === 'object' && isRecord(value)) {
-    for (const required of schema.required ?? []) {
-      if (!(required in value)) throw new Error(`${path}.${required} is required`);
-    }
-
-    const properties = schema.properties ?? {};
-    for (const [key, childValue] of Object.entries(value)) {
-      const childSchema = properties[key];
-      if (childSchema) {
-        assertMatches(childSchema, childValue, `${path}.${key}`);
-        continue;
-      }
-
-      if (schema.additionalProperties === false) {
-        throw new Error(`${path}.${key} is not allowed`);
-      }
-      if (typeof schema.additionalProperties === 'object') {
-        assertMatches(schema.additionalProperties, childValue, `${path}.${key}`);
-      }
-    }
-  }
-}
-
-function matchesType(type: string, value: unknown): boolean {
-  if (type === 'null') return value === null;
-  if (type === 'array') return Array.isArray(value);
-  if (type === 'integer') return Number.isInteger(value);
-  if (type === 'object') return isRecord(value);
-  return typeof value === type;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/** The top-level field names a schema accepts, for error messages that name the remedy rather than the symptom. */
+function allowedTopLevelFields(schemaName: string): string[] {
+    if (!/^[a-z][a-z0-9-]*$/.test(schemaName)) return [];
+    const text = schemaText[schemaName];
+    if (text === undefined) return [];
+    const properties = (JSON.parse(text) as { properties?: unknown }).properties;
+    if (!properties || typeof properties !== 'object') return [];
+    return Object.keys(properties).sort();
 }

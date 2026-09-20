@@ -651,7 +651,8 @@ describe('Wiki governance', () => {
             const selection = await selectAuthoritativeContext(root, ['src/thing.ts']);
 
             expect(selection.authoritative.map((record) => record.id)).toEqual(['wiki-distilled']);
-            expect(selection.excluded).toContainEqual({ id: 'wiki-ingested', status: 'verified', reason: 'ingested-summary' });
+            // `relevant` is the Phase 6 addition: the ingested summary cites `src/thing.ts`, the ref being asked about.
+            expect(selection.excluded).toContainEqual({ id: 'wiki-ingested', status: 'verified', reason: 'ingested-summary', relevant: true });
         });
 
         it('reads the provenance of a record that never declared one', async () => {

@@ -149,5 +149,52 @@ describe('a validation failure names what the schema allows', () => {
         // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema.
         await expect(readValidated('wiki-record', file)).rejects.toThrow(/Allowed fields: .*id/);
     });
+});
 
+/**
+ * The two keywords the hand-written interpreter silently ignored, and the schema that was not a schema at all.
+ *
+ * These are not new rules: `task.schema.json` already said `workflowProfile.version` is `const: 1` and that `ownedPaths`
+ * is `uniqueItems`, and the interpreter simply never looked. A validator that does not enforce the file it reads is the
+ * failure this replace exists to end.
+ */
+describe('the validator enforces the whole schema, not just the keywords the interpreter knew', () => {
+    const profile = { version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode: 'std', comet: { projectInit: 'not_requested', openStatus: 'acknowledged' } };
+    const task = (overrides: Record<string, unknown>) => ({
+        id: 'schema-task',
+        title: 'Schema task',
+        phase: 'implement',
+        acceptance: [{ id: 'AC-1', statement: 'x' }],
+        createdAt: '2026-09-17T00:00:00.000Z',
+        updatedAt: '2026-09-17T00:00:00.000Z',
+        workflowProfile: profile,
+        ...overrides,
+    });
+
+    it('refuses a `const` value the interpreter let through', () => {
+        // `workflowProfile.version: 2` used to pass, so a task could declare a profile version nothing reads.
+        expect(() => validate('task', task({ workflowProfile: { ...profile, version: 2 } })))
+            .toThrow(/workflowProfile.version must be 1/);
+    });
+
+    it('refuses duplicate array items the interpreter let through', () => {
+        expect(() => validate('task', task({ ownedPaths: ['src', 'src'] })))
+            .toThrow(/ownedPaths must not contain duplicate items/);
+    });
+
+    it('names the offending path for a nested violation, not just the root', () => {
+        // The path is the whole value of the error: `$.workflowProfile.comet.openStatus` tells the reader where to look.
+        expect(() => validate('task', task({ workflowProfile: { ...profile, comet: { ...profile.comet, openStatus: 'nope' } } })))
+            .toThrow(/\$\.workflowProfile\.comet\.openStatus must be one of/);
+    });
+
+    it('compiles every bundled schema, so a malformed asset fails here and not at the first real artefact', () => {
+        // `wiki-record.schema.json`'s `provenance` was a bare array — valid JSON, not a schema. The interpreter ignored
+        // it; Ajv refuses to compile it, which is why the corpus repair had to land in the same change as the swap.
+        const names = ['task', 'workflow-state-record', 'workflow-state-event', 'evidence', 'review-finding', 'judge-result', 'wiki-record', 'handoff-packet', 'handoff-receipt', 'repair', 'repair-obligations', 'repair-batch', 'scope-changes', 'revision', 'user-choice-gate', 'task-choice', 'review', 'verify-result', 'kata-relations', 'adversarial-review'];
+
+        for (const name of names) {
+            expect(() => validate(name, {}), name).not.toThrow(/schema is invalid|must be object,boolean/);
+        }
+    });
 });

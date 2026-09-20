@@ -1,6 +1,7 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateWikiRecord, type WikiRecord } from './record.js';
+import { withRepositoryArtefactLock } from '../core/locks.js';
 import { wikiDir as layoutWikiDir, wikiRecordPath as layoutWikiRecordPath } from '../core/layout.js';
 
 export function normalizeId(id: string): string {
@@ -70,23 +71,24 @@ export async function writeWikiRecord(root: string, record: WikiRecord): Promise
   await mkdir(wikiDir, { recursive: true });
   const validated = validateWikiRecord(record);
   const validatedWithId = { ...validated, id };
-  await writeFile(join(wikiDir, `${id}.json`), `${JSON.stringify(validatedWithId, null, 2)}\n`, 'utf8');
+  // L3-04: validation happens before the write (it already did) and the write is now atomic, so a crash mid-write leaves
+  // the previous record readable instead of a truncated file that every reader then has to report as invalid.
+  await withRepositoryArtefactLock(root, `wiki-${id}`, join(wikiDir, `${id}.json`), async () =>
+    `${JSON.stringify(validatedWithId, null, 2)}\n`);
 }
 
 export async function updateWikiRecord(root: string, id: string, update: Partial<WikiRecord>): Promise<WikiRecord> {
   const normalizedId = normalizeId(id);
-  const wikiDir = layoutWikiDir(root);
-  const filePath = join(wikiDir, `${normalizedId}.json`);
-  const raw = await readFile(filePath, 'utf8');
-  const existing = JSON.parse(raw) as WikiRecord;
-  const updated: WikiRecord = {
-    ...existing,
-    ...update,
-    id: existing.id,
-    updatedAt: new Date().toISOString(),
-  };
-  await writeFile(filePath, `${JSON.stringify(updated, null, 2)}\n`, 'utf8');
-  return updated;
+  const filePath = layoutWikiRecordPath(root, normalizedId);
+  let updated: WikiRecord | undefined;
+  // The read-modify-write is one critical section, the same shape `mutateTaskArtefact` uses: two concurrent updates to
+  // one record used to interleave and the second silently dropped the first.
+  await withRepositoryArtefactLock(root, `wiki-${normalizedId}`, filePath, async (current) => {
+    const existing = JSON.parse(current) as WikiRecord;
+    updated = validateWikiRecord({ ...existing, ...update, id: existing.id, updatedAt: new Date().toISOString() });
+    return `${JSON.stringify(updated, null, 2)}\n`;
+  });
+  return updated!;
 }
 
 export async function deleteWikiRecord(root: string, id: string): Promise<void> {

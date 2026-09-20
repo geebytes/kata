@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readWikiRecordsWithIssues } from './store.js';
+import { mutateTaskArtefact } from '../core/state.js';
 import { wikiClosurePath as layoutWikiClosurePath, taskDir } from '../core/layout.js';
 
 export type WikiClosureDecision = 'captured' | 'not_applicable' | 'deferred';
@@ -98,7 +99,10 @@ function pathFor(root: string, taskId: string): string {
 
 async function persist(root: string, closure: WikiClosure): Promise<void> {
   await mkdir(taskDir(root, closure.taskId), { recursive: true });
-  await writeFile(pathFor(root, closure.taskId), `${JSON.stringify(closure, null, 2)}\n`, 'utf8');
+  // The closure is task-scoped, so it takes the task's own lock rather than the repository one — and the mutator returns
+  // the bytes, which is what makes the lock cover the read (D6).
+  await mutateTaskArtefact(root, closure.taskId, pathFor(root, closure.taskId), async () =>
+    `${JSON.stringify(closure, null, 2)}\n`);
 }
 
 function isWikiClosure(value: unknown): value is WikiClosure {

@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { assertValidTaskId } from './ids.js';
-import { readValidatedOptional } from './schema.js';
+import { readValidatedOptional, validate } from './schema.js';
+import { withRepositoryArtefactLock } from './locks.js';
 import { relationsPath, taskPath } from './layout.js';
 
 export type TaskRelationType =
@@ -128,7 +129,6 @@ export async function addKataRelation(input: {
   if (input.to.type === 'task') await assertTaskExists(input.root, input.to.id);
 
   const now = input.createdAt ?? new Date().toISOString();
-  const current = await readKataRelations(input.root);
   const relation: KataRelation = {
     kind: input.kind ?? inferRelationKind(input.type),
     type: input.type,
@@ -138,15 +138,27 @@ export async function addKataRelation(input: {
     createdAt: now,
     ...(input.createdBy ? { createdBy: input.createdBy } : {}),
   };
-  const next: KataRelationsGraph = {
-    version: 1,
-    relations: [
-      ...current.relations.filter((item) => !sameEndpoint(item.from, relation.from) || !sameEndpoint(item.to, relation.to) || item.type !== relation.type),
-      relation,
-    ],
-    updatedAt: now,
-  };
-  await writeKataRelations(input.root, next);
+  // L3-02: the read and the write are one critical section. Two commands adding an edge used to interleave — read,
+  // read, write, write — and the second write silently dropped the first edge. Validation on write (D5) means a graph
+  // that drifted fails the mutation that would have compounded it, naming the field.
+  let next: KataRelationsGraph = { version: 1, relations: [], updatedAt: now };
+  await withRepositoryArtefactLock(input.root, 'relations', relationsPath(input.root), async (current) => {
+    // Validation is of the graph that is **on disk**: an absent file has no graph to drift, and the seed below is an
+    // internal placeholder whose empty `updatedAt` the schema rightly rejects. Validating the seed would make the
+    // first write fail on a graph nobody ever wrote.
+    const existing = current.trim()
+      ? validate<KataRelationsGraph>('kata-relations', JSON.parse(current) as unknown)
+      : { version: 1, relations: [] as KataRelationsGraph['relations'] };
+    next = {
+      version: 1,
+      relations: [
+        ...existing.relations.filter((item) => !sameEndpoint(item.from, relation.from) || !sameEndpoint(item.to, relation.to) || item.type !== relation.type),
+        relation,
+      ],
+      updatedAt: now,
+    };
+    return `${JSON.stringify(next, null, 2)}\n`;
+  });
   return next;
 }
 
@@ -281,12 +293,6 @@ async function readTask(root: string, taskId: string): Promise<Record<string, un
 
 
 
-
-async function writeKataRelations(root: string, graph: KataRelationsGraph): Promise<void> {
-  const path = relationsPath(root);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(graph, null, 2)}\n`, 'utf8');
-}
 
 function graphPath(root: string): string {
   return relationsPath(root);
