@@ -1,4 +1,4 @@
-import { deferredChecks, type CheckCommand } from '../../src/quality/evidence.js';
+import { deferredChecks, executedChecks, type CheckCommand } from '../../src/quality/evidence.js';
 import { obligationIsAnswered } from '../../src/quality/repair-obligations.js';
 import { describe, expect, it } from 'vitest';
 import type { EvidenceEnvelope } from '../../src/quality/evidence.js';
@@ -36,9 +36,20 @@ describe('the preflight reasons about the checks that will run', () => {
         expect(deferredChecks([frozen, sealTier, untiered], true)).toEqual([]);
     });
 
+    it('excludes a covered check too, because it produces no evidence either', () => {
+        const covered: CheckCommand = { id: 'covered-check', kind: 'test', command: 'true', args: [], cwd: '/', coveredBy: 'seal-check' };
+
+        // Both are declared and neither runs: this is the set anyone reasoning about the run's evidence must use, and
+        // the preflight counted a covered check as planned until it was routed through here.
+        expect(executedChecks([frozen, covered, sealTier, untiered], false).map((check) => check.id))
+            .toEqual(['seal-check', 'plain-check']);
+        expect(executedChecks([frozen, covered, sealTier, untiered], true).map((check) => check.id))
+            .toEqual(['frozen-check', 'seal-check', 'plain-check']);
+    });
+
     it('does not call an obligation answerable on the strength of a check the run will defer', () => {
         const planned = [frozen];
-        const willRun = planned.filter((check) => !deferredChecks(planned, false).includes(check));
+        const willRun = executedChecks(planned, false);
 
         // What the run will actually produce: this is what the resolver will see.
         const produced = willRun.map((check) => envelope(check.id!));
@@ -47,7 +58,7 @@ describe('the preflight reasons about the checks that will run', () => {
         // whole point: the over-promise was the preflight counting a check the collector was going to skip.
         expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence: produced }).answered).toBe(false);
         // And with a seal-tier check present, both agree it is answerable.
-        const withSealTier = [frozen, sealTier].filter((check) => !deferredChecks([frozen, sealTier], false).includes(check));
+        const withSealTier = executedChecks([frozen, sealTier], false);
         expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence: withSealTier.map((check) => envelope(check.id!)) }).answered).toBe(true);
     });
 });

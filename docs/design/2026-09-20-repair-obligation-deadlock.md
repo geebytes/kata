@@ -136,3 +136,24 @@ the path from the label instead of guessing between two.
 
 `adversarial finding add` was given an obligation for a terminal finding; `adversarial record` opens the batch but created
 none, so a finding that arrived in the verdict had nothing that could ever answer it. The record path now persists one too.
+
+## The review round: the fix for the drift had the drift's shape
+
+The change's claim is that the preflight and the resolver cannot disagree about answerability, because they share one
+rule. The review attacked that claim by asking what *else* keeps a declared check from running — since the change had
+already fixed one such condition (the frozen tier) by inlining it at the preflight.
+
+There are two. `collectEvidence` skips a check that another check **covers** (`coveredBy`) as well as a deferred one, and
+my fix had excluded only the deferred case. So the over-promise was still reachable through the other condition:
+
+- measured: a plan of `[full-suite, covered-by-full-suite]` produced evidence for `full-suite` alone, while the
+  preflight's planned set counted both.
+
+The repair extracts the executed set into one shared `executedChecks`, used by both the collector and the preflight, so
+the conditions live in one place rather than being re-stated at each caller. That is the lesson the review makes concrete:
+**a fix that inlines one of two conditions invites the other to be missed** — which is the same shape as the defect the
+change was written to fix, appearing inside the fix.
+
+Extracting it also broke something the suite caught immediately: the seal's progress loop reads the deferred set to report
+*why* a check was skipped, and the first extraction dropped that binding. 113 tests failed loudly, which is the behaviour
+worth having — the fix for a silent failure had a silent failure in it, and the suite was not silent about it.

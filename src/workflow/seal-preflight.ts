@@ -18,7 +18,7 @@ import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
 import { obligationIsAnswered, readObligations } from '../quality/repair-obligations.js';
-import { deferredChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
+import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**
  * How many independent preflight reads may be in flight (L1-04).
@@ -98,10 +98,10 @@ export async function collectSealPreflight(input: {
      * The evidence this run is about to collect, as far as answerability is concerned: one passing item per declared
      * check. Ids are the check ids, because that is what `evidenceIds` carries and what a matrix row matches on.
      */
-    // Only the checks this run will actually execute: a deferred (frozen-tier) check produces no evidence, so counting it
-    // as planned made the dry run over-promise and let a seal pass while an obligation stayed unresolved.
-    const willRun = (options.plannedChecks ?? []).filter((check) => !deferredChecks(options.plannedChecks ?? [], options.includeFrozen === true).includes(check));
-    const plannedEvidence: EvidenceEnvelope[] = willRun.map((check) => ({
+    // Only the checks this run will actually execute. Two things keep a declared check from running — another check
+    // covering it, and a frozen tier this run was not asked for — and both produce no evidence, so counting either made
+    // the dry run over-promise and let a seal pass while an obligation stayed unresolved.
+    const plannedEvidence: EvidenceEnvelope[] = executedChecks(options.plannedChecks ?? [], options.includeFrozen === true).map((check) => ({
         id: check.id ?? check.name ?? check.command,
         taskId,
         kind: check.kind,

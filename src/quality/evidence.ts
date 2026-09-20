@@ -236,6 +236,19 @@ export function deferredChecks(commands: CheckCommand[], includeFrozen: boolean)
     return includeFrozen ? [] : commands.filter((check) => check.tier === 'frozen' && !check.coveredBy);
 }
 
+/**
+ * The checks a collection will actually execute, which is the set anyone reasoning about its evidence must use.
+ *
+ * Two things keep a declared check from running: another check covering it (`coveredBy`), and a frozen tier this run was
+ * not asked to include. Both produce **no evidence**, so a caller that counts them is over-promising — which is exactly
+ * how the preflight came to call an obligation answerable that the resolver then could not resolve. The condition lives
+ * here, beside the loop that applies it, so the two cannot drift.
+ */
+export function executedChecks(commands: CheckCommand[], includeFrozen: boolean): CheckCommand[] {
+    const deferred = new Set(deferredChecks(commands, includeFrozen));
+    return commands.filter((check) => !check.coveredBy && !deferred.has(check));
+}
+
 /** Characters of a check's output kept inline in the envelope. Enough for the failure, not for a megabyte of noise. */
 const maxLogLength = 20_000;
 
@@ -380,7 +393,7 @@ export async function collectEvidence(
   // — in `--list-checks`, in the artefact and in the seal's report — and only its execution is elided.
   const covered = commands.filter((check) => check.coveredBy);
   const deferred = deferredChecks(commands, options.includeFrozen === true);
-  const toRun = commands.filter((check) => !check.coveredBy && !deferred.includes(check));
+  const toRun = executedChecks(commands, options.includeFrozen === true);
   const cwd = toRun[0]?.cwd ?? commands[0]?.cwd ?? process.cwd();
 
   if (commands.some((check) => (check.cwd ?? process.cwd()) !== cwd)) {
