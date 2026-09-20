@@ -140,7 +140,9 @@ describe('evidence adequacy', () => {
                 currentDiffHash: diffHash,
             });
 
-            expect(judged.acceptance).toEqual(shared.acceptance);
+            // The verdict is `result` + `repairScope`; `repairOwner` is the Judge's own derivation *from* the scope
+            // (L2-02), so it is not part of "does the shared evaluator and the Judge agree".
+            expect(judged.acceptance.map(({ repairOwner: _repairOwner, ...verdict }) => verdict)).toEqual(shared.acceptance);
             expect(judged.result).toBe(shared.acceptance.every((item) => item.result === 'PASS') ? 'PASS' : 'FAIL');
         }
     });

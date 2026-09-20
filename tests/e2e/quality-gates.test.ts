@@ -51,9 +51,10 @@ describe('quality gates', () => {
         });
 
         expect(result.result).toBe('FAIL');
+        // `repairOwner` is the Phase 4 addition: a scope only a test can close names the phase that owns tests.
         expect(result.acceptance).toEqual([
-            { id: 'AC-1', result: 'FAIL', repairScope: 'missing_test_evidence' },
-            { id: 'AC-2', result: 'FAIL', repairScope: 'missing_test_evidence' },
+            { id: 'AC-1', result: 'FAIL', repairScope: 'missing_test_evidence', repairOwner: 'build' },
+            { id: 'AC-2', result: 'FAIL', repairScope: 'missing_test_evidence', repairOwner: 'build' },
         ]);
     });
 
@@ -792,10 +793,13 @@ describe('acceptance matrix closure', () => {
         expect(result.acceptance[0]).toMatchObject({ result: 'FAIL', repairScope: 'insufficient_evidence_level' });
     });
 
-    it('unit acceptance row passes even with evidence command mismatch', async () => {
+    // L2-02: the old evaluator required row-specific evidence only for `entrypoint` rows, so a unit row passed on any
+    // passing test — this test pinned that tolerance. The rule is now the row's own evidence at **every** level, so the
+    // same fixture must reject the mismatched command and still accept the one the row declared.
+    it('rejects a unit acceptance row whose fresh evidence does not match its declared command', async () => {
         const root = await tempRoot();
         const task = await createTask({
-            root, id: 'unit-row-command-tolerant', title: 'Unit row command tolerant',
+            root, id: 'unit-row-command-tolerant', title: 'Unit row command tolerance',
             acceptance: [{ id: 'AC-1', statement: 'Requires selected unit evidence.' }],
             acceptanceMatrix: {
                 version: 1, rows: [{
@@ -804,9 +808,17 @@ describe('acceptance matrix closure', () => {
                 }]
             },
         });
-        const [evidence] = await collectEvidence(task.id, [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }]);
-        const result = await judge({ root, taskId: task.id, acceptance: task.acceptance, evidence: [evidence], findings: [], currentDiffHash: evidence.diffHash, matrix: task.acceptanceMatrix });
-        expect(result.acceptance[0]).toMatchObject({ result: 'PASS' });
+
+        const [unrelated] = await collectEvidence(task.id, [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }]);
+        const rejected = await judge({ root, taskId: task.id, acceptance: task.acceptance, evidence: [unrelated], findings: [], currentDiffHash: unrelated.diffHash, matrix: task.acceptanceMatrix });
+        expect(rejected.acceptance[0]).toMatchObject({ result: 'FAIL', repairScope: 'insufficient_evidence_level' });
+
+        // The same row, with the command it declared, does pass — the rule is scoping, not a blanket failure. The
+        // envelope records `renderCommand(command, args)`, so a harmless node argv carries the declared text without
+        // shelling out to a real vitest run.
+        const [declared] = await collectEvidence(task.id, [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)', 'vitest', 'run', 'foo.test.ts'], cwd: root }]);
+        const accepted = await judge({ root, taskId: task.id, acceptance: task.acceptance, evidence: [declared], findings: [], currentDiffHash: declared.diffHash, matrix: task.acceptanceMatrix });
+        expect(accepted.acceptance[0]).toMatchObject({ result: 'PASS' });
     });
 
     it('records only the matching evidence IDs when resolving an obligation', async () => {

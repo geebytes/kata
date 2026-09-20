@@ -3,14 +3,84 @@
   "$id": "https://kata.dev/schemas/review-finding.schema.json",
   "title": "Kata Review Finding",
   "type": "object",
-  "required": ["id", "taskId", "severity", "message"],
+  "required": [
+    "id",
+    "taskId",
+    "severity",
+    "message"
+  ],
   "additionalProperties": false,
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "taskId": { "type": "string", "minLength": 1 },
-    "acceptanceId": { "type": "string", "pattern": "^AC-[0-9]+$" },
-    "severity": { "type": "string", "enum": ["blocking", "major", "minor", "note"] },
-    "message": { "type": "string", "minLength": 1 },
-    "path": { "type": "string", "minLength": 1 }
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "acceptanceId": {
+      "type": "string",
+      "pattern": "^AC-[0-9]+$"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "blocking",
+        "major",
+        "minor",
+        "note"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reproduction": {
+      "type": "object",
+      "required": [
+        "findingId",
+        "ranChecks",
+        "missingTest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "findingId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ranChecks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "checkId",
+              "passed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "checkId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "testSelector": {
+                "type": "string",
+                "minLength": 1
+              },
+              "passed": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "missingTest": {
+          "type": "boolean"
+        }
+      }
+    }
   }
 }
