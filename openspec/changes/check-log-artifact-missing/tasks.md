@@ -39,3 +39,21 @@ All four acceptance criteria were verified, three of them through the real comma
 
 Full suite: 883 passed, 1 failed — the failure is the pre-existing locale-dependent `tests/unit/worktree.test.ts` case
 (`git` reports 无效引用 in this environment), unchanged before and after this change.
+
+## Known blocker on the seal gate (verify-phase)
+
+`kata-cli verify` requires a green seal, and the seal's `test` check (`npm test`) fails for a reason **this change does
+not own**:
+
+- The failing test is `tests/unit/worktree.test.ts` — "reports a repository with no commit to branch from".
+- It fails because `src/workflow/worktree.ts:101` classifies git's failure by matching its English prose, and git 2.43
+  exits 128 with `fatal: invalid reference: HEAD` (English) / `fatal: 无效引用：HEAD` (this environment's locale) —
+  neither matches the regex. The remedy message the code exists to produce is never shown.
+- It reproduces identically on a clean tree with this change stashed, and this change's commit touches none of
+  `tests/unit/worktree.test.ts`, `src/workflow/worktree.ts` or `src/core/git.ts`.
+- Recorded, with the fix, in `docs/design/2026-09-20-worktree-no-commit-message.md`.
+
+Consequently the seal is red for an unrelated defect and this task's `verify` cannot reach a PASS without either fixing
+that defect (a separate change, deliberately not folded in here) or waiving the check (which would misrepresent the
+suite as green). The four acceptance criteria of **this** change are separately evidenced above, including through the
+real commands.
