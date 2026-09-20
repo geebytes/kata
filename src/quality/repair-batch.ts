@@ -267,6 +267,27 @@ export async function closeBatchAfterSeal(
         .map((finding) => ({ id: finding.id, reason: finding.dispositionReason ?? 'no reason recorded' }));
 
     const answered = batch.findings.filter((finding) => resolved.has(finding.id)).map((finding) => finding.id);
+    // Closing the batch is what says these were repaired, so it is also where that becomes visible to everything reading
+    // dispositions: an answered finding is marked `fixed`, and the round framing stops describing a repaired finding as
+    // unrepaired. Without this the batch closed while `readTrackedFindings` still reported every one of them `open`.
+    if (answered.length > 0) {
+        const { applyDisposition } = await import('./finding-disposition.js');
+        const bySource = new Map(tracked.map((finding) => [finding.id, finding.source]));
+        for (const findingId of answered) {
+            const source = bySource.get(findingId);
+            if (!source) continue;
+            await applyDisposition(root, taskId, source, findingId, {
+                disposition: 'fixed',
+                reason: 'repaired in the seal that closed the batch',
+                by: 'kata',
+                at: new Date().toISOString(),
+            }).catch((error: unknown) => {
+                // Reported rather than swallowed: a closure that recorded `answered` while failing to mark the finding
+                // fixed is exactly the disagreement this is here to prevent.
+                throw new Error(`Closed batch ${batch.id} answered '${findingId}' but could not mark it fixed: ${error instanceof Error ? error.message : String(error)}`);
+            });
+        }
+    }
     // A finding the current run no longer reports is accounted for by absence — the batch's third way, and the reason the
     // option is named for what it means rather than for the state it is in.
     const stillTracked = new Set(tracked.map((finding) => finding.id));

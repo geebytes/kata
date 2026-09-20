@@ -17,8 +17,8 @@ import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
-import { readObligations } from '../quality/repair-obligations.js';
-import { runWithConcurrency } from '../quality/evidence.js';
+import { obligationIsAnswered, readObligations } from '../quality/repair-obligations.js';
+import { deferredChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**
  * How many independent preflight reads may be in flight (L1-04).
@@ -58,6 +58,13 @@ export interface SealPreflightTask {
 
 export interface SealPreflightOptions {
     waivers?: Waiver[];
+    /**
+     * The checks this seal is about to run. Used only for the obligation dry run: an obligation is answerable when the
+     * evidence this run will produce answers it, and the declared checks are what will produce that evidence.
+     */
+    plannedChecks?: CheckCommand[];
+    /** Whether this seal will run the checks a project marked `tier: 'frozen'`; a deferred check produces no evidence. */
+    includeFrozen?: boolean;
     allowOwnershipConflicts?: boolean;
     allowOutOfScopeRepair?: boolean;
     /** Set when owned-path resolution failed; carried as a blocker rather than thrown from the caller. */
@@ -82,6 +89,29 @@ export async function collectSealPreflight(input: {
     options: SealPreflightOptions;
 }): Promise<SealPreflightResult> {
     const { root, taskId, task, ownedPaths, options } = input;
+    // The acceptance ids this run intends to satisfy: every criterion the task declares, since the seal is the run that
+    // proves them. The resolver is given the same set, so the dry run and the real answer are computed over one input.
+    const resolvedAcceptanceIds = task.acceptanceMatrix
+        ? task.acceptanceMatrix.rows.map((row) => row.acceptanceId)
+        : (task.acceptance ?? []).flatMap((item) => (item.id ? [item.id] : []));
+    /**
+     * The evidence this run is about to collect, as far as answerability is concerned: one passing item per declared
+     * check. Ids are the check ids, because that is what `evidenceIds` carries and what a matrix row matches on.
+     */
+    // Only the checks this run will actually execute: a deferred (frozen-tier) check produces no evidence, so counting it
+    // as planned made the dry run over-promise and let a seal pass while an obligation stayed unresolved.
+    const willRun = (options.plannedChecks ?? []).filter((check) => !deferredChecks(options.plannedChecks ?? [], options.includeFrozen === true).includes(check));
+    const plannedEvidence: EvidenceEnvelope[] = willRun.map((check) => ({
+        id: check.id ?? check.name ?? check.command,
+        taskId,
+        kind: check.kind,
+        command: renderCommand(check.command, check.args ?? []),
+        ...(check.id ? { checkId: check.id } : {}),
+        exitCode: 0,
+        startedAt: '',
+        finishedAt: '',
+        diffHash: '',
+    }));
     const blockers: SealBlocker[] = [];
     const deny = (code: string, message: string, diagnostics: Record<string, unknown>): void => {
         blockers.push({ code, message, diagnostics });
@@ -122,22 +152,39 @@ export async function collectSealPreflight(input: {
                 }
             }
         },
-        // 5. A task without a matrix resolves obligations from its acceptance ids and passing evidence, so an unresolved
-        //    obligation is a real refusal on any task — not only one that declared a matrix. The check used to return
-        //    early for a matrix-less task, which meant the *seal* could not refuse what the *closure* could not resolve:
-        //    the repair batch could never close and the seal said nothing about it.
+        // 5. An obligation this run cannot answer. An obligation this run **will** answer must not refuse it: the seal
+        //    runs this check before the checks, and the resolver that stamps `resolvedAt` runs after them, so denying an
+        //    answerable obligation stopped the very run that would have produced its evidence — a deadlock. The verdict
+        //    comes from the same `obligationIsAnswered` rule the resolver uses, asked here about the evidence this run is
+        //    about to collect, so the two cannot drift into a seal that passes while leaving the obligation open.
         async () => {
             const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
-            if (unresolved.length > 0) {
-                deny(
-                    'unresolvedObligations',
-                    'Unresolved repair obligations: every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.',
-                    {
-                        unresolvedObligations: unresolved.length,
-                        unresolvedAcceptanceIds: [...new Set(unresolved.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))],
-                    },
-                );
-            }
+            if (unresolved.length === 0) return;
+            const answerable = new Set(
+                unresolved
+                    .filter((obligation) =>
+                        obligationIsAnswered({
+                            obligation,
+                            resolvedAcceptanceIds,
+                            evidence: plannedEvidence,
+                            ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
+                        }).answered,
+                    )
+                    .map((obligation) => obligation.id),
+            );
+            const unanswered = unresolved.filter((obligation) => !answerable.has(obligation.id));
+            if (unanswered.length === 0) return;
+            const acceptanceIds = [...new Set(unanswered.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))];
+            deny(
+                'unresolvedObligations',
+                `Unresolved repair obligations: ${unanswered.length} obligation(s) this seal cannot answer${acceptanceIds.length > 0 ? ` (${acceptanceIds.join(', ')})` : ''}. Every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.`,
+                {
+                    unresolvedObligations: unanswered.length,
+                    unresolvedAcceptanceIds: acceptanceIds,
+                    // The distinction the reader needs: these were answerable, and are not why the seal is blocked.
+                    ...(answerable.size > 0 ? { answerableObligations: answerable.size } : {}),
+                },
+            );
         },
     ];
     await runWithConcurrency(independent, preflightConcurrency, () => 1, async (step) => { await step(); });

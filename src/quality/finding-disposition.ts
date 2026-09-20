@@ -42,7 +42,14 @@ export interface TrackedFinding {
     dispositionBy?: string;
     dispositionAt?: string;
     /** Where the finding lives: `review` for `review.json`, the node name for an adversarial record. */
-    source: 'review' | AdversarialNode;
+    /**
+     * Which record holds the finding.
+     *
+     * `review` is the reviewer's own `review.json`; an adversarial pass's finding is `adversarial-<node>`. The two used to
+     * share the label `review` — the node name — so a reader could not tell which file a finding came from, and a write
+     * aimed at the wrong one failed with an ENOENT on a record that does not exist for that task.
+     */
+    source: 'review' | `adversarial-${AdversarialNode}`;
 }
 
 /** The severity that may be dispositioned; the rest must be repaired (I1). */
@@ -91,7 +98,7 @@ export async function readTrackedFindings(root: string, taskId: string): Promise
             'adversarial-review',
             adversarialReviewPath(root, taskId, node),
         ).catch(() => null);
-        for (const finding of record?.findings ?? []) tracked.push(track(finding, node));
+        for (const finding of record?.findings ?? []) tracked.push(track(finding, `adversarial-${node}`));
     }
 
     return tracked;
@@ -148,7 +155,10 @@ export async function applyDisposition(
     event: DispositionEvent,
 ): Promise<boolean> {
     const { mutateTaskArtefact } = await import('../core/state.js');
-    const path = source === 'review' ? reviewPath(root, taskId) : adversarialReviewPath(root, taskId, source);
+    // The label names the record, so the path follows from it directly — no guessing between the two.
+    const path = source === 'review'
+        ? reviewPath(root, taskId)
+        : adversarialReviewPath(root, taskId, source.replace('adversarial-', ''));
     let found = false;
     await mutateTaskArtefact(root, taskId, path, async () => {
         const raw = JSON.parse(await readFile(path, 'utf8')) as { findings?: Array<Record<string, unknown>> };

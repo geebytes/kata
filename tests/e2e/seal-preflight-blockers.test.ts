@@ -114,10 +114,12 @@ describe('seal preflight blockers', () => {
     it('still refuses on a single blocker, on a task that declared no matrix', async () => {
         const root = await tempRoot();
         const taskId = 'preflight-single';
-        // A task with no matrix and no strict closure, carrying one unresolved repair obligation: exactly one blocker. The
+        // A task with no matrix and no strict closure, carrying one obligation **this run cannot answer**: it names AC-9,
+        // which the task does not declare, so no criterion is satisfied that could answer it. Exactly one blocker, and the
         // refusal is real on such a task — closure resolves an obligation from the task's acceptance ids and the passing
-        // evidence for the revision, so a matrix is an enrichment rather than a precondition. The check used to return
-        // early for a matrix-less task, which let the seal pass while the repair batch stayed open forever.
+        // evidence for the revision, so a matrix is an enrichment rather than a precondition. (An obligation naming a
+        // criterion this run *will* satisfy is deliberately not a blocker: the seal used to refuse it and thereby stop the
+        // run that would have produced its evidence. See tests/e2e/repair-obligation-deadlock.test.ts.)
         await runCommand('open', taskId, root, {
             title: 'Preflight fixture',
             acceptance: [{ id: 'AC-1', statement: 'The seal reports its blocker.' }],
@@ -127,7 +129,7 @@ describe('seal preflight blockers', () => {
             updatedAt: '2026-09-17T00:00:00.000Z',
             obligations: [{
                 id: 'obligation-1', taskId, source: 'review', severity: 'blocking',
-                acceptanceId: 'AC-1', message: 'Still open.', createdAt: '2026-09-17T00:00:00.000Z',
+                acceptanceId: 'AC-9', message: 'Still open.', createdAt: '2026-09-17T00:00:00.000Z',
             }],
         }, null, 2)}\n`, 'utf8');
 
@@ -136,6 +138,8 @@ describe('seal preflight blockers', () => {
         expect(result.success).toBe(false);
         expect(result.diagnostics).toMatchObject({ blockerCount: 1, unresolvedObligations: 1 });
         expect(result.error).toContain('Unresolved repair obligations');
+        // The criterion is named, so the refusal says what to fix rather than only that something is wrong.
+        expect(result.error).toContain('AC-9');
         // Nothing was sealed, so the repair loop never paid the evidence cost before hearing about the next problem.
         expect(result.diagnostics?.revisionId).toBeUndefined();
     });

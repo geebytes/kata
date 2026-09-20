@@ -127,7 +127,9 @@ describe('a finding has a disposition', () => {
 
         const findings = await readTrackedFindings(root, 'finding-task');
         expect(findings.map((finding) => finding.id)).toContain('a-nit');
-        expect(findings.find((finding) => finding.id === 'a-nit')?.source).toBe('verify');
+        // The label names the record the finding lives in. It used to be the bare node name, which collided with
+        // `review.json` — so a write aimed at the wrong record failed on a file that task does not have.
+        expect(findings.find((finding) => finding.id === 'a-nit')?.source).toBe('adversarial-verify');
     });
 });
 
@@ -168,7 +170,7 @@ describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () =>
             findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
         });
         const { applyDisposition, readTrackedFindings, deferredFindings } = await import('../../src/quality/finding-disposition.js');
-        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+        await applyDisposition(root, 'd-task', 'adversarial-verify', 'a-1', {
             disposition: 'deferred',
             reason: 'not now',
             by: 'reviewer-1',
@@ -206,7 +208,7 @@ describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () =>
             attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
         };
         await writeAdversarialRecord(root, 'd-task', { ...base, findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }] });
-        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+        await applyDisposition(root, 'd-task', 'adversarial-verify', 'a-1', {
             disposition: 'deferred',
             reason: 'not now',
             by: 'reviewer-1',
@@ -220,7 +222,7 @@ describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () =>
 
         const after = await readTrackedFindings(root, 'd-task');
         expect(after.find((finding) => finding.id === 'a-1'))
-            .toMatchObject({ disposition: 'deferred', dispositionReason: 'not now', source: 'verify' });
+            .toMatchObject({ disposition: 'deferred', dispositionReason: 'not now', source: 'adversarial-verify' });
         expect(deferredFindings(after).map((finding) => finding.id)).toEqual(['a-1']);
     });
 
@@ -272,7 +274,7 @@ describe('the two defects the first F1.4 exposed (reproduced 2026-09-18)', () =>
             attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' }],
             findings: [{ id: 'a-1', taskId: 'd-task', severity: 'minor', message: 'cosmetic' }],
         });
-        await applyDisposition(root, 'd-task', 'verify', 'a-1', {
+        await applyDisposition(root, 'd-task', 'adversarial-verify', 'a-1', {
             disposition: 'deferred',
             reason: 'not now',
             by: 'reviewer-1',

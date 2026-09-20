@@ -109,6 +109,37 @@ export async function persistBlockingJudgeResult(
   return created;
 }
 
+/**
+ * Whether one obligation is answered by a revision's evidence — the **one** rule the seal and the resolver share.
+ *
+ * `collectSealPreflight` refuses a seal while an obligation lacks a `resolvedAt`, and it runs *before* the checks; the
+ * resolver runs *after* them. Deciding answerability in two places let the seal refuse an obligation the run was about to
+ * answer, which is a deadlock: the refusal stopped the very run that would have produced the evidence. Both callers
+ * consult this, so they cannot drift — a seal that passes while leaving the obligation unresolved is then impossible by
+ * construction rather than by review.
+ *
+ * The matrix is an enrichment of the mapping, not a precondition: with one, an obligation scoped to a criterion waits for
+ * evidence matching that criterion's row; without one, the criterion being satisfied and the revision carrying passing
+ * evidence is the whole answer.
+ */
+export function obligationIsAnswered(input: {
+    obligation: RepairObligation;
+    resolvedAcceptanceIds: string[];
+    evidence: EvidenceEnvelope[];
+    matrix?: AcceptanceMatrix;
+}): { answered: boolean; evidenceIds: string[] } {
+    const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
+    const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
+    const matchedEvidence = matrix && row
+        ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
+        : evidence.filter((item) => item.exitCode === 0);
+    const evidenceIds = matchedEvidence.map((item) => item.id);
+    const answered = obligation.acceptanceId
+        ? resolvedAcceptanceIds.includes(obligation.acceptanceId) && (!matrix || evidenceIds.length > 0)
+        : evidenceIds.length > 0;
+    return { answered, evidenceIds };
+}
+
 export async function resolveObligationsForRevision(
   root: string,
   taskId: string,
@@ -122,25 +153,11 @@ export async function resolveObligationsForRevision(
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
-      const matchedEvidence = matrix && row
-        ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
-        : evidence.filter((item) => evidenceIds.includes(item.id) && item.exitCode === 0);
-      // An obligation scoped to a criterion waits for that criterion, and — when a matrix binds it to a check — for that
-      // check's evidence. One with **no** criterion is scoped to nothing, so the revision's passing evidence is the whole
-      // of what can answer it. Requiring an acceptance id for both left every unscoped obligation permanently
-      // unresolvable, and the seal correctly refused on it forever.
-      // The `hasMappedEvidence` term is unchanged: with no matrix there is nothing to match a row against, so the
-      // criterion being satisfied is the answer, exactly as before this change.
-      const hasMappedEvidence = !matrix || matchedEvidence.length > 0;
-      const answered = obligation.acceptanceId
-        ? resolvedAcceptanceIds.includes(obligation.acceptanceId) && hasMappedEvidence
-        : matchedEvidence.length > 0;
-      if (answered) {
-        obligation.resolvedAt = now;
-        obligation.resolvedByRevisionId = revisionId;
-        obligation.resolvedEvidenceIds = matchedEvidence.map((item) => item.id);
-      }
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}) });
+      if (!verdict.answered) continue;
+      obligation.resolvedAt = now;
+      obligation.resolvedByRevisionId = revisionId;
+      obligation.resolvedEvidenceIds = verdict.evidenceIds;
     }
     return existing;
   });

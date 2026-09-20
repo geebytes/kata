@@ -225,6 +225,17 @@ export type FreshnessResult =
       evidenceScopeHash: string;
     };
 
+/**
+ * The checks a run will **not** execute, because a frozen-tier check waits for the artefact to be frozen.
+ *
+ * Exported because the seal preflight has to reason about the evidence a run will produce, and a check the run defers
+ * produces none. Counting a deferred check as planned evidence let the preflight call an obligation answerable that the
+ * resolver then could not resolve — the seal passing while the obligation stayed open, reported by nothing.
+ */
+export function deferredChecks(commands: CheckCommand[], includeFrozen: boolean): CheckCommand[] {
+    return includeFrozen ? [] : commands.filter((check) => check.tier === 'frozen' && !check.coveredBy);
+}
+
 /** Characters of a check's output kept inline in the envelope. Enough for the failure, not for a megabyte of noise. */
 const maxLogLength = 20_000;
 
@@ -368,7 +379,7 @@ export async function collectEvidence(
   // evidence. Keeping the skip here (rather than dropping the check upstream) means every consumer still sees the check
   // — in `--list-checks`, in the artefact and in the seal's report — and only its execution is elided.
   const covered = commands.filter((check) => check.coveredBy);
-  const deferred = options.includeFrozen ? [] : commands.filter((check) => check.tier === 'frozen' && !check.coveredBy);
+  const deferred = deferredChecks(commands, options.includeFrozen === true);
   const toRun = commands.filter((check) => !check.coveredBy && !deferred.includes(check));
   const cwd = toRun[0]?.cwd ?? commands[0]?.cwd ?? process.cwd();
 
@@ -656,7 +667,8 @@ function environmentSummary(cwd: string): string {
   return `node=${process.version} platform=${process.platform} cwd=${cwd}`;
 }
 
-function renderCommand(command: string, args: string[]): string {
+/** Exported so the seal preflight can describe a planned check's command the way its evidence will. */
+export function renderCommand(command: string, args: string[]): string {
   return [command, ...args].join(' ');
 }
 

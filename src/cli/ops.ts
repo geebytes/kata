@@ -18,6 +18,7 @@ import {
     adversarialNodes,
 } from '../quality/adversarial.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
+import { isTerminalSeverity } from '../quality/finding-lifecycle.js';
 import { runProcessSync } from '../process/run.js';
 
 /** The CodeGraph subcommands this CLI dispatches to the installed binary. */
@@ -399,6 +400,18 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // known, and it is reached regardless of which refusal the node reports first.
         const { recordPassFindingsForBatching } = await import('../quality/repair-batch.js');
         await recordPassFindingsForBatching(root, change, node, record.findings ?? []).catch(() => null);
+        // The batch the line above opens has to be closable, and closure reads `answered` from resolved obligations — so a
+        // terminal finding recorded in a verdict needs an obligation too. Without this the batch opened here held a finding
+        // nothing could ever answer, which is the same gap as the pass's `finding add` path had.
+        const { persistBlockingFindings } = await import('../quality/repair-obligations.js');
+        for (const finding of record.findings ?? []) {
+            if (!isTerminalSeverity(finding.severity)) continue;
+            await persistBlockingFindings(root, change, [{
+                id: finding.id,
+                severity: finding.severity,
+                message: finding.message,
+            }]).catch(() => null);
+        }
         const gate = await adversarialGateFor(root, change, node);
         // `--mode` is accepted but never authoritative: the round answered the issued brief, so a flag that disagrees
         // is reported rather than allowed to misdescribe the round (M2's rotation reads the mode from here).

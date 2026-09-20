@@ -450,6 +450,10 @@ async function cmdBuild(
             ...(options.allowOwnershipConflicts ? { allowOwnershipConflicts: true } : {}),
             ...(options.allowOutOfScopeRepair ? { allowOutOfScopeRepair: true } : {}),
             ...(ownedPathsError ? { ownedPathsError } : {}),
+            // The checks this seal is about to run, so the obligation dry run can tell an obligation this run will answer
+            // from one it cannot. Without them every unresolved obligation would refuse the seal that answers it.
+            plannedChecks: checks,
+            ...(options.frozen === true ? { includeFrozen: true } : {}),
         },
     });
     if (preflight.blockers.length > 0) {
@@ -583,12 +587,6 @@ async function cmdBuild(
     // C3: what the claims did, against the evidence just collected. A claim whose evidence is absent counts as failed —
     // the sentence declared itself checkable, and nothing checked it.
     const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
-    // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
-    // The base revision was stamped when the batch opened, so nothing here supplies one.
-    if (evidence.every(isPassing)) {
-        const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
-        await closeBatchAfterSeal(root, taskId).catch(() => null);
-    }
     if (evidence.some((item) => !isPassing(item))) {
         return {
             command: 'build',
@@ -649,6 +647,17 @@ async function cmdBuild(
             task.acceptanceMatrix,
             evidence,
         );
+    }
+    // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
+    // The base revision was stamped when the batch opened, so nothing here supplies one.
+    //
+    // This runs **after** the resolution above, and that order is the point: closure reads `answered` from the obligations
+    // that carry a resolvedAt, so closing before resolving refused every batch on its first successful seal — one run
+    // late, with the refusal swallowed by this `.catch`. Same ordering class as the seal that refused the run whose
+    // evidence would answer it.
+    if (evidence.every(isPassing)) {
+        const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
+        await closeBatchAfterSeal(root, taskId).catch(() => null);
     }
     // A review repair is outstanding only when the manifest changed, which the preflight just established; resolving
     // it here is what closes the repair against the revision that superseded it.
