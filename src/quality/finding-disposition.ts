@@ -50,6 +50,9 @@ export interface TrackedFinding {
      * aimed at the wrong one failed with an ENOENT on a record that does not exist for that task.
      */
     source: 'review' | `adversarial-${AdversarialNode}`;
+    /** The revision the record that raised this finding answered, when it recorded one. */
+    revisionId?: string;
+    manifestHash?: string;
 }
 
 /** The severity that may be dispositioned; the rest must be repaired (I1). */
@@ -57,8 +60,21 @@ export function mayBeDispositioned(severity: string): boolean {
     return !isTerminalSeverity(severity);
 }
 
+/** The binding fields of a record, for carrying onto its findings. */
+function bindingOf(record: { revisionId?: string; manifestHash?: string } | null | undefined): { revisionId?: string; manifestHash?: string } {
+    return {
+        ...(record?.revisionId ? { revisionId: record.revisionId } : {}),
+        ...(record?.manifestHash ? { manifestHash: record.manifestHash } : {}),
+    };
+}
+
 /** A finding from either record, with `open` as the answer for one that never said (老记录 treated as open). */
-function track(finding: ReviewFinding | AdversarialFinding, source: TrackedFinding['source']): TrackedFinding {
+function track(
+    finding: ReviewFinding | AdversarialFinding,
+    source: TrackedFinding['source'],
+    /** The record's own binding, carried onto each of its findings so a reader can tell which revision raised it. */
+    binding: { revisionId?: string; manifestHash?: string } = {},
+): TrackedFinding {
     const dispositioned = finding as ReviewFinding & {
         disposition?: FindingDisposition;
         dispositionReason?: string;
@@ -76,6 +92,11 @@ function track(finding: ReviewFinding | AdversarialFinding, source: TrackedFindi
         ...(dispositioned.dispositionReason ? { dispositionReason: dispositioned.dispositionReason } : {}),
         ...(dispositioned.dispositionBy ? { dispositionBy: dispositioned.dispositionBy } : {}),
         ...(dispositioned.dispositionAt ? { dispositionAt: dispositioned.dispositionAt } : {}),
+        // The binding a finding was raised under. A finding carries none of its own — it is written into a record, and the
+        // record is what says which revision the pass answered — so without this a reader could not tell a finding about
+        // the revision in hand from one about the revision before it.
+        ...(binding.revisionId ? { revisionId: binding.revisionId } : {}),
+        ...(binding.manifestHash ? { manifestHash: binding.manifestHash } : {}),
         source,
     };
 }
@@ -90,15 +111,15 @@ function track(finding: ReviewFinding | AdversarialFinding, source: TrackedFindi
 export async function readTrackedFindings(root: string, taskId: string): Promise<TrackedFinding[]> {
     const tracked: TrackedFinding[] = [];
 
-    const review = await readValidatedOptional<{ findings?: ReviewFinding[] }>('review', reviewPath(root, taskId)).catch(() => null);
-    for (const finding of review?.findings ?? []) tracked.push(track(finding, 'review'));
+    const review = await readValidatedOptional<{ findings?: ReviewFinding[]; revisionId?: string; manifestHash?: string }>('review', reviewPath(root, taskId)).catch(() => null);
+    for (const finding of review?.findings ?? []) tracked.push(track(finding, 'review', bindingOf(review)));
 
     for (const node of ['verify', 'review'] as const) {
-        const record = await readValidatedOptional<{ findings?: AdversarialFinding[] }>(
+        const record = await readValidatedOptional<{ findings?: AdversarialFinding[]; revisionId?: string; manifestHash?: string }>(
             'adversarial-review',
             adversarialReviewPath(root, taskId, node),
         ).catch(() => null);
-        for (const finding of record?.findings ?? []) tracked.push(track(finding, `adversarial-${node}`));
+        for (const finding of record?.findings ?? []) tracked.push(track(finding, `adversarial-${node}`, bindingOf(record)));
     }
 
     return tracked;

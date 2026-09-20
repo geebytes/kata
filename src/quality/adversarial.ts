@@ -771,9 +771,28 @@ export async function resolveBriefMode(
 ): Promise<{ mode: 'verify' | 'cold'; reason: string }> {
     if (requested) return { mode: requested, reason: `requested explicitly (--mode ${requested})` };
 
+    // The findings that bind to the revision this brief is for — or to a revision whose content is the same, since a
+    // re-seal of unchanged content issues a new id. Findings from another revision are not this round's to check: a pass
+    // is recorded at the revision it answered, a repair re-seals to a new one, and the record is only replaced when the
+    // NEXT pass is recorded — so issuing a brief in that window found the previous revision's findings still open and
+    // framed the round as checking an unrepaired repair, after the repair had landed and its batch had closed.
+    const { bindsToRevision } = await import('../workflow/verdict-binding.js');
+    const identity = await (await import('../workflow/verdict-binding.js')).currentRevisionIdentity(root, taskId);
     const open = (await import('./finding-disposition.js'))
         .unfixed(await (await import('./finding-disposition.js')).readTrackedFindings(root, taskId))
-        .filter((finding) => finding.disposition === 'open' && (finding.severity === 'blocking' || finding.severity === 'major'));
+        .filter((finding) => finding.disposition === 'open' && (finding.severity === 'blocking' || finding.severity === 'major'))
+        .filter((finding) => {
+            const bound = finding as { revisionId?: string; manifestHash?: string };
+            // A finding whose record names no revision is kept: the conservative direction is to treat it as this round's,
+            // and the old records predate the binding.
+            const hasBinding = Boolean(bound.revisionId) || Boolean(bound.manifestHash);
+            if (!hasBinding) return true;
+            // A record that names a revision **while nothing current exists** is kept too. That is the state a task is in
+            // before its first seal, and a mixed or unsealed workspace is not one where "this finding is about an older
+            // revision" means anything — `bindsToRevision` reads an unknown current revision as binding nothing.
+            if (!identity.revisionId) return true;
+            return bindsToRevision(bound, identity);
+        });
     if (open.length > 0) {
         return { mode: 'verify', reason: `an open ${open[0].severity} finding (${open[0].id}) is unrepaired, so this round checks the repair rather than opening a new search` };
     }
