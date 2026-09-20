@@ -586,6 +586,31 @@
           }
         }
       }
+    },
+    "acceptanceMatrixMigration": {
+      "type": "object",
+      "required": [
+        "gapCount",
+        "acceptanceIds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gapCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acceptanceIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   }
 }

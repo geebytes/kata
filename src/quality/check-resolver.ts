@@ -125,6 +125,11 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
             args: [...(runtimeEntry ? [runtimeEntry] : []), ...args],
             cwd: runtimeProjectDir,
             timeoutMs: timeoutForKind(evidence.kind),
+            // Two reasons, both structural: the input fingerprint must change when the selector does (or a reuse would
+            // credit the wrong test), and Verify/Review may only execute selectors a declaration named (L0-04/L2-04).
+            // Keeping the selector out of `args` is what lets those two rules read it rather than pattern-match the
+            // command line.
+            testSelector: selector,
         } satisfies CheckCommand;
     }
 
@@ -147,6 +152,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
                 args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
                 cwd: runtimeProjectDir,
                 timeoutMs: timeoutForKind(evidence.kind),
+                testSelector: selector,
             } satisfies CheckCommand;
         }
         return new Error(`Matrix row ${row.acceptanceId} declares a testSelector but command "${template}" does not support selectors. Use vitest, pytest, uv run pytest, or a command template with {{selector}} placeholder.`);
@@ -166,7 +172,13 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
         args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
         cwd: runtimeProjectDir,
         timeoutMs: timeoutForKind(evidence.kind),
+        ...(selector ? { testSelector: selector } : {}),
     } satisfies CheckCommand;
+}
+
+/** The stable identity of a resolved check, matching `resolveSealChecks`' naming for the revision id. */
+export function resolvedCheckId(check: CheckCommand): string {
+    return check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`;
 }
 
 /** Every declaration in the matrix, resolved and de-duplicated. Throws the resolver's error, as the seal always has. */

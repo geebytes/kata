@@ -247,6 +247,10 @@
     "waivedBy": {
       "type": "string",
       "minLength": 1
+    },
+    "testPolicy": {
+      "type": "string",
+      "const": "reuse_declared_tests_only"
     }
   }
 }

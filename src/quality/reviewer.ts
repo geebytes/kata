@@ -15,6 +15,21 @@ export interface ReviewFindingInput {
   path?: string;
 }
 
+/**
+ * How a review confirmed a finding, and with what (L0-04/L2-04).
+ *
+ * The review may re-run any test the change **declared** — that is a reproduction oracle, not authorship. When no
+ * declared test can reproduce the finding, the honest record says so and the gap becomes a Build obligation: the fix is
+ * a focused test in the phase that owns tests, not a fixture this pass leaves behind.
+ */
+export interface FindingReproduction {
+  findingId: string;
+  /** The declared checks the reviewer re-ran, in the order it ran them. */
+  ranChecks: Array<{ checkId: string; testSelector?: string; passed: boolean }>;
+  /** True when no declared check could reproduce it, so the finding carries a Build obligation. */
+  missingTest: boolean;
+}
+
 export interface ReviewFinding {
   id: string;
   taskId: string;
@@ -22,6 +37,7 @@ export interface ReviewFinding {
   severity: ReviewSeverity;
   message: string;
   path?: string;
+  reproduction?: FindingReproduction;
 }
 
 export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFinding> {

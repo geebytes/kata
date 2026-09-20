@@ -152,6 +152,8 @@ export interface TaskRecord {
   acceptanceMatrix?: AcceptanceMatrix;
   requirements?: RequirementItem[];
   upstreamCoverage?: UpstreamCoverage;
+  /** A strict-matrix migration note (L2-02). Optional, so a task that never had a gap still validates. */
+  acceptanceMatrixMigration?: AcceptanceMatrixMigrationNote;
 }
 
 export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
@@ -207,6 +209,34 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
   await writeCurrentState(root, state);
 
   return task;
+}
+
+/**
+ * A task strict verification cannot judge structurally, and why (L2-02).
+ *
+ * Reported rather than refused: a task sealed before strict rows required declared check ids must keep verifying, or the
+ * rule would retroactively invalidate every binding it holds. The note is what makes the migration visible instead of
+ * leaving the next reader to rediscover why one task's evidence set behaves differently from another's.
+ */
+export interface AcceptanceMatrixMigrationNote {
+    taskId: string;
+    gapCount: number;
+    acceptanceIds: string[];
+}
+
+/**
+ * Record the strict-matrix migration note on the task.
+ *
+ * The note is produced by `findMatrixDeclarationGaps` in the **verify path only** (`src/workflow/orchestrator.ts`). A
+ * status call has no business writing a task record, and the verify result already carries the gaps for a reader who
+ * wants them without sealing.
+ */
+export async function writeAcceptanceMatrixMigration(root: string, taskId: string, note: Omit<AcceptanceMatrixMigrationNote, 'taskId'>): Promise<void> {
+  await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (current) => {
+    const task = JSON.parse(current) as TaskRecord;
+    task.acceptanceMatrixMigration = { taskId, ...note };
+    return `${JSON.stringify(task, null, 2)}\n`;
+  });
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

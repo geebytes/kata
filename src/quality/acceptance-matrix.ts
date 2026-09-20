@@ -6,6 +6,8 @@ import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import type { AcceptanceCriterion, AcceptanceMatrix, AcceptanceMatrixRow } from '../core/task.js';
 import { waiversPath, taskDir } from '../core/layout.js';
+import { selectorRunnerCommandLines } from './check-resolver.js';
+import { runWithConcurrency } from './evidence.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -306,6 +308,91 @@ function selectorMatches(evidenceCommand: string, testSelector: string): boolean
  * verdict. A declaration without an id, or evidence recorded before ids existed, falls back to the textual comparison
  * this used to be the only path.
  */
+/**
+ * Why a strict acceptance row cannot be verified structurally (L2-02).
+ *
+ * A strict row without a declared check id has no answerable question: no evidence can be attributed to it, so the gate
+ * either re-runs everything — the cost this phase removes — or guesses. Legacy tasks are **reported, not blocked**: a
+ * task sealed before the rule existed keeps verifying, and the diagnostic names it so the migration is explicit.
+ */
+export interface MatrixDeclarationGap {
+    acceptanceId: string;
+    evidenceIndex: number;
+    reason: 'missing_check_id' | 'missing_test_selector';
+    detail: string;
+}
+
+export function findMatrixDeclarationGaps(matrix: AcceptanceMatrix | undefined, strict: boolean): MatrixDeclarationGap[] {
+    if (!matrix || !strict) return [];
+    const gaps: MatrixDeclarationGap[] = [];
+    for (const row of matrix.rows) {
+        row.evidence.forEach((declaration, evidenceIndex) => {
+            if (!declaration.id) {
+                gaps.push({
+                    acceptanceId: row.acceptanceId,
+                    evidenceIndex,
+                    reason: 'missing_check_id',
+                    detail: `${row.acceptanceId} declares evidence without an id, so no recorded evidence can be attributed to it`,
+                });
+                return;
+            }
+            // A selector-capable runner whose declaration names no selector cannot be reproduced as a single test, and
+            // re-running the whole suite is exactly what the reuse path exists to avoid.
+            if (declaration.kind === 'test' && !declaration.testSelector
+                && selectorRunnerCommandLines.some((line) => declaration.command.startsWith(line))) {
+                gaps.push({
+                    acceptanceId: row.acceptanceId,
+                    evidenceIndex,
+                    reason: 'missing_test_selector',
+                    detail: `${row.acceptanceId} declares '${declaration.command}' without a testSelector; a strict row needs the focused test that proves it`,
+                });
+            }
+        });
+    }
+    return gaps;
+}
+
+/**
+ * Whether an envelope's evidence counts for a specific acceptance criterion.
+ *
+ * `coveredAcceptanceIds` first: the envelope records the criteria it was declared against, which is a structural match
+ * and needs no command-text inference. `evidenceMatchesRow` is the fallback for envelopes written before that field
+ * existed, so an old evidence set is re-read rather than invalidated. A match that cannot be decided is **false** — the
+ * criterion fails instead of being credited.
+ */
+export function evidenceCoversAcceptance(
+  row: AcceptanceMatrixRow,
+  acceptanceId: string,
+  envelope: { command: string; kind: string; checkId?: string; coveredAcceptanceIds?: string[] },
+): boolean {
+  if (envelope.coveredAcceptanceIds) return envelope.coveredAcceptanceIds.includes(acceptanceId);
+  // `kind` is typed `string` on purpose: acceptance-matrix.ts has no reason to import `EvidenceKind`, and
+  // `evidenceMatchesRow` beside this already takes `string` for the same parameter. Widening here is what keeps the type
+  // import out of a module that only needs the value.
+  return evidenceMatchesRow(row, envelope.command, envelope.kind, envelope.checkId);
+}
+
+/**
+ * The acceptance criteria each declared check id is declared against (L1-01/L2-02).
+ *
+ * The matrix is the only place the AC-to-check relationship exists, and both reuse and evidence adequacy need it in the
+ * same direction, so it is derived once here rather than twice by two callers with subtly different rules. A declaration
+ * with no `id` is skipped: it cannot be addressed structurally, and inventing a key from its command text would rebuild
+ * the substring matching this exists to remove.
+ */
+export function acceptanceIdsByCheckId(matrix: AcceptanceMatrix | undefined): Record<string, string[]> {
+  const byCheck: Record<string, string[]> = {};
+  for (const row of matrix?.rows ?? []) {
+    for (const declaration of row.evidence) {
+      if (!declaration.id) continue;
+      // A covered declaration is credited with the covering check's evidence, so it names that check too.
+      const checkId = declaration.coveredBy ?? declaration.id;
+      byCheck[checkId] = [...new Set([...(byCheck[checkId] ?? []), row.acceptanceId])].sort();
+    }
+  }
+  return byCheck;
+}
+
 export function evidenceMatchesRow(
   row: AcceptanceMatrixRow,
   evidenceCommand: string,
@@ -330,6 +417,16 @@ export function evidenceMatchesRow(
   return false;
 }
 
+/**
+ * How many per-path `codegraph affected` queries may be in flight (L4-03).
+ *
+ * Each query is a child process against one shared index, so an unbounded fan-out started one per affected path and made
+ * them contend. Batching into a single call would be cheaper still and is deliberately not done: the per-path
+ * attribution — which implementation path dragged each affected test in — is a product behaviour with its own test, so
+ * the cost is paid in parallel under a bound instead of being paid out of information.
+ */
+const codegraphQueryConcurrency = 4;
+
 export async function discoverCodeGraphCandidates(
   root: string,
   matrix: AcceptanceMatrix,
@@ -341,16 +438,21 @@ export async function discoverCodeGraphCandidates(
     .filter((path) => ownedPaths.some((owned) => pathOverlaps(owned, path))))];
   if (sourcePaths.length === 0) return [];
 
-  // One query per implementation path, run concurrently: each answer attributes an affected test to the path that
-  // dragged it in, which is what the reviewer reads. A single batched `affected` call would return a flat list and lose
-  // that attribution, so the cost is paid in parallel rather than by dropping the information.
+  // One query per implementation path, run under a bounded pool: each answer attributes an affected test to the path
+  // that dragged it in, which is what the reviewer reads. A single batched `affected` call would return a flat list and
+  // lose that attribution, so the cost is paid in parallel rather than by dropping the information — but bounded,
+  // because each query is a child process against one shared index and the unbounded `Promise.all` this replaces made
+  // them contend. A `Map` filled concurrently keeps the attribution a batch would lose.
+  //
+  // A failing query still fails the whole discovery: a bounded pool may not turn "the index could not answer" into
+  // "nothing is affected".
   const sourcesByCandidate = new Map<string, string[]>();
-  const perPath = await Promise.all(sourcePaths.map(async (sourcePath) => ({
-    sourcePath,
-    affectedTests: await runAffected(root, [sourcePath]),
-  })));
-  for (const { sourcePath, affectedTests } of perPath) {
-    for (const affectedTest of affectedTests) {
+  const perPath = new Map<string, string[]>();
+  await runWithConcurrency(sourcePaths, codegraphQueryConcurrency, () => 1, async (sourcePath) => {
+    perPath.set(sourcePath, await runAffected(root, [sourcePath]));
+  });
+  for (const sourcePath of sourcePaths) {
+    for (const affectedTest of perPath.get(sourcePath) ?? []) {
       const path = normalizePath(affectedTest);
       const sources = sourcesByCandidate.get(path) ?? [];
       if (!sources.includes(sourcePath)) sources.push(sourcePath);

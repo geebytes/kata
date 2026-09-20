@@ -90,6 +90,8 @@ export const reasonForUniformScope: Record<RepairScope, NextActionReason | null>
   failing_evidence: null,
   blocking_review_finding: null,
   cross_revision_evidence: null,
+  // Declaring the missing row is Build's work, and the repair entry is Build's own default.
+  no_acceptance_matrix_row: null,
 };
 
 /** The scopes that a uniform failed set can map to a specific reason, or `null` when they are mixed or unmapped. */

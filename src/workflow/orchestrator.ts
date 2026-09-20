@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { createTask, type CreateTaskInput } from '../core/task.js';
 import { readCurrentState, appendStateEvent, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
-import { checkFreshness, collectEvidence, computeDiffHash, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
+import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
+import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
+import { findMatrixDeclarationGaps } from '../quality/acceptance-matrix.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
 import { createHandoff } from './handoff.js';
@@ -20,12 +22,12 @@ import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wi
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
-import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
+import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { adversarialGateFor, adversarialReasonFor, blockingAdversarialFindings } from '../quality/adversarial.js';
+import { adversarialGateFor, adversarialNodes, adversarialReasonFor, blockingAdversarialFindings, requiredAdversarialNodes } from '../quality/adversarial.js';
 import { readReview } from './review-read.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
@@ -182,7 +184,7 @@ async function cmdOpen(
     try {
         context = await buildContextManifest({ root, taskId, sourceRefs: [] });
     } catch {
-        context = { taskId, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], warnings: [] };
+        context = { taskId, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], excludedWikiSummary: { relevant: [], unrelated: { count: 0, byReason: {} } }, warnings: [] };
     }
 
     const ownershipConflicts = options.ownedPaths?.length
@@ -486,13 +488,25 @@ async function cmdBuild(
         : undefined;
     const revision = sealed?.revision;
 
-    // Reuse, and say so. A check is only reused when it previously passed against content that is still current: the
-    // revision identity matched (same owned-path manifest, same resolved check set) and every recorded envelope still
-    // describes the current tree. Anything else runs, which keeps the gate fail-closed.
+    // Reuse, per check, and say so (L1-01). The revision identity still gates the whole thing — same owned-path content,
+    // same resolved check set — but *within* that identity a check is now reusable on its own record: it previously
+    // passed, its recorded input fingerprint still matches, and it was declared against rows whose files are unchanged.
+    //
+    // The "rows whose files are unchanged" half is deliberately NOT implemented here: `checkInputFingerprint` already
+    // encodes *which* files a check reads (command, args, cwd, and — for a test check — the selector that names the
+    // files), so a change to a file the check reads moves the fingerprint and invalidates it. Adding a second, path-level
+    // rule on top of that would be the same decision made twice, and the row-to-evidence question belongs to
+    // `evidenceCoversAcceptance`. The old `item.diffHash === currentTreeHash` guard is therefore replaced by the
+    // fingerprint rather than merely dropped: it was a whole-tree predicate where a per-check one is what the finding
+    // asked for.
+    //
+    // Everything else runs. Uncertainty invalidates rather than assumes, which is the direction the gate needs.
+    let reusePlan: CheckReusePlan | undefined;
     if (sealed?.reused && revision) {
-        const currentTreeHash = await computeDiffHash(root);
         const recorded = await readRecordedEvidence(root, taskId);
-        if (recorded.length > 0 && recorded.every((item) => item.exitCode === 0 && item.diffHash === currentTreeHash)) {
+        const plan = planCheckReuse(checks, recorded);
+        reusePlan = plan;
+        if (plan.reusable.length === checks.length && checks.length > 0) {
             return {
                 command: 'build',
                 taskId,
@@ -501,11 +515,15 @@ async function cmdBuild(
                 diagnostics: {
                     mode: 'seal',
                     reusedRevision: revision.id,
-                    reusedEvidence: recorded.length,
+                    reusedEvidence: plan.reusable.length,
+                    reusedChecks: plan.reusable.map((entry) => entry.checkId),
                     sealedAt: revision.createdAt,
                 },
             };
         }
+        // The reusable checks carry `importResult`, so `collectEvidence` records them without spawning anything while
+        // the evidence set stays whole and in declaration order.
+        checks = plan.planned;
     }
 
     // A readable heartbeat. Monitoring a seal used to mean `pgrep`-ing for a process — which false-positives on the
@@ -544,6 +562,11 @@ async function cmdBuild(
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.frozen === true ? { includeFrozen: true } : {}),
+        acceptanceByCheckId: acceptanceIdsByCheckId(task.acceptanceMatrix),
+        // L4-02: the bounded capture drops the middle of a noisy check's output, so give it a place to write the whole
+        // thing. The envelope keeps the reference and the bounded excerpt; a reader who needs the transcript reads the
+        // file instead of finding a truncated log and no way to tell.
+        checkLogDir: evidenceDir(root),
         onProgress: (event) => {
             progress(event);
             options.onProgress?.(event);
@@ -556,11 +579,11 @@ async function cmdBuild(
     const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
     // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
     // The base revision was stamped when the batch opened, so nothing here supplies one.
-    if (evidence.every((item) => item.exitCode === 0)) {
+    if (evidence.every(isPassing)) {
         const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
         await closeBatchAfterSeal(root, taskId).catch(() => null);
     }
-    if (evidence.some((item) => item.exitCode !== 0)) {
+    if (evidence.some((item) => !isPassing(item))) {
         return {
             command: 'build',
             taskId,
@@ -574,15 +597,21 @@ async function cmdBuild(
             diagnostics: {
                 mode: 'seal',
                 evidenceCount: evidence.length,
-                passing: evidence.filter((item) => item.exitCode === 0).length,
-                failing: evidence.filter((item) => item.exitCode !== 0).length,
+                passing: evidence.filter((item) => isPassing(item)).length,
+                failing: evidence.filter((item) => !isPassing(item)).length,
                 // Which checks failed, by id, so "sealing failed" is answerable without re-reading the evidence files.
                 failingChecks: evidence
-                    .filter((item) => item.exitCode !== 0)
-                    .map((item) => ({ checkId: item.checkId ?? null, name: item.name ?? null, command: item.command, exitCode: item.exitCode })),
+                    .filter((item) => !isPassing(item))
+                    .map((item) => ({ checkId: item.checkId ?? null, name: item.name ?? null, command: item.command, exitCode: item.exitCode, expectedExitCode: item.expectExitCode ?? 0 })),
                 ...(claimSummary.ran.length > 0 ? { claims: claimSummary.ran.map((claim) => claim.checkId) } : {}),
                 ...(claimSummary.failures.length > 0
                     ? { claimFailures: claimSummary.failures.map((failure) => ({ ...failure, description: describeClaimFailure(failure) })) }
+                    : {}),
+                ...(reusePlan
+                    ? {
+                        reusedChecks: reusePlan.reusable.map((entry) => entry.checkId),
+                        invalidatedChecks: reusePlan.invalidated,
+                    }
                     : {}),
             },
         };
@@ -605,7 +634,7 @@ async function cmdBuild(
         const acIds = task.acceptanceMatrix.rows.map((r) => r.acceptanceId);
         await resolveObligationsForRevision(
             root, taskId, revision.id, acIds,
-            evidence.filter((e) => e.exitCode === 0).map((e) => e.id),
+            evidence.filter((e) => isPassing(e)).map((e) => e.id),
             task.acceptanceMatrix,
             evidence,
         );
@@ -625,11 +654,11 @@ async function cmdBuild(
         command: 'build',
         taskId,
         phase: 'hardVerify',
-        success: evidence.every((e) => e.exitCode === 0),
+        success: evidence.every((e) => isPassing(e)),
         diagnostics: {
             evidenceCount: evidence.length,
-            passing: evidence.filter((e) => e.exitCode === 0).length,
-            failing: evidence.filter((e) => e.exitCode !== 0).length,
+            passing: evidence.filter((e) => isPassing(e)).length,
+            failing: evidence.filter((e) => !isPassing(e)).length,
             // Checks that were not executed because another check covers them: named here so "not run" is a decision the
             // reader can audit, never an absence they have to notice.
             ...(coveredChecks.length > 0 ? { coveredChecks } : {}),
@@ -648,6 +677,10 @@ async function cmdBuild(
             ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
             ...(revision ? { revisionId: revision.id } : {}),
             ...(ownershipConflicts.length > 0 ? { ownershipConflicts } : {}),
+            // A partial reuse is reported too: which checks ran, which were carried forward, and why the rest ran.
+            ...(reusePlan
+                ? { reusedChecks: reusePlan.reusable.map((entry) => entry.checkId), invalidatedChecks: reusePlan.invalidated }
+                : {}),
         },
     };
 }
@@ -856,7 +889,7 @@ async function missingFrozenTierEvidence(
     const checks = await resolveBuildChecks(root, config, task.ownedPaths ?? []);
     const frozen = checks.filter((check) => check.tier === 'frozen');
     if (frozen.length === 0) return [];
-    const passing = evidence.filter((envelope) => envelope.exitCode === 0);
+    const passing = evidence.filter((envelope) => isPassing(envelope));
     return frozen
         .filter((check) => !passing.some((envelope) => (check.id ? envelope.checkId === check.id : false)
             || (check.name ? envelope.name === check.name : false)))
@@ -998,9 +1031,24 @@ async function cmdVerify(
     // The verify node does not conclude on the author's own reading of the evidence: an independent adversarial pass
     // over this revision has to have been recorded (or explicitly waived). This gate runs only when everything else
     // passed — a failing verification is repaired first, and the adversarial pass attacks the revision that survives.
-    const adversarial = verifyResult.result === 'PASS' && implementationReady
+    // L2-03: Verify answers a deterministic question — is the evidence current, complete and attributable — and Review is
+    // the independent look. `strict`/`security` buy Verify's pass back, so the assurance level is a profile choice.
+    const reviewMode = task.workflowProfile?.reviewMode;
+    const requiredNodes = requiredAdversarialNodes({ ...(reviewMode ? { reviewMode } : {}) });
+    const verifyNodeRequired = requiredNodes.includes('verify');
+    const adversarial = verifyNodeRequired && verifyResult.result === 'PASS' && implementationReady
         ? await adversarialGateFor(root, taskId, 'verify')
         : null;
+    // A strict matrix declaration gap is reported, not blocked: a task sealed before strict rows required declared check
+    // ids must keep verifying, or the rule would retroactively invalidate every binding it holds.
+    const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewMode === 'strict');
+    if (matrixGaps.length > 0) {
+        const { writeAcceptanceMatrixMigration } = await import('../core/task.js');
+        await writeAcceptanceMatrixMigration(root, taskId, {
+            gapCount: matrixGaps.length,
+            acceptanceIds: [...new Set(matrixGaps.map((gap) => gap.acceptanceId))].sort(),
+        }).catch(() => null);
+    }
     if (adversarial && !adversarial.satisfied) {
         return {
             command: 'verify',
@@ -1015,6 +1063,11 @@ async function cmdVerify(
                 implementationReady,
                 governanceReady: wikiClosure.valid,
                 adversarial: { node: 'verify', required: true, satisfied: false, reason: adversarial.reason ?? null },
+                adversarialNodesRequired: requiredNodes,
+                adversarialNodesNotRequired: adversarialNodes
+                    .filter((node) => !requiredNodes.includes(node))
+                    .map((node) => ({ node, reason: 'not_required' })),
+                ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
                 ...(deferredForDiagnostics.length > 0 ? { deferredFindings: deferredForDiagnostics } : {}),
                 nextAction: nextActionForTask(taskId, '/kata-verify', 'reviewer', 'adversarial_verify_pending'),
             },
@@ -1083,6 +1136,11 @@ async function cmdVerify(
             implementationReady,
             governanceReady: wikiClosure.valid,
             ...(adversarial?.satisfied ? { adversarial: { node: 'verify', required: true, satisfied: true, waived: adversarial.reason === 'waived' } } : {}),
+            adversarialNodesRequired: requiredNodes,
+            adversarialNodesNotRequired: adversarialNodes
+                .filter((node) => !requiredNodes.includes(node))
+                .map((node) => ({ node, reason: 'not_required' })),
+            ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
             ...(task.upstreamCoverage ? {
                 outOfScopeRequirements: task.upstreamCoverage.sources.flatMap((s) =>
                     (s.requirements ?? []).filter((r) => !r.mappedTo).map((r) => ({

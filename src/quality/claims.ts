@@ -118,7 +118,7 @@ export function resolveClaimChecks(root: string, acceptance: AcceptanceCriterion
  */
 export function evaluateClaims(
     acceptance: AcceptanceCriterion[],
-    evidence: Array<{ checkId?: string; exitCode: number | null }>,
+    evidence: Array<{ checkId?: string; exitCode: number | null; passed?: boolean }>,
 ): { ran: ClaimCheckSummary[]; failures: ClaimFailure[] } {
     const ran: ClaimCheckSummary[] = [];
     const failures: ClaimFailure[] = [];
@@ -147,7 +147,10 @@ export function evaluateClaims(
                 continue;
             }
             ran.push(summary);
-            if (found.exitCode !== summary.expect.exitCode) {
+            // `expectExitCode` and the envelope's `passed` are the same question asked once: a claim declaring exit 1 is
+            // satisfied by exit 1, which the seal's own `exitCode === 0` predicate used to call a failure (L2-01). The
+            // `?? exitCode === expect` fallback keeps envelopes written before the field readable.
+            if (!(found.passed ?? found.exitCode === summary.expect.exitCode)) {
                 failures.push({ ...summary, actualExitCode: found.exitCode, missing: false });
             }
         }

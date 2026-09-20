@@ -22,8 +22,32 @@ import type { EvidenceEnvelope } from './evidence.js';
  * (`executedInFreshContext`, `contextNote`), exactly as `--confirm-host-model` is.
  */
 
-export const adversarialNodes = ['verify', 'review'] as const;
+/**
+ * Which node carries a mandatory independent pass on the **standard** path (L2-03).
+ *
+ * Verify's job is deterministic: establish that the evidence is current, complete and attributable. Review's job is
+ * discovery, and discovery is what a clean context buys. Both nodes used to run the same fresh-context pass over the
+ * same sealed evidence and the same reading set, so the project paid twice for one independent look.
+ */
+export const standardAdversarialNodes = ['review'] as const;
+
+/**
+ * Which node carries it when the run is escalated.
+ *
+ * `strict` and `security` are the modes whose whole point is a second independent look, so they buy Verify's pass back.
+ * Keeping this a function of the workflow profile — rather than a deletion — is what makes the reduction a
+ * configuration change instead of an irreversible one.
+ */
+export const escalatedAdversarialNodes = ['verify'] as const;
+
+export const adversarialNodes = [...standardAdversarialNodes, ...escalatedAdversarialNodes] as const;
 export type AdversarialNode = (typeof adversarialNodes)[number];
+
+/** The nodes this run must satisfy: Review always, Verify only when the mode escalated. */
+export function requiredAdversarialNodes(input: { reviewMode?: string }): AdversarialNode[] {
+    const escalated = input.reviewMode === 'strict' || input.reviewMode === 'security';
+    return escalated ? [...adversarialNodes] : [...standardAdversarialNodes];
+}
 
 export interface AdversarialAttempt {
     hypothesis: string;
@@ -60,6 +84,14 @@ export interface AdversarialFinding {
     dispositionAt?: string;
 }
 
+/**
+ * The execution policy every standard pass runs under: the declared selectors and nothing else (L0-04).
+ *
+ * Stated as a contract rather than left to the brief's prose because the gate checks the record, and "the brief said
+ * not to" is not something a record can be held to.
+ */
+export const adversarialTestPolicy = 'reuse_declared_tests_only' as const;
+
 export interface AdversarialRecord {
     node: AdversarialNode;
     status: 'recorded' | 'waived';
@@ -76,6 +108,13 @@ export interface AdversarialRecord {
     executedInFreshContext?: boolean;
     contextNote?: string;
     briefSha256?: string;
+    /**
+     * The execution policy this pass ran under: the change's own declared selectors, and nothing written.
+     *
+     * Stated on the record rather than left to the brief's prose because the gate checks the record, and "the brief said
+     * not to" is not something a record can be held to.
+     */
+    testPolicy?: typeof adversarialTestPolicy;
     verdict?: 'no_defect_found' | 'defects_found' | 'inconclusive';
     executedBy?: string;
     attempts?: AdversarialAttempt[];
@@ -429,7 +468,12 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 
 ## Rules
 
-- You may read anything. You may write only new files needed for a counterexample's execution, and you must say so.
+- You may read anything. You may **run** any test the change already declares — the recorded evidence names the exact
+  check ids and selectors, and re-running one of those is the cheapest way to confirm or refute a claim. You may not
+  **write** a test, a fixture, a helper or a temporary harness: Build/TDD is the only author of test code, and a
+  counterexample nobody owns is a test nobody maintains. If a claim can only be falsified by a test that does not
+  exist, report that as the finding — \`kind: "missing-test"\`, severity per the rules below — and it becomes a Build
+  repair obligation rather than an artefact this pass leaves behind.
 - Judge the claims against the repository and the recorded evidence, not against the author's summary of them.
 - If you cannot falsify a claim, say \`refuted\` for that attempt — that is a real result, and the honest one.
 - Do not report style preferences as defects. Severity: \`blocking\` (the claim is false), \`major\` (the claim holds only
@@ -528,6 +572,10 @@ export async function addAdversarialFinding(
 }
 
 export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
+    // The policy is stamped, not accepted from the caller: a pass that ran under a different one is a different pass,
+    // and the gate reads this field. It is stamped **in place** rather than through a spread, because the carry-forward
+    // below reassigns `findings` on this object and the written copy has to be that same object.
+    record.testPolicy = adversarialTestPolicy;
     const validated = validate<AdversarialRecord>('adversarial-review', record);
     const path = adversarialReviewPath(root, taskId, record.node);
     // The previous pass is snapshotted before it is replaced, so the comparison the design asked for (what did a delta
@@ -604,7 +652,11 @@ export type AdversarialGateReason =
     /** A delta pass whose declared paths do not cover the change it claims to cover. */
     | 'delta_stale'
     /** A delta was asked for against a revision that records no per-path digests. */
-    | 'delta_unavailable';
+    | 'delta_unavailable'
+    /** The pass cited a test path no declaration on this revision named: an authored counterexample, not a reproduction. */
+    | 'undeclared_test_path'
+    /** This node carries no mandatory independent pass in the current review mode. */
+    | 'not_required';
 
 export interface AdversarialGateResult {
     satisfied: boolean;
@@ -823,6 +875,14 @@ export function evaluateAdversarialGate(
          * recomputation was exactly what let a later action invalidate a brief that had really been handed out.
          */
         issuedBriefSha256s: string[];
+        /**
+         * The test selectors the change's own declarations name (L0-04).
+         *
+         * Absent means "nothing was declared", which is the permissive reading *by design*: a change with no declared
+         * test has no declared set to exceed, and inventing a refusal there would fail passes for a gap in the matrix
+         * rather than for a test the pass wrote itself.
+         */
+        declaredTestSelectors?: string[];
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
         /** The current revision's code-only content identity, when it can be derived (C2). */
@@ -884,9 +944,43 @@ export function evaluateAdversarialGate(
         return { satisfied: false, reason: anotherRound ? 'brief_mismatch' : 'brief_not_issued', record, findings: [] };
     }
     if (!record.attempts || record.attempts.length === 0) return { satisfied: false, reason: 'incomplete', record, findings: [] };
+    // L0-04: a pass may re-run a test the change declares and may not leave one behind. A record whose attempts cite a
+    // test path outside the declared set is refused here, the same way a stale revision is — so an authored
+    // counterexample fails the node rather than entering the evidence.
+    const undeclared = undeclaredTestPaths(record, input.declaredTestSelectors ?? []);
+    if (undeclared.length > 0) {
+        return {
+            satisfied: false,
+            reason: 'undeclared_test_path',
+            record,
+            findings: [],
+            detail: `the pass cites test path(s) no declaration on this revision named: ${undeclared.join(', ')}`,
+        };
+    }
 
     // The pass ran and is binding: confirmed defects travel with it, and the node that receives them must resolve them.
     return { satisfied: true, record, findings: record.findings ?? [] };
+}
+
+/**
+ * The test paths a pass cited that no declaration named.
+ *
+ * Only paths that *look like* a test file are considered: `evidence` is free prose and frequently cites source files for
+ * context, so a blanket "every path in every attempt must be declared" would refuse honest records. The shape test is
+ * deliberately broad — a test/, tests/, __tests__/ segment or a `*.test.*` / `*.spec.*` suffix — because the failure this
+ * guards is a pass that *wrote* a test, and those are where a written test lands.
+ */
+function undeclaredTestPaths(record: AdversarialRecord, declared: string[]): string[] {
+    const looksLikeTest = (path: string): boolean =>
+        /(^|\/)(tests?|__tests__)\//.test(path) || /\.(test|spec)\.[a-z0-9]+$/i.test(path);
+    const declaredSet = new Set(declared);
+    const cited = new Set<string>();
+    for (const attempt of record.attempts ?? []) {
+        for (const match of attempt.evidence?.matchAll(/[\w./-]+\.(?:test|spec)\.[a-z0-9]+|(?:^|\s)[\w./-]*\/(?:tests?|__tests__)\/[\w./-]+/gi) ?? []) {
+            cited.add(match[0].trim());
+        }
+    }
+    return [...cited].filter((path) => looksLikeTest(path) && !declaredSet.has(path)).sort();
 }
 
 /** The findings an adversarial pass confirmed that must be resolved before the node passes. */
@@ -907,6 +1001,7 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined):
         case 'waived': return 'The independent adversarial pass was explicitly waived.';
         case 'delta_stale': return 'The pass is a delta, and the paths it declared do not cover everything that changed since its base revision — widen the range or run a full pass.';
         case 'delta_unavailable': return 'A delta pass was recorded against a revision that has no per-path digests, so the change surface cannot be verified; run a full pass.';
+        case 'not_required': return 'This node carries no mandatory independent pass in the current review mode; run it as an escalation instead.';
         default: return 'The independent adversarial pass is not satisfied.';
     }
 }

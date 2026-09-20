@@ -33,6 +33,9 @@ export const repairScopes = [
   'cross_revision_evidence',
   'insufficient_evidence_level',
   'unresolved_repair_obligation',
+  // Phase 4 §1 returns this: an acceptance criterion with no matrix row cannot be evidenced structurally, and the
+  // repair is to *declare* the row — which is Build's work, so it belongs in the repairable set.
+  'no_acceptance_matrix_row',
 ] as const;
 
 export type RepairScope = (typeof repairScopes)[number];
@@ -45,6 +48,7 @@ export const repairableJudgeScopes = [
   'blocking_review_finding',
   'insufficient_evidence_level',
   'unresolved_repair_obligation',
+  'no_acceptance_matrix_row',
 ] as const satisfies readonly RepairScope[];
 
 /** Verify FAILs authorise drift repairs as well, which a Judge FAIL cannot. */
@@ -63,6 +67,25 @@ export interface JudgeAcceptanceResult {
   result: 'PASS' | 'FAIL';
   evidenceIds?: string[];
   repairScope?: RepairScope;
+  /**
+   * Who owns the repair, for the scopes only a test can close.
+   *
+   * The repair-scope guide already tells a human where to go; this makes it machine-readable so the next action is
+   * derived rather than inferred.
+   */
+  repairOwner?: 'build';
+}
+
+/** The scopes only a test (or its declaration) can close, so the repair belongs to Build. */
+const buildOwnedRepairScopes: readonly RepairScope[] = [
+  'missing_test_evidence',
+  'insufficient_evidence_level',
+  'no_acceptance_matrix_row',
+];
+
+/** The repair owner for a scope, or nothing when the scope is not Build's. */
+export function repairOwnerFor(scope: RepairScope | undefined): 'build' | undefined {
+  return scope !== undefined && buildOwnedRepairScopes.includes(scope) ? 'build' : undefined;
 }
 
 export interface JudgeResult {
@@ -93,7 +116,12 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
     result: adequacy.acceptance.every((criterion) => criterion.result === 'PASS') ? 'PASS' : 'FAIL',
     diffHash: input.currentDiffHash,
     ...(revisionIds[0] ? { revisionId: revisionIds[0] } : {}),
-    acceptance: adequacy.acceptance,
+    // L2-02: the Judge does not re-derive the match — one evaluator, one answer, which is why the ladder is shared
+    // with verify. Each FAIL that only a test can close carries its repair owner.
+    acceptance: adequacy.acceptance.map((criterion) => {
+      const repairOwner = repairOwnerFor(criterion.repairScope);
+      return repairOwner ? { ...criterion, repairOwner } : criterion;
+    }),
     evidenceIds: adequacy.evidenceIds,
   };
 

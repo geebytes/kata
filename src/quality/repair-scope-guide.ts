@@ -13,6 +13,7 @@ const repairScopeGuide: Record<RepairScope, string> = {
     cross_revision_evidence: 'the acceptance is covered by evidence from more than one revision; seal one revision',
     insufficient_evidence_level: 'the acceptance requires integration or entrypoint evidence that is missing; add it',
     unresolved_repair_obligation: 'a repair obligation from the review or the Judge is still unresolved',
+    no_acceptance_matrix_row: 'the acceptance criterion has no row in the acceptance matrix; declare one',
 };
 
 
