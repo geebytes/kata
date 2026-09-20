@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ensureWorkspaceHygiene, ignoredRuntimePaths, resolveWorkspaceRootForTask } from '../../src/core/layout.js';
+import { runGit } from '../../src/core/git.js';
 import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from '../../src/workflow/worktree.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 
@@ -142,13 +143,78 @@ describe('kata worktrees', () => {
         expect((await listWorktrees(root)).map((entry) => entry.path)).toEqual([root]);
     });
 
-    it('reports a repository with no commit to branch from', async () => {
+    /**
+     * A commitless repository is not a worktree problem, and the message has to say so.
+     *
+     * This test is why the classification moved off git's prose. It passed against an older git whose failure read
+     * `not a valid object name`; git 2.43 says `fatal: invalid reference: HEAD` (English) or `fatal: 无效引用：HEAD`
+     * (this environment's locale), neither of which the regex matched — so the branch became unreachable and the remedy
+     * users are promised disappeared. `docs/design/2026-09-20-worktree-no-commit-message.md` has the measurements.
+     */
+    async function commitlessRepo(): Promise<string> {
         const root = await mkdtemp(join(tmpdir(), 'kata-worktree-nocommit-'));
         roots.push(root);
         execFileSync('git', ['init', '-q', '-b', 'main', '.'], { cwd: root });
         execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
         execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+        return root;
+    }
+
+    it('reports a repository with no commit to branch from', async () => {
+        const root = await commitlessRepo();
 
         await expect(createWorktree({ root, branch: 'kata/none' })).rejects.toThrow(/no commit to branch from/);
+    });
+
+    it('names that remedy under a non-English locale too, because the answer is not read from the message git prints', async () => {
+        const root = await commitlessRepo();
+        const previous = process.env.LC_ALL;
+        // The text git prints is translated; the classification must not notice. This is the half of the fix that
+        // only a locale change can prove.
+        process.env.LC_ALL = 'zh_CN.UTF-8';
+        try {
+            await expect(createWorktree({ root, branch: 'kata/none' })).rejects.toThrow(/no commit to branch from/);
+        } finally {
+            if (previous === undefined) delete process.env.LC_ALL;
+            else process.env.LC_ALL = previous;
+        }
+    });
+
+    it('runs git with a pinned locale, so parsed output cannot change with the operator environment', async () => {
+        // Asserted on the language git actually emits, not on kata's own string: the point is that a caller's locale
+        // cannot reach the output kata parses. A test that greps for Chinese text would re-introduce the dependency.
+        const root = await commitlessRepo();
+        const previous = process.env.LC_ALL;
+        process.env.LC_ALL = 'zh_CN.UTF-8';
+        try {
+            const result = runGit(root, ['worktree', 'add', '-b', 'kata/locale', join(root, 'wt'), 'HEAD']);
+
+            expect(result.ok).toBe(false);
+            // The Chinese form of this message is `fatal: 无效引用：HEAD`; the pin means we never see it.
+            expect(result.stderr).toMatch(/invalid reference|not a valid object/i);
+            expect(result.stderr).not.toMatch(/引用/);
+        } finally {
+            if (previous === undefined) delete process.env.LC_ALL;
+            else process.env.LC_ALL = previous;
+        }
+    });
+
+    it('does not borrow the no-commit remedy for a failure that is not one', async () => {
+        // A healthy repository with an unresolvable base: git fails, but nothing about this failure is "no commit".
+        const root = await repo();
+
+        await expect(createWorktree({ root, branch: 'kata/bad-base', base: 'refs/heads/does-not-exist' }))
+            .rejects.toThrow(/git worktree add failed/);
+        await expect(createWorktree({ root, branch: 'kata/bad-base', base: 'refs/heads/does-not-exist' }))
+            .rejects.not.toThrow(/no commit to branch from/);
+    });
+
+    it('still creates the worktree in a repository that has a commit', async () => {
+        // The guardrail in the other direction: a structural check that is too eager would refuse a healthy repository.
+        const root = await repo();
+
+        const created = await createWorktree({ root, branch: 'kata/healthy' });
+
+        await expect(stat(created.path)).resolves.toBeDefined();
     });
 });

@@ -1,7 +1,7 @@
 import { cp, mkdir, readdir, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { ensureRuntimeGitignore, taskDir, tasksDir } from '../core/layout.js';
-import { gitCurrentBranchOf, gitWorktreeAdd, gitWorktreeList, gitWorktreeRemove, runGit, type GitWorktree } from '../core/git.js';
+import { gitCurrentBranchOf, gitWorktreeAdd, gitWorktreeList, gitWorktreeRemove, hasCommit, runGit, type GitWorktree } from '../core/git.js';
 import { assertValidTaskId } from '../core/ids.js';
 
 /**
@@ -96,9 +96,14 @@ export async function createWorktree(input: {
     const created = gitWorktreeAdd(root, target, branch, input.base ? { base: input.base } : { base });
     if (!created.ok) {
         const detail = created.stderr.trim() || created.stdout.trim() || 'unknown error';
-        // A repository with no commit has no base to branch from; that is worth saying plainly, because the remedy is
-        // one commit rather than anything about worktrees.
-        if (/not a valid object name|does not have any commits/i.test(detail)) {
+        // A repository with no commit has no base to branch from; that is worth saying plainly, because the remedy is one
+        // commit rather than anything about worktrees.
+        //
+        // The question is asked of the **repository**, not of the failure message. Matching git's prose was how this
+        // branch became unreachable: it looked for `not a valid object name|does not have any commits`, and git 2.43 says
+        // `invalid reference: HEAD` — so the remedy disappeared silently, and the same regex would have read a translated
+        // string in a non-English locale. `hasCommit` is an exit code.
+        if (!hasCommit(root)) {
             throw new Error(`git worktree add failed: ${detail}. The repository has no commit to branch from — make an initial commit first.`);
         }
         throw new Error(`git worktree add failed: ${detail}`);

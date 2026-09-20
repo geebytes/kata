@@ -14,11 +14,31 @@ export interface GitCommandResult {
     stderr: string;
 }
 
-/** Runs a git command in the repository, reporting failure instead of throwing. */
-/** Runs a git command in the repository through the shared subprocess facility, reporting failure instead of throwing. */
+/**
+ * Runs a git command in the repository through the shared subprocess facility, reporting failure instead of throwing.
+ *
+ * `LC_ALL=C` is pinned here, and only here: git translates its messages, and anything kata decides from git's text would
+ * otherwise depend on the operator's locale. The pin lives on this function rather than in `runProcessSync` because that
+ * facility also serves checks, CodeGraph and Git Flow, and pinning the locale for a project's own test commands would
+ * change their behaviour — a check that asserts on its own localized output is not kata's to break.
+ *
+ * Measured cost of not pinning: `createWorktree` classified a commitless repository by matching
+ * `not a valid object name|does not have any commits`, and git 2.43 says `fatal: invalid reference: HEAD` in English and
+ * `fatal: 无效引用：HEAD` here — so the remedy the code exists to name was never shown, in either locale.
+ */
 export function runGit(root: string, args: string[]): GitCommandResult {
-    const result = runProcessSync('git', args, { cwd: root, timeoutMs: 60_000 });
+    const result = runProcessSync('git', args, { cwd: root, timeoutMs: 60_000, env: { ...process.env, LC_ALL: 'C' } });
     return { ok: result.ok, stdout: result.stdout, stderr: result.stderr.trim() };
+}
+
+/**
+ * Whether `HEAD` resolves to a commit.
+ *
+ * This is the structural question behind "the repository has no commit to branch from": git answers it with an exit
+ * code, so the answer does not move when git's wording or the locale does.
+ */
+export function hasCommit(root: string): boolean {
+    return runGit(root, ['rev-parse', '--verify', 'HEAD']).ok;
 }
 
 /** A single-value read, or `null` when git cannot answer (not a repository, missing ref, and so on). */

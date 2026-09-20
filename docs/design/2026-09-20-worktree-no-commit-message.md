@@ -72,3 +72,22 @@ The existing test is the right test — it asserts the remedy users are promised
 fixing the classifier.
 
 Found and recorded rather than folded into `check-log-artifact-missing`, whose scope is the evidence log artifact.
+
+## Outcome
+
+Fixed, and the fix is recorded in `docs/design/2026-09-20-worktree-classification-fix.md` plus
+`docs/changelog/2026-09-20-git-failure-classified-structurally.md`. Two things this investigation got right and one it
+did not:
+
+- **Right:** the test was the messenger, not the problem. It was left asserting the remedy users are promised, and it is
+  green because the classifier was fixed.
+- **Right:** the scope measurement held — `worktree.ts:101` was the only site in `src/` matching git's prose, so pinning
+  `LC_ALL` at `runGit` closed the class without a broader error taxonomy.
+- **Wrong:** the first draft of the fix's AC-2 said to verify the locale pin "by observing the child environment". That
+  is not observable from the outside in a way that proves anything, and the *real* proof turned out to be cheaper — set
+  `LC_ALL=zh_CN.UTF-8` in the caller, run a failing git command through `runGit`, and assert the emitted message is the
+  English form (`fatal: invalid reference: HEAD`) rather than `fatal: 无效引用：HEAD`. The environment is the input; the
+  language of the output is the observable.
+
+The full suite is green for the first time in this line of work (**888 passed, 0 failed**), which also unblocks the seal
+gate of the change this was found under.
