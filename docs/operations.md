@@ -148,6 +148,19 @@ A declared check may carry a **tier**:
   freeze points use. Deferred checks are named in the result (`diagnostics.deferredChecks`), in progress events
   (`skipped`, `reason: "frozen_tier"`) and in `--list-checks`, so "declared but not run" is never silent.
 
+### A noisy check's transcript
+
+Output is captured with a bound, so a check that prints megabytes does not make the seal hold megabytes: the middle of
+each stream is dropped and named (`[N bytes omitted]`), and the envelope carries a head/tail excerpt of at most 20 000
+characters plus `logBytes` — what the check really produced. When anything was dropped the envelope also carries
+`logTruncated: true` and `logArtifact`, the path of the **complete** transcript written beside the evidence under
+`.kata/evidence/`.
+
+The guarantee is literal: **when `logArtifact` is present, the file exists and holds the whole output.** The directory is
+created before the checks run, so a task's first seal has one too. When the artifact cannot be written — a full disk, a
+read-only mount, a permission change — the envelope omits `logArtifact` and states the reason in
+`logArtifactFailure`, rather than naming a file a reader would not find.
+
 A declaration may also name the check that **covers** it (`coveredBy: "<check id>"`, typically the project's suite):
 the covering check still runs, and the declaration is credited with its evidence instead of running its own second copy
 of the same work. It appears under `diagnostics.coveredChecks`.

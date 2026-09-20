@@ -38,6 +38,8 @@ export interface ImportedCheckResult {
   logTruncated?: boolean;
   /** The complete output, as a path. Present only when the capture dropped something. */
   logArtifact?: string;
+  /** Why the captured log could not be written, when it could not be. */
+  logArtifactFailure?: string;
 }
 
 export interface CheckCommand {
@@ -148,8 +150,16 @@ export interface EvidenceEnvelope {
   logBytes?: number;
   /** True when `log` is an excerpt. A reader must never mistake a truncated log for a silent check. */
   logTruncated?: boolean;
-  /** Where the complete log was written, when the capture was bounded. */
+  /**
+   * Where the complete log **was written**, when the capture was bounded.
+   *
+   * Present only when the file exists. The field is a pointer a reader follows, so an artifact that could not be
+   * written is reported through `logArtifactFailure` instead of being named here — the difference between "the
+   * transcript is here" and "the transcript should have been here" is the difference between a diagnostic and a trap.
+   */
   logArtifact?: string;
+  /** Why the bounded capture could not be written beside the envelope, when it could not be. */
+  logArtifactFailure?: string;
   /**
    * The exit code this check declared it must produce (claims only). Absent for an ordinary check.
    *
@@ -428,6 +438,7 @@ export async function collectEvidence(
       ...(result.logBytes !== undefined ? { logBytes: result.logBytes } : {}),
       ...(result.logTruncated || (result.log?.length ?? 0) > maxLogLength ? { logTruncated: true } : {}),
       ...(result.logArtifact ? { logArtifact: result.logArtifact } : {}),
+      ...(result.logArtifactFailure ? { logArtifactFailure: result.logArtifactFailure } : {}),
     };
   });
   evidence.push(...results.filter((item): item is EvidenceEnvelope => item !== undefined));
@@ -579,12 +590,15 @@ async function runBoundedCommand(
     exitCode: result.exitCode,
     log: withNote,
     logBytes: result.capturedBytes,
+    // `logArtifact` names a file that exists: it is only claimed when the tee reported no failure. A gone artifact is
+    // reported as a failure rather than as a path, because a reader who follows the path must never get ENOENT.
     ...(result.captureTruncated || withNote.length > maxLogLength
       ? {
           logTruncated: true,
-          ...(options?.logArtifactPath ? { logArtifact: options.logArtifactPath } : {}),
+          ...(options?.logArtifactPath && !result.artifactFailure ? { logArtifact: options.logArtifactPath } : {}),
         }
       : {}),
+    ...(result.artifactFailure ? { logArtifactFailure: result.artifactFailure } : {}),
     environment: result.environment,
   };
 }

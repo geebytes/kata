@@ -92,6 +92,15 @@ export interface ProcessResult {
     capturedBytes: number;
     /** True when `maxCaptureBytes` was reached and the middle of a stream was dropped. */
     captureTruncated: boolean;
+    /**
+     * Why a declared `captureArtifact` could not be written, when it could not be.
+     *
+     * Absent means the artifact was written — the distinction the caller needs, because the whole point of declaring an
+     * artifact is handing that path to a reader. Swallowing this was how a truncated check came to name a transcript
+     * that did not exist: the failure was an ENOENT from a missing parent directory, and the tee turned it into
+     * nothing.
+     */
+    artifactFailure?: string;
 }
 
 export interface RunProcessOptions {
@@ -147,9 +156,16 @@ export async function runProcess(command: string, args: string[], options: RunPr
         // Chunks are appended in arrival order; `finish` waits for the queue so a caller that reads the artifact
         // after awaiting `runProcess` sees the whole log rather than a prefix of it.
         let artifactQueue: Promise<void> = Promise.resolve();
+        // The first failure is kept and the queue keeps draining, so a later chunk cannot overwrite the reason with a
+        // different one and the child is never blocked by a channel that is only a diagnostic.
+        let artifactFailure: string | undefined;
         const tee = (text: string): void => {
             if (!options.captureArtifact) return;
-            artifactQueue = artifactQueue.then(() => appendFile(options.captureArtifact!, text, 'utf8')).catch(() => undefined);
+            artifactQueue = artifactQueue
+                .then(() => appendFile(options.captureArtifact!, text, 'utf8'))
+                .catch((error: unknown) => {
+                    artifactFailure ??= error instanceof Error ? error.message : String(error);
+                });
         };
         let settled = false;
         let failure: ProcessFailure | undefined;
@@ -170,6 +186,7 @@ export async function runProcess(command: string, args: string[], options: RunPr
                 capturedBytes: stdout.totalBytes() + stderr.totalBytes(),
                 captureTruncated: stdout.wasTruncated() || stderr.wasTruncated(),
                 ...(failure ? { failure } : {}),
+                ...(artifactFailure ? { artifactFailure } : {}),
                 environment: environmentSummary(options.cwd),
             }));
         };

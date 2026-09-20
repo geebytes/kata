@@ -143,4 +143,44 @@ describe('process facility', () => {
         expect(result.captureTruncated).toBe(true);
         expect(await readFile(artifact, 'utf8')).toHaveLength(20_000);
     });
+
+    /**
+     * A declared artifact that could not be written is a failure, not a silence.
+     *
+     * The tee used to be `artifactQueue.then(appendFile).catch(() => undefined)`, so an ENOENT from a missing parent
+     * directory (a full disk, a read-only mount, a permission change) was indistinguishable from success — and the
+     * caller had no way to know that the path it was about to hand a reader did not exist. `captureArtifact` documents
+     * a promise; a promise that cannot be kept has to be reported.
+     */
+    it('reports a declared artifact it could not write, instead of discarding the failure', async () => {
+        const root = await tempRoot();
+        // A *file* where the directory should be: the write fails for a reason the process cannot have caused, and no
+        // mock is involved in observing it.
+        const blocked = join(root, 'blocked');
+        await writeFile(blocked, 'not a directory\n', 'utf8');
+
+        const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("hello")'], {
+            cwd: root,
+            captureArtifact: join(blocked, 'full.log'),
+        });
+
+        // The child still succeeded — the verdict is not this channel's to change.
+        expect(result.ok).toBe(true);
+        expect(result.failure).toBeUndefined();
+        // …but the artifact failure is reported rather than swallowed.
+        expect(result.artifactFailure).toBeTruthy();
+        expect(String(result.artifactFailure)).toMatch(/ENOTDIR|EEXIST|ENOENT|not a directory/i);
+    });
+
+    it('reports no artifact failure when the artifact was written', async () => {
+        const root = await tempRoot();
+
+        const result = await runProcess(process.execPath, ['-e', 'process.stdout.write("hello")'], {
+            cwd: root,
+            captureArtifact: join(root, 'ok.log'),
+        });
+
+        // The absence of the field is the success signal, so `undefined` has to mean "written", not "not attempted".
+        expect(result.artifactFailure).toBeUndefined();
+    });
 });

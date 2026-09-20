@@ -15,3 +15,5 @@ openspec/changes/archive/*/.comet/*
 
 # Scratch artifacts (AGENTS.md: evidence and working files live under tmp/)
 tmp/
+.kata/runtime/
+.kata/worktrees/

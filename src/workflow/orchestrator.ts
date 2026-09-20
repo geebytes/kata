@@ -558,6 +558,12 @@ async function cmdBuild(
     // falls back to the full set — so "cheap" can never mean "silently under-run".
     const relevant = await deriveSealRelevantChecks(root, taskId, checks, revision ?? null, options);
     const checksToRun = relevant.checks ?? checks;
+    // The log directory has to exist **before** the checks, not when their evidence is written: `writeEvidence` creates
+    // it afterwards, so the first seal of a task ran every bounded check against a directory that was not there — and
+    // `runProcess`'s tee discards the write failure, so the envelope named a transcript that did not exist. Creating it
+    // here is where the requirement belongs; `runProcess` serves checks, CodeGraph and Git Flow and has no business
+    // knowing which of its callers wants an artifact directory.
+    await mkdir(evidenceDir(root), { recursive: true });
     const evidence = await collectEvidence(taskId, checksToRun, {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),

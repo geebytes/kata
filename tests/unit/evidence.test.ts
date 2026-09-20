@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +25,57 @@ describe('quality evidence collection', () => {
 
   afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  /**
+   * `logArtifact` names a file that exists, or is absent with the reason reported.
+   *
+   * A check that prints more than the capture bound produces an envelope carrying `logTruncated: true` and — as the
+   * field's own doc comment promises — the path of the complete transcript. `src/workflow/orchestrator.ts` used to
+   * create `.kata/evidence/` only inside `writeEvidence`, which runs *after* the checks, so the first seal of every
+   * task had no directory to write into; `runProcess`'s tee turned that ENOENT into nothing, and the envelope was
+   * built from the path that was *requested* rather than a path that was written.
+   *
+   * The two halves are the whole contract, and they are asserted separately: the directory existing is the runtime's
+   * job (AC-3, the orchestrator's `mkdir`), and never naming a file that is not there is the collector's (AC-2).
+   */
+  it('names the log artifact when the directory exists, and the file holds the complete output', async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, 'noisy.mjs'), "process.stdout.write('x'.repeat(3 * 1024 * 1024));\n", 'utf8');
+    const logDir = join(root, '.kata/evidence');
+    await mkdir(logDir, { recursive: true });
+
+    const [evidence] = await collectEvidence('task-artifact', [
+      { kind: 'test', command: process.execPath, args: [join(root, 'noisy.mjs')], cwd: root, id: 'noisy' },
+    ], { checkLogDir: logDir });
+
+    expect(evidence?.logTruncated).toBe(true);
+    expect(evidence?.logArtifact).toBeTruthy();
+    expect(evidence?.logArtifactFailure).toBeUndefined();
+    const info = await stat(evidence!.logArtifact!);
+    expect(info.size).toBe(3 * 1024 * 1024);
+  });
+
+  it('does not name an artifact when the directory is absent, and reports why instead', async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, 'noisy.mjs'), "process.stdout.write('x'.repeat(3 * 1024 * 1024));\n", 'utf8');
+    // Deliberately absent: the collector's own contract is that it does not invent the directory. The orchestrator
+    // creates it before collecting, which is what makes a first seal work; a bare `collectEvidence` must still be
+    // honest about what it could not write.
+    const logDir = join(root, '.kata/evidence');
+
+    const [evidence] = await collectEvidence('task-artifact', [
+      { kind: 'test', command: process.execPath, args: [join(root, 'noisy.mjs')], cwd: root, id: 'noisy' },
+    ], { checkLogDir: logDir });
+
+    expect(evidence?.logTruncated).toBe(true);
+    // The reader is never handed a path that does not resolve…
+    expect(evidence?.logArtifact).toBeUndefined();
+    // …and the reason is stated rather than swallowed.
+    expect(evidence?.logArtifactFailure).toBeTruthy();
+    expect(String(evidence?.logArtifactFailure)).toMatch(/ENOENT|no such file/i);
+    // The verdict is untouched by the diagnostic channel.
+    expect(evidence?.exitCode).toBe(0);
   });
 
   it('collects bounded command evidence with exit codes, redacted logs, environment summary, and diff hash', async () => {
