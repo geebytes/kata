@@ -36,7 +36,7 @@ because the previous layer let the next seal run far enough to fail.
 - [x] 6.1 **Layer 2 — nothing created an obligation for an adversarial finding.** `persistBlockingFindings`' only caller was
   `recordFinding` (review findings); an adversarial finding reached the platform through `addAdversarialFinding`, which
   persisted none. Repaired: adding a terminal adversarial finding now persists one. <!-- comet-task:6-1 -->
-- [ ] 6.2 **Layer 3 — a pre-existing deadlock, NOT repaired here.** `collectSealPreflight` refuses on unresolved obligations
+- [x] 6.2 **Layer 3 — the pre-existing deadlock, closed in its own change.** `collectSealPreflight` refuses on unresolved obligations
   *before* the checks; `resolveObligationsForRevision` — the only resolution path — runs *after* them. So an unresolved
   obligation blocks the run whose evidence would answer it, and no CLI can resolve one by hand. Removing check 5's early
   return for a matrix-less task (required by D2, since closure no longer needs a matrix) makes this reachable on the
