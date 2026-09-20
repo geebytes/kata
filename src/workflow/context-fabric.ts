@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import { buildContextManifest } from '../core/context.js';
-import { createHandoff, type Role } from './handoff.js';
+import { createHandoff, readAcknowledgedHashes, type Role } from './handoff.js';
 import { existsSync } from 'node:fs';
 import type { WorkflowProfile } from '../core/workflow-profile.js';
 import { computeManifestHash, readCurrentTaskRevision } from './revision.js';
@@ -21,10 +21,10 @@ export interface HandoffPacket {
   from: { role: Role; platform?: string }; to: { role: Role; preferredPlatforms?: string[] }; phase: string;
   repository: { head: string | null; branch: string | null; diffHash: string; scope?: HandoffAnchorScope; worktreeRoot: '.' };
   task: { title: string; acceptance: Array<{ id: string; statement: string }>; workflowProfile?: WorkflowProfile };
-  context: { requiredReads: string[]; designRefs: string[]; sourceRefs: string[]; authoritativeWiki: Array<{ id: string; path: string }>; excludedWiki: Array<{ id: string; reason: string }>; evidencePaths: string[]; priorArtifacts: string[] };
+  context: { requiredReads: string[]; continuedReads?: string[]; contextMemo?: { role: Role; revisionId?: string; hashes: Record<string, string> }; designRefs: string[]; sourceRefs: string[]; authoritativeWiki: Array<{ id: string; path: string }>; excludedWiki: Array<{ id: string; reason: string }>; evidencePaths: string[]; priorArtifacts: string[] };
   permissions: { allowedWrites: string[]; guardInstructions: string[] }; nextAction: string;
 }
-export interface HandoffReceipt { protocolVersion: 1; taskId: string; handoffId: string; platform: string; role: Role; packetSha256: string; acknowledgedAt: string; repository: HandoffPacket['repository']; }
+export interface HandoffReceipt { protocolVersion: 1; taskId: string; handoffId: string; platform: string; role: Role; packetSha256: string; acknowledgedAt: string; repository: HandoffPacket['repository']; contextMemo?: { role: Role; revisionId?: string; hashes: Record<string, string> }; }
 /**
  * Why a packet failed verification.
  *
@@ -36,12 +36,68 @@ export interface HandoffReceipt { protocolVersion: 1; taskId: string; handoffId:
 export type ContextPacketVerification =
   | { valid: true }
   | { valid: false; reason: 'branch_mismatch' | 'diff_mismatch' | 'packet_hash_mismatch' };
+/**
+ * The read sets a packet carries, split by whether this role has already acknowledged the content (L1-03).
+ *
+ * `requiredReads` is what the receiving role must read. `continuedReads` is content it has already acknowledged at this
+ * hash — still listed, because an auditable packet names everything it depends on, but not mandatory, because asking for
+ * the same immutable file again costs a read and buys nothing. The packet states the distinction instead of leaving the
+ * receiver to guess which of thirteen paths is new.
+ */
+export interface ReadPartition {
+    requiredReads: string[];
+    continuedReads: string[];
+    /** Every read's hash, which is what the receipt records and the next packet compares against. */
+    hashes: Record<string, string>;
+}
+
+/** sha256 of a file's contents, or null when the path does not exist. */
+async function hashFileIfPresent(root: string, path: string): Promise<string | null> {
+    try {
+        return hashContent(await readFile(join(root, path)));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Splits a read list against what this role last acknowledged.
+ *
+ * The hashes come from the receipt rather than from a cache: a cache would be a second source of truth about content the
+ * revision already identifies, and a stale entry in it would read as "already read" for a file that changed.
+ */
+export async function partitionReads(input: {
+    root: string;
+    taskId: string;
+    role: Role;
+    paths: string[];
+}): Promise<ReadPartition> {
+    const acknowledged = await readAcknowledgedHashes(input.root, input.taskId, input.role);
+    const requiredReads: string[] = [];
+    const continuedReads: string[] = [];
+    const hashes: Record<string, string> = {};
+    for (const path of input.paths) {
+        const hash = await hashFileIfPresent(input.root, path);
+        if (hash === null) {
+            // A read that does not exist is still required: the receiver must learn that it is missing.
+            requiredReads.push(path);
+            continue;
+        }
+        hashes[path] = hash;
+        if (acknowledged[path] === hash) continuedReads.push(path);
+        else requiredReads.push(path);
+    }
+    return { requiredReads, continuedReads, hashes };
+}
+
 export async function createContextPacket(input: { root: string; taskId: string; fromRole: Role; toRole: Role; platform?: string }): Promise<HandoffPacket> {
   assertValidTaskId(input.taskId); assertRole(input.fromRole); assertRole(input.toRole);
   const handoff = await createHandoff(input.root, input.taskId, input.toRole);
   const task = JSON.parse(await readFile(taskPath(input.root, input.taskId), 'utf8')) as HandoffPacket['task'];
   const context = await buildContextManifest({ root: input.root, taskId: input.taskId, sourceRefs: handoff.context.sourceRefs });
   const designRefs = designRefsFor(input.root, input.taskId, input.toRole);
+  const reads = existingReads(input.root, input.taskId, designRefs);
+  const partition = await partitionReads({ root: input.root, taskId: input.taskId, role: input.toRole, paths: reads });
   const packet: HandoffPacket = {
     protocolVersion: 1,
     id: `handoff-${randomUUID().slice(0, 12)}`,
@@ -56,7 +112,9 @@ export async function createContextPacket(input: { root: string; taskId: string;
       // What the receiving role has to read, what the task's design references are, the sources the Wiki was consulted
       // for, and which records are authoritative vs excluded — the whole point of a context packet is that this list is
       // explicit rather than implied.
-      requiredReads: existingReads(input.root, input.taskId, designRefs),
+      requiredReads: partition.requiredReads,
+      ...(partition.continuedReads.length > 0 ? { continuedReads: partition.continuedReads } : {}),
+      contextMemo: { role: input.toRole, hashes: partition.hashes },
       designRefs,
       sourceRefs: [...handoff.context.sourceRefs].sort(),
       authoritativeWiki: context.authoritativeWiki.map((record) => ({ id: record.id, path: `.kata/wiki/${record.id}.json` })),
@@ -98,6 +156,9 @@ export async function acknowledgeContextPacket(input: {
     packetSha256: hashContent(JSON.stringify(packet)),
     acknowledgedAt: new Date().toISOString(),
     repository: await anchor(input.root, input.taskId),
+    // The memo belongs to the acknowledgement rather than to the packet: what is recorded is what this role said it had
+    // read, so the next packet can tell that role what is new.
+    ...(packet.context.contextMemo ? { contextMemo: packet.context.contextMemo } : {}),
   };
   await writeFile(receiptPath(input.root, input.taskId, input.id), `${JSON.stringify(receipt, null, 2)}\n`);
   return receipt;

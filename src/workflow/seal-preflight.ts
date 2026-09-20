@@ -18,6 +18,15 @@ import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
 import { readObligations } from '../quality/repair-obligations.js';
+import { runWithConcurrency } from '../quality/evidence.js';
+
+/**
+ * How many independent preflight reads may be in flight (L1-04).
+ *
+ * Bounded rather than unbounded for the reason the seal's own concurrency is opt-in: these reads touch the same
+ * workspace and the same CodeGraph index, and a preflight that oversubscribes them turns a diagnostic into a timeout.
+ */
+const preflightConcurrency = 4;
 
 /**
  * Everything a seal refuses on, collected instead of fail-fast.
@@ -78,46 +87,58 @@ export async function collectSealPreflight(input: {
         blockers.push({ code, message, diagnostics });
     };
 
-    // 1-2. The acceptance matrix: required by strict closure, and only meaningful when it validates.
+    // 1-5. The independent reads, collected concurrently and reported in the order below (L1-04).
+    //
+    // Every step here is a pure read whose only ordering requirement is that a read consuming an earlier read's value
+    // runs after it; the matrix and coverage steps read the task, not each other, so they overlap. The scheduler bounds
+    // them rather than leaving them unbounded, because they touch the same workspace and the same CodeGraph index.
+    // `blockers` is filled out of order and read in order, which is what keeps the reported list identical to the
+    // serial one a caller and its tests already depend on.
     const matrixRequired = requiresMatrix(task.workflowProfile);
-    const matrixUsable = Boolean(task.acceptanceMatrix);
-    if (matrixRequired && !task.acceptanceMatrix) {
-        deny('missingMatrix', 'Strict closure requires an acceptanceMatrix; add it to task.json before sealing.', { missingMatrix: true });
-    } else if (matrixUsable) {
-        const matrixErrors = validateMatrix(task.acceptance ?? [], task.acceptanceMatrix);
-        if (matrixRequired && matrixErrors.length > 0) {
-            deny('matrixErrors', `Acceptance matrix validation failed: ${matrixErrors.length} error(s).`, { matrixErrors });
-        }
-    }
-
-    // 3-4. Upstream coverage: required by strict closure, and validated against the matrix when present.
-    if (requiresUpstreamCoverage(task.workflowProfile) && !task.upstreamCoverage) {
-        deny(
-            'missingUpstreamCoverage',
-            'Strict closure requires upstreamCoverage before sealing; add it to task.json (map upstream doc requirements to ACs or out-of-scope).',
-            { missingUpstreamCoverage: true },
-        );
-    } else if (task.upstreamCoverage) {
-        const coverageErrors = validateUpstreamCoverage(task.acceptance ?? [], task.acceptanceMatrix, task.upstreamCoverage, root);
-        if (coverageErrors.length > 0) {
-            deny('coverageErrors', `Upstream coverage validation failed before sealing: ${coverageErrors.length} error(s).`, { coverageErrors });
-        }
-    }
-
-    // 5. A legacy task (no matrix) cannot record closure against obligations it never declared.
-    if (!task.acceptanceMatrix) {
-        const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
-        if (unresolved.length > 0) {
-            deny(
-                'unresolvedObligations',
-                'Legacy task has unresolved repair obligations; add an acceptanceMatrix to task.json so closure can record matrix-matched evidence for the affected AC(s).',
-                {
-                    unresolvedObligations: unresolved.length,
-                    unresolvedAcceptanceIds: [...new Set(unresolved.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))],
-                },
-            );
-        }
-    }
+    const independent: Array<() => Promise<void>> = [
+        // 1-2. The acceptance matrix: required by strict closure, and only meaningful when it validates.
+        async () => {
+            if (matrixRequired && !task.acceptanceMatrix) {
+                deny('missingMatrix', 'Strict closure requires an acceptanceMatrix; add it to task.json before sealing.', { missingMatrix: true });
+            } else if (task.acceptanceMatrix) {
+                const matrixErrors = validateMatrix(task.acceptance ?? [], task.acceptanceMatrix);
+                if (matrixRequired && matrixErrors.length > 0) {
+                    deny('matrixErrors', `Acceptance matrix validation failed: ${matrixErrors.length} error(s).`, { matrixErrors });
+                }
+            }
+        },
+        // 3-4. Upstream coverage: required by strict closure, and validated against the matrix when present.
+        async () => {
+            if (requiresUpstreamCoverage(task.workflowProfile) && !task.upstreamCoverage) {
+                deny(
+                    'missingUpstreamCoverage',
+                    'Strict closure requires upstreamCoverage before sealing; add it to task.json (map upstream doc requirements to ACs or out-of-scope).',
+                    { missingUpstreamCoverage: true },
+                );
+            } else if (task.upstreamCoverage) {
+                const coverageErrors = validateUpstreamCoverage(task.acceptance ?? [], task.acceptanceMatrix, task.upstreamCoverage, root);
+                if (coverageErrors.length > 0) {
+                    deny('coverageErrors', `Upstream coverage validation failed before sealing: ${coverageErrors.length} error(s).`, { coverageErrors });
+                }
+            }
+        },
+        // 5. A legacy task (no matrix) cannot record closure against obligations it never declared.
+        async () => {
+            if (task.acceptanceMatrix) return;
+            const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
+            if (unresolved.length > 0) {
+                deny(
+                    'unresolvedObligations',
+                    'Legacy task has unresolved repair obligations; add an acceptanceMatrix to task.json so closure can record matrix-matched evidence for the affected AC(s).',
+                    {
+                        unresolvedObligations: unresolved.length,
+                        unresolvedAcceptanceIds: [...new Set(unresolved.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))],
+                    },
+                );
+            }
+        },
+    ];
+    await runWithConcurrency(independent, preflightConcurrency, () => 1, async (step) => { await step(); });
 
     // 6. Declared ownership is required, and the caller reports why resolving it failed.
     if (options.ownedPathsError) {
