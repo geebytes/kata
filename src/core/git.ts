@@ -22,9 +22,15 @@ export interface GitCommandResult {
  * facility also serves checks, CodeGraph and Git Flow, and pinning the locale for a project's own test commands would
  * change their behaviour — a check that asserts on its own localized output is not kata's to break.
  *
- * Measured cost of not pinning: `createWorktree` classified a commitless repository by matching
- * `not a valid object name|does not have any commits`, and git 2.43 says `fatal: invalid reference: HEAD` in English and
- * `fatal: 无效引用：HEAD` here — so the remedy the code exists to name was never shown, in either locale.
+ * What the pin buys, stated for what it actually is: git's stderr is interpolated into messages kata throws
+ * (`createWorktree` puts it in the failure a user reads), so without the pin a translated git error sits inside an
+ * English sentence.
+ *
+ * It is **not** what fixed the worktree classification. That defect was a regex over git's prose that git 2.43 never
+ * matched — `not a valid object name|does not have any commits` against an actual `invalid reference: HEAD`, in English
+ * as well as in translation — and it was fixed by asking the repository a structural question instead (`hasCommit`, an
+ * exit code). The pin is a separate, smaller improvement to the message a failure carries; reading it as the fix would
+ * suggest the structural change was unnecessary, which is backwards.
  */
 export function runGit(root: string, args: string[]): GitCommandResult {
     const result = runProcessSync('git', args, { cwd: root, timeoutMs: 60_000, env: { ...process.env, LC_ALL: 'C' } });

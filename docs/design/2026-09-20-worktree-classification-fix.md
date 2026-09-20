@@ -95,3 +95,27 @@ than on a message the old code happened to match.
   string — a test that greps for Chinese output would re-introduce the dependency it is meant to remove.
 - AC-3 and AC-4 are the guardrails: a structural check that is too eager (refusing a healthy repo) or too broad
   (claiming every failure is "no commit") is the regression this change could introduce.
+
+## The review rounds
+
+**Round 1 (cold)** confirmed the change's claim and found a documentation defect inside it: the `runGit` doc comment
+credited the `LC_ALL=C` pin with fixing the classification, which this change itself made untrue. The old regex fails in
+English too (`fatal: invalid reference: HEAD` matches neither `not a valid object name` nor `does not have any commits`),
+so no locale could have saved it — the structural question is what fixed it, and the pin is a smaller, separate
+improvement to the message a failure carries. A maintainer reading the original comment could reasonably have concluded
+`hasCommit` was the unnecessary half, and deleted it. Corrected.
+
+**Round 2 (verify)** turned up a mechanism while sealing the repaired revision: **a seal can never narrow a task's owned
+paths.** `resolveSealOwnedPaths` unions the CLI paths onto the task's own declaration and persists the result —
+`[...new Set([...task.ownedPaths, ...cliPaths])]` — so a broader path recorded once is permanent.
+
+Observed on this task. `task.json` held `docs/design/` and `docs/changelog/` (trailing slashes: git reports an **untracked
+directory** by name, so an auto-scoped seal over a task with new docs records one). Those directories are then hashed as
+directories, so writing *any other change's* design doc under `docs/design/` marks this task's sealed revision superseded
+— which happened twice in a row here, each time with `revision_superseded` on every AC and the verify gate failing until a
+re-seal. Re-passing the precise file list did not help: the union keeps the directories. Only hand-editing `task.json`
+removed them, after which the same unrelated write no longer invalidated anything.
+
+Recorded rather than repaired: it is a seal-path mechanism, not this change's subject, and it belongs with whoever owns
+`resolveSealOwnedPaths`. What it costs a project is worth stating in the finding — two changes in flight at once is the
+normal case, and this makes their seals invalidate each other.
