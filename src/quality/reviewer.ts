@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { validate } from '../core/schema.js';
 import { reviewPath as layoutReviewPath, taskDir } from '../core/layout.js';
+import { isTerminalSeverity } from './finding-lifecycle.js';
 
 export type ReviewSeverity = 'blocking' | 'major' | 'minor' | 'note';
 
@@ -74,7 +75,10 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
     return `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...binding, findings: [...findings, finding], ...(status ? { status } : { status: 'pending' }) }, null, 2)}\n`;
   });
 
-  if (finding.severity === 'blocking') {
+  // A terminal finding is one that gates a node, and each one owes a repair — the same rule the gates use, so a `major`
+  // finding creates the obligation that lets its repair be closed. Asking only for `'blocking'` here is the other half of
+  // why a `major` finding gated approval and could never be accounted for.
+  if (isTerminalSeverity(finding.severity)) {
     const { persistBlockingFindings } = await import('./repair-obligations.js');
     await persistBlockingFindings(root, input.taskId, [{
       id: finding.id,

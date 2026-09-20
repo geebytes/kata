@@ -636,8 +636,13 @@ async function cmdBuild(
         }
     }
 
-    if (revision && task.acceptanceMatrix) {
-        const acIds = task.acceptanceMatrix.rows.map((r) => r.acceptanceId);
+    if (revision) {
+        // A matrix enriches the mapping from an obligation to the evidence that answers it; it is not a precondition for
+        // one existing. Requiring it here meant a task opened without one — the `/kata-open` default — could never
+        // resolve an obligation, so a repair batch on such a task stayed open however well the repair went.
+        const acIds = task.acceptanceMatrix
+            ? task.acceptanceMatrix.rows.map((row) => row.acceptanceId)
+            : task.acceptance.flatMap((item) => (item.id ? [item.id] : []));
         await resolveObligationsForRevision(
             root, taskId, revision.id, acIds,
             evidence.filter((e) => isPassing(e)).map((e) => e.id),

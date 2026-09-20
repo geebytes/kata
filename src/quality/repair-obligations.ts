@@ -4,6 +4,7 @@ import { readValidatedOptional } from '../core/schema.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evidenceMatchesRow, getMatrixRowForAc } from './acceptance-matrix.js';
+import { isTerminalSeverity } from './finding-lifecycle.js';
 import { repairObligationsPath, taskDir } from '../core/layout.js';
 
 export interface RepairObligation {
@@ -12,7 +13,8 @@ export interface RepairObligation {
   source: 'review' | 'judge';
   findingId?: string;
   acceptanceId?: string;
-  severity: 'blocking';
+  /** The severity the obligation was raised for: the terminal classes, which are the ones that gate a node. */
+  severity: 'blocking' | 'major';
   message: string;
   createdAt: string;
   resolvedAt?: string;
@@ -54,7 +56,11 @@ export async function persistBlockingFindings(
   await updateObligations(root, taskId, (existing) => {
     const added: RepairObligation[] = [];
     for (const finding of findings) {
-      if (finding.severity !== 'blocking') continue;
+      // The rule, not a literal: `isTerminalSeverity` is what the navigation ladder, the adversarial gate and the batch
+      // closure all use, so a severity that gates a node creates the obligation that lets it be accounted for. Hardcoding
+      // `'blocking'` here was how a `major` finding came to gate approval and then be permanently unclosable — the batch
+      // reads `answered` from resolved obligations, and no obligation was ever created.
+      if (!isTerminalSeverity(finding.severity)) continue;
       if (existing.some((o) => o.findingId === finding.id && !o.resolvedAt)) continue;
       added.push({
         id: `obligation-${crypto.randomUUID()}`,
@@ -62,7 +68,9 @@ export async function persistBlockingFindings(
         source: 'review',
         findingId: finding.id,
         ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
-        severity: 'blocking',
+        // The finding's own severity, narrowed to the terminal classes — an obligation that claimed `blocking` for a
+        // `major` finding would misreport what is owed.
+        severity: finding.severity === 'blocking' ? 'blocking' : 'major',
         message: finding.message,
         createdAt: now,
       });
@@ -113,13 +121,22 @@ export async function resolveObligationsForRevision(
   const now = new Date().toISOString();
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
-    if (obligation.resolvedAt) continue;
-    const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
-    const matchedEvidence = matrix && row
-      ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
-      : evidence.filter((item) => evidenceIds.includes(item.id) && item.exitCode === 0);
-    const hasMappedEvidence = !matrix || matchedEvidence.length > 0;
-      if (obligation.acceptanceId && resolvedAcceptanceIds.includes(obligation.acceptanceId) && hasMappedEvidence) {
+      if (obligation.resolvedAt) continue;
+      const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
+      const matchedEvidence = matrix && row
+        ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
+        : evidence.filter((item) => evidenceIds.includes(item.id) && item.exitCode === 0);
+      // An obligation scoped to a criterion waits for that criterion, and — when a matrix binds it to a check — for that
+      // check's evidence. One with **no** criterion is scoped to nothing, so the revision's passing evidence is the whole
+      // of what can answer it. Requiring an acceptance id for both left every unscoped obligation permanently
+      // unresolvable, and the seal correctly refused on it forever.
+      // The `hasMappedEvidence` term is unchanged: with no matrix there is nothing to match a row against, so the
+      // criterion being satisfied is the answer, exactly as before this change.
+      const hasMappedEvidence = !matrix || matchedEvidence.length > 0;
+      const answered = obligation.acceptanceId
+        ? resolvedAcceptanceIds.includes(obligation.acceptanceId) && hasMappedEvidence
+        : matchedEvidence.length > 0;
+      if (answered) {
         obligation.resolvedAt = now;
         obligation.resolvedByRevisionId = revisionId;
         obligation.resolvedEvidenceIds = matchedEvidence.map((item) => item.id);

@@ -329,12 +329,21 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // K2: a finding lands as it is confirmed, so a crash costs the unfinished tail rather than the finished part.
         const action = rest[0];
         if (action !== 'add') throw new Error('Usage: kata-cli adversarial finding add --change <task-id> --node verify --from-file <finding.json>');
+        // The task id comes from the flag, not from the positional helper: `rest` still begins with the `add` action word
+        // here, and `parseChangeArg` returns the first non-flag token — so the documented invocation resolved the task id
+        // to `add` and died with `ENOENT: .kata/tasks/add/adversarial-review.json`. The shape the docs and the generated
+        // Skills use is `--change <id>`, so that is what is read.
+        const addressed = argValue(rest, '--change');
+        if (!addressed) {
+            throw new Error('Usage: kata-cli adversarial finding add --change <task-id> --node verify|review --from-file <finding.json>');
+        }
         const fromFile = argValue(rest, '--from-file');
         const { addAdversarialFinding } = await import('../quality/adversarial.js');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial finding add requires the finding JSON on stdin or via --from-file');
-        const finding = await addAdversarialFinding(root, change, node, JSON.parse(raw) as Record<string, unknown>);
-        return { command: 'adversarial finding add', taskId: change, node, findingId: finding.id, severity: finding.severity, findings: 'stored on the node record; `record` seals the verdict and the revision binding' };
+        const finding = await addAdversarialFinding(root, addressed, node, JSON.parse(raw) as Record<string, unknown>);
+        // `addressed`, not `change`: the latter is the positional read, which for this subcommand is the action word.
+        return { command: 'adversarial finding add', taskId: addressed, node, findingId: finding.id, severity: finding.severity, findings: 'stored on the node record; `record` seals the verdict and the revision binding' };
     }
 
     if (subcommand === 'record') {

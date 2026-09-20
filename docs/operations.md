@@ -24,7 +24,7 @@
 | `kata-cli adversarial brief <task-id> [--since <rev>] [--mode verify\|cold]` | Render the independent pass's brief and store it; only a stored brief's hash satisfies the gate |
 | `kata-cli adversarial record <task-id> --from-file <result.json>` | Seal a pass's verdict and its revision binding (see *Independent adversarial review*) |
 | `kata-cli adversarial note <task-id> --from-file <line.json>` | Append one heartbeat line — the work a killed pass would otherwise take with it |
-| `kata-cli adversarial finding add <task-id> --from-file <finding.json>` | Record one finding as it is confirmed, before the verdict |
+| `kata-cli adversarial finding add --change <task-id> --from-file <finding.json>` | Record one finding as it is confirmed, before the verdict |
 | `kata-cli adversarial status <task-id>` | Both nodes' gate state, the heartbeat, and a delta round's measured saving |
 | `kata-cli findings list \| defer \| accept \| carry <task-id>` | Give a finding a disposition (`blocking`/`major` cannot be deferred or accepted) |
 | `kata-cli revision digests <task-id> [--since <rev>]` | The per-path content table a delta round is measured against |
@@ -296,6 +296,18 @@ invocation is a full turn of the reviewer's own loop, which is what a pass mostl
 finding the moment it is confirmed. A pass that dies mid-run therefore keeps its work: `status` reports the heartbeat, and
 a `record` later in the round keeps the findings that arrived separately. Until `record` runs there is no verdict, so a
 partial pass can never read as a passed one.
+
+**A terminal finding owes a repair, and the obligation is what lets that repair be accounted for.** Adding a `blocking` or
+`major` finding writes a repair obligation, and a repair batch reads what it can close from the obligations that carry a
+`resolvedAt`. An obligation scoped to an acceptance id waits for that criterion; one scoped to nothing — an adversarial
+finding is not tied to a criterion the way a review finding is — is answered by the revision's passing evidence. A task
+does not need an acceptance matrix for either: the matrix binds an evidence item to a check, which sharpens the answer,
+but the task's own acceptance ids and the revision's evidence are enough without it.
+
+One consequence is worth knowing before you hit it: if a task has an unresolved obligation, the **seal refuses** and names
+the obligations. That is deliberate — the seal is where the platform stops passing silently while a batch stays open — but
+on a task with no matrix the refusal also blocks the run whose evidence would resolve the obligation, so the remedy is to
+supply the evidence the refusal asks for (or add a matrix to bind it to a specific check).
 
 The gate:
 

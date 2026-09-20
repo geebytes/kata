@@ -122,14 +122,16 @@ export async function collectSealPreflight(input: {
                 }
             }
         },
-        // 5. A legacy task (no matrix) cannot record closure against obligations it never declared.
+        // 5. A task without a matrix resolves obligations from its acceptance ids and passing evidence, so an unresolved
+        //    obligation is a real refusal on any task — not only one that declared a matrix. The check used to return
+        //    early for a matrix-less task, which meant the *seal* could not refuse what the *closure* could not resolve:
+        //    the repair batch could never close and the seal said nothing about it.
         async () => {
-            if (task.acceptanceMatrix) return;
             const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
             if (unresolved.length > 0) {
                 deny(
                     'unresolvedObligations',
-                    'Legacy task has unresolved repair obligations; add an acceptanceMatrix to task.json so closure can record matrix-matched evidence for the affected AC(s).',
+                    'Unresolved repair obligations: every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.',
                     {
                         unresolvedObligations: unresolved.length,
                         unresolvedAcceptanceIds: [...new Set(unresolved.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))],

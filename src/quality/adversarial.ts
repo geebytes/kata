@@ -5,6 +5,7 @@ import { hashContent } from '../core/hash.js';
 import { adversarialBriefPath, adversarialBriefsDir, adversarialReviewPath, evidenceDir } from '../core/layout.js';
 import { readValidatedOptional, validate } from '../core/schema.js';
 import type { EvidenceEnvelope } from './evidence.js';
+import { isTerminalSeverity } from './finding-lifecycle.js';
 
 /**
  * The independent adversarial pass.
@@ -568,6 +569,18 @@ export async function addAdversarialFinding(
     };
     const findings = [...(draft.findings ?? []).filter((entry) => entry.id !== candidate.id), candidate];
     await writeAdversarialRecord(root, taskId, { ...draft, findings });
+    // A terminal finding owes a repair, and the obligation is what lets that repair be **accounted for**: a repair batch
+    // reads `answered` from obligations carrying a `resolvedAt`. Creating one only for review findings (the sole caller of
+    // `persistBlockingFindings`) left a batch opened on an adversarial finding with nothing that could ever resolve, so the
+    // batch stayed open however well the repair went.
+    if (isTerminalSeverity(candidate.severity)) {
+        const { persistBlockingFindings } = await import('./repair-obligations.js');
+        await persistBlockingFindings(root, taskId, [{
+            id: candidate.id,
+            severity: candidate.severity,
+            message: candidate.message,
+        }]).catch(() => null);
+    }
     return candidate;
 }
 

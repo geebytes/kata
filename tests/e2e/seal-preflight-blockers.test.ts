@@ -111,11 +111,13 @@ describe('seal preflight blockers', () => {
         expect(result.error).toContain('blocked by 2 independent problems');
     });
 
-    it('still refuses on a single blocker, with the message the early return produced', async () => {
+    it('still refuses on a single blocker, on a task that declared no matrix', async () => {
         const root = await tempRoot();
         const taskId = 'preflight-single';
-        // A legacy task (no matrix, no strict closure) with one unresolved repair obligation: exactly one blocker, and
-        // its `error` is the same sentence the fail-fast version returned.
+        // A task with no matrix and no strict closure, carrying one unresolved repair obligation: exactly one blocker. The
+        // refusal is real on such a task — closure resolves an obligation from the task's acceptance ids and the passing
+        // evidence for the revision, so a matrix is an enrichment rather than a precondition. The check used to return
+        // early for a matrix-less task, which let the seal pass while the repair batch stayed open forever.
         await runCommand('open', taskId, root, {
             title: 'Preflight fixture',
             acceptance: [{ id: 'AC-1', statement: 'The seal reports its blocker.' }],
@@ -133,7 +135,7 @@ describe('seal preflight blockers', () => {
 
         expect(result.success).toBe(false);
         expect(result.diagnostics).toMatchObject({ blockerCount: 1, unresolvedObligations: 1 });
-        expect(result.error).toContain('Legacy task has unresolved repair obligations');
+        expect(result.error).toContain('Unresolved repair obligations');
         // Nothing was sealed, so the repair loop never paid the evidence cost before hearing about the next problem.
         expect(result.diagnostics?.revisionId).toBeUndefined();
     });
