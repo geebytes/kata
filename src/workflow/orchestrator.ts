@@ -791,7 +791,12 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
 
     const { readdir, rename } = await import('node:fs/promises');
     try {
-        const files = (await readdir(evidenceDirectory)).filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
+        // Both the envelopes and the transcripts beside them: the artifacts are evidence too, and archiving only the
+        // `.json` files was how a superseded revision's transcript stayed at the active path — where the next seal, which
+        // writes the same name, would be read as if it were still that revision's.
+        const files = (await readdir(evidenceDirectory)).filter(
+            (file) => file.startsWith(`${taskId}-`) && (file.endsWith('.json') || file.endsWith('.log')),
+        );
         if (files.length > 0) {
             // The revision the outgoing set was collected for, read from the envelope rather than guessed.
             const previous = JSON.parse(await readFile(join(evidenceDirectory, files[0]!), 'utf8')) as { revisionId?: string };

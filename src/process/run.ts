@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { appendFile } from 'node:fs/promises';
+import { open, type FileHandle } from 'node:fs/promises';
 
 /**
  * The one place kata spawns a child process.
@@ -127,12 +127,17 @@ export interface RunProcessOptions {
      */
     maxCaptureBytes?: number;
     /**
-     * Append every chunk to this file as it arrives, in addition to capturing it.
+     * Write every chunk to this file as it arrives, in addition to capturing it.
      *
-     * The capture bound is a memory bound, not a diagnostic one: the complete output is still the record of last
-     * resort, so when the bound is set the full text goes here and the caller keeps a path instead of a payload.
-     * The file is created or appended to, and it is flushed before the promise settles. `inheritOutput` captures
-     * nothing, so nothing is written when both are set.
+     * The capture bound is a memory bound, not a diagnostic one: the complete output is still the record of last resort,
+     * so when the bound is set the full text goes here and the caller keeps a path instead of a payload. The file is
+     * flushed before the promise settles. `inheritOutput` captures nothing, so nothing is written when both are set.
+     *
+     * **The run owns the file: it is truncated on the first chunk and appended to thereafter.** It used to be appended
+     * to from the start, which meant a second caller reusing the same path got this run's output concatenated onto the
+     * previous one's with no boundary — measured on the seal path, where the artifact is named after the task and check
+     * and carries no revision, so a repaired task's transcript held two seals' output. A caller that wants accumulation
+     * across runs should name a different path per run, not rely on the write to keep the old bytes.
      */
     captureArtifact?: string;
 }
@@ -159,10 +164,20 @@ export async function runProcess(command: string, args: string[], options: RunPr
         // The first failure is kept and the queue keeps draining, so a later chunk cannot overwrite the reason with a
         // different one and the child is never blocked by a channel that is only a diagnostic.
         let artifactFailure: string | undefined;
+        // One `open` for the run, so the first chunk truncates and every later chunk appends. Doing this per chunk with
+        // `appendFile` was how a reused path ended up holding two runs' output.
+        let artifactHandle: FileHandle | undefined;
+        const openArtifact = async (path: string): Promise<FileHandle> => {
+            artifactHandle ??= await open(path, 'w');
+            return artifactHandle;
+        };
         const tee = (text: string): void => {
             if (!options.captureArtifact) return;
             artifactQueue = artifactQueue
-                .then(() => appendFile(options.captureArtifact!, text, 'utf8'))
+                .then(async () => {
+                    const handle = await openArtifact(options.captureArtifact!);
+                    await handle.appendFile(text, 'utf8');
+                })
                 .catch((error: unknown) => {
                     artifactFailure ??= error instanceof Error ? error.message : String(error);
                 });
@@ -177,18 +192,22 @@ export async function runProcess(command: string, args: string[], options: RunPr
             if (killTimer) clearTimeout(killTimer);
             clearTimeout(timeoutTimer);
             options.signal?.removeEventListener('abort', onAbort);
-            void artifactQueue.then(() => resolve({
-                ok: exitCode === 0 && !failure,
-                exitCode,
-                signal,
-                stdout: stdout.value(),
-                stderr: stderr.value(),
-                capturedBytes: stdout.totalBytes() + stderr.totalBytes(),
-                captureTruncated: stdout.wasTruncated() || stderr.wasTruncated(),
-                ...(failure ? { failure } : {}),
-                ...(artifactFailure ? { artifactFailure } : {}),
-                environment: environmentSummary(options.cwd),
-            }));
+            // The handle is closed before resolving, so a caller that reads the artifact after awaiting `runProcess`
+            // sees a flushed file and the descriptor does not leak out of this function.
+            void artifactQueue
+                .then(() => artifactHandle?.close().catch(() => undefined))
+                .then(() => resolve({
+                    ok: exitCode === 0 && !failure,
+                    exitCode,
+                    signal,
+                    stdout: stdout.value(),
+                    stderr: stderr.value(),
+                    capturedBytes: stdout.totalBytes() + stderr.totalBytes(),
+                    captureTruncated: stdout.wasTruncated() || stderr.wasTruncated(),
+                    ...(failure ? { failure } : {}),
+                    ...(artifactFailure ? { artifactFailure } : {}),
+                    environment: environmentSummary(options.cwd),
+                }));
         };
 
         const kill = (reason: ProcessFailure): void => {

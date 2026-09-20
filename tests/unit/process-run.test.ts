@@ -172,6 +172,25 @@ describe('process facility', () => {
         expect(String(result.artifactFailure)).toMatch(/ENOTDIR|EEXIST|ENOENT|not a directory/i);
     });
 
+    it('truncates the artifact for this run instead of appending onto a previous one', async () => {
+        // The artifact is named after the task and the check and carries no revision, so a re-running caller used to
+        // find the previous run's output in front of this one's with no boundary. Measured on the seal path: a repaired
+        // task's transcript held two seals' output. The run owns the file now.
+        const root = await tempRoot();
+        const artifact = join(root, 'run.log');
+        const script = 'process.stdout.write("RUN\\n".repeat(1000))';
+
+        const first = await runProcess(process.execPath, ['-e', script], { cwd: root, maxCaptureBytes: 100, captureArtifact: artifact });
+        const second = await runProcess(process.execPath, ['-e', script], { cwd: root, maxCaptureBytes: 100, captureArtifact: artifact });
+
+        const { readFile } = await import('node:fs/promises');
+        const content = await readFile(artifact, 'utf8');
+        // One run's worth, not two concatenated.
+        expect(content.split('RUN').length - 1).toBe(1000);
+        expect(first.artifactFailure).toBeUndefined();
+        expect(second.artifactFailure).toBeUndefined();
+    });
+
     it('reports no artifact failure when the artifact was written', async () => {
         const root = await tempRoot();
 

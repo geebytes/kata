@@ -140,3 +140,33 @@ Two things the design did not anticipate, recorded here rather than only in a re
 Also worth recording: `design` itself creates `.kata/evidence/` (the design gate runs evidence), so a literal "make the
 directory absent" reproduction has to remove it after `design`. The first-seal state is real, but it is not simply "call
 `collectEvidence` on a fresh root".
+
+## The adversarial review, and what it found
+
+The change was reviewed by an independent adversarial pass over `revision-b182515dd6bf5577` (6 attempts, 3 findings,
+verdict `defects_found`). The review attacked the **claim** the change makes — "when `logArtifact` is present, the file
+exists and holds the complete output" — rather than re-reading the diff, and the claim turned out to rest on more than
+the two mechanisms this document originally identified.
+
+**Confirmed, and repaired:**
+
+1. **`major` — the artifact accumulates across seals.** The tee used `appendFile` and the name is
+   `${taskId}-${checkId}.log` with no revision, so a second seal appended onto the first's transcript. Measured: the same
+   check collected twice produced 50 000 bytes containing 10 000 marker lines where one run prints 5 000, at the same
+   path. `writeEvidence` archives only `.json`, so the accumulation survived every re-seal. **This is the one the change
+   made worse**: the field was previously a silent dead reference, and this change documents it as the complete
+   transcript. Repaired by opening the file once per run with truncation, and by archiving `.log` beside the envelopes.
+2. **`minor` — the name falls back to `check.command`.** An id-less check produced
+   `<logDir>/<task>-/usr/bin/node.log`. Repaired by slugging the stem and rejecting separators.
+3. **`nit` — the existence guard covered only the spawned path.** An `importResult` carrying a stale `logArtifact` was
+   re-stamped as if live. Reachable only by a future caller — `planCheckReuse` forwards neither `logArtifact` — so it
+   was recorded as defence in depth. Repaired in the same code for the same reason the field states the contract.
+
+**A hypothesis the review refuted, and it is worth keeping:** the design's own AC-2 verification ("observe `runGit`'s
+env hand-off") was already known to be unobservable — that correction is recorded in the worktree design note. The
+review confirmed the shipped test is the honest one. The lesson generalises: an acceptance criterion phrased as "observe
+X was passed" is usually unfalsifiable, and "assert the effect X causes" is usually cheap.
+
+**What the review did not re-run:** the sealed suite. The brief states that the gate already ran it against this
+revision and that re-running proves nothing new; the finding about accumulation was reachable by reading and probing,
+which is where the effort went instead.

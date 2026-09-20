@@ -56,6 +56,49 @@ describe('quality evidence collection', () => {
     expect(info.size).toBe(3 * 1024 * 1024);
   });
 
+  it('names the artifact with a slug that cannot become a path, for a check declared without an id', async () => {
+    // `checkName` falls back to `check.command`, which for the realistic case is absolute — so the old name produced
+    // `<logDir>/<task>-/usr/bin/node.log`, an ENOENT for a reason that looked like a missing directory. Projects declare
+    // checks with `name` and no `id` (this repository's own .kata-config.json does), so this was the common shape.
+    const root = await tempRoot();
+    // The orchestrator creates this before collecting; the collector deliberately does not (AC-2).
+    const logDir = join(root, '.kata/evidence');
+    await mkdir(logDir, { recursive: true });
+
+    const [evidence] = await collectEvidence('task-slug', [
+      { kind: 'test', command: process.execPath, args: ['-e', "process.stdout.write('x'.repeat(25000))"], cwd: root },
+    ], { checkLogDir: logDir });
+
+    expect(evidence?.logArtifact).toBeTruthy();
+    // The stem carries no separator, so the join cannot escape the log directory.
+    const stem = evidence!.logArtifact!.split('/').pop()!;
+    expect(stem).toMatch(/^task-slug-[A-Za-z0-9_.-]+\.log$/);
+    expect(evidence?.logArtifactFailure).toBeUndefined();
+  });
+
+  it('does not re-stamp an imported artifact that does not exist', async () => {
+    // A reused check never spawns, so the existence guard cannot live only in the spawn path. `planCheckReuse` forwards
+    // exitCode/log/environment today and not `logArtifact`, so this is defence in depth — but the contract is stated on
+    // the field, and a future caller forwarding a stale path would otherwise reintroduce the lie silently.
+    const root = await tempRoot();
+
+    const [evidence] = await collectEvidence('task-import', [
+      {
+        kind: 'test',
+        id: 'imported',
+        command: 'true',
+        args: [],
+        cwd: root,
+        importResult: { exitCode: 0, log: 'reused', logTruncated: true, logArtifact: join(root, 'never-written.log') },
+      },
+    ]);
+
+    expect(evidence?.logArtifact).toBeUndefined();
+    // The bounded excerpt and the outcome are still what they were: only the pointer is refused.
+    expect(evidence?.logTruncated).toBe(true);
+    expect(evidence?.exitCode).toBe(0);
+  });
+
   it('does not name an artifact when the directory is absent, and reports why instead', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'noisy.mjs'), "process.stdout.write('x'.repeat(3 * 1024 * 1024));\n", 'utf8');

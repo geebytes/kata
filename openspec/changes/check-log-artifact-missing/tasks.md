@@ -57,3 +57,24 @@ Consequently the seal is red for an unrelated defect and this task's `verify` ca
 that defect (a separate change, deliberately not folded in here) or waiving the check (which would misrepresent the
 suite as green). The four acceptance criteria of **this** change are separately evidenced above, including through the
 real commands.
+
+## Repair round 1 (from the adversarial review)
+
+The independent review over `revision-b182515dd6bf5577` returned `defects_found` with three findings; `kata-cli review
+--approve` refused on the `major` one and a repair batch opened. All three are repaired, each with the measurement that
+found it reproduced as a test:
+
+- [x] **major — `artifact-appends-across-seals`**: the artifact is opened once per run with truncation instead of being
+  appended to from the start, and `writeEvidence` archives `.log` files with the `.json` envelopes. Proven by a test that
+  collects the same check twice and asserts one run's worth of output (`tests/unit/process-run.test.ts`).
+- [x] **minor — `artifact-name-falls-back-to-command-path`**: the artifact stem is a separators-free slug of the check's
+  id, name or command (`artifactSlugFor`), so a check declared without an id can no longer produce a path built from an
+  absolute one. Covered in `tests/unit/evidence.test.ts`.
+- [x] **nit — `imported-result-artifact-unchecked`**: the existence guard now covers an imported result too, so a reused
+  envelope cannot be re-stamped with a path that does not resolve. Covered in `tests/unit/evidence.test.ts`.
+
+Documentation corrected to match: `docs/operations.md` now names all four rules the guarantee rests on,
+`docs/changelog/2026-09-20-log-artifact-repair.md` records them as one property, and the design note gains a "what the
+adversarial review found" section.
+
+Suite after repair: 891 passed, 0 failed.

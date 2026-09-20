@@ -156,10 +156,22 @@ characters plus `logBytes` — what the check really produced. When anything was
 `logTruncated: true` and `logArtifact`, the path of the **complete** transcript written beside the evidence under
 `.kata/evidence/`.
 
-The guarantee is literal: **when `logArtifact` is present, the file exists and holds the whole output.** The directory is
-created before the checks run, so a task's first seal has one too. When the artifact cannot be written — a full disk, a
-read-only mount, a permission change — the envelope omits `logArtifact` and states the reason in
-`logArtifactFailure`, rather than naming a file a reader would not find.
+The guarantee is literal: **when `logArtifact` is present, the file exists and holds the whole output of that run.** Four
+things it rests on, each of which was a defect before it was a rule:
+
+- The directory is created **before** the checks run, so a task's first seal has one too. It used to be created when the
+  evidence was written — afterwards — so a first seal wrote into a directory that was not there.
+- The run **owns** the file: it is truncated on the first chunk and appended to thereafter. It used to be appended to from
+  the start, and since the name carries the task and the check but no revision, a repaired task's transcript held two
+  seals' output concatenated with no boundary.
+- The name is a **slug** — a check's id, or its name or command reduced to separators-free text. It used to fall back to
+  the raw command, so an id-less check produced a path built from an absolute one.
+- The file is **checked to exist** before the path is stamped, for an imported (reused) result as well as a freshly run
+  one, and the superseded-archive moves the `.log` files along with the `.json` envelopes rather than leaving them at the
+  active path.
+
+When the artifact cannot be written — a full disk, a read-only mount, a permission change — the envelope omits
+`logArtifact` and states the reason in `logArtifactFailure`, rather than naming a file a reader would not find.
 
 A declaration may also name the check that **covers** it (`coveredBy: "<check id>"`, typically the project's suite):
 the covering check still runs, and the declaration is credited with its evidence instead of running its own second copy

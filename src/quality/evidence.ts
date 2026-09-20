@@ -237,6 +237,32 @@ const maxLogLength = 20_000;
  */
 const maxCaptureBytes = 2_000_000;
 
+/**
+ * A check's artifact filename stem: its id, or a slash-free slug of its name or command.
+ *
+ * The name used to be `${check.id ?? checkName}` straight, and `checkName` falls back to `check.command` — so a check
+ * declared without an id produced a path built from its command, which for the realistic case is absolute
+ * (`<logDir>/<task>-/usr/bin/node.log`). The write failed, the envelope reported the failure honestly (the guard below
+ * is what made it visible rather than silent), and the reason was a misleading ENOENT rather than "this check has no
+ * usable artifact name". A project's own `.kata-config.json` declares checks with `name` and no `id`, so this was the
+ * common shape, not a corner.
+ *
+ * The slug keeps the diagnostic property that mattered — the file is recognisable — while never introducing a
+ * separator that turns the name into a path.
+ */
+/** Whether a path names a readable file, for the one field whose contract is that it does. */
+async function fileExists(path: string): Promise<boolean> {
+    return stat(path).then((info) => info.isFile()).catch(() => false);
+}
+
+function artifactSlugFor(check: CheckCommand): string {
+    const raw = check.id ?? check.name ?? check.command;
+    const slug = raw.replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+    // A name that is nothing but separators (a bare path, a check with no name at all) still needs a stem, and every
+    // such check gets the same one — which is correct: they are indistinguishable to a reader anyway.
+    return slug || 'check';
+}
+
 // Which envelope a reused check was carried forward from, so the new evidence names its provenance.
 function reuseSourceMap(commands: CheckCommand[]): Map<CheckCommand, string> {
   const reuseSource = new Map<CheckCommand, string>();
@@ -399,7 +425,7 @@ export async function collectEvidence(
       onProgress: options.onProgress,
       signal: options.signal,
       ...(options.checkLogDir
-        ? { logArtifactPath: join(options.checkLogDir, `${taskId}-${check.id ?? checkName}.log`) }
+        ? { logArtifactPath: join(options.checkLogDir, `${taskId}-${artifactSlugFor(check)}.log`) }
         : {}),
     }));
     const finishedAt = new Date().toISOString();
@@ -437,7 +463,13 @@ export async function collectEvidence(
       ...(result.log ? { log: redact(truncate(result.log), redactions) } : {}),
       ...(result.logBytes !== undefined ? { logBytes: result.logBytes } : {}),
       ...(result.logTruncated || (result.log?.length ?? 0) > maxLogLength ? { logTruncated: true } : {}),
-      ...(result.logArtifact ? { logArtifact: result.logArtifact } : {}),
+      // The guard is applied to whatever produced the result, imported or spawned: `logArtifact` names a file that
+      // exists. For the spawned path `runBoundedCommand` already dropped a failed write, and for an imported result the
+      // file is checked here — a reused envelope carrying a stale path would otherwise be re-stamped as if it were live,
+      // which is the one way this field could still lie.
+      ...(result.logArtifact && (await fileExists(result.logArtifact))
+        ? { logArtifact: result.logArtifact }
+        : {}),
       ...(result.logArtifactFailure ? { logArtifactFailure: result.logArtifactFailure } : {}),
     };
   });

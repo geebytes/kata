@@ -17,6 +17,15 @@ When a check's output exceeds the capture bound, the envelope SHALL report `logT
 - **WHEN** the artifact's parent directory is missing or unwritable
 - **THEN** the envelope SHALL NOT carry `logArtifact`, and the write failure SHALL be reported instead of swallowed
 
+#### Scenario: A transcript is written twice at the same path
+- **WHEN** a later run writes the artifact path an earlier run used
+- **THEN** the file SHALL contain that later run's output only, because the run owns the file, and the artifact name
+  SHALL NOT be buildable from a path separator
+
+#### Scenario: A superseded revision's transcript
+- **WHEN** a seal supersedes the evidence set it replaces
+- **THEN** the transcripts SHALL be archived with the envelopes, so the active path holds only the current revision's
+
 #### Scenario: A task's first seal runs a bounded check
 - **WHEN** a task is sealed for the first time and no evidence directory exists yet
 - **THEN** the artifact SHALL still be written, because the runtime creates the directory before running the checks
