@@ -168,3 +168,26 @@ The other three sites that still write the pair out (`resolveBriefMode`, `blocki
 `evidence-adequacy`) are equivalent to the rule by construction, and `distill-gates`' blocking-only check is unreachable
 with an unpaid major because an approved review cannot carry one. They are duplicated literals, not holes — recorded
 because the sweep found them, and deliberately not "fixed" into a refactor this change does not need.
+
+## The third round: the anti-counterexample rule had no caller
+
+The delta pass over the repair found one more, and it is the sharpest of the set because the rule was *inverted in
+effect*.
+
+`evaluateAdversarialGate` refuses a pass with `undeclared_test_path` when an attempt's evidence cites a test outside
+`input.declaredTestSelectors`. **No caller ever supplied that field** — `adversarialGateFor` builds the gate input from
+briefs, manifests and claims, and the name appears nowhere else in the source. So the refusal was unconditional in
+practice, and measurably so: the same record, one attempt whose evidence reads *"ran tests/unit/alpha.test.ts — 3
+passed"*, is refused with the field absent and accepted with it set.
+
+The effect is the opposite of the rule's purpose. It was written so an **authored counterexample** could not enter the
+evidence as if it were a reproduction. Unshippable, it instead selected for vagueness: an honest reviewer naming the test
+it re-ran was blocked from concluding, while one describing its work without a path passed.
+
+Repaired by deriving the declaration from the task's own matrix rows, and by skipping the guard entirely when the
+revision declares nothing — that is when the rule's own words (*"no declaration on this revision named it"*) are vacuously
+true of every path, and refusing there is not about anything.
+
+Recorded because it is the second instance in these four changes of the same class — *a mechanism built to enforce a rule,
+wired to nothing, silently permissive or silently blocking* — after `persistBlockingFindings` having no caller for
+adversarial findings.

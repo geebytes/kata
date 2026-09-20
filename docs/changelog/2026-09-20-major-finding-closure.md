@@ -37,3 +37,21 @@ that still begins with the action word. The command died with `ENOENT: .kata/tas
 other `parseChangeArg(rest)` call site was checked for the same shape.
 
 Suite: 899 passed, 0 failed.
+
+## A rule wired to nothing, inverted in effect
+
+The delta review round over the repair found one more, and it is the sharpest: the anti-counterexample guard had no
+caller.
+
+`evaluateAdversarialGate` refuses a pass that cites a test outside `declaredTestSelectors` — the rule exists so an
+**authored counterexample** cannot enter the evidence as if it were a reproduction. No caller ever passed the field. So the
+refusal was unconditional in practice: the same record, one attempt reading *"ran tests/unit/alpha.test.ts — 3 passed"*, is
+refused without the field and accepted with it. The rule selected for **vagueness** — an honest reviewer naming the test
+it re-ran could not conclude, while one describing its work without a path passed.
+
+It now derives the declaration from the task's matrix rows, and stays silent when the revision declares nothing: that is
+when the rule's own words are vacuously true of every path.
+
+This is the second instance of one class across these changes — a mechanism built to enforce a rule, wired to nothing —
+after `persistBlockingFindings`, which had no caller for adversarial findings at all. Both were found by asking what
+*produces* the input a gate reads, rather than whether the gate looks right.

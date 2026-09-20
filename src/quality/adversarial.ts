@@ -960,7 +960,11 @@ export function evaluateAdversarialGate(
     // L0-04: a pass may re-run a test the change declares and may not leave one behind. A record whose attempts cite a
     // test path outside the declared set is refused here, the same way a stale revision is — so an authored
     // counterexample fails the node rather than entering the evidence.
-    const undeclared = undeclaredTestPaths(record, input.declaredTestSelectors ?? []);
+    // Only when the revision **declares** tests is citing one outside that set a counterexample. With no declaration at
+    // all — a task with no matrix — the set is empty and "no declaration named it" is vacuously true of every path, so the
+    // guard is skipped rather than treating a reviewer's honest description of which test it re-ran as a violation.
+    const declaredTests = input.declaredTestSelectors ?? [];
+    const undeclared = declaredTests.length > 0 ? undeclaredTestPaths(record, declaredTests) : [];
     if (undeclared.length > 0) {
         return {
             satisfied: false,
@@ -1463,6 +1467,14 @@ export async function adversarialGateFor(
         manifestHash: revision?.manifestHash ?? null,
         issuedBriefSha256s: pool.accepted.map((entry) => entry.briefSha256),
         otherRevisionBriefSha256s: pool.otherRevision.map((entry) => entry.briefSha256),
+        // The tests this change declares: the matrix's rows. Without it the anti-counterexample guard refused every round
+        // that named any test path — punishing the honest report and accepting the vague one, which is the opposite of
+        // what it was written for. A task with no matrix declares none, and then no path is "declared", so the guard
+        // stays silent rather than blocking: the refusal is for citing something outside the declaration, not for citing.
+        ...(() => {
+            const declared = (task?.acceptanceMatrix?.rows ?? []).flatMap((row) => row.testPaths ?? []);
+            return declared.length > 0 ? { declaredTestSelectors: declared } : {};
+        })(),
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,
