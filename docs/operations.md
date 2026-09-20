@@ -5,7 +5,7 @@
 | Command | Description |
 |---------|-------------|
 | `kata-cli init` | Unified setup: coordinates Comet init and installs Kata Skills/rules/hooks/Wiki for detected platforms. Silent on success unless `--json` is passed |
-| `kata-cli update` | Update installed Skills. Silent on success unless `--json` is passed |
+| `kata-cli update` | Update installed Skills, then refresh the managed runtime by policy (`--refresh` / `--no-refresh`, default `auto`). Silent on success unless `--json` is passed |
 | `kata-cli uninstall` | Remove installed Skills. Silent on success unless `--json` is passed |
 | `kata-cli discover` | List detected platforms |
 | `kata-cli doctor [--platform <name>]` | Verify installed skills, rules, hooks, command bridges, and Wiki presence. Without `--platform`, checks all detected project platforms |
@@ -20,6 +20,7 @@
 | `kata-cli status <change>` | Show Comet change status |
 | `kata-cli next <change>` | Show next Comet action |
 | `kata-cli eval <manifest>` | Run evaluation from manifest |
+| `kata-cli baseline [--platform <p>] [--language en\|zh] [--change <id>]` | Measure rendered payload bytes/tokens and the authoritative read sizes before a phase runs |
 | `kata-cli adversarial brief <task-id> [--since <rev>] [--mode verify\|cold]` | Render the independent pass's brief and store it; only a stored brief's hash satisfies the gate |
 | `kata-cli adversarial record <task-id> --from-file <result.json>` | Seal a pass's verdict and its revision binding (see *Independent adversarial review*) |
 | `kata-cli adversarial note <task-id> --from-file <line.json>` | Append one heartbeat line — the work a killed pass would otherwise take with it |
@@ -194,6 +195,7 @@ behaviour of each surface, and nothing here is needed for an ordinary run.
 | Variable | Default | What it changes |
 |---|---|---|
 | `KATA_CHECK_CONCURRENCY` | `1` (serial) | How many checks a seal may run at once. Serial by default because the platform cannot know what two checks share; raise it only for checks known to be independent, and prefer a check's own `weight` (see *Giving a check its own weight*) |
+| `KATA_EVAL_CONCURRENCY` | `1` (serial) | How many evaluation fixtures `kata-cli eval` may run at once. Each fixture already gets its own temporary root, so the isolation is real — but serial is the default for the same reason as the seal's, and a resource-related fixture failure is reported with the concurrency that produced it. A value that is not a positive integer falls back to `1` rather than serialising silently or failing |
 | `KATA_CODEGRAPH_INDEX_TIMEOUT_MS` | `300000` | Budget for the `codegraph index` stage of `update`. It is a full rebuild — measured at 35–46 s on a 972-file index — so it does **not** share the smaller budget the incremental `sync` stage uses; a stage that exceeds its budget is reported as `timed_out` with the budget it had |
 | `KATA_RUNTIME_REFRESH_TIMEOUT_MS` | `30000` | Budget for the runtime refresh's non-index stages (`comet`, `codegraph sync`). The refresh is best-effort: no stage failure aborts the platform update |
 | `KATA_GITFLOW_TIMEOUT_MS` | `300000` | Budget for a Git Flow subcommand. Both the interactive and non-interactive paths are bounded by it, so a git operation cannot hang an unattended run |
@@ -317,7 +319,52 @@ Before release, Kata checks:
 4. **Wiki governance** — records present
 5. **Wiki rejection rate** <= 50%
 
-All gates must pass for release.
+All gates must pass for release. A gate whose metric was not measured is reported as `skipped` and does not count
+toward the pass/fail total, so "all gates passed" never means "cost was measured".
+
+### Runtime refresh after `update`
+
+`kata-cli update` refreshes the managed runtime (Comet, then the CodeGraph sync and index stages) after the platform
+files are written. The refresh is best-effort — it never aborts the update — and which runs is now a policy:
+
+| Flag | Behaviour |
+|---|---|
+| *(none)* | `auto`: refresh only when the update actually wrote or removed a managed artefact. |
+| `--refresh` | `always`: refresh even when nothing changed. Use this to recover a runtime you believe is stale. |
+| `--no-refresh` | `never`: leave the runtime alone; the report says it was skipped and why. |
+
+A skipped refresh is reported as `"skipped": true` with a `reason`, not as a silent success and not as a failure.
+### Platforms removed by hand
+
+An aggregate `kata-cli update` (no `--platform`) targets every platform the install manifest records, plus every
+platform detected in the project. A platform whose own skills directory no longer exists is **skipped**, with the
+reason printed:
+
+```text
+跳过 opencode：其目录已被移除，更新不再重建（要恢复请用 --platform opencode 显式安装）
+```
+
+Deleting `.opencode/` (or `.codex/`, `.cursor/`, …) by hand is how you say you do not want that surface. Without this
+rule the manifest entry outlived the deletion and the next aggregate update silently rebuilt the whole directory, so the
+decision lasted exactly one command.
+
+Two things this does **not** do:
+
+- It does not touch the explicit path. `kata-cli update --platform opencode` still installs, which is the deliberate way back.
+- It does not treat a *partial* deletion as a removal. The probe is the platform's skills directory: if the directory is
+  there but individual skills are missing, that is damage and update repairs it. Only the absence of the whole surface
+  reads as a decision.
+
+Detection is unchanged: a platform can still be *detected* (Codex reports through the shared `AGENTS.md`, which kata
+writes for every platform and which survives removing `.codex`), but detection alone no longer forces a reinstall.
+
+
+### Payload baseline
+
+`kata-cli baseline [--platform <p>] [--language en|zh] [--change <id>] [--json]` measures what a phase costs before it
+runs: the rendered bytes and estimated tokens of each generated Skill, and the size of every authoritative read a
+packet requires. Byte counts are exact; token counts are `characters / 4` and are labelled as an estimate. Compare two
+baselines taken the same way rather than reading the number as a bill.
 
 ## Rollback
 

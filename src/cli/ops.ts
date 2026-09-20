@@ -58,6 +58,8 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
             id: run.id,
             steps: run.steps,
             expected: run.expected,
+            // A reader must not have to re-derive the comparison from two objects; the verdict is the comparison.
+            expectation: run.expectation,
             acceptances: run.acceptances,
             passed: run.acceptancesPassed,
             failed: run.acceptancesFailed,
@@ -68,6 +70,9 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
         releaseGates: report.releaseGates,
         unmeasured: report.unmeasured,
         durationMs: report.durationMs,
+        // The plan's manual criterion reads `concurrency` off this command, and a report that ran parallel without
+        // saying so is the failure the note below exists to avoid. Both surfaces carry it.
+        concurrency: report.concurrency,
         ...(persistPath ? { report: persistPath } : {}),
     };
 }
