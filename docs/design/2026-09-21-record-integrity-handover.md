@@ -212,6 +212,13 @@ shorten the falsification instructions.
   plan document for two days of rounds; the class only ended when the slice sections named the real carriers.
 - Two nodes can reach the same finding independently (twice in the last three rounds). Good for confidence, wasteful for
   cost; per-node surface digests (§22) are the mechanism, and using them is a project-side choice.
+- **A repair batch always costs one round.** A finding closes only when a *later* pass on the repaired revision does
+  not report it, so repairing invalidates the pass that found the defect by construction. Measured on one change:
+  seven consecutive repair→seal→round cycles, all of them prose, none of them a new capability.
+- **And a repair that is not swept by class costs a round per carrier.** One retracted claim lived in six carriers
+  across three files; each round found the next sibling, because the repair fixed the sentence the pass named instead
+  of the claim. When a finding is "this sentence overstates X", grep X's wording across every document and comment
+  before sealing — that is what finally ended it.
 
 ---
 
