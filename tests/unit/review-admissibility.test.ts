@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deriveVerdict, evaluateAdmissibility, type ReviewState } from '../../src/quality/review-state.js';
+import { admissibilityCorpus, scoreCorpus } from '../../src/eval/admissibility-corpus.js';
 
 /**
  * The judgment foundation: a conclusion is admissible only when each of its parts is checkable from the record.
@@ -181,5 +182,20 @@ describe('review admissibility', () => {
         expect(deriveVerdict(state({ hypotheses: [discharged({ outcome: 'abandoned', abandoned: { limit: 'time', why: 'x' } })] }))).toBe('budget_exhausted');
         expect(deriveVerdict(state({ hypotheses: [discharged({ outcome: 'confirmed' })], findings: [{ id: 'f', severity: 'major', message: 'm' }] }))).toBe('defects_found');
         expect(deriveVerdict(state({ hypotheses: [discharged({ observation: undefined })] }))).toBe('inconclusive');
+    });
+
+    it('scores the shape the old gate accepted as a false pass over the corpus', () => {
+        // The corpus and the predicate must meet, or the referee measures something the change does not alter. This is
+        // the join: the minimal record §2.1 identified (a reviewer stating "I did not reach a conclusion", which the old
+        // gate accepted) is refused here, and the corpus independently counts that shape as a false pass.
+        const minimal: ReviewState = { coverage: [], hypotheses: [], findings: [] };
+        const verdict = evaluateAdmissibility(minimal, revision);
+        expect(verdict.admissible).toBe(false);
+        expect(verdict.verdict).toBe('inconclusive');
+
+        const corpus = admissibilityCorpus();
+        const blind = scoreCorpus(corpus, corpus.map((entry) => ({ caseId: entry.id, verdict: 'no_defect_found' as const, findingIds: [] })));
+        expect(blind.criticalRecall).toBeLessThan(1);
+        expect(blind.falsePassRate).toBeGreaterThan(0);
     });
 });
