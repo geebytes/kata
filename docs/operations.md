@@ -525,6 +525,85 @@ kata-cli next --change <change-id>
 
 The `status` output includes `nextSkill` (for example `/kata-review` after hard evidence is collected) that maps to the phase column above. If running inside a platform that supports slash commands, invoke the suggested Skill directly; otherwise use the CLI equivalent.
 
+## Records the machine writes, and the prose you write
+
+A governed round requires a written record, and until now nothing checked it. Code has tests, RED/GREEN evidence and
+`claims[]`; "is the ledger row true" had nothing — so the cheapest falsifiable surface an independent reviewer could
+attack was the prose *about* the work. Measured on one change across thirteen passes: thirty de-duplicated findings,
+twenty of them about a ledger row, a count, a pointer or a doc sentence (seven of the eleven `major`). Repairing one row
+wrote another sentence, which became the next round's cheapest target.
+
+The seal now writes the factual half of the round's record itself, from sources that already hold each fact:
+
+```
+.kata/tasks/<task-id>/change-record-<revision-id>.json   # bound to the revision it describes
+.kata/tasks/<task-id>/change-record.json                 # the latest, for a reader who does not know the revision
+```
+
+```json
+{
+  "changedPaths": ["src/a.ts", "tests/unit/a.test.ts"],
+  "changedOutsideOwnership": ["tests/unit/a.test.ts"],
+  "checks": [{ "checkId": "typecheck", "exitCode": 0, "passed": true }],
+  "claimFailures": [],
+  "openFindings": [{ "id": "a-1", "severity": "major", "disposition": "open" }],
+  "counts": { "changedPaths": 2, "checks": 1, "passing": 1, "failures": 0, "openFindings": 1 }
+}
+```
+
+`changedPaths` comes from the repository's own change listing, not from the ownership declaration — that is the whole
+point: `changedOutsideOwnership` is where "the delta understates the change" stops being a sentence somebody wrote and
+becomes a list. Counts are derived so nobody counts by hand and gets one wrong; the one field you write is `judgement`,
+and it is labelled as prose because that is the half no diff can derive.
+
+A governed record row can also declare itself checkable, using the same `claims[]` shape an acceptance statement uses, and
+a false row then fails the seal by claim id instead of waiting for the next review round.
+
+The adversarial brief carries the same idea in its finding history: prior findings grouped by class with each class's
+count and disposition, so a reviewer attacks the repair instead of re-deriving a class an earlier round already named.
+The class is derived (`acceptance:<id>`, `path:<file>`, `record:<source>`) rather than declared, so it cannot be changed
+by naming it differently — and it is drawn only from sources a pass cannot write, which is what keeps a brief's hash
+stable when its own answer is recorded.
+
+## The audited surface, and applying it
+
+`kata-cli scope change --add <path> --reason "<why>"` records a decision. It does **not** change the task's
+`ownedPaths` — that is what a revision hashes and what a delta is computed over — so a recorded change has to be applied:
+
+```bash
+kata-cli scope change --change <task-id> --add <path> --reason "<why>"
+kata-cli scope apply  --change <task-id>          # writes the recorded surface; then re-seal
+kata-cli scope show   --change <task-id>          # the surface, its layers, its instruments, any unreported growth
+```
+
+Applying a change that was never recorded is refused with the reason. Recording without applying was previously silent: the
+recorded addition never reached `ownedPaths`, so six scope changes on one task left every revision hashing the same
+owned-path digest.
+
+The delta surface has the matching half of the same correction: it measures the union of the base revision's owned paths
+**and** every path the working tree reports as changed. Measuring only the declared set answered "did the declaration
+move", which let a round edit docs, tests or tooling outside its scope and still be told `unchanged`.
+
+## Bootstrapping a strict task
+
+A strict task needs an acceptance matrix before `design` will run. `open` could not supply one, so the only route was
+editing `task.json` by hand — the unverified surface everything above exists to remove. Declare the contract as a file:
+
+```json
+{
+  "acceptance": [{ "id": "AC-1", "statement": "…", "claims": [{ "id": "row", "statement": "…", "check": { "command": "test", "args": ["-f", "src/x.ts"], "expect": { "exitCode": 0 } } }] }],
+  "acceptanceMatrix": { "version": 1, "rows": [{ "acceptanceId": "AC-1", "implementationPaths": ["src/x.ts"], "testPaths": ["tests/unit/x.test.ts"], "evidence": [{ "id": "ac-1", "kind": "test", "command": "vitest", "testSelector": "tests/unit/x.test.ts" }], "verificationLevel": "unit" }] }
+}
+```
+
+```bash
+kata-cli open --change <task-id> --isolation current_worktree --development tdd --review strict \
+    --bootstrap-file bootstrap.json
+```
+
+The matrix is validated **at `open`**: a contract whose matrix does not cover its criteria is refused by the command that
+was given the bad input, before the task directory exists, rather than at `design` three commands later.
+
 ## Workflow diagnostics
 
 Every workflow command returns a JSON envelope. Common fields:

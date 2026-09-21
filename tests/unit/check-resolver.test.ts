@@ -43,10 +43,12 @@ describe('matrix check resolution', () => {
     });
 
     it('appends a selector to a known runner', () => {
+        // `run` is not decoration: `vitest.mjs` with no subcommand starts watch mode, so the resolved check never
+        // returned and every matrix test check timed out. See `tests/unit/matrix-runner-subcommand.test.ts`.
         expect(resolveCheckForRow(row(), { kind: 'test', command: 'vitest', testSelector: 'tests/foo.test.ts' }, root))
             .toMatchObject({
                 command: process.execPath,
-                args: [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'tests/foo.test.ts'],
+                args: [join(root, 'node_modules', 'vitest', 'vitest.mjs'), 'run', 'tests/foo.test.ts'],
             });
     });
 

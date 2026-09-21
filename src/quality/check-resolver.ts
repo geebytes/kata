@@ -23,6 +23,16 @@ export interface MatrixRunnerSpec {
      */
     nodeEntry?: string;
     /**
+     * Arguments the Node entry needs to run once and exit.
+     *
+     * `vitest.mjs` with no subcommand starts **watch mode**: it prints `DEV`, runs the selector, and then waits for file
+     * changes forever. Every matrix-derived test check therefore hung until its timeout and the seal could never pass —
+     * measured here as `exitCode: 124` on all five declared matrix checks, against a `vitest` that finishes a focused
+     * selector in about two seconds when told to `run`. Recorded as data so the next runner that needs a subcommand has
+     * somewhere to say so.
+     */
+    nodeEntryArgs?: string[];
+    /**
      * A command name kata passes to the Node binary as the first argument, for the selector path only. Preserved from
      * the previous implementation, where `pytest` resolved to `node pytest …`.
      */
@@ -35,7 +45,7 @@ export interface MatrixRunnerSpec {
 
 /** The runners a matrix declaration may name. Each entry is one place to change when a package layout moves. */
 export const matrixRunners: Record<string, MatrixRunnerSpec> = {
-    vitest: { nodeEntry: join('node_modules', 'vitest', 'vitest.mjs'), selectorCapable: true },
+    vitest: { nodeEntry: join('node_modules', 'vitest', 'vitest.mjs'), nodeEntryArgs: ['run'], selectorCapable: true },
     tsc: { nodeEntry: join('node_modules', 'typescript', 'bin', 'tsc'), selectorCapable: false },
     pytest: { nodeCommandOnSelectorPath: 'pytest', selectorCapable: true },
     uv: { wholeCommandLine: true, selectorCapable: true },
@@ -142,6 +152,8 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
             const entry = spec?.nodeEntry;
             const runtimeEntry = spec?.nodeCommandOnSelectorPath
                 ?? (entry ? join(runtimeProjectDir, entry) : undefined);
+            // The entry's own subcommand, when the runner needs one to run once instead of starting a watcher.
+            const runtimeEntryArgs = spec?.nodeEntryArgs;
             return {
                 id,
                 source: 'matrix',
@@ -149,7 +161,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
                 kind: evidence.kind,
                 ...coveredByOf(evidence),
                 command: runtimeEntry ? process.execPath : rawCommand!,
-                args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...selectorArgs(selector)],
+                args: [...(runtimeEntry ? [runtimeEntry] : []), ...(runtimeEntryArgs ?? []), ...args, ...selectorArgs(selector)],
                 cwd: runtimeProjectDir,
                 timeoutMs: timeoutForKind(evidence.kind),
                 testSelector: selector,
@@ -160,7 +172,8 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
 
     const [rawCommand, ...args] = template.split(/\s+/);
     const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : undefined;
-    const entry = matrixRunners[rawCommand!]?.nodeEntry;
+    const spec = matrixRunners[rawCommand!];
+    const entry = spec?.nodeEntry;
     const runtimeEntry = entry ? join(runtimeProjectDir, entry) : undefined;
     return {
         id,
@@ -169,7 +182,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
         kind: evidence.kind,
         ...coveredByOf(evidence),
         command: runtimeEntry ? process.execPath : rawCommand!,
-        args: [...(runtimeEntry ? [runtimeEntry] : []), ...args, ...(selector ? selectorArgs(selector) : [])],
+        args: [...(runtimeEntry ? [runtimeEntry] : []), ...(spec?.nodeEntryArgs ?? []), ...args, ...(selector ? selectorArgs(selector) : [])],
         cwd: runtimeProjectDir,
         timeoutMs: timeoutForKind(evidence.kind),
         ...(selector ? { testSelector: selector } : {}),

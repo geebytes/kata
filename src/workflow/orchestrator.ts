@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTask, type CreateTaskInput } from '../core/task.js';
+import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
@@ -36,6 +36,8 @@ import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { readTask } from '../core/task.js';
 import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
+import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
+import { readTrackedFindings } from '../quality/finding-disposition.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
@@ -55,7 +57,7 @@ const judgeActor: Actor = { id: 'kata-judge', role: 'judge' };
 
 export interface CommandOptions {
     title?: string;
-    acceptance?: Array<{ id?: string; statement: string }>;
+    acceptance?: Array<{ id?: string; statement: string; claims?: ClaimDeclaration[] }>;
     requirements?: Array<{ id?: string; statement: string; source?: string }>;
     checks?: CheckCommand[];
     guard?: CometGuard;
@@ -92,6 +94,21 @@ export interface CommandOptions {
     workflowProfile?: WorkflowProfile;
     ownedPaths?: string[];
     waivers?: Waiver[];
+    /**
+     * The declared contract a strict task is born with: acceptance criteria, acceptance matrix, upstream coverage.
+     *
+     * Without it `open` could only write the placeholder criterion, while `design` refuses to run unless the matrix
+     * already exists — so a strict task's only route to a designable state was hand-editing `task.json`, and the
+     * platform had no way to check what was written there. Supplied as a file so the criteria carry their claims and
+     * the matrix its rows in one record.
+     */
+    bootstrapFile?: string;
+    /** The parsed bootstrap contract itself. `bootstrapFile` is the CLI's spelling; this is what the orchestrator takes. */
+    bootstrap?: {
+        acceptance: Array<{ id?: string; statement: string; claims?: ClaimDeclaration[] }>;
+        acceptanceMatrix?: AcceptanceMatrix;
+        upstreamCoverage?: UpstreamCoverage;
+    };
     signal?: AbortSignal;
     onProgress?: (event: CheckProgressEvent) => void;
 }
@@ -164,11 +181,31 @@ async function cmdOpen(
             );
         }
     }
-    const acceptance = options.acceptance?.length
-        ? options.acceptance
-        : requirements.length > 0
-            ? requirements.map((r, i) => ({ id: `AC-${i + 1}`, statement: r.statement }))
-            : [{ id: 'AC-1', statement: 'Implement the change successfully.' }];
+    // A declared contract, when one is supplied, is the task's own: it replaces the placeholder criterion rather than
+    // sitting beside it. The matrix is validated here and refused before the task directory exists, so a contract that
+    // cannot be satisfied leaves nothing behind to clean up — and, more to the point, the *open* command is where the
+    // mistake was made, which is where it should be reported.
+    const bootstrap = options.bootstrap;
+    if (bootstrap) {
+        const bootstrapErrors = validateMatrix(bootstrap.acceptance, bootstrap.acceptanceMatrix);
+        if (bootstrapErrors.length > 0) {
+            return {
+                command: 'open', taskId, phase: 'intake', success: false,
+                error: `Bootstrap contract refused: ${bootstrapErrors.map((error) => error.message).join('; ')}`,
+                diagnostics: { bootstrapErrors },
+            };
+        }
+        for (const criterion of bootstrap.acceptance) {
+            if (criterion.id) assertValidAcceptanceId(criterion.id);
+        }
+    }
+    const acceptance = bootstrap?.acceptance.length
+        ? bootstrap.acceptance
+        : options.acceptance?.length
+            ? options.acceptance
+            : requirements.length > 0
+                ? requirements.map((r, i) => ({ id: `AC-${i + 1}`, statement: r.statement }))
+                : [{ id: 'AC-1', statement: 'Implement the change successfully.' }];
     const input: CreateTaskInput = {
         root,
         id: taskId,
@@ -177,6 +214,8 @@ async function cmdOpen(
         workflowProfile: options.workflowProfile ?? defaultWorkflowProfile(),
         ...(requirements.length > 0 ? { requirements: requirements.map((r, i) => ({ id: r.id ?? `REQ-${i + 1}`, statement: r.statement, ...(r.source ? { source: r.source } : {}), confirmedAt: new Date().toISOString() })) } : {}),
         ...(options.ownedPaths?.length ? { ownedPaths: options.ownedPaths } : {}),
+        ...(bootstrap?.acceptanceMatrix ? { acceptanceMatrix: bootstrap.acceptanceMatrix } : {}),
+        ...(bootstrap?.upstreamCoverage ? { upstreamCoverage: bootstrap.upstreamCoverage } : {}),
     };
 
     const task = await createTask(input);
@@ -418,6 +457,25 @@ async function cmdBuild(
     }
 
     const task = await readTask(root, taskId);
+    // C3, and the order matters: a claim whose check cannot fail is refused **before** the check set is resolved. It used
+    // to be refused after, which meant `resolveClaimChecks` dereferenced `claim.check.expect.exitCode` on exactly the
+    // declaration the refusal exists to reject — so the documented 'a check that cannot fail is not evidence' message
+    // was replaced by `Cannot read properties of undefined (reading 'exitCode')`. The refusal is the better error and it
+    // is the one the design promises, so the guard runs first and the resolver never sees an unusable claim.
+    const claimRefusalsEarly = validateClaims(task.acceptance ?? []);
+    if (claimRefusalsEarly.length > 0) {
+        return {
+            command: 'build',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Acceptance claims cannot be checked: ${claimRefusalsEarly.map((refusal) => refusal.detail).join('; ')}`,
+            diagnostics: {
+                claimRefusals: claimRefusalsEarly,
+                remedy: 'Give each claim a check with an expected exit code (a check that cannot fail is not evidence).',
+            },
+        };
+    }
     let checks: CheckCommand[];
     try {
         checks = await resolveSealChecks(root, task, options);
@@ -584,6 +642,24 @@ async function cmdBuild(
     });
     await progress.finish();
     await writeEvidence(root, taskId, evidence);
+    // A2: the factual half of the round's record is written from what the machine holds — the working tree's changed
+    // paths, the envelopes just collected, the claim outcomes, the tracked findings — rather than asked of the author.
+    // The measurement behind it: of thirty de-duplicated findings across thirteen passes of one change, twenty (seven of
+    // the eleven `major`) were about the author's *prose about their own work* — a ledger row, a count, a pointer. Prose
+    // had no checker, so it was the cheapest falsifiable surface a reviewer could attack, and every repair wrote more of
+    // it. The author is left `judgement`: why this fix, what was traded away.
+    const changeRecord = revision
+        ? await buildChangeRecord({
+            root,
+            taskId,
+            revisionId: revision.id,
+            ownedPaths,
+            evidence,
+            claimFailures: [],
+            findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition })),
+        }).catch(() => null)
+        : null;
+    if (changeRecord) await writeChangeRecord(root, taskId, changeRecord).catch(() => null);
     // C3: what the claims did, against the evidence just collected. A claim whose evidence is absent counts as failed —
     // the sentence declared itself checkable, and nothing checked it.
     const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);

@@ -230,6 +230,18 @@ export interface AdversarialBriefInput {
      * somebody already made.
      */
     knownFindings?: Array<{ id: string; severity: string; message: string; disposition: string; dispositionReason?: string; dispositionBy?: string; source: string }>;
+    /**
+     * Prior findings grouped by class, with each class's count and disposition.
+     *
+     * Cheap, and it does not lower the falsification bar. A reviewer who re-derives a class an earlier round already
+     * named and a repair already addressed spends the pass on the wrong question — three consecutive rounds of one
+     * measured change landed on the same record-accuracy class that way, each paying the full cost to find something
+     * already fixed. A reviewer who still believes a repaired class is open reports it as a finding *against the
+     * decision*, which is the rule the dispositions already follow.
+     */
+    findingHistory?: Array<{ class: string; severity: string; id: string; message: string; disposition: string }>;
+    /** An optional explanation of how `class` was determined, printed with the table so the grouping is auditable. */
+    findingHistoryNote?: string;
 }
 
 /**
@@ -271,6 +283,33 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
             .join('\n')
         : '- (nothing has been dispositioned for this task)';
 
+
+    // The class table: one row per class, with its count and the dispositions that occurred in it. `repaired` is called
+    // out separately because that is the decision a reviewer needs before choosing where to spend the pass — a class
+    // whose findings are all `fixed` was already addressed on this content.
+    const history = (input.findingHistory ?? []);
+    const classes = [...new Set(history.map((finding) => finding.class))].sort();
+    const classRows = classes.map((klass) => {
+        const members = history.filter((finding) => finding.class === klass);
+        const dispositions = [...new Set(members.map((finding) => finding.disposition))].sort();
+        const sevAs = [...new Set(members.map((finding) => finding.severity))].sort();
+        const repaired = members.every((finding) => finding.disposition === 'fixed');
+        return `- ${klass}: ${members.length} finding(s) [${sevAs.join('/')}] — disposition: ${dispositions.join(', ')}${repaired ? ' (repaired)' : ' (not repaired)'}`;
+    }).join('\n');
+    const classSection = classes.length > 0
+        ? `## Findings by class, and what was done about each
+
+Grouped so you do not re-derive a class an earlier round already named. A class marked **(repaired)** was addressed on
+this content; attacking it again is welcome only as a finding against the decision, not as a new discovery.
+
+${input.findingHistoryNote ? `${input.findingHistoryNote}\n\n` : ''}${classRows}
+
+Earlier findings in each class, in full:
+
+${history.map((finding) => `- [${finding.class}] ${finding.severity} ${finding.id}: ${finding.message} (${finding.disposition})`).join('\n')}
+
+`
+        : '';
     const readingSet = (input.readingSet ?? []).length > 0
         ? (input.readingSet ?? [])
             .map((entry) => `- ${entry.path}${entry.lines === null || entry.lines === undefined ? '' : ` (~${entry.lines} lines)`} — ${entry.why}`)
@@ -451,6 +490,8 @@ ${findings}
 ## Already known, already decided — do not re-report these
 
 ${known}
+
+${classSection}
 
 If you believe one of those decisions is wrong, say so as a finding **against the decision**, with your reasoning: a
 decision can be wrong, but re-reporting it as a new discovery wastes the pass and hides the fact that it was decided.
@@ -1146,6 +1187,22 @@ export async function buildAdversarialBrief(
         ownedPaths: revision?.ownedPaths ?? task.ownedPaths ?? [],
         reviewFindings: review.findings,
         knownFindings: decidedReviewFindings(review.findings),
+        // D: the class history, so a reviewer attacks the repair instead of re-deriving a class an earlier round named.
+        //
+        // Scoped to findings from a **durable** source, deliberately. The adversarial record of the pass being recorded is
+        // listed in `BRIEF_VOLATILE_INPUTS` — its attempts *and its dispositions* move when the pass lands — so reading
+        // the live tracked set put this round's own finding into this round's brief and moved the hash the gate
+        // recomputes. Two existing tests caught exactly that (`a pass does not change the brief it answered`, `the brief
+        // is reproducible`), and both are right: a round's findings belong to the *next* round's history.
+        findingHistory: (await readTrackedFindingsForBrief(root, taskId))
+            .filter((finding) => finding.source !== `adversarial-${node}`)
+            .map((finding) => ({
+                class: findingClassOf(finding),
+                severity: finding.severity,
+                id: finding.id,
+                message: finding.message,
+                disposition: finding.disposition,
+            })),
         // M1: point at the envelopes and name the project's own checks, so the reviewer can read rather than re-derive.
         evidencePaths: await evidenceEnvelopePaths(root, taskId, evidence),
         declaredChecks: (await readProjectQualityChecks(root)).map((check) => ({ id: check.name, name: check.name })),
@@ -1406,6 +1463,32 @@ async function readProjectQualityChecks(root: string): Promise<Array<{ name: str
  * A one-line filter over a durable source, on purpose — see the note on `knownFindings` for what happens when a brief
  * carries state that recording a pass rewrites.
  */
+/**
+ * A finding's class, derived from the two fields that describe it — its acceptance criterion and its path.
+ *
+ * Derived rather than declared, so grouping a finding needs no cooperation from the author and cannot be gamed by
+ * writing a different class name. Two findings about the same criterion, or the same file, are findings about the same
+ * thing, which is exactly what a reviewer needs to avoid re-deriving a class an earlier round already named. A finding
+ * with neither is grouped under the record it came from, which is the honest answer for a finding about the record
+ * itself — the class the measured change kept re-finding.
+ */
+export function findingClassOf(finding: { acceptanceId?: string; path?: string; source?: string }): string {
+    if (finding.acceptanceId) return `acceptance:${finding.acceptanceId}`;
+    if (finding.path) return `path:${finding.path}`;
+    return `record:${finding.source ?? 'unknown'}`;
+}
+
+/**
+ * The tracked findings, imported dynamically.
+ *
+ * `finding-disposition` imports this module's types, so a static edge here would be a cycle; the import is dynamic for
+ * the same reason the review read above is.
+ */
+async function readTrackedFindingsForBrief(root: string, taskId: string) {
+    const { readTrackedFindings } = await import('./finding-disposition.js');
+    return readTrackedFindings(root, taskId).catch(() => []);
+}
+
 function decidedReviewFindings(
     findings: Array<{ id: string; severity: string; message: string; disposition?: string; dispositionReason?: string; dispositionBy?: string }>,
 ): Array<{ id: string; severity: string; message: string; disposition: string; dispositionReason?: string; dispositionBy?: string; source: string }> {

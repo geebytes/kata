@@ -39,7 +39,8 @@ import { createWorkflowHandoff } from '../workflow/delegation-prompt.js';
 import { activateHookTask } from '../hooks/runtime.js';
 import { createPacketHash } from './tasks.js';
 import { type KataCommand } from '../workflow/orchestrator.js';
-import { validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
+import { validateMatrix, validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
+import type { AcceptanceMatrix, ClaimDeclaration, UpstreamCoverage } from '../core/task.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';
 import { argValue, parseChangeArg } from './invocation.js';
 import { outputResult } from './output.js';
@@ -92,6 +93,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     const branchPreparationOnly = workflowProfile?.isolationMode === 'git_flow' && command !== 'open';
     const commandToRun: KataCommand = branchPreparationOnly ? 'open' : command;
     const openRequirements = command === 'open' ? await readRequirementsFile(argv.slice(1)) : undefined;
+    const bootstrap = command === 'open' ? await readBootstrapFile(argv.slice(1)) : undefined;
     const result = await runCommand(commandToRun, change, root, {
         title: openRequirements?.[0]?.statement.slice(0, 80) ?? (command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`),
         ...(openRequirements ? { requirements: openRequirements } : command === 'hotfix' || command === 'tweak'
@@ -119,6 +121,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
             ? { discoverChecks: argv.includes('--discover-checks') && !argv.includes('--no-discover-checks') }
             : {}),
         ...(waivers ? { waivers } : {}),
+        ...(commandToRun === 'open' && bootstrap ? { bootstrap } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
         ...(workflowProfile ? { workflowProfile } : {}),
         ...(onProgress ? { onProgress, signal: abortController?.signal } : {}),
@@ -436,6 +439,63 @@ export async function readRequirementsFile(argv: string[]): Promise<Array<{ id?:
             ...(typeof item.source === 'string' ? { source: item.source } : {}),
         };
     });
+}
+
+/**
+ * The declared contract a strict task is born with, read from `--bootstrap-file`.
+ *
+ * Shaped like `--requirements-file` on purpose: both take a path, both validate before anything is written, and both
+ * fail loudly at the command that was given the bad input rather than at the gate three commands later. The
+ * difference is that this one carries the matrix too — that is the record `design` refuses to proceed without, and
+ * the reason `open` had no honest way to produce a strict task.
+ */
+export async function readBootstrapFile(argv: string[]): Promise<{
+    acceptance: Array<{ id?: string; statement: string; claims?: ClaimDeclaration[] }>;
+    acceptanceMatrix?: AcceptanceMatrix;
+    upstreamCoverage?: UpstreamCoverage;
+} | undefined> {
+    const path = valueAfter(argv, '--bootstrap-file');
+    if (!path) return undefined;
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(await readFile(path, 'utf8'));
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Invalid bootstrap file: ${detail}`);
+    }
+    if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Invalid bootstrap file: expected an object with an acceptance array.');
+    }
+    const body = parsed as { acceptance?: unknown; acceptanceMatrix?: unknown; upstreamCoverage?: unknown };
+    if (!Array.isArray(body.acceptance) || body.acceptance.length === 0) {
+        throw new Error('Invalid bootstrap file: acceptance must be a non-empty array, because a task without criteria has no contract.');
+    }
+    const acceptance = body.acceptance.map((item) => {
+        const criterion = item as { id?: unknown; statement?: unknown; claims?: unknown };
+        if (typeof criterion.statement !== 'string' || !criterion.statement.trim()) {
+            throw new Error('Invalid bootstrap file: each acceptance criterion needs a non-empty statement.');
+        }
+        return {
+            ...(typeof criterion.id === 'string' ? { id: criterion.id } : {}),
+            statement: criterion.statement,
+            ...(Array.isArray(criterion.claims) ? { claims: criterion.claims as ClaimDeclaration[] } : {}),
+        };
+    });
+
+    const acceptanceMatrix = body.acceptanceMatrix as AcceptanceMatrix | undefined;
+    const errors = validateMatrix(acceptance, acceptanceMatrix);
+    if (errors.length > 0) {
+        // Refused where it is written. A matrix that disagrees with its criteria is a contract nobody can satisfy,
+        // and discovering that at `design` (or at seal) spends the author's time on the wrong question.
+        throw new Error(`Invalid bootstrap file: ${errors.map((error) => error.message).join('; ')}`);
+    }
+
+    return {
+        acceptance,
+        ...(acceptanceMatrix ? { acceptanceMatrix } : {}),
+        ...(body.upstreamCoverage ? { upstreamCoverage: body.upstreamCoverage as UpstreamCoverage } : {}),
+    };
 }
 
 export function gitFlowBranchKindForCommand(command: KataCommand): GitFlowBranchKind {

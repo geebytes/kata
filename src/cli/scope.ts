@@ -9,9 +9,14 @@ import { readTask } from '../core/task.js';
  * addition both expanded what the gate considered in scope and invalidated the evidence, restarting the search, with no
  * point at which the cost was visible. These commands are that point.
  */
-export async function runScopeCommand(argv: string[]): Promise<Record<string, unknown>> {
+/**
+ * `kata-cli scope …`.
+ *
+ * `root` is threaded in for the same reason every other command's is: the workspace is resolved once, at the entry point,
+ * so a test (or an embedder) can point the command at a repository other than the process's own.
+ */
+export async function runScopeCommand(argv: string[], root: string = resolveWorkspaceRoot()): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
-    const root = resolveWorkspaceRoot();
     if (!subcommand || subcommand === '--help' || subcommand === '-h') {
         return {
             command: 'scope help',
@@ -25,7 +30,7 @@ export async function runScopeCommand(argv: string[]): Promise<Record<string, un
     }
 
     const change = parseChangeArg(rest);
-    if (!change) throw new Error('Usage: kata-cli scope <show|change|declare|boundary> --change <task-id>');
+    if (!change) throw new Error('Usage: kata-cli scope <show|change|apply|declare|boundary> --change <task-id>');
 
     if (subcommand === 'show') {
         const { readScopeChanges, unreportedScopeGrowth } = await import('../quality/scope-change.js');
@@ -47,6 +52,23 @@ export async function runScopeCommand(argv: string[]): Promise<Record<string, un
             changes: record.changes,
             // The thing the measured task did four times without saying so.
             ...(undecided.length > 0 ? { unreportedGrowth: undecided } : {}),
+        };
+    }
+
+    if (subcommand === 'apply') {
+        // The subcommand `scope change` has always told the operator to run, and which did not exist: recording a scope
+        // change wrote the decision and left `ownedPaths` untouched, so the audited surface never actually grew.
+        const { applyScopeChange } = await import('../quality/scope-change.js');
+        const changeId = valueAfter(rest, '--id');
+        const applied = await applyScopeChange(root, change, changeId);
+        if (!applied.applied) throw new Error(applied.reason ?? 'the scope change could not be applied');
+        return {
+            command: 'scope apply',
+            taskId: change,
+            ...(changeId ? { id: changeId } : {}),
+            applied: true,
+            ownedPaths: applied.ownedPaths ?? [],
+            next: 'Re-seal so the next revision hashes the grown surface; the change resets what the next round narrows against.',
         };
     }
 
@@ -77,7 +99,7 @@ export async function runScopeCommand(argv: string[]): Promise<Record<string, un
             removed: result.removed,
             baseRevisionId: result.baseRevisionId ?? null,
             ...(result.conflicts?.length ? { conflicts: result.conflicts } : {}),
-            next: 'Run `kata-cli scope apply` or re-seal; the change resets what the next round narrows against.',
+            next: 'Run `kata-cli scope apply --change <task-id>`; the change resets what the next round narrows against.',
         };
     }
 

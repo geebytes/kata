@@ -1,4 +1,5 @@
 import { computePathDigests, type TaskRevision } from '../workflow/revision.js';
+import { changedGitPaths } from '../core/git.js';
 
 /**
  * What changed between two revisions of the same task, by content (F2 of the finding-lifecycle design).
@@ -71,12 +72,24 @@ export async function changeSurface(
     return { status: 'available', ...diff };
 }
 
-/** The same comparison against what is on disk right now, taken over the base revision's owned set. */
+/**
+ * The same comparison against what is on disk right now, over the base revision's owned set **plus** every path the
+ * working tree reports as changed.
+ *
+ * The second half is the correction. Measuring only `base.ownedPaths` answers "did the declared surface move", which is
+ * a different question from "did this round change anything" — and the difference is what a round that edited docs,
+ * tests or tooling outside its declaration exploited: the surface said `unchanged`, so the next pass was told there was
+ * nothing to re-derive. The fact is available and cheap (`git status`), the base revision's digests are already known,
+ * and a path the base never hashed has every reason to count as added rather than to be invisible.
+ */
 export async function changeSurfaceAgainstWorkspace(root: string, base: TaskRevision): Promise<DeltaStatus> {
     if (!base.pathDigests) {
         return { status: 'delta_unavailable', reason: `revision ${base.id} was sealed before per-path digests were recorded` };
     }
-    const currentDigests = await computePathDigests(root, base.ownedPaths);
+    // The union, sorted, so the digest tables line up: the base's own paths (which it has digests for) and every path
+    // git reports as changed (which may be outside the declaration entirely).
+    const paths = [...new Set([...base.ownedPaths, ...changedGitPaths(root)])].sort();
+    const currentDigests = await computePathDigests(root, paths);
     const diff = diffPathDigests(base.pathDigests, currentDigests);
     if (diff.changedPaths.length === 0) return { status: 'unchanged' };
     return { status: 'available', ...diff };

@@ -1,4 +1,4 @@
-import { scopeChangesPath } from '../core/layout.js';
+import { scopeChangesPath, taskPath } from '../core/layout.js';
 import { mutateTaskArtefact } from '../core/state.js';
 import { readValidatedOptional } from '../core/schema.js';
 
@@ -135,4 +135,51 @@ export async function unreportedScopeGrowth(root: string, taskId: string, declar
     // growth.
     const recorded = new Set(changes.at(-1)?.scope ?? []);
     return declared.filter((path) => !recorded.has(path)).sort();
+}
+
+/** What applying a recorded scope change did, or why it could not. */
+export interface ScopeApplyResult {
+    applied: boolean;
+    /** The owned paths after the change, when it applied. */
+    ownedPaths?: string[];
+    reason?: string;
+}
+
+/**
+ * Applies a recorded scope change to the task's `ownedPaths`.
+ *
+ * Recording was the whole mechanism, and it was half of one: `recordScopeChange` writes the decision into
+ * `scope-changes.json`, while `ownedPaths` is what a revision hashes, what a delta is computed over and what the
+ * adversarial gate re-verifies. So the six scope changes one measured task recorded changed the audited surface by
+ * nothing at all — every revision carried the same owned-path digest (`4522af1eaa…`) — and the CLI's own output pointed
+ * at `kata-cli scope apply`, a subcommand that did not exist. This is that subcommand's engine: the recorded decision is
+ * applied, or it is refused and said so.
+ *
+ * The change is written through `mutateTaskArtefact` so it lands under the task lock like every other task mutation, and
+ * the read-modify-write is inside that lock rather than around it.
+ */
+export async function applyScopeChange(root: string, taskId: string, changeId?: string): Promise<ScopeApplyResult> {
+    const record = await readScopeChanges(root, taskId);
+    const change = changeId
+        ? record.changes.find((candidate) => candidate.id === changeId)
+        : record.changes.at(-1);
+    if (!change) {
+        return {
+            applied: false,
+            reason: changeId
+                ? `No recorded scope change '${changeId}' exists for task '${taskId}'; record it with \`kata-cli scope change\` before applying it.`
+                : `No recorded scope change exists for task '${taskId}'; there is nothing to apply.`
+        };
+    }
+
+    let ownedPaths: string[] = [];
+    await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (raw) => {
+        const task = JSON.parse(raw) as { ownedPaths?: string[] };
+        // The recorded `scope` is the complete resulting surface, so applying is a set, not a merge. Merging would let a
+        // removal (a deliberate narrowing) be silently undone by the union.
+        ownedPaths = [...new Set(change.scope)].sort();
+        const next = { ...task, ownedPaths };
+        return `${JSON.stringify(next, null, 2)}\n`;
+    });
+    return { applied: true, ownedPaths };
 }

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kata/change-record.schema.json",
+  "title": "Change record",
+  "type": "object",
+  "required": [
+    "version",
+    "taskId",
+    "revisionId",
+    "changedPaths",
+    "changedOutsideOwnership",
+    "ownedPaths",
+    "checks",
+    "claimFailures",
+    "openFindings",
+    "counts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changedPaths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "changedOutsideOwnership": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "ownedPaths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["checkId", "name", "command", "exitCode", "passed"],
+        "additionalProperties": false,
+        "properties": {
+          "checkId": { "type": "string" },
+          "name": { "type": "string" },
+          "command": { "type": "string" },
+          "exitCode": { "type": ["integer", "null"] },
+          "passed": { "type": "boolean" }
+        }
+      }
+    },
+    "claimFailures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["checkId", "acceptanceId", "claimId", "statement", "expect", "actualExitCode", "missing"],
+        "additionalProperties": false,
+        "properties": {
+          "checkId": { "type": "string", "minLength": 1 },
+          "acceptanceId": { "type": "string", "minLength": 1 },
+          "claimId": { "type": "string", "minLength": 1 },
+          "statement": { "type": "string" },
+          "expect": {
+            "type": "object",
+            "required": ["exitCode"],
+            "additionalProperties": false,
+            "properties": { "exitCode": { "type": "integer" } }
+          },
+          "actualExitCode": { "type": ["integer", "null"] },
+          "missing": { "type": "boolean" }
+        }
+      }
+    },
+    "openFindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "minLength": 1 },
+          "disposition": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["changedPaths", "checks", "passing", "failures", "openFindings"],
+      "additionalProperties": false,
+      "properties": {
+        "changedPaths": { "type": "integer", "minimum": 0 },
+        "checks": { "type": "integer", "minimum": 0 },
+        "passing": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "integer", "minimum": 0 },
+        "openFindings": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "judgement": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
