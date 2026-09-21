@@ -1215,72 +1215,15 @@ invariant rather than as good intentions.
 | No absolute quantifier without its range, and mark untested branches | r40/r41: "prose is not machine-checked" (two guards check it), "不会被任何门禁检查覆盖" (a guard covers it), "每行/任何" | the coverage section names the two guards and their ranges, and marks the branch it did not measure as *not measured* |
 | Past delivery makes present-tense text false; mark it | r42: the audit report was still named as outside the surface after being merged in; two `现状` lines survived their own delivery | pre-delivery statements read "（交付前；现已不成立，本条按历史读）" |
 
-### 27.5 Work list: four changes, with the evidence for each
+### 27.5 Work list, traps and handover: one document, not two
 
-The C-list (§14) fixed *when* a pass runs and *what* it binds to. These four are about the **record**, which is where
-this loop's findings actually landed. Order by leverage; each must be able to fail, and each must be shown to fail by
-planting a false statement before it is called delivered.
+The four changes this loop justifies (A generated records, B `claims[]` for record rows, C apply the recorded scopes,
+D class history in the brief), the traps measured the hard way, the self-evidence each change must produce, the
+invariants that must survive, and the author-side rules the platform cannot enforce are **not repeated here**. They live
+in one place, so that a reader of either document cannot act on a stale copy:
 
-**A — the change record is generated, not written.** The seal already holds the git diff, the evidence set, the check
-results, the claims and the findings. Emit a machine-written record from them (paths, checks, claims, findings, the
-surface digests) and allow the author only *judgements and trade-offs* — which cannot be derived, and are therefore the
-only prose worth reviewing. Evidence this is the root fix: 37/50 findings are of the derivable kind, and every repair
-in r36–r44 wrote more of them. Acceptance: (a) planting a false derivable fact in the generated block is impossible
-because the block is regenerated and compared byte-wise (the k2skills interim checker is a worked example of this
-shape — and of its limit: it protected the block and left the prose outside it); (b) a record whose prose states a
-derivable fact is refused with the reason, and the reason names the field. Invariant: **the record may never be the only
-place a fact is true** — a fact that matters must exist in code, evidence or a check.
+**`2026-09-21-record-integrity-handover.md`** — self-contained, and the document to hand to whoever owns the record side.
 
-**B — `claims[]` reach the record's own rows.** C3 (`7eee82e`, `76649a0`) runs acceptance statements as checks and
-reports by claim id; the same mechanism applies to ledger/report rows, which are the surface the last seven rounds
-falsified. Acceptance: a planted false ledger row fails the seal and names the row; a true one passes. Invariant: a
-claim's `check` must be able to fail (`expect.exitCode` required — see the trap in §27.6), and a row with no check is
-marked *unverified* rather than silently counted.
-
-**C — apply the scope changes.** Make the effective surface `ownedPaths ∪ recorded scope changes`, computed at seal and
-stamped into the revision, with the reason for each exclusion recorded. Acceptance: after `scope change --add design.md`,
-the next revision's digest changes and the delta covers that file; an *unrecorded* out-of-surface edit is still refused.
-Invariant: never silently widen — if the platform cannot compute the union, it must fail closed and say which record it
-could not apply.
-
-**D — the brief carries the class history.** For each class of finding present in the record, add: how many times, the
-last disposition, and the invariant that now covers it. Acceptance: a brief for a revision whose prior rounds found the
-same class names that class and its disposition; a brief for the first round does not invent one. Invariant: this is
-context, not a verdict — it must not tell the pass what to conclude (I1), and it must not shorten the instructions to
-falsify.
-
-### 27.6 Handover entry (for whoever owns kata)
-
-**What is already there, so nothing above is a re-proposal.** C1–C7, the §21 platform gaps (`instruments[]`,
-`boundaries[]`, `scope-changes.json`, `findings list --byLayer`), the brief's reading set, and the M1/M2 brief
-instructions are all delivered (§26). What is *not* delivered is: applying recorded scopes (M2's second half), any
-verifier for the record (M1), and class history in the brief (M3).
-
-**Traps measured in this loop, worth having in the code and in the tests.**
-
-- `check = {command: <executable>, args: [...], expect: {exitCode: n}}` — `command` must be an **executable**; a whole
-  command line in it is treated as a missing program (10/10 claims red with exit 127).
-- `expect.exitCode` is **required**: without it `resolveClaimChecks` throws
-  `Cannot read properties of undefined (reading 'exitCode')` and the diagnostics are mislabelled `matrixError` — so the
-  platform's own `validateClaims` (which rejects a claim with no expected result) is unreachable on that input.
-- The generated `.kata/schemas/task.schema.json` copy inside a project lags the engine's schema (no `claims`,
-  `coveredBy`, `boundaries`, `instruments`, `engine`); a project reading the copy will believe a legal declaration is
-  illegal. Refresh the generator, or stamp the copy's version.
-- `adversarial record`'s schema is `additionalProperties: false` and the error does not list the allowed keys; a
-  top-level `taskId` is legal on findings and illegal at the top level. Project the payload or keep the raw file.
-- A pass that dies without writing its result file leaves the revision with **no** record for that node (r38's verify),
-  and nothing in `adversarial status` distinguishes "never ran" from "ran and crashed".
-- Two nodes can reach the same finding independently (r41 and r42 did, in both cases one `major` and one pass phrasing
-  the same fact): good for confidence, wasteful for cost. Per-node surface digests (§22) are the mechanism; using them
-  is a project-side choice.
-
-**Self-evidence required before any of A–D is called delivered.** The new gate must be shown to fail: plant a false
-derivable fact and watch the seal name it (A/B), add a scope record and watch the digest change (C), and produce a brief
-whose class history is wrong and watch a pass refuse it (D). A gate that cannot be shown to fail is what §15 calls a
-guard that reads as protection without being one.
-
-**What must not change.** The four invariants of §15 stand: an independent adversarial node (I1), evidence bound to the
-revision it was produced on (I2), repairs authorised by severity and nothing else (I3), and `fail-closed` over a silent
-pass (I4). Nothing in §27.5 touches them: A removes prose, B adds a check, C corrects which surface is bound, D adds
-context. In particular, **do not** shorten the falsification instructions to save tokens — the measured waste is in
-re-deriving a class, not in falsifying it.
+The one sentence each, for orientation only: **A** emits the record from the diff, evidence, checks, claims and findings
+so the author writes only judgements; **B** extends C3's `claims[]` to the ledger/report rows; **C** makes the effective
+surface `ownedPaths ∪ recorded scope changes`; **D** puts each finding class's history and disposition in the brief.
