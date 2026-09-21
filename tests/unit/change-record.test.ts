@@ -124,6 +124,34 @@ describe('machine-generated change record', () => {
         expect(record.ownedPaths).toEqual(['declared']);
     });
 
+    it('records the paths the revision changed even when the round committed before sealing', async () => {
+        // The independent pass found this on the real task: every earlier record reported 33-44 changed paths, and the
+        // one sealed *after* its commits reported 0 while the revision it described had 9 changed paths of its own.
+        // `changedGitPaths` reads `git status`, which is empty on a clean tree, so the record stated that nothing
+        // changed — in the round whose whole purpose is to stop a round's surface being understated. The revision's
+        // own content identity is the fact; the working tree's dirtiness is not.
+        const root = await tempRoot();
+        await writeFile(join(root, 'src/changed.ts'), 'export const changed = 2;\n', 'utf8');
+        execFileSync('git', ['add', 'src/changed.ts'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'the round committed before sealing'], { cwd: root });
+
+        const record = await buildChangeRecord({
+            root,
+            taskId: 'record-task',
+            revisionId: 'revision-committed',
+            ownedPaths: ['src'],
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+            // The sealed revision's own content identity: what this revision has that its base did not.
+            basePathDigests: { 'src/untouched.ts': 'base-digest' },
+            pathDigests: { 'src/untouched.ts': 'base-digest', 'src/changed.ts': 'changed-digest' },
+        });
+
+        expect(record.changedPaths).toContain('src/changed.ts');
+        expect(record.counts.changedPaths).toBe(1);
+    });
+
     it('refuses a record whose factual fields were not derived — the fields are not writable input', async () => {
         const root = await tempRoot();
         const record = await buildChangeRecord({

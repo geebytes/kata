@@ -107,6 +107,46 @@ describe('delta surface follows the change', () => {
         expect(after.ownedPaths).toEqual(['src/outside.ts', 'src/owned.ts']);
     });
 
+    it('reports a path the round added and committed, which neither the base nor git status can see', async () => {
+        // The independent pass measured this on the real task: the base revision's digest table has no entry for a
+        // newly added file, and once the round commits, `git status` is clean - so the union of those two sources
+        // omitted every added path. The issued brief then said "Added: (none)" while the shipped CLI's own comparison
+        // named three added paths, and the reviewer was told a six-path surface was the complete difference.
+        const root = await tempRoot();
+        await runCommand('open', 'added-task', root, {
+            title: 'Added paths',
+            acceptance: [{ id: 'AC-1', statement: 'x' }],
+            ownedPaths: ['src/owned.ts'],
+        });
+        await runCommand('design', 'added-task', root);
+        const first = await runCommand('build', 'added-task', root, { seal: true, checks: [{ id: 'typecheck', kind: 'typecheck', name: 'typecheck', command: 'true', expectExitCode: 0 }] });
+        const base = await readTaskRevision(root, 'added-task', first.diagnostics?.revisionId as string);
+        expect(base).toBeTruthy();
+
+        // A new file, committed - so `git status` reports nothing and the base has no digest for it.
+        await writeFile(join(root, 'src/added.ts'), 'export const added = 1;\n', 'utf8');
+        execFileSync('git', ['add', 'src/added.ts'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'the round added a file and committed'], { cwd: root });
+
+        // The blind call is the defect's shape: the file is invisible, and git says nothing because the round committed.
+        const blind = await changeSurfaceAgainstWorkspace(root, base!);
+        const blindPaths = blind.status === 'available' ? blind.changedPaths : [];
+        expect(blindPaths).not.toContain('src/added.ts');
+
+        // With the current revision supplied the added path appears, and it is the union of its digest *keys* that makes
+        // it visible - the revision below carries the base's own digest values unchanged, so only the path set can
+        // account for the difference.
+        const seen = await changeSurfaceAgainstWorkspace(root, base!, {
+            ...base!,
+            id: 'revision-current',
+            pathDigests: { ...(base!.pathDigests ?? {}), 'src/added.ts': base!.pathDigests?.['src/owned.ts'] ?? 'x' },
+        });
+        expect(seen.status).toBe('available');
+        if (seen.status === 'available') {
+            expect(seen.added).toContain('src/added.ts');
+        }
+    });
+
     it('refuses to apply a scope change that was never recorded', async () => {
         const root = await tempRoot();
         await runCommand('open', 'scope-missing', root, {

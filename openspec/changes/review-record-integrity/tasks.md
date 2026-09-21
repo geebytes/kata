@@ -39,7 +39,8 @@
 ## 6. Verification and records
 
 - [x] 6.1 `npx tsc --noEmit` clean (repair round re-run).
-- [x] 6.2 Full suite command `npm test`: **957 passed / 0 failed** (repair round re-run).
+- [x] 6.2 Full suite green (`npm test`); the count lives in the sealed envelope `.kata/evidence/review-record-integrity-test.json`
+  rather than being restated here — restating it is the defect AC-2 exists to retire.
 - [x] 6.3 `docs/changelog/2026-09-21-machine-verifiable-review-records.md`.
 - [x] 6.4 OpenSpec delta for `model-policy-and-evidence` and `workflow-runtime`.
 
@@ -74,3 +75,15 @@
 - [x] 8.1 Normalize `build --seal --owned-path` **before** persisting, so the refusing command no longer mutates the
   task it refuses; the refusal names every offending path and states that nothing was written.
 - [x] 8.2 Pin the defect with a mutation-checked regression in the already-declared `scope-change-safety` suite.
+
+## 9. Third independent pass: the surface cannot depend on the working tree
+
+- [x] 9.1 Derive the change record's surface from the sealed revision's own `pathDigests` against its base, unioned with
+  live `git status` — so a round that commits before sealing no longer records `changedPaths: []`.
+- [x] 9.2 Union the current revision's digest keys into the delta comparison's path set, so a path the round added is
+  visible even though the base never hashed it and the tree is clean.
+- [x] 9.3 Take the current revision's recorded digest only for paths the base did not know (a substitution for known
+  paths reports `unchanged` when a file changed, and `current.id === base.id` in a single-revision workspace).
+- [x] 9.4 Close `COUNT_WORD`: covers multipliers and the tens forms, plus the count-of-findings phrasings.
+- [x] 9.5 Point at the sealed envelope for the suite count instead of restating it.
+- [x] 9.6 Each fix is RED-first and mutation-checked.

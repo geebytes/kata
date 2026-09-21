@@ -553,6 +553,9 @@ async function cmdBuild(
     // Reaching here means every blocker was absent; a non-strict task has no waivers to persist.
     if (requiresMatrix(task.workflowProfile)) await writeWaivers(root, taskId, waivers);
 
+    // What this seal narrows against: the revision that was current before it. Its digests are half the change
+    // surface the record derives — the half that survives the round committing.
+    const baseRevision = await readCurrentTaskRevision(root, taskId).catch(() => null);
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
@@ -673,6 +676,11 @@ async function cmdBuild(
             revisionId: revision.id,
             ownedPaths,
             evidence,
+            // The revision's content identity is what the record's surface is derived from; live `git status` is added
+            // on top for drift since the seal. Passing only the digests would miss paths the round touched after
+            // sealing; passing only git (the previous behaviour) made the field empty whenever the round committed first.
+            ...(revision.pathDigests ? { pathDigests: revision.pathDigests } : {}),
+            ...(baseRevision?.pathDigests ? { basePathDigests: baseRevision.pathDigests } : {}),
             ...(options.judgement ? { judgement: options.judgement } : {}),
             claimFailures: claimSummary.failures,
             findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition })),

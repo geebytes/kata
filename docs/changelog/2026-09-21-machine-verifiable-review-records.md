@@ -91,7 +91,52 @@ RED→GREEN in a suite already declared by this change's matrix:
 ## Verification
 
 - `npx tsc --noEmit` clean.
-- Full suite command: `npm test` (**958 passed / 0 failed**, sentinel-pass repair re-run).
+- Full suite green (`npm test`); the count is in the sealed envelope rather than restated here — that restatement is
+  the defect AC-2 exists to retire (the previous round shipped a stale count in `tasks.md` and an independent pass
+  caught it).
 - Matrix-declared suites cover strict bootstrap, change records, record assertions, delta surface, and adversarial history.
 - Repair regressions cover scope safety and A/C/D self-evidence; the three second-pass regressions live in those existing
   matrix-declared suites so they are included in the sealed contract.
+
+## Third independent pass: the change surface must not depend on the working tree
+
+A second strict verify pass measured three `major` findings that share one root cause, and the root cause is an
+architectural one rather than a slip in the repair:
+
+`buildChangeRecord` and `changeSurfaceAgainstWorkspace` both derived the change surface from `changedGitPaths(root)` —
+`git status --porcelain`. That is *uncommitted* work, so the surface was a function of whether the round happened to
+commit before sealing:
+
+- the record bound to `revision-181acf2e2d561a4c` reported `changedPaths: []` and `counts.changedPaths: 0`, while the
+  revision it described had nine changed paths in its own `pathDigests` and every sibling record reported 33–44;
+- the delta brief for that revision said `Added: (none)` while the gate's own comparison named three added paths, so a
+  reviewer was told a six-path surface was "the complete difference";
+- the same contradiction reached the seal gate as `revision_superseded`.
+
+An empty list is self-consistent with a clean tree, which is why it failed silently — in the record whose entire purpose
+is to stop a round's surface being understated.
+
+Both derivations now take the sealed revision's own content identity as the primary source:
+
+- `ChangeRecordInput` accepts the revision's `pathDigests` and its base's, and unions `diffPathDigests` with live
+  `git status` — the first for what the revision *is*, the second for drift since the seal;
+- `changeSurfaceAgainstWorkspace` takes an optional current revision and unions its digest **keys** into the compared
+  path set, so a path the round added is visible even though the base never hashed it and `git status` is clean.
+
+Two rules were tried and rejected on evidence, both recorded in the code: substituting the current revision's digest for
+every path the base knew re-introduced the base's own value and reported `unchanged` when a file changed on disk (a
+repair-batch case went from `changedPaths: ['src/a.py']` to `[]`); and substituting whenever a current revision exists is
+the same defect one step over, because `createTaskRevision` makes a revision current — a single-revision workspace has
+`current.id === base.id` and would compare the base against itself.
+
+Also repaired in the same batch:
+
+- `COUNT_WORD` was an enumeration ending at `twelve`, so `Seventeen files changed`, `A dozen checks passed`,
+  `thirty findings were raised` and `Thirteen paths changed` were all accepted while `eight files changed` was refused —
+  the documented rule was wider than the implementation, and the gap was where a careful author writing a number lands.
+  It is now a closed shape (multiplier × units/tens) with the count-of-findings phrasings added; a mutation restoring the
+  old enumeration fails the new case.
+- `tasks.md` recorded `957 passed` while the sealed envelope for the same revision recorded `958`. Fixed by pointing at
+  the envelope instead of restating the number.
+
+Each fix was written RED first, and each is pinned by a mutation that makes its regression fail.

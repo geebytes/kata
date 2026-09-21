@@ -91,6 +91,26 @@ describe('§6 self-evidence: the record-integrity rules can be shown to fail', (
             expect(Array.isArray(written)).toBe(false);
         });
 
+        it('refuses every spelling of a count a reader would recognise, not just the first twelve', () => {
+            // A second independent pass extracted the live pattern table and measured the gap: `Seventeen files changed`,
+            // `A dozen checks passed`, `thirty findings were raised` and `Thirteen paths changed` were all ACCEPTED while
+            // `eight files changed` was refused. An enumeration of number words is the wrong shape for this rule — the
+            // pattern has to cover the spelling the next author writes, including multipliers and the tens forms.
+            for (const sentence of [
+                'Seventeen files changed',
+                'A dozen checks passed',
+                'thirty findings were raised',
+                'Thirteen paths changed',
+                'twenty-two checks ran',
+                'fifty passing',
+            ]) {
+                expect(refusalForDerivableProse(sentence), `expected ${JSON.stringify(sentence)} to be refused`).not.toEqual([]);
+            }
+            // And the narrow forms still fire, so widening the word list did not replace the original rule.
+            expect(refusalForDerivableProse('2 files changed').map((r) => r.quantity)).toEqual(['counts.changedPaths']);
+            expect(refusalForDerivableProse('eight files changed').map((r) => r.quantity)).toEqual(['counts.changedPaths']);
+        });
+
         it('names each derivable quantity it recognises', () => {
             expect(refusalForDerivableProse('two checks ran').map((r) => r.quantity)).toEqual(['counts.checks']);
             expect(refusalForDerivableProse('1 failed').map((r) => r.quantity)).toEqual(['counts.failures']);

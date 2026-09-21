@@ -82,14 +82,52 @@ export async function changeSurface(
  * nothing to re-derive. The fact is available and cheap (`git status`), the base revision's digests are already known,
  * and a path the base never hashed has every reason to count as added rather than to be invisible.
  */
-export async function changeSurfaceAgainstWorkspace(root: string, base: TaskRevision): Promise<DeltaStatus> {
+export async function changeSurfaceAgainstWorkspace(
+    root: string,
+    base: TaskRevision,
+    current?: TaskRevision | null,
+): Promise<DeltaStatus> {
     if (!base.pathDigests) {
         return { status: 'delta_unavailable', reason: `revision ${base.id} was sealed before per-path digests were recorded` };
     }
-    // The union, sorted, so the digest tables line up: the base's own paths (which it has digests for) and every path
-    // git reports as changed (which may be outside the declaration entirely).
-    const paths = [...new Set([...base.ownedPaths, ...changedGitPaths(root)])].sort();
-    const currentDigests = await computePathDigests(root, paths);
+    // Three sources, unioned and sorted so the digest tables line up:
+    //
+    //  - the base's own paths, which it has digests for;
+    //  - every path git reports as changed, which may be outside the declaration entirely;
+    //  - **the current revision's recorded paths**, which is the correction an independent pass measured on the real
+    //    task: a file added by a round that committed before sealing appears in neither of the first two — it is absent
+    //    from the base's digest table, and `git status` is clean once it is committed — so the brief's `Added:` list was
+    //    empty while the gate's own comparison named three added paths. The revision's digest table is the only source
+    //    that still knows what the round added.
+    const paths = [...new Set([
+        ...base.ownedPaths,
+        ...changedGitPaths(root),
+        ...Object.keys(current?.pathDigests ?? {}),
+    ])].sort();
+    // The walk re-derives digests for the base's owned shape; the current revision's own recorded digests are the
+    // authority for the paths it knows about, because it hashed them itself (including files that no longer exist as
+    // directory members). Recomputing those would make a committed-then-deleted path read as absent rather than removed.
+    const walked = await computePathDigests(root, paths);
+    // `walked` is the comparison for every path in the union. The current revision's recorded digest is consulted only
+    // where the walk produced nothing — a path it hashed that no longer exists on disk (removed, or produced by a build
+    // artefact), which must read as removed rather than as never-having-existed. It is deliberately **not** a third
+    // source of *added* paths: a guide that invented paths from a digest table would report entries the revision never
+    // claimed. Visibility comes from the union alone.
+    const currentDigests: Record<string, string> = { ...walked };
+    // The recorded digest is substituted **only for a path the current revision knows and the base did not** — the added
+    // set, which is why the union admits those keys at all. Two narrower-looking rules are both wrong, and each was
+    // caught by a test rather than by reading:
+    //
+    //  - substituting for every path the base knew re-introduces the base's own value and reports `unchanged` when the
+    //    file changed on disk (measured: a repair-batch case went from `changedPaths: ['src/a.py']` to `[]`);
+    //  - substituting whenever the current revision is present is the same defect one step over, because the current
+    //    revision often *is* the base — `createTaskRevision` makes it current, so a single-revision workspace has
+    //    `current.id === base.id` and the substitution would compare the base against itself.
+    if (current && current.id !== base.id) {
+        for (const [path, digest] of Object.entries(current.pathDigests ?? {})) {
+            if (!(path in base.pathDigests)) currentDigests[path] = digest;
+        }
+    }
     const diff = diffPathDigests(base.pathDigests, currentDigests);
     if (diff.changedPaths.length === 0) return { status: 'unchanged' };
     return { status: 'available', ...diff };

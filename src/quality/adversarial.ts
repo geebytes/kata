@@ -1155,7 +1155,7 @@ export async function buildAdversarialBrief(
         if (!base) {
             deltaReport = { unavailable: `no revision matching '${scopeBase}' was found for task '${taskId}'` };
         } else {
-            const surface = await changeSurfaceAgainstWorkspace(root, base);
+            const surface = await changeSurfaceAgainstWorkspace(root, base, revision);
             if (surface.status === 'delta_unavailable') {
                 deltaReport = { unavailable: surface.reason };
             } else if (surface.status === 'unchanged') {

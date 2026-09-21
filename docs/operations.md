@@ -589,8 +589,10 @@ owned-path digest.
 
 
 Both `scope change` and `scope apply` validate the resulting surface before writing: it must contain at least one repository-relative path. Empty surfaces, absolute paths, and `..` escapes are refused at the command that received them, leaving the task readable and repairable.
-The delta surface has the matching half of the same correction: it measures the union of the base revision's owned paths
-**and** every path the working tree reports as changed. Measuring only the declared set answered "did the declaration
+The delta surface has the matching half of the same correction: it measures the union of the base revision's owned paths,
+every path the working tree reports as changed, **and** the paths the current revision recorded. The third source is what
+makes an added file visible at all — the base never hashed it, and once the round commits `git status` says nothing — so a
+brief that omitted it claimed a six-path surface was the complete difference. Measuring only the declared set answered "did the declaration
 move", which let a round edit docs, tests or tooling outside its scope and still be told `unchanged`.
 
 ## Bootstrapping a strict task

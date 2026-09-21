@@ -4,6 +4,7 @@ import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { taskDir } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
+import { diffPathDigests } from './revision-delta.js';
 
 /**
  * The factual half of a change record, derived instead of asserted.
@@ -52,7 +53,10 @@ export interface ChangeRecord {
     version: 1;
     taskId: string;
     revisionId: string;
-    /** Every path the working tree reports as changed, sorted. Derived from git, never from the ownership declaration. */
+    /**
+     * Every path this revision changed: its own content identity against its base, plus whatever the working tree
+     * reports as changed since the seal. Derived from the revision and git, never from the ownership declaration.
+     */
     changedPaths: string[];
     /**
      * The changed paths that no declared owned path covers.
@@ -81,7 +85,15 @@ export interface ChangeRecordInput {
     evidence: Array<{ id?: string; checkId?: string; name?: string; command?: string; exitCode: number | null; passed?: boolean }>;
     claimFailures: ChangeRecordClaimFailure[];
     findings: ChangeRecordFinding[];
-    /** The one thing a machine cannot derive. Prose, and named so. */
+    /**
+     * The sealed revision's content identity, and its base's — the fact that survives the round committing.
+     *
+     * `git status` alone made the record's central field depend on whether the author committed first: a round that
+     * committed before sealing reported `changedPaths: []` on a revision with nine changed paths of its own. The
+     * digests are what the revision *is*, so the record derives its surface from them and adds live drift on top.
+     */
+    pathDigests?: Record<string, string>;
+    basePathDigests?: Record<string, string>;
     judgement?: string;
 }
 
@@ -105,11 +117,18 @@ export interface JudgementRefusal {
 }
 
 /**
- * The numbers, digits **or words**, because the measured loop wrote both: `r35 "two places"` and `r36 "three places"` were
- * the same defect as a digit would have been, and a check that only read digits would have passed the round that produced
- * it.
+ * The numbers: digits, or **any** English count word.
+ *
+ * A second independent pass measured the first version of this and called it correctly: an enumeration that stopped at
+ * `twelve` accepted `Seventeen files changed`, `Thirty findings were raised` and `A dozen checks passed` while refusing
+ * `eight files changed` — so the documented rule ("refuses a judgement that restates a derivable count") was materially
+ * wider than the implementation, and the gap was exactly where a careful author writing out a number would land.
+ *
+ * The shape is closed rather than enumerated: a multiplier (`a dozen`, `twenty`) optionally followed by the units/
+ * tens form (`-three`, ` three`). Any spelling a reader would recognise as a count is covered, and the pattern cannot
+ * silently miss the next one somebody writes.
  */
-const COUNT_WORD = String.raw`(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`;
+const COUNT_WORD = String.raw`(?:\d+|a\s+(?:couple|dozen|hundred|thousand)|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)(?:[\s-](?:one|two|three|four|five|six|seven|eight|nine))?)`;
 
 const DERIVABLE_QUANTITY_PATTERNS: Array<{ quantity: string; pattern: RegExp }> = [
     // Counts. A number next to one of the words the record already counts.
@@ -119,6 +138,11 @@ const DERIVABLE_QUANTITY_PATTERNS: Array<{ quantity: string; pattern: RegExp }> 
     { quantity: 'counts.passing', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:passed|passing)\\b`, 'i') },
     { quantity: 'counts.failures', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:failed|failing)\\b`, 'i') },
     { quantity: 'counts.openFindings', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:open|unfixed|unresolved)\\s+findings?\\b`, 'i') },
+    // The record's own finding count, whatever the sentence calls it: "thirty findings were raised" states the same
+    // quantity the record derives. The second independent pass found this shape accepted while `1 file changed` was
+    // refused, so the gap was not only the word list — it was also that only the `openFindings` phrasing was matched.
+    { quantity: 'counts.openFindings', pattern: new RegExp(`\\b${COUNT_WORD}\\s+findings?\\b`, 'i') },
+    { quantity: 'counts.openFindings', pattern: new RegExp(`\\bfindings?\\s+(?:raised|reported|recorded|found)\\s*[:\\s]\\s*${COUNT_WORD}\\b`, 'i') },
     // The exhaustive quantifiers. "all of them", "every file", "the complete list" — a claim about the set the record
     // already enumerates.
     { quantity: 'changedPaths', pattern: /\b(?:all|every|each)\s+(?:of\s+the\s+)?(?:changed\s+)?(?:files?|paths?|checks?)\b/i },
@@ -164,7 +188,18 @@ function ownedCovers(ownedPaths: string[], path: string): boolean {
  * acceptance text, applied to the record.
  */
 export async function buildChangeRecord(input: ChangeRecordInput): Promise<ChangeRecord> {
-    const changedPaths = [...new Set(changedGitPaths(input.root))].sort();
+    // Two sources, unioned, because either one alone understates the surface:
+    //
+    //  - the sealed revision's own path digests against its base — the content identity of *this* revision, which is
+    //    the only thing that stays true once the round commits (the independent pass measured this: a round that
+    //    committed before sealing produced `changedPaths: []` while its own revision had nine changed paths);
+    //  - `git status`, which is the only source for paths changed *since* the seal — the drift a later reader must see.
+    //
+    // Reading only `git status` made the record's central field a function of whether the author happened to commit
+    // first, and it failed silently in the direction that matters: an empty list is self-consistent with a clean tree,
+    // so a record whose purpose is to stop a round's surface being understated reported that nothing had changed.
+    const fromRevision = diffPathDigests(input.basePathDigests ?? {}, input.pathDigests ?? {}).changedPaths;
+    const changedPaths = [...new Set([...fromRevision, ...changedGitPaths(input.root)])].sort();
     const ownedPaths = [...new Set(input.ownedPaths)].sort();
     const changedOutsideOwnership = changedPaths.filter((path) => !ownedCovers(ownedPaths, path));
 
