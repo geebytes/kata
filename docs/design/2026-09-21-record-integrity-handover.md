@@ -192,7 +192,10 @@ shorten the falsification instructions.
   `Cannot read properties of undefined (reading 'exitCode')` and the diagnostics are mislabelled `matrixError` — which
   makes the platform's own `validateClaims` (rejecting a claim with no expected result) **unreachable** on that input.
 - `adversarial record`'s schema is `additionalProperties: false` and the error does not list the allowed keys; a
-  top-level `taskId` is required on findings and rejected at the top level. Project the payload, or keep the raw file.
+  top-level `taskId` is required on findings and rejected at the top level. **`findings[].path` must be a non-empty
+  string** — `null`, `""` and absence are all rejected with `$.findings[n].path must be string`, and a finding about
+  a commit message or a process has no natural path, so the recorder has to invent a marker. Project the payload, or
+  keep the raw file.
 - The generated `.kata/schemas/task.schema.json` copy inside a project lags the engine's schema (no `claims`,
   `coveredBy`, `boundaries`, `instruments`, `engine`): a project reading the copy concludes that a legal declaration is
   illegal. Refresh the generator, or stamp the copy with the engine version it came from.
@@ -234,7 +237,7 @@ intention would not have survived the next round.
 | Point at the artefact; do not enumerate it | "only two rules are not derivable from the diff" was false | the note says how to derive the diff (`git show <a>^:<path>` vs `git show <a>:<path>`); nothing counts the hunks |
 | Cite symbols, not line numbers | five citations resolved to wrong content | zero line-number citations **in the documents the change touches** — per document, because 19 other documents under `docs/` still cite line numbers, and stating it repo-wide was itself a false claim |
 | No absolute quantifier without its range, and mark the branch you did not measure | "prose is not machine-checked" (two guards check it); "不会被任何门禁检查覆盖" (a guard covers it) | the coverage section names the guards and their ranges, and labels the unmeasured branch *not measured* |
-| A delivery makes present-tense text false; mark it | the audit report was still named as outside the surface after being merged in; three `现状` lines survived their own delivery | pre-delivery statements read "（交付前；现已不成立，本条按历史读）" |
+| A delivery makes present-tense text false; mark it | the audit report was still named as outside the surface after being merged in; and in the last two rounds **five** lines asserting absence survived the deliveries that removed the absence — three the passes found, **two the class sweep found that neither node reported** | pre-delivery statements read "（交付前；现已不成立，本条按历史读）"; and after a repair, sweep for the class rather than waiting for the next round to report the next instance |
 
 ---
 
