@@ -556,14 +556,21 @@ point: `changedOutsideOwnership` is where "the delta understates the change" sto
 becomes a list. Counts are derived so nobody counts by hand and gets one wrong; the one field you write is `judgement`,
 and it is labelled as prose because that is the half no diff can derive.
 
+
+To attach the only permitted prose, pass it at seal time:
+
+> `kata-cli build --change <task-id> --seal --judgement "<why this trade-off>"`
+
+> The seal refuses a `judgement` that restates a derivable count, exhaustive list, or open-finding total. Its error names the generated field and quotes the sentence; point at `change-record.json` instead of restating the fact.
 A governed record row can also declare itself checkable, using the same `claims[]` shape an acceptance statement uses, and
 a false row then fails the seal by claim id instead of waiting for the next review round.
 
 The adversarial brief carries the same idea in its finding history: prior findings grouped by class with each class's
 count and disposition, so a reviewer attacks the repair instead of re-deriving a class an earlier round already named.
-The class is derived (`acceptance:<id>`, `path:<file>`, `record:<source>`) rather than declared, so it cannot be changed
-by naming it differently — and it is drawn only from sources a pass cannot write, which is what keeps a brief's hash
-stable when its own answer is recorded.
+The class is derived (`acceptance:<id>`, `path:<file>`, `record:<source>`) rather than declared, and the **history
+projection** reads only the other node's durable record. Recording a pass may correctly update lifecycle framing, scope,
+claims, and the reading set; the gate binds the pass to the issued brief copy rather than demanding a later re-render
+remain byte-identical.
 
 ## The audited surface, and applying it
 
@@ -580,6 +587,8 @@ Applying a change that was never recorded is refused with the reason. Recording 
 recorded addition never reached `ownedPaths`, so six scope changes on one task left every revision hashing the same
 owned-path digest.
 
+
+Both `scope change` and `scope apply` validate the resulting surface before writing: it must contain at least one repository-relative path. Empty surfaces, absolute paths, and `..` escapes are refused at the command that received them, leaving the task readable and repairable.
 The delta surface has the matching half of the same correction: it measures the union of the base revision's owned paths
 **and** every path the working tree reports as changed. Measuring only the declared set answered "did the declaration
 move", which let a round edit docs, tests or tooling outside its scope and still be told `unchanged`.
@@ -603,6 +612,11 @@ kata-cli open --change <task-id> --isolation current_worktree --development tdd 
 
 The matrix is validated **at `open`**: a contract whose matrix does not cover its criteria is refused by the command that
 was given the bad input, before the task directory exists, rather than at `design` three commands later.
+
+`--owned-path` inputs are normalized under the same before-write rule: an empty, absolute, or escaping path is refused
+by `open` before a task artefact exists. `build --seal --owned-path` follows the identical rule and refuses **before**
+persisting anything, naming every offending path and stating that nothing was written — so a refusing seal can no longer
+leave the escaped surface on disk for the next command to trip over.
 
 ## Workflow diagnostics
 

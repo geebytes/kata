@@ -1,3 +1,4 @@
+import { relative, resolve } from 'node:path';
 import { scopeChangesPath, taskPath } from '../core/layout.js';
 import { mutateTaskArtefact } from '../core/state.js';
 import { readValidatedOptional } from '../core/schema.js';
@@ -47,14 +48,51 @@ export interface ScopeChangePreview {
     empty: boolean;
 }
 
+/**
+ * The one rule for what a declared scope may contain, applied at the **write**.
+ *
+ * Both halves of this were found by an independent adversarial pass through the shipped CLI, and both are the class this
+ * change exists to retire: a write path that trusts its input while every read path validates it.
+ *
+ * - At least one path. The task schema requires it, and `applyScopeChange` used to write `change.scope` verbatim, so a
+ *   scope change that removed the last owned path produced `ownedPaths: []`. Every task-reading command then failed with a
+ *   schema error — including `scope change --add`, the command that would have added one back — so the task was
+ *   unrecoverable from the CLI, while `scope apply` reported success and changed nothing.
+ * - Inside the repository. An absolute path or `../outside.ts` was accepted, stored, printed by `scope show` as
+ *   `layer: deliverable`, and carried into the design handoff; `normalizeOwnedPaths` refused it only at seal.
+ *
+ * The normalization is the same one the revision hash uses (`./docs/note.md` and `docs/note.md` are one path), so the
+ * stored surface is the surface a revision will hash — not the spelling the caller happened to use.
+ */
+export function normalizeScopePaths(root: string, paths: string[]): { paths: string[] } | { refused: string } {
+    const normalized: string[] = [];
+    for (const path of paths) {
+        const dotted = relative(root, resolve(root, path)).replaceAll('\\', '/');
+        if (!dotted || dotted === '..' || dotted.startsWith('../')) {
+            return { refused: `A scope change must name at least one path inside the repository: ${path}` };
+        }
+        normalized.push(dotted);
+    }
+    const unique = [...new Set(normalized)].sort();
+    if (unique.length === 0) {
+        return { refused: 'A scope change must leave at least one owned path: the task schema requires one, and a task with none cannot be read by any command, including the one that would add it back.' };
+    }
+    return { paths: unique };
+}
+
 export async function previewScopeChange(
     root: string,
     taskId: string,
     current: string[],
     next: string[],
 ): Promise<ScopeChangePreview> {
-    const before = new Set(current);
-    const after = new Set(next);
+    // Both sides are normalized first, so `src/` and `src` are one path rather than an addition plus a removal. A
+    // spelling difference is not growth, and a change that changes nothing has to stay refusable (it is a decision with
+    // no content).
+    const normalize = (paths: string[]): string[] => [...new Set(paths.map((path) => relative(root, resolve(root, path)).replaceAll('\\', '/')))]
+        .filter((path) => path && path !== '..' && !path.startsWith('../'));
+    const before = new Set(normalize(current));
+    const after = new Set(normalize(next));
     const added = [...after].filter((path) => !before.has(path)).sort();
     const removed = [...before].filter((path) => !after.has(path)).sort();
     const { findOwnershipConflicts } = await import('../workflow/revision.js');
@@ -77,7 +115,12 @@ export async function recordScopeChange(
     if (!input.reason?.trim()) {
         return { refused: 'A scope change requires --reason: growth that expands what a round is about is a decision, and an unexplained one is the drift this records.' };
     }
-    const preview = await previewScopeChange(root, taskId, input.current, input.next);
+    // The paths are checked before anything else reads them, so `added`/`removed`/`conflicts` are computed over the
+    // surface that will actually be stored.
+    const normalizedNext = normalizeScopePaths(root, input.next);
+    if ('refused' in normalizedNext) return { refused: normalizedNext.refused };
+    const next = normalizedNext.paths;
+    const preview = await previewScopeChange(root, taskId, input.current, next);
     if (preview.empty) {
         return { refused: 'The proposed scope is identical to the current one, so there is nothing to record.' };
     }
@@ -101,7 +144,7 @@ export async function recordScopeChange(
             reason: input.reason,
             added: preview.added,
             removed: preview.removed,
-            scope: [...new Set(input.next)].sort(),
+            scope: next,
             ...(base ? { baseRevisionId: base.id, baseManifestHash: base.manifestHash } : {}),
             ...(preview.conflicts.length > 0 ? { conflicts: preview.conflicts } : {}),
         };
@@ -134,7 +177,12 @@ export async function unreportedScopeGrowth(root: string, taskId: string, declar
     // say what the scope was before the first change, and guessing it would make the check report the original scope as
     // growth.
     const recorded = new Set(changes.at(-1)?.scope ?? []);
-    return declared.filter((path) => !recorded.has(path)).sort();
+    // The recorded surface is normalized by the write path, so the comparison normalizes the caller's spelling too:
+    // `src/` and `src` are the same owned path, and reporting one as unreported growth would be a false positive.
+    return declared
+        .map((path) => relative(root, resolve(root, path)).replaceAll('\\', '/'))
+        .filter((path) => path && !recorded.has(path))
+        .sort();
 }
 
 /** What applying a recorded scope change did, or why it could not. */
@@ -172,12 +220,18 @@ export async function applyScopeChange(root: string, taskId: string, changeId?: 
         };
     }
 
+    // Validated here as well as at the record, deliberately. The rule belongs on the write that changes the task, so it
+    // has to hold for a record that reached `scope-changes.json` by any route — a hand-edit, or a record written before
+    // the rule existed. A guard only on the record path would leave this one reachable.
+    const normalized = normalizeScopePaths(root, change.scope);
+    if ('refused' in normalized) return { applied: false, reason: normalized.refused };
+
     let ownedPaths: string[] = [];
     await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (raw) => {
         const task = JSON.parse(raw) as { ownedPaths?: string[] };
         // The recorded `scope` is the complete resulting surface, so applying is a set, not a merge. Merging would let a
         // removal (a deliberate narrowing) be silently undone by the union.
-        ownedPaths = [...new Set(change.scope)].sort();
+        ownedPaths = normalized.paths;
         const next = { ...task, ownedPaths };
         return `${JSON.stringify(next, null, 2)}\n`;
     });

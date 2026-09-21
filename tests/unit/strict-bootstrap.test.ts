@@ -139,4 +139,29 @@ describe('strict bootstrap', () => {
         // The file is read, not recorded as a path: the contract lives in the task, where the gates read it.
         expect(await readFile(path, 'utf8')).toContain('AC-1');
     });
+
+    it('refuses absolute and escaping owned paths before creating a task', async () => {
+        const root = await tempRoot();
+        const escaping = await runWorkflowCommand(
+            'open',
+            'escape-cli',
+            root,
+            undefined,
+            ['open', '--owned-path', '../outside.ts', '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'strict'],
+        );
+        expect(escaping.success).toBe(false);
+        expect(escaping.error).toMatch(/inside the repository/i);
+        await expect(readTask(root, 'escape-cli')).rejects.toThrow(/cannot read task artefact/i);
+
+        const absolute = await runWorkflowCommand(
+            'open',
+            'absolute-cli',
+            root,
+            undefined,
+            ['open', '--owned-path', join(tmpdir(), 'outside.ts'), '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'strict'],
+        );
+        expect(absolute.success).toBe(false);
+        expect(absolute.error).toMatch(/inside the repository/i);
+        await expect(readTask(root, 'absolute-cli')).rejects.toThrow(/cannot read task artefact/i);
+    });
 });

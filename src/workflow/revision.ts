@@ -328,7 +328,7 @@ function pathsOverlap(left: string, right: string): boolean {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
-function normalizeOwnedPaths(root: string, paths: string[]): string[] {
+export function normalizeOwnedPaths(root: string, paths: string[]): string[] {
   return [...new Set(paths.map((path) => {
     const normalized = relative(root, resolve(root, path)).replaceAll('\\', '/');
     if (!normalized || normalized === '..' || normalized.startsWith('../')) {

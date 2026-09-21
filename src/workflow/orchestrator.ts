@@ -21,7 +21,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
@@ -103,6 +103,8 @@ export interface CommandOptions {
      * the matrix its rows in one record.
      */
     bootstrapFile?: string;
+    /** The author's non-derivable rationale, recorded only after the seal rejects factual prose. */
+    judgement?: string;
     /** The parsed bootstrap contract itself. `bootstrapFile` is the CLI's spelling; this is what the orchestrator takes. */
     bootstrap?: {
         acceptance: Array<{ id?: string; statement: string; claims?: ClaimDeclaration[] }>;
@@ -206,6 +208,20 @@ async function cmdOpen(
             : requirements.length > 0
                 ? requirements.map((r, i) => ({ id: `AC-${i + 1}`, statement: r.statement }))
                 : [{ id: 'AC-1', statement: 'Implement the change successfully.' }];
+    let normalizedOwnedPaths: string[] | undefined;
+    if (options.ownedPaths?.length) {
+        try {
+            normalizedOwnedPaths = normalizeOwnedPaths(root, options.ownedPaths);
+        } catch (error) {
+            return {
+                command: 'open',
+                taskId,
+                phase: 'intake',
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    }
     const input: CreateTaskInput = {
         root,
         id: taskId,
@@ -213,7 +229,7 @@ async function cmdOpen(
         acceptance,
         workflowProfile: options.workflowProfile ?? defaultWorkflowProfile(),
         ...(requirements.length > 0 ? { requirements: requirements.map((r, i) => ({ id: r.id ?? `REQ-${i + 1}`, statement: r.statement, ...(r.source ? { source: r.source } : {}), confirmedAt: new Date().toISOString() })) } : {}),
-        ...(options.ownedPaths?.length ? { ownedPaths: options.ownedPaths } : {}),
+        ...(normalizedOwnedPaths?.length ? { ownedPaths: normalizedOwnedPaths } : {}),
         ...(bootstrap?.acceptanceMatrix ? { acceptanceMatrix: bootstrap.acceptanceMatrix } : {}),
         ...(bootstrap?.upstreamCoverage ? { upstreamCoverage: bootstrap.upstreamCoverage } : {}),
     };
@@ -226,8 +242,8 @@ async function cmdOpen(
         context = { taskId, sourceRefs: [], authoritativeWiki: [], excludedWiki: [], excludedWikiSummary: { relevant: [], unrelated: { count: 0, byReason: {} } }, warnings: [] };
     }
 
-    const ownershipConflicts = options.ownedPaths?.length
-        ? await findOwnershipConflicts(root, taskId, options.ownedPaths)
+    const ownershipConflicts = normalizedOwnedPaths?.length
+        ? await findOwnershipConflicts(root, taskId, normalizedOwnedPaths)
         : [];
     const warnings = [
         ...context.warnings,
@@ -648,6 +664,8 @@ async function cmdBuild(
     // the eleven `major`) were about the author's *prose about their own work* — a ledger row, a count, a pointer. Prose
     // had no checker, so it was the cheapest falsifiable surface a reviewer could attack, and every repair wrote more of
     // it. The author is left `judgement`: why this fix, what was traded away.
+    // C3: derive claim truth from the evidence before the machine record freezes the seal's factual surface.
+    const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
     const changeRecord = revision
         ? await buildChangeRecord({
             root,
@@ -655,14 +673,24 @@ async function cmdBuild(
             revisionId: revision.id,
             ownedPaths,
             evidence,
-            claimFailures: [],
+            ...(options.judgement ? { judgement: options.judgement } : {}),
+            claimFailures: claimSummary.failures,
             findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition })),
         }).catch(() => null)
         : null;
-    if (changeRecord) await writeChangeRecord(root, taskId, changeRecord).catch(() => null);
-    // C3: what the claims did, against the evidence just collected. A claim whose evidence is absent counts as failed —
-    // the sentence declared itself checkable, and nothing checked it.
-    const claimSummary = evaluateClaims(task.acceptance ?? [], evidence);
+    // §6 self-evidence for A: a record whose prose restates a derivable quantity is refused, and the refusal names both
+    // the quantity and the sentence. The seal does not paper over it — the author's judgement is the one field they wrote.
+    const changeRecordRefusal = changeRecord ? await writeChangeRecord(root, taskId, changeRecord).catch(() => null) : null;
+    if (changeRecordRefusal && typeof changeRecordRefusal !== 'string') {
+        return {
+            command: 'build',
+            taskId,
+            phase: 'implement',
+            success: false,
+            error: `Seal blocked: ${changeRecordRefusal.refused.join('; ')}`,
+            diagnostics: { mode: 'seal', judgementRefusals: changeRecordRefusal.refused },
+        };
+    }
     if (evidence.some((item) => !isPassing(item))) {
         return {
             command: 'build',
@@ -838,22 +866,63 @@ async function resolveSealOwnedPaths(
     task: { ownedPaths?: string[] },
     options: CommandOptions,
 ): Promise<string[]> {
+    const declared = options.ownedPaths?.length
+        // Normalize — and therefore refuse — before anything is written. This function used to persist the merged
+        // surface first and let `createTaskRevisionIfChanged` reject it afterwards, so `build --seal --owned-path
+        // ../outside.ts` reported a refusal *after* the escaped path was already on disk: the refusing command
+        // mutated the task it refused, and the next seal then failed from that persisted state. The write is the
+        // place to refuse it, in the same terms every read path already uses.
+        //
+        // The refusal names **every** offending value, not just the first: `normalizeOwnedPaths` throws on one, and a
+        // caller who passed two bad paths needs to know both. Nothing is written, and the message says so — the
+        // previous behaviour left a reader unable to tell a refusal from a partial write.
+        ? declaredOwnedPathsOrThrow(root, options.ownedPaths)
+        : undefined;
+    if (declared && declared.length === 0) {
+        throw new Error('seal requires at least one --owned-path');
+    }
     if (task.ownedPaths?.length) {
-        const cliPaths = options.ownedPaths?.length ? options.ownedPaths : [];
-        const merged = cliPaths.length
-            ? [...new Set([...task.ownedPaths, ...cliPaths])].sort()
+        const merged = declared?.length
+            ? [...new Set([...task.ownedPaths, ...declared])].sort()
             : task.ownedPaths;
         if (merged.length > task.ownedPaths.length) {
             await persistTaskOwnedPaths(root, taskId, task, merged);
         }
         return merged;
     }
-    if (!options.ownedPaths?.length) {
+    if (!declared?.length) {
         throw new Error('seal requires at least one --owned-path when the task has no ownedPaths');
     }
-    const ownedPaths = [...new Set(options.ownedPaths)].sort();
-    await persistTaskOwnedPaths(root, taskId, task, ownedPaths);
-    return ownedPaths;
+    await persistTaskOwnedPaths(root, taskId, task, declared);
+    return declared;
+}
+
+/**
+ * The declared seal surface, normalized as a whole so the refusal can name every offending path at once.
+ *
+ * `normalizeOwnedPaths` reports one violation per call by construction (it maps and throws on the first), which is
+ * right for a single value and wrong for a list a user typed: an adversarial pass recorded that the seal's refusal
+ * named only the first bad path while the second was equally refused. Normalizing each value separately collects the
+ * whole set, and the aggregate message states that nothing was written — so a caller never has to ask whether a
+ * refusal left something behind.
+ */
+function declaredOwnedPathsOrThrow(root: string, paths: string[]): string[] {
+    const refused: string[] = [];
+    const accepted: string[] = [];
+    for (const path of paths) {
+        try {
+            accepted.push(...normalizeOwnedPaths(root, [path]));
+        } catch {
+            refused.push(path);
+        }
+    }
+    if (refused.length > 0) {
+        throw new Error(
+            `Task-owned path must be inside the repository: ${refused.join(', ')}`
+            + ' — nothing was written, and the task still carries its previous owned paths.',
+        );
+    }
+    return [...new Set(accepted)].sort();
 }
 
 async function persistTaskOwnedPaths(

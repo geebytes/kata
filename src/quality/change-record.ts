@@ -85,6 +85,68 @@ export interface ChangeRecordInput {
     judgement?: string;
 }
 
+/**
+ * The derivable quantities a record's prose is not allowed to state.
+ *
+ * §6 of the record-integrity handover requires self-evidence for A: *plant a false derivable fact, and the seal refuses it
+ * and names the field.* The refusal is the whole point — a record whose prose re-states a number the machine already
+ * computed is the class of defect this change exists to retire (the measured loop spent five rounds on a paragraph of
+ * counts and pointers), and a rule that is never shown to fire is a guard that reads as protection without being one.
+ *
+ * The check is deliberately narrow and mechanical: it looks for a sentence that states one of the quantities this record
+ * derives, and it refuses the record rather than editing it. "Derive it or drop the claim" is the only honest remedy —
+ * quietly correcting the number would leave the author believing their prose is being read.
+ */
+export interface JudgementRefusal {
+    /** The quantity the sentence states, in the terms the record already uses. */
+    quantity: string;
+    /** The sentence, quoted back, so the author sees what was refused rather than a rule number. */
+    sentence: string;
+}
+
+/**
+ * The numbers, digits **or words**, because the measured loop wrote both: `r35 "two places"` and `r36 "three places"` were
+ * the same defect as a digit would have been, and a check that only read digits would have passed the round that produced
+ * it.
+ */
+const COUNT_WORD = String.raw`(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`;
+
+const DERIVABLE_QUANTITY_PATTERNS: Array<{ quantity: string; pattern: RegExp }> = [
+    // Counts. A number next to one of the words the record already counts.
+    { quantity: 'counts.changedPaths', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:files?|paths?)\\s+(?:changed|touched|modified)`, 'i') },
+    { quantity: 'counts.changedPaths', pattern: new RegExp(`\\b(?:changed|touched|modified)\\s+${COUNT_WORD}\\s+(?:files?|paths?)`, 'i') },
+    { quantity: 'counts.checks', pattern: new RegExp(`\\b${COUNT_WORD}\\s+checks?\\b`, 'i') },
+    { quantity: 'counts.passing', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:passed|passing)\\b`, 'i') },
+    { quantity: 'counts.failures', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:failed|failing)\\b`, 'i') },
+    { quantity: 'counts.openFindings', pattern: new RegExp(`\\b${COUNT_WORD}\\s+(?:open|unfixed|unresolved)\\s+findings?\\b`, 'i') },
+    // The exhaustive quantifiers. "all of them", "every file", "the complete list" — a claim about the set the record
+    // already enumerates.
+    { quantity: 'changedPaths', pattern: /\b(?:all|every|each)\s+(?:of\s+the\s+)?(?:changed\s+)?(?:files?|paths?|checks?)\b/i },
+    { quantity: 'changedPaths', pattern: /\b(?:complete|full|exhaustive)\s+(?:list|set|count)\b/i },
+];
+
+/**
+ * Whether a record's prose states something the record derives.
+ *
+ * Returns the refusals rather than a boolean so the message can name the quantity *and* quote the sentence: an author told
+ * only "prose must not state derived facts" has to guess which sentence, and guessing is what produced three attempts at
+ * the same paragraph.
+ */
+export function refusalForDerivableProse(judgement: string | undefined): JudgementRefusal[] {
+    if (!judgement?.trim()) return [];
+    const sentences = judgement.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+    const refusals: JudgementRefusal[] = [];
+    for (const sentence of sentences) {
+        for (const { quantity, pattern } of DERIVABLE_QUANTITY_PATTERNS) {
+            if (pattern.test(sentence)) {
+                refusals.push({ quantity, sentence });
+                break;
+            }
+        }
+    }
+    return refusals;
+}
+
 /** Whether a declared owned path covers a changed path. Directory prefixes cover what is beneath them. */
 function ownedCovers(ownedPaths: string[], path: string): boolean {
     return ownedPaths.some((owned) => {
@@ -161,7 +223,15 @@ export function changeRecordPath(root: string, taskId: string, revisionId?: stri
  * and `change-record.json` is what a reader asks for when they want the latest without knowing a revision id. The same
  * rule `evidence` follows — the bound artefact is the one that cannot be amended.
  */
-export async function writeChangeRecord(root: string, taskId: string, record: ChangeRecord): Promise<string> {
+export async function writeChangeRecord(root: string, taskId: string, record: ChangeRecord): Promise<string | { refused: string[] }> {
+    // §6 self-evidence for A. The record is refused, not corrected: the author's prose is the only field they wrote, and
+    // silently fixing a number in it would leave them believing it is being read.
+    const refusals = refusalForDerivableProse(record.judgement);
+    if (refusals.length > 0) {
+        return {
+            refused: refusals.map((refusal) => `the judgement states ${refusal.quantity}, which this record derives: "${refusal.sentence}" — point at the record instead of restating it`),
+        };
+    }
     const bound = changeRecordPath(root, taskId, record.revisionId);
     await writeFile(bound, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
     await writeFile(changeRecordPath(root, taskId), `${JSON.stringify(record, null, 2)}\n`, 'utf8');

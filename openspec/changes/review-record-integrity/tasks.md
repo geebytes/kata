@@ -38,8 +38,8 @@
 
 ## 6. Verification and records
 
-- [x] 6.1 `npx tsc --noEmit` clean.
-- [x] 6.2 Full suite green: **935 passed / 0 failed**.
+- [x] 6.1 `npx tsc --noEmit` clean (repair round re-run).
+- [x] 6.2 Full suite command `npm test`: **957 passed / 0 failed** (repair round re-run).
 - [x] 6.3 `docs/changelog/2026-09-21-machine-verifiable-review-records.md`.
 - [x] 6.4 OpenSpec delta for `model-policy-and-evidence` and `workflow-runtime`.
 
@@ -51,3 +51,26 @@
 - `changedOutsideOwnership` currently reports; it does not block. Making it a gate is a separate decision with a real cost
   (it would refuse legitimate out-of-scope documentation edits), and the user's proposal D asked only that the class stop
   being re-derived by hand.
+- Repair-round safety: scope record/apply now validates the final normalized surface before writing, rejecting empty,
+  absolute, and escaping paths; a `judgement` is passed through `build --seal --judgement` and refuses derived prose at
+  the real seal boundary. The class-history contract is deliberately scoped to the generated history projection; a full
+  post-repair brief may change its lifecycle state while the issued copy remains the record binding.
+
+## 7. Repair round: verified adversarial findings
+
+- [x] 7.0 Full-suite and type-check repair evidence complete; re-seal, Verify and a fresh independent adversarial pass remain
+  required before this change can be called complete.
+
+- [x] 7.1 Refuse an empty, absolute, or escaping scope surface at both record and apply time; preserve a readable task.
+- [x] 7.2 Make a derivable `--judgement` fail a real seal with its generated field and quoted sentence.
+- [x] 7.3 Reprove changed-path derivation with the mutations the reviewer used.
+- [x] 7.4 Scope the brief-history invariant to the generated projection, not a post-repair full re-render.
+- [x] 7.5 Carry failed claim outcomes into the same seal's generated record.
+- [x] 7.6 Validate initial `open --owned-path` inputs before a task can be written.
+- [x] 7.7 Permit only sealed Build-authored (or matrix-declared) test citations; retain refusal for post-seal paths.
+
+## 8. Sentinel pass: the seal's own trusted write
+
+- [x] 8.1 Normalize `build --seal --owned-path` **before** persisting, so the refusing command no longer mutates the
+  task it refuses; the refusal names every offending path and states that nothing was written.
+- [x] 8.2 Pin the defect with a mutation-checked regression in the already-declared `scope-change-safety` suite.

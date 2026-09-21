@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderAdversarialBrief } from '../../src/quality/adversarial.js';
+import { evaluateAdversarialGate, renderAdversarialBrief, type AdversarialRecord } from '../../src/quality/adversarial.js';
 
 /**
  * The brief has to hand the reviewer the class history, not just the open findings.
@@ -57,5 +57,31 @@ describe('adversarial brief: finding history by class', () => {
     it('omits the section entirely when no class history exists, rather than printing an empty table', () => {
         const text = renderAdversarialBrief({ ...base });
         expect(text).not.toMatch(/Findings by class/i);
+    });
+
+    it('accepts a test path sealed with this revision but still refuses a reviewer-authored path', () => {
+        const record: AdversarialRecord = {
+            node: 'verify',
+            status: 'recorded',
+            revisionId: 'revision-1',
+            createdAt: '2026-09-21T00:00:00.000Z',
+            executedInFreshContext: true,
+            briefSha256: 'issued-brief',
+            attempts: [{ hypothesis: 'h', method: 'read', outcome: 'refuted', evidence: 'Read tests/unit/revision-owned.test.ts' }],
+            findings: [],
+        };
+        const input = {
+            node: 'verify' as const,
+            revisionId: 'revision-1',
+            issuedBriefSha256s: ['issued-brief'],
+            declaredTestSelectors: ['tests/unit/declared.test.ts'],
+            sealedRevisionTestSelectors: ['tests/unit/revision-owned.test.ts'],
+        } as Parameters<typeof evaluateAdversarialGate>[1] & { sealedRevisionTestSelectors: string[] };
+
+        expect(evaluateAdversarialGate(record, input)).toMatchObject({ satisfied: true });
+        expect(evaluateAdversarialGate({
+            ...record,
+            attempts: [{ hypothesis: 'h', method: 'read', outcome: 'refuted', evidence: 'Read tests/unit/reviewer-authored.test.ts' }],
+        }, input)).toMatchObject({ satisfied: false, reason: 'undeclared_test_path' });
     });
 });

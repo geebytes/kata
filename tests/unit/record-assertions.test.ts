@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { readChangeRecord } from '../../src/quality/change-record.js';
 
 /**
  * A governed record row that declares itself checkable.
@@ -68,6 +69,9 @@ describe('governed record assertions', () => {
         expect(sealed.success).toBe(false);
         const surfaces = JSON.stringify(sealed.diagnostics ?? {}) + (sealed.error ?? '');
         expect(surfaces).toContain('claim:AC-1:row');
+        // AC-2's record must preserve the failed claim, not report an empty factual surface while diagnostics say it failed.
+        const record = await readChangeRecord(root, 'legend-task');
+        expect(record?.claimFailures).toMatchObject([{ checkId: 'claim:AC-1:row', actualExitCode: 1, missing: false }]);
         expect(surfaces).toMatch(/expected exit 0|contradicted/i);
     });
 

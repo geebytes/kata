@@ -69,6 +69,61 @@ describe('machine-generated change record', () => {
         expect(record.claimFailures).toEqual([]);
     });
 
+    it('treats a directory owned path as covering the files beneath it', async () => {
+        // The shape every real task uses, and the one nothing exercised. An independent adversarial pass proved it by
+        // mutation: replacing the directory rule in `ownedCovers` with `return false` left the entire declared evidence
+        // set green, because the only case compared two identical file paths — so the half of the rule that decides this
+        // task's own outside-ownership list was asserted by nothing.
+        const root = await tempRoot();
+        await mkdir(join(root, 'src', 'nested'), { recursive: true });
+        await mkdir(join(root, 'docs'), { recursive: true });
+        await writeFile(join(root, 'src/nested/inside.ts'), 'export const inside = 1;\n', 'utf8');
+        await writeFile(join(root, 'docs/outside.md'), '# outside\n', 'utf8');
+
+        const record = await buildChangeRecord({
+            root,
+            taskId: 'record-task',
+            revisionId: 'revision-dir',
+            ownedPaths: ['src'],
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+        });
+
+        expect(record.changedPaths).toEqual(['docs/outside.md', 'src/nested/inside.ts']);
+        // `src` owns what is beneath it; `docs` is nobody's.
+        expect(record.changedOutsideOwnership).toEqual(['docs/outside.md']);
+    });
+
+    it('distinguishes what changed from what is declared', async () => {
+        // The other mutation the same pass found: swapping `changedGitPaths(input.root)` for `input.ownedPaths` also left
+        // every declared test green, because the same path appeared on both sides. Here the declared surface and the
+        // changed surface are disjoint, so the two sources cannot be confused.
+        const root = await tempRoot();
+        await mkdir(join(root, 'declared'), { recursive: true });
+        await writeFile(join(root, 'declared/untouched.ts'), 'export const untouched = 1;\n', 'utf8');
+        // Committed on purpose: an untracked file is itself a change, so only a committed one can show that the
+        // *declaration* is not the source of the listing.
+        execFileSync('git', ['add', 'declared/untouched.ts'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'declare'], { cwd: root });
+        await writeFile(join(root, 'src/changed.ts'), 'export const changed = 2;\n', 'utf8');
+
+        const record = await buildChangeRecord({
+            root,
+            taskId: 'record-task',
+            revisionId: 'revision-disjoint',
+            ownedPaths: ['declared'],
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+        });
+
+        // The declaration is not the source: `declared/` appears nowhere in the changed listing.
+        expect(record.changedPaths).not.toContain('declared/untouched.ts');
+        expect(record.changedPaths).toContain('src/changed.ts');
+        expect(record.ownedPaths).toEqual(['declared']);
+    });
+
     it('refuses a record whose factual fields were not derived — the fields are not writable input', async () => {
         const root = await tempRoot();
         const record = await buildChangeRecord({

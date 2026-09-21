@@ -956,6 +956,8 @@ export function evaluateAdversarialGate(
          * rather than for a test the pass wrote itself.
          */
         declaredTestSelectors?: string[];
+        /** Test paths the current sealed change record proves existed before this pass; citation is allowed, authorship is not. */
+        sealedRevisionTestSelectors?: string[];
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
         /** The current revision's code-only content identity, when it can be derived (C2). */
@@ -1019,12 +1021,14 @@ export function evaluateAdversarialGate(
     if (!record.attempts || record.attempts.length === 0) return { satisfied: false, reason: 'incomplete', record, findings: [] };
     // L0-04: a pass may re-run a test the change declares and may not leave one behind. A record whose attempts cite a
     // test path outside the declared set is refused here, the same way a stale revision is — so an authored
-    // counterexample fails the node rather than entering the evidence.
-    // Only when the revision **declares** tests is citing one outside that set a counterexample. With no declaration at
-    // all — a task with no matrix — the set is empty and "no declaration named it" is vacuously true of every path, so the
-    // guard is skipped rather than treating a reviewer's honest description of which test it re-ran as a violation.
-    const declaredTests = input.declaredTestSelectors ?? [];
-    const undeclared = declaredTests.length > 0 ? undeclaredTestPaths(record, declaredTests) : [];
+    // A reviewer may cite a test declared by the matrix or one the *current sealed change record* proves Build wrote
+    // before this pass. A path created after sealing remains refused: it is neither declared nor part of that sealed
+    // record, so this exception cannot turn a review pass into test authorship.
+    const permittedTests = [...new Set([
+        ...(input.declaredTestSelectors ?? []),
+        ...(input.sealedRevisionTestSelectors ?? []),
+    ])];
+    const undeclared = permittedTests.length > 0 ? undeclaredTestPaths(record, permittedTests) : [];
     if (undeclared.length > 0) {
         return {
             satisfied: false,
@@ -1562,6 +1566,8 @@ export async function adversarialGateFor(
     const { surfaceDigests } = await import('./code-surface.js');
     const { readTask } = await import('../core/task.js');
     const task = await readTask(root, taskId).catch(() => null);
+    const { readChangeRecord } = await import('./change-record.js');
+    const sealedRecord = revision ? await readChangeRecord(root, taskId) : null;
     const surfaces = surfaceDigests(revision, task ?? {});
     const gate = evaluateAdversarialGate(record, {
         node,
@@ -1577,6 +1583,7 @@ export async function adversarialGateFor(
             const declared = (task?.acceptanceMatrix?.rows ?? []).flatMap((row) => row.testPaths ?? []);
             return declared.length > 0 ? { declaredTestSelectors: declared } : {};
         })(),
+        ...(sealedRecord?.revisionId === revisionId ? { sealedRevisionTestSelectors: sealedRecord.changedPaths } : {}),
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,

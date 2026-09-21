@@ -33,6 +33,12 @@ fail is not evidence.
 - **THEN** the seal SHALL fail
 - **AND** the failure SHALL name the claim identifier
 
+
+#### Scenario: A failed claim is recorded with the seal that found it
+
+- **WHEN** a claim check contradicts its record row during a seal
+- **THEN** that seal's change record SHALL list the claim failure and its observed outcome
+- **AND** the record SHALL NOT report an empty claim-failure surface while the seal diagnostics report a contradiction
 #### Scenario: An unfalsifiable claim is refused before it runs
 
 - **WHEN** a claim declares no expected outcome, so nothing can contradict it

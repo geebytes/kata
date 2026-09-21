@@ -68,15 +68,30 @@ gamed by writing a different name.
 
 ## One regression this change caused, and the invariant that caught it
 
-Reading the *live* tracked findings for the class history put the pass being recorded into its own brief, moving the hash
-the gate recomputes. Two existing tests failed immediately — `a pass does not change the brief it answered` and `the brief
-is reproducible, which is what makes a partial pass resumable` — and both were right. `BRIEF_VOLATILE_INPUTS` in
-`src/quality/adversarial.ts` already lists "the adversarial record of the pass being recorded (its `mode`, its attempts,
-its dispositions)" as volatile; the history is now filtered to the other node's record, i.e. a durable source.
+The first implementation read the *live* tracked findings for class history, which made the history section include
+the pass being recorded. The `findingHistory` projection now excludes the current adversarial node and reads only the
+other node's durable record. A pass **can** correctly change the rest of a future brief — a major finding opens a repair,
+so framing, claims, and the reading set must change. The gate binds the record to the issued brief copy; its invariant is
+therefore that the history projection is not self-authored, not that a post-repair re-render is byte-identical.
 
+## Second independent-pass repair findings
+
+The first strict independent pass found three proof-boundary defects in the implementation itself. Each was repaired
+RED→GREEN in a suite already declared by this change's matrix:
+
+1. A failed claim made the seal red, but `change-record.json` was emitted first with `claimFailures: []`. The record now
+   receives the already evaluated summary, so the same seal reports the claim identifier and observed exit outcome in both
+   surfaces.
+2. `scope change`/`scope apply` validated their writes, but `open --owned-path` did not. It created the task and only then
+   threw from ownership-conflict discovery; the task was schema-readable but carried an absolute or escaping path. `open`
+   now uses the same normalizer before `createTask`, returning a refusal with no artefact.
+3. The anti-authorship guard rejected an independent pass that merely cited two Build-authored repair tests omitted from the
+   earlier sealed matrix. It now permits a citation only when the current sealed change record proves the path existed before
+   the pass. A reviewer-created post-seal path remains `undeclared_test_path`; citation is not new evidence.
 ## Verification
 
 - `npx tsc --noEmit` clean.
-- Full suite **935 passed / 0 failed** (129 files).
-- New tests: `strict-bootstrap` (3), `change-record` (4), `record-assertions` (2), `delta-surface` (4),
-  `adversarial-history` (3) — each written RED first and failing for the defect it names.
+- Full suite command: `npm test` (**958 passed / 0 failed**, sentinel-pass repair re-run).
+- Matrix-declared suites cover strict bootstrap, change records, record assertions, delta surface, and adversarial history.
+- Repair regressions cover scope safety and A/C/D self-evidence; the three second-pass regressions live in those existing
+  matrix-declared suites so they are included in the sealed contract.
