@@ -471,6 +471,36 @@ published comparison covers the same entries for both paths.
 | CodeGraph is incomplete for this repository | Graph output is a navigation candidate, never admissible evidence | Observed: the index covers 4 TS nodes and points at the parent repo |
 | Benchmark is expensive to build | It is Phase 0, and it is what makes every later phase's claim checkable | Without it, "quality did not drop" is unverifiable prose |
 
+## 5.1 Acceptance items this design inherits from a closed change
+
+Four rounds of independent adversarial review on `review-record-integrity` produced six findings that could not be
+repaired inside that change, because repairing them means changing what a revision's content identity *is* — a
+semantic change to AC-2/AC-4, not a defect fix. They are recorded in
+`docs/design/2026-09-21-review-record-integrity-fourth-pass.md` and become **acceptance items** here rather than
+optional improvements:
+
+1. **The change surface must be defined by content identity, not by declaration.** `revision.pathDigests` is computed
+   over `ownedPaths` at seal time, so a committed change outside the declaration escapes *both* sources the record and
+   the delta compare against (`git status` is clean; the digest table never had the path). Measured: one commit touched
+   `.gitignore`, `docs/guide.md` and `src/a.ts`; the record reported only `src/a.ts`. The retrieval layer's evidence
+   graph (§3.3) is the natural home for a declaration-independent snapshot.
+2. **One scope source per contract pair.** The brief's declared delta and the recorded pass's scope must be the *same
+   immutable object*, fixed at issuance and read at record time — never re-derived. Measured: a brief issued with
+   `changedPaths: ['src/added.ts']` was recorded with `[]`, and the gate answered `delta_stale`, refusing the pass
+   against the brief Kata itself had just issued.
+3. **A platform-selected delta round must be equivalent to an explicit `--since`.** `issueAdversarialBrief` stamps
+   `since` only when the flag was given, so batch-derived rounds record as `{kind: 'full'}` and the coverage check never
+   runs on exactly the rounds the delta machinery auto-selects.
+4. **The permitted-test set comes from the task's declaration, not from what the current revision happens to contain.**
+   A test that is declared, hashed in every revision, and named in the brief's reading set was refused as
+   `undeclared_test_path` — the guard punished an accurate citation and rewarded vague prose.
+5. **A guard's false negatives are tested too.** Every one of the above is a guard harming honest reporting.
+   `docs/verfify.md`'s rule that cost work must not lower critical recall extends to: a guard must not penalise an
+   accurate citation.
+
+These are listed under §3.1 (the record's shape), §3.3 (retrieval) and the Phase 0 corpus respectively; the corpus must
+contain a case for each, since a guard that harms honest reporting is invisible to a corpus that only plants defects.
+
 ## 6. Sequencing, and what this is not
 
 **What this is not**: a patch list. §1.1's three measured brief defects (the contradictory 26-path header, the duplicated
