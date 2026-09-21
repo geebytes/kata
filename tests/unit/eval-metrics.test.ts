@@ -48,6 +48,44 @@ describe('Evaluation metrics', () => {
     expect(metrics.metricCoverage).toEqual({ tokens: 1, cost: 0, escalations: 0 });
   });
 
+  it('measures defect recall and false-pass rate over the admissibility corpus', async () => {
+    // The corpus is the referee for every later phase: `docs/verfify.md` states the objective as
+    // minimise(tokens, latency) subject to criticalRecall >= baseline and falsePassRate <= baseline, and a benchmark
+    // that does not exist cannot referee anything. It must contain planted defects (so recall is measurable), clean
+    // revisions (so false-pass and false-positive are measurable), and guard-harms-honest-reporting cases (because a
+    // guard that refuses an accurate citation is invisible to a corpus that only plants defects).
+    const { admissibilityCorpus, scoreCorpus } = await import('../../src/eval/admissibility-corpus.js');
+
+    const corpus = admissibilityCorpus();
+    expect(corpus.length).toBeGreaterThan(0);
+
+    // Every case declares which kinds it covers, and the corpus must cover the three classes that matter.
+    const kinds = new Set(corpus.flatMap((entry) => entry.kinds));
+    expect(kinds).toContain('planted-defect');
+    expect(kinds).toContain('clean-revision');
+    expect(kinds).toContain('guard-false-negative');
+
+    // Each case carries a revision fixture and the verdict a correct verifier must reach.
+    for (const entry of corpus) {
+      expect(entry.id).toBeTruthy();
+      expect(entry.expectedVerdict).toMatch(/^(no_defect_found|defects_found|inconclusive|budget_exhausted)$/);
+      expect(entry.expectedFindings.length > 0 || entry.expectedVerdict !== 'defects_found').toBe(true);
+    }
+
+    // A perfect verifier scores 1.0 recall and 0.0 false-pass; a verifier that reports nothing scores 0.0 recall.
+    const perfect = scoreCorpus(corpus, corpus.map((entry) => ({ caseId: entry.id, verdict: entry.expectedVerdict, findingIds: entry.expectedFindings })));
+    expect(perfect.criticalRecall).toBe(1);
+    expect(perfect.falsePassRate).toBe(0);
+
+    const blind = scoreCorpus(corpus, corpus.map((entry) => ({ caseId: entry.id, verdict: 'no_defect_found', findingIds: [] })));
+    expect(blind.criticalRecall).toBeLessThan(1);
+    expect(blind.falsePassRate).toBeGreaterThan(0);
+
+    // And a verifier that reports a defect on a clean revision is a false positive, counted separately from a false pass.
+    const overEager = scoreCorpus(corpus, corpus.map((entry) => ({ caseId: entry.id, verdict: 'defects_found', findingIds: ['invented'] })));
+    expect(overEager.falsePositiveRate).toBeGreaterThan(0);
+  });
+
   it('includes wiki rejection rate', () => {
     const runs: EvaluationRun[] = [
       { id: 'run-1', taskId: 'task-1', acceptances: 1, acceptancesPassed: 1, acceptancesFailed: 0, repairCount: 0, escalationCount: null, tokensUsed: 0, costCredits: 0, latencyMs: 0, wikiRejected: 1, wikiPromoted: 1 },
