@@ -115,9 +115,11 @@ smaller context; it is not re-deriving a classification the platform already kno
 
 Order by leverage. Every item must be **shown to fail** before it is called delivered (§6).
 
-### A — the change record is generated, not written
+### A — the change record is generated, not written — **PARTLY DELIVERED (2026-09-21, `2c2894e` “derive the factual half of a round's record, and verify it”)**
 
 **What exists:** the seal already holds the git diff, the evidence set, the check results, the claims and the findings.
+The kata repository now derives the factual half of a round's record from them; what remains of this item is the refusal
+side — a record whose prose states a derivable fact should be refused, naming the field.
 
 **What is missing:** any artefact assembled from them. The author writes paths, counts and dispositions by hand.
 
@@ -149,11 +151,15 @@ marked *unverified* rather than silently counted as covered.
 
 **Dependency:** none beyond C3.
 
-### C — apply the recorded scope changes
+### C — apply the recorded scope changes — **DELIVERED (2026-09-21, `2c2894e`)**
 
-**What exists:** `scope-changes.json`, written by `scope change` (the recording half).
+**What existed:** `scope-changes.json`, written by `scope change` (the recording half), and nothing that read it: the
+seal stamped `ownedPaths` as declared, so six scope records in one project change left every revision snapshot with the
+same `ownedPaths` digest.
 
-**What is missing:** anything that reads it. The seal stamps `ownedPaths` as declared.
+**Status:** `scope apply` is now registered (`src/cli/scope.ts`, dispatched from `src/cli.ts`) and it works: a project
+change ran `scope change --add .llmwiki/` then `scope apply`, and `task.json`'s `ownedPaths` grew to include it. The
+verification below is kept as the acceptance the fix should keep meeting.
 
 **Change:** the effective surface becomes `ownedPaths ∪ recorded scope changes`, computed at seal and stamped into the
 revision, with the reason for each exclusion recorded.
@@ -218,7 +224,25 @@ called delivered:
 - add a scope record → the next revision's digest changes and the delta covers the file (C);
 - produce a brief whose class history is wrong → a pass refuses it (D).
 
+
+### 6.1 Implementation boundary (2026-09-21)
+
+`pass refuses it` is not a mechanically meaningful D gate: history is context, not a reviewer verdict. A major finding
+correctly changes repair framing, claims and the reading set after the pass, so requiring a later full brief re-render to
+be byte-identical would suppress real workflow state. The implemented, falsifiable contract is narrower: a finding the
+briefed node records cannot appear in its own `Findings by class` projection; a finding from the other node appears with
+its derived class and disposition; and the gate binds the pass to the verbatim brief copy issued before recording.
 ---
+
+### 6.2 Repair-pass boundary (2026-09-21)
+
+A failed claim must appear in the change record produced by the same seal; diagnostics and the generated record cannot
+disagree about whether the row held. The command that first accepts an owned path (`open`) applies the same before-write
+normalization as scope apply, preventing an invalid task that the CLI cannot subsequently repair.
+
+The declared-test guard distinguishes reviewer authorship from a reviewer naming a Build-authored regression: a citation
+is permitted only if the matrix declares the path or the current sealed change record already lists it. The record binds
+the exception to a path that existed before the pass, so a test written after sealing still fails closed.
 
 ## 7. What must not change
 
