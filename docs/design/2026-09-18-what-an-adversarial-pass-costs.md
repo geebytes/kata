@@ -1098,7 +1098,8 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
 | **24** | **How classification is actually determined today (verified), the §22 correction, and the three gaps: instruments undeclared, instruments in the code bucket, non-path inputs invisible** | the mechanism as built |
 | **25** | **Implementation items G1–G3: declare instruments, per-surface digests, environment inputs — each with acceptance, invariants, and what may not change** | the work list for §24 |
-| **27** | **A twelve-round documentation loop, measured: the prose/code split of its findings, the sweep whose own summary was false, three structural multipliers (unverified records, recorded-but-unapplied scopes, class history missing from the brief), four author-side invariants, and the work list A–D plus the handover entry** | the record work |
+| **27** | **A twelve-round documentation loop, measured: the prose/code split of its findings, the sweep whose own summary was false, three structural multipliers, and four author-side invariants** | the evidence for the record work |
+| **27.5 / `2026-09-21-record-integrity-handover.md`** | **The work list A–D, the measured traps, the self-evidence required, and the invariants that must survive — self-contained, for whoever owns the record side** | the work list |
 | 26 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
