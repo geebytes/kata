@@ -1098,6 +1098,7 @@ Read in this order; each section stands alone but the numbering is the argument.
 | **23** | **What may trigger a pass: classification by surface digest, three tiers, chore routing, the cost calculus** | the trigger taxonomy |
 | **24** | **How classification is actually determined today (verified), the §22 correction, and the three gaps: instruments undeclared, instruments in the code bucket, non-path inputs invisible** | the mechanism as built |
 | **25** | **Implementation items G1–G3: declare instruments, per-surface digests, environment inputs — each with acceptance, invariants, and what may not change** | the work list for §24 |
+| **27** | **A twelve-round documentation loop, measured: the prose/code split of its findings, the sweep whose own summary was false, three structural multipliers (unverified records, recorded-but-unapplied scopes, class history missing from the brief), four author-side invariants, and the work list A–D plus the handover entry** | the record work |
 | 26 | This index | orientation |
 
 Current status of the C-list (as of 2026-09-19). **All of C1–C7 are implemented**; the commit column is the evidence, and
@@ -1133,3 +1134,153 @@ derivable or curated; whether the attempt cap's reproduction escape hatch is che
 all — today `toolUses` is the only portable signal).
 
 Two project-side notes, for context rather than as kata requirements: a project may install an interim checker of its own (k2skills did, for one acceptance statement) — it is explicitly a stopgap with a stated retirement condition once C3's claims cover the same clauses; and a handoff of this document does not authorise changes to any project's repository, only to this one.
+
+## 27. A twelve-round documentation loop, measured (2026-09-20/21, project change `b1-identity-gap-closure`)
+
+§§14–25 were written from a 24-round loop on one project change. This section adds a second, independent loop from a
+different change in the same project, because the composition of the findings is different and it moves the diagnosis.
+
+### 27.1 The ledger
+
+19 recorded passes (10 `verify`, 9 `review`), **50 findings** by id, 487 tool uses in the records alone.
+
+| Class | Findings | of which `major` | of which `blocking` |
+|---|---|---|---|
+| **Record / prose** (ledger rows, notes, counts, citations, coverage claims, "what I did" summaries) | **37** | **12** | 0 |
+| Code (identity preimages, wiring, assembly, guards) | 10 | 5 | 2 |
+| Other | 3 | 0 | 0 |
+
+Rounds r33–r43: ~30M subagent tokens and ~1.5h of agent wall-clock, 12 `build --seal` cycles, one repair batch followed by
+two independent passes each time. A single round is two passes at 0.91–3.16M tokens each and 115–1146 s each; the seal
+plus the repair is 5–8 minutes on top. **Provenance of these numbers:** the pass counts, severities and `toolUses` come
+from `.kata/tasks/<task>/passes/*.json` and the seal output; the token and wall-clock figures come from the harness's per-agent
+reports, so those two are estimates rather than something a reader can re-derive from the repository.
+
+**Which rounds were necessary.** Of the eleven rounds, the ones that bought real product defects were four, all of them
+on delivered work:
+`ac3` (evidence citations were not content-anchored, so two independent compilations of identical content could produce
+different `version_id`s — `blocking`), the B2-3 binding channel (`manifest` digest still carried `seg.segment_id`),
+a preimage still carrying runtime handles, and a SIGTERM guard that leaked orphan processes under load. Everything else —
+**seven rounds** — was about the documents describing the work: pointer targets that had been deleted, ledger rows whose
+premise the row's own disposition had falsified, counts that drifted, a section that said it did not restate what it
+restated, and a coverage statement that misdescribed what the gates actually do.
+
+### 27.2 The finding that changes the diagnosis
+
+Round 43's passes were pointed at my own repair of round 42. The repair was **a mechanical sweep**: resolve every
+`path:line` citation against `git ls-files`, check the line exists. Its commit message said "30 citations resolve and
+hold, 4 bare ones hand-checked, one stale". Both passes measured it independently:
+
+- 38 unique citations, not 35;
+- **five** resolve to content that is not what the sentence claims, not one;
+- and the one it did find was the one it happened to needle-test.
+
+The sweep checked that the *line exists*, not that the *line is the right one* — and then summarized itself in a
+sentence that was false. So the failure mode is not "the author is careless". It is structural: **an author's account of
+its own work has no verifier, and any process that requires one will keep producing falsifiable text.** Even a
+purpose-built checker, written by the same author in the same round, fails at summarizing itself. This is the same
+shape as §19 (a probe is not a test case) one level up: *a summary is not a measurement*.
+
+### 27.3 Three structural multipliers, with this change's evidence
+
+**M1 — the DoD mandates hand-written records and gives them no verifier.** The batch-level DoD requires the delivery
+note, the ledger row and the report line to be updated in the same batch as the code. Code carries tests, mutation
+evidence and `claims[]`; the record carries nothing. An adversarial pass whose instruction is "falsify" will always find
+the unverified surface cheapest. Evidence: 37/50 findings; and — the part that makes it a loop rather than a tail —
+**every repair's new prose became the next round's target** (r36→r44 all sit in one section family of one file).
+
+**M2 — scope changes are recorded but never applied.** `scope change --add/--remove` writes `scope-changes.json`; no
+subcommand applies it and the seal does not either. Measured in this change: six records (including two that *added* the
+design contract), and **every** revision snapshot carries the same `ownedPaths` digest `4522af1eaa…` — still containing
+`docs/acceptance-claims/`, still excluding the design contract. Consequences, both of which cost rounds: the delta
+understates a repair whose delivery note is out of surface (`scope-additions-never-applied`, plus two `owned-path-*`
+majors), and the DoD's "update the design contract in the same batch" pushes edits into a file the gate cannot see — the
+relocation that followed left a stale cross-reference, which was round 42's major. §21/§26 records the *recording* half
+as delivered; the *applying* half is what is missing.
+
+**M3 — the brief carries attempts, not class history.** The brief lists the previous round's attempts; it does not say
+"this class has been found six times, here is how each was dispositioned". So each round re-derives the same class from
+zero: the rounds r36–r43 all sit in one section family of one document, each pass re-deriving it independently. The cheapest lever in this loop is not
+a smaller context — it is not re-deriving a classification the record already holds.
+
+### 27.4 Author-side discipline that worked, and how it became permanent
+
+Four rules were each *forced* by a finding; the ones that stuck are the ones written as a mechanically checkable
+invariant rather than as good intentions.
+
+| Rule | Forced by | Invariant as it now reads |
+|---|---|---|
+| Point at the artefact, do not enumerate it | r37: "only two rules are not derivable from the diff" was false | the note says "check it with `git show <a>^:<path>` vs `git show <a>:<path>`"; nothing counts the hunks |
+| Cite symbols, not line numbers | r43: five citations resolved to the wrong content; line numbers drift on every edit | **no line-number citation in the three documents this change touches** (`docs/2026-09-16-…-plan.md`, `docs/2026-09-15-…-design.md`, `docs/acceptance-claims/README.md`): the same grep over those three returns 0 hits. It is **not** a repository-wide invariant — 19 other documents under `docs/` still cite line numbers, which is why the rule is stated per document. Where precision matters the citation names the symbol (`MethodObjectRow(version="0.1.0")`, `_projection_dir`) |
+| No absolute quantifier without its range, and mark untested branches | r40/r41: "prose is not machine-checked" (two guards check it), "不会被任何门禁检查覆盖" (a guard covers it), "每行/任何" | the coverage section names the two guards and their ranges, and marks the branch it did not measure as *not measured* |
+| Past delivery makes present-tense text false; mark it | r42: the audit report was still named as outside the surface after being merged in; two `现状` lines survived their own delivery | pre-delivery statements read "（交付前；现已不成立，本条按历史读）" |
+
+### 27.5 Work list: four changes, with the evidence for each
+
+The C-list (§14) fixed *when* a pass runs and *what* it binds to. These four are about the **record**, which is where
+this loop's findings actually landed. Order by leverage; each must be able to fail, and each must be shown to fail by
+planting a false statement before it is called delivered.
+
+**A — the change record is generated, not written.** The seal already holds the git diff, the evidence set, the check
+results, the claims and the findings. Emit a machine-written record from them (paths, checks, claims, findings, the
+surface digests) and allow the author only *judgements and trade-offs* — which cannot be derived, and are therefore the
+only prose worth reviewing. Evidence this is the root fix: 37/50 findings are of the derivable kind, and every repair
+in r36–r44 wrote more of them. Acceptance: (a) planting a false derivable fact in the generated block is impossible
+because the block is regenerated and compared byte-wise (the k2skills interim checker is a worked example of this
+shape — and of its limit: it protected the block and left the prose outside it); (b) a record whose prose states a
+derivable fact is refused with the reason, and the reason names the field. Invariant: **the record may never be the only
+place a fact is true** — a fact that matters must exist in code, evidence or a check.
+
+**B — `claims[]` reach the record's own rows.** C3 (`7eee82e`, `76649a0`) runs acceptance statements as checks and
+reports by claim id; the same mechanism applies to ledger/report rows, which are the surface the last seven rounds
+falsified. Acceptance: a planted false ledger row fails the seal and names the row; a true one passes. Invariant: a
+claim's `check` must be able to fail (`expect.exitCode` required — see the trap in §27.6), and a row with no check is
+marked *unverified* rather than silently counted.
+
+**C — apply the scope changes.** Make the effective surface `ownedPaths ∪ recorded scope changes`, computed at seal and
+stamped into the revision, with the reason for each exclusion recorded. Acceptance: after `scope change --add design.md`,
+the next revision's digest changes and the delta covers that file; an *unrecorded* out-of-surface edit is still refused.
+Invariant: never silently widen — if the platform cannot compute the union, it must fail closed and say which record it
+could not apply.
+
+**D — the brief carries the class history.** For each class of finding present in the record, add: how many times, the
+last disposition, and the invariant that now covers it. Acceptance: a brief for a revision whose prior rounds found the
+same class names that class and its disposition; a brief for the first round does not invent one. Invariant: this is
+context, not a verdict — it must not tell the pass what to conclude (I1), and it must not shorten the instructions to
+falsify.
+
+### 27.6 Handover entry (for whoever owns kata)
+
+**What is already there, so nothing above is a re-proposal.** C1–C7, the §21 platform gaps (`instruments[]`,
+`boundaries[]`, `scope-changes.json`, `findings list --byLayer`), the brief's reading set, and the M1/M2 brief
+instructions are all delivered (§26). What is *not* delivered is: applying recorded scopes (M2's second half), any
+verifier for the record (M1), and class history in the brief (M3).
+
+**Traps measured in this loop, worth having in the code and in the tests.**
+
+- `check = {command: <executable>, args: [...], expect: {exitCode: n}}` — `command` must be an **executable**; a whole
+  command line in it is treated as a missing program (10/10 claims red with exit 127).
+- `expect.exitCode` is **required**: without it `resolveClaimChecks` throws
+  `Cannot read properties of undefined (reading 'exitCode')` and the diagnostics are mislabelled `matrixError` — so the
+  platform's own `validateClaims` (which rejects a claim with no expected result) is unreachable on that input.
+- The generated `.kata/schemas/task.schema.json` copy inside a project lags the engine's schema (no `claims`,
+  `coveredBy`, `boundaries`, `instruments`, `engine`); a project reading the copy will believe a legal declaration is
+  illegal. Refresh the generator, or stamp the copy's version.
+- `adversarial record`'s schema is `additionalProperties: false` and the error does not list the allowed keys; a
+  top-level `taskId` is legal on findings and illegal at the top level. Project the payload or keep the raw file.
+- A pass that dies without writing its result file leaves the revision with **no** record for that node (r38's verify),
+  and nothing in `adversarial status` distinguishes "never ran" from "ran and crashed".
+- Two nodes can reach the same finding independently (r41 and r42 did, in both cases one `major` and one pass phrasing
+  the same fact): good for confidence, wasteful for cost. Per-node surface digests (§22) are the mechanism; using them
+  is a project-side choice.
+
+**Self-evidence required before any of A–D is called delivered.** The new gate must be shown to fail: plant a false
+derivable fact and watch the seal name it (A/B), add a scope record and watch the digest change (C), and produce a brief
+whose class history is wrong and watch a pass refuse it (D). A gate that cannot be shown to fail is what §15 calls a
+guard that reads as protection without being one.
+
+**What must not change.** The four invariants of §15 stand: an independent adversarial node (I1), evidence bound to the
+revision it was produced on (I2), repairs authorised by severity and nothing else (I3), and `fail-closed` over a silent
+pass (I4). Nothing in §27.5 touches them: A removes prose, B adds a check, C corrects which surface is bound, D adds
+context. In particular, **do not** shorten the falsification instructions to save tokens — the measured waste is in
+re-deriving a class, not in falsifying it.
