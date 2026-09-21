@@ -200,7 +200,10 @@ shorten the falsification instructions.
   `coveredBy`, `boundaries`, `instruments`, `engine`): a project reading the copy concludes that a legal declaration is
   illegal. Refresh the generator, or stamp the copy with the engine version it came from.
 - A pass that dies without writing its result file leaves the revision with **no** record for that node, and
-  `adversarial status` does not distinguish "never ran" from "ran and crashed".
+  `adversarial status` does not distinguish "never ran" from "ran and crashed". The same shape appears in the
+  project's CI: `pytest tests/<a-name-that-does-not-exist>.py -q` prints *no tests ran* and **exits 0**, so a
+  contract that names a test file which was never created reads as covered. Four such names survived in the
+  plan document for two days of rounds; the class only ended when the slice sections named the real carriers.
 - Two nodes can reach the same finding independently (twice in the last three rounds). Good for confidence, wasteful for
   cost; per-node surface digests (§22) are the mechanism, and using them is a project-side choice.
 
