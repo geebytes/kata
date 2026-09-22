@@ -138,3 +138,77 @@ describe('capability state is visible, and the wording matches the mechanism', (
         expect(source).not.toMatch(/cannot author|unforgeable/i);
     });
 });
+
+/**
+ * b1: the receipt can say which telemetry it could not measure, and `status` reports it.
+ *
+ * The recommended realisation is a subagent round, whose platform reports tool uses, tokens and wall clock but not output
+ * bytes or truncations. Those must be recordable as *not measured* — a fabricated zero is indistinguishable from a measured
+ * one, which is the defect this whole mechanism replaces.
+ */
+describe('telemetry distinguishes "not measured" from a measured zero', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('accepts a receipt that could not measure every figure, and names the ones it could not', async () => {
+        const root = await strictTask('telemetry-partial');
+        const brief = await issueAdversarialBrief(root, 'telemetry-partial', 'review');
+        await writeAdversarialRecord(root, 'telemetry-partial', {
+            node: 'review',
+            status: 'recorded',
+            revisionId: brief.revisionId ?? '',
+            briefSha256: brief.sha256,
+            createdAt: new Date().toISOString(),
+            scope: { kind: 'full' },
+            mode: 'cold',
+            hypotheses: [],
+            attempts: [],
+            findings: [],
+            receipt: {
+                runId: brief.runRequest!.runId,
+                requestSha256: brief.runRequest!.requestSha256,
+                capabilities: ['fresh_context', 'read_only_fs'],
+                startedAt: '2026-09-22T00:00:00.000Z',
+                endedAt: '2026-09-22T00:00:20.000Z',
+                // What a subagent round can actually obtain from the platform: uses and tokens, not bytes or truncations.
+                telemetry: { toolCalls: 2, tokens: 52_700, outputBytes: null, truncations: null },
+                status: 'completed',
+            },
+        } as never);
+
+        const node = ((await statusAt(root, 'telemetry-partial')).nodes as Record<string, Record<string, unknown>>).review!;
+        expect(node.receipt).toBe('recorded');
+        expect(node.unmeasuredTelemetry).toEqual(['outputBytes', 'truncations']);
+    });
+
+    it('reports nothing unmeasured for a receipt that measured all four figures', async () => {
+        const root = await strictTask('telemetry-complete');
+        const brief = await issueAdversarialBrief(root, 'telemetry-complete', 'review');
+        await writeAdversarialRecord(root, 'telemetry-complete', {
+            node: 'review',
+            status: 'recorded',
+            revisionId: brief.revisionId ?? '',
+            briefSha256: brief.sha256,
+            createdAt: new Date().toISOString(),
+            scope: { kind: 'full' },
+            mode: 'cold',
+            hypotheses: [],
+            attempts: [],
+            findings: [],
+            receipt: {
+                runId: brief.runRequest!.runId,
+                requestSha256: brief.runRequest!.requestSha256,
+                capabilities: ['fresh_context', 'read_only_fs'],
+                startedAt: '2026-09-22T00:00:00.000Z',
+                endedAt: '2026-09-22T00:00:20.000Z',
+                telemetry: { toolCalls: 2, tokens: 52_700, outputBytes: 4_096, truncations: 0 },
+                status: 'completed',
+            },
+        } as never);
+
+        const node = ((await statusAt(root, 'telemetry-complete')).nodes as Record<string, Record<string, unknown>>).review!;
+        // An empty list is the claim "every figure was measured", which is why the helper must not conflate it with absent.
+        expect(node.unmeasuredTelemetry).toEqual([]);
+    });
+});

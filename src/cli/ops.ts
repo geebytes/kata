@@ -1,5 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { requiredCapabilitiesForNode, type ExecutionNode } from '../quality/review-execution.js';
+import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode } from '../quality/review-execution.js';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
@@ -672,6 +672,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 requiredCapabilities: requiredCapabilitiesForNode(candidate as ExecutionNode),
                 receipt: record?.receipt ? 'recorded' as const : 'absent' as const,
                 ...(record?.receipt ? { capabilities: record.receipt.capabilities } : {}),
+                // b1's consumer: which figures the platform actually reported. Without this, an unmeasured field and a
+                // measured zero read alike, and the operator cannot tell a measured round from a partially reported one.
+                ...(record?.receipt ? { unmeasuredTelemetry: unmeasuredTelemetry(record.receipt.telemetry) } : {}),
                 ...(missing.length > 0 ? { missingCapabilities: missing } : {}),
                 path: record?.status === 'waived'
                     ? { kind: 'waived' as const, reason: record.waivedReason ?? null }

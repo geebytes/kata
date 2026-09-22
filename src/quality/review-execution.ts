@@ -77,11 +77,33 @@ export interface ReviewRunRequest {
 }
 
 /** Telemetry only the executor can observe. Facts, never a verdict. */
+/**
+ * What the executor measured. A field is `null` when the platform could not report it.
+ *
+ * Not measured is a distinct state from measured-as-zero, and the difference matters more here than anywhere else in this
+ * design: the whole mechanism exists to replace numbers someone asserted with numbers something measured. A route that can
+ * only obtain some of them must say which — the alternative is a fabricated zero, which is the same defect as
+ * `executedInFreshContext: true` wearing a number.
+ */
 export interface ReviewExecutionTelemetry {
-    toolCalls: number;
-    outputBytes: number;
-    tokens: number;
-    truncations: number;
+    /** Measured by the platform, or `null` where it could not be. */
+    toolCalls: number | null;
+    outputBytes: number | null;
+    tokens: number | null;
+    truncations: number | null;
+}
+
+const TELEMETRY_FIELDS = ['toolCalls', 'outputBytes', 'tokens', 'truncations'] as const;
+
+/**
+ * The telemetry fields this receipt could not measure, named rather than silently zero.
+ *
+ * A consumer exists so this is not a vocabulary with nothing reading it: `adversarial status` reports it per node, because
+ * an operator asking "was this round measured" should not have to infer it from a `0`.
+ */
+export function unmeasuredTelemetry(telemetry: Partial<ReviewExecutionTelemetry> | undefined): string[] {
+    if (!telemetry) return [...TELEMETRY_FIELDS];
+    return TELEMETRY_FIELDS.filter((field) => telemetry[field] === null);
 }
 
 /** The executor's report. Authored by the host, never by the reviewer. */

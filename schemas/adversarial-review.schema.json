@@ -281,20 +281,36 @@
           "additionalProperties": false,
           "properties": {
             "toolCalls": {
-              "type": "integer",
-              "minimum": 0
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Measured by the executor, or null where the platform could not report it. Null is not zero: an unmeasured figure must not be fabricated into one."
             },
             "outputBytes": {
-              "type": "integer",
-              "minimum": 0
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Measured by the executor, or null where the platform could not report it. Null is not zero: an unmeasured figure must not be fabricated into one."
             },
             "tokens": {
-              "type": "integer",
-              "minimum": 0
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Measured by the executor, or null where the platform could not report it. Null is not zero: an unmeasured figure must not be fabricated into one."
             },
             "truncations": {
-              "type": "integer",
-              "minimum": 0
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Measured by the executor, or null where the platform could not report it. Null is not zero: an unmeasured figure must not be fabricated into one."
             }
           }
         },
