@@ -15,6 +15,7 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
         return {
             command: 'findings help',
             commands: [
+                'add --change <task-id> --severity <blocking|major|minor> --message "<the defect>" [--path <file>] [--acceptance <AC-id>]',
                 'list --change <task-id> [--disposition open|deferred|accepted|fixed]',
                 'defer --change <task-id> --id <finding-id> --reason "<why not now>" [--by <actor>]',
                 'accept --change <task-id> --id <finding-id> --reason "<why this is not a defect>" [--by <actor>]',
@@ -81,8 +82,38 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
         };
     }
 
+    if (subcommand === 'add') {
+        // The production path for a review finding. `recordFinding` validates against the schema, takes the task lock and
+        // binds the revision — and had **no caller outside an eval fixture and a test**, so `review.json` could never
+        // become non-empty and `review --approve` could never satisfy "requires non-empty review evidence". A mechanism
+        // with no consumer, in the one place where the consumer is the gate itself.
+        const severity = valueAfter(rest, '--severity');
+        const message = valueAfter(rest, '--message');
+        const severities = ['blocking', 'major', 'minor'] as const;
+        if (!severity || !message) {
+            throw new Error('Usage: kata-cli findings add --change <task-id> --severity <blocking|major|minor> --message "<the defect>" [--path <file>] [--acceptance <AC-id>]');
+        }
+        // Refused here rather than at the schema, so the message names the vocabulary instead of reporting a path into a
+        // JSON document.
+        if (!(severities as readonly string[]).includes(severity)) {
+            throw new Error(`Unknown severity '${severity}'. Use one of: ${severities.join(', ')}.`);
+        }
+        const { recordFinding } = await import('../quality/reviewer.js');
+        const path = valueAfter(rest, '--path');
+        const acceptanceId = valueAfter(rest, '--acceptance');
+        const finding = await recordFinding({
+            root,
+            taskId,
+            severity: severity as (typeof severities)[number],
+            message,
+            ...(path ? { path } : {}),
+            ...(acceptanceId ? { acceptanceId } : {}),
+        });
+        return { command: 'findings add', taskId, findingId: finding.id, severity: finding.severity };
+    }
+
     const disposition = subcommand === 'defer' ? 'deferred' : subcommand === 'accept' ? 'accepted' : null;
-    if (!disposition) throw new Error(`Unknown findings subcommand: ${subcommand}. Usage: kata-cli findings <list|defer|accept|carry>`);
+    if (!disposition) throw new Error(`Unknown findings subcommand: ${subcommand}. Usage: kata-cli findings <add|list|defer|accept|carry>`);
 
     const id = valueAfter(rest, '--id');
     const reason = valueAfter(rest, '--reason');
