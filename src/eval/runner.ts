@@ -9,7 +9,7 @@ import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { computeMetrics, type EvaluationRun, type EvaluationMetrics } from './metrics.js';
 import { checkReleaseGates, type ReleaseGateResult } from './release-gates.js';
-import { admissibilityCorpus, scoreCorpus, type CorpusObservation } from './admissibility-corpus.js';
+import { admissibilityCorpus, scoreCorpus, type CorpusObservation, type CorpusScore } from './admissibility-corpus.js';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 /** Metrics this harness cannot observe in process: the host platform owns model choice, cost and retries. */
@@ -32,7 +32,13 @@ export interface EvaluationManifest {
    * running both shapes over the corpus and reporting what each concluded. Absent means unmeasured, which the gate
    * reports as `skipped` — never as a pass.
    */
-  verifier?: { baseline: CorpusObservation; current: CorpusObservation };
+  /**
+   * The verifier scored against the corpus, before and after the change (AC-5) — **one observation per case**, because
+   * that is what `scoreCorpus` measures. It was one observation per *side*, which made the measurement inexpressible:
+   * measured, a perfect verifier scored `1/21 = 0.0476` and a blind one scored the same, so two runs of that shape
+   * compared equal and the gate passed without measuring anything.
+   */
+  verifier?: { baseline: CorpusObservation[]; current: CorpusObservation[] };
 }
 
 /**
@@ -97,6 +103,14 @@ export interface EvaluationReport {
    * empty denominator, and this is where the reader sees which side was refused and why.
    */
   verifierObservationProblems?: string[];
+  /**
+   * The scored verifier, published rather than computed and discarded.
+   *
+   * The gate consumed these scores and the report did not carry them, so a reader could see that the gate refused without
+   * seeing what it measured — and the measurement is the whole point of AC-5.
+   */
+  verifierBaseline?: CorpusScore;
+  verifierCurrent?: CorpusScore;
 }
 
 /**
@@ -143,17 +157,28 @@ export async function runEvaluation(
   //
   // The observations are matched to the corpus by case id, and an id the corpus does not declare is refused rather than
   // silently dropped into a zero denominator.
+  const criticalCases = corpus.filter((entry) => entry.critical === true);
   const verifyObservations = manifest.verifier
-    ? ([['baseline', manifest.verifier.baseline], ['current', manifest.verifier.current]] as const).map(([side, observation]) => {
-        const known = corpus.some((entry) => entry.id === observation.caseId);
-        return known ? null : `${side} names caseId '${observation.caseId}', which is not a corpus case`;
-    }).filter((problem): problem is string => problem !== null)
+    ? ([['baseline', manifest.verifier.baseline], ['current', manifest.verifier.current]] as const).flatMap(([side, observations]) => {
+        const problems = observations
+            .filter((observation) => !corpus.some((entry) => entry.id === observation.caseId))
+            .map((observation) => `${side} names caseId '${observation.caseId}', which is not a corpus case`);
+        // An absent observation and a missed defect must not read alike. A set that does not cover every critical case is
+        // refused with the missing ids named — never scored, because scoring it would report a recall the manifest did not
+        // measure, which is the reading AC-5 exists to refuse.
+        const covered = new Set(observations.map((observation) => observation.caseId));
+        const missing = criticalCases.filter((entry) => !covered.has(entry.id)).map((entry) => entry.id);
+        if (missing.length > 0) {
+            problems.push(`${side} declares ${observations.length} observation(s) and does not cover ${missing.length} critical case(s): ${missing.join(', ')}`);
+        }
+        return problems;
+    })
     : [];
   // A refused observation makes the gate **fail** rather than skip: the manifest claimed a measurement and named
   // something the corpus does not contain, so "we did not measure" would understate it. Fail-closed, and it names what
   // was wrong so the declaration can be fixed.
   const verifier = manifest.verifier && verifyObservations.length === 0
-    ? { verifierBaseline: scoreCorpus(corpus, [manifest.verifier.baseline]), verifierCurrent: scoreCorpus(corpus, [manifest.verifier.current]) }
+    ? { verifierBaseline: scoreCorpus(corpus, manifest.verifier.baseline), verifierCurrent: scoreCorpus(corpus, manifest.verifier.current) }
     : {};
   const verifierObservationProblems = verifyObservations.length > 0 ? verifyObservations : undefined;
   const releaseGates = await checkReleaseGates(root, metrics, {
@@ -169,6 +194,7 @@ export async function runEvaluation(
   return {
     manifest,
     runs,
+    ...verifier,
     metrics,
     releaseGates,
     timestamp: new Date().toISOString(),

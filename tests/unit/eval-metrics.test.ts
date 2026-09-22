@@ -84,8 +84,8 @@ describe('the release path actually scores the verifier', () => {
             const manifest = {
                 taskFixtures: [],
                 verifier: {
-                    baseline: { caseId: 'a', verdict: 'defects_found' as const, findingIds: ['seal-persists-refused-owned-paths'] },
-                    current: { caseId: 'a', verdict: 'no_defect_found' as const, findingIds: [] },
+                    baseline: [{ caseId: 'a', verdict: 'defects_found' as const, findingIds: ['seal-persists-refused-owned-paths'] }],
+                    current: [{ caseId: 'a', verdict: 'no_defect_found' as const, findingIds: [] }],
                 },
             };
             const report = await runEvaluation(manifest as never, root);
@@ -98,11 +98,72 @@ describe('the release path actually scores the verifier', () => {
             // assertion above only held because an unrelated gate failed `allPass`. A declaration that names no corpus
             // case must be refused and reported, never scored as a held line.
             expect(gate?.pass).toBe(false);
-            expect(report.verifierObservationProblems?.length).toBe(2);
+            // Two sides, and each side now reports two distinct facts: the id names no corpus case, **and** the declared
+            // set does not cover the critical cases. Both are refusals; neither is a score of zero.
+            expect(report.verifierObservationProblems?.length).toBeGreaterThanOrEqual(2);
+            expect(report.verifierObservationProblems?.join(' ')).toMatch(/not a corpus case/);
+            expect(report.verifierObservationProblems?.join(' ')).toMatch(/does not cover/);
         } finally {
             await rm(root, { recursive: true, force: true });
         }
     });
+
+    /**
+     * P1.1, measured: the manifest carried **one** observation per side while `scoreCorpus` measures per case, so a
+     * perfect verifier scored `1/21 = 0.0476`, a blind one scored the same, and two runs of that shape compared equal —
+     * the gate passed without measuring anything. A declared surface with no producer of the right shape.
+     */
+    it('scores a verifier that answers the whole corpus at full recall, and refuses a partial set', async () => {
+        const { admissibilityCorpus } = await import('../../src/eval/admissibility-corpus.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-eval-verifier-coverage-'));
+        try {
+            await initLayout(root);
+            const corpus = admissibilityCorpus();
+            const critical = corpus.filter((entry) => entry.critical === true);
+            expect(critical.length).toBeGreaterThan(1);
+
+            // The verdict and the reported findings are **independent**: the corpus holds a critical case
+            // (`budget-exhaustion-is-reported-not-silent`) whose correct answer is the refused state `budget_exhausted`
+            // *and* names the finding it established. Keying `findingIds` on the verdict — my first attempt — made that
+            // case uncatchable by a verifier answering exactly as the corpus declares, and the measurement said 20/21.
+            const answering = (verdictOf: (entry: (typeof corpus)[number]) => 'no_defect_found' | 'defects_found' | 'inconclusive' | 'budget_exhausted') =>
+                corpus.map((entry) => ({ caseId: entry.id, verdict: verdictOf(entry), findingIds: entry.expectedFindings }));
+
+            // 1. A perfect verifier — the full set — measures as a perfect verifier.
+            const perfect = await runEvaluation({ taskFixtures: [], verifier: { baseline: answering((e) => e.expectedVerdict), current: answering((e) => e.expectedVerdict) } } as never, root);
+            expect(perfect.verifierBaseline?.criticalRecall).toBe(1);
+            expect(perfect.verifierBaseline?.falsePassRate).toBe(0);
+
+            // 2. An incomplete set is refused with the missing ids named — never scored as a miss. An absent observation
+            //    and a missed defect must not read alike.
+            const partialSet = answering((e) => e.expectedVerdict).slice(0, 1);
+            const partial = await runEvaluation(
+                { taskFixtures: [], verifier: { baseline: partialSet, current: partialSet } } as never,
+                root,
+            );
+            const partialProblems = partial.verifierObservationProblems?.join(' ') ?? '';
+            expect(partial.verifierObservationProblems?.length).toBeGreaterThan(0);
+            expect(partialProblems).toMatch(/does not cover/);
+            // It names what was not measured, and that is a critical case the declared set omits — not a score of zero.
+            const uncovered = critical.filter((entry) => !partialSet.some((observation) => observation.caseId === entry.id));
+            expect(uncovered.length).toBeGreaterThan(0);
+            expect(partialProblems).toContain(uncovered[0]!.id);
+            const partialGate = partial.releaseGates.gates.find((g) => g.name === 'verifier-critical-recall');
+            expect(partialGate?.pass).toBe(false);
+            expect(partialGate?.skipped).not.toBe(true);
+
+            // 3. A blind verifier over the same full coverage reads as blind: zero recall, and a false pass per critical
+            //    defect it answered with "nothing wrong". Both are measurable only now that the set can express them.
+            const blind = await runEvaluation(
+                { taskFixtures: [], verifier: { baseline: answering(() => 'no_defect_found' as const).map((o) => ({ ...o, findingIds: [] })), current: answering(() => 'no_defect_found' as const).map((o) => ({ ...o, findingIds: [] })) } } as never,
+                root,
+            );
+            expect(blind.verifierBaseline?.criticalRecall).toBe(0);
+            expect(blind.verifierBaseline?.falsePassRate).toBeGreaterThan(0);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 30000);
 });
 
 /**
