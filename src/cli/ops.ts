@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
@@ -257,6 +257,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
 
     if (subcommand === 'brief') {
         const since = argValue(rest, '--since');
+        // K2: the request is the contract a host answers. Emitting it here means a host never has to read kata's private
+        // state to obtain one — and what it gets is the very object the gate will verify against, not a re-derivation.
+        const emitRequest = argValue(rest, '--emit-request');
         const requestedMode = argValue(rest, '--mode');
         // Issued, not merely rendered: this is the copy the recorded pass will be bound to (D2, second fix).
         const prepared = await prepareAdversarialCertification(root, change, node, {
@@ -271,10 +274,25 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 certification: 'reused',
                 priorBriefSha256: prepared.priorBriefSha256,
                 reCertification: prepared.decision,
-                note: 'No formal brief issued: the planner mechanically proved the prior certification still applies.',
+                ...(emitRequest
+                    ? {
+                        emittedRequest: false,
+                        note: 'No request was emitted: reuse issues no new brief, so there is no new run to bind. The prior '
+                            + 'certification still applies; a fresh pass needs a changed surface.',
+                    }
+                    : { note: 'No formal brief issued: the planner mechanically proved the prior certification still applies.' }),
             };
         }
         const brief = await persistAdversarialBrief(root, change, node, prepared.brief);
+        if (emitRequest) {
+            if (!brief.runRequest) {
+                return {
+                    command: 'adversarial brief', taskId: change, node, emittedRequest: false,
+                    error: 'The issued brief carries no run request, so there is nothing to emit.',
+                };
+            }
+            await writeFile(emitRequest, `${JSON.stringify(brief.runRequest, null, 2)}\n`, 'utf8');
+        }
         const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
             command: 'adversarial brief',
@@ -409,6 +427,40 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         } catch (error) {
             throw new Error(`adversarial record could not parse the result: ${error instanceof Error ? error.message : String(error)}`);
         }
+        // K1: the receipt schema says it is written by the host and never by the reviewer. The write path enforced only
+        // *which round* a receipt binds to, so a receipt inside the reviewer's own result body was accepted — measured.
+        // Unforgeability comes from not being able to write it in, not from not being able to guess the nonce.
+        const receiptFile = argValue(rest, '--receipt-file');
+        if ((parsed as unknown as Record<string, unknown>).receipt !== undefined) {
+            return {
+                command: 'adversarial record',
+                taskId: change,
+                node,
+                recorded: false,
+                status: 'refused',
+                error: 'The result body may not carry a receipt: a receipt inside the reviewer\'s own result file is the '
+                    + `reviewer writing its own provenance. Pass it on its own channel instead: kata-cli adversarial record `
+                    + `--change ${change} --node ${node} --from-file <result.json> --receipt-file <receipt.json>. Nothing was recorded.`,
+            };
+        }
+        let fileReceipt: unknown;
+        if (receiptFile) {
+            const receiptRaw = await readFile(receiptFile, 'utf8').catch(() => null);
+            if (receiptRaw === null) {
+                return {
+                    command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
+                    error: `--receipt-file could not be read: ${receiptFile}. Nothing was recorded.`,
+                };
+            }
+            try {
+                fileReceipt = JSON.parse(receiptRaw);
+            } catch (error) {
+                return {
+                    command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
+                    error: `--receipt-file is not JSON: ${error instanceof Error ? error.message : String(error)}. Nothing was recorded.`,
+                };
+            }
+        }
         const binding = await currentRevisionManifest(root, change, node);
         // The record is bound to the brief kata **issued** (D2). An unissued hash is refused before anything is
         // written: it could never satisfy the gate, and writing it would destroy whatever pass is already recorded.
@@ -434,6 +486,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         }
         const record = await writeAdversarialRecord(root, change, {
             ...parsed,
+            ...(fileReceipt !== undefined ? { receipt: fileReceipt as AdversarialRecord['receipt'] } : {}),
             node,
             ...binding,
             // The scope comes from the **brief that was answered**, never from a flag on this command: a delta round's

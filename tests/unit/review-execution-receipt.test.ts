@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
 import { adversarialGateFor, issueAdversarialBrief, writeAdversarialRecord } from '../../src/quality/adversarial.js';
+import { adversarialBriefsDir } from '../../src/core/layout.js';
 import { requiredCapabilitiesForNode, verifyExecutionReceipt, type ReviewExecutionReceipt } from '../../src/quality/review-execution.js';
 import { runAdversarialCommand } from '../../src/cli/ops.js';
 
@@ -268,6 +269,145 @@ describe('the self-reported telemetry arguments are retired', () => {
             const result = await runAdversarialCommand(['note', '--change', 'note-telemetry', '--node', 'review', '--from-file', line]);
             expect(result.written).toBeUndefined();
             expect(String(result.error)).toMatch(/toolUses|telemetry|receipt/i);
+        } finally {
+            process.chdir(before);
+        }
+    }, 20000);
+});
+
+/**
+ * K1/K2 of `docs/design/2026-09-22-execution-layer-implementation-plan.md`.
+ *
+ * The receipt schema says it is *"Written by the host, never by the reviewer"*, and the write path did not enforce it:
+ * `record` spread the reviewer's own result JSON into the record, so a `receipt` inside that body was accepted. The claim
+ * was about **who wrote it**, and the only thing enforced was **which round it binds to**. Unforgeability comes from not
+ * being able to write it in, not from not being able to guess the nonce.
+ *
+ * K2 gives the host the request it must answer, so a host never has to read Kata's private state to obtain one.
+ */
+describe('the receipt arrives on its own channel, and the request is handed over', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    /** A task with one issued brief, and the paths a host and a reviewer would use. */
+    async function issued(issueBrief = true): Promise<{ root: string; brief: Awaited<ReturnType<typeof issueAdversarialBrief>>; resultPath: string; recordPath: string }> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-receipt-channel-'));
+        cleanup.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'receipt-channel', title: 'Receipt channel', acceptance: [{ id: 'AC-1', statement: 'The receipt is host-authored.' }] } as never);
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src/x.ts'), 'export const x = 1;\n', 'utf8');
+        await createTaskRevision({ root, taskId: 'receipt-channel', ownedPaths: ['src/x.ts'], checkIds: [] });
+
+        const brief = issueBrief ? await issueAdversarialBrief(root, 'receipt-channel', 'review') : ({} as Awaited<ReturnType<typeof issueAdversarialBrief>>);
+        const resultPath = join(root, 'result.json');
+        await writeFile(resultPath, JSON.stringify({
+            node: 'review', status: 'recorded', revisionId: brief.revisionId ?? '', executedInFreshContext: true,
+            contextNote: 'a context that did not author the change', briefSha256: brief.sha256,
+            createdAt: new Date().toISOString(),
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
+            hypotheses: [{
+                id: 'h1',
+                claim: 'the acceptance criterion is satisfied only by the shape of the assertion',
+                targets: ['AC-1'],
+                method: 'source-read',
+                outcome: 'refuted',
+                observation: { kind: 'source', ref: 'src/x.ts', observed: 'the assertion exercises the declared behaviour' },
+            }],
+            findings: [],
+        }), 'utf8');
+        return { root, brief, resultPath, recordPath: join(root, '.kata', 'tasks', 'receipt-channel', 'adversarial-review.json') };
+    }
+
+    function receiptFor(brief: Awaited<ReturnType<typeof issueAdversarialBrief>>, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+        return {
+            runId: brief.runRequest!.runId,
+            requestSha256: brief.runRequest!.requestSha256,
+            capabilities: requiredCapabilitiesForNode('review'),
+            startedAt: '2026-09-22T00:00:00.000Z',
+            endedAt: '2026-09-22T00:01:00.000Z',
+            telemetry: { toolCalls: 3, outputBytes: 1024, tokens: 100, truncations: 0 },
+            status: 'completed',
+            ...overrides,
+        };
+    }
+
+    it('refuses a receipt carried in the reviewer result body, and writes nothing', async () => {
+        const { root, brief, resultPath, recordPath } = await issued();
+        const body = JSON.parse(await readFile(resultPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(resultPath, JSON.stringify({ ...body, receipt: receiptFor(brief) }), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand(['record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath]);
+            expect(result.recorded).toBe(false);
+            expect(String(result.error)).toMatch(/--receipt-file/);
+            // The disk assertion, not merely the return value: a refusal that still files the record is not a refusal.
+            await expect(readFile(recordPath, 'utf8')).rejects.toThrow();
+        } finally {
+            process.chdir(before);
+        }
+    }, 20000);
+
+    it('records a receipt named by --receipt-file, and persists the issued run id', async () => {
+        const { root, brief, resultPath, recordPath } = await issued();
+        const receiptPath = join(root, 'receipt.json');
+        await writeFile(receiptPath, JSON.stringify(receiptFor(brief)), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand([
+                'record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath, '--receipt-file', receiptPath,
+            ]);
+            expect(result.status).toBe('recorded');
+            // The receipt reached the record *and* bound: the gate's refusal reason must not be the binding one.
+            expect((result.gate as { reason?: string } | undefined)?.reason).not.toBe('receipt_unbound');
+            const persisted = JSON.parse(await readFile(recordPath, 'utf8')) as { receipt?: { runId?: string } };
+            expect(persisted.receipt?.runId).toBe(brief.runRequest!.runId);
+        } finally {
+            process.chdir(before);
+        }
+    }, 20000);
+
+    it('refuses a receipt file bound to a different run', async () => {
+        const { root, brief, resultPath } = await issued();
+        const receiptPath = join(root, 'receipt.json');
+        await writeFile(receiptPath, JSON.stringify(receiptFor(brief, { requestSha256: 'a'.repeat(64) })), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand([
+                'record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath, '--receipt-file', receiptPath,
+            ]);
+            // Measured: the record is filed and the gate refuses it, with `receipt_unbound`. The refusal is the point —
+            // a receipt that does not bind must not certify a pass, whatever else the record carries.
+            expect((result.gate as { satisfied?: boolean } | undefined)?.satisfied).toBe(false);
+            expect((result.gate as { reason?: string } | undefined)?.reason).toBe('receipt_unbound');
+        } finally {
+            process.chdir(before);
+        }
+    }, 20000);
+
+    it('emits the request the gate will verify against, byte-identical to the issued one', async () => {
+        // Issued here rather than in the helper: the planner reports `reused` when a brief already applies, and reuse
+        // means no new run — a different case, asserted separately.
+        const { root } = await issued(false);
+        const target = join(root, 'request.json');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            await runAdversarialCommand(['brief', '--change', 'receipt-channel', '--node', 'review', '--emit-request', target]);
+            const emitted = await readFile(target, 'utf8');
+            // Re-read what the command actually persisted, rather than trusting the return value.
+            const dir = adversarialBriefsDir(root, 'receipt-channel');
+            const file = (await readdir(dir)).find((name) => name.endsWith('.json'))!;
+            const persisted = JSON.parse(await readFile(join(dir, file), 'utf8')) as { briefs: Array<{ runRequest?: unknown }> };
+            expect(JSON.stringify(JSON.parse(emitted))).toBe(JSON.stringify(persisted.briefs[0]?.runRequest));
         } finally {
             process.chdir(before);
         }
