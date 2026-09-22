@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 // AC-1. The check has to be able to *gate*, which means three states rather than two: clean, findings, and the instrument
 // could not run. The third one matters most here — a check that exits 0 when it could not do its job is precisely the
@@ -63,4 +63,75 @@ describe('the wiring check as one command', () => {
             await rm(root, { recursive: true, force: true });
         }
     });
+});
+
+/**
+ * f4 of the independent pass's findings: the exit-code path had **no test at all**.
+ *
+ * AC-1's claim is that the command "exits non-zero when any finding is present and zero when none is, so it can gate rather
+ * than merely advise" — and what was tested was the *library* return value. `runWiringCheckCommand` and the wrapper that
+ * turns its value into a process exit code appeared in no test, so a regression making the command exit 0 with findings
+ * present — the short-circuited-gate class this change exists to detect — would have left the suite green.
+ */
+describe('the command gates: three exit states, and the process code the wrapper produces', () => {
+    const cleanup: string[] = [];
+
+    async function fixture(): Promise<string> {
+        const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-wiring-command-'));
+        cleanup.push(root);
+        await mkdir(join(root, 'src'), { recursive: true });
+        // Referenced within its own file, so neither check reports anything.
+        await writeFile(join(root, 'src/clean.ts'), 'export const used = 1;\nconsole.log(used);\n', 'utf8');
+        // Referenced nowhere: a finding, and nothing else.
+        await writeFile(join(root, 'src/dirty.ts'), 'export function dead(): number { return 1; }\n', 'utf8');
+        return root;
+    }
+
+    afterEach(async () => {
+        const { rm } = await import('node:fs/promises');
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('returns 0 clean, 1 with a finding, and 2 when the instrument cannot run', async () => {
+        const { runWiringCheckCommand } = await import('../../src/quality/wiring-check.js');
+        const root = await fixture();
+
+        const clean = await runWiringCheckCommand({ root, surface: ['src/clean.ts'], print: () => undefined });
+        expect(clean).toBe(0);
+
+        const dirty = await runWiringCheckCommand({ root, surface: ['src/dirty.ts'], print: () => undefined });
+        expect(dirty).toBe(1);
+
+        // The third state is the point: "could not do its job" must not be readable as "clean".
+        const unreadable = await runWiringCheckCommand({ root, surface: ['src/absent.ts'], print: () => undefined });
+        expect(unreadable).toBe(2);
+    }, 30000);
+
+    it('turns that value into the process exit code a CI would read', async () => {
+        const { execFile } = await import('node:child_process');
+        const { join } = await import('node:path');
+        const { promisify } = await import('node:util');
+        const run = promisify(execFile);
+        const root = await fixture();
+        // The wrapper resolves its own entry relative to itself and takes the *workspace* from the cwd, so a fixture can be
+        // checked without the repository being built first.
+        const wrapper = join(process.cwd(), 'scripts', 'wiring-check.mjs');
+
+        const codeOf = async (surface: string): Promise<number> => {
+            try {
+                await run('node', [wrapper, '--surface', surface], { cwd: root });
+                return 0;
+            } catch (error) {
+                const code = (error as { code?: number | string }).code;
+                if (typeof code !== 'number') throw error;
+                return code;
+            }
+        };
+
+        expect(await codeOf('src/clean.ts')).toBe(0);
+        expect(await codeOf('src/dirty.ts')).toBe(1);
+    }, 120000);
 });
