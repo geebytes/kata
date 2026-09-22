@@ -469,6 +469,72 @@ export function admissibilityCorpus(): CorpusCase[] {
  * state this change exists to make visible, and folding false-positive into false-pass would let a verifier trade one
  * for the other.
  */
+/** One case, as both rules read it. */
+export interface ShadowCaseReport {
+    caseId: string;
+    kinds: string[];
+    critical: boolean;
+    expectedVerdict: ExpectedVerdict;
+    /** Whether the pre-change rule accepted the observation's *declared* verdict at face value. */
+    legacyAccepted: boolean;
+    /** What the rule that actually judges a verdict concludes. `false_pass` is a conclusion, not a certification. */
+    derivedVerdict: ExpectedVerdict | 'false_pass' | 'unobserved';
+    /** False when the case carried no observation at all: nothing was compared, which is not an agreement. */
+    compared: boolean;
+    /** Meaningful only when `compared`; an unobserved case must not read as an agreement. */
+    agrees: boolean;
+    /** Present whenever the two rules do not agree — published per case, never folded into a count. */
+    disagreement?: string;
+}
+
+/**
+ * The legacy rule and the derived rule, compared case by case.
+ *
+ * Phase 4 requires the comparison to be *published*, and requires every disagreement sample to be visible rather than
+ * counted. The two rules differ in exactly one place: the legacy rule took a declared verdict as an answer, so
+ * `no_defect_found` on a revision that carried a critical defect read as a pass. That is the false pass the corpus exists
+ * to make visible, and a count of them is not a sample.
+ */
+export function shadowCorpusReport(corpus: CorpusCase[], observations: CorpusObservation[]): ShadowCaseReport[] {
+    const byId = new Map(observations.map((observation) => [observation.caseId, observation]));
+    return corpus.map((entry) => {
+        const observation = byId.get(entry.id);
+        const critical = entry.critical === true;
+        // Legacy: the declared verdict was the answer. Only the two refusable states were excluded, because they decline
+        // to certify — everything else passed, including "nothing wrong" on a planted defect.
+        const legacyAccepted = observation !== undefined
+            && observation.verdict !== 'inconclusive'
+            && observation.verdict !== 'budget_exhausted';
+        const derivedVerdict: ShadowCaseReport['derivedVerdict'] = observation === undefined
+            ? 'unobserved'
+            : critical && observation.verdict === 'no_defect_found'
+                ? 'false_pass'
+                : observation.verdict;
+        const derivedAccepted = derivedVerdict !== 'unobserved' && derivedVerdict !== 'false_pass';
+        const compared = observation !== undefined;
+        // An unobserved case is **not** an agreement. Without this, an empty observation set produced 27 rows whose two
+        // rules both "refused", which read as 27 agreements — the reading RED3 exists to forbid.
+        const agrees = compared && legacyAccepted === derivedAccepted;
+        return {
+            caseId: entry.id,
+            kinds: entry.kinds,
+            critical,
+            expectedVerdict: entry.expectedVerdict,
+            legacyAccepted,
+            derivedVerdict,
+            compared,
+            agrees,
+            ...(agrees
+                ? {}
+                : {
+                    disagreement: compared
+                        ? `legacy ${legacyAccepted ? 'accepted' : 'refused'} this case and the derived rule ${derivedAccepted ? 'accepts' : 'refuses'} it (derived verdict: ${derivedVerdict})`
+                        : 'not observed: nothing was compared for this case',
+                }),
+        };
+    });
+}
+
 export function scoreCorpus(corpus: CorpusCase[], observations: CorpusObservation[]): CorpusScore {
     const byId = new Map(observations.map((observation) => [observation.caseId, observation]));
     const criticalCases = corpus.filter((entry) => entry.critical === true);

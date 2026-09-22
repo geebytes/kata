@@ -469,3 +469,75 @@ describe('the corpus covers the criterion that makes it a gate', () => {
         ).toEqual([]);
     });
 });
+
+/**
+ * P1.2 — the shadow comparison, published.
+ *
+ * Phase 4's acceptance is that every disagreement sample is visible and that the comparison is published rather than
+ * computed and discarded. The two rules differ in one place: the legacy rule took a declared verdict as an answer, so
+ * `no_defect_found` on a revision carrying a critical defect read as a pass.
+ */
+describe('the legacy rule and the derived rule are compared case by case', () => {
+    it('covers every corpus case, and publishes each disagreement with its case id', async () => {
+        const { admissibilityCorpus, shadowCorpusReport } = await import('../../src/eval/admissibility-corpus.js');
+        const corpus = admissibilityCorpus();
+
+        // A verifier that answers "nothing wrong" everywhere: the exact shape the legacy rule passed and the derived
+        // rule refuses on critical cases.
+        const observations = corpus.map((entry) => ({ caseId: entry.id, verdict: 'no_defect_found' as const, findingIds: [] }));
+        const report = shadowCorpusReport(corpus, observations);
+
+        // 1. Every case appears — the comparison covers the same entries for both paths.
+        expect(report.map((row) => row.caseId).sort()).toEqual(corpus.map((entry) => entry.id).sort());
+
+        // 2. A legacy acceptance the derived rule refuses is a **disagreement with its case id**, not a count.
+        const disagreements = report.filter((row) => !row.agrees);
+        expect(disagreements.length).toBeGreaterThan(0);
+        const criticalFalsePass = disagreements.find((row) => row.critical && row.derivedVerdict === 'false_pass');
+        expect(criticalFalsePass).toBeDefined();
+        expect(criticalFalsePass!.legacyAccepted).toBe(true);
+        expect(criticalFalsePass!.disagreement).toContain('false_pass');
+        expect(criticalFalsePass!.caseId).toBe(corpus.find((entry) => entry.id === criticalFalsePass!.caseId)!.id);
+    });
+
+    it('reads an empty comparison as nothing compared, never as no disagreements', async () => {
+        const { admissibilityCorpus, shadowCorpusReport } = await import('../../src/eval/admissibility-corpus.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-shadow-empty-'));
+        try {
+            await initLayout(root);
+            // Every case still appears, and none of them claims to have been compared.
+            const noneObserved = shadowCorpusReport(admissibilityCorpus(), []);
+            expect(noneObserved.length).toBe(admissibilityCorpus().length);
+            expect(noneObserved.every((row) => !row.compared && !row.agrees)).toBe(true);
+
+            const report = await runEvaluation(
+                { taskFixtures: [], verifier: { baseline: [], current: [] } } as never,
+                root,
+            );
+            // An empty comparison must not be readable as a clean one. Every case still appears — the comparison covers
+            // the same entries for both paths — but **no row claims agreement**, and the marker says why.
+            expect(report.verifierShadowNote).toMatch(/nothing compared/);
+            expect(report.verifierShadow?.length).toBe(admissibilityCorpus().length);
+            expect(report.verifierShadow?.every((row) => !row.compared && !row.agrees)).toBe(true);
+            expect(report.verifierShadow?.every((row) => row.disagreement === 'not observed: nothing was compared for this case')).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 30000);
+
+    it('publishes the comparison through the report, not only through the function', async () => {
+        const { admissibilityCorpus } = await import('../../src/eval/admissibility-corpus.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-shadow-published-'));
+        try {
+            await initLayout(root);
+            const corpus = admissibilityCorpus();
+            const observations = corpus.map((entry) => ({ caseId: entry.id, verdict: 'no_defect_found' as const, findingIds: [] }));
+            const report = await runEvaluation({ taskFixtures: [], verifier: { baseline: observations, current: observations } } as never, root);
+
+            expect(report.verifierShadow?.length).toBe(corpus.length);
+            expect(report.verifierShadow?.some((row) => !row.agrees)).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 30000);
+});

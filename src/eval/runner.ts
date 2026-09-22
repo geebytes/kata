@@ -9,7 +9,7 @@ import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { computeMetrics, type EvaluationRun, type EvaluationMetrics } from './metrics.js';
 import { checkReleaseGates, type ReleaseGateResult } from './release-gates.js';
-import { admissibilityCorpus, scoreCorpus, type CorpusObservation, type CorpusScore } from './admissibility-corpus.js';
+import { admissibilityCorpus, scoreCorpus, shadowCorpusReport, type CorpusObservation, type CorpusScore, type ShadowCaseReport } from './admissibility-corpus.js';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 /** Metrics this harness cannot observe in process: the host platform owns model choice, cost and retries. */
@@ -111,6 +111,15 @@ export interface EvaluationReport {
    */
   verifierBaseline?: CorpusScore;
   verifierCurrent?: CorpusScore;
+  /**
+   * The legacy rule against the derived rule, case by case, for the `current` side.
+   *
+   * Published rather than computed and discarded: Phase 4's acceptance is that every disagreement sample is visible, and
+   * a comparison whose result is discarded cannot be audited.
+   */
+  verifierShadow?: ShadowCaseReport[];
+  /** Set when there was nothing to compare, so an empty report never reads as "no disagreements". */
+  verifierShadowNote?: string;
 }
 
 /**
@@ -191,10 +200,20 @@ export async function runEvaluation(
     concurrency,
   });
 
+  const declaredVerifier = manifest.verifier;
+  const shadow = declaredVerifier ? shadowCorpusReport(corpus, declaredVerifier.current) : undefined;
   return {
     manifest,
     runs,
     ...verifier,
+    ...(shadow
+        ? {
+            verifierShadow: shadow,
+            ...(declaredVerifier!.current.length === 0
+                ? { verifierShadowNote: 'nothing compared: the declared observation set is empty, which is not the same as a comparison that found no disagreements' }
+                : {}),
+        }
+        : {}),
     metrics,
     releaseGates,
     timestamp: new Date().toISOString(),
