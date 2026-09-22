@@ -22,12 +22,7 @@ import { join, relative } from 'node:path';
  */
 
 export interface WiringFinding {
-    /**
-     * `reference-via-build` is the third class option (c) settled on: an export whose only consumer is a **bundled**
-     * artifact, so it is consumed but invisible to a name-based search — the wrapper calls it by a minified name. It is
-     * reported so the fact is auditable, and it does not gate, because a symbol the build consumes is not dead code.
-     */
-    check: 'reference' | 'reference-via-build' | 'declared-member' | 'mutation';
+    check: 'reference' | 'declared-member' | 'mutation';
     /** Repository-relative. A finding without a location cannot be acted on, so this is never empty. */
     file: string;
     line: number;
@@ -86,37 +81,6 @@ export async function filesUnder(root: string, directories: string[]): Promise<s
     return [...new Set(found)].sort();
 }
 
-/**
- * Modules the repository's own wrappers bundle — the declared consumers a name-based search cannot see.
- *
- * Measured: `scripts/wiring-check.mjs` bundles `src/quality/wiring-check.ts` and calls its entry point as `module.n`
- * after minification, so `runWiringCheckCommand` was reported as "no reference anywhere in the repository" while that
- * wrapper is exactly its consumer. The declaration is already machine-readable — `entryPoints: [resolve(here, '..', …)]` —
- * so it is read rather than guessed.
- */
-export async function findBundleEntries(root: string): Promise<Map<string, string[]>> {
-    const declared = new Map<string, string[]>();
-    for (const wrapper of await filesUnder(root, ['scripts'])) {
-        if (!/\.(mjs|cjs|js|ts)$/.test(wrapper)) continue;
-        const text = await readFile(join(root, wrapper), 'utf8').catch(() => '');
-        for (const match of text.matchAll(/entryPoints:\s*\[([^\]]*)\]/g)) {
-            const segments = [...match[1]!.matchAll(/['"`]([^'"`]+)['"`]/g)].map((segment) => segment[1]!);
-            if (segments.length === 0) continue;
-            const directory = wrapper.split('/').slice(0, -1);
-            // Two shapes exist in this repository: `resolve(here, '..', 'src', …)` and `resolve(root, 'src', …)`. Both
-            // are tried and the one that resolves to a real file wins, so the resolution is verified rather than assumed.
-            for (const candidate of [join(...directory, ...segments), join(...segments)]) {
-                const normalized = candidate.replace(/\\/g, '/');
-                const exists = await stat(join(root, normalized)).then((info) => info.isFile()).catch(() => false);
-                if (exists) {
-                    declared.set(normalized, [...(declared.get(normalized) ?? []), wrapper]);
-                    break;
-                }
-            }
-        }
-    }
-    return declared;
-}
 
 async function readSurface(root: string, surface: string[]): Promise<Map<string, string>> {
     const contents = new Map<string, string>();
@@ -179,7 +143,6 @@ export async function findUnreferencedExports(options: ReferenceCheckOptions): P
     const testGlobs = options.testGlobs ?? ['tests'];
     const testText = (await Promise.all((await filesUnder(options.root, testGlobs)).map((path) => readFile(join(options.root, path), 'utf8').catch(() => '')))).join('\n');
 
-    const bundleEntries = await findBundleEntries(options.root);
     const findings: WiringFinding[] = [];
     for (const [file, text] of surface) {
         for (const pattern of EXPORT_PATTERNS) {
@@ -197,10 +160,8 @@ export async function findUnreferencedExports(options: ReferenceCheckOptions): P
                 // Subtract the one in its own declaration; a symbol that appears exactly once is referenced by nothing.
                 if (references - 1 > 0) continue;
                 const testReferences = testText ? occurrences(testText, word) : 0;
-                // Consumed by a bundled artifact: visible as a fact, not counted as dead code.
-                const bundledBy = bundleEntries.get(file);
                 findings.push({
-                    check: bundledBy ? 'reference-via-build' : 'reference',
+                    check: 'reference',
                     file,
                     line: lineOf(text, match.index),
                     subject: name,
@@ -210,9 +171,7 @@ export async function findUnreferencedExports(options: ReferenceCheckOptions): P
                         // all — `scripts/wiring-check.mjs` calls this file's entry point as `module.n` after
                         // minification — so a symbol that is an entry point still lands here, and the wording must not
                         // pretend otherwise.
-                        : bundledBy
-                            ? `consumed by ${bundledBy.join(', ')}, which bundles this module and calls it by a minified name — invisible to a name-based search`
-                            : `no reference in ${searchDirs.join(', ')}`,
+                        : `no reference in ${searchDirs.join(', ')}`,
                 });
             }
         }
@@ -583,10 +542,7 @@ export async function runWiringCheck(options: WiringCheckOptions): Promise<Wirin
         });
     }
 
-    // `reference-via-build` is reported and does not gate: option (c) — visible, reasoned, and not pretending the check
-    // saw a minified name. Counting it would make the command fail on a symbol the build itself consumes.
-    const gating = findings.filter((finding) => finding.check !== 'reference-via-build');
-    const exitCode: WiringCheckRun['exitCode'] = instrument.length > 0 ? 2 : gating.length > 0 ? 1 : 0;
+    const exitCode: WiringCheckRun['exitCode'] = instrument.length > 0 ? 2 : findings.length > 0 ? 1 : 0;
     return { findings, instrument, exitCode };
 }
 

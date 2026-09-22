@@ -33,19 +33,7 @@ async function fixture(id: string): Promise<string> {
         'utf8',
     );
     // A hand-written production consumer outside `src`: the surface the old default could not see.
-    await writeFile(join(root, 'src/entry.ts'), 'export function entryOnly(): number { return 3; }\n', 'utf8');
-    await writeFile(
-        join(root, 'scripts/run.mjs'),
-        [
-            "import { usedFromScript } from '../src/x.ts';",
-            'console.log(usedFromScript);',
-            // The declaration the classification reads: this wrapper bundles `src/entry.ts` and would call its
-            // exports by minified names, exactly as `scripts/wiring-check.mjs` does with `module.n`.
-            "const options = { entryPoints: [resolve(here, '..', 'src', 'entry.ts')] };",
-            '',
-        ].join('\n'),
-        'utf8',
-    );
+    await writeFile(join(root, 'scripts/run.mjs'), "import { usedFromScript } from '../src/x.ts';\nconsole.log(usedFromScript);\n", 'utf8');
     return root;
 }
 
@@ -78,15 +66,5 @@ describe('the checks do not report a symbol that something consumes', () => {
         expect(subjects).not.toContain('tdd');
         // The control: a list nothing consumes still reports its members, so this is not a blanket silence.
         expect(subjects).toContain('z');
-    });
-    it('reports a build-consumed export as its own class, and does not let it gate', async () => {
-        const root = await fixture('via-build');
-        const findings = await findUnreferencedExports({ root, surface: ['src/entry.ts'] });
-        const entry = findings.find((finding) => finding.subject === 'entryOnly');
-
-        // Reported — the fact is auditable rather than hidden in a document.
-        expect(entry?.check).toBe('reference-via-build');
-        expect(entry?.detail).toMatch(/consumed by scripts\/run\.mjs/);
-        expect(entry?.detail).not.toMatch(/anywhere in the repository/);
     });
 });
