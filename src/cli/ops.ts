@@ -225,6 +225,18 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
 }
 
 /**
+ * §3.2.2 retired caller-stated telemetry, and it is one fact in two encodings.
+ *
+ * The retirement was written against `argv` only, so the same duration typed into a result line JSON body was still
+ * accepted and written into the progress record — measured, then reproduced as a failing test. A second encoding of the
+ * same self-report is the same defect, so the names and the remedy come from one place and both channels refuse them.
+ */
+const RETIRED_TELEMETRY_FLAGS = ['--elapsed-ms', '--tool-uses'] as const;
+const RETIRED_TELEMETRY_FIELDS = ['elapsedMs', 'toolUses'] as const;
+const TELEMETRY_RETIREMENT_REMEDY =
+    'telemetry is reported by the execution receipt, which binds to the issued request and cannot be typed in. Record the receipt instead of a duration, or leave telemetry unreported.';
+
+/**
  * `kata-cli adversarial …` — the independent adversarial pass at the verify and review nodes.
  *
  * `brief` renders the self-contained brief for a clean-context subagent and reports the hash the result must carry;
@@ -321,12 +333,25 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const { appendProgressLine } = await import('../quality/adversarial-progress.js');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial note requires a JSON line on stdin or via --from-file');
-        let parsed: { hypothesis?: string; method?: string; outcome?: 'refuted' | 'confirmed' | 'inconclusive'; type?: string; findingId?: string; message?: string; toolUses?: number };
+        let parsed: { hypothesis?: string; method?: string; outcome?: 'refuted' | 'confirmed' | 'inconclusive'; type?: string; findingId?: string; message?: string };
         try {
             parsed = JSON.parse(raw) as typeof parsed;
         } catch (error) {
             throw new Error(`adversarial note could not parse the line: ${error instanceof Error ? error.message : String(error)}`);
         }
+        // The same fact, through the other channel: a duration typed into the line body is the self-report the
+        // receipt replaced. Refused rather than dropped, for the reason stated at the argv check above.
+        const typedTelemetry = RETIRED_TELEMETRY_FIELDS.filter((field) => (parsed as Record<string, unknown>)[field] !== undefined);
+        if (typedTelemetry.length > 0) {
+            return {
+                command: 'adversarial note',
+                taskId: change,
+                node,
+                status: 'refused',
+                error: `${typedTelemetry.join(' and ')} ${typedTelemetry.length > 1 ? 'are' : 'is'} retired: ${TELEMETRY_RETIREMENT_REMEDY}`,
+            };
+        }
+
         const written = await appendProgressLine(root, change, {
             type: parsed.type === 'finding' ? 'finding' : 'attempt',
             at: new Date().toISOString(),
@@ -336,7 +361,6 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...(parsed.outcome ? { outcome: parsed.outcome } : {}),
             ...(parsed.findingId ? { findingId: parsed.findingId } : {}),
             ...(parsed.message ? { message: parsed.message } : {}),
-            ...(typeof parsed.toolUses === 'number' ? { toolUses: parsed.toolUses } : {}),
         });
         return { command: 'adversarial note', taskId: change, node, written };
     }
@@ -365,7 +389,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (subcommand === 'record') {
         // §3.2.2: refused rather than ignored. A flag that is accepted and silently dropped teaches the caller that
         // telemetry can be typed in, which is the belief this retirement exists to end.
-        const retiredFlags = ['--elapsed-ms', '--tool-uses'].filter((flag) => rest.includes(flag));
+        const retiredFlags = RETIRED_TELEMETRY_FLAGS.filter((flag) => rest.includes(flag));
         if (retiredFlags.length > 0) {
             return {
                 command: 'adversarial record',
@@ -373,7 +397,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 node,
                 recorded: false,
                 status: 'refused',
-                error: `${retiredFlags.join(' and ')} ${retiredFlags.length > 1 ? 'are' : 'is'} retired: telemetry is reported by the execution receipt, which binds to the issued request and cannot be typed in. Record the receipt instead of a duration, or leave telemetry unreported.`,
+                error: `${retiredFlags.join(' and ')} ${retiredFlags.length > 1 ? 'are' : 'is'} retired: ${TELEMETRY_RETIREMENT_REMEDY}`,
             };
         }
         const fromFile = argValue(rest, '--from-file');

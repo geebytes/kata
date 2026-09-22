@@ -244,4 +244,32 @@ describe('the self-reported telemetry arguments are retired', () => {
         expect(result.recorded).toBe(false);
         expect(String(result.error)).toMatch(/--elapsed-ms|--tool-uses|receipt/i);
     }, 20000);
+
+    /**
+     * The same fact, through the other channel.
+     *
+     * The retirement above closed the **argv** channel and left the **JSON** channel open: `adversarial note` accepted a
+     * `toolUses` typed into the line body and wrote it into the progress record. The rationale it cites — "telemetry is
+     * reported by the execution receipt, and cannot be typed in" — is not a statement about `argv`, so a second encoding
+     * of the same self-report is the same defect. Measured: the argv form was refused and this one was accepted.
+     */
+    it('does not accept caller-stated telemetry on the note path either', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-note-telemetry-'));
+        cleanup.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'note-telemetry', title: 'Note telemetry', acceptance: [{ id: 'AC-1', statement: 'Telemetry is receipt-stamped.' }] } as never);
+
+        const line = join(root, 'line.json');
+        await writeFile(line, JSON.stringify({ type: 'attempt', hypothesis: 'h', method: 'm', outcome: 'refuted', toolUses: 7 }), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand(['note', '--change', 'note-telemetry', '--node', 'review', '--from-file', line]);
+            expect(result.written).toBeUndefined();
+            expect(String(result.error)).toMatch(/toolUses|telemetry|receipt/i);
+        } finally {
+            process.chdir(before);
+        }
+    }, 20000);
 });
