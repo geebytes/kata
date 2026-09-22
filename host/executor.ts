@@ -1,19 +1,16 @@
 /**
- * H1 — the host executor: the producer of an execution receipt.
+ * The **reference declared command** for `kata-cli adversarial execute`.
  *
- * **This is not `kata-cli`.** It is not built into `dist/cli.js` and `src/` never imports it (asserted in its test). Kata
- * issues a request, validates a receipt and fails closed when a capability is missing; it does not launch a session, does
- * not choose a model and does not observe a host. Putting that act inside kata would make the author's own toolchain the
- * producer of the evidence that the round was independent — the self-attestation the receipt exists to replace.
+ * Under option A, kata runs a declared command and reads the receipt it writes; it does not decide how a session is
+ * isolated, and this file is not part of `kata-cli`. It exists to show that the contract is satisfiable and to keep the
+ * envelope/telemetry logic testable without a host — a project may declare any equivalent command instead, including a
+ * shell script, and the contract does not change.
  *
- * The core here is platform-neutral and testable without a host: it enforces the envelope and accounts telemetry from a
- * stream of events. Everything host-specific lives behind `HostAdapter`, which is deliberately thin.
- *
- * **The input is the packet from `kata-cli adversarial brief --emit-request`**, and the session's entire input is the
- * issued brief it carries. Two senses of "context" are at stake and only one of them is withheld: the author's session,
- * the project's `AGENTS.md` and loaded extensions must not be inherited, because that is what independence means; the
- * brief must be supplied, because a reviewer without a checklist is merely ignorant (optimization document §1.3).
+ * It reaches the packet and the receipt through the environment, which is the interface `execute` provides:
+ *   KATA_REVIEW_PACKET   the path of the packet to run
+ *   KATA_REVIEW_RECEIPT  the path this command must write its receipt to
  */
+
 
 export interface ReviewEnvelope {
     maxHypotheses: number;

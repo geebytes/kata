@@ -23,7 +23,7 @@ import {
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
 import { deriveVerdict, type ReviewState } from '../quality/review-state.js';
 import { isTerminalSeverity } from '../quality/finding-lifecycle.js';
-import { runProcessSync } from '../process/run.js';
+import { runProcess, runProcessSync } from '../process/run.js';
 
 /** The CodeGraph subcommands this CLI dispatches to the installed binary. */
 const CODEGRAPH_SUBCOMMANDS = ['explore', 'query', 'impact', 'affected', 'node', 'status', 'index', 'sync'] as const;
@@ -410,6 +410,90 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const finding = await addAdversarialFinding(root, addressed, node, JSON.parse(raw) as Record<string, unknown>);
         // `addressed`, not `change`: the latter is the positional read, which for this subcommand is the action word.
         return { command: 'adversarial finding add', taskId: addressed, node, findingId: finding.id, severity: finding.severity, findings: 'stored on the node record; `record` seals the verdict and the revision binding' };
+    }
+
+    if (subcommand === 'execute') {
+        // Option A: kata runs a **declared** command and validates the receipt it writes. Kata does not decide how a
+        // session is isolated — the command does — and that is what keeps a change to kata from loosening the envelope it
+        // certifies. This entry point is therefore shaped like the one that runs a declared check: an opaque command, a
+        // result read back, nothing decided here about flags, tools or models.
+        const packetPath = argValue(rest, '--packet');
+        const executor = argValue(rest, '--executor');
+        const receiptOut = argValue(rest, '--receipt-out');
+        if (!packetPath) {
+            throw new Error('Usage: kata-cli adversarial execute --change <task-id> --node review --packet <packet.json> --executor "<command>" [--receipt-out <path>]');
+        }
+        if (!executor?.trim()) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused',
+                error: 'No executor command was declared. Pass --executor "<command>": kata runs a declared command and '
+                    + 'reads the receipt it writes, and it does not decide how a session is isolated.',
+            };
+        }
+
+        const packetRaw = await readFile(packetPath, 'utf8').catch(() => null);
+        if (packetRaw === null) {
+            return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: `--packet could not be read: ${packetPath}. Nothing was run.` };
+        }
+        let packet: { request?: { runId?: string; requestSha256?: string; briefSha256?: string; requiredCapabilities?: string[]; budget?: { maxWallMs?: number } }; brief?: { sha256?: string; text?: string } };
+        try {
+            packet = JSON.parse(packetRaw) as typeof packet;
+        } catch (error) {
+            return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: `--packet is not JSON: ${error instanceof Error ? error.message : String(error)}. Nothing was run.` };
+        }
+        const request = packet.request;
+        if (!request?.runId || !request.requestSha256) {
+            return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: 'The packet carries no request, so there is nothing to bind a receipt to. Nothing was run.' };
+        }
+        // The same binding the executor refuses on, checked here too: a packet whose halves disagree cannot be run by
+        // anyone, and saying so before launching a session is cheaper than saying it after.
+        if (packet.brief?.sha256 !== request.briefSha256) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'packet_unbound',
+                error: `The packet's brief does not bind to its request: brief.sha256 is ${packet.brief?.sha256}, request.briefSha256 is ${request.briefSha256}. Nothing was run.`,
+            };
+        }
+
+        const out = receiptOut ?? `${packetPath.replace(/\.json$/, '')}.receipt.json`;
+        const run = await runProcess('sh', ['-c', executor], {
+            cwd: root,
+            env: { ...process.env, KATA_REVIEW_PACKET: packetPath, KATA_REVIEW_RECEIPT: out },
+            ...(request.budget?.maxWallMs ? { timeoutMs: request.budget.maxWallMs + 30_000 } : {}),
+        });
+
+        const receiptRaw = await readFile(out, 'utf8').catch(() => null);
+        if (receiptRaw === null) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'executor_unavailable', receiptPath: out,
+                error: `The declared executor wrote no receipt at ${out} (exit ${run.exitCode}). A round that produced no receipt is not a round: kata does not write one on the executor's behalf. ${run.stderr.trim()}`,
+            };
+        }
+        let receipt: { runId?: string; requestSha256?: string; capabilities?: string[]; status?: string };
+        try {
+            receipt = JSON.parse(receiptRaw) as typeof receipt;
+        } catch (error) {
+            return { command: 'adversarial execute', taskId: change, node, status: 'executor_unavailable', receiptPath: out, error: `The receipt at ${out} is not JSON: ${error instanceof Error ? error.message : String(error)}.` };
+        }
+        if (receipt.runId !== request.runId || receipt.requestSha256 !== request.requestSha256) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'receipt_unbound', receiptPath: out,
+                error: 'The receipt does not bind to the issued request: its runId or requestSha256 names a different round.',
+            };
+        }
+        const missing = (request.requiredCapabilities ?? []).filter((capability) => !(receipt.capabilities ?? []).includes(capability));
+        if (missing.length > 0) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'capability_missing', receiptPath: out,
+                error: `The receipt does not advertise ${missing.join(', ')}, which this node requires. Recorded telemetry does not stand in for a capability the host did not provide.`,
+            };
+        }
+
+        return {
+            command: 'adversarial execute', taskId: change, node, status: 'executed', receiptPath: out,
+            receiptStatus: receipt.status ?? null,
+            capabilities: receipt.capabilities ?? [],
+            note: `Record it with: kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json> --receipt-file ${out}`,
+        };
     }
 
     if (subcommand === 'record') {
