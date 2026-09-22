@@ -292,7 +292,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                     error: 'The issued brief carries no run request, so there is nothing to emit.',
                 };
             }
-            await writeFile(emitRequest, `${JSON.stringify(brief.runRequest, null, 2)}\n`, 'utf8');
+            // The packet a round is run from: the request, and **verbatim** the brief it names. Emitting the request
+            // alone left a host unable to feed the session the material its own `briefSha256` refers to, which made
+            // reading kata's private state the only alternative — the dependency K2 exists to remove.
+            await writeFile(
+                emitRequest,
+                `${JSON.stringify({ request: brief.runRequest, brief: { sha256: brief.sha256, text: brief.text } }, null, 2)}\n`,
+                'utf8',
+            );
         }
         const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
