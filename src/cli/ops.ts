@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { requiredCapabilitiesForNode, type ExecutionNode } from '../quality/review-execution.js';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
@@ -555,6 +556,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         for (const candidate of adversarialNodes) {
             const record = await readAdversarialRecord(root, change, candidate);
             const gate = await adversarialGateFor(root, change, candidate);
+            const requiredForNode = requiredCapabilitiesForNode(candidate as ExecutionNode);
+            const missing = record?.receipt
+                ? requiredForNode.filter((capability) => !record.receipt!.capabilities.includes(capability))
+                : [];
             nodes[candidate] = {
                 recorded: record !== null,
                 status: record?.status ?? null,
@@ -569,6 +574,19 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 ...(record?.toolUses ? { toolUses: record.toolUses } : {}),
                 ...(await deltaSaving(root, change, candidate, record)),
                 blockingFindings: blockingAdversarialFindings(record).length,
+                // K3: a strict node that cannot be certified used to show only `satisfied: false`, so an operator could
+                // not tell "the host cannot do this" from "the pass was bad" — and the legacy path Phase 4 requires to be
+                // *visible and reasoned* was invisible. Answerable from this command alone: can this host certify this
+                // node, and if not, what is missing.
+                requiredCapabilities: requiredCapabilitiesForNode(candidate as ExecutionNode),
+                receipt: record?.receipt ? 'recorded' as const : 'absent' as const,
+                ...(record?.receipt ? { capabilities: record.receipt.capabilities } : {}),
+                ...(missing.length > 0 ? { missingCapabilities: missing } : {}),
+                path: record?.status === 'waived'
+                    ? { kind: 'waived' as const, reason: record.waivedReason ?? null }
+                    : record?.receipt
+                        ? { kind: 'receipt' as const }
+                        : { kind: 'legacy' as const, note: 'no execution receipt: this node is certified by the agent\'s own report, which is what a receipt replaces' },
                 satisfied: gate.satisfied,
                 reason: gate.reason ?? null,
             };

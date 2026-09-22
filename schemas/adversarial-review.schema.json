@@ -229,7 +229,7 @@
       }
     },
     "receipt": {
-      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Written by the host, never by the reviewer; the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires.",
+      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Host-authored, measured and bound: it arrives on its own channel (`--receipt-file`) rather than in the reviewer's result body, and the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires. Authorship separation is process and tool policy, not cryptography — a receipt a single-user machine could forge is out of scope here.",
       "type": "object",
       "required": [
         "runId",

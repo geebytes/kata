@@ -10,11 +10,13 @@
  *
  *   - **`ReviewRunRequest`** — issued by Kata, content-addressed, carrying the revision identity, the brief hash, the
  *     budget, and the result-schema version. The `runId` is a one-time nonce.
- *   - **`ReviewExecutionReceipt`** — returned by the executor, never authored by the reviewer. It binds to the request by
+ *   - **`ReviewExecutionReceipt`** — host-authored, measured and bound: it binds to the request by
  *     nonce and hash, advertises the capabilities it actually provides, and reports telemetry the CLI could never
  *     observe: tool calls, output bytes, tokens, truncations, wall time.
  *
- * The other half — implementing the capability set — belongs to the host (Pi/Codex) and lives outside this repository.
+ * The other half — implementing the capability set — belongs to the host platform and lives outside this repository.
+ * The capabilities name environment properties, not products: any host that can isolate a session, restrict the tool set
+ * and enforce a budget satisfies them.
  * Kata's half is to define the shape, require it where a node requires it, and **refuse to certify a pass that lacks
  * it**. A host without `fresh_context` cannot satisfy an escalated node: it yields `executor_unavailable` and blocks. It
  * is never silently downgraded to "the agent said it was fresh", because that is precisely the unsound state.
