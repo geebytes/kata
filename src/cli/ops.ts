@@ -523,6 +523,13 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // *which round* a receipt binds to, so a receipt inside the reviewer's own result body was accepted — measured.
         // Unforgeability comes from not being able to write it in, not from not being able to guess the nonce.
         const receiptFile = argValue(rest, '--receipt-file');
+        if ((parsed as unknown as Record<string, unknown>).executedBy !== undefined) {
+            return {
+                command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
+                error: 'The result body may not carry executedBy: provenance is recorded from the execution receipt, not '
+                    + 'written by the party being reviewed. Nothing was recorded.',
+            };
+        }
         if ((parsed as unknown as Record<string, unknown>).receipt !== undefined) {
             return {
                 command: 'adversarial record',
@@ -536,6 +543,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             };
         }
         let fileReceipt: unknown;
+        let executorPlatform: string | undefined;
         if (receiptFile) {
             const receiptRaw = await readFile(receiptFile, 'utf8').catch(() => null);
             if (receiptRaw === null) {
@@ -546,6 +554,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             }
             try {
                 fileReceipt = JSON.parse(receiptRaw);
+                const provenance = (fileReceipt as { executor?: { platform?: string } }).executor;
+                if (provenance?.platform) executorPlatform = provenance.platform;
             } catch (error) {
                 return {
                     command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
@@ -579,6 +589,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const record = await writeAdversarialRecord(root, change, {
             ...parsed,
             ...(fileReceipt !== undefined ? { receipt: fileReceipt as AdversarialRecord['receipt'] } : {}),
+            // K5's open item: the field that implied provenance and had no producer. It is filled from the receipt — a real
+            // source — and the gate does not read it, because platform is provenance and capability is the contract.
+            ...(executorPlatform ? { executedBy: executorPlatform } : {}),
             node,
             ...binding,
             // The scope comes from the **brief that was answered**, never from a flag on this command: a delta round's
@@ -675,6 +688,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 // b1's consumer: which figures the platform actually reported. Without this, an unmeasured field and a
                 // measured zero read alike, and the operator cannot tell a measured round from a partially reported one.
                 ...(record?.receipt ? { unmeasuredTelemetry: unmeasuredTelemetry(record.receipt.telemetry) } : {}),
+                ...(record?.executedBy ? { executedBy: record.executedBy } : {}),
+                // A relaying route — which is what a subagent round is — should record where it ran, because its figures
+                // passed through a session. Reported here rather than required: the gate owns what is required.
+                ...(record?.receipt && !record.receipt.executor ? { provenanceMissing: true } : {}),
                 ...(missing.length > 0 ? { missingCapabilities: missing } : {}),
                 path: record?.status === 'waived'
                     ? { kind: 'waived' as const, reason: record.waivedReason ?? null }

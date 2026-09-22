@@ -106,6 +106,16 @@ export function unmeasuredTelemetry(telemetry: Partial<ReviewExecutionTelemetry>
     return TELEMETRY_FIELDS.filter((field) => telemetry[field] === null);
 }
 
+/** Where a receipt came from. Provenance for an auditor; never a gate criterion. */
+export interface ReviewExecutionProvenance {
+    /** Which host produced the receipt. */
+    platform: string;
+    /** The session the round ran in, so the platform's own record can be found. */
+    sessionId?: string;
+    /** The platform's completion line verbatim — the source the relayed figures were transcribed from. */
+    completionReport?: string;
+}
+
 /** The executor's report. Authored by the host, never by the reviewer. */
 export interface ReviewExecutionReceipt {
     /** Must equal the issued request's nonce. */
@@ -116,6 +126,13 @@ export interface ReviewExecutionReceipt {
     startedAt: string;
     endedAt: string;
     telemetry: ReviewExecutionTelemetry;
+    /**
+     * Present when the executor recorded where it ran.
+     *
+     * Expected of a relaying route — a subagent round returns its figures through the calling session — because the
+     * identifiers are what let an auditor check those figures against the platform's own record.
+     */
+    executor?: ReviewExecutionProvenance;
     status: 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled' | 'executor_unavailable';
 }
 

@@ -285,53 +285,54 @@ describe('the self-reported telemetry arguments are retired', () => {
  *
  * K2 gives the host the request it must answer, so a host never has to read Kata's private state to obtain one.
  */
+/** A task with one issued brief, and the paths a host and a reviewer would use. */
+async function issued(issueBrief = true): Promise<{ root: string; brief: Awaited<ReturnType<typeof issueAdversarialBrief>>; resultPath: string; recordPath: string }> {
+    const root = await mkdtemp(join(tmpdir(), 'kata-receipt-channel-'));
+    cleanup.push(root);
+    await initLayout(root);
+    await createTask({ root, id: 'receipt-channel', title: 'Receipt channel', acceptance: [{ id: 'AC-1', statement: 'The receipt is host-authored.' }] } as never);
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src/x.ts'), 'export const x = 1;\n', 'utf8');
+    await createTaskRevision({ root, taskId: 'receipt-channel', ownedPaths: ['src/x.ts'], checkIds: [] });
+
+    const brief = issueBrief ? await issueAdversarialBrief(root, 'receipt-channel', 'review') : ({} as Awaited<ReturnType<typeof issueAdversarialBrief>>);
+    const resultPath = join(root, 'result.json');
+    await writeFile(resultPath, JSON.stringify({
+        node: 'review', status: 'recorded', revisionId: brief.revisionId ?? '', executedInFreshContext: true,
+        contextNote: 'a context that did not author the change', briefSha256: brief.sha256,
+        createdAt: new Date().toISOString(),
+        attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
+        hypotheses: [{
+            id: 'h1',
+            claim: 'the acceptance criterion is satisfied only by the shape of the assertion',
+            targets: ['AC-1'],
+            method: 'source-read',
+            outcome: 'refuted',
+            observation: { kind: 'source', ref: 'src/x.ts', observed: 'the assertion exercises the declared behaviour' },
+        }],
+        findings: [],
+    }), 'utf8');
+    return { root, brief, resultPath, recordPath: join(root, '.kata', 'tasks', 'receipt-channel', 'adversarial-review.json') };
+}
+
+function receiptFor(brief: Awaited<ReturnType<typeof issueAdversarialBrief>>, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        runId: brief.runRequest!.runId,
+        requestSha256: brief.runRequest!.requestSha256,
+        capabilities: requiredCapabilitiesForNode('review'),
+        startedAt: '2026-09-22T00:00:00.000Z',
+        endedAt: '2026-09-22T00:01:00.000Z',
+        telemetry: { toolCalls: 3, outputBytes: 1024, tokens: 100, truncations: 0 },
+        status: 'completed',
+        ...overrides,
+    };
+}
+
 describe('the receipt arrives on its own channel, and the request is handed over', () => {
     afterEach(async () => {
         await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
     });
 
-    /** A task with one issued brief, and the paths a host and a reviewer would use. */
-    async function issued(issueBrief = true): Promise<{ root: string; brief: Awaited<ReturnType<typeof issueAdversarialBrief>>; resultPath: string; recordPath: string }> {
-        const root = await mkdtemp(join(tmpdir(), 'kata-receipt-channel-'));
-        cleanup.push(root);
-        await initLayout(root);
-        await createTask({ root, id: 'receipt-channel', title: 'Receipt channel', acceptance: [{ id: 'AC-1', statement: 'The receipt is host-authored.' }] } as never);
-        await mkdir(join(root, 'src'), { recursive: true });
-        await writeFile(join(root, 'src/x.ts'), 'export const x = 1;\n', 'utf8');
-        await createTaskRevision({ root, taskId: 'receipt-channel', ownedPaths: ['src/x.ts'], checkIds: [] });
-
-        const brief = issueBrief ? await issueAdversarialBrief(root, 'receipt-channel', 'review') : ({} as Awaited<ReturnType<typeof issueAdversarialBrief>>);
-        const resultPath = join(root, 'result.json');
-        await writeFile(resultPath, JSON.stringify({
-            node: 'review', status: 'recorded', revisionId: brief.revisionId ?? '', executedInFreshContext: true,
-            contextNote: 'a context that did not author the change', briefSha256: brief.sha256,
-            createdAt: new Date().toISOString(),
-            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
-            hypotheses: [{
-                id: 'h1',
-                claim: 'the acceptance criterion is satisfied only by the shape of the assertion',
-                targets: ['AC-1'],
-                method: 'source-read',
-                outcome: 'refuted',
-                observation: { kind: 'source', ref: 'src/x.ts', observed: 'the assertion exercises the declared behaviour' },
-            }],
-            findings: [],
-        }), 'utf8');
-        return { root, brief, resultPath, recordPath: join(root, '.kata', 'tasks', 'receipt-channel', 'adversarial-review.json') };
-    }
-
-    function receiptFor(brief: Awaited<ReturnType<typeof issueAdversarialBrief>>, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-        return {
-            runId: brief.runRequest!.runId,
-            requestSha256: brief.runRequest!.requestSha256,
-            capabilities: requiredCapabilitiesForNode('review'),
-            startedAt: '2026-09-22T00:00:00.000Z',
-            endedAt: '2026-09-22T00:01:00.000Z',
-            telemetry: { toolCalls: 3, outputBytes: 1024, tokens: 100, truncations: 0 },
-            status: 'completed',
-            ...overrides,
-        };
-    }
 
     it('refuses a receipt carried in the reviewer result body, and writes nothing', async () => {
         const { root, brief, resultPath, recordPath } = await issued();
@@ -419,4 +420,85 @@ describe('the receipt arrives on its own channel, and the request is handed over
             process.chdir(before);
         }
     }, 20000);
+});
+
+/**
+ * b2: the receipt records where it ran, and `executedBy` finally has a producer.
+ *
+ * On the recommended route — a subagent round — the figures reach the receipt through the calling session, so the
+ * platform's identifiers are what let an auditor check them against the platform's own record. And `executedBy`, which
+ * implied provenance and had no production writer at all, is filled from that receipt: platform is provenance, capability
+ * is the contract.
+ */
+describe('the receipt records its provenance', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    async function statusOf(root: string): Promise<Record<string, unknown>> {
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            return await runAdversarialCommand(['status', '--change', 'receipt-channel']);
+        } finally {
+            process.chdir(before);
+        }
+    }
+
+    it('fills executedBy from the receipt, rather than leaving the field to imply a provenance it never had', async () => {
+        const { root, brief, resultPath, recordPath } = await issued();
+        const receiptPath = join(root, 'receipt.json');
+        await writeFile(receiptPath, JSON.stringify(receiptFor(brief, {
+            executor: { platform: 'a-host-platform', sessionId: 'session-1', completionReport: 'Agent completed in 20.5s (2 tool uses, 52.7k token)' },
+        })), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand(['record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath, '--receipt-file', receiptPath]);
+            expect(result.status).toBe('recorded');
+        } finally {
+            process.chdir(before);
+        }
+
+        const persisted = JSON.parse(await readFile(recordPath, 'utf8')) as { executedBy?: string };
+        expect(persisted.executedBy).toBe('a-host-platform');
+    });
+
+    it('reports a receipt that did not record where it ran, so a relaying route cannot look like a locally measured one', async () => {
+        const { root, brief, resultPath } = await issued();
+        const receiptPath = join(root, 'receipt.json');
+        // Bound and capable, but with no provenance: the numbers came from somewhere unstated.
+        await writeFile(receiptPath, JSON.stringify(receiptFor(brief)), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            await runAdversarialCommand(['record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath, '--receipt-file', receiptPath]);
+        } finally {
+            process.chdir(before);
+        }
+
+        const node = ((await statusOf(root)).nodes as Record<string, Record<string, unknown>>).review!;
+        expect(node.receipt).toBe('recorded');
+        expect(node.provenanceMissing).toBe(true);
+        expect(node.executedBy).toBeUndefined();
+    });
+
+    it('refuses provenance carried in the reviewer result body, the same channel rule as the receipt itself', async () => {
+        const { root, resultPath, recordPath } = await issued();
+        const body = JSON.parse(await readFile(resultPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(resultPath, JSON.stringify({ ...body, executedBy: 'the-reviewer-itself' }), 'utf8');
+
+        const before = process.cwd();
+        process.chdir(root);
+        try {
+            const result = await runAdversarialCommand(['record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath]);
+            expect(result.status).toBe('refused');
+            expect(String(result.error)).toMatch(/may not carry executedBy/);
+            await expect(readFile(recordPath, 'utf8')).rejects.toThrow();
+        } finally {
+            process.chdir(before);
+        }
+    });
 });

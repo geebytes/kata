@@ -270,6 +270,31 @@
           "type": "string",
           "minLength": 1
         },
+        "executor": {
+          "type": "object",
+          "required": [
+            "platform"
+          ],
+          "additionalProperties": false,
+          "description": "Provenance for this receipt. On a subagent round the telemetry is relayed by the calling session, so the identifiers are what let an auditor check the numbers against the platform's own record.",
+          "properties": {
+            "platform": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Which host produced this receipt. Provenance, never a gate criterion: capability is the contract, and naming a platform must not read as a requirement."
+            },
+            "sessionId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The session the round ran in, so the platform's own record of it can be found."
+            },
+            "completionReport": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The platform's completion line verbatim — what the relayed figures were transcribed from."
+            }
+          }
+        },
         "telemetry": {
           "type": "object",
           "required": [
