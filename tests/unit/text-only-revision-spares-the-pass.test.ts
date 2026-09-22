@@ -22,7 +22,6 @@ describe('a revision that differs only in governance text', () => {
         createdAt: '2026-09-19T00:00:00.000Z',
         executedInFreshContext: true,
         briefSha256: 'brief-1',
-        verdict: 'no_defect_found',
         attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted' }],
         findings: [],
         scope: { kind: 'full' },
@@ -53,6 +52,45 @@ describe('a revision that differs only in governance text', () => {
 
     it('does not spare it when code changed', () => {
         expect(gate({ codeManifestHash: 'code-2' })).toMatchObject({ satisfied: false, reason: 'stale_revision' });
+    });
+
+    it('expires the pass when the CandidateFreeze moved even though the owned manifest did not (§7.4)', () => {
+        // `manifestHash` covers only the *declared* owned paths. A change committed outside the declaration leaves it
+        // byte-identical while the reviewed content has moved — measured on this project as a commit touching .gitignore,
+        // docs/guide.md and src/a.ts that the record still read as `changedPaths ['src/a.ts']`. When both sides can name
+        // a freeze, the freeze is the binding, so that shape is refused instead of silently certifying stale content.
+        const frozen: AdversarialRecord = { ...record, candidateFreezeSha256: 'a'.repeat(64) };
+
+        expect(
+            evaluateAdversarialGate(frozen, {
+                node: 'verify',
+                revisionId: 'revision-text',
+                manifestHash: 'manifest-full-2',
+                codeManifestHash: 'code-1',
+                issuedBriefSha256s: ['brief-1'],
+                claimsVerified: true,
+                // Same owned manifest, different freeze: the content the pass answered is not the content in hand.
+                candidateFreezeSha256: 'b'.repeat(64),
+            }),
+        ).toMatchObject({ satisfied: false, reason: 'stale_revision' });
+    });
+
+    it('still spares the pass when the freeze agrees, and does not fail a record that predates the contract', () => {
+        const frozen: AdversarialRecord = { ...record, candidateFreezeSha256: 'a'.repeat(64) };
+        expect(
+            evaluateAdversarialGate(frozen, {
+                node: 'verify',
+                revisionId: 'revision-text',
+                manifestHash: 'manifest-full-2',
+                codeManifestHash: 'code-1',
+                issuedBriefSha256s: ['brief-1'],
+                claimsVerified: true,
+                candidateFreezeSha256: 'a'.repeat(64),
+            }),
+        ).toMatchObject({ satisfied: true });
+
+        // A legacy record carries no freeze; the older binding must keep working rather than failing on a missing field.
+        expect(gate({ candidateFreezeSha256: 'a'.repeat(64) })).toMatchObject({ satisfied: true });
     });
 
     it('does not spare it when either side cannot name the code surface', () => {

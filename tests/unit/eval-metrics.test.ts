@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { initLayout } from '../../src/core/layout.js';
 import { computeMetrics, type EvaluationRun } from '../../src/eval/metrics.js';
 import { checkReleaseGates } from '../../src/eval/release-gates.js';
 import { runEvaluation, type EvaluationManifest } from '../../src/eval/runner.js';
+import { admissibilityCorpus, scoreCorpus } from '../../src/eval/admissibility-corpus.js';
 
 describe('Evaluation metrics', () => {
   it('computes acceptance pass rate from runs', () => {
@@ -56,6 +61,90 @@ describe('Evaluation metrics', () => {
     // guard that refuses an accurate citation is invisible to a corpus that only plants defects).
     const { admissibilityCorpus, scoreCorpus } = await import('../../src/eval/admissibility-corpus.js');
 
+  });
+
+    it('has a case for every acceptance criterion of this change, AC-5 included', () => {
+        const declared = ['AC-1', 'AC-2', 'AC-3', 'AC-4', 'AC-5', 'AC-6'];
+        const covered = new Set(admissibilityCorpus().map((entry) => entry.criterion));
+        const missing = declared.filter((id) => !covered.has(id));
+        expect(missing, `the corpus must cover every declared criterion; missing ${missing.join(', ')}`).toEqual([]);
+    });
+});
+
+/**
+ * The `verifier-critical-recall` gate existed but nothing on the production path filled it, so it always reported
+ * `skipped` — a gate that can never fire is not a gate. The manifest now carries the observations and the runner scores
+ * them, so the comparison happens on the real release path rather than only in a unit test.
+ */
+describe('the release path actually scores the verifier', () => {
+    it('turns manifest-declared observations into a scored gate', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-eval-verifier-'));
+        try {
+            await initLayout(root);
+            const manifest = {
+                taskFixtures: [],
+                verifier: {
+                    baseline: { caseId: 'a', verdict: 'defects_found' as const, findingIds: ['seal-persists-refused-owned-paths'] },
+                    current: { caseId: 'a', verdict: 'no_defect_found' as const, findingIds: [] },
+                },
+            };
+            const report = await runEvaluation(manifest as never, root);
+            const gate = report.releaseGates.gates.find((g) => g.name === 'verifier-critical-recall');
+            expect(gate?.skipped).not.toBe(true);
+            expect(report.releaseGates.allPass).toBe(false);
+
+            // R6 (2026-09-22, found by an adversarial pass): this fixture declares `caseId: 'a'`, which names no corpus
+            // case, so both sides scored a zero denominator and the gate reported `pass: true` on `0 >= 0`. The
+            // assertion above only held because an unrelated gate failed `allPass`. A declaration that names no corpus
+            // case must be refused and reported, never scored as a held line.
+            expect(gate?.pass).toBe(false);
+            expect(report.verifierObservationProblems?.length).toBe(2);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+});
+
+/**
+ * §4 Phase 0 names five kinds of corpus entry, and two of them were missing:
+ *
+ *  - **mutation cases** — for each checker this repository owns, the mutation that must be caught. The
+ *    `change-record-has-no-test-for-its-central-claim` finding showed this class is where silent gaps live: a checker
+ *    whose central assertion no mutation can break is a checker with no assertion.
+ *  - **malicious fixtures** — records engineered to pass under today's predicate (the §2.1 minimal record) and to fail
+ *    under §3.1's. Without them the corpus measures whether defects are *found*, never whether a well-shaped non-answer
+ *    can still *pass*.
+ */
+describe('the corpus covers every kind Phase 0 names', () => {
+    it('has entries for mutation cases and malicious fixtures, not only planted defects and clean revisions', () => {
+        const kinds = new Set(admissibilityCorpus().flatMap((entry) => entry.kinds));
+        for (const required of ['planted-defect', 'mutation-case', 'clean-revision', 'malicious-fixture'] as const) {
+            expect(kinds.has(required), `missing corpus kind: ${required}`).toBe(true);
+        }
+    });
+
+    it('names, for every mutation case, the checker it breaks and the mutation that must be caught', () => {
+        const mutations = admissibilityCorpus().filter((entry) => entry.kinds.includes('mutation-case'));
+        expect(mutations.length).toBeGreaterThan(0);
+        for (const entry of mutations) {
+            // The reproduction *is* the mutation; a mutation case without one is a claim nobody can falsify.
+            expect(entry.reproduction.length, `${entry.id} must name its mutation`).toBeGreaterThan(40);
+        }
+    });
+});
+
+/**
+ * Two acceptance criteria declaring the **same** `testSelector` produced one evidence file and left the other criterion
+ * unreferenced, so verify failed `AC-4: insufficient_evidence_level` while the tests for it were green. The seal dedupes
+ * by selector, which is correct — the defect was two rows claiming one selector, i.e. a declaration that cannot say which
+ * evidence answers which criterion.
+ *
+ * This is asserted against the live task's declaration because that is where the ambiguity was, and a fixture would not
+ * have caught it: the fixture would have to reproduce the same duplication to be meaningful.
+ */
+describe('each acceptance criterion declares its own evidence selector', () => {
+    it('declares, per criterion, the evidence that answers it, and scores every corpus class', () => {
+
     const corpus = admissibilityCorpus();
     expect(corpus.length).toBeGreaterThan(0);
 
@@ -85,6 +174,31 @@ describe('Evaluation metrics', () => {
     const overEager = scoreCorpus(corpus, corpus.map((entry) => ({ caseId: entry.id, verdict: 'defects_found', findingIds: ['invented'] })));
     expect(overEager.falsePositiveRate).toBeGreaterThan(0);
   });
+
+    it('scores the guard-false-negative class instead of counting it nowhere', () => {
+        // R5, found by an adversarial pass on 2026-09-22. AC-6 requires guards be tested for false negatives, and the
+        // corpus declares a `guard-false-negative` class for exactly that — but the scorer computed only three rates and
+        // such a case is neither `critical: true` nor kind `clean-revision`, so it entered none of them. Measured against
+        // the real corpus: answering all three guard cases as the harm (verdict `defects_found`, no findings) left every
+        // rate byte-identical to a perfect verifier. AC-6's class was measurable by nothing.
+        const corpus = admissibilityCorpus();
+        const guardCases = corpus.filter((entry) => entry.kinds.includes('guard-false-negative'));
+        expect(guardCases.length).toBeGreaterThan(0);
+
+        // The harm: reporting a defect where the guard had refused an honest report.
+        const harmful = corpus.map((entry) => ({
+            caseId: entry.id,
+            verdict: guardCases.some((guard) => guard.id === entry.id) ? 'defects_found' as const : entry.expectedVerdict,
+            findingIds: [...entry.expectedFindings],
+        }));
+        const score = scoreCorpus(corpus, harmful);
+        expect(score.guardHarmRate).toBeGreaterThan(0);
+
+        // And a correct verifier does not pay for it: answering the declared verdict leaves the rate at zero, so this is
+        // a rate, not a constant.
+        const correct = corpus.map((entry) => ({ caseId: entry.id, verdict: entry.expectedVerdict, findingIds: [...entry.expectedFindings] }));
+        expect(scoreCorpus(corpus, correct).guardHarmRate).toBe(0);
+    });
 
   it('includes wiki rejection rate', () => {
     const runs: EvaluationRun[] = [
@@ -163,6 +277,87 @@ describe('Release gates', () => {
   });
 });
 
+describe('Release gates: the verifier budget is judged against measured recall, not against cost', () => {
+  const metrics = {
+    totalTasks: 1,
+    totalAcceptances: 1,
+    totalPassed: 1,
+    acceptancePassRate: 1,
+    repairRate: 0,
+    totalRepairs: 0,
+    escalationRate: 0,
+    avgLatencyMs: 10,
+    avgTokens: 10,
+    wikiPromoted: 0,
+    wikiRejected: 0,
+    wikiRejectionRate: 0,
+    metricCoverage: {},
+  } as never;
+
+  it('refuses an optimization that improved cost while lowering critical recall', async () => {
+    // AC-5: the objective is minimize(tokens, latency) *subject to* criticalRecall >= baseline. A cheaper verifier is
+    // not an improvement if it misses defects, and the miss is invisible without this comparison.
+    const { admissibilityCorpus, scoreCorpus } = await import('../../src/eval/admissibility-corpus.js');
+    const corpus = admissibilityCorpus();
+    const critical = corpus.filter((entry) => entry.critical === true);
+    const { join } = await import('node:path');
+    const { mkdtemp, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const root = await mkdtemp(join(tmpdir(), 'kata-corpus-gate-'));
+    await mkdir(join(root, '.kata/wiki'), { recursive: true });
+
+    // The verifier missed one critical defect that the baseline caught — a cost win that must lose here.
+    const current = scoreCorpus(corpus, critical.map((entry, index) => ({
+      caseId: entry.id,
+      verdict: index === 0 ? 'no_defect_found' : 'defects_found',
+      findingIds: index === 0 ? [] : entry.expectedFindings,
+    })));
+    const baseline = scoreCorpus(corpus, critical.map((entry) => ({
+      caseId: entry.id,
+      verdict: 'defects_found',
+      findingIds: entry.expectedFindings,
+    })));
+
+    const result = await checkReleaseGates(root, metrics, { verifierBaseline: baseline, verifierCurrent: current });
+    const gate = result.gates.find((entry) => entry.name === 'verifier-critical-recall');
+    expect(gate).toMatchObject({ pass: false });
+    expect(gate?.details).toMatch(/recall/i);
+    expect(result.allPass).toBe(false);
+  });
+
+  it('passes a verifier that holds recall and false-pass rate at the baseline', async () => {
+    // The other direction: the gate must not merely always refuse, or it proves nothing about the change it guards.
+    const { admissibilityCorpus, scoreCorpus } = await import('../../src/eval/admissibility-corpus.js');
+    const corpus = admissibilityCorpus();
+    const clean = corpus.map((entry) => ({
+      caseId: entry.id,
+      verdict: entry.expectedVerdict,
+      findingIds: entry.expectedFindings,
+    }));
+    const score = scoreCorpus(corpus, clean);
+    const { join } = await import('node:path');
+    const { mkdtemp, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const root = await mkdtemp(join(tmpdir(), 'kata-corpus-gate-ok-'));
+    await mkdir(join(root, '.kata/wiki'), { recursive: true });
+
+    const result = await checkReleaseGates(root, metrics, { verifierBaseline: score, verifierCurrent: score });
+    expect(result.gates.find((entry) => entry.name === 'verifier-critical-recall')).toMatchObject({ pass: true });
+  });
+
+  it('reports the gate as skipped rather than passed when no verifier was measured', async () => {
+    // Same rule as every other gate here: green because nothing was checked is the failure mode this exists to remove.
+    const { join } = await import('node:path');
+    const { mkdtemp, mkdir } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const root = await mkdtemp(join(tmpdir(), 'kata-corpus-gate-skip-'));
+    await mkdir(join(root, '.kata/wiki'), { recursive: true });
+
+    const result = await checkReleaseGates(root, metrics);
+    expect(result.gates.find((entry) => entry.name === 'verifier-critical-recall')).toMatchObject({ skipped: true });
+  });
+});
+
 describe('Evaluation runner', () => {
   it('produces a report from a manifest', async () => {
     const manifest: EvaluationManifest = {
@@ -185,4 +380,31 @@ describe('Evaluation runner', () => {
     expect(report.releaseGates.allPass).toBe(true);
     expect(report.timestamp).toBeTruthy();
   });
+});
+
+/**
+ * AC-5 is the corpus's own acceptance criterion: it must *gate* optimization, and a corpus that does not cover the
+ * criterion about gating cannot referee itself. Measured before this: the cases covered AC-1/2/3/4/6 and left AC-5 out,
+ * so "the corpus gates every optimization" was the one claim no case tested.
+ */
+describe('the corpus covers the criterion that makes it a gate', () => {
+    it('has no two criteria sharing one selector, so no criterion is left un-evidenced by dedup', async () => {
+        const { readTask } = await import('../../src/core/task.js');
+        const task = await readTask(
+            '/data/work/ahaeureka/k2skills/kata/.kata/worktrees/adversarial-admissibility',
+            'adversarial-admissibility',
+        );
+        const bySelector = new Map<string, string[]>();
+        for (const row of task?.acceptanceMatrix?.rows ?? []) {
+            for (const item of row.evidence ?? []) {
+                const selector = item.testSelector ?? `${row.acceptanceId}:${item.id ?? item.kind}`;
+                bySelector.set(selector, [...(bySelector.get(selector) ?? []), row.acceptanceId]);
+            }
+        }
+        const shared = [...bySelector.entries()].filter(([, ids]) => new Set(ids).size > 1);
+        expect(
+            shared.map(([selector, ids]) => `${selector} declared by ${[...new Set(ids)].join(', ')}`),
+            'a selector declared by two criteria cannot evidence both — the seal emits one file per selector',
+        ).toEqual([]);
+    });
 });

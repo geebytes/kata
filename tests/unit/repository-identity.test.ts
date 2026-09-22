@@ -78,6 +78,23 @@ describe('repository identity', () => {
         expect(await walkRepositoryFiles(root, { under: '.kata' })).toEqual([]);
     });
 
+    it('excludes what the repository itself declares ignored, not only the built-in names', async () => {
+        // §1.1 measured the brief listing `tmp-verify-brief.json` — the reviewer's own scratch file — as a path under
+        // review. The walk filtered by a hard-coded name list, so a repository's own declaration (this project's
+        // `.gitignore` says `tmp/` holds evidence and working files) had no effect on what a review was told to read.
+        const root = await tempRoot();
+        execFileSync('git', ['init', '-q', '.'], { cwd: root });
+        await writeFile(join(root, '.gitignore'), 'tmp/\n*.local.json\n', 'utf8');
+        await mkdir(join(root, 'tmp'), { recursive: true });
+        await writeFile(join(root, 'tmp/brief.json'), '{}\n', 'utf8');
+        await writeFile(join(root, 'scratch.local.json'), '{}\n', 'utf8');
+        await writeFile(join(root, 'kept.ts'), 'export const x = 1;\n', 'utf8');
+
+        const paths = (await walkRepositoryFiles(root)).map((file) => file.path);
+        expect(paths).toContain('kept.ts');
+        expect(paths).not.toContain('tmp/brief.json');
+        expect(paths).not.toContain('scratch.local.json');
+    });
     it('caps the tree hash by size but hashes owned paths in full', async () => {
         const root = await tempRoot();
         await mkdir(join(root, 'owned'), { recursive: true });

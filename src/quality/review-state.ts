@@ -80,6 +80,15 @@ export interface RevisionUnderReview {
     declaredTestSelectors?: string[];
     /** Evidence envelope ids bound to this revision, for the `evidence` observation kind. */
     evidenceIds?: string[];
+    /**
+     * The check commands the task itself declares, for the `analysis` observation kind.
+     *
+     * Without this the `analysis` kind had no registry to resolve against, so its grounding rule collapsed to "the ref is
+     * a non-empty string" — a citation-free discharge path that made the other three kinds moot: a hypothesis could name
+     * any analyzer that does not exist and still ground. An analysis citation must name something the *task* declared as
+     * an instrument, which is the same standard the `test` kind already holds citations to.
+     */
+    declaredInstruments?: string[];
     /** Resolvable paths at this revision; defaults to `changedPaths` when the caller has no fuller list. */
     readablePaths?: string[];
 }
@@ -138,8 +147,11 @@ function resolves(observation: ReviewObservation, revision: RevisionUnderReview)
         case 'test':
             return (revision.declaredTestSelectors ?? []).includes(observation.ref.split(' ')[0] ?? observation.ref);
         case 'analysis':
-            return observation.ref.trim().length > 0;
-    }
+            // R8 (2026-09-22, found by an adversarial pass): this was `observation.ref.trim().length > 0`, which admitted
+            // `{kind:'analysis', ref:'q', observed:'z'}` with `satisfied: true`. An analysis citation must name an
+            // instrument the task declared — a named checker, not any non-empty string.
+            return (revision.declaredInstruments ?? []).includes(observation.ref.trim());
+}
 }
 
 /**

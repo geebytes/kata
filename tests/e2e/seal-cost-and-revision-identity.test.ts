@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -8,6 +8,7 @@ import { initLayout } from '../../src/core/layout.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { findOwnershipConflicts } from '../../src/workflow/revision.js';
 
+import { createExecutionSandbox } from '../../src/workflow/execution-sandbox.js';
 const execFileAsync = promisify(execFile);
 
 /**
@@ -92,7 +93,7 @@ describe('seal cost and revision identity', () => {
             checks: [
                 {
                     id: 'first', name: 'first', kind: 'test', command: process.execPath, cwd: root, timeoutMs: 10_000,
-                    args: ['-e', `const fs=require('fs');fs.writeFileSync('${join(root, 'first-saw')}',String(fs.existsSync('${witness}')));`],
+                    args: ['-e', `process.exit(require('fs').existsSync('${witness}') ? 3 : 0)`],
                 },
                 {
                     id: 'second', name: 'second', kind: 'test', command: process.execPath, cwd: root, timeoutMs: 10_000,
@@ -102,19 +103,20 @@ describe('seal cost and revision identity', () => {
         });
 
         expect(result).toMatchObject({ success: true });
-        expect(await readFile(join(root, 'first-saw'), 'utf8')).toBe('false');
+        // A sequential check sees no witness; its success is the observation, without writing back into the author tree.
     });
 
-    it('reuses an unchanged revision and its evidence instead of re-running the checks', async () => {
+    it('runs checks in an isolated execution snapshot and reuses the unchanged author revision', async () => {
         const root = await tempRoot();
         await openTask(root, 'reuse-seal');
         const marker = join(root, 'check-ran.txt');
         const checks = [{
             id: 'marker', name: 'marker', kind: 'test' as const, command: process.execPath, cwd: root,
-            args: ['-e', `require('fs').appendFileSync('${marker}','ran\\n')`],
+            args: ['-e', "require('fs').appendFileSync('check-ran.txt','ran\\n')"],
         }];
 
         const first = await seal('reuse-seal', root, { checks });
+        await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         expect(first).toMatchObject({ success: true });
         const firstRevision = (first.diagnostics as { revision?: string })?.revision;
         const second = await seal('reuse-seal', root, { checks });
@@ -123,8 +125,56 @@ describe('seal cost and revision identity', () => {
         expect(second).toMatchObject({ success: true });
         expect(second.diagnostics).toMatchObject({ reusedEvidence: 1 });
         expect((second.diagnostics as { reusedRevision?: string })?.reusedRevision).toBeDefined();
-        expect((await readFile(marker, 'utf8')).trim().split('\n')).toEqual(['ran']);
+        await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         void firstRevision;
+    });
+
+    it('copies runtime dependencies resolved from an ancestor workspace into the sandbox', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'kata-runtime-workspace-'));
+        roots.push(workspace);
+        const root = join(workspace, 'checkout');
+        await mkdir(join(workspace, 'node_modules', 'fixture-runtime'), { recursive: true });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await mkdir(join(workspace, 'node_modules', '.bin'), { recursive: true });
+        await symlink('../fixture-runtime/index.js', join(workspace, 'node_modules', '.bin', 'fixture-runtime'));
+        await writeFile(join(workspace, 'node_modules', 'fixture-runtime', 'index.js'), 'module.exports = 1;\n', 'utf8');
+        await writeFile(join(root, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+        await writeFile(join(root, 'src', 'subject.js'), 'export const value = 1;\n', 'utf8');
+        await execFileAsync('git', ['init', '-q'], { cwd: root });
+        await execFileAsync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+        await execFileAsync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+        await execFileAsync('git', ['add', '-A'], { cwd: root });
+        await execFileAsync('git', ['commit', '-qm', 'baseline'], { cwd: root });
+
+        const sandbox = await createExecutionSandbox(root);
+        try {
+            const copied = join(sandbox.root, 'node_modules', 'fixture-runtime', 'index.js');
+            await expect(readFile(copied, 'utf8')).resolves.toBe('module.exports = 1;\n');
+            expect((await lstat(join(sandbox.root, 'node_modules', 'fixture-runtime'))).isSymbolicLink()).toBe(false);
+            const bin = join(sandbox.root, 'node_modules', '.bin', 'fixture-runtime');
+            await expect(readFile(bin, 'utf8')).resolves.toBe('module.exports = 1;\n');
+            expect((await lstat(bin)).isSymbolicLink()).toBe(true);
+        } finally {
+            await sandbox.dispose();
+        }
+    });
+
+    it('refuses a runtime dependency symlink that escapes the sandbox', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'kata-runtime-escape-'));
+        roots.push(workspace);
+        const root = join(workspace, 'checkout');
+        await mkdir(join(workspace, 'node_modules', '.bin'), { recursive: true });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await symlink('../../author-escape', join(workspace, 'node_modules', '.bin', 'escape'));
+        await writeFile(join(root, 'package.json'), '{"name":"fixture"}\n', 'utf8');
+        await writeFile(join(root, 'src', 'subject.js'), 'export const value = 1;\n', 'utf8');
+        await execFileAsync('git', ['init', '-q'], { cwd: root });
+        await execFileAsync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+        await execFileAsync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+        await execFileAsync('git', ['add', '-A'], { cwd: root });
+        await execFileAsync('git', ['commit', '-qm', 'baseline'], { cwd: root });
+
+        await expect(createExecutionSandbox(root)).rejects.toThrow('Refusing runtime dependency symlink outside the execution sandbox');
     });
 
     it('mints a new revision only when the content changes', async () => {

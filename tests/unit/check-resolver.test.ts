@@ -166,5 +166,34 @@ describe('matrix check resolution', () => {
         );
         expect(sanitizeCheckName('--')).toBe('');
     });
+
+    it('resolves the runner entry through dependency resolution, not through the project directory literal', async () => {
+        // A linked worktree deliberately has no `node_modules` of its own: Node resolves dependencies from an ancestor
+        // workspace, and the seal's execution sandbox copies from those ancestor candidates for the same reason. The
+        // runner entry was built as `join(projectDir, 'node_modules', …)`, so in a worktree every matrix check died with
+        // MODULE_NOT_FOUND on a path that does not exist there — all seven declared checks in one seal run.
+        const { mkdir: mk, mkdtemp, rm, writeFile: wf } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { basename } = await import('node:path');
+        const parent = await mkdtemp(join(tmpdir(), 'kata-runner-entry-'));
+        const worktree = join(parent, 'wt');
+        const ancestor = join(parent, 'ancestor');
+        try {
+            // The worktree: sources only, no dependencies.
+            await mk(join(worktree, 'tests'), { recursive: true });
+            await wf(join(worktree, 'package.json'), JSON.stringify({ name: 'wt', version: '1.0.0' }), 'utf8');
+            // The ancestor workspace: where the dependency actually resolves from.
+            await mk(join(ancestor, 'node_modules', 'vitest'), { recursive: true });
+            await wf(join(ancestor, 'node_modules', 'vitest', 'vitest.mjs'), '// vitest entry\n', 'utf8');
+
+            const check = resolveCheckForRow(row(), { kind: 'test', command: 'vitest', testSelector: 'tests/foo.test.ts' }, worktree, { dependencyRoots: [ancestor] });
+            if (check instanceof Error) throw check;
+            // Runnable, and located where the dependency does — not at the worktree literal.
+            expect(check.args?.[0]).toBe(join(ancestor, 'node_modules', 'vitest', 'vitest.mjs'));
+            expect(basename(check.args?.[0] ?? '')).toBe('vitest.mjs');
+        } finally {
+            await rm(parent, { recursive: true, force: true });
+        }
+    });
 })
 ;

@@ -82,6 +82,31 @@ export async function changeSurface(
  * nothing to re-derive. The fact is available and cheap (`git status`), the base revision's digests are already known,
  * and a path the base never hashed has every reason to count as added rather than to be invisible.
  */
+/**
+ * The change surface between two **sealed revisions**, computed from their own content snapshots.
+ *
+ * This is the surface AC-2 asks for, and it is the one that does not depend on the working tree at all. Two facts make it
+ * possible: each revision froze `contentDigests` at seal time, and the union inside it already included what the
+ * repository reported as changed beyond the declaration. So a committed change outside the owned set is *in* the older
+ * and newer snapshots and the diff sees it — where deriving from `ownedPaths` plus live `git status` saw neither.
+ *
+ * A revision sealed before the field existed cannot answer this, and says so instead of guessing: a fabricated diff is
+ * worse than an honest `delta_unavailable`, which is the rule the workspace-based path already follows.
+ */
+export function revisionChangeSurface(base: TaskRevision, current: TaskRevision | null): DeltaStatus {
+    if (!base.contentDigests) {
+        return { status: 'delta_unavailable', reason: `revision ${base.id} was sealed before content digests were recorded` };
+    }
+    if (!current) return { status: 'delta_unavailable', reason: 'no current revision to compare against' };
+    if (current.id === base.id) return { status: 'unchanged' };
+    if (!current.contentDigests) {
+        return { status: 'delta_unavailable', reason: `revision ${current.id} was sealed before content digests were recorded` };
+    }
+    const diff = diffPathDigests(base.contentDigests, current.contentDigests);
+    if (diff.changedPaths.length === 0) return { status: 'unchanged' };
+    return { status: 'available', ...diff };
+}
+
 export async function changeSurfaceAgainstWorkspace(
     root: string,
     base: TaskRevision,

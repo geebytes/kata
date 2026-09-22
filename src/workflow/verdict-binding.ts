@@ -1,5 +1,8 @@
 import { readCurrentTaskRevision } from './revision.js';
+// A dynamic import: `quality/adversarial` reads `workflow/revision`, so a static edge here would close a cycle.
+// `candidateFreezeHashFor` is the one producer of the freeze identity (§7.4).
 import { surfaceDigests } from '../quality/code-surface.js';
+
 
 /**
  * How a verdict about a revision is bound to that revision.
@@ -28,6 +31,14 @@ export interface VerdictBinding {
     governanceManifestHash?: string;
     /** The declared-instrument surface (§24.4): what an instrument edit may expire, and nothing more. */
     instrumentManifestHash?: string;
+    /**
+     * The frozen candidate this verdict answered (§7.4).
+     *
+     * `manifestHash` covers only the *declared* owned paths, so a change committed outside the declaration left it
+     * identical while the reviewed content had moved. When both sides can name a freeze it is the binding; a verdict
+     * written before this contract keeps the older rule rather than failing.
+     */
+    candidateFreezeSha256?: string;
 }
 
 /**
@@ -55,6 +66,8 @@ export interface RevisionIdentity {
     governanceManifestHash?: string | null;
     /** The declared-instrument surface (§24.4): instrument edits invalidate the instrument surface only. */
     instrumentManifestHash?: string | null;
+    /** The frozen candidate the current revision would be certified under (§7.4), when it can be derived. */
+    candidateFreezeSha256?: string | null;
 }
 
 /**
@@ -68,12 +81,20 @@ export async function currentRevisionIdentity(root: string, taskId: string): Pro
     const { readTask } = await import('../core/task.js');
     const task = await readTask(root, taskId).catch(() => null);
     const surfaces = surfaceDigests(revision, task ?? {});
+    // §7.4: the freeze identity is delegated to one producer. Recomputing it here from a private guess at `node` and
+    // `reviewPolicyHash` would mint a *different* identity for the same candidate, and every verdict would then refuse
+    // to bind — a fabricated semantic surface. One derivation, many consumers.
+    const { candidateFreezeHashFor } = await import('../quality/adversarial.js');
+    const freezeHash = task
+        ? await candidateFreezeHashFor(root, taskId, 'review').catch(() => undefined)
+        : undefined;
     return {
         revisionId: revision?.id ?? null,
         manifestHash: revision?.manifestHash ?? null,
         codeManifestHash: surfaces.code,
         governanceManifestHash: surfaces.governance,
         instrumentManifestHash: surfaces.instrument,
+        ...(freezeHash ? { candidateFreezeSha256: freezeHash } : {}),
     };
 }
 
@@ -85,6 +106,7 @@ export function revisionBindingFields(identity: RevisionIdentity): VerdictBindin
         ...(identity.codeManifestHash ? { codeManifestHash: identity.codeManifestHash } : {}),
         ...(identity.governanceManifestHash ? { governanceManifestHash: identity.governanceManifestHash } : {}),
         ...(identity.instrumentManifestHash ? { instrumentManifestHash: identity.instrumentManifestHash } : {}),
+        ...(identity.candidateFreezeSha256 ? { candidateFreezeSha256: identity.candidateFreezeSha256 } : {}),
     };
 }
 
@@ -103,6 +125,10 @@ export function bindsToRevision(
     if (!artifact) return false;
     const scope = options.scope ?? 'full';
     if (!current.revisionId) return !artifact.revisionId;
+    // §7.4: when both sides can name the frozen candidate, that is the binding — and it takes precedence over the owned
+    // manifest, which cannot see a change committed outside the declaration.
+    const freezeKnown = Boolean(artifact.candidateFreezeSha256) && Boolean(current.candidateFreezeSha256);
+    if (freezeKnown) return artifact.candidateFreezeSha256 === current.candidateFreezeSha256;
     if (scope === 'full' && artifact.revisionId === current.revisionId) return true;
     if (Boolean(artifact.manifestHash) && artifact.manifestHash === current.manifestHash) return true;
     // C2: a code-scoped verdict may outlive an edit that touched only governance text. Both sides must be able to name the

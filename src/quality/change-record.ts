@@ -94,6 +94,9 @@ export interface ChangeRecordInput {
      */
     pathDigests?: Record<string, string>;
     basePathDigests?: Record<string, string>;
+    /** Declaration-independent snapshots are authoritative when both revisions carry them. */
+    contentDigests?: Record<string, string>;
+    baseContentDigests?: Record<string, string>;
     judgement?: string;
 }
 
@@ -198,7 +201,10 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
     // Reading only `git status` made the record's central field a function of whether the author happened to commit
     // first, and it failed silently in the direction that matters: an empty list is self-consistent with a clean tree,
     // so a record whose purpose is to stop a round's surface being understated reported that nothing had changed.
-    const fromRevision = diffPathDigests(input.basePathDigests ?? {}, input.pathDigests ?? {}).changedPaths;
+    const fromRevision = diffPathDigests(
+        input.baseContentDigests ?? input.basePathDigests ?? {},
+        input.contentDigests ?? input.pathDigests ?? {},
+    ).changedPaths;
     const changedPaths = [...new Set([...fromRevision, ...changedGitPaths(input.root)])].sort();
     const ownedPaths = [...new Set(input.ownedPaths)].sort();
     const changedOutsideOwnership = changedPaths.filter((path) => !ownedCovers(ownedPaths, path));

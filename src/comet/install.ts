@@ -265,6 +265,22 @@ async function runCometInitOnce(
                 stdout: stdout.trim(),
             };
         } catch (error) {
+            // Comet reports "nothing was selected" by exiting non-zero with this text, and that is a **decision**, not
+            // a broken install: `comet init --yes --scope global` exits 1 printing `No platforms selected. Exiting.`,
+            // while the same command with `--platform <id>` exits 0. Classifying it as `failed` sent a reader looking
+            // for a broken binary, so the case is named where it is recognised.
+            const detail = commaInitFailureDetail(error);
+            if (isNoPlatformSelected(detail)) {
+                return {
+                    command: 'comet init',
+                    status: 'skipped',
+                    path: binaryPath,
+                    root: input.root,
+                    scope: input.scope,
+                    ...(input.language ? { language: input.language } : {}),
+                    reason: 'no platforms selected',
+                };
+            }
             return {
                 command: 'comet init',
                 status: 'failed',
@@ -272,7 +288,7 @@ async function runCometInitOnce(
                 root: input.root,
                 scope: input.scope,
                 ...(input.language ? { language: input.language } : {}),
-                reason: error instanceof Error ? error.message : String(error),
+                reason: detail,
             };
         }
     }
@@ -309,6 +325,30 @@ async function runCometInitOnce(
             reason: error instanceof Error ? error.message : String(error),
         };
     }
+}
+
+/**
+ * The text of a failed `comet init`, from either stream.
+ *
+ * Comet writes its refusal to stdout and its exit code carries the verdict, so reading only `error.message` loses
+ * the sentence that says why. Both are joined here so a classification can be made on what comet actually said.
+ */
+function commaInitFailureDetail(error: unknown): string {
+    if (typeof error !== 'object' || error === null) return String(error);
+    const withStreams = error as { message?: string; stdout?: string; stderr?: string };
+    return [withStreams.message, withStreams.stdout, withStreams.stderr]
+        .filter((part): part is string => typeof part === 'string' && part.length > 0)
+        .join('\n');
+}
+
+/**
+ * Whether comet's refusal was "you did not select a platform" rather than a failure of ours.
+ *
+ * Checked on the exit text because that is the only signal comet gives: the same invocation succeeds once a platform
+ * is named, which is what makes this a decision to report rather than an error to raise.
+ */
+function isNoPlatformSelected(detail: string): boolean {
+    return /no platforms selected/i.test(detail);
 }
 
 function mergeCometInitResults(

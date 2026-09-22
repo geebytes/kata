@@ -92,8 +92,44 @@ export interface WalkOptions {
  * The path list is what an identity consumer actually needs in order; the bytes can be read one at a time
  * afterwards. Separating the two is what lets a whole-tree hash hold one file instead of the whole tree.
  */
+/**
+ * Every path the repository itself declares ignored, as git reports it.
+ *
+ * One `git status` call over the whole tree, answered by the authority on gitignore semantics. A repository that is not
+ * under git has declared nothing, and an unavailable git narrows the walk to the built-in policy rather than failing it —
+ * the same best-effort contract the rest of the identity reads follow.
+ */
+async function gitIgnoredPaths(root: string): Promise<Set<string>> {
+    const ignored = new Set<string>();
+    try {
+        const { runGit } = await import('./git.js');
+        const result = runGit(root, ['status', '--porcelain=v1', '-z', '--ignored=matching', '--untracked-files=all']);
+        if (!result.ok) return ignored;
+        for (const token of result.stdout.split('\0').filter(Boolean)) {
+            if (!token.startsWith('!! ')) continue;
+            const reported = token.slice(3).replaceAll('\\', '/');
+            if (!reported) continue;
+            // `--ignored=matching` reports an ignored directory as one entry (`tmp/`), and git's own trailing slash is not
+            // part of the path. Both forms are stored, so a lookup by either a directory or a file matches — the walk
+            // prunes the subtree by looking up the entry it is standing on.
+            ignored.add(reported);
+            ignored.add(reported.replace(/\/+$/, ''));
+            const bare = reported.replace(/\/+$/, '');
+            if (bare) ignored.add(`${bare}/`);
+        }
+    } catch {
+        return ignored;
+    }
+    return ignored;
+}
+
 export async function listRepositoryFiles(root: string, options: WalkOptions = {}): Promise<string[]> {
     const paths: string[] = [];
+    // The repository's own declaration is consulted through git, the authority on its own ignore semantics. Re-deriving
+    // `.gitignore` here would be a second implementation that disagrees at the edges (negations, nested files,
+    // `.git/info/exclude`). Measured: this project declares `tmp/` for evidence and working files, yet a review brief
+    // listed `tmp-verify-brief.json` — the reviewer's own scratch file — as a path under review (§1.1).
+    const declaredIgnored = await gitIgnoredPaths(root);
 
     async function visit(directory: string): Promise<void> {
         let entries;
@@ -108,6 +144,9 @@ export async function listRepositoryFiles(root: string, options: WalkOptions = {
             const absolutePath = join(directory, entry.name);
             const repositoryPath = relative(root, absolutePath).replaceAll('\\', '/');
             if (isIgnoredRepositoryPath(repositoryPath)) continue;
+            // git reports an ignored *directory* by its directory path, so matching the entry itself is enough to prune the
+            // whole subtree — which is what makes the walk cheap as well as correct.
+            if (declaredIgnored.has(repositoryPath)) continue;
             if (entry.isDirectory()) {
                 await visit(absolutePath);
                 continue;

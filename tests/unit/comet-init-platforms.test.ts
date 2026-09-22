@@ -50,7 +50,15 @@ describe('initCometProject multi-platform loop (real comet)', () => {
                 compat,
                 cometVersion: '0.4.0-beta.14',
             });
-            expect(result.status).toBe('initialized');
+            // The real comet refuses this shape and says so: with no `--platform` it prints
+            // `No platforms selected. Exiting.` and exits 1 without initializing anything. Verified outside kata —
+            // `comet init --yes --scope global` exits 1, and the same command with `--platform codex` exits 0 — so
+            // "nothing was selected" is a *decision comet reports*, not an initialization and not a crash of ours.
+            expect(result.status).toBe('skipped');
+            expect(result.reason).toMatch(/no platforms selected/i);
+            // The distinction is the point: `failed` would send a reader looking for a broken install, and
+            // `initialized` would claim platform integration that does not exist.
+            expect(result.status).not.toBe('failed');
             expect(result.platforms).toBeUndefined();
         } finally {
             process.env.HOME = previousHome;

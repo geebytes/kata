@@ -112,3 +112,39 @@ describe('a re-seal of the same content keeps the gates satisfied', () => {
             .resolves.toMatchObject({ choice: 'continue_current' });
     });
 });
+
+/**
+ * §7.4: the anchor is the frozen candidate — its content snapshot and semantic contract — not the owned manifest.
+ *
+ * `manifestHash` covers only the *declared* owned paths, so a change committed outside the declaration leaves it
+ * byte-identical while the reviewed content has moved. Measured on this project: a commit touching .gitignore,
+ * docs/guide.md and src/a.ts was still recorded as `changedPaths ['src/a.ts']`, because the digest table never had the
+ * other paths. Every verdict that shares this rule inherited that blind spot, which is why the freeze anchor is added
+ * here — one rule, eight call sites — instead of per-verdict special cases.
+ */
+describe('a verdict binds to the frozen candidate when both sides can name one', () => {
+    const freezeA = 'a'.repeat(64);
+    const freezeB = 'b'.repeat(64);
+
+    it('refuses a verdict whose freeze moved, even when the owned manifest did not', () => {
+        expect(bindsToRevision(
+            { revisionId: 'revision-old', manifestHash: 'aa'.repeat(32), candidateFreezeSha256: freezeA },
+            { revisionId: 'revision-new', manifestHash: 'aa'.repeat(32), candidateFreezeSha256: freezeB },
+        )).toBe(false);
+    });
+
+    it('accepts a verdict whose freeze agrees under a new revision id', () => {
+        expect(bindsToRevision(
+            { revisionId: 'revision-old', manifestHash: 'aa'.repeat(32), candidateFreezeSha256: freezeA },
+            { revisionId: 'revision-new', manifestHash: 'zz'.repeat(32), candidateFreezeSha256: freezeA },
+        )).toBe(true);
+    });
+
+    it('keeps the older binding for a verdict that predates the anchor', () => {
+        // A legacy artefact carries no freeze; the manifest rule must keep working rather than failing on a missing field.
+        expect(bindsToRevision(
+            { revisionId: 'revision-old', manifestHash: 'aa'.repeat(32) },
+            { revisionId: 'revision-new', manifestHash: 'aa'.repeat(32), candidateFreezeSha256: freezeA },
+        )).toBe(true);
+    });
+});

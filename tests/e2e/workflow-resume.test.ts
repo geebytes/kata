@@ -594,7 +594,7 @@ describe('Workflow resume and lifecycle', () => {
 
         expect(result.success).toBe(true);
         expect(result.phase).toBe('hardVerify');
-        await expect(readFile(join(root, 'checks.log'), 'utf8')).resolves.toContain('pyrightcheck');
+        await expect(readFile(join(root, 'checks.log'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(root, '.kata/evidence/wf-project-checks-test-pyrightcheck.json'), 'utf8')).resolves.toContain('"name": "pyrightcheck"');
         await expect(readFile(join(root, '.kata/evidence/wf-project-checks-test-typecheck.json'), 'utf8')).resolves.toContain('"name": "typecheck"');
     });
@@ -641,7 +641,7 @@ describe('Workflow resume and lifecycle', () => {
         const result = await runCommand('build', taskId, root, { ownedPaths: ['task-owned.txt'] });
 
         expect(result).toMatchObject({ success: true, phase: 'hardVerify' });
-        await expect(readFile(join(root, 'checks.log'), 'utf8')).resolves.toContain('default-check');
+        await expect(readFile(join(root, 'checks.log'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(root, `.kata/evidence/${taskId}-default-check.json`), 'utf8')).resolves.toContain('"name": "default-check"');
         const evidenceFiles = await readdir(join(root, '.kata/evidence'));
         const matrixEvidence = evidenceFiles.find((f) => f.startsWith(`${taskId}-AC-1-test-`));

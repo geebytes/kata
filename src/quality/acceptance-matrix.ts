@@ -8,6 +8,7 @@ import type { AcceptanceCriterion, AcceptanceMatrix, AcceptanceMatrixRow } from 
 import { waiversPath, taskDir } from '../core/layout.js';
 import { selectorRunnerCommandLines } from './check-resolver.js';
 import { runWithConcurrency } from './evidence.js';
+import { findAffectedTestsByImportGraph, isAffectedTestPath } from './import-graph.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -25,6 +26,14 @@ export interface CodeGraphCandidate {
   path: string;
   reason: string;
   sourcePaths: string[];
+  /**
+   * Which instrument answered for this candidate.
+   *
+   * Recorded rather than left to the reader: a candidate the index produced and one the import-graph fallback produced
+   * carry different confidence, and a reviewer deciding whether to trust attribution needs to know which it has. A
+   * reader that cannot tell them apart cannot tell an indexed fact from a corroborated one.
+   */
+  instrument?: 'codegraph' | 'import-graph';
 }
 
 export type CodeGraphAffectedRunner = (root: string, sourcePaths: string[]) => Promise<string[]>;
@@ -443,27 +452,77 @@ export async function discoverCodeGraphCandidates(
   // lose that attribution, so the cost is paid in parallel rather than by dropping the information — but bounded,
   // because each query is a child process against one shared index and the unbounded `Promise.all` this replaces made
   // them contend. A `Map` filled concurrently keeps the attribution a batch would lose.
-  //
-  // A failing query still fails the whole discovery: a bounded pool may not turn "the index could not answer" into
-  // "nothing is affected".
-  const sourcesByCandidate = new Map<string, string[]>();
-  const perPath = new Map<string, string[]>();
+  const answered = new Map<string, string[]>();
+  const failed = new Map<string, string>();
   await runWithConcurrency(sourcePaths, codegraphQueryConcurrency, () => 1, async (sourcePath) => {
-    perPath.set(sourcePath, await runAffected(root, [sourcePath]));
+    try {
+      answered.set(sourcePath, await runAffected(root, [sourcePath]));
+    } catch (error) {
+      failed.set(sourcePath, error instanceof Error ? error.message : String(error));
+    }
   });
-  for (const sourcePath of sourcePaths) {
-    for (const affectedTest of perPath.get(sourcePath) ?? []) {
-      const path = normalizePath(affectedTest);
-      const sources = sourcesByCandidate.get(path) ?? [];
-      if (!sources.includes(sourcePath)) sources.push(sourcePath);
-      sourcesByCandidate.set(path, sources);
+
+  // §3.3, and the reason the fallback is load-bearing rather than decorative: **an empty answer from an instrument with
+  // no coverage is not an answer.** Measured on this repository, whose index is rooted at the parent project and holds
+  // 4 TypeScript files for a worktree of 259: `codegraph affected src/quality/adversarial.ts` answers "No test files
+  // affected by the changed files", while 26 test files import that module. Accepting it would report a silent false
+  // negative — the shape the surrounding comment already forbids for failures, now closed for empty answers too.
+  //
+  // So an empty answer is corroborated: only the import graph agreeing that nothing reaches the path makes it stand.
+  const needsCorroboration = sourcePaths.filter((path) => failed.has(path) || (answered.get(path) ?? []).length === 0);
+  let fallbackError: string | null = null;
+  let fallback: Awaited<ReturnType<typeof findAffectedTestsByImportGraph>> | null = null;
+  if (needsCorroboration.length > 0) {
+    try {
+      fallback = await findAffectedTestsByImportGraph(root, needsCorroboration);
+    } catch (error) {
+      fallbackError = error instanceof Error ? error.message : String(error);
     }
   }
 
-  return [...sourcesByCandidate.entries()].map(([path, candidateSources]) => ({
+  const sourcesByCandidate = new Map<string, { sources: string[]; instrument: 'codegraph' | 'import-graph' }>();
+  const record = (candidatePath: string, sourcePath: string, instrument: 'codegraph' | 'import-graph'): void => {
+    const path = normalizePath(candidatePath);
+    const entry = sourcesByCandidate.get(path) ?? { sources: [], instrument };
+    if (!entry.sources.includes(sourcePath)) entry.sources.push(sourcePath);
+    // An index answer and a fallback answer about the same test: the index wins, because it saw a call graph rather than
+    // an import statement, and the provenance should name the stronger instrument.
+    if (instrument === 'codegraph') entry.instrument = 'codegraph';
+    sourcesByCandidate.set(path, entry);
+  };
+
+  for (const sourcePath of sourcePaths) {
+    const indexed = answered.get(sourcePath);
+    if (indexed && indexed.length > 0) {
+      for (const affectedTest of indexed) record(affectedTest, sourcePath, 'codegraph');
+      continue;
+    }
+    const corroboration = fallback?.importers.get(sourcePath) ?? [];
+    if (corroboration.length > 0) {
+      for (const affectedTest of corroboration) record(affectedTest, sourcePath, 'import-graph');
+      continue;
+    }
+    // No importers from either instrument. That is an answer only when the fallback was actually able to look: a failed
+    // index plus a fallback that could not run leaves the question unanswered, and unanswered is refused.
+    const couldLook = fallback ? fallback.covered.has(sourcePath) : false;
+    if (couldLook) continue;
+    const indexSays = failed.has(sourcePath)
+      ? `the index failed (${failed.get(sourcePath)})`
+      : 'the index reported no affected tests for a path it does not appear to cover';
+    throw new Error(
+      `Affected-test discovery could not answer for ${sourcePath}: ${indexSays}, and the import-graph fallback could `
+      + `${fallback ? `not resolve that path in this repository (${sourcePath} is not a file the walk saw)` : `not run (${fallbackError})`}. `
+      + 'Strict sealing is refused rather than reading "the instrument could not answer" as "nothing is affected".',
+    );
+  }
+
+  return [...sourcesByCandidate.entries()].map(([path, entry]) => ({
     path,
-    sourcePaths: candidateSources,
-    reason: `CodeGraph reports this test is affected by sealed implementation paths: ${candidateSources.join(', ')}`,
+    sourcePaths: entry.sources,
+    instrument: entry.instrument,
+    reason: entry.instrument === 'codegraph'
+      ? `CodeGraph reports this test is affected by sealed implementation paths: ${entry.sources.join(', ')}`
+      : `The import graph reaches this test file from sealed implementation paths (the index had no answer): ${entry.sources.join(', ')}`,
   }));
 }
 
@@ -561,18 +620,14 @@ async function runCodeGraphAffected(root: string, sourcePaths: string[]): Promis
     .split(/\r?\n/)
     .map((line) => line.trim())
     .map((line) => line.replace(/^[•*-]\s*/, ''))
-    .filter((line) => isRepositoryRelativeTestPath(line));
+    .filter((line) => isAffectedTestPath(line));
 }
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
-function isRepositoryRelativeTestPath(value: string): boolean {
-  return !value.startsWith('/')
-    && !value.includes('..')
-    && /(?:^|\/)(?:[^/]+\.)?(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]+\.py$|(?:^|\/)[^/]+_test\.py$/.test(value);
-}
+
 
 export async function readWaivers(root: string, taskId: string): Promise<Waiver[]> {
   try {

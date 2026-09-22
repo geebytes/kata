@@ -16,12 +16,13 @@ import { resolveBuildChecks } from '../quality/project-checks.js';
 import { describeClaimFailure, evaluateClaims, resolveClaimChecks, validateClaims } from '../quality/claims.js';
 import { collectSealPreflight } from './seal-preflight.js';
 import { bindsToRevision, currentRevisionIdentity, revisionBindingFields } from './verdict-binding.js';
-import { matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
+import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
@@ -357,23 +358,40 @@ async function acknowledgeCometOpenIfRequired(root: string, taskId: string): Pro
  * running, and when the line was written. A failure to write it never fails a seal — the log is an observation, and a
  * seal that died because its log was unwritable would be worse than one nobody can watch.
  */
-async function sealProgressWriter(
+export async function sealProgressWriter(
     root: string,
     taskId: string,
+    /**
+     * How a line reaches the log. Injected so the ordering contract below can be tested deterministically — a real
+     * filesystem makes the race that used to exist here fire once in a hundred runs, which is not a test.
+     */
+    appendLine?: (line: Record<string, unknown>) => Promise<void>,
 ): Promise<((event: CheckProgressEvent) => void) & { finish: () => Promise<void> }> {
     const { appendFile, mkdir } = await import('node:fs/promises');
     const { dirname } = await import('node:path');
     const { sealProgressPath } = await import('../core/layout.js');
     const path = sealProgressPath(root, taskId);
     const startedAt = new Map<string, number>();
-    const write = async (line: Record<string, unknown>): Promise<void> => {
-        try {
-            await mkdir(dirname(path), { recursive: true });
-            await appendFile(path, `${JSON.stringify(line)}\n`, 'utf8');
-        } catch {
-            // Observation only: never let the log decide the seal.
-        }
+    const append = appendLine ?? (async (line: Record<string, unknown>): Promise<void> => {
+        await mkdir(dirname(path), { recursive: true });
+        await appendFile(path, `${JSON.stringify(line)}\n`, 'utf8');
+    });
+
+    // Every append is chained rather than fired and forgotten. The previous writer called `void write(...)` per event
+    // and awaited only its own `seal_complete`, so a line emitted just before `finish()` could still be in flight and
+    // land *after* it — measured as a failing `lines.at(-1)` assertion inside a real seal while the same test passed
+    // standalone. `finish()` now resolves only once every earlier line is durable, which is what makes "seal_complete is
+    // last" a guarantee instead of a coincidence.
+    let queue: Promise<void> = Promise.resolve();
+    const write = (line: Record<string, unknown>): Promise<void> => {
+        queue = queue
+            .then(() => append(line))
+            .catch(() => {
+                // Observation only: never let the log decide the seal.
+            });
+        return queue;
     };
+
     const writer = ((event: CheckProgressEvent): void => {
         const now = Date.now();
         const name = String(event.check ?? '');
@@ -553,12 +571,25 @@ async function cmdBuild(
     // Reaching here means every blocker was absent; a non-strict task has no waivers to persist.
     if (requiresMatrix(task.workflowProfile)) await writeWaivers(root, taskId, waivers);
 
+    let sandbox;
+    try {
+        sandbox = await createExecutionSandbox(root);
+    } catch (error) {
+        return {
+            command: 'build', taskId, phase: 'implement', success: false,
+            error: error instanceof Error ? error.message : String(error),
+            diagnostics: { mode: 'seal', reason: 'isolated_execution_unavailable' },
+        };
+    }
+    try {
     // What this seal narrows against: the revision that was current before it. Its digests are half the change
     // surface the record derives — the half that survives the round committing.
     const baseRevision = await readCurrentTaskRevision(root, taskId).catch(() => null);
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
+            contentRoot: sandbox.root,
+            contentDigests: sandbox.contentDigests,
             taskId,
             ownedPaths,
             checkIds: checks.map((check) => check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`),
@@ -645,12 +676,12 @@ async function cmdBuild(
     // here is where the requirement belongs; `runProcess` serves checks, CodeGraph and Git Flow and has no business
     // knowing which of its callers wants an artifact directory.
     await mkdir(evidenceDir(root), { recursive: true });
-    const evidence = await collectEvidence(taskId, checksToRun, {
+    const evidence = await collectEvidence(taskId, checksForExecutionSandbox(checksToRun, root, sandbox.root), {
         ...(revision ? { revision } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.frozen === true ? { includeFrozen: true } : {}),
         acceptanceByCheckId: acceptanceIdsByCheckId(task.acceptanceMatrix),
-        // L4-02: the bounded capture drops the middle of a noisy check's output, so give it a place to write the whole
+        inputDiffHash: sandbox.contentDigests ? contentSnapshotHash(sandbox.contentDigests) : undefined,
         // thing. The envelope keeps the reference and the bounded excerpt; a reader who needs the transcript reads the
         // file instead of finding a truncated log and no way to tell.
         checkLogDir: evidenceDir(root),
@@ -679,8 +710,8 @@ async function cmdBuild(
             // The revision's content identity is what the record's surface is derived from; live `git status` is added
             // on top for drift since the seal. Passing only the digests would miss paths the round touched after
             // sealing; passing only git (the previous behaviour) made the field empty whenever the round committed first.
-            ...(revision.pathDigests ? { pathDigests: revision.pathDigests } : {}),
-            ...(baseRevision?.pathDigests ? { basePathDigests: baseRevision.pathDigests } : {}),
+            ...(revision.contentDigests ? { contentDigests: revision.contentDigests } : {}),
+            ...(baseRevision?.contentDigests ? { baseContentDigests: baseRevision.contentDigests } : {}),
             ...(options.judgement ? { judgement: options.judgement } : {}),
             claimFailures: claimSummary.failures,
             findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition })),
@@ -815,6 +846,9 @@ async function cmdBuild(
                 : {}),
         },
     };
+    } finally {
+        await sandbox.dispose();
+    }
 }
 
 
@@ -836,7 +870,13 @@ async function resolveSealChecks(
         : await resolveBuildChecks(root, await loadConfig(root), task.ownedPaths ?? [], {
             ...(options.discoverChecks !== undefined ? { discoverChecks: options.discoverChecks } : {}),
         });
-    const matrixDerivedChecks = !options.checks?.length && task.acceptanceMatrix ? matrixChecks(root, task.acceptanceMatrix) : [];
+    // The runner entry is resolved through the dependency roots, not the project-directory literal: in a linked worktree
+    // the dependency is present in an ancestor workspace (and the execution sandbox copies from those same candidates),
+    // so `join(projectDir, 'node_modules', …)` named a path that never exists there and every matrix check died with
+    // MODULE_NOT_FOUND. Resolved through the same list the sandbox uses, the check runs the dependency it has.
+    const matrixDerivedChecks = !options.checks?.length && task.acceptanceMatrix
+        ? matrixChecks(root, task.acceptanceMatrix, { dependencyRoots: dependencyRootsFor(root) })
+        : [];
     // C3: the clauses of the acceptance statements that declared themselves checkable. They join the seal's set as
     // ordinary checks — same resolver, same collector, same evidence binding — so a false claim fails *here*, on the
     // revision it describes, rather than being caught by the next independent round.
@@ -1206,82 +1246,14 @@ async function cmdVerify(
     const repairReason = suggestion.reason;
     const nextAction = nextActionForTask(taskId, suggestion.nextSkill, suggestion.role, suggestion.reason);
 
-    // The verify node does not conclude on the author's own reading of the evidence: an independent adversarial pass
-    // over this revision has to have been recorded (or explicitly waived). This gate runs only when everything else
-    // passed — a failing verification is repaired first, and the adversarial pass attacks the revision that survives.
-    // L2-03: Verify answers a deterministic question — is the evidence current, complete and attributable — and Review is
-    // the independent look. `strict`/`security` buy Verify's pass back, so the assurance level is a profile choice.
+    // Verify concludes on the evidence, not on an author's reading of it — but it no longer hosts its own adversarial
+    // pass. The one formal certification belongs to the Review node (see #5461 / `requiredAdversarialNodes`), so this
+    // node reports readiness and its deterministic refusals, and never blocks on a pass it does not own.
     const reviewMode = task.workflowProfile?.reviewMode;
     const requiredNodes = requiredAdversarialNodes({ ...(reviewMode ? { reviewMode } : {}) });
-    const verifyNodeRequired = requiredNodes.includes('verify');
-    const adversarial = verifyNodeRequired && verifyResult.result === 'PASS' && implementationReady
-        ? await adversarialGateFor(root, taskId, 'verify')
-        : null;
     // A strict matrix declaration gap is reported, not blocked: a task sealed before strict rows required declared check
     // ids must keep verifying, or the rule would retroactively invalidate every binding it holds.
     const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewMode === 'strict');
-    if (matrixGaps.length > 0) {
-        const { writeAcceptanceMatrixMigration } = await import('../core/task.js');
-        await writeAcceptanceMatrixMigration(root, taskId, {
-            gapCount: matrixGaps.length,
-            acceptanceIds: [...new Set(matrixGaps.map((gap) => gap.acceptanceId))].sort(),
-        }).catch(() => null);
-    }
-    if (adversarial && !adversarial.satisfied) {
-        return {
-            command: 'verify',
-            taskId,
-            phase: current.phase,
-            success: false,
-            error: `Verify is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason)}`,
-            diagnostics: {
-                verifyResult: verifyResult.result,
-                acceptanceResults: verifyResult.acceptance.map((a) => ({ id: a.id, result: a.result, repairScope: a.repairScope })),
-                evidenceCount: evidence.length,
-                implementationReady,
-                governanceReady: wikiClosure.valid,
-                adversarial: { node: 'verify', required: true, satisfied: false, reason: adversarial.reason ?? null },
-                adversarialNodesRequired: requiredNodes,
-                adversarialNodesNotRequired: adversarialNodes
-                    .filter((node) => !requiredNodes.includes(node))
-                    .map((node) => ({ node, reason: 'not_required' })),
-                ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
-                ...(deferredForDiagnostics.length > 0 ? { deferredFindings: deferredForDiagnostics } : {}),
-                nextAction: nextActionForTask(taskId, '/kata-verify', 'reviewer', 'adversarial_verify_pending'),
-            },
-        };
-    }
-    const adversarialFindings = adversarial?.satisfied ? blockingAdversarialFindings(adversarial.record ?? null) : [];
-    if (adversarialFindings.length > 0) {
-        // C1: same producer, on the verify node.
-        const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
-        await recordFindingsForBatching(
-            root,
-            taskId,
-            adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
-            'adversarial-verify',
-        ).catch(() => null);
-        return {
-            command: 'verify',
-            taskId,
-            phase: current.phase,
-            success: false,
-            error: `The independent adversarial pass confirmed ${adversarialFindings.length} defect(s) at blocking or major severity; repair them before review/judge.`,
-            diagnostics: {
-                verifyResult: verifyResult.result,
-                evidenceCount: evidence.length,
-                implementationReady,
-                adversarial: {
-                    node: 'verify',
-                    required: true,
-                    satisfied: true,
-                    findings: adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, path: finding.path })),
-                },
-                ...(deferredForDiagnostics.length > 0 ? { deferredFindings: deferredForDiagnostics } : {}),
-                nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
-            },
-        };
-    }
 
     return {
         command: 'verify',
@@ -1313,7 +1285,6 @@ async function cmdVerify(
             blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
             implementationReady,
             governanceReady: wikiClosure.valid,
-            ...(adversarial?.satisfied ? { adversarial: { node: 'verify', required: true, satisfied: true, waived: adversarial.reason === 'waived' } } : {}),
             adversarialNodesRequired: requiredNodes,
             adversarialNodesNotRequired: adversarialNodes
                 .filter((node) => !requiredNodes.includes(node))

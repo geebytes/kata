@@ -8,6 +8,7 @@ import {
     computeManifestHash,
     createTaskRevision,
     revisionIdFor,
+    contentSnapshotHash,
     type TaskRevision,
 } from '../../src/workflow/revision.js';
 import {
@@ -49,9 +50,24 @@ describe('the change surface between revisions', () => {
         const manifestHash = await computeManifestHash(root, ['src']);
         const revision = await createTaskRevision({ root, taskId: 'delta-task', ownedPaths: ['src'], checkIds: ['test'] });
 
-        // The regression lock the design asks for: adding the field must not move any identity.
+        // The regression lock the design asks for: adding per-path digests must not move the manifest hash, so every
+        // existing binding keeps its meaning. The **id** now also covers the declaration-independent content snapshot
+        // (AC-2), because a revision has to exist for a change the declaration does not cover — and the previous
+        // derivation returned the same id for such a round, which is how the change became unrepresentable rather than
+        // merely invisible.
         expect(revision.manifestHash).toBe(manifestHash);
-        expect(revision.id).toBe(revisionIdFor('delta-task', manifestHash, ['test']));
+        expect(revision.id).toBe(revisionIdFor(
+            'delta-task',
+            manifestHash,
+            ['test'],
+            contentSnapshotHash(revision.contentDigests ?? {}),
+        ));
+        // And the snapshot is what the id now depends on: the same owned manifest with a different repository content
+        // must not collapse to the same revision.
+        expect(revision.contentDigests).toBeTruthy();
+        expect(Object.keys(revision.contentDigests ?? {}).sort()).toEqual(
+            expect.arrayContaining(['src/a.ts', 'src/b.ts']),
+        );
     });
 
     it('records a digest per owned file, expanding a directory', async () => {
@@ -198,9 +214,25 @@ describe('the delta gate refuses a scope that does not cover the change', () => 
             ok: false,
             reason: 'delta_stale',
         });
-        // A base revision that predates per-path digests cannot be verified as a delta at all.
+        // R4 (2026-09-22): the gate used `changeSurface`, which diffs the owned-path table, so a path changed outside
+        // the declaration was invisible to it — the delta covered everything it could see and was accepted. Measured
+        // before the fix: adding `src/outside.ts` (not in the owned set) left the delta gate reporting `ok: true` for a
+        // pass that declared only `src/a.ts`.
+        await mkdir(join(root, 'docs'), { recursive: true });
+        await writeFile(join(root, 'docs/outside.md'), 'outside\n', 'utf8');
+        const withOutside = await createTaskRevision({ root, taskId: 'gate-task', ownedPaths: ['src'], checkIds: ['test', 'lint'] });
+        await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), withOutside.id)).resolves.toMatchObject({
+            ok: false,
+            reason: 'delta_stale',
+        });
+
+        // A base revision that predates *content identity* cannot be verified as a delta at all — it has neither the
+        // per-path table the workspace comparison needs nor the content snapshots the two-revision comparison needs. The
+        // expectation now names both fields because R4 changed which surface the gate measures: `pathDigests` alone is no
+        // longer the boundary, so deleting only that would leave a revision that is still verifiable (and rightly so).
         const legacyBase = { ...base };
         delete legacyBase.pathDigests;
+        delete (legacyBase as { contentDigests?: Record<string, string> }).contentDigests;
         const { writeFile: write } = await import('node:fs/promises');
         await write(join(root, '.kata/tasks/gate-task/revisions', `${base.id}.json`), JSON.stringify(legacyBase), 'utf8');
         await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), current.id)).resolves.toMatchObject({

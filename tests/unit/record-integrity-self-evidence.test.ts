@@ -10,7 +10,7 @@ import { buildChangeRecord, refusalForDerivableProse, writeChangeRecord } from '
 import { applyScopeChange, recordScopeChange } from '../../src/quality/scope-change.js';
 import { createTaskRevision, readCurrentTaskRevision } from '../../src/workflow/revision.js';
 import { changeSurfaceAgainstWorkspace } from '../../src/quality/revision-delta.js';
-import { buildAdversarialBrief, writeAdversarialRecord } from '../../src/quality/adversarial.js';
+import { adversarialGateFor, buildAdversarialBrief, issueAdversarialBrief, writeAdversarialRecord } from '../../src/quality/adversarial.js';
 
 /**
  * §6 of the record-integrity handover: **a gate that cannot be shown to fail is a guard that reads as protection without
@@ -256,6 +256,108 @@ describe('§6 self-evidence: the record-integrity rules can be shown to fail', (
             });
             const brief = await buildAdversarialBrief(root, 'history-empty', 'verify');
             expect(brief.text).not.toMatch(/Findings by class/i);
+        });
+    });
+
+    describe('E — the verdict is derived, so a guard may not refuse an honest conclusion and may not accept a declared one', () => {
+        /** A sealed revision with one criterion and one changed path, which is what coverage is measured against. */
+        async function sealedTask(taskId: string): Promise<{ root: string; revisionId: string; revisionHash: string }> {
+            const root = await tempRoot();
+            await runCommand('open', taskId, root, {
+                title: 'Derived verdict',
+                acceptance: [{ id: 'AC-1', statement: 'x' }],
+                ownedPaths: ['src/a.ts'],
+            });
+            const revision = await createTaskRevision({ root, taskId, ownedPaths: ['src/a.ts'], checkIds: [] });
+            return { root, revisionId: revision.id, revisionHash: revision.manifestHash };
+        }
+
+        /**
+         * The record a pass writes, carrying only the judgement section under test.
+         *
+         * It deliberately does **not** carry a `verdict`: §4 Phase 1 retired the field, so a record that supplies one is
+         * refused at the write boundary and never reaches the predicate this suite is about.
+         */
+        const recordFor = (
+            revisionId: string,
+            manifestHash: string,
+            briefSha256: string,
+            hypotheses: Array<Record<string, unknown>>,
+            findings: Array<Record<string, unknown>> = [],
+        ): Record<string, unknown> => ({
+            node: 'verify',
+            status: 'recorded',
+            revisionId,
+            manifestHash,
+            createdAt: '2026-09-21T00:00:00.000Z',
+            executedInFreshContext: true,
+            contextNote: 'Fixture ran the brief in a subagent with no prior conversation.',
+            briefSha256,
+            attempts: [{ hypothesis: 'h', method: 'read', outcome: 'refuted' }],
+            hypotheses,
+            findings,
+        });
+
+        it('refuses an honest "I did not conclude" instead of passing the node', async () => {
+            // AC-6, first half: a guard that accepts `inconclusive` as a pass is itself the defect. Before this, the
+            // smallest passing record declared `inconclusive` with no findings — the node passed on a round that
+            // concluded nothing, because nothing read the verdict.
+            const { root, revisionId, revisionHash } = await sealedTask('derived-inconclusive');
+            const brief = await issueAdversarialBrief(root, 'derived-inconclusive', 'verify');
+            await writeAdversarialRecord(root, 'derived-inconclusive', recordFor(revisionId, revisionHash, brief.sha256, [
+                {
+                    id: 'H-1',
+                    claim: 'the boundary is unhandled',
+                    targets: ['AC-1', 'src/a.ts'],
+                    method: 'source-read',
+                    outcome: 'inconclusive',
+                },
+            ]) as never);
+
+            const gate = await adversarialGateFor(root, 'derived-inconclusive', 'verify');
+            expect(gate.satisfied).toBe(false);
+            expect(gate.detail ?? gate.reason).toMatch(/inconclusive|did not converge/i);
+        });
+
+        it('refuses a declared verdict that the hypotheses do not support', async () => {
+            // Second half: the reviewer cannot declare its own conclusion. This record states `no_defect_found` while
+            // abandoning a hypothesis to a limit, which is the round saying it was cut short.
+            const { root, revisionId, revisionHash } = await sealedTask('derived-abandoned');
+            const brief = await issueAdversarialBrief(root, 'derived-abandoned', 'verify');
+            await writeAdversarialRecord(root, 'derived-abandoned', recordFor(revisionId, revisionHash, brief.sha256, [
+                {
+                    id: 'H-1',
+                    claim: 'the retry loop terminates',
+                    targets: ['AC-1', 'src/a.ts'],
+                    method: 'mutation',
+                    outcome: 'abandoned',
+                    abandoned: { limit: 'tools', why: 'the budget ran out mid-reproduction' },
+                },
+            ]) as never);
+
+            const gate = await adversarialGateFor(root, 'derived-abandoned', 'verify');
+            expect(gate.satisfied).toBe(false);
+        });
+
+        it('admits a fully discharged pass and reports the verdict it derived', async () => {
+            // The other direction is what makes the refusals meaningful: a complete round must still pass, and the
+            // The verdict must be kata's reading of the hypotheses, which is why the reviewer no longer writes one.
+            const { root, revisionId, revisionHash } = await sealedTask('derived-admitted');
+            const brief = await issueAdversarialBrief(root, 'derived-admitted', 'verify');
+            await writeAdversarialRecord(root, 'derived-admitted', recordFor(revisionId, revisionHash, brief.sha256, [
+                {
+                    id: 'H-1',
+                    claim: 'the retry loop never terminates',
+                    targets: ['AC-1', 'src/a.ts'],
+                    method: 'source-read',
+                    outcome: 'refuted',
+                    observation: { kind: 'source', ref: 'src/a.ts', observed: 'the loop carries a bounded retry counter' },
+                },
+            ]) as never);
+
+            const gate = await adversarialGateFor(root, 'derived-admitted', 'verify');
+            expect(gate.satisfied).toBe(true);
+            expect(gate.verdict).toBe('no_defect_found');
         });
     });
 });
