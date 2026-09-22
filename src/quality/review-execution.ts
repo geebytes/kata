@@ -1,0 +1,169 @@
+/**
+ * The execution layer's trust boundary: fresh context is a **capability**, not an assertion (§3.2.1).
+ *
+ * Kata is a CLI. It cannot start a subagent and cannot inspect a host's session. The gate this replaces was honest about
+ * that and then asserted the property anyway: `record.executedInFreshContext !== true → not_fresh_context` is a boolean
+ * an agent writes about itself, and §2.1 found it load-bearing in the *passing predicate* — not a quality nicety but a
+ * trust gap inside the judgment foundation.
+ *
+ * So the property moves to a contract with two halves, and this module is the half Kata can own:
+ *
+ *   - **`ReviewRunRequest`** — issued by Kata, content-addressed, carrying the revision identity, the brief hash, the
+ *     budget, and the result-schema version. The `runId` is a one-time nonce.
+ *   - **`ReviewExecutionReceipt`** — returned by the executor, never authored by the reviewer. It binds to the request by
+ *     nonce and hash, advertises the capabilities it actually provides, and reports telemetry the CLI could never
+ *     observe: tool calls, output bytes, tokens, truncations, wall time.
+ *
+ * The other half — implementing the capability set — belongs to the host (Pi/Codex) and lives outside this repository.
+ * Kata's half is to define the shape, require it where a node requires it, and **refuse to certify a pass that lacks
+ * it**. A host without `fresh_context` cannot satisfy an escalated node: it yields `executor_unavailable` and blocks. It
+ * is never silently downgraded to "the agent said it was fresh", because that is precisely the unsound state.
+ *
+ * `docs/verfify.md`'s rule falls out of this too: the receipt carries telemetry and capability, **never a prior
+ * verdict** — facts may be cached across runs, judgments may not.
+ */
+
+/** What an executor can be trusted to provide, as advertised on its receipt. */
+export type ExecutorCapability =
+    /** The reviewer runs in a context that did not author the change, and the host proves it rather than the agent. */
+    | 'fresh_context'
+    /** The reviewer cannot write to the repository. */
+    | 'read_only_fs'
+    /** The host constrains which tools the reviewer may call. */
+    | 'bounded_tools'
+    /** The host enforces the envelope and reports exhaustion rather than letting the round run on. */
+    | 'budget_enforced';
+
+/** The review nodes, as far as capability requirements are concerned. */
+export type ExecutionNode = 'review' | 'verify';
+
+/**
+ * Which capabilities a node requires.
+ *
+ * `review` is the always-run node, so it needs the minimum that makes an independent look meaningful: a context the
+ * author did not write and a filesystem the reviewer cannot mutate. `verify` is the **escalated** node — the one a
+ * `strict`/`security` profile buys back specifically for a second independent look — so it additionally requires the host
+ * to bound tool use and enforce the budget. A host that cannot isolate read-only, or cannot stop a runaway round, is not
+ * a host that can satisfy the node whose entire purpose is a controlled second look.
+ */
+export function requiredCapabilitiesForNode(node: ExecutionNode): ExecutorCapability[] {
+    const base: ExecutorCapability[] = ['fresh_context', 'read_only_fs'];
+    return node === 'verify' ? [...base, 'bounded_tools', 'budget_enforced'] : base;
+}
+
+/** What Kata hands to an executor: the immutable input identity plus the run nonce. */
+export interface ReviewRunRequest {
+    /** One-time nonce. A receipt naming anything else did not answer this request. */
+    runId: string;
+    /** sha256 of the canonical request body, so the receipt can bind to exactly what was issued. */
+    requestSha256: string;
+    node: ExecutionNode;
+    revisionId: string;
+    manifestHash?: string;
+    /** sha256 of the brief text this run is answering. */
+    briefSha256: string;
+    /** sha256 of the structured ReviewIR the executor must use; it is never allowed to re-render live workspace state. */
+    reviewIrSha256: string;
+    /** sha256 of the semantic CandidateFreeze used to decide re-certification; it prevents revision-ID-only reuse. */
+    candidateFreezeSha256?: string;
+    /** The envelope the executor must enforce (§3.2.2). */
+    budget: { maxHypotheses: number; maxToolCalls: number; maxOutputBytes: number; maxWallMs: number };
+    /** The capabilities this node requires, so a host can decide whether it can serve the request at all. */
+    requiredCapabilities: ExecutorCapability[];
+    /** Version of the result schema, so a receipt and a record cannot silently disagree about the shape. */
+    resultSchemaVersion: number;
+}
+
+/** Telemetry only the executor can observe. Facts, never a verdict. */
+export interface ReviewExecutionTelemetry {
+    toolCalls: number;
+    outputBytes: number;
+    tokens: number;
+    truncations: number;
+}
+
+/** The executor's report. Authored by the host, never by the reviewer. */
+export interface ReviewExecutionReceipt {
+    /** Must equal the issued request's nonce. */
+    runId: string;
+    /** Must equal the issued request's hash. */
+    requestSha256: string;
+    capabilities: ExecutorCapability[];
+    startedAt: string;
+    endedAt: string;
+    telemetry: ReviewExecutionTelemetry;
+    status: 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled' | 'executor_unavailable';
+}
+
+/** Why a receipt was not accepted as proof the node's capabilities were actually available. */
+export interface ReceiptRefusal {
+    reason: 'executor_unavailable' | 'receipt_unbound' | 'capability_missing';
+    detail: string;
+    /** Capabilities the node required and the receipt did not advertise. */
+    missing: ExecutorCapability[];
+}
+
+/**
+ * Whether a receipt proves the node's required capabilities for the request it claims to answer.
+ *
+ * Three separate refusals, deliberately kept apart because their remedies differ:
+ *
+ *   - `executor_unavailable` — no receipt at all, or one whose own status says the executor could not serve the run. The
+ *     remedy is a capable host, never setting a flag.
+ *   - `receipt_unbound` — a receipt for a *different* run. The remedy is to re-issue, not to trust it.
+ *   - `capability_missing` — a bound receipt that does not advertise everything the node requires. The remedy is a host
+ *     that provides the rest.
+ *
+ * A `budget_exhausted` status is **not** a refusal here: it is a truthful report about the round, and its refusal happens
+ * one level up, where §3.1.2's predicate turns it into a refused state. Conflating the two would make "the round ran out
+ * of budget" indistinguishable from "the host could not run the round".
+ */
+export function verifyExecutionReceipt(input: {
+    request: ReviewRunRequest;
+    receipt?: ReviewExecutionReceipt;
+}): { ok: true; receipt: ReviewExecutionReceipt } | { ok: false; refusal: ReceiptRefusal } {
+    const { request, receipt } = input;
+
+    if (!receipt) {
+        return {
+            ok: false,
+            refusal: {
+                reason: 'executor_unavailable',
+                detail: `no execution receipt was recorded, so ${request.node} cannot be certified: a context the agent describes as fresh is not a capability`,
+                missing: request.requiredCapabilities,
+            },
+        };
+    }
+    if (receipt.status === 'executor_unavailable') {
+        return {
+            ok: false,
+            refusal: {
+                reason: 'executor_unavailable',
+                detail: 'the executor reported that it could not serve this request',
+                missing: request.requiredCapabilities,
+            },
+        };
+    }
+    if (receipt.runId !== request.runId || receipt.requestSha256 !== request.requestSha256) {
+        return {
+            ok: false,
+            refusal: {
+                reason: 'receipt_unbound',
+                detail: 'the receipt does not bind to this request, so it proves nothing about this run',
+                missing: [],
+            },
+        };
+    }
+    const missing = request.requiredCapabilities.filter((capability) => !receipt.capabilities.includes(capability));
+    if (missing.length > 0) {
+        return {
+            ok: false,
+            refusal: {
+                reason: 'capability_missing',
+                detail: `the executor does not provide ${missing.join(', ')}, which ${request.node} requires`,
+                missing,
+            },
+        };
+    }
+    return { ok: true, receipt };
+}

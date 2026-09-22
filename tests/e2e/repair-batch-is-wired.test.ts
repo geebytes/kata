@@ -55,7 +55,6 @@ describe('a repair batch opens, closes, and makes the next round narrow', () => 
             contextNote: 'Fixture recorded a pass with a blocking finding.',
             createdAt: '2026-09-19T00:00:00.000Z',
             briefSha256: brief.sha256,
-            verdict: 'defects_found',
             attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed' }],
             findings: [{ id: 'b1', taskId: 'chain', severity: 'blocking', message: 'must be repaired' }],
         }), 'utf8');

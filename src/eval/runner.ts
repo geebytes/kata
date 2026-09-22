@@ -9,6 +9,7 @@ import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { computeMetrics, type EvaluationRun, type EvaluationMetrics } from './metrics.js';
 import { checkReleaseGates, type ReleaseGateResult } from './release-gates.js';
+import { admissibilityCorpus, scoreCorpus, type CorpusObservation } from './admissibility-corpus.js';
 import { evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 
 /** Metrics this harness cannot observe in process: the host platform owns model choice, cost and retries. */
@@ -24,6 +25,14 @@ export interface EvaluationFixture {
 
 export interface EvaluationManifest {
   taskFixtures: EvaluationFixture[];
+  /**
+   * The verifier scored against the admissibility corpus, before and after the change (AC-5).
+   *
+   * Declared here because the *observation* has to come from somewhere real: an execution control change is scored by
+   * running both shapes over the corpus and reporting what each concluded. Absent means unmeasured, which the gate
+   * reports as `skipped` — never as a pass.
+   */
+  verifier?: { baseline: CorpusObservation; current: CorpusObservation };
 }
 
 /**
@@ -81,6 +90,13 @@ export interface EvaluationReport {
   unmeasured: string[];
   /** The concurrency the fixtures actually ran at, so a report cannot be mistaken for a serial one. */
   concurrency: number;
+  /**
+   * Declared verifier observations the corpus could not match (R6).
+   *
+   * Present only when the manifest named a case id no corpus entry carries: the gate then fails rather than scoring an
+   * empty denominator, and this is where the reader sees which side was refused and why.
+   */
+  verifierObservationProblems?: string[];
 }
 
 /**
@@ -116,8 +132,34 @@ export async function runEvaluation(
   });
 
   const metrics = computeMetrics(runs);
+  // AC-5: scored on the release path, not only in a unit test. Both sides are scored against the *same* corpus, so a
+  // manifest that declares one observation per shape cannot accidentally compare two different referee sets.
+  const corpus = admissibilityCorpus();
+  // R6 (2026-09-22, measured by an adversarial pass): this scored each side with a ONE-element observation list and never
+  // checked that the declared `caseId` names a corpus case. Measured with the test's own fixture — both sides declaring
+  // caseId `a`, which matches no corpus id — both scores collapsed to recall 0 / false-pass 0, and the gate reported
+  // `pass: true` because `0 >= 0` and `0 <= 0`. A recall regression therefore read as a pass, which is precisely the
+  // reading AC-5 exists to refuse: a verifier that measured nothing must not be reported as having held the line.
+  //
+  // The observations are matched to the corpus by case id, and an id the corpus does not declare is refused rather than
+  // silently dropped into a zero denominator.
+  const verifyObservations = manifest.verifier
+    ? ([['baseline', manifest.verifier.baseline], ['current', manifest.verifier.current]] as const).map(([side, observation]) => {
+        const known = corpus.some((entry) => entry.id === observation.caseId);
+        return known ? null : `${side} names caseId '${observation.caseId}', which is not a corpus case`;
+    }).filter((problem): problem is string => problem !== null)
+    : [];
+  // A refused observation makes the gate **fail** rather than skip: the manifest claimed a measurement and named
+  // something the corpus does not contain, so "we did not measure" would understate it. Fail-closed, and it names what
+  // was wrong so the declaration can be fixed.
+  const verifier = manifest.verifier && verifyObservations.length === 0
+    ? { verifierBaseline: scoreCorpus(corpus, [manifest.verifier.baseline]), verifierCurrent: scoreCorpus(corpus, [manifest.verifier.current]) }
+    : {};
+  const verifierObservationProblems = verifyObservations.length > 0 ? verifyObservations : undefined;
   const releaseGates = await checkReleaseGates(root, metrics, {
     ...options,
+    ...verifier,
+    ...(verifierObservationProblems ? { verifierObservationProblems } : {}),
     expectations: runs.map((run) => ({ id: run.id, matched: run.expectation.matched, mismatches: run.expectation.mismatches })),
     // Recorded rather than inferred: resource-related fixture failures are the reason the default is serial, so a report
     // that shows a parallel run must say so where the reader is already looking for what happened.
@@ -133,6 +175,9 @@ export async function runEvaluation(
     durationMs: Date.now() - startedAt,
     unmeasured: [...unmeasuredMetrics],
     concurrency,
+    // Reported rather than swallowed: a manifest whose verifier observations do not name corpus cases is a declaration
+    // defect, and the reader has to be able to see which side was refused (R6).
+    ...(verifierObservationProblems ? { verifierObservationProblems } : {}),
   };
 }
 

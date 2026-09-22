@@ -9,15 +9,18 @@ import {
     adversarialReasonFor,
     blockingAdversarialFindings,
     buildAdversarialBrief,
-    issueAdversarialBrief,
+    persistAdversarialBrief,
+    prepareAdversarialCertification,
     issuedBriefPool,
     readAdversarialRecord,
     writeAdversarialRecord,
     type AdversarialNode,
     type AdversarialRecord,
+    type AdversarialBriefScope,
     adversarialNodes,
 } from '../quality/adversarial.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
+import { deriveVerdict, type ReviewState } from '../quality/review-state.js';
 import { isTerminalSeverity } from '../quality/finding-lifecycle.js';
 import { runProcessSync } from '../process/run.js';
 
@@ -244,10 +247,22 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const since = argValue(rest, '--since');
         const requestedMode = argValue(rest, '--mode');
         // Issued, not merely rendered: this is the copy the recorded pass will be bound to (D2, second fix).
-        const brief = await issueAdversarialBrief(root, change, node, {
+        const prepared = await prepareAdversarialCertification(root, change, node, {
             ...(since ? { since } : {}),
             ...(requestedMode === 'cold' || requestedMode === 'verify' ? { mode: requestedMode } : {}),
         });
+        if (prepared.kind === 'reuse') {
+            return {
+                command: 'adversarial brief',
+                taskId: change,
+                node,
+                certification: 'reused',
+                priorBriefSha256: prepared.priorBriefSha256,
+                reCertification: prepared.decision,
+                note: 'No formal brief issued: the planner mechanically proved the prior certification still applies.',
+            };
+        }
+        const brief = await persistAdversarialBrief(root, change, node, prepared.brief);
         const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
             command: 'adversarial brief',
@@ -255,6 +270,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             node,
             revisionId: brief.revisionId,
             briefSha256: brief.sha256,
+            ...(prepared.decision ? { reCertification: prepared.decision } : {}),
             // M2: the framing and why it was chosen, so the rotation is visible rather than silent.
             mode: brief.mode,
             modeReason: brief.modeReason,
@@ -267,12 +283,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // that quietly pretends to be the narrower pass it asked for.
             ...(brief.delta ? { delta: brief.delta } : {}),
             brief: brief.text,
-            // The printed command carries the procedure the skill text states: pass the same --since (kata measures the
-            // scope itself) and report the pass's duration, which is the only place that number exists.
+            // The printed command carries the procedure the skill text states. The duration flags are gone from it:
+            // telemetry arrives on the receipt (§3.2.2), so a caller who copies this line records the pass without
+            // hand-typing a number the platform cannot check.
             recordCommand: [
                 `kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json>`,
-                '--elapsed-ms <milliseconds the pass took>',
-                '--tool-uses <how many tool calls the pass made>',
             ].join(' '),
         };
     }
@@ -348,6 +363,19 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     }
 
     if (subcommand === 'record') {
+        // §3.2.2: refused rather than ignored. A flag that is accepted and silently dropped teaches the caller that
+        // telemetry can be typed in, which is the belief this retirement exists to end.
+        const retiredFlags = ['--elapsed-ms', '--tool-uses'].filter((flag) => rest.includes(flag));
+        if (retiredFlags.length > 0) {
+            return {
+                command: 'adversarial record',
+                taskId: change,
+                node,
+                recorded: false,
+                status: 'refused',
+                error: `${retiredFlags.join(' and ')} ${retiredFlags.length > 1 ? 'are' : 'is'} retired: telemetry is reported by the execution receipt, which binds to the issued request and cannot be typed in. Record the receipt instead of a duration, or leave telemetry unreported.`,
+            };
+        }
         const fromFile = argValue(rest, '--from-file');
         const raw = fromFile ? await readFile(fromFile, 'utf8') : await readStdin();
         if (!raw.trim()) throw new Error('adversarial record requires the result JSON on stdin or via --from-file');
@@ -357,7 +385,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         } catch (error) {
             throw new Error(`adversarial record could not parse the result: ${error instanceof Error ? error.message : String(error)}`);
         }
-        const binding = await currentRevisionManifest(root, change);
+        const binding = await currentRevisionManifest(root, change, node);
         // The record is bound to the brief kata **issued** (D2). An unissued hash is refused before anything is
         // written: it could never satisfy the gate, and writing it would destroy whatever pass is already recorded.
         const pool = await issuedBriefPool(root, change, node, {
@@ -386,15 +414,15 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             ...binding,
             // The scope comes from the **brief that was answered**, never from a flag on this command: a delta round's
             // surface was fixed when kata issued it, and re-deriving it here would let the two disagree.
-            scope: await scopeForIssuedBrief(root, change, issued),
-            // Reported by the executor rather than measured here: the pass happens in another context, and §11 of the
-            // design is precisely that nobody had the number.
-            ...(argValue(rest, '--elapsed-ms') ? { elapsedMs: Number(argValue(rest, '--elapsed-ms')) } : {}),
+            scope: await scopeForIssuedBrief(issued),
+            // §3.2.2: telemetry comes from the receipt, never from the caller. `--elapsed-ms` was retired because a
+            // number typed here is an assertion about itself — the same reason `executedInFreshContext` stopped being a
+            // proof. The receipt reports what the CLI could not observe, so it is the only telemetry source that means
+            // anything. The *field* stays on the schema: past records carry it, and reporting is not a conclusion.
             // M2: the framing is the one the *issued* brief carried — the round answered that brief, and the next
             // rotation reads the mode from here. Taken from a flag instead, the record could contradict the brief.
             mode: issued.mode,
-            // M3: the turn term alongside the clock, so the two halves of a pass's cost are separable in the record.
-            ...(argValue(rest, '--tool-uses') ? { toolUses: Number(argValue(rest, '--tool-uses')) } : {}),
+            // M3: the turn term arrives the same way, for the same reason.
         });
         // C1: a recorded pass's gating findings open (or join) this task's repair batch — the write is where they become
         // known, and it is reached regardless of which refusal the node reports first.
@@ -427,7 +455,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             mode: record.mode ?? null,
             briefSha256: record.briefSha256 ?? null,
             ...(modeConflict ? { modeNote: `--mode ${modeConflict} was ignored: the issued brief framed this round as ${issued.mode}, and the record follows the brief it answered.` } : {}),
-            verdict: record.verdict ?? null,
+            // §4 Phase 1: the verdict is **derived**, so this reports what kata computed from the hypotheses rather than
+            // echoing a field the caller wrote. Null when the record carries no judgement basis (a pre-§3.1 record), which
+            // is the honest answer — it is not "no defect found", it is "reached by a shape the predicate cannot read".
+            verdict: derivedVerdictFor(record),
             findings: (record.findings ?? []).map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
             ...(parsed.findingOrigins ? { findingOrigins: parsed.findingOrigins } : {}),
             gate: { satisfied: gate.satisfied, reason: gate.reason ?? null },
@@ -451,7 +482,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 recorded: record !== null,
                 status: record?.status ?? null,
                 revisionId: record?.revisionId ?? null,
-                verdict: record?.verdict ?? null,
+                // Derived, like the line above: §3.1 makes the conclusion Kata's, so a report must not re-expose the
+                // retired field even for a record that still carries one.
+                verdict: record ? derivedVerdictFor(record) : null,
                 executedInFreshContext: record?.executedInFreshContext ?? null,
                 scope: record?.scope?.kind ?? null,
                 mode: record?.mode ?? null,
@@ -662,41 +695,52 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
  * verify the claim without trusting the reviewer. If the change surface cannot be measured the scope says so, and the
  * gate refuses the pass as `delta_unavailable` rather than accepting a delta nobody can check.
  */
-async function currentDeltaScope(root: string, taskId: string, since: string): Promise<{ kind: 'full' | 'delta'; from?: string; changedPaths?: string[] }> {
-    const { readTaskRevision } = await import('../workflow/revision.js');
-    const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
-    const base = await readTaskRevision(root, taskId, since).catch(() => null);
-    if (!base) return { kind: 'delta', from: since, changedPaths: [] };
-    const surface = await changeSurfaceAgainstWorkspace(root, base);
-    return {
-        kind: 'delta',
-        from: base.id,
-        changedPaths: surface.status === 'available' ? surface.changedPaths : [],
-    };
-}
 
 /** The sealed revision's id and content hash, for binding a recorded pass to the revision it reviewed. */
 /** The scope a pass is judged against: whatever the brief it answered was issued with. */
 async function scopeForIssuedBrief(
-    root: string,
-    taskId: string,
-    issued: { since?: string },
-): Promise<{ kind: 'full' } | { kind: 'delta'; from: string; changedPaths: string[] }> {
-    if (!issued.since) return { kind: 'full' };
-    const scope = await currentDeltaScope(root, taskId, issued.since);
-    return { kind: 'delta', from: scope.from ?? issued.since, changedPaths: scope.changedPaths ?? [] };
+    issued: { scope?: AdversarialBriefScope; since?: string },
+): Promise<AdversarialBriefScope> {
+    if (issued.scope) return issued.scope;
+    // A legacy delta brief did not persist its measured paths. Refuse unsafe reuse by preserving its delta claim with no
+    // coverage, so the existing delta gate fails closed instead of silently widening it to a full pass.
+    return issued.since
+        ? { kind: 'delta', from: issued.since, changedPaths: [] }
+        : { kind: 'full' };
 }
 
 
-async function currentRevisionManifest(root: string, taskId: string): Promise<{ revisionId?: string; manifestHash?: string; codeManifestHash?: string }> {
+function derivedVerdictFor(record: { hypotheses?: unknown } | null | undefined): string | null {
+    const hypotheses = record?.hypotheses;
+    if (!Array.isArray(hypotheses) || hypotheses.length === 0) return null;
+    // The verdict implied by the hypotheses alone, from the **same exported derivation** the gate starts from. Coverage
+    // and grounding are predicates against a revision the CLI does not hold here, so the gate applies those on top; what
+    // this must not do is apply its own weaker rule, which is how `outcome: confirmed` came to be reported as
+    // `no_defect_found` (R7).
+    return deriveVerdict({
+        coverage: [],
+        hypotheses: hypotheses as ReviewState['hypotheses'],
+        findings: ((record as { findings?: ReviewState['findings'] }).findings ?? []),
+    });
+}
+async function currentRevisionManifest(
+    root: string,
+    taskId: string,
+    node?: AdversarialNode,
+): Promise<{ revisionId?: string; manifestHash?: string; codeManifestHash?: string; candidateFreezeSha256?: string }> {
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
     const { codeManifestHash } = await import('../quality/code-surface.js');
     const revision = await readCurrentTaskRevision(root, taskId);
     const codeHash = revision ? codeManifestHash(revision) : null;
+    // §7.4: the freeze travels with the record, so a later certification is compared against the candidate it answered
+    // rather than against a revision id that moves on every re-seal.
+    const { candidateFreezeHashFor } = await import('../quality/adversarial.js');
+    const freeze = node ? await candidateFreezeHashFor(root, taskId, node).catch(() => undefined) : undefined;
     return {
         ...(revision ? { revisionId: revision.id } : {}),
         ...(revision?.manifestHash ? { manifestHash: revision.manifestHash } : {}),
         // C2: the code-only identity, stamped beside the full manifest so a text-only re-seal can be recognised later.
         ...(codeHash ? { codeManifestHash: codeHash } : {}),
+        ...(freeze ? { candidateFreezeSha256: freeze } : {}),
     };
 }

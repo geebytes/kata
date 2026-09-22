@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import type { AcceptanceMatrix, AcceptanceMatrixRow, MatrixEvidenceItem } from '../core/task.js';
 import type { CheckCommand, EvidenceKind } from './evidence.js';
@@ -14,6 +16,12 @@ import type { CheckCommand, EvidenceKind } from './evidence.js';
  * `pytest` is launched by passing the bare name to the Node binary, and `uv run pytest` keeps its command line whole
  * while the resolved command is `uv` — and they are recorded rather than quietly corrected: this module moves knowledge
  * and must not change what runs.
+ *
+ * The runner entry is located by **dependency resolution** as well as by the project directory. A linked worktree
+ * deliberately has no `node_modules` of its own — Node resolves dependencies from an ancestor workspace, and the seal's
+ * execution sandbox copies from those same candidates — so resolving the entry as `join(projectDir, 'node_modules', …)`
+ * made every matrix check die with MODULE_NOT_FOUND inside a worktree: the dependency was present, the path was not the
+ * one that reaches it.
  */
 
 export interface MatrixRunnerSpec {
@@ -111,8 +119,17 @@ function checkIdentity(row: AcceptanceMatrixRow, evidence: MatrixEvidenceItem): 
  *   1. a selector plus a `{{selector}}` template — the selector is substituted, the command line is then split;
  *   2. a selector plus a known selector-capable runner — the runner is launched with the selector appended;
  *   3. a plain command line.
+ *
+ * `dependencyRoots` names the workspace roots a dependency may actually resolve from — the ancestors the sandbox copies
+ * from. Given them, a runner entry absent under the project directory is looked up there instead, so an isolated worktree
+ * runs the dependency it has rather than a path it does not.
  */
-export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvidenceItem, root: string): CheckCommand | Error {
+export function resolveCheckForRow(
+    row: AcceptanceMatrixRow,
+    evidence: MatrixEvidenceItem,
+    root: string,
+    options: { dependencyRoots?: string[] } = {},
+): CheckCommand | Error {
     const hasSelector = typeof evidence.testSelector === 'string' && evidence.testSelector.length > 0;
     const template = evidence.command.trim();
     const hasPlaceholder = template.includes('{{selector}}');
@@ -124,7 +141,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
         const filled = template.replace('{{selector}}', selector);
         const [rawCommand, ...args] = filled.split(/\s+/);
         const entry = matrixRunners[rawCommand!]?.nodeEntry;
-        const runtimeEntry = entry ? join(runtimeProjectDir, entry) : undefined;
+        const runtimeEntry = entry ? resolveRunnerEntry(runtimeProjectDir, entry, options.dependencyRoots) : undefined;
         return {
             id,
             source: 'matrix',
@@ -151,7 +168,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
             const spec = matrixRunners[rawCommand!];
             const entry = spec?.nodeEntry;
             const runtimeEntry = spec?.nodeCommandOnSelectorPath
-                ?? (entry ? join(runtimeProjectDir, entry) : undefined);
+                ?? (entry ? resolveRunnerEntry(runtimeProjectDir, entry, options.dependencyRoots) : undefined);
             // The entry's own subcommand, when the runner needs one to run once instead of starting a watcher.
             const runtimeEntryArgs = spec?.nodeEntryArgs;
             return {
@@ -174,7 +191,7 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
     const selector = evidence.testSelector ? testSelectorForRuntime(evidence.testSelector, runtimeProjectDir, root) : undefined;
     const spec = matrixRunners[rawCommand!];
     const entry = spec?.nodeEntry;
-    const runtimeEntry = entry ? join(runtimeProjectDir, entry) : undefined;
+    const runtimeEntry = entry ? resolveRunnerEntry(runtimeProjectDir, entry, options.dependencyRoots) : undefined;
     return {
         id,
         source: 'matrix',
@@ -189,17 +206,52 @@ export function resolveCheckForRow(row: AcceptanceMatrixRow, evidence: MatrixEvi
     } satisfies CheckCommand;
 }
 
+
+/**
+ * Where a runner's entry file actually is.
+ *
+ * The project directory is tried first, because a nested project (`kata/`-prefixed rows) has its own dependencies and
+ * must keep using them. When the entry is not there — the case a linked worktree is in by construction, since it holds no
+ * `node_modules` of its own — the dependency roots are tried in the order they were given, which is the resolution order
+ * Node itself would use. Nothing is invented: if no root has the entry, the project-directory path is returned unchanged,
+ * so a genuinely missing dependency still reports the path a reader expects.
+ */
+function resolveRunnerEntry(projectDir: string, entry: string, dependencyRoots?: string[]): string {
+    const local = join(projectDir, entry);
+    if (!dependencyRoots || dependencyRoots.length === 0) return local;
+    if (existsSync(local)) return local;
+    for (const root of dependencyRoots) {
+        const candidate = join(root, entry);
+        if (existsSync(candidate)) return candidate;
+    }
+    return local;
+}
+
+/**
+ * The workspace roots a dependency may resolve from for `authorRoot`, nearest last.
+ *
+ * The same candidate list the execution sandbox copies from, so a check resolves its runner through the dependency the
+ * sandbox will actually have. Kept here rather than in the sandbox module because the check is resolved before the
+ * sandbox exists — the sandbox is built to run it.
+ */
+export function dependencyRootsFor(authorRoot: string): string[] {
+    const requireFromAuthor = createRequire(join(authorRoot, 'package.json'));
+    const candidates = requireFromAuthor.resolve.paths('kata-runner-entry') ?? [];
+    // Far to near, so the author's closest dependency wins — the resolution order Node itself uses.
+    return [...candidates].reverse().filter((candidate) => candidate !== join(authorRoot, 'node_modules'));
+}
+
 /** The stable identity of a resolved check, matching `resolveSealChecks`' naming for the revision id. */
 export function resolvedCheckId(check: CheckCommand): string {
     return check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`;
 }
 
 /** Every declaration in the matrix, resolved and de-duplicated. Throws the resolver's error, as the seal always has. */
-export function matrixChecks(root: string, matrix: AcceptanceMatrix): CheckCommand[] {
+export function matrixChecks(root: string, matrix: AcceptanceMatrix, options: { dependencyRoots?: string[] } = {}): CheckCommand[] {
     const checks: CheckCommand[] = [];
     for (const row of matrix.rows) {
         for (const evidence of row.evidence) {
-            const result = resolveCheckForRow(row, evidence, root);
+            const result = resolveCheckForRow(row, evidence, root, options);
             if (result instanceof Error) {
                 throw result;
             }

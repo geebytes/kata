@@ -32,6 +32,10 @@
       "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
       "type": "string"
     },
+    "candidateFreezeSha256": {
+      "description": "The frozen candidate this verdict answered (§7.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
+      "type": "string"
+    },
     "status": {
       "type": "string",
       "enum": [

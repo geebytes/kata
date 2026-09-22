@@ -516,13 +516,14 @@ Do this:
    is what a pass mostly costs. \`record\` at the end seals the verdict and the revision binding — it is the conclusion, not
    the container.
    \`\`\`bash
-   kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json> --elapsed-ms <milliseconds the pass took>
+   kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json>
    \`\`\`
-   Report the wall-clock time of the whole pass honestly, including the subagent's runtime. This is the only place the
-   number exists: the design's own §11 could not answer "what does a narrower re-verification actually save?" because
-   nothing recorded a pass's duration, and the baseline is destroyed the moment the next pass overwrites the record.
-   \`kata-cli adversarial status --change <task-id>\` then reports \`deltaSaving\` (the previous full pass, this one, the
-   difference) — or says plainly that it is not measurable yet, which is the honest answer for the first passes.
+   Telemetry is **not** typed in. \`--elapsed-ms\` and \`--tool-uses\` are retired: a duration the caller states is an
+   assertion about itself, which is the same reason the fresh-context boolean stopped being a proof. The execution
+   receipt reports wall time, tool calls, output bytes and truncations, and it binds to the request kata issued — so it
+   is the only telemetry source that can be checked. Where a host cannot produce a receipt, telemetry is simply
+   unreported: \`kata-cli adversarial status --change <task-id>\` then says the measurement is unavailable rather than
+   showing a number nobody can verify.
 4. **Put the brief's hash on the result**, whatever kind of round it was. \`record\` binds the pass to the brief kata
    **issued** — a hash kata never handed out is refused, and so is one issued for another revision — and it takes the
    round's scope from that brief, so you never pass a \`--since\` and never hand-write \`scope\`. For a delta brief the gate

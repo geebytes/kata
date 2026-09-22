@@ -33,6 +33,11 @@
     "manifestHash": {
       "type": "string"
     },
+    "candidateFreezeSha256": {
+      "description": "The CandidateFreeze this pass certified (§7.4): the content snapshot plus the semantic contract it answered. Stamped so a completed certification can be reused for the freezes it is still valid for, instead of being expired by a revision id that moves on any re-seal.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "codeManifestHash": {
       "description": "Content identity of the revision's code paths only (C2). Stamped beside manifestHash so a code-scoped verdict can outlive a governance-text edit; absent when the split cannot be derived, in which case a code-scoped binding refuses to match.",
       "type": "string"
@@ -119,6 +124,191 @@
     "executedBy": {
       "type": "string",
       "minLength": 1
+    },
+    "hypotheses": {
+      "description": "The judgement basis: what the reviewer asserted, over what, by which method, and what it observed. The verdict is derived from these by kata; `verdict` is a display field that may not contradict them.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "claim",
+          "targets",
+          "method",
+          "outcome"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "mutation",
+              "source-read",
+              "sealed-evidence",
+              "permitted-test",
+              "deterministic-analysis"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "refuted",
+              "confirmed",
+              "ruled_out",
+              "abandoned",
+              "inconclusive"
+            ]
+          },
+          "observation": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref",
+              "observed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "source",
+                  "evidence",
+                  "test",
+                  "analysis"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "observed": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "abandoned": {
+            "type": "object",
+            "required": [
+              "limit",
+              "why"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "limit": {
+                "type": "string",
+                "enum": [
+                  "budget",
+                  "time",
+                  "tools"
+                ]
+              },
+              "why": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "receipt": {
+      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Written by the host, never by the reviewer; the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires.",
+      "type": "object",
+      "required": [
+        "runId",
+        "requestSha256",
+        "capabilities",
+        "startedAt",
+        "endedAt",
+        "telemetry",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "fresh_context",
+              "read_only_fs",
+              "bounded_tools",
+              "budget_enforced"
+            ]
+          }
+        },
+        "startedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "endedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetry": {
+          "type": "object",
+          "required": [
+            "toolCalls",
+            "outputBytes",
+            "tokens",
+            "truncations"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "toolCalls": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outputBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncations": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "budget_exhausted",
+            "timeout",
+            "cancelled",
+            "executor_unavailable"
+          ]
+        }
+      }
     },
     "attempts": {
       "type": "array",

@@ -1,5 +1,5 @@
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
+import { isIgnoredRepositoryPath, maxTreeHashFileBytes, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -22,6 +22,20 @@ export interface TaskRevision {
    * rather than guess a diff.
    */
   pathDigests?: Record<string, string>;
+  /**
+   * A **declaration-independent** content snapshot of what this revision contained.
+   *
+   * `pathDigests` is computed over `ownedPaths`, so a change committed outside the declared set is invisible to it — and
+   * `git status` is clean once the round commits, so it is invisible there too. Measured on a real task: one commit
+   * touched `.gitignore`, `docs/guide.md` and `src/a.ts`, and the record derived from those two sources reported only
+   * `src/a.ts`. Anchoring the change surface on the declaration is exactly what AC-2 forbids, so the revision carries
+   * the fact itself: every path this revision changed, with its content digest, taken from the repository's own change
+   * listing at seal time and then frozen into the revision.
+   *
+   * Deliberately named for what it is — content, not ownership. `pathDigests` answers "which owned file changed";
+   * this answers "what did this revision contain", which is the question the change surface actually asks.
+   */
+  contentDigests?: Record<string, string>;
   createdAt: string;
   ownershipConflicts?: Array<{ taskId: string; path: string }>;
   ownershipConflictsAcknowledged?: boolean;
@@ -45,12 +59,17 @@ export async function createTaskRevision(input: CreateTaskRevisionInput): Promis
 
 /** The same call, reporting whether the revision already existed — the caller may then reuse what it recorded. */
 export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput): Promise<{ revision: TaskRevision; reused: boolean }> {
+  const contentRoot = input.contentRoot ?? input.root;
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
-  // One traversal for both digests (L1-02). The id still derives from the manifest hash and the check set only:
-  // the per-path table is *added* by this seal (F2.1) and never participates in the identity (I4).
-  const { manifestHash, pathDigests } = await computeBothOwnedDigests(input.root, ownedPaths);
-  const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? []);
+  // The identity and owned-manifest facts come from the materialized pre-check
+  // snapshot when a seal supplied one. Revision artefacts still live under root.
+  const { manifestHash, pathDigests } = await computeBothOwnedDigests(contentRoot, ownedPaths);
+  const contentDigests = input.contentDigests ?? await computeContentDigests(contentRoot);
+  // The id now covers the content snapshot as well as the owned manifest. The manifest hash field itself is unchanged —
+  // every existing binding keeps its meaning — but a revision *exists* for a change outside the declaration, which the
+  // own  the owned-path hash alone could not express.
+  const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? [], contentSnapshotHash(contentDigests));
 
   const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
   if (existing) {
@@ -59,6 +78,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
       ...existing,
       // A revision sealed before the field existed gains it here, without being renumbered.
       ...(existing.pathDigests ? {} : { pathDigests }),
+      ...(existing.contentDigests ? {} : { contentDigests }),
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
       ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
     };
@@ -72,6 +92,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     ownedPaths,
     manifestHash,
     pathDigests,
+    contentDigests,
     createdAt: new Date().toISOString(),
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
     ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
@@ -84,7 +105,12 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
 }
 
 export interface CreateTaskRevisionInput {
+  /** Workspace where Kata persists the revision artefacts. */
   root: string;
+  /** Immutable pre-check content root when sealing in isolation; defaults to root. */
+  contentRoot?: string;
+  /** Digests frozen from contentRoot before any check can run. */
+  contentDigests?: Record<string, string>;
   taskId: string;
   ownedPaths: string[];
   checkIds?: string[];
@@ -92,10 +118,33 @@ export interface CreateTaskRevisionInput {
   ownershipConflictsAcknowledged?: boolean;
 }
 
-/** The content-derived revision id: same task, same owned-path content, same check set, same revision. */
-export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[]): string {
-  const digest = hashContent(JSON.stringify({ taskId, manifestHash, checkIds: [...checkIds].sort() }));
+/**
+ * The content-derived revision id: same task, same content, same check set, same revision.
+ *
+ * `contentDigestHash` is the declaration-independent half, and it is what makes a revision exist for a change the
+ * declaration does not cover. Without it, a round that edited a path outside its owned set and committed produced **the
+ * same revision id** as the round before it — so the change was not merely invisible, it was not a revision at all.
+ * Measured: editing and committing `src/outside.ts` with `src/owned.ts` owned returned the existing id, and the change
+ * surface answered `unchanged`.
+ *
+ * Optional so a caller with no snapshot (a pre-existing revision being read back, a test that names an id directly)
+ * keeps the historical derivation and therefore the historical id — the transition must not renumber revisions that
+ * nothing has re-sealed.
+ */
+export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[], contentDigestHash?: string): string {
+  const digest = hashContent(JSON.stringify({
+    taskId,
+    manifestHash,
+    checkIds: [...checkIds].sort(),
+    ...(contentDigestHash ? { contentDigestHash } : {}),
+  }));
   return `revision-${digest.slice(0, 16)}`;
+}
+
+/** A stable digest over a content snapshot, so the id derives from content rather than from map ordering. */
+export function contentSnapshotHash(contentDigests: Record<string, string>): string {
+  const ordered = Object.keys(contentDigests).sort();
+  return hashContent(JSON.stringify(ordered.map((path) => [path, contentDigests[path]])));
 }
 
 export async function readTaskRevision(root: string, taskId: string, revisionId: string): Promise<TaskRevision> {
@@ -112,6 +161,9 @@ export async function readCurrentTaskRevision(root: string, taskId: string): Pro
 }
 
 export async function revisionStatus(root: string, revision: TaskRevision): Promise<RevisionStatus> {
+  // Freshness remains scoped to the declared manifest. `contentDigests` names
+  // what the sealed revision contained and powers its delta; using the whole
+  // snapshot here would make a later unrelated file invalidate valid evidence.
   const manifestHash = await computeManifestHash(root, revision.ownedPaths);
   return manifestHash === revision.manifestHash
     ? { status: 'current' }
@@ -180,6 +232,34 @@ export async function computeBothOwnedDigests(
   const manifest = createContentHasher();
   await feedOwnedTree(root, ownedPaths, manifest, pathDigests);
   return { manifestHash: manifest.digest('hex'), pathDigests };
+}
+
+/**
+ * The content snapshot a revision freezes: the declared owned set **plus** everything else the repository reports as
+ * changed, each with a digest.
+ *
+ * The union is the point. The owned set alone cannot answer "what did this revision change" — that is the defect AC-2
+ * names — and the change listing alone cannot answer it after the round commits. Taking both at seal time, when the
+ * listing is still honest, and freezing the result is what makes the answer durable.
+ *
+ * A path outside any owned path is hashed the same way an owned one is, so the two kinds are comparable; a path that no
+ * longer exists keeps its digest from the manifest walk (a removal must not read as "never existed").
+ */
+export async function computeContentDigests(root: string): Promise<Record<string, string>> {
+  // Walked from the tree, **not** from `git status`.
+  //
+  // Using the change listing was the same trap one level down: it reports *uncommitted* work, so a round that committed
+  // before sealing produced a snapshot identical to its predecessor and the revision was reused — measured: editing and
+  // committing `src/outside.ts` returned the base id and the content snapshot still listed only `src/owned.ts`. A
+  // snapshot that depends on when the author happened to commit is not a content identity.
+  //
+  // The walk is bounded by the same ignore policy and size cap as the tree hash, so this is a fingerprint over the
+  // repository rather than a read of every model file for the sake of bookkeeping.
+  const digests: Record<string, string> = {};
+  for await (const file of walkRepositoryEntries(root, { maxFileBytes: maxTreeHashFileBytes })) {
+    digests[file.path] = hashContent(file.content);
+  }
+  return digests;
 }
 
 export async function computeManifestHash(root: string, ownedPaths: string[]): Promise<string> {

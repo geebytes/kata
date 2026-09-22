@@ -113,6 +113,7 @@ import { parseDelegationArgs, runDelegateCommand, runHandoffCommand, type Delega
 import { runFindingsCommand } from './cli/findings.js';
 import { runBaselineCommand } from './cli/baseline.js';
 import { runScopeCommand } from './cli/scope.js';
+import { runMatrixCommand } from './cli/matrix.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
     isResumableWorkflowCommand,
@@ -308,6 +309,14 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (command === 'scope') {
         const result = await runScopeCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'matrix') {
+        // A sealed task's matrix could only be declared at `open`, so a declaration defect found later had no supported
+        // correction. The command validates the corrected declaration before writing it.
+        const result = await runMatrixCommand(argv.slice(1));
         outputResult(result);
         return;
     }

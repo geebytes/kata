@@ -189,6 +189,28 @@ describe('machine-generated change record', () => {
         expect(changeRecordPath(root, 'record-task')).toContain(join('.kata', 'tasks', 'record-task'));
     });
 
+    it('derives the change surface from content identity, so a path changed outside the declaration is reported', async () => {
+        // R3/R4, found by an adversarial pass on 2026-09-22. `changedPaths` is built from `contentDigests` when they are
+        // supplied, and falls back to `pathDigests`; the gate must use the same surface the record publishes. Measured on
+        // the real change: the record reported 65 changed paths including its only `changedOutsideOwnership` entry, while
+        // the gate's coverage remit was the 66-path ownership declaration and did NOT contain that file.
+        const root = await tempRoot();
+        const withContent = await buildChangeRecord({
+            root,
+            taskId: 'record-task',
+            revisionId: 'revision-content',
+            ownedPaths: ['src/owned.ts'],
+            contentDigests: { 'src/owned.ts': 'a', 'docs/outside.md': 'b' },
+            pathDigests: { 'src/owned.ts': 'a' },
+            baseContentDigests: { 'src/owned.ts': 'old' },
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+        });
+        expect(withContent.changedPaths).toContain('docs/outside.md');
+        expect(withContent.changedOutsideOwnership).toContain('docs/outside.md');
+    });
+
     it('does not re-derive a fact the file already records, so re-reading is stable', async () => {
         const root = await tempRoot();
         await writeFile(join(root, 'src/changed.ts'), 'export const changed = 9;\n', 'utf8');

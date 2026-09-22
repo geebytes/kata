@@ -81,12 +81,13 @@ describe('a pass leaves recoverable work when it dies', () => {
         await writeAdversarialRecord(root, 'k-task', {
             ...partial!,
             attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' }],
-            verdict: 'defects_found',
             findings: [...(partial!.findings ?? [])],
         });
 
         const sealed = await readAdversarialRecord(root, 'k-task', 'verify');
-        expect(sealed?.verdict).toBe('defects_found');
+        // §4 Phase 1: the record no longer carries a verdict; the conclusion is derived from what it does carry. The
+        // findings it recorded are the fact this test is actually about.
+        expect(sealed?.findings?.map((entry) => entry.id).sort()).toEqual([first.id, second.id].sort());
         expect(sealed?.findings?.map((entry) => entry.id).sort()).toEqual([first.id, second.id].sort());
     });
 
@@ -152,7 +153,6 @@ describe('the default framing rotates, and stops rotating at an unrepaired block
             scope: { kind: 'full' },
             attempts: [{ hypothesis: 'x', method: 'y', outcome: 'confirmed' }],
             mode: 'cold',
-            verdict: 'defects_found',
             findings: [{ id: 'blocker', taskId: 'm-task', severity: 'major', message: 'must be repaired' }],
         });
 

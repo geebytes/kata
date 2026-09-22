@@ -69,8 +69,15 @@ describe('the Definition of Done, condition by condition', () => {
             briefSha256: brief.sha256,
             createdAt: '2026-09-19T00:00:00.000Z',
             executedInFreshContext: true,
+            hypotheses: [{
+                id: 'h1',
+                claim: 'the definition of done gates on the worst finding severity',
+                targets: ['AC-1', 'src/a.py'],
+                method: 'source-read',
+                outcome: 'confirmed',
+                observation: { kind: 'source', ref: 'src/a.py', observed: 'the recorded severity is the gate input' },
+            }],
             attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed' }],
-            verdict: 'defects_found',
             findings: [{ id: 'n1', taskId: 'dod', severity: 'nit', message: 'naming' }],
         });
         // A nit does not gate: the gate reports it and stays satisfied.
@@ -84,8 +91,15 @@ describe('the Definition of Done, condition by condition', () => {
             briefSha256: brief.sha256,
             createdAt: '2026-09-19T00:01:00.000Z',
             executedInFreshContext: true,
+            hypotheses: [{
+                id: 'h1',
+                claim: 'the definition of done gates on the worst finding severity',
+                targets: ['AC-1', 'src/a.py'],
+                method: 'source-read',
+                outcome: 'confirmed',
+                observation: { kind: 'source', ref: 'src/a.py', observed: 'the recorded severity is the gate input' },
+            }],
             attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed' }],
-            verdict: 'defects_found',
             findings: [{ id: 'b1', taskId: 'dod', severity: 'blocking', message: 'must be repaired' }],
         });
         // A blocking finding does.

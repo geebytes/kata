@@ -42,6 +42,13 @@ export interface ImportedCheckResult {
   logArtifactFailure?: string;
 }
 
+
+export interface CheckExecution {
+  command: string;
+  args: string[];
+  cwd: string;
+  env?: Record<string, string>;
+}
 export interface CheckCommand {
   /** Stable identity of the check, so recorded evidence can name it structurally instead of by command text. */
   id?: string;
@@ -101,6 +108,8 @@ export interface CheckCommand {
    * new envelope. An unknown field here is a compile error, which is the point.
    */
   reusedFrom?: string;
+  /** Internal execution override: evidence retains the original check contract and fingerprint. */
+  execution?: CheckExecution;
 }
 
 export interface EvidenceCollectionOptions {
@@ -127,6 +136,8 @@ export interface EvidenceCollectionOptions {
    * what lets a reused envelope stay answerable for the rows it was declared against.
    */
   acceptanceByCheckId?: Record<string, string[]>;
+  /** Pre-check content snapshot identity; avoids accepting check-created output as author drift. */
+  inputDiffHash?: string;
 }
 
 export interface EvidenceEnvelope {
@@ -501,7 +512,7 @@ export async function collectEvidence(
 
   if (evidence.length === 0) return evidence;
 
-  const finalDiffHash = await computeDiffHash(cwd);
+  const finalDiffHash = options.inputDiffHash ?? await computeDiffHash(cwd);
   const scopePaths = options.revision?.ownedPaths ?? options.scopePaths;
   const scope = options.revision
     ? { paths: options.revision.ownedPaths, hash: options.revision.manifestHash }
@@ -619,10 +630,15 @@ async function runBoundedCommand(
   check: CheckCommand,
   options?: { onProgress?: (event: CheckProgressEvent) => void; signal?: AbortSignal; logArtifactPath?: string },
 ): Promise<ImportedCheckResult> {
-  const cwd = check.cwd ?? process.cwd();
-  const result = await runProcess(check.command, check.args ?? [], {
-    cwd,
-    env: { ...process.env, ...(check.env ?? {}) },
+  const execution = check.execution ?? {
+    command: check.command,
+    args: check.args ?? [],
+    cwd: check.cwd ?? process.cwd(),
+    ...(check.env ? { env: check.env } : {}),
+  };
+  const result = await runProcess(execution.command, execution.args, {
+    cwd: execution.cwd,
+    env: { ...process.env, ...(execution.env ?? {}) },
     ...(check.timeoutMs !== undefined ? { timeoutMs: check.timeoutMs } : {}),
     ...(options?.signal ? { signal: options.signal } : {}),
     // L4-02: bound what the child can make us hold. The bound is upstream of the evidence cap, so a megabyte of test

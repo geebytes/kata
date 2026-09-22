@@ -42,6 +42,18 @@ describe('the declared test paths a pass may cite', () => {
             node: 'review', status: 'recorded', revisionId: brief.revisionId ?? '',
             createdAt: new Date().toISOString(), executedInFreshContext: true, contextNote: 'fixture',
             briefSha256: brief.sha256,
+            // R2: the judgement basis the gate derives its verdict from. The pass speaks for the criterion and the
+            // change surface; the `attempts` entry below is what carries the cited test path this file is about.
+            hypotheses: [{
+                id: 'h1',
+                claim: 'the cited test path is the one the task declares',
+                targets: ['AC-1', 'src/x.ts'],
+                method: 'permitted-test',
+                outcome: 'refuted',
+                // R8: the observation cites the file this fixture wrote (`src/x.ts`) — a real path at this revision, where
+                // the old citation-free `analysis` rule accepted a made-up analyzer name.
+                observation: { kind: 'source', ref: 'src/x.ts', observed: 'the cited path is declared' },
+            }],
             attempts: [{ hypothesis: 'h', method: 'm', outcome: 'refuted', evidence: `ran ${cited} — 3 passed` }],
             findings: [],
         });

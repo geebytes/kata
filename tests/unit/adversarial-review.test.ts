@@ -45,7 +45,6 @@ describe('independent adversarial review', () => {
             executedInFreshContext: true,
             contextNote: 'Subagent with no prior conversation.',
             briefSha256: adversarialBriefSha256(brief),
-            verdict: 'no_defect_found',
             attempts: [{ hypothesis: 'Boundary input is unhandled.', method: 'Read the guard and run the case.', outcome: 'refuted', evidence: 'The guard rejects it.' }],
             findings: [],
             ...overrides,
@@ -93,7 +92,6 @@ describe('independent adversarial review', () => {
 
     it('carries the defects it confirmed, so the node cannot pass over them', () => {
         const withDefects = record({
-            verdict: 'defects_found',
             findings: [
                 { id: 'F-1', taskId: 'adversarial-task', severity: 'blocking', message: 'The boundary case is unhandled.' },
                 { id: 'F-2', taskId: 'adversarial-task', severity: 'nit', message: 'Naming.' },
@@ -191,9 +189,10 @@ describe('the brief points at sealed evidence instead of asking for it again (M1
         expect(text).toMatch(/drops from \*re-derived\* to \*inspected\*/);
         // The narrow exception is stated, so a suite-global round is still possible.
         expect(text).toMatch(/Exception, narrow and explicit/);
-        // And the batched-execution line, which is the largest lever on the turn term.
-        expect(text).toContain('## How to spend a turn');
-        expect(text).toMatch(/one\*\* invocation/);
+        // The batched-execution line, which is the largest lever on the turn term — now stated under the budget section,
+        // because the section it used to live in was advice and this one is a contract (§3.2.2).
+        expect(text).toContain('## Budget — hard limits, not advice');
+        expect(text).toMatch(/fewer launches per observation, \*\*never fewer observations\*\*/);
         // A declared check is flagged; a matrix check is listed without the flag.
         expect(text).toMatch(/lint \| exit=0.*do not re-run it/);
         expect(text).not.toMatch(/matrix:AC-1:test \| exit=0.*do not re-run it/);
@@ -304,9 +303,9 @@ describe('the brief contract of §18.5', () => {
         // …and an unreadable path says nothing about a size rather than claiming zero.
         expect(text).toContain('src/gone.ts —');
         expect(text).not.toContain('src/gone.ts (~0 lines)');
-        // The cap, with its escape hatch named as a reproduction rather than as permission to keep going.
-        expect(text).toContain('at most six attempts');
-        expect(text).toMatch(/Exceed that only with a \*\*reproduction\*\*/);
+        // The cap, stated as a number in the envelope rather than as prose (§3.2.2), with its consequence named.
+        expect(text).toMatch(/\| hypotheses \| 6 \|/);
+        expect(text).toMatch(/record the remaining ones as `abandoned`/);
         // And the scope's reason is stated in the brief, so an unexamined area is never read as verified.
         expect(text).toContain('repair batch batch-1 closed on revision-0');
         expect(text).toMatch(/What this round does not cover/);
@@ -336,12 +335,11 @@ describe('§19: the brief requires promotion, not re-probing (§19.4)', () => {
         expect(text).toMatch(/zero-hit mutation is a probe failure,\s*\n?\s*not a finding/i);
         // 4. Promote and name the test.
         expect(text).toMatch(/Promote\*{0,2} anything permanent into the suite and \*{0,2}name the test/);
-        // 5. Batch, with the concretely actionable half (§18.5).
-        expect(text).toMatch(/merge several queries against the same file into one/);
+        // 5. Batch, with the concretely actionable half (§18.5) — kept even though the *cost* prose around it was cut:
+        // this is a method (fewer launches per observation), not a plea to spend less.
         expect(text).toMatch(/prefer one test invocation over several/);
-        // And the measurement that makes the batching instruction credible rather than a preference.
-        expect(text).toMatch(/57\.5 s/);
-        expect(text).toMatch(/cost is in process launches and unpacking, not in case\s*\n?\s*count/i);
-        expect(text).toMatch(/at most six attempts/);
+        expect(text).toMatch(/fewer launches per observation, \*\*never fewer observations\*\*/);
+        // The cap is now the envelope's number, not a sentence asking for restraint.
+        expect(text).toMatch(/\| hypotheses \| 6 \|/);
     });
 });

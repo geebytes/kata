@@ -1,5 +1,6 @@
 import { readWikiRecords } from '../wiki/store.js';
 import { type EvaluationMetrics } from './metrics.js';
+import { type CorpusScore } from './admissibility-corpus.js';
 
 export interface ReleaseGate {
   name: string;
@@ -45,6 +46,21 @@ export async function checkReleaseGates(
      * that shows a parallel run must say so where the reader is already looking for what happened.
      */
     concurrency?: number;
+    /**
+     * The verifier scored against the admissibility corpus, before and after the change (AC-5).
+     *
+     * Absent means nothing was scored, and the gate reports `skipped` rather than passing: the point of the comparison
+     * is that a cost win may not be certified from cost alone.
+     */
+    verifierBaseline?: CorpusScore;
+    verifierCurrent?: CorpusScore;
+    /**
+     * Declared verifier observations the corpus does not know (R6).
+     *
+     * A manifest naming a case id no corpus entry carries has measured nothing, so the gate fails and says which side was
+     * refused rather than scoring a zero denominator as a held line.
+     */
+    verifierObservationProblems?: string[];
   } = {},
 ): Promise<ReleaseGateResult> {
   const opts = {
@@ -132,6 +148,40 @@ export async function checkReleaseGates(
     details: `Wiki rejection rate: ${(metrics.wikiRejectionRate * 100).toFixed(1)}%`,
   };
   gates.push(wikiRejectionGate);
+
+  // AC-5: the optimization's acceptance condition. Cost is only allowed to fall while critical recall holds, so the
+  // comparison is a gate rather than a number in a report — a cheaper verifier that misses defects is the one failure
+  // mode that stays invisible without it.
+  const baseline = options.verifierBaseline;
+  const current = options.verifierCurrent;
+  // R6: a manifest that declares verifier observations naming no corpus case has not measured anything, and must not be
+  // reported as having held the line. Fail-closed and named, before the comparison below can pass on 0 >= 0.
+  const refused = options.verifierObservationProblems;
+  const recallGate: ReleaseGate = refused && refused.length > 0
+    ? {
+        name: 'verifier-critical-recall',
+        description: 'Critical defect recall >= baseline, and false-pass rate <= baseline',
+        pass: false,
+        details: `The declared verifier observations do not name corpus cases, so nothing was measured and the comparison cannot be made: ${refused.join('; ')}. Scoring them anyway reported a zero denominator as a held line (0 >= 0).`,
+      }
+    : baseline === undefined || current === undefined
+    ? {
+        name: 'verifier-critical-recall',
+        description: 'Critical defect recall >= baseline, and false-pass rate <= baseline',
+        pass: true,
+        skipped: true,
+        details: 'No verifier was scored against the admissibility corpus, so recall was not measured; the gate is skipped rather than passed on an assumption.',
+      }
+    : {
+        name: 'verifier-critical-recall',
+        description: 'Critical defect recall >= baseline, and false-pass rate <= baseline',
+        pass: current.criticalRecall >= baseline.criticalRecall && current.falsePassRate <= baseline.falsePassRate,
+        details: `Critical recall ${(current.criticalRecall * 100).toFixed(1)}% vs baseline ${(baseline.criticalRecall * 100).toFixed(1)}%; false-pass ${(current.falsePassRate * 100).toFixed(1)}% vs baseline ${(baseline.falsePassRate * 100).toFixed(1)}% (${current.cases} corpus cases).`
+          + (current.criticalRecall < baseline.criticalRecall
+            ? ' Recall fell: a cheaper verifier that misses defects is not an optimization.'
+            : current.falsePassRate > baseline.falsePassRate ? ' The false-pass rate rose above the baseline.' : ''),
+      };
+  gates.push(recallGate);
 
   // A skipped gate is neither a pass nor a failure: it is the report saying it does not know.
   const scored = gates.filter((gate) => gate.skipped !== true);
