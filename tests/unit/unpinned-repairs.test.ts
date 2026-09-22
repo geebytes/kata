@@ -1,0 +1,91 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+// AC-5. Two repairs were measured as **unpinned** on 2026-09-22: reverting each left the full suite completely green
+// (`docs/design/2026-09-21-adversarial-execution-control-optimization.md` §19). These are the tests that should have
+// existed. Neither is a new behaviour — both pin behaviour that is already correct, which is precisely what was missing.
+//
+// R1 mattered most: it was the `blocking` finding whose consequence was that a reviewer following the brief verbatim
+// could record nothing, and one real pass was destroyed that way. No test held the repair.
+
+describe('a repair that was measured as unpinned', () => {
+    it("R1: every field the issued brief prescribes is accepted by the writer", async () => {
+        const { initLayout } = await import('../../src/core/layout.js');
+        const { createTask } = await import('../../src/core/task.js');
+        const { createTaskRevision } = await import('../../src/workflow/revision.js');
+        const { buildAdversarialBrief, writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+
+        const root = await mkdtemp(join(tmpdir(), 'kata-unpinned-r1-'));
+        try {
+            await initLayout(root);
+            await createTask({ root, id: 'unpinned-r1', title: 'R1', ownedPaths: ['src/a.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+            await mkdir(join(root, 'src'), { recursive: true });
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
+            await createTaskRevision({ root, taskId: 'unpinned-r1', ownedPaths: ['src/a.ts'], checkIds: [] });
+
+            const brief = await buildAdversarialBrief(root, 'unpinned-r1', 'review');
+            const start = brief.text.indexOf('## Required result');
+            const fence = brief.text.indexOf('```json', start);
+            const close = brief.text.indexOf('```', fence + 7);
+            const template = JSON.parse(brief.text.slice(fence + 7, close)) as Record<string, unknown>;
+
+            // Build the record out of the template's own keys, so *any* field the template prescribes — including one the
+            // writer has since retired — has to be accepted. That is the round-trip that was never tested.
+            const values: Record<string, unknown> = {
+                node: 'review',
+                status: 'recorded',
+                revisionId: brief.revisionId,
+                executedInFreshContext: true,
+                contextNote: 'a context that did not author the change',
+                briefSha256: brief.sha256,
+                hypotheses: [{
+                    id: 'h1',
+                    claim: 'the acceptance criterion is only satisfied by the shape of the test',
+                    targets: ['AC-1'],
+                    method: 'source-read',
+                    outcome: 'refuted',
+                    observation: { kind: 'source', ref: 'src/a.ts', observed: 'the assertion exercises the behaviour' },
+                }],
+                attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' }],
+                findings: [],
+                // Supplied so that a `verdict` re-appearing in the template reddens for the *right* reason: the schema
+                // accepts this value, and the writer's retired-field refusal is what rejects the record. With an
+                // unknown-string placeholder the schema rejected it first, which would have hidden the retirement.
+                verdict: 'no_defect_found',
+                createdAt: '2026-09-22T00:00:00.000Z',
+            };
+
+            const prescribed = Object.keys(template);
+            expect(prescribed.length).toBeGreaterThan(0);
+            const record: Record<string, unknown> = {};
+            for (const key of prescribed) record[key] = values[key] ?? 'a field the writer does not know';
+
+            await expect(writeAdversarialRecord(root, 'unpinned-r1', record as never)).resolves.toBeDefined();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('R10: a corpus case whose reproduction requires a refusal does not answer "no defect found"', async () => {
+        const { admissibilityCorpus } = await import('../../src/eval/admissibility-corpus.js');
+        const corpus = admissibilityCorpus();
+
+        const guardCase = corpus.find((entry) => entry.id === 'guard-penalises-an-honest-inconclusive');
+        expect(guardCase).toBeDefined();
+        // Its reproduction requires the pass to be *refused*; the refusal is the guard working, so a correct verifier
+        // answers with the state that declines to certify. Declaring `no_defect_found` here contradicts the case's own
+        // text — which is what the case said before it was corrected, and nothing noticed when it was put back.
+        expect(guardCase!.reproduction).toMatch(/refus/i);
+        expect(guardCase!.expectedVerdict).toBe('inconclusive');
+
+
+        // Deliberately *not* generalised into "any case whose reproduction mentions a refusal". Two guard-false-negative
+        // cases (`guard-refuses-a-declared-test-citation`, `guard-refuses-a-refuted-with-no-observation`) describe a
+        // refusal that is itself the defect, on an otherwise clean revision — so `no_defect_found` is their correct
+        // answer. The general rule is false, and it was written here first and failed on exactly those two before being
+        // checked against the corpus.
+        expect(corpus.some((entry) => entry.id === 'guard-refuses-a-declared-test-citation')).toBe(true);
+    });
+});

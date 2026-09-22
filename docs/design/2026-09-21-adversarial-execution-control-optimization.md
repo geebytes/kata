@@ -1432,7 +1432,7 @@ symbols, 19 declared literal lists. Cost: **no model call, about one second.**
 **exactly once**, in its own declaration. The list is not marginal — it includes modules this change touched:
 
 ```
-deleteWikiRecord      readWikiRecordStrict   validationRevisionId   provenance-gate
+deleteWikiRecord      readWikiRecordsStrict  validationRevisionId   provenance-gate
 readBriefFile         changeRecordHash       computePathDigest      revision
 resolvedCheckId       describeFinding        validateBatchRecord    reopenObligation
 writeAcceptanceMatrixMigration  isLegacyTask  commandsForPlatform   migrationsPath
@@ -1440,9 +1440,13 @@ recoveryPath  taskProfilePath  evidenceArchiveDir  evidenceFilePath  wikiCandida
 llmwikiDir  handoffBaselinePath  subagentProgressPath  cometCompatibilitySnapshot
 ```
 
-A further **15** are referenced only by tests (`splitOwnedPaths`, `reviewScopeVerdict`, `isAdmissibleObservationKind`,
-`claimsHash`, the eval fixtures…) — production code with no production consumer.
+A further **15** were reported then as referenced only by tests (`splitOwnedPaths`, `reviewScopeVerdict`,
+`isAdmissibleObservationKind`, `claimsHash`, the eval fixtures…).
 
+> **Corrected 2026-09-22, when the check was rebuilt.** The 24-name union stands — each name was re-verified by whole-repo
+> search — but the orphan/test-only **split was mismeasured**: re-running the same search finds a test reference for 38 of
+> the 40 findings, not 15. The union is what the acceptance criterion asserts; the split is reported as a correction rather
+> than quietly kept.
 This is the check earning its place: it is free, it is deterministic, and it found a real and previously unlisted set.
 
 ### 17.2 Check B — declared members nothing consumes
@@ -1531,6 +1535,9 @@ rather than counted as a detection.
 
 **Of the 30 valid mutations, 15 left the suite completely green.**
 
+> **Withdrawn — see §17.9.** This figure does not reproduce; the re-measurement gives 0 decorative on this surface. The
+> guard *set* below stands and is asserted by a test; the *classification* is withdrawn.
+
 `decorative = 15/30` — **half the refusal guards on this change's declared surface can be removed without a single test
 noticing.** "Decorative" means exactly one thing here: *no test exercises that refusal*, so its behaviour can regress
 silently. It does not mean the refusal is unreachable.
@@ -1569,10 +1576,20 @@ found by a check that costs no tokens.
 | B (declared, unconsumed) | R5 only; parser needs rewriting first | ~1 s, **0 tokens** |
 | **C (mutation, prospective)** | **15 unpinned refusals found on this surface** | ~10 min local test time, **0 tokens** |
 
-The withdrawal in §17.3 stands — A and B are not the majority — but the conclusion inverts at check C: it *does* reach the
-R-class defect shape, it needs no seeds, and its cost is wall-clock rather than tokens. **That is the axis that matters**,
-and it is the first measurement in this line of work where a cheap instrument demonstrably reaches a defect class the
-expensive pass was being paid for.
+> **Withdrawn 2026-09-22, later the same day.** The `15/30` decorative figure **does not reproduce**. Re-measuring the same
+> four-file surface with the same check, now that the work has been merged and committed, gives **31 guards, 29 noticed,
+> 1 collapse, 0 decorative, 557 s** — and every one of the 15 sites named in §17.8 comes back *noticed* individually. What
+> reproduces is the **enumeration** (the guard set); what does not is the classification.
+>
+> The likely cause is a defect in that run's harness, not in the code: it is the same family as the two failure modes
+> already recorded in §17.5 — a mutation that reddens many files at once reading as "detected", and a partial mutation
+> leaving the suite green reading as "blind". A third mode was not considered at the time: **a green suite that means the
+> harness never ran the tests it thought it ran**. §17.5's rule generalises again — an assertion that fails, or passes, for
+> a reason you did not predict is reporting on your instrument.
+>
+> **What survives in §17.9:** check A and check B, both reproducible and re-run against the merged tree, and the mutation
+> check as a *tool* — it costs wall-clock rather than tokens and it found one collapsed mutation today. What does not
+> survive is the claim that a majority of guards on this surface are unpinned.
 
 Still untested, and this is E2's job: whether repairing these 15 (or a sample of them) reduces what the expensive pass
 finds. The seeds from §17.4 are that experiment's labelled benchmark.
