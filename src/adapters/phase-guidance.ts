@@ -505,6 +505,16 @@ Do this:
 2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
    conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
    do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
+
+   Take the brief from the packet, which carries the request *and* the brief it names, so the session's input and the
+   receipt's binding cannot come from two different places:
+   \`\`\`bash
+   kata-cli adversarial brief --change <task-id> --node ${node} --emit-request <packet.json>
+   \`\`\`
+   The platform cannot stop a round at the Nth tool call or the Nth output byte, and kata does not claim it can: on
+   this route do **not** report \`budget_enforced\` among the receipt's capabilities. Wall clock and the tool allowlist
+   are enforceable; a mid-flight tool budget is not, and a capability listed without the means to provide it is the
+   defect this whole mechanism exists to remove.
    every claim, to run the attempts, and to return one JSON object.
 3. Record what came back, unchanged — **and report how long the pass took**. Two things write as the pass proceeds, so a
    pass that dies mid-run keeps its work rather than taking all of it down:
@@ -519,11 +529,18 @@ Do this:
    kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json>
    \`\`\`
    Telemetry is **not** typed in. \`--elapsed-ms\` and \`--tool-uses\` are retired: a duration the caller states is an
-   assertion about itself, which is the same reason the fresh-context boolean stopped being a proof. The execution
-   receipt reports wall time, tool calls, output bytes and truncations, and it binds to the request kata issued — so it
-   is the only telemetry source that can be checked. Where a host cannot produce a receipt, telemetry is simply
-   unreported: \`kata-cli adversarial status --change <task-id>\` then says the measurement is unavailable rather than
-   showing a number nobody can verify.
+   assertion about itself, which is the same reason the fresh-context boolean stopped being a proof. Telemetry comes
+   from the execution receipt, and the receipt arrives **on its own channel**:
+   \`\`\`bash
+   kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json> --receipt-file <receipt.json>
+   \`\`\`
+   A \`receipt\` inside the reviewer's own result file is refused: a receipt the reviewed party writes is that party
+   writing its own provenance. Write the figures the platform actually reported, **and leave the rest \`null\`** — an
+   unmeasured figure is not a zero, and \`kata-cli adversarial status --change <task-id>\` names which ones were not
+   measured. A subagent round returns tool uses, tokens and wall clock; it does not return output bytes or truncations,
+   so those are the fields that are usually unmeasured rather than the fields that are usually zero. Where a host
+   cannot produce a receipt at all, telemetry is simply unreported: status says the measurement is unavailable rather
+   than showing a number nobody can verify.
 4. **Put the brief's hash on the result**, whatever kind of round it was. \`record\` binds the pass to the brief kata
    **issued** — a hash kata never handed out is refused, and so is one issued for another revision — and it takes the
    round's scope from that brief, so you never pass a \`--since\` and never hand-write \`scope\`. For a delta brief the gate
@@ -548,8 +565,11 @@ kata-cli adversarial waive --change <task-id> --node ${node} --reason "<why this
 \`\`\`
 
 Kata cannot start a subagent or inspect the host's session: it renders the brief, checks the result against the revision
-and that brief, and holds the gate. Who ran it, in which context, is reported by the executing agent in
-\`executedInFreshContext\`/\`contextNote\` — the same way host model confirmation is reported.
+and that brief, and holds the gate. **Who ran it comes from the receipt**, not from the agent's word: \`executor.platform\`
+is copied into the record's \`executedBy\` for display, and \`executedBy\` written into the result body is refused the same
+way a body-carried receipt is. That field is provenance only — the gate never reads it, because capability is the
+contract — and \`adversarial status\` reports \`provenanceMissing\` for a receipt that did not record where it ran, so a
+round whose figures passed through another session cannot read like one measured locally.
 
 `;
 }
