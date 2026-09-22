@@ -320,3 +320,87 @@ them deliverable before H1.
 2. **Whether to add an external trust anchor** for genuine unforgeability. Out of scope here; needs its own design.
 3. **Whether `executedBy` should instead be removed.** Recommended against: with K1 it has a real producer, and
    "which host produced this" is worth being able to answer.
+
+---
+
+## 10. Host preconditions for the subagent route — measured by the b4-A probe
+
+The recommended realisation (§7) is a subagent round. A mechanics probe on this host — a synthetic one-acceptance change,
+one real subagent round — established three preconditions and one naming defect. None of them is a judgment about the code
+under review; each is a measured property of the environment a round runs in.
+
+### 10.1 The permission system cannot express "this round is read-only"
+
+`/data/work/pi/extensions/pi-permission-system/config.json`:
+
+| Setting | Value |
+|---|---|
+| `permission."*"` | `allow` |
+| `permission.path."*"` | `allow` |
+| `permission.bash."*"` | `allow` (with `mkdir`, `mv`, `chmod`, `curl` … also allowed) |
+| `permission.external_directory."*"` | `ask` |
+
+So a write to an ordinary path triggers **no request at all**. The permission system authorises **paths and command
+strings**, not **operation classes for a role**: there is no notion of "this session is a reviewer". It is also binary —
+and in headless operation `ask` degrades to a hard deny, because there is no approver.
+
+A global `deny` would not substitute. It would refuse every session including the author's; it would forbid the reviewer
+from re-running the declared checks, because a test runner writes artifacts and caches; and worst, the guarantee would then
+live in a **mutable local config file**. "The reviewer was read-only" would become a statement about this machine's
+settings rather than about this round — the same class of defect as `executedInFreshContext`: provenance from the wrong
+place, and nothing a receipt could attest.
+
+**The allowlist and the permission system are different axes.** The allowlist answers *which tools this call has*, a fact
+about the round carried in `argv`. Permissions answer *which path or command may be touched*, a fact about the machine.
+Only the first can express a role.
+
+### 10.2 This host's subagent facility has no tool allowlist
+
+`Agent` exposes `subagent_type`, `model`, `max_turns`, `isolation` and `inherit_context` — and no tool restriction.
+`Explore` carries `bash`, so a subagent round here **cannot honestly claim `read_only_fs`**; a probe that claimed it while
+running under `Explore` would attest a capability the session does not have.
+
+The consequence is the honest one: the review node requires `['fresh_context', 'read_only_fs']`
+(`requiredCapabilitiesForNode('review')`), so on this host the subagent route **cannot certify a strict review**. The gate
+refuses, correctly. This is also why a strict change can sit at `review_gate` with no way forward except the
+declared-command route (§7, option A) or an explicitly recorded waiver.
+
+### 10.3 The packet must live inside the workspace root
+
+Measured: reading the packet from a subagent produced `external_directory_read ... requires approval, but no interactive UI
+is available` — a hard deny. `/tmp` is not in the trusted set and `external_directory` is `ask`.
+
+So `--emit-request <path>` must be given a path **inside the workspace root**, or the packet must be inlined into the
+prompt. The brief does not state a workspace root, which is right for a real round — the reviewer's cwd is the repository —
+but it means a probe whose fixture lives elsewhere cannot be reviewed at all. The subagent did the right thing with it:
+reported the blocker, and refused to fabricate a result whose schema it could only learn from the brief it could not read.
+
+### 10.4 `read_only_fs` names the wrong thing
+
+The design requires both that the reviewer cannot modify the artifact **and** that it may re-run the declared checks — and
+a test runner writes: artifacts, caches, and a stray marker file this line of work already had to exclude from the content
+snapshot. The literal reading of the capability name therefore forbids something the design requires.
+
+The criterion should be **authorship**, not syscalls:
+
+> `read_only_fs` — the session cannot author or modify the change, its tests or its evidence. Incidental writes produced by
+> running a declared check do not violate it.
+
+This matters because the current name misleads an implementer into building more than is needed. With `bash` granted, the
+only route left is a kernel-level read-only mount, which is how a bespoke supervisor process came to be built for this in
+the first place.
+
+### 10.5 What the probe verified, and the one thing it could not
+
+Verified end to end on a synthetic change: `open --bootstrap-file` (one acceptance row, `warnings: []`);
+`adversarial brief --emit-request` (the packet self-bound, budget and acceptance contract carried, and — after the
+note-example fix — no retired telemetry field anywhere in the brief); `adversarial status` reporting
+`requiredCapabilities`, `receipt: "absent"` and the legacy path per node; and **a refusal at every step that could not be
+satisfied**, including `record` refusing `brief_mismatch` because no revision is sealed, and writing nothing.
+
+Not verified: the receipt channel through `record`, because `record` refuses before it writes when no revision is sealed.
+The fields added for it — `unmeasuredTelemetry`, `executedBy` filled from the receipt, `provenanceMissing` — are covered by
+unit tests, and that is said plainly rather than implied by a green run.
+
+The cost of a failed round, for the record: **186 s / 41 tool uses / 1.2 M tokens to zero findings**, because the brief
+never reached the reviewer. A round that fails on its input costs like a round.
