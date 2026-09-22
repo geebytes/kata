@@ -237,6 +237,41 @@ Surface it through the eval report so the comparison is published, not computed 
 
 Not this repository. Recorded so the boundary is unambiguous and so a second host can follow it.
 
+> **Corrected 2026-09-22, by measurement: the recommended realisation is a `subagent` round, not a supervisor process.**
+>
+> This section was written on an assumption — that a subagent's telemetry could only be its own report, which is the
+> self-report the receipt exists to replace. Measured on this host, twice: a subagent round returns
+> `Agent completed in 20.5s (2 tool uses, 52.7k token)` to its **caller**, and the count tracked the activity exactly
+> (two `read` calls, nothing else). The number is the platform's accounting, not prose the reviewer wrote.
+>
+> What that buys, against the supervisor route in the steps below:
+>
+> | | supervisor process | **subagent round** |
+> |---|---|---|
+> | `fresh_context` | the launcher remembering `--no-session --no-context-files --no-extensions` | **the platform creates the session** |
+> | `read_only_fs`, `bounded_tools` | the launcher writing the `--tools` allowlist correctly | the platform's tool allowlist |
+> | telemetry | the launcher parsing an event stream | **the platform's completion report** |
+> | artifacts needed | supervisor + adapter + reference command | **none** |
+>
+> The node's required set is `['fresh_context', 'read_only_fs']` (`requiredCapabilitiesForNode('review')`), which a
+> subagent round satisfies directly — the closure is exact rather than approximate. This is also how a coding agent
+> normally works, which is not a small consideration for a mechanism a human has to operate.
+>
+> **Residual weakness, stated rather than hidden.** The numbers reach the receipt through the **calling session**, because
+> the caller is what writes the file: the telemetry is relayed from the platform by the author's agent. Mitigations, in
+> order of strength: have the receipt carry the platform's identifiers (child session id, the completion line) so an
+> auditor can cross-check it against the platform's own record; and note that capability *names* cannot be inflated at all
+> — the gate checks them — so the surface a relaying session can distort is numbers, not capabilities.
+>
+> **`budget_enforced` is the one capability a subagent round does not get for free.** The caller can bound wall clock
+> (the launch takes a timeout) and tools, but it cannot stop a round at the Nth tool call or the Nth output byte; those are
+> checkable after the fact, not enforceable during. It must therefore not be claimed, and no node that requires it may be
+> certified this way — which is the existing fail-closed behaviour, not a new rule.
+>
+> **What remains valid.** `kata-cli adversarial execute` and `host/executor.ts` stay as the **declared-command** route
+> (option A): they are what a project declares when it wants an out-of-process round with a real event stream, and the
+> contract is unchanged either way. They are a supported alternative, no longer the recommended realisation.
+
 A conforming executor, for one host:
 
 1. Reads the request emitted by K2.
@@ -278,8 +313,10 @@ them deliverable before H1.
 
 ## 9. Open decisions
 
-1. **Where the host executor lives** — project-local (`.pi/extensions/`) or global (`~/.pi/agent/extensions/`). Affects
-   who can use it, not the contract.
+1. **Where the executor lives** — project-local (`.pi/extensions/`) or global (`~/.pi/agent/extensions/`). Affects
+   who can use it, not the contract. **Mostly answered by the correction above**: on the recommended subagent route there
+   is no artifact to place — the round is a platform facility the calling agent invokes — so this decision narrows to the
+   optional declared-command route.
 2. **Whether to add an external trust anchor** for genuine unforgeability. Out of scope here; needs its own design.
 3. **Whether `executedBy` should instead be removed.** Recommended against: with K1 it has a real producer, and
    "which host produced this" is worth being able to answer.
