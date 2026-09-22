@@ -232,8 +232,8 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
  * accepted and written into the progress record — measured, then reproduced as a failing test. A second encoding of the
  * same self-report is the same defect, so the names and the remedy come from one place and both channels refuse them.
  */
-const RETIRED_TELEMETRY_FLAGS = ['--elapsed-ms', '--tool-uses'] as const;
-const RETIRED_TELEMETRY_FIELDS = ['elapsedMs', 'toolUses'] as const;
+export const RETIRED_TELEMETRY_FLAGS = ['--elapsed-ms', '--tool-uses'] as const;
+export const RETIRED_TELEMETRY_FIELDS = ['elapsedMs', 'toolUses'] as const;
 const TELEMETRY_RETIREMENT_REMEDY =
     'telemetry is reported by the execution receipt, which binds to the issued request and cannot be typed in. Record the receipt instead of a duration, or leave telemetry unreported.';
 

@@ -604,8 +604,8 @@ You do **not** have to hold everything until the end. A pass that dies mid-run k
   \`\`\`bash
   kata-cli adversarial note --change <task-id> --node ${input.node} --from-file <line.json>
   \`\`\`
-  (\`{"hypothesis": "…", "method": "…", "outcome": "refuted|confirmed|inconclusive", "toolUses": <calls this batch took>}\`)
-  — the count is what makes a costly hypothesis visible *while the round runs*, which is when the decision to stop is made
+  (\`{"hypothesis": "…", "method": "…", "outcome": "refuted|confirmed|inconclusive"}\`)
+  — the batch is what keeps a crashed round from taking all of its work down with it
 - report a finding the moment you confirm it, rather than in the final file:
   \`\`\`bash
   kata-cli adversarial finding add --change <task-id> --node ${input.node} --from-file <finding.json>

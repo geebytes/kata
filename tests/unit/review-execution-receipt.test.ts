@@ -8,7 +8,7 @@ import { createTaskRevision } from '../../src/workflow/revision.js';
 import { adversarialGateFor, issueAdversarialBrief, writeAdversarialRecord } from '../../src/quality/adversarial.js';
 import { adversarialBriefsDir } from '../../src/core/layout.js';
 import { requiredCapabilitiesForNode, verifyExecutionReceipt, type ReviewExecutionReceipt } from '../../src/quality/review-execution.js';
-import { runAdversarialCommand } from '../../src/cli/ops.js';
+import { RETIRED_TELEMETRY_FIELDS, runAdversarialCommand } from '../../src/cli/ops.js';
 
 /**
  * §3.2.1: fresh context is a **capability**, not an assertion.
@@ -499,6 +499,31 @@ describe('the receipt records its provenance', () => {
             await expect(readFile(recordPath, 'utf8')).rejects.toThrow();
         } finally {
             process.chdir(before);
+        }
+    });
+});
+
+/**
+ * The brief must not prescribe a shape its own write path refuses.
+ *
+ * This is the R1 defect class — "the brief mandates what `record` rejects" — one level over: R1 removed `verdict` from the
+ * result template, and the note example kept prescribing `toolUses` long after the CLI retired it. A reviewer following the
+ * brief verbatim would have been refused. Found by reading a real emitted brief, not by a test.
+ *
+ * The assertion is driven by the CLI's own list rather than a literal here, so the two cannot drift apart again — which is
+ * how this survived in the first place.
+ */
+describe('the brief and the write path agree on retired telemetry', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('never asks the pass for a field the write path refuses', async () => {
+        const { brief } = await issued();
+        expect(RETIRED_TELEMETRY_FIELDS.length).toBeGreaterThan(0);
+        for (const field of RETIRED_TELEMETRY_FIELDS) {
+            // Quoted, so this catches the JSON key in an example rather than any prose mention of the name.
+            expect(brief.text).not.toContain(`"${field}"`);
         }
     });
 });
