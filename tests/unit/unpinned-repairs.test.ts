@@ -276,3 +276,62 @@ describe('a disposition on a finding in the adversarial record reads back', () =
         }
     }, 60000);
 });
+
+/**
+ * `kgs3-f2`, claim two: the guard fired **after** the write had landed, so its message — "the write is refused rather than
+ * left for the next reader to discover" — described something it did not do. The record was written and then the command
+ * threw, leaving a bad record on disk and a caller who believed nothing had happened.
+ *
+ * The property that distinguishes a pre-write refusal from a post-write detection is what this asserts: **the file is
+ * byte-identical afterwards**. A disposition the schema rejects must leave the record untouched, not repaired-in-place and
+ * then reported.
+ */
+describe('a refused disposition leaves the record untouched', () => {
+    it('does not write the record it cannot validate', async () => {
+        const { mkdtemp, mkdir, rm, readFile } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-prewrite-'));
+        try {
+            const { initLayout } = await import('../../src/core/layout.js');
+            const { createTask } = await import('../../src/core/task.js');
+            const { createTaskRevision } = await import('../../src/workflow/revision.js');
+            const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+            const { adversarialReviewPath } = await import('../../src/core/layout.js');
+            const { applyDisposition } = await import('../../src/quality/finding-disposition.js');
+
+            await initLayout(root);
+            await mkdir(join(root, 'src'), { recursive: true });
+            await createTask({ root, id: 'prewrite', title: 'prewrite', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+            await createTaskRevision({ root, taskId: 'prewrite', ownedPaths: ['src/x.ts'], checkIds: [] });
+            await writeAdversarialRecord(root, 'prewrite', {
+                node: 'review',
+                status: 'recorded',
+                revisionId: 'revision-one',
+                manifestHash: 'hash-one',
+                executedInFreshContext: true,
+                contextNote: 'a fixture',
+                createdAt: '2026-09-23T01:00:00.000Z',
+                hypotheses: [],
+                attempts: [],
+                findings: [{ id: 'kept-untouched', taskId: 'prewrite', severity: 'minor', message: 'a minor finding' }],
+            } as never);
+
+            const path = adversarialReviewPath(root, 'prewrite', 'review');
+            const before = await readFile(path, 'utf8');
+
+            // A disposition no schema accepts. The write must not land at all.
+            await expect(applyDisposition(root, 'prewrite', 'adversarial-review', 'kept-untouched', {
+                disposition: 'not-a-disposition' as never,
+                reason: 'invalid on purpose',
+                by: 'user',
+                at: '2026-09-23T03:00:00.000Z',
+            })).rejects.toThrow();
+
+            const after = await readFile(path, 'utf8');
+            expect(after).toBe(before);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60000);
+});

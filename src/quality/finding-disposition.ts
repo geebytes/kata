@@ -222,7 +222,8 @@ export async function applyDisposition(
     let found = false;
     await mutateTaskArtefact(root, taskId, path, async () => {
         const raw = JSON.parse(await readFile(path, 'utf8')) as { findings?: Array<Record<string, unknown>> };
-        for (const finding of raw.findings ?? []) {
+        const next = JSON.parse(JSON.stringify(raw)) as { findings?: Array<Record<string, unknown>> };
+        for (const finding of next.findings ?? []) {
             if (finding.id !== findingId) continue;
             found = true;
             finding.disposition = event.disposition;
@@ -230,7 +231,13 @@ export async function applyDisposition(
             if (event.by !== undefined) finding.dispositionBy = event.by;
             finding.dispositionAt = event.at;
         }
-        return `${JSON.stringify(raw, null, 2)}\n`;
+        // **Before** the write, not after it (kgs3-f2, claim two). The guard this replaces ran after `mutateTaskArtefact`
+        // had already replaced the file, so its message — "the write is refused rather than left for the next reader to
+        // discover" — described something it did not do: the record was written and then the command threw. Validating the
+        // record that *would* be written is the pattern the matrix command already uses, and it can honestly refuse.
+        const { validate } = await import('../core/schema.js');
+        validate(source === 'review' ? 'review' : 'adversarial-review', next);
+        return `${JSON.stringify(next, null, 2)}\n`;
     });
     // kgs-f1, the blocking finding, and it is the reason this line exists: `routed` was added to the type and the command
     // but to no schema's enum, and this writer validated nothing — so routing a finding left the record schema-invalid, and
@@ -241,9 +248,10 @@ export async function applyDisposition(
         const readable = await readTrackedFindings(root, taskId).catch(() => null);
         if (!readable || !readable.some((entry) => entry.id === findingId && entry.disposition === event.disposition)) {
             throw new Error(
-                `Dispositioning '${findingId}' as '${event.disposition}' wrote a record this platform cannot read back. `
-                + 'The disposition is not accepted by the record schema, or the write did not land — either way the record is '
-                + 'now unreadable, so the write is refused rather than left for the next reader to discover.',
+                `Dispositioning '${findingId}' as '${event.disposition}' validated before the write but does not read back `
+                + 'afterwards. The record passed the schema and the write landed, so this is not a rejected disposition — it '
+                + 'means something else about the record changed underneath the write, and it is reported rather than '
+                + 'swallowed.',
             );
         }
     }
