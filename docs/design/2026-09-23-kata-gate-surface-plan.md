@@ -650,3 +650,18 @@ dated 2020 or 2099 matches neither. If so the fixture must make the envelope's `
 
 **Stated as a hypothesis rather than a conclusion, because the next attempt should test it first rather than fix a fourth
 fixture detail.** What is certain: the assertion never reached the offered list, so nothing about the clause was measured.
+
+### The hypothesis was falsified, and the evidence points somewhere sharper
+
+Tested rather than assumed: `buildAdversarialBrief` reads evidence with a plain `readRecordedEvidence(root, taskId)` — **no
+freshness filter anywhere**, so `checkFreshness` is not what emptied the list. Hypothesis falsified.
+
+What the measurement points at instead: the message the assertion read is `- (nothing is sealed yet, so there is …)`, which is
+the **no-delta** branch of that section. It renders when `sinceAt` is undefined, and `sinceAt` comes from `input.delta?.sinceAt`
+— so the brief the fixture built was **not a delta brief**, and the withholding branch never ran. The `since` argument is
+therefore not enough on its own: the fixture's base revision has to be one the delta derivation accepts, and the builder
+already refuses to guess (`delta_unavailable` when a revision predates per-path digests).
+
+So the next attempt starts by asserting the precondition rather than the behaviour — `brief.delta` (or the reported scope) must
+say delta — and only then asserts which envelopes are offered. That is the same rule this clause has now taught three times in a
+row: **an assertion that fails for a reason you did not anticipate reports your instrument, not your subject.**
