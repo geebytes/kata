@@ -2470,7 +2470,20 @@ export async function adversarialGateFor(
         const sealedBasis = sealedForRevision
             ? recordSurfaceBasis(sealedRecord, revision?.pathDigests ? Object.keys(revision.pathDigests) : null)
             : null;
-        const changeSurface = sealedForRevision
+        // AC-3. A delta round's remit is the scope kata issued for it, read from the issued brief — kata's own declaration,
+        // not the reviewer's, which is what keeps the remit falsifiable.
+        //
+        // Measured before this: the brief declared one surface and the gate demanded another. A pass holding exactly the
+        // declared delta was refused for a path the brief never named (`wcc3-f10`), and the two derivations only ever
+        // agreed by accident. This is the third source for one concept and the only one the gate never read.
+        const issuedDelta = revisionId
+            ? (await issuedBriefPool(root, taskId, node, { revisionIds: [revisionId] })).accepted
+                .map((entry) => entry.scope ?? entry.ir?.scope)
+                .find((scope) => scope?.kind === 'delta')?.changedPaths ?? null
+            : null;
+        const changeSurface = issuedDelta
+            ? issuedDelta
+            : sealedForRevision
             ? (sealedBasis === 'first-revision' ? [] : (sealedRecord?.changedPaths ?? []))
             // No record for this revision: a revision sealed before content identity existed has only the ownership table
             // to offer. Kept so such a task still gates at all.
