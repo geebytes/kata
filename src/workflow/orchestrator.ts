@@ -808,7 +808,7 @@ async function cmdBuild(
         // **The revision, which no caller passed.** Without it the carried-forward batch had no base, the batch a later round
         // reads as the last closed one yielded no delta, and every round reviewed the whole surface instead of the repair —
         // measured at 2.5-2.7x the necessary cost.
-        const closure = await closeBatchAfterSeal(root, taskId, revision?.id).catch(() => null);
+        const closure = await closeBatchAfterSeal(root, taskId).catch(() => null);
         if (closure && 'refused' in closure && closure.refused) {
             batchClosure = {
                 closed: false,
