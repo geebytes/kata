@@ -203,3 +203,19 @@ at the end. Until one exists, `closure-gate` cannot be sealed — and it is not 
 **Also measured, and fixed in the same pass**: `matrix set --command` and `--selector` are separate branches, so supplying both
 applies only the first. That is why the command correction landed and the selector correction did not — and it is the reason
 the two corrections have to be issued one at a time.
+
+## A read-only reviewer cannot persist as it goes — the two requirements are in tension
+
+Measured on this change's own independent round: `progress lines 0` thirteen minutes in, with 2 MB of output, because the
+`kata-reviewer` agent type has `tools: read, grep, find, ls` — **no bash** — and persisting a note means running
+`kata-cli adversarial note`. So the instruction "persist as you go, so a round that dies mid-way keeps what it established" was
+**impossible to follow** with the tool set that makes `read_only_fs` constructive.
+
+That is not a bug in either half. **Constructive read-only means the reviewer cannot write, and incremental persistence means
+something must write.** The resolution is that the two cannot both belong to the reviewer: either the **orchestrator** persists
+on its behalf from what it returns, or the round accepts that a crash loses everything and the brief stops asking for
+incremental notes.
+
+Recorded because the tension will be met again by anyone who reads "read-only reviewer" and "persist as you go" in the same
+brief, and because the honest current state is: **a crashed `kata-reviewer` round leaves nothing, and the instruction telling it
+otherwise is noise it cannot act on.**
