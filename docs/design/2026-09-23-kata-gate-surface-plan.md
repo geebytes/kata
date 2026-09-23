@@ -515,3 +515,46 @@ loop can be false, and the same finding returns in the next round.
    loop must either converge or be **recorded as not converged**. Silence is what makes it unbounded.
 3. **Measure the loop** — record the trajectory (findings per round, the share of them about the previous repair, tokens per
    round) so "this is round five" is a number rather than a discovery. Today it is a directory listing.
+
+## Why our review rounds cost more instead of less, and the two levers that reverse it
+
+In ordinary practice a review round gets **cheaper** as the change matures, and the reasons are specific rather than
+cultural:
+
+| ordinary practice | why it gets cheaper |
+|---|---|
+| round 2 reviews **the diff** | the artefact under review **shrinks** to what round 1's repairs touched |
+| the reviewer **keeps its knowledge** of the module | the cost of understanding is paid **once** |
+| findings attach to **lines** in a tracker | the author works from the comment, not from a re-derivation |
+
+**Our flow inverts both halves of that, by design and by instruction:**
+
+| | ours | consequence |
+|---|---|---|
+| what round 2 reviewed | **the whole change surface**, and my prompt told it to examine all ten selectors | it read the large files early (`adversarial.ts` is 2,400+ lines) and carried them for eighty turns |
+| the reviewer's knowledge | **destroyed by design** — a fresh context per round is what independence *means* | every round re-acquires understanding from scratch |
+| the findings | **prose** (29.5% of the brief) | the repairer re-reads code to re-derive the mechanism |
+| the transcript | **accumulates for 86 turns**, `cacheRead 0` | 48× replay: 9.85M input against a 205K final context |
+
+So the measured 2.82M → 9.88M is not a platform anomaly and not a model property. **It is what happens when the artefact
+under review grows while the reviewer's knowledge is discarded.**
+
+### The two levers, both already named in the design and neither built
+
+1. **Review the delta, not the surface.** The delta machinery exists — `since`, `changeSurfaceAgainstWorkspace`, the delta
+   brief — and round 2 did **not** use it: the brief reported `no repair batch has closed, so there is nothing to narrow
+   against`. But a repair batch **had** closed: the round reviewed a revision containing round 1's repairs, which is exactly a
+   delta. **This is the single largest lever**, because it bounds the artefact instead of letting it grow with each round.
+2. **Externalise the facts, not the conclusions.** The retrieval layer of §3.3 — content-addressed slices, the evidence graph,
+   per-hypothesis hydration — was classified host-side and never built. It is what stops the transcript growing: a file read in
+   round 1 is not re-read in round 2, because its hash is known.
+
+Plus the one change already landed: **findings carry a falsifier rather than prose**, so a repair goes straight to making a
+check red instead of re-deriving why the defect exists. That cuts turns, which is the term that dominates.
+
+### The measurable target
+
+Round 2: 86 turns at 114,559 average input. If the round read the delta (a handful of files rather than twenty) and the facts
+were externalised so the context plateaued around 35K instead of climbing to 205K, the same round would cost roughly
+86 × 35K ≈ **3M rather than 9.9M** — back to round 1's level, and **decreasing** from there as the delta stays small. That is
+the shape ordinary practice has, and it is reachable with machinery this design already describes.
