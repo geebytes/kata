@@ -1482,6 +1482,28 @@ export async function candidateFreezeHashFor(root: string, taskId: string, node:
  * attempts and seven discharged hypotheses was refused with that sentence, which sends the reader to fix something that is
  * not broken while the actual failing conjunct stays hidden. `detail` is computed by the predicate and was simply dropped.
  */
+/**
+ * Which derivation a record's surface came from: recorded when the record says, inferred when it predates the field.
+ *
+ * The inference is exact rather than a guess. A first revision's surface is produced by diffing against nothing, so it
+ * covers **every path the revision has**; that is what makes it an identity rather than a change. The test is therefore a
+ * superset, not equality — measured on `wiring-coverage-check`, the record reported 669 paths against a revision holding
+ * 660, because the surface also carries git drift on top of the identity.
+ *
+ * Returns null when the two cannot be compared, so a record that cannot be classified keeps the behaviour it had rather
+ * than acquiring a basis nobody established.
+ */
+export function recordSurfaceBasis(
+    record: { surfaceBasis?: 'content-diff' | 'first-revision'; changedPaths?: string[] },
+    revisionPaths: string[] | null,
+): 'content-diff' | 'first-revision' | null {
+    if (record.surfaceBasis) return record.surfaceBasis;
+    const surface = record.changedPaths ?? [];
+    if (!revisionPaths || revisionPaths.length === 0 || surface.length === 0) return null;
+    const present = new Set(surface);
+    return revisionPaths.every((path) => present.has(path)) ? 'first-revision' : 'content-diff';
+}
+
 export function adversarialReasonFor(reason: AdversarialGateReason | undefined, detail?: string | null): string {
     switch (reason) {
         case 'missing': return 'No independent adversarial pass has been recorded for this revision.';
@@ -2444,9 +2466,12 @@ export async function adversarialGateFor(
         // A first revision has no derivable *change* surface — its identity is the tree — so its remit is the criteria the
         // task declares, which the predicate enforces through `criterionIds`. The surface stays a reported fact on the
         // record. Where content identity **can** define a change (a later revision), nothing is relaxed.
-        const sealedSurface = sealedRecord?.revisionId === revisionId ? sealedRecord.changedPaths : null;
-        const changeSurface = sealedRecord?.revisionId === revisionId
-            ? (sealedRecord.surfaceBasis === 'first-revision' ? [] : sealedRecord.changedPaths)
+        const sealedForRevision = sealedRecord?.revisionId === revisionId;
+        const sealedBasis = sealedForRevision
+            ? recordSurfaceBasis(sealedRecord, revision?.pathDigests ? Object.keys(revision.pathDigests) : null)
+            : null;
+        const changeSurface = sealedForRevision
+            ? (sealedBasis === 'first-revision' ? [] : (sealedRecord?.changedPaths ?? []))
             // No record for this revision: a revision sealed before content identity existed has only the ownership table
             // to offer. Kept so such a task still gates at all.
             : (revision?.pathDigests ? Object.keys(revision.pathDigests) : []);
