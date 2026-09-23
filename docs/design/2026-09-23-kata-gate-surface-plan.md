@@ -104,3 +104,26 @@ at **both** seals — does not appear in the change surface. The surface is deri
 revision)` in `revision-delta.ts`; the question to answer before any code is whether the base revision's digest for those
 paths was captured **before or after** the repair, because a digest captured after it makes the two equal and the edit
 invisible by construction rather than by bug.
+
+## AC-2, measured: the finding's premise is wrong, and the surface is right
+
+The measurement this document said to take before writing any code — the base revision's digest for the files `wcc3-f2`
+named, against the current revision's:
+
+```
+src/workflow/orchestrator.ts    base bf74c4e2e5   current bf74c4e2e5   SAME
+src/adapters/phase-guidance.ts  base d164842a02   current d164842a02   SAME
+src/quality/wiring-check.ts     base e99b367112   current eb3037d1a6   DIFFERENT
+```
+
+The two files the finding named carry the **same** digest in both revisions. So they did not change **between** the two
+seals: the repair that touched them landed **before** the base revision was sealed, which is why the base already holds the
+edited content and why the delta is empty for them. A surface that reported them as changed would be the defect.
+
+That makes `wcc3-f2` a **premise error rather than a bug**: "a repair that edits a file already hashed at both seals" is
+only invisible when the edit happened before the earlier seal, and in that case there is nothing for a delta to report. The
+third file differs, and the surface does see it.
+
+AC-2 therefore closes as **measured, not implemented** — and this is the second time in this change that measuring before
+coding turned a finding into a correction of the finding rather than a code change (the first being AC-6's cause, which is
+upstream of the derivation that was suspected).
