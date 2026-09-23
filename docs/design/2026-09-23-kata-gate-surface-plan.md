@@ -697,3 +697,30 @@ So the honest breakdown of why the two levers are unsolved is now precise:
 later round's reading is content that has not changed since an earlier round read it*. In a delta round that could be large; in
 a cold round it is zero. Nobody has measured that number, which means the ledger's value is currently an argument rather than a
 measurement — the same shape as the claims this line keeps correcting.
+
+## Magic Context as the missing host-side half — checked against its own configuration docs
+
+The question was whether `cortexkit/magic-context` can supply the transcript externalization that kata cannot. Read from the
+repository's own `CONFIGURATION.md` rather than assumed:
+
+- **`system_prompt_injection.enabled: false`** — "when `false`, **NO injection happens for ANY agent**. Global escape hatch;
+  Magic Context's transform and compaction still run, but nothing is added to the system prompt." **This is the version the
+  review child needs**: the context-management half without the accumulated project knowledge that `fresh_context` exists to
+  exclude.
+- **`skip_signatures`** — exempts a specific agent by a signature string in its prompt, for the case where only one node must be
+  exempt rather than all.
+- **Ephemeral environments** — mount `~/.local/share/cortexkit/magic-context/` on a persistent volume, or memory and history
+  simply do not accumulate. For a one-shot round that is the desired behaviour, not a limitation.
+- **And the repository documents the exact gap this line measured**: "Native compaction covers child sessions: **subagents
+  receive additive memory/docs injection but no Magic Context reclaim in this mode**." So for a *subagent* round the injection
+  arrives and the reclaim does not — which is the reverse of what a review round wants, and it has to be tested for the
+  `pi -p` process rather than assumed from that sentence.
+
+**Two facts a review receipt would have to state if this is adopted**: the executor's plugin configuration (so "injection was
+off" is recorded rather than claimed, the same discipline as `configurationHash`), and that a historian run is a **model call
+outside the child's own event stream** — meaning a round could spend tokens the receipt does not measure, which matters
+precisely because cost is the thing being measured.
+
+**Where it fits**: it is a **host-side plugin**, so kata cannot require it — it is an executor capability, and the honest
+statement is "the executor may declare it; the receipt records what was declared". For the repair/implement side, which has no
+independence requirement, it can be adopted plainly.
