@@ -151,3 +151,40 @@ cause ③; using it does** — and the use is the next round, not this one.
 predicted — four of seven findings are this change's own mechanisms not doing what they say — and the round cost a third of
 `closure-gate`'s because its brief carried no history. **The cheap round is the first one; the expensive rounds are the ones
 that carry their predecessors.**
+
+## The first real use of this change's mechanism, and it produced nothing
+
+Dispatched `kata-implementer` with `isolation: worktree` to repair the seven findings — the first time the repair author this
+change exists for was actually used. What happened:
+
+| | |
+|---|---|
+| duration | ~19 minutes |
+| output | 1,435,479 bytes of investigation |
+| **changes made** | **none** — its worktree was clean at the base commit |
+| **output file** | **removed, with no completion notification** |
+| **worktree** | **left behind**, still registered in `git worktree list` |
+
+**The isolation half worked, and it is structural rather than instructed**: `isolation: worktree` really gave it its own git
+worktree, so "write only inside a scratch copy" was true by construction. **The other half did not exist.** There was no way for
+it to report, no way for a dispatch to receive a report, and nothing that noticed it had ended — which is `rba-f4` ("a mechanism
+with no producer and no consumer") demonstrated on the mechanism itself, the same day the finding was filed.
+
+**So this round does not test the change's hypothesis.** The hypothesis is that a different repair author regenerates the class
+less; the first use produced no repair at all, so there is nothing to compare. What it does test is the mechanism, and the
+mechanism's first step is missing: **a repair author with a scratch copy, an investigation, no output, and no consumer.**
+
+### What that changes
+
+`kata-cli repair-author record|list` is built from this (`rba-f4`'s repair): `record` writes what a repair author returns —
+session, what it was handed, what it reported — and `list` reads it back with `allHaveAuthors`, the question a reader asks. Tested
+behaviourally rather than by asserting strings, which is the shape `rba-f3` named.
+
+**And it is not enough on its own.** The missing piece is the orchestration around the author: a dispatch that hands it the
+findings and the falsifier each needs, receives the report, records it, and **knows when the job ended**. Today that last part is
+absent — the job's output file disappeared and no notification arrived, and the only reason this document can describe it is that
+I went looking at the filesystem.
+
+**Stated rather than tidied**: this change built the entry point, the ledger and the criterion for a repair author, and its own
+seven findings were repaired by its author, because the first attempt to use the mechanism produced nothing and nothing was there
+to notice.

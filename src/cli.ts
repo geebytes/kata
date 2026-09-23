@@ -116,6 +116,7 @@ import { runBaselineCommand } from './cli/baseline.js';
 import { runScopeCommand } from './cli/scope.js';
 import { runMatrixCommand } from './cli/matrix.js';
 import { runRoundsCommand } from './cli/rounds.js';
+import { runRepairAuthorCommand } from './cli/repair-author.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
     isResumableWorkflowCommand,
@@ -319,6 +320,14 @@ async function runMain(argv: string[]): Promise<void> {
         // A sealed task's matrix could only be declared at `open`, so a declaration defect found later had no supported
         // correction. The command validates the corrected declaration before writing it.
         const result = await runMatrixCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'repair-author') {
+        // AC-1's record had no producer and no consumer in the tool; this is both, so a dispatched repair author has somewhere
+        // to report and a reader has something to read.
+        const result = await runRepairAuthorCommand(argv.slice(1));
         outputResult(result);
         return;
     }
