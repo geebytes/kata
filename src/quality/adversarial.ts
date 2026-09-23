@@ -95,6 +95,8 @@ export const adversarialTestPolicy = 'reuse_declared_tests_only' as const;
 
 export interface AdversarialRecord {
     node: AdversarialNode;
+    /** What this pass read, as facts rather than text. The hash is taken from the content when the record is written. */
+    deliveredFacts?: Array<{ path: string; note: string }>;
     status: 'recorded' | 'waived';
     revisionId: string;
     /**
@@ -769,6 +771,12 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 
 ## Required result
 
+**Deliver the facts you read**, as \`deliveredFacts\`: one entry per path you drew a conclusion from, with the conclusion.
+Not the text — the fact. The next round is offered these instead of re-reading the same content, so a conclusion stated once
+is paid for once. The hash is taken from the content when the record is written, which is how a later round tells a fact that
+still describes the file from one that does not: **you do not need to hash anything, and you cannot** — that is the platform's
+to measure, not yours to assert.
+
 Every finding carries a **falsifier**: the check that must redden under the defect it names. Not a repair recipe — the
 repair is not yours to design, and a recipe would make this pass a second author of the change, which is the one thing it
 exists not to be. A falsifier is what you already have: the counterexample you ran, the command whose output shows the
@@ -793,6 +801,9 @@ Return exactly one JSON object, and nothing else:
   ],
   "findings": [
     { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>", "falsifier": "<the check that must redden under this defect — a declared selector, a command, or the observation you already made that refutes it>" }
+  ],
+  "deliveredFacts": [
+    { "path": "<a path you read>", "note": "<what you concluded from it>" }
   ],
   "createdAt": "<ISO timestamp>"
 }
@@ -892,6 +903,25 @@ export function retiredRecordFields(record: Record<string, unknown>): string[] {
     return ['verdict'].filter((field) => record[field] !== undefined);
 }
 
+/**
+ * Records what a pass read into the delivered-fact ledger. Called from the single write path rather than from each command,
+ * because a producer that lives beside its callers is a producer one of them will forget.
+ */
+async function persistDeliveredFacts(
+    root: string,
+    taskId: string,
+    facts: Array<{ path: string; note: string }> | undefined,
+    at: string,
+): Promise<void> {
+    if (!facts || facts.length === 0) return;
+    const { recordDeliveredFact } = await import('./delivered-facts.js');
+    for (const fact of facts) {
+        // A path that is not there cannot be addressed by content, and a pass reporting one is reporting something it did
+        // not read — so the refusal is the pass's problem, not a reason to write a fact with no content behind it.
+        await recordDeliveredFact(root, taskId, { path: fact.path, note: fact.note, at }).catch(() => undefined);
+    }
+}
+
 export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
     // The policy is stamped, not accepted from the caller: a pass that ran under a different one is a different pass,
     // and the gate reads this field. It is stamped **in place** rather than through a spread, because the carry-forward
@@ -909,6 +939,10 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
     }
     const validated = validate<AdversarialRecord>('adversarial-review', record);
     const path = adversarialReviewPath(root, taskId, record.node);
+    // The producer for the delivered-fact ledger, in the single write path rather than beside each caller: a producer that
+    // lives next to its callers is one of them will forget. The hashes are taken here, from the content, so a pass cannot
+    // assert what a file contains — only that it read it.
+    await persistDeliveredFacts(root, taskId, validated.deliveredFacts, validated.createdAt ?? new Date().toISOString());
     // AC-6. The node record is a **single slot**, so the pass that writes last decides what is still open — and a finding
     // the next pass does not re-raise disappears, which is what `wcc3-f8` measured (the current record's open set was the
     // base's, and two findings raised between the seals were gone from every source the seal reads). A pass's record is

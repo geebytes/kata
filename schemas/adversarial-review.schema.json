@@ -82,6 +82,19 @@
         }
       }
     },
+    "deliveredFacts": {
+      "type": "array",
+      "description": "What this pass read, as facts rather than text: one entry per path it drew a conclusion from. The hash is taken from the content when the record is written, so a later round can tell a fact that still describes the file from one that does not.",
+      "items": {
+        "type": "object",
+        "required": ["path", "note"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "createdAt": {
       "type": "string",
       "minLength": 1

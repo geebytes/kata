@@ -50,6 +50,10 @@ describe('a repair that was measured as unpinned', () => {
                 }],
                 attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' }],
                 findings: [],
+                // The template gained this field with the delivered-fact ledger, and the invariant is that **any** field the
+                // template prescribes is accepted by the writer — so the fixture supplies a valid value rather than the
+                // template being trimmed. A path that exists, because the hash is taken from content.
+                deliveredFacts: [{ path: 'src/a.ts', note: 'the constant is one' }],
                 // Supplied so that a `verdict` re-appearing in the template reddens for the *right* reason: the schema
                 // accepts this value, and the writer's retired-field refusal is what rejects the record. With an
                 // unknown-string placeholder the schema rejected it first, which would have hidden the retirement.

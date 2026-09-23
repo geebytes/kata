@@ -82,3 +82,36 @@ describe('the brief offers the facts instead of the text', () => {
         expect(after.text).toContain('src/a.ts');
     }, 60000);
 });
+
+describe('the record path is the producer', () => {
+    it('writes the facts a pass delivered, with hashes taken from the content', async () => {
+        const root = await workspace();
+        const { createTaskRevision } = await import('../../src/workflow/revision.js');
+        const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+        await createTaskRevision({ root, taskId: 'f-task', ownedPaths: ['src/a.ts'], checkIds: [] });
+
+        await writeAdversarialRecord(root, 'f-task', {
+            node: 'review',
+            status: 'recorded',
+            revisionId: 'revision-one',
+            manifestHash: 'hash-one',
+            executedInFreshContext: true,
+            contextNote: 'a fixture',
+            createdAt: '2026-09-23T01:00:00.000Z',
+            hypotheses: [],
+            attempts: [],
+            findings: [],
+            deliveredFacts: [
+                { path: 'src/a.ts', note: 'the constant is one' },
+                // A path that is not there: the pass is reporting something it did not read, so nothing is written for it.
+                { path: 'src/never-existed.ts', note: 'a claim about a file that is not there' },
+            ],
+        } as never);
+
+        const { live } = await readDeliveredFacts(root, 'f-task');
+        expect(live.map((fact) => fact.path)).toEqual(['src/a.ts']);
+        expect(live[0]?.note).toBe('the constant is one');
+        const { createHash } = await import('node:crypto');
+        expect(live[0]?.sha256).toBe(createHash('sha256').update('export const a = 1;\n').digest('hex'));
+    }, 60000);
+});
