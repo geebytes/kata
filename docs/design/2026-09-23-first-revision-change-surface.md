@@ -260,3 +260,30 @@ All ids are in the adversarial record for `revision-4d540d50f0d5895f`; this tabl
 
 The next change's first acceptance criterion should be exactly that they cannot disagree, with a falsifier that enumerates
 every producer rather than asserting one pair.
+
+### A fourth requirement for `kata-gate-surface`: the flow has no "resolved by routing" terminal state
+
+Found while closing this change, and it is the structural form of the loop the three rounds kept re-entering.
+
+The only two exits from an unaddressed **major** finding are:
+
+1. **repair it** — which, for the findings routed above, means repairing machinery this change does not own; or
+2. **`adversarial waive`** — which replaces the node's record with `status: 'waived'`, a state that by design *"makes no
+   claim to have looked, it says so"*, and which therefore states `findings: []`.
+
+**Erasing is not resolution.** And the middle route does not exist: `findings defer` and `findings accept` both refuse
+`blocking` and `major` outright ("they must be repaired"), so a finding whose repair belongs to another change has nowhere
+to go.
+
+Measured consequence, at this change's own closure:
+
+- the waiver set the review node to `satisfied: true, reason: 'waived'` — and **the 6 obligations survived it**, because they
+  derive from the change record's `openFindings` rather than from the node record. So the trailing edge of a finding is
+  **more** durable than the finding's own record, and the node can be closed while the obligations it produced stay open;
+- `next` still points at `repair_unresolved_obligations`, so the change cannot be *completed* by routing — only parked,
+  waived, or repaired.
+
+What the next change needs, then, is a **routed** terminal disposition: a finding that names the change or capability that
+will carry it, is visible in `status`, keeps the evidence, and closes the obligation it produced. Until that exists, the
+honest options for any change whose findings outgrow its ownership are repair (the loop) or waive (the erasure) — and the
+three rounds of this change are the measurement of what those two cost.
