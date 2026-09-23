@@ -74,3 +74,35 @@ cannot be argued with, because it counts rather than judges.
 already how the review gate names who is running), or a new field on the revision. The first reuses an existing mechanism, which
 this line prefers; the second invents a store, which is another place declaration and reality can diverge. I lean to the first
 and will check what the handoff actually records before deciding.
+
+## The open question, answered by reading the record: `platform` cannot distinguish two sessions
+
+Checked rather than assumed. A handoff and its receipt carry exactly:
+
+```
+protocolVersion, taskId, handoffId, platform, role, packetSha256, acknowledgedAt, repository, contextMemo
+```
+
+and `platform` is `"pi"` — **the host platform, identical for every session on this machine** — while nothing in `src/` records
+a session identity at all, which is deliberate: kata does not configure, route or record host models (AGENTS.md #4). So the
+first candidate is out:
+
+> **The comparison AC-1 wanted cannot be made from recorded identity.** Two sessions on one workstation are the same
+> `platform`, the same `role` and the same repository, and a handoff is acknowledged by whoever runs the command rather than by
+> an identity the record could compare.
+
+**So AC-1 is reframed to make the difference structural rather than declared** — which is the same move this line made for the
+review round, and for the same reason:
+
+> **The repair is made by a session the platform constructs** — a fresh context and a declared tool set, the `kata-reviewer`
+> shape one step further: an agent type that may write, but only inside a scratch copy of the change, and whose own report and
+> what it was handed are both recorded.
+
+**And the ceiling is stated rather than hidden**, exactly as it is for the execution receipt: on a single-user machine this
+proves *which session did the work and what it was given*, not that two sessions are cryptographically separate. What it does
+make impossible is the shape this change exists to remove — **a repair whose record cannot say who made it, closing an
+obligation owed by the person who made it.**
+
+The second candidate (a new field on the revision) is rejected for the reason this line keeps giving: **a new store is another
+place declaration and reality can diverge**, and the existing mechanism plus a structural construction covers what the new field
+would have claimed to.
