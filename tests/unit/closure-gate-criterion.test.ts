@@ -78,3 +78,39 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
  * reads is asserted load-bearing — drop any one and the verdict must change.
  */
 
+
+/**
+ * The second disposition, and its limits. A repair whose subject is not code — a test, a document — has no check that can
+ * redden, so `kata-cli falsify --none --reason` records the absence instead. It is not a loophole, and these cases are what
+ * says so: the absence has to carry a reason, has to be bound to the revision being resolved, and the command refuses to write
+ * one without both.
+ */
+describe('a repair with no falsifier says so, and only with a reason', () => {
+    const obligation = { id: 'obl-1', findingId: 'a-finding', acceptanceId: 'AC-1', raisedAt: '2026-09-23T01:00:00.000Z' } as never;
+    const evidence = [{ id: 'e1', exitCode: 0, kind: 'test', command: 'npx vitest run tests/unit/x.test.ts' }] as never;
+    const absence = {
+        findingId: 'a-finding',
+        reason: 'The repair is a sentence in a design doc, so prose has no check to redden.',
+        revisionId: 'revision-one',
+        recordedAt: '2026-09-23T02:00:00.000Z',
+    };
+
+    it('closes an obligation when the absence carries a reason', () => {
+        expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, absences: [absence] } as never).answered).toBe(true);
+    });
+
+    it('stays open when the reason is empty — the shape exists to be explained', () => {
+        expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, absences: [{ ...absence, reason: '   ' }] } as never).answered).toBe(false);
+    });
+
+    it('stays open when the absence is for another revision, like a reddening', () => {
+        expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, absences: [absence], revisionId: 'revision-two' } as never).answered).toBe(false);
+    });
+
+    it('refuses to record an absence without a reason', async () => {
+        const { runFalsifyCommand } = await import('../../src/cli/ops.js');
+        const refused = await runFalsifyCommand(['--change', 'c', '--finding', 'f', '--none']);
+        expect(refused.success).toBe(false);
+        expect(String(refused.error)).toContain('--reason');
+    });
+});
