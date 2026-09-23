@@ -459,3 +459,23 @@ being written. The measurement is not "this change has bugs" — it is:
 falsifier mechanism built and used; nine obligations closed through it; seven decorative checks of mine caught by the mechanism
 itself; two findings routed; and the record of all of it in this document. What it does not have is a review record the gate
 will admit, and that is stated rather than pushed through.
+
+## `cg5-f2`'s fix, verified in the field rather than by a fixture
+
+Trying to close `closure-gate`'s open batch to test the delta path, the seal refused — and the refusal read:
+
+```
+Unresolved repair obligations: 2 obligation(s) this seal cannot answer; the findings awaiting a
+falsifier or a recorded absence are cg5-f1, cg5-f2.
+```
+
+**It names the findings.** Before the fix it named acceptance ids, and for the unscoped shape `persistBlockingFindings` creates
+it named nothing at all — which is why AC-1's third clause was false as written. This is the first time that clause is exercised
+by the real workflow rather than by a test, and it holds.
+
+**And the refusal is correct**, which is the other half of the measurement: `cg5-f1` and `cg5-f2` have no falsifier recorded and
+no absence, so the seal must refuse. The mechanism is doing exactly what the change built it for.
+
+**So the delta-path verification is blocked one step earlier than expected** — not by the carry, but by two findings that need a
+recorded disposition before the batch can close. `cg5-f1` is a prose correction (an absence, with the reason) and `cg5-f2` is a
+code change whose falsifier can be shown reddening. Until those are recorded, `batch-9` stays open and no carry is created.
