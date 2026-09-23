@@ -773,3 +773,30 @@ point, not a missing capability.
 `.pi/agents/kata-reviewer.md` is added with exactly that frontmatter. **Whether it is picked up is unverified**: the agent
 registry is resolved when a session starts, so this needs a reload before a round can use it, and that must be measured rather
 than assumed.
+
+## The read-only agent type is verified — the subagent route satisfies all three capabilities by construction
+
+Probe after a session reload, `subagent_type: kata-reviewer`, model `litellm/deepseek-v4.1-flash-goat`:
+
+```
+Agent completed in 14.9s (2 tool uses, 6.2k token)
+
+1. Tool names available: read, grep, find, ls — exactly four.
+2. Not available: bash, write, edit, powershell. I have none of them.
+3. First heading: "# A repair closes only when its falsifier has been shown reddening". Total line count: 68.
+```
+
+Measured, and it is the unblock: **the custom agent type is picked up, and `tools:` is enforced** — the subagent has exactly four tools and no mutating tool at all. So:
+
+| capability review requires | how it is satisfied |
+|---|---|
+| `fresh_context` | the platform makes the session |
+| `read_only_fs` | **the declared tool set — constructive, not instructed** |
+| `bounded_tools` | the same declaration |
+
+**No supervisor, no `bwrap`, no kata code deciding how isolation is achieved.** The `pi -p` route is now the fallback for the one thing it uniquely gives (kernel-enforced read-only), and it is only needed if `bash` is granted.
+
+**Two environment facts the executor must handle, both measured here**:
+
+- **The Agent call needs an explicit native model.** Without one it fails `400 MissingSessionID` — the extension-registered default provider is invisible to the child. So the orchestrator names the model; kata does not, which keeps AGENTS.md #4 intact.
+- **The gateway restricts which models a team may use** (`403 team_model_access_denied`, listing the allowed set), so the executor's model choice is a host decision that can fail visibly rather than silently.
