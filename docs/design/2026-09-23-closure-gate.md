@@ -239,7 +239,7 @@ The question was whether this change passes its own test. It does not.
 
 ## The repair of the independent round's findings
 
-All seven disposed, each with a verification that can fail:
+All seven disposed. Six carry a verification that can fail; the seventh does not, and saying so is the point of this sentence rather than an omission from it:
 
 - **`cg-f1` blocking** — the seal preflight now reads the reddening ledger, so it dry-runs the same inputs the resolver does. Without this the preflight refused every seal while a finding-shaped obligation was open, and the resolver that could close one runs only after a successful seal: a permanent deadlock. It is the second derivation of "answered" this line keeps producing, and it is now asserted rather than remembered — `closure-gate-producers.test.ts` requires the preflight to call `obligationIsAnswered` **and** to read the ledger.
 - **`cg-f2`** — the criterion narrows by revision, so the docstring's promise ("a later re-seal cannot inherit a stale proof") is now true rather than decorative. The shared fixture takes the revision it reddens for, which is why six fixtures moved.
@@ -247,7 +247,7 @@ All seven disposed, each with a verification that can fail:
 - **`cg-f4`** — AC-4's rule implemented, not merely declared: a reddening now records **the three exit codes the producer observed** (green, red, green), and the criterion requires them. A falsifier that merely names a check, with no observed runs, no longer closes an obligation.
 - **`cg-f5`** — AC-5's falsifier now enumerates the **producers of the closure decision** rather than the inputs of one function: the decider computes it and consults the ledger, the preflight calls it, and the batch closure reads the resolver's output rather than re-deciding. A naive "no other file may mention answered" assertion would have been wrong — the third shape is a consumer, and the test says why.
 - **`cg-f6`** — `matrix set --from-file` has a test: it applies a whole corrected matrix, reports the previous selectors, refuses a result that does not validate, and asserts the matrix was left as it was.
-- **`cg-f7`** — the false sentence is corrected in place, and says what is true: the single-branch behaviour is **still** there, and a fix belongs with the other corrections rather than in a sentence claiming it was done.
+- **`cg-f7`** — the false sentence is corrected in place, and says what is true: the single-branch behaviour is **still** there, and a fix belongs with the other corrections rather than in a sentence claiming it was done. **It is the one finding with no falsifier, because it is prose** — round 3 caught that this file claimed "each with a verification that can fail" while one of the seven had none (cg3-f1). A prose correction cannot be pinned by a test; it can only be stated honestly, which is what this sentence now does.
 
 ## Round 2 produced no record, and its last thought was a real defect
 

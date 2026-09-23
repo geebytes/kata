@@ -10,6 +10,7 @@ import { persistBlockingFindings, readObligations } from '../../src/quality/repa
 import { recordFalsifierReddening } from '../../src/quality/falsifier-reddenings.js';
 
 const roots: string[] = [];
+let currentRevisionId = 'revision-one';
 afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -30,7 +31,8 @@ async function fixture(id: string): Promise<string> {
     await initLayout(root);
     await createTask({ root, id, title: 'Visibility', acceptance: [{ id: 'AC-1', statement: 'An obligation says how it was answered.' }] });
     // The two things the command needs to report the full shape rather than its early one.
-    await createTaskRevision({ root, taskId: id, ownedPaths: ['src/x.ts'], checkIds: [] });
+    const revision = await createTaskRevision({ root, taskId: id, ownedPaths: ['src/x.ts'], checkIds: [] });
+    currentRevisionId = revision.id;
     await writeAdversarialRecord(root, id, {
         node: 'review',
         status: 'recorded',
@@ -58,7 +60,8 @@ describe('the status report distinguishes how an obligation was answered', () =>
             findingId: 'reddened-finding',
             check: 'tests/unit/x.test.ts',
             mutation: 'revert',
-            revisionId: 'revision-one',
+            // The revision the report narrows by (cg3-f4): a reddening for another revision is not one the rule counts.
+            revisionId: currentRevisionId,
             reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 },
         });
         // The setup, before the subject.
@@ -83,7 +86,9 @@ describe('the status report distinguishes how an obligation was answered', () =>
         // therefore the legacy state, which is why the real change shows seven of them.
         const { resolveObligationsForRevision } = await import('../../src/quality/repair-obligations.js');
         const passing = [{ id: 'e1', taskId: 'vis', kind: 'test', command: 'vitest', exitCode: 0, startedAt: '2026-09-23T01:00:00.000Z', finishedAt: '2026-09-23T01:01:00.000Z', diffHash: 'a'.repeat(64) }];
-        await resolveObligationsForRevision(root, 'vis', 'revision-one', ['AC-1'], ['e1'], undefined, passing as never);
+        // The revision the reddening was recorded for, and the one the report narrows by: the three have to agree or the
+        // case is testing the narrowing rather than the distinction (cg3-f4).
+        await resolveObligationsForRevision(root, 'vis', currentRevisionId, ['AC-1'], ['e1'], undefined, passing as never);
 
         process.chdir(root);
         const after = await runAdversarialCommand(['status', '--change', 'vis', '--json']).finally(() => process.chdir(previous));

@@ -662,6 +662,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const { readFalsifierReddenings, hasReddening } = await import('../quality/falsifier-reddenings.js');
         const obligations = await readObligations(root, change).catch(() => []);
         const reddenings = await readFalsifierReddenings(root, change).catch(() => []);
+        // The same predicate the criterion applies, narrowing included: a report computed with a weaker rule can disagree
+        // with the rule it reports on (cg3-f4).
+        const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+        const currentRevisionId = (await readCurrentTaskRevision(root, change).catch(() => null))?.id;
         const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as Array<{ id: string; severity: string; source: string; disposition: string; dispositionReason?: string }>);
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
@@ -742,7 +746,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 // different facts and a default would erase it.
                 answeredBy: obligation.resolvedAt
                     ? obligation.findingId
-                        ? (hasReddening(reddenings, obligation.findingId) ? 'evidence-and-falsifier' : 'evidence-only')
+                        ? (hasReddening(reddenings, obligation.findingId, currentRevisionId) ? 'evidence-and-falsifier' : 'evidence-only')
                         : 'evidence'
                     : null,
             })),
