@@ -294,3 +294,26 @@ Two honest dispositions, and the choice is a judgement rather than a measurement
 
 **What is not in doubt**: three attempts produced no falsifier, and the reason is now known — the defect is unreachable there.
 Recording that is worth more than a green test, which is why all three attempts were deleted rather than kept.
+
+## `kgs-f9`: the fix is right, the falsifier does not exist — and the reason is not established
+
+The finding, with a live reproduction on this very round: the record was refused with `undeclared_test_path` naming
+`tests/unit/change-record.test.ts` — a pre-existing test the pass only **read**. The permitted set was fed
+`sealedRecord.changedPaths` (what this revision **changed**), while the rule it feeds permits any test "the current sealed
+change record proves Build wrote before this pass". A test that existed at seal time and was not modified is exactly that.
+
+The fix is one expression: the permitted set is the sealed revision's own content —
+`Object.keys(revision?.pathDigests ?? {})` — rather than only the paths that moved.
+
+**The falsifier was attempted and deleted.** The case built a test sealed into an *earlier* revision (measured: putting it in
+the same revision as the delta made it a changed path, so the first fixture proved nothing), recorded a pass citing it, and
+asserted the refusal reason is not `undeclared_test_path`. It passed — and restoring the old behaviour left it green, so it
+pinned nothing.
+
+**The reason is not established.** What is known: `undeclaredTestPaths(record, permittedTests)` did not refuse the record
+even when the cited path was outside the permitted set, so the fixture did not produce the shape that triggers the check —
+most likely the cited path has to appear where that function scans, and a `permitted-test` observation's `ref` is not it.
+Settling that is the next attempt's first step, not a guess.
+
+This is the fifth falsifier attempt in this change that ended in a deletion rather than a green test, and the pattern is now
+the change's own subject: **the assertion has to be on the producer the finding is about, in the shape that producer reads.**

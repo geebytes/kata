@@ -2411,7 +2411,14 @@ export async function adversarialGateFor(
             ];
             return declared.length > 0 ? { declaredTestSelectors: declared } : {};
         })(),
-        ...(sealedRecord?.revisionId === revisionId ? { sealedRevisionTestSelectors: sealedRecord.changedPaths } : {}),
+        // kgs-f9, reproduced live on this round: the record was refused with `undeclared_test_path` naming
+        // `tests/unit/change-record.test.ts` — a pre-existing test the pass only *read*. The permitted set was the paths
+        // this revision **changed**, while the rule this feeds (above) permits a test "the current sealed change record
+        // proves Build wrote before this pass". A test that existed at seal time and was not modified is exactly that, so
+        // the set is the revision's own content — every path it sealed — and not only the ones that moved.
+        ...(sealedRecord?.revisionId === revisionId
+            ? { sealedRevisionTestSelectors: Object.keys(revision?.pathDigests ?? {}) }
+            : {}),
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,
