@@ -147,9 +147,25 @@ export async function closeRepairBatch(
                 !deferred.has(finding.id) &&
                 !(options.noLongerReported ?? []).includes(finding.id),
         );
+        // **A batch must be closable, and no finding may be lost** — and those two requirements were in conflict.
+        // `openRepairBatch` extends the open batch with findings that arrive while it is open ("findings that arrive while
+        // a batch is open belong to it"), while a batch's contract is one seal and one delta round per node. So findings
+        // raised *after* the seal that was meant to close it landed in the same batch, could never be answered by that seal,
+        // and refused the closure forever — which is why the next round never received a delta and reviewed the whole
+        // surface instead of the repair. Measured: 12 terminal findings against 7 answered, the five unaccounted being the
+        // round raised after the seal.
+        //
+        // They are **carried forward** instead of blocking: this batch closes with the findings it answered, and the
+        // unaccounted ones open the next batch based at the current revision. Nothing is lost — they stay visible and their
+        // obligations stay open, so the change still cannot be archived while they are unaddressed — and the closure that
+        // unblocks the next round's delta is no longer refused by findings that did not exist when it ran.
         if (unaccounted.length > 0) {
-            outcome = { refused: true, reason: 'open_terminal_findings', findings: unaccounted };
-            return `${JSON.stringify(record, null, 2)}\n`;
+            const carry: RepairBatch = {
+                id: `batch-${record.batches.length + 1}`,
+                openedAt: new Date().toISOString(),
+                findings: [...unaccounted],
+            };
+            record.batches.push(carry);
         }
         open.closedAt = new Date().toISOString();
         if (options.baseRevisionId) open.baseRevisionId = options.baseRevisionId;

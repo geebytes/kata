@@ -42,15 +42,27 @@ describe('a repair batch', () => {
         expect(batches[0]!.findings.map((entry) => entry.id)).toEqual(['f-1', 'f-2']);
     });
 
-    it('refuses to close while a terminal finding it opened for is unaccounted', async () => {
+    it('closes and carries an unaccounted terminal finding into the next batch', async () => {
+        // **This replaced a refusal, and the reason is measured rather than stylistic.** A batch accumulates findings that
+        // arrive while it is open, while its contract is one seal and one delta round per node — so a finding raised after
+        // the seal that was meant to close it could never be answered by that seal, and the closure was refused forever.
+        // On the change this was measured on, that meant the next round never received a delta and reviewed the whole
+        // surface instead of the repair: 2.82M tokens against 9.88M.
+        //
+        // The requirement was never "refuse" — it was **"no finding becomes invisible"**. Carrying it forward satisfies
+        // that more directly than refusing does, so the assertion is stronger, not weaker: the finding must be *present*
+        // in the next batch, not merely named in a refusal.
         const root = await workspace();
         await openRepairBatch(root, 'b-task', [finding('blocker', 'major'), finding('minor-1')]);
 
-        const refused = await closeRepairBatch(root, 'b-task', { answered: ['minor-1'] });
-        expect(refused).toMatchObject({ refused: true, reason: 'open_terminal_findings' });
-        // The refusal names the finding that would otherwise have become invisible.
-        expect((refused as { findings: Array<{ id: string }> }).findings.map((entry) => entry.id)).toEqual(['blocker']);
-        expect(await openBatch(root, 'b-task')).not.toBeNull();
+        const closed = await closeRepairBatch(root, 'b-task', { answered: ['minor-1'] });
+        expect(closed).toMatchObject({ id: 'batch-1' });
+        expect((closed as { closedAt?: string }).closedAt).toBeTruthy();
+
+        const carried = await openBatch(root, 'b-task');
+        expect(carried).not.toBeNull();
+        expect(carried?.findings.map((entry) => entry.id)).toEqual(['blocker']);
+        expect(carried?.id).toBe('batch-2');
     });
 
     it('closes when every terminal finding is repaired, deferred with a reason, or no longer reported', async () => {
