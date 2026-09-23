@@ -185,12 +185,18 @@ export async function collectSealPreflight(input: {
             const unanswered = unresolved.filter((obligation) => !answerable.has(obligation.id));
             if (unanswered.length === 0) return;
             const acceptanceIds = [...new Set(unanswered.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))];
+            // **The finding ids too**, because AC-1 promises the refusal names the finding whose falsifier is missing and it
+            // named only acceptance ids — and for the unscoped shape `persistBlockingFindings` creates it named nothing at
+            // all, since those obligations carry no `acceptanceId` (cg5-f2). A refusal that cannot say which repair is owed
+            // leaves the operator to reconstruct it from the count.
+            const findingIds = [...new Set(unanswered.map((obligation) => obligation.findingId).filter((id): id is string => Boolean(id)))];
             deny(
                 'unresolvedObligations',
-                `Unresolved repair obligations: ${unanswered.length} obligation(s) this seal cannot answer${acceptanceIds.length > 0 ? ` (${acceptanceIds.join(', ')})` : ''}. Every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.`,
+                `Unresolved repair obligations: ${unanswered.length} obligation(s) this seal cannot answer${acceptanceIds.length > 0 ? ` (${acceptanceIds.join(', ')})` : ''}${findingIds.length > 0 ? `; the findings awaiting a falsifier or a recorded absence are ${findingIds.join(', ')}` : ''}. Every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.`,
                 {
                     unresolvedObligations: unanswered.length,
                     unresolvedAcceptanceIds: acceptanceIds,
+                    ...(findingIds.length > 0 ? { unresolvedFindingIds: findingIds } : {}),
                     // The distinction the reader needs: these were answerable, and are not why the seal is blocked.
                     ...(answerable.size > 0 ? { answerableObligations: answerable.size } : {}),
                 },

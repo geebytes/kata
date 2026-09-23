@@ -104,3 +104,26 @@ describe('the reddening ledger is read through its schema, and a failure is not 
         await expect(readFalsifierReddenings(root, 'r-task')).rejects.toThrow();
     });
 });
+
+/**
+ * AC-1's third clause, which round 5 found false as written (`cg5-f2`): the refusal must **name the finding whose falsifier is
+ * missing**. It named only acceptance ids — and for the unscoped shape `persistBlockingFindings` creates it named nothing at
+ * all, since those obligations carry no `acceptanceId`. So the declaration was true of nothing, and this is what makes it true.
+ */
+describe('a refusal names the finding whose falsifier is missing', () => {
+    it('includes the finding ids the seal cannot answer', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-names-'));
+        cleanup.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'names', title: 'Names', acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+        const { persistBlockingFindings } = await import('../../src/quality/repair-obligations.js');
+        const { collectSealPreflight } = await import('../../src/workflow/seal-preflight.js');
+        await persistBlockingFindings(root, 'names', [{ id: 'the-finding-without-a-falsifier', severity: 'major', message: 'm' }] as never);
+
+        const task = await (await import('../../src/core/task.js')).readTask(root, 'names');
+        const preflight = await collectSealPreflight({ root, taskId: 'names', task: task as never, ownedPaths: [], options: { plannedEvidence: [] } as never }).catch((error) => ({ error: String(error) }));
+        const text = JSON.stringify(preflight);
+        // The finding is named, and it is not named through an acceptance id — which is the shape that made the clause false.
+        expect(text).toContain('the-finding-without-a-falsifier');
+    });
+});
