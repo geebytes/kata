@@ -222,3 +222,22 @@ The honest options, and neither is "declare a matrix":
 
 Either way, **the capability just built is not what unblocks them**, and saying so before using it is the point. It does
 unblock what it was aimed at: `wiring-coverage-check`'s two criteria that are false as written can now be corrected.
+
+## A falsifier that asserted the wrong producer, deleted rather than kept
+
+Tried to pin `kgs-f3` (the remit taking any delta in the issued-brief pool). The test built exactly the case the finding
+describes — a real issued brief for this revision plus a content-matched entry for a foreign revision carrying a different
+delta, ordered so a first-match-wins reader would take the foreign one — and it **passed**. Then the mutation check: removing
+the revision filter again **left it green**, so it pinned nothing.
+
+The reason is the finding's own shape, one level up: **it asserted the wrong producer.** `ir.scope` is built inside
+`buildAdversarialBrief` from that function's own resolved scope; the filter I fixed lives in `adversarialGateFor`. A test
+that reads the brief cannot see the gate's remit at all.
+
+That is the third time in this change that my own test did not test what it claimed — after a case that passed while `routed`
+was schema-invalid (`kgs-f2`), and a fixture that asserted the surface while the criterion was about the record (`kgs-f4`).
+It is also why the test was **deleted rather than kept**: a green test that cannot fail is worse than no test, because it
+reads as coverage.
+
+To pin `kgs-f3` the assertion has to be on `adversarialGateFor`'s remit: a pass that covers this revision's delta and not
+the foreign one must be admitted, and the same pass must be refused when the foreign delta is what the gate took.
