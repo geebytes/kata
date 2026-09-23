@@ -441,3 +441,25 @@ The remaining two from this round are recorded with what they need:
   as a citation, so **this very round's record was refused** because one attempt mentioned a fixture's test path. The guard
   cannot tell "ran this test" from "mentioned this test" in free text, which is a design question about where the citation
   should be recorded rather than a predicate tweak.
+
+## `kgs3-f7`: the fix is designed, the attempt failed, and the tree was restored
+
+The finding, with a live reproduction: `undeclaredTestPaths` scans `attempts[].evidence` and `looksLikeTestPath` treats any
+test-shaped token as a citation, so **the independent round's own record was refused** for mentioning a fixture's test path in
+prose. The guard cannot tell "ran this test" from "mentioned this test" in free text.
+
+The fix is precision rather than a loosening, and the reason is worth keeping: the guard exists to catch a test the pass
+**wrote**, and a written test **exists on disk**, while a path merely mentioned may not. So the predicate should flag a cited
+path only if it exists — which cannot let an authored test through, because that one exists by definition.
+
+The shape: the predicate is pure and has no `root`, so the fact is **supplied by the gate**, the way
+`sealedRevisionTestSelectors` already is — `existingTestPaths: (await listRepositoryFiles(root)).filter(looksLikeTestPath)` —
+and the predicate filters by membership, **failing closed** when the list is absent (keeping today's behaviour rather than
+opening a hole).
+
+**The attempt failed and was reverted.** `listRepositoryFiles` is imported inside another function in the same module, so the
+gate could not see it; the patch left the module unimportable and **53 tests failed**. Reverted immediately rather than left
+broken: `tsc` clean, 160 files / 1151 tests / 0 failed, tree clean.
+
+The remaining step is one import — `listRepositoryFiles` into `adversarialGateFor`, or threading the `files` the gate already
+computes — plus the input field and the predicate filter. Everything else in the design above is settled.
