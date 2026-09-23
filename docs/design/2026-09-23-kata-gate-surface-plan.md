@@ -317,3 +317,23 @@ Settling that is the next attempt's first step, not a guess.
 
 This is the fifth falsifier attempt in this change that ended in a deletion rather than a green test, and the pattern is now
 the change's own subject: **the assertion has to be on the producer the finding is about, in the shape that producer reads.**
+
+## `kgs-f9`'s falsifier, third attempt: deleted, and the reason is now known
+
+The second attempt fixed the shape problem the first one had — `undeclaredTestPaths` walks `record.attempts[].evidence`, and
+the earlier version put the path in a hypothesis observation's `ref`, which that function never reads. The record was built
+through the schema-valid helper with the citation in an attempt's `evidence` string, and the test asserted the refusal reason
+is not `undeclared_test_path`.
+
+It passed. The mutation restored the defect and **it stayed green**.
+
+**The reason is the same one the second `kgs-f3` attempt hit, and it is now certain rather than suspected: the assertion
+never reaches the check under test.** `adversarialGateFor` returns on the first failing conjunct, and a fixture whose record
+does not satisfy the earlier ones (a judgement basis, coverage of the remit, grounded observations) never gets as far as
+`undeclared_test_path` — in either version. An assertion of the form "the reason is not X" is therefore satisfied by the
+gate stopping somewhere else entirely, which is precisely the "passes for the wrong reason" shape this change exists to
+remove.
+
+So the honest state stands: **`kgs-f9`'s code fix is correct and unpinned, and pinning it needs a fixture that reaches that
+check — which means the record must satisfy every conjunct before it.** That is a fixture-building task with a known
+prerequisite, not a guess, and it is the third falsifier in this change deleted rather than kept green.
