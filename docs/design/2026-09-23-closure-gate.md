@@ -107,3 +107,22 @@ refusals are what stop the producer from becoming another field a caller can typ
 A closure rule that refuses honest work. The refusal must fire on **one** thing — a missing reddening — and never on the shape
 of the check, the wording of the record, or whether the mutation looked convincing. If a criterion here can be satisfied by
 prose, the change has reproduced the class it exists to remove.
+
+## Slice 1 measured: the criterion works, and it breaks eleven fixtures across six files
+
+The criterion change was written and its own three cases went **GREEN** — an obligation with no reddening stays open, one with a
+reddening closes, a reddening for a different finding does not close it. **The RED before it was exactly the change's reason**:
+two of the three failed with `expected true to be false`, i.e. today the obligation closes on passing evidence alone.
+
+Then the full suite: **eleven failures across six files** (`quality-gates`, `batch-closure-marks-findings`,
+`major-finding-routing`, `obligation-answerability`, `obligation-resolution`, `preflight-planned-evidence`). The fixtures are
+wrong rather than the rule — they close finding-shaped obligations with no reddening — and the shared producer is
+`persistBlockingFindings`.
+
+**So the criterion was reverted and this slice keeps only the store**, which is additive and green. Committing a red suite is
+not an option, and neither is loosening the rule to make fixtures pass: the rule is the change.
+
+**The next slice is therefore fixture work plus the criterion**: give each of the six fixtures a reddening for the finding its
+obligation carries, then re-apply the criterion. **And one consequence needs deciding rather than discovering**: changes sealed
+before this rule — `wiring-coverage-check`'s six obligations among them — have findings with no reddening and could never
+close. AC-3's visibility is where that shows up, and it is the reason AC-3 is not optional.
