@@ -169,7 +169,11 @@ export async function closeRepairBatch(
                 // closed one carried no revision, `defaultBriefScope` could not derive a delta from it, and the next round
                 // reviewed the whole surface instead of the repair. That is the measured cost of this line: 2.5-2.7x per
                 // round, and the delta path was unreachable because of one missing field in the code meant to unblock it.
-                ...(options.baseRevisionId ? { baseRevisionId: options.baseRevisionId } : {}),
+                // **The closed batch's own base, not the revision this seal minted.** Narrowing to the just-sealed revision
+                // would mean "nothing changed", which is the invariant an existing e2e case already asserts and which my first
+                // attempt broke by passing the new revision through. The base is what the repair was made *against*, so the
+                // carry inherits it — and that is what makes the next round's delta cover the repair rather than nothing.
+                ...(open.baseRevisionId ? { baseRevisionId: open.baseRevisionId } : {}),
             };
             record.batches.push(carry);
         }
@@ -275,16 +279,6 @@ export async function recordFindingsForBatching(
 export async function closeBatchAfterSeal(
     root: string,
     taskId: string,
-    /**
-     * The revision this seal minted, and the carry's base.
-     *
-     * **The option existed and no caller supplied it.** The writer was fixed to put `baseRevisionId` on a carried-forward
-     * batch — and the batch a later round reads as the last *closed* one still had none, because this function took only a root
-     * and a task id and `closeRepairBatch` therefore never received a base. Measured: `batch-9` closed at
-     * `revision-1e0a2f0d2503bc5c`, `batch-10` was carried out of it with no base, and the delta path stayed unreachable —
-     * the same defect one layer out from where it was fixed.
-     */
-    baseRevisionId?: string,
 ): Promise<RepairBatch | CloseRefusal | null> {
     const batch = await openBatch(root, taskId);
     if (!batch) return null;
@@ -325,8 +319,7 @@ export async function closeBatchAfterSeal(
     const stillTracked = new Set(tracked.map((finding) => finding.id));
     const noLongerReported = batch.findings.filter((finding) => !stillTracked.has(finding.id)).map((finding) => finding.id);
 
-    // The base is what makes the next round's delta possible, and it comes from the revision this seal minted.
-    return closeRepairBatch(root, taskId, { answered, deferred, noLongerReported, ...(baseRevisionId ? { baseRevisionId } : {}) });
+    return closeRepairBatch(root, taskId, { answered, deferred, noLongerReported });
 }
 
 /**
