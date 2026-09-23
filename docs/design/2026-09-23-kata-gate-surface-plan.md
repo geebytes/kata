@@ -68,3 +68,39 @@ what this line of work has recorded three times over.
 
 `wcc3-f2` (a repair that edits a file hashed at both seals is invisible in the surface) and AC-4's routed terminal
 disposition are separate acceptance criteria of this change and are not touched by the remit fix.
+
+## Where AC-6's cause is not
+
+`wcc3-f8` says the current change record's `openFindings` is the same ids as the base record's, so findings raised between
+the two seals never appear. Checked, and the derivation is not the cause:
+
+```ts
+// change-record.ts
+const openFindings = input.findings
+    .filter((finding) => finding.disposition !== 'fixed')
+    .map((finding) => ({ id, severity, disposition }))
+```
+
+It filters and maps the input — it does not copy a previous record. And the seal passes live state:
+
+```ts
+// orchestrator.ts, at the seal
+findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id, severity, disposition }))
+```
+
+So the cause is upstream of both: **what `readTrackedFindings` can see**. Measured while closing `wiring-coverage-check`,
+which is the same mechanism from the other side: round 2's findings lived only in the adversarial node record, round 3's pass
+overwrote that record, and after the overwrite the earlier ids were gone from every source the seal reads. The node record
+is a single slot per node, so "what is still open" is a function of which pass wrote last.
+
+That makes AC-6's first question concrete and answerable without further search: **should the tracked-findings source be the
+node record, or an append-only history of passes?** The evidence for the answer is already committed — the file this
+document's sibling dumped verbatim exists precisely because the node record is a single slot.
+
+## AC-2's first question, likewise
+
+`wcc3-f2` measured that a repair editing `src/workflow/orchestrator.ts` and `src/adapters/phase-guidance.ts` — files hashed
+at **both** seals — does not appear in the change surface. The surface is derived by `changeSurfaceAgainstWorkspace(base,
+revision)` in `revision-delta.ts`; the question to answer before any code is whether the base revision's digest for those
+paths was captured **before or after** the repair, because a digest captured after it makes the two equal and the edit
+invisible by construction rather than by bug.
