@@ -20,9 +20,14 @@ One command, `npm run check:wiring`, over a declared surface, with findings that
 
 ### Check A — reference
 
-An exported symbol the production code never references. Measured basis: **24 dead exported symbols and 15 test-only
-ones** in `src/` (119 files, 578 exported symbols), each spot-checked by whole-repo search and each occurring exactly
-once, in its own declaration.
+An exported symbol the production code never references. Measured basis: on a first run over `src/` (119 files, 578
+exported symbols) the findings split into a dead set and a test-only set, each spot-checked by whole-repo search.
+
+The absolute counts are deliberately not restated here: they drifted twice on the day they were taken — the split was
+corrected when the test-only classification was found to be wrong, and both sets moved again when the search surface and
+the walk's extension filter were fixed. What the check *means* is stable; the number is a function of the tree. Run
+`npm run check:wiring` for the count at the revision in front of you, and read the per-finding detail for which class each
+one is in.
 
 ### Check B — declared-member
 
@@ -39,7 +44,13 @@ regex would ship a check that is wrong in the direction of noise, so AC-2 requir
 On a declared surface, enumerate every `if (...)` whose body contains a refusal (`satisfied: false` / `ok: false` /
 `reason:` / `throw`), disable each in turn, run the suite, and report the ones nothing notices. Measured basis: **31
 guards on `adversarial-admissibility`'s declared surface, 30 valid mutations, 1 discounted as a type collapse that
-reddened 16 files at once, and 15 that left the suite completely green.**
+reddened 16 files at once.**
+
+**Withdrawn, same revision: the "15 that left the suite completely green".** Re-measured, 29 of the 30 were noticed and the
+remaining one was the collapse; the earlier classification could not be reproduced, and the likeliest cause was a defect in
+that first harness of the family this document records elsewhere — a mutation that never ran, or one applied to half a
+condition, reads exactly like "not noticed". The changelog records the withdrawal; the figure is kept here as withdrawn
+rather than deleted, because a number that was published and then retracted is part of the record.
 
 "Decorative" means exactly one thing: *no test exercises that refusal*, so its behaviour can regress silently. It does
 **not** mean the refusal is unreachable, and the report says so — the distinction is what keeps the number honest.
@@ -64,9 +75,14 @@ These are not style; each was paid for once already.
 
 ## Self-validation, because a mechanism with no referee is the defect
 
-AC-4: the change ships a test that runs the checks against **the material they were built from** — the 15 decorative
-guards and the 24 dead exports measured on 2026-09-22 — and asserts they are reported. An instrument that cannot
-reproduce the findings that motivated it is not evidence that it works.
+AC-4: the change ships a test that runs the checks against **the material they were built from** and asserts they are
+reported. An instrument that cannot reproduce the findings that motivated it is not evidence that it works.
+
+What that assertion can honestly be, measured: the mutation check found **0** decorative guards on the surface where 15 had
+been claimed, so "assert the 15 are reported" is not a claim any test can hold. What is asserted instead is the
+**classification against real material**: a real repository, a real test command, and a refusal guard the test genuinely
+does not exercise must be reported as decorative — a positive control, where the earlier test used a stub command and
+therefore proved only the plumbing.
 
 AC-5 closes the two repairs measured as **unpinned**:
 

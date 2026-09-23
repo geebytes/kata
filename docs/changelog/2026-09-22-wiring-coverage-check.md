@@ -13,6 +13,8 @@ name a location and an exit code that distinguishes three states.
 | `declared-member` | a member of an `export const X = [...] as const` list nothing consumes | **11 findings** |
 | `mutation` | a refusal guard that can be disabled with the suite still green | 31 guards enumerated; see the withdrawal below |
 
+These counts are the output of `npm run check:wiring` **at the time of writing** and they drift: the table read 40 reference and 11 declared-member when it was written, and 39 and 3 after the two false-positive classes were fixed on the same day. Treat them as evidence that the checks ran and produced findings, never as the current number — run the command. Correcting them here would only re-arm the same drift.
+
 Exit codes: **0** clean · **1** findings · **2** the instrument could not run. The third state is the point — a check that
 reports "clean" when it could not do its job is the defect class this change exists to detect.
 

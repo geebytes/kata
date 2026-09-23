@@ -117,3 +117,72 @@ describe('the mutation check', () => {
         }
     });
 });
+
+/**
+ * f2 of the independent pass's findings, and AC-4's assertion.
+ *
+ * AC-4 claims a test runs the checks against **the material they were built from**. The declared selector did not: it
+ * asserted that 15 recorded `file::condition` sites are a subset of the enumerated set — static enumeration, no suite run —
+ * and the classification against real material was covered only by a scripted stand-in command. That proves the plumbing,
+ * not the judgement: a stub that emits FAIL lines on demand cannot show that the check reads a real runner's behaviour.
+ *
+ * Measured, the claim "the 15 are reported" cannot be held: re-measured, 0 guards on that surface were decorative. So what
+ * is asserted here is the **classification**, against a real repository, a real test runner and a real untested guard.
+ */
+describe('the decorative classification, on real material rather than a scripted command', () => {
+    it('reports the guard no real test exercises, and not the one that is exercised', async () => {
+        const { mkdir, mkdtemp, rm, writeFile } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-mutation-real-'));
+        try {
+            await mkdir(join(root, 'src'), { recursive: true });
+            await mkdir(join(root, 'tests'), { recursive: true });
+            await writeFile(
+                join(root, 'src/guard.mjs'),
+                [
+                    'export function check(kind) {',
+                    "    if (kind === 'a') {",
+                    "        throw new Error('refused a');",
+                    '    }',
+                    "    if (kind === 'b') {",
+                    "        throw new Error('refused b');",
+                    '    }',
+                    "    return 'ok';",
+                    '}',
+                    '',
+                ].join('\n'),
+                'utf8',
+            );
+            // A real test that exercises exactly one of the two guards, run by a real runner.
+            await writeFile(
+                join(root, 'tests/guard.test.mjs'),
+                [
+                    "import { test } from 'node:test';",
+                    "import assert from 'node:assert';",
+                    "import { check } from '../src/guard.mjs';",
+                    "test('refuses a', () => { assert.throws(() => check('a')); });",
+                    '',
+                ].join('\n'),
+                'utf8',
+            );
+
+            const { findDecorativeGuards } = await import('../../src/quality/wiring-check.js');
+            const results = await findDecorativeGuards({
+                root,
+                scratch: join(root, 'scratch'),
+                surface: ['src/guard.mjs'],
+                testCommand: { command: process.execPath, args: ['--test', 'tests/guard.test.mjs'] },
+            });
+
+            // The exercised guard is noticed — its mutation really does redden the suite — and the unexercised one is not.
+            expect(results.filter((r) => r.status === 'noticed').map((r) => r.guard.line)).toHaveLength(1);
+            const decorative = results.filter((r) => r.status === 'decorative');
+            expect(decorative).toHaveLength(1);
+            // `text` is the guard's own `if (...) {` line, which is the mutation anchor.
+            expect(decorative[0]!.guard.text).toContain("kind === 'b'");
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 120000);
+});
