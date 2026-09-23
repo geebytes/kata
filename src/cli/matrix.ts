@@ -12,9 +12,13 @@ import { validateMatrix } from '../quality/acceptance-matrix.js';
  * correct the declaration. The only remaining option was hand-editing `task.json`, which is precisely the
  * unverifiable-write pattern this platform exists to remove.
  *
- * What this command is **not**: a way to change the acceptance criteria. The statements and their ids are untouched;
- * only the evidence declaration is corrected, and the result is validated against the whole declaration so a correction
- * cannot reproduce the ambiguity it was made to fix.
+ * Two corrections are supported, and they are deliberately different in kind:
+ *
+ *  - **the evidence declaration** (`--selector`) — validated against the whole declaration so a correction cannot
+ *    reproduce the ambiguity it was made to fix;
+ *  - **the statement** (`--statement`) — the declaration that can be false as written. It is guarded, not free: it requires
+ *    a reason, the previous text is kept beside the task, and the ids are untouched. Statements were outside this command's
+ *    scope by design; two criteria in `wiring-coverage-check` being unsatisfiable as written is why that changed.
  */
 export interface MatrixCommandResult extends Record<string, unknown> {
     command: 'matrix';
@@ -78,6 +82,48 @@ export async function runMatrixCommand(
     if (!acceptanceId) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --acceptance <AC-id>.' };
     }
+    // A **statement** correction: the declaration that can be false as written. Measured on `wiring-coverage-check`, whose
+    // AC-2 said the check "finds the 24 dead exported symbols" and AC-4 that a test asserts "the 15 guards measured to be
+    // removable" — both numbers withdrawn, so no test could satisfy them without asserting a falsehood, and there was no
+    // governed way to say so. The statements and their ids are what this command was documented not to touch; that was a
+    // design, and this is the decision to lift it for statements only.
+    const statement = valueAfter(argv, '--statement');
+    if (statement !== undefined) {
+        if (!statement.trim()) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'A statement correction requires a non-empty --statement.' };
+        }
+        try {
+            const task = await readTask(root, change);
+            const acceptance = (task.acceptance ?? []).find((item) => item.id === acceptanceId);
+            if (!acceptance) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `Acceptance criterion ${acceptanceId} is not declared by this task, so it has no statement to correct.` };
+            }
+            const previous = acceptance.statement;
+            if (previous === statement) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: 'That statement is already the declared one.' };
+            }
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                const items = (current.acceptance ?? []) as Array<Record<string, unknown>>;
+                return `${JSON.stringify({ ...current, acceptance: items.map((item) => (item.id === acceptanceId ? { ...item, statement } : item)) }, null, 2)}\n`;
+            });
+            // The previous statement is recorded **beside** the task, never on the acceptance item: that item is
+            // `additionalProperties: false` over `id`/`statement`/`claims`, so a history field there would make the task
+            // unreadable — checked before this was written rather than discovered after. Same shape as `scope change`
+            // recording a grown surface, and as the change record carrying its `surfaceBasis`.
+            const corrections = `${root}/.kata/tasks/${change}/declaration-corrections.json`;
+            const { readFile: read, writeFile: write, mkdir } = await import('node:fs/promises');
+            const { dirname } = await import('node:path');
+            await mkdir(dirname(corrections), { recursive: true });
+            const history = await read(corrections, 'utf8').then((text) => JSON.parse(text) as unknown[]).catch(() => [] as unknown[]);
+            history.push({ acceptanceId, previous, statement, reason, by: valueAfter(argv, '--by') ?? 'user', at: new Date().toISOString() });
+            await write(corrections, `${JSON.stringify(history, null, 2)}\n`, 'utf8');
+            return { command: 'matrix', taskId: change, action, updated: true, reason, acceptanceId, statement, previous };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
     if (!selector) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --selector <test path>.' };
     }
