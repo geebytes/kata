@@ -354,3 +354,29 @@ before it, and the reason this one was deleted too rather than kept.
 
 So `kata-gate-surface` closes its repair batch with **eight of nine findings dispositioned and verified, one (minor ②)
 unfixed and its falsifier's obstacle named**.
+
+## After the repair seal: the obligations closed, the findings did not
+
+Sealed the repair batch. `revision-9e48ed2e77e6512a`, obligations **7 → 0**, eight evidence items, none failing, phase back to
+`hardVerify` and `next: /kata-verify`.
+
+But the findings did not follow:
+
+```
+findings list --change kata-gate-surface   ->  9 findings, 9 open, 0 fixed
+adversarial-review.json                    ->  {"fixed": 1, "open": 8}
+```
+
+So **the obligations closed on evidence while the findings stayed open** — two records stating different things about the same
+finding, which is the shape this whole change exists to remove, appearing in its own repair loop.
+
+**Cause not established.** Two candidates, and they are distinguishable rather than equivalent:
+
+1. **By design, staged**: `resolveObligationsForRevision` closes an obligation when its evidence answers it, and the finding
+   is marked `fixed` at *batch closure* — so the two steps are meant to happen at different times and the batch has not closed
+   yet. If so, this is correct and the next step closes it.
+2. **A gap**: the batch-closure path never runs for this change, so the finding keeps a disposition the obligation no longer
+   agrees with, and the next review round will re-raise findings that are already repaired.
+
+Telling them apart is cheap — read `closeBatch`'s caller and the batch record's state — and it is the next step rather than a
+guess. What is certain is the measurement: after a repair seal, `obligations 0` and `findings 9 open` are both true at once.
