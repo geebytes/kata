@@ -398,3 +398,26 @@ because every mechanism it adds is another chance to say more than it does.
 
 **That is worth recording as the change's own conclusion**, because the alternative — one more repair round — has now been
 tried four times with the same result.
+
+## The close-out: routed, not repaired, and why
+
+Round 4's three majors are **routed to `repair-by-another-author`** rather than repaired here. The routing is not a way of
+closing them — it is the conclusion this change reached about itself: four rounds show that the author of this class cannot
+repair it, because every repair adds surface for the next round to find the same class in.
+
+| round | findings | about the previous round's repairs |
+|---|---|---|
+| 1 | 7 (1 blocking) | — |
+| 2 | no record | — |
+| 3 | 5 | 3 |
+| 4 | 5 | **5** |
+
+**What the change delivered, measured**: five acceptance criteria each with its own test file; `kata-cli falsify` with three
+steps and three refusals, verified end to end against real subprocesses; a second disposition for repairs whose subject is not
+code; nine obligations closed through the falsifier route, the first time on this line that any closed that way; and **six
+decorative repairs of mine caught by the mechanism itself** — four by `kata-cli falsify` refusing them, and two by the
+independent rounds.
+
+**What it did not deliver**: convergence, and the six ledger entries bound to a revision the change is not on (`cg4-f5`) mean
+that even the closure it did achieve rests on proofs about different content. That is disclosed rather than tidied: the change
+that exists to make a claim match its evidence ends with one of its own claims not matching.
