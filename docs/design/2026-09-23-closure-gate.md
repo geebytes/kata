@@ -479,3 +479,22 @@ no absence, so the seal must refuse. The mechanism is doing exactly what the cha
 **So the delta-path verification is blocked one step earlier than expected** — not by the carry, but by two findings that need a
 recorded disposition before the batch can close. `cg5-f1` is a prose correction (an absence, with the reason) and `cg5-f2` is a
 code change whose falsifier can be shown reddening. Until those are recorded, `batch-9` stays open and no carry is created.
+
+## Two measurements from trying to close the batch, and one deadlock
+
+**1. The guard checks less than its message prints — confirmed in the field.** `cg5-f2`'s reddening was refused with "The working
+tree is not what revision-1e0a2f0d2503bc5c describes: 6 path(s) differ", and the six do not include `src/quality/repair-batch.ts`,
+which I had edited an hour earlier. The guard compares digests over the revision's **owned** paths only, so a change outside
+ownership is invisible to it while the message claims the whole tree. That is `cg4-f2` exactly, now demonstrated by the tool
+rather than argued from the source.
+
+**2. The absence path has no guard at all.** `cg5-f1`'s absence was **accepted** and recorded against `revision-1e0a2f0d2503bc5c`
+while the same six paths differed. So the check that exists to stop a proof being recorded about content no revision names
+protects the reddening path and not the absence path — which is the same defect one door over, in the fix written for it.
+
+**3. And that produces a deadlock.** The seal refuses because `cg5-f2` has no recorded disposition; the proof refuses because the
+tree is not what the sealed revision describes; and the seal is what would make the tree match. `cg5-f1`'s absence went through
+only because it takes the unguarded path — a reddening cannot be recorded at all in this state.
+
+**Stated rather than worked around**: the sequence "freeze content, prove, seal" is what the guard exists to enforce, and it is
+unreachable when the proofs are themselves what the seal needs in order to close the obligations that block it.
