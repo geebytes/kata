@@ -654,6 +654,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // AC-4 promises a routed finding is visible in this command, so the dispositions come from the tracked view — the
         // same one the disposition commands write through, so the report cannot disagree with what they stored.
         const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+        // AC-3: an obligation answered by evidence and one answered **and falsified** were indistinguishable, so a batch that
+        // closed on evidence alone read exactly like one whose repairs were shown to bite. Reported per obligation, from the
+        // same ledger the criterion reads — and a change sealed before the criterion existed shows up here as evidence-only
+        // rather than silently, which is the reason this criterion is not optional.
+        const { readObligations } = await import('../quality/repair-obligations.js');
+        const { readFalsifierReddenings, hasReddening } = await import('../quality/falsifier-reddenings.js');
+        const obligations = await readObligations(root, change).catch(() => []);
+        const reddenings = await readFalsifierReddenings(root, change).catch(() => []);
         const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as Array<{ id: string; severity: string; source: string; disposition: string; dispositionReason?: string }>);
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
@@ -725,6 +733,19 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // reported nodes, progress and the open batch's finding ids, and never a finding's disposition — so a routed
             // finding's disposition and the change carrying it were invisible exactly where the criterion promised them.
             // Reported from the tracked view, which is the one the disposition commands write through.
+            obligations: obligations.map((obligation) => ({
+                id: obligation.id,
+                findingId: obligation.findingId ?? null,
+                acceptanceId: obligation.acceptanceId ?? null,
+                resolvedAt: obligation.resolvedAt ?? null,
+                // The distinction AC-3 exists for. `null` when unresolved, because "not answered" and "answered one way" are
+                // different facts and a default would erase it.
+                answeredBy: obligation.resolvedAt
+                    ? obligation.findingId
+                        ? (hasReddening(reddenings, obligation.findingId) ? 'evidence-and-falsifier' : 'evidence-only')
+                        : 'evidence'
+                    : null,
+            })),
             findings: trackedForStatus.map((finding) => ({
                 id: finding.id,
                 severity: finding.severity,
