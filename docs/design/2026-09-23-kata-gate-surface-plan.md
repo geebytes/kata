@@ -605,3 +605,14 @@ that also occurs elsewhere.**
 
 **State of ②**: the ledger (`4cbcf08`) and its consumer in the brief (`e8d3f3e`) are committed and mutation-verified. The
 producer is the one part left, and it is specified above.
+
+## `kgs3-f5`: the correction command existed and the correction was half applied
+
+The finding: "the nonexistent implementation path was given a correction command and left uncorrected." Measured — it was worse and
+simpler than that. I had corrected **AC-1's** row and stopped, so **AC-2 still declared `src/quality/change-surface.ts`**, a file
+this change never created. Every declared implementation path now exists (checked across all six rows), and the brief no longer
+names the phantom.
+
+The finding is right, and its sharpest part is about me rather than the tool: **I built the correction command and then used it
+once, on the row I happened to be looking at.** A tool that exists is not a tool that was applied — which is the same distinction
+as the mechanism-with-no-consumer class, one step earlier in the chain.
