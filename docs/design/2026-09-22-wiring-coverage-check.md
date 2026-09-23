@@ -101,17 +101,19 @@ Both were written as assertions during the measurement and both fail when the de
   production consumer, not a test.
 - **It does not run repository-wide.** The mutation surface is what the caller declares; a repo-wide sweep is a different
   cost and is not claimed.
-- **It does not claim coverage it has not measured.** Check C's reach on a novel codebase is unknown; what is known is
-  that on the surface it was built for it found 15 guards, and AC-4 holds it to that.
+- **It does not claim coverage it has not measured.** Check C's reach on a novel codebase is unknown, and on the surface
+  it was built for it found **0** guards that the suite fails to notice — the 15 were withdrawn (see above). What AC-4
+  holds it to is therefore not a count but the **classification**: given a real untested guard, it reports it, and given a
+  real tested one, it does not.
 
 ## Acceptance mapping
 
 | AC | check | evidence |
 |---|---|---|
 | AC-1 | one command, located findings, three exit states | `tests/unit/wiring-check-command.test.ts` |
-| AC-2 | A reports the 24; B parses multi-line declarations | `tests/unit/wiring-check-reference.test.ts` |
+| AC-2 | A reports the dead set and spares what production code calls; B parses multi-line declarations | `tests/unit/wiring-check-reference.test.ts` |
 | AC-3 | C mutates a scratch copy, discounts collapse, reports failing-file counts | `tests/unit/wiring-check-mutation.test.ts` |
-| AC-4 | the checks reproduce the 15 measured guards | `tests/unit/wiring-check-self-validation.test.ts` |
+| AC-4 | the mutation check classifies against real material (a real runner, a real untested guard) | `tests/unit/wiring-check-mutation.test.ts` |
 | AC-5 | R1's round-trip and R10's corpus consistency are pinned | `tests/unit/unpinned-repairs.test.ts` |
 
 Each AC declares its **own** selector. The change that preceded this one declared the same selector for two ACs, so the

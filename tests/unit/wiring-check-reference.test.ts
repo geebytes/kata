@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 // AC-2. Both reference checks are held to the material they were built from.
 //
-// Check A's measured basis: 24 exported symbols in src/ referenced nowhere, each occurring exactly once in its own
-// declaration, plus 15 referenced only from tests.
+// Check A's measured basis, as corrected: **23** exported symbols in src/ referenced nowhere — the 2026-09-22 measurement
+// said 24, and the 24th was the false positive f1 removed (`runWiringCheckCommand`, which `scripts/wiring-check.mjs`
+// calls), so the check was right to stop reporting it and the count is 23, not 24. A further 38 had a reference under
+// `tests/` and are a different class, reported separately.
 //
 // Check B's measured basis is a **negative** one: the harness that produced the 2026-09-22 numbers used a regex whose
 // `[^\]]*` spans newlines, so an apostrophe in prose inside a multi-line list was taken for a string boundary and produced
