@@ -61,3 +61,24 @@ describe('the delivered-fact ledger', () => {
             .rejects.toThrow(/does not exist/);
     });
 });
+
+describe('the brief offers the facts instead of the text', () => {
+    it('renders a live fact as a reference and names a stale one as changed', async () => {
+        const root = await workspace();
+        const { createTaskRevision } = await import('../../src/workflow/revision.js');
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+        await createTaskRevision({ root, taskId: 'f-task', ownedPaths: ['src/a.ts'], checkIds: [] });
+
+        await recordDeliveredFact(root, 'f-task', { path: 'src/a.ts', note: 'the constant is one', at: '2026-09-23T01:00:00.000Z' });
+        const live = await buildAdversarialBrief(root, 'f-task', 'review');
+        expect(live.text).toContain('## What a previous round read');
+        expect(live.text).toContain('the constant is one');
+
+        // Change the content: the fact must stop being offered and the path must be named as changed instead.
+        await writeFile(join(root, 'src/a.ts'), 'export const a = 2;\n', 'utf8');
+        const after = await buildAdversarialBrief(root, 'f-task', 'review');
+        expect(after.text).not.toContain('the constant is one');
+        expect(after.text).toContain('changed since');
+        expect(after.text).toContain('src/a.ts');
+    }, 60000);
+});

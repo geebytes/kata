@@ -222,6 +222,13 @@ export interface AdversarialBriefInput {
     taskId: string;
     node: AdversarialNode;
     revisionId: string | null;
+    /**
+     * What a previous round read, addressed by content — the ledger's **live** half only. A fact whose hash no longer matches
+     * is not offered, because it describes a version of the file that no longer exists; the changed paths are named instead,
+     * so "read before, changed since" is visible rather than silent.
+     */
+    deliveredFacts?: Array<{ path: string; sha256: string; note: string }>;
+    deliveredFactsChanged?: string[];
     acceptance: Array<{ id?: string; statement?: string }>;
     evidence: EvidenceEnvelope[];
     ownedPaths: string[];
@@ -506,6 +513,25 @@ Already repaired on this content: ${history.filter((finding) => finding.disposit
 
 `
         : '';
+    // Lever 2's consumer. Without this the ledger is an unwired mechanism, which is the class this change exists to remove:
+    // the facts are offered as **references** rather than as text, so the next round spends context on its own reasoning
+    // instead of re-reading what a previous round already read — and it decides whether to re-read.
+    // Either half makes the section worth rendering — and the case where **no** fact is live is the one where the changed
+    // paths matter most, because the round has nothing to reuse and needs to know what moved. Gating on the live half alone
+    // dropped the warning exactly then.
+    const delivered = (input.deliveredFacts ?? []).length > 0 || (input.deliveredFactsChanged ?? []).length > 0
+        ? `## What a previous round read
+
+Each line is a fact about content that **still hashes to what it did when it was read**, so re-reading it would learn the
+same thing. The note says what was concluded; follow the path only when you need more than that.
+
+${(input.deliveredFacts ?? []).map((fact) => `- \`${fact.path}\` (${fact.sha256.slice(0, 12)}) — ${fact.note}`).join('\n')}
+${(input.deliveredFactsChanged ?? []).length > 0
+    ? `\nRead by an earlier round and **changed since** — these are not covered by the facts above and need reading again: ${(input.deliveredFactsChanged ?? []).map((path) => `\`${path}\``).join(', ')}`
+    : ''}
+
+`
+        : '';
     const readingSet = (input.readingSet ?? []).length > 0
         ? (input.readingSet ?? [])
             .map((entry) => `- ${entry.path}${entry.lines === null || entry.lines === undefined ? '' : ` (~${entry.lines} lines)`} — ${entry.why}`)
@@ -615,7 +641,7 @@ A starting set, **not a boundary** — reading beyond it is expected whenever a 
 
 ${untrustedMaterial('reading-set', readingSet)}
 
-## Writing as you go
+${delivered}## Writing as you go
 
 You do **not** have to hold everything until the end. A pass that dies mid-run keeps whatever it already wrote:
 
@@ -1824,6 +1850,13 @@ export async function buildAdversarialBrief(
         // it was the *only* source for that node's own history — so on a strict change, whose only node is `review`, every
         // tracked finding was `adversarial-review` and the table came out empty for the one case it exists to serve. The
         // node's own history is now read from its **archived** passes, which recording a pass appends to and never rewrites.
+        // Lever 2's consumer: the facts a previous round delivered, split by whether the content still matches. The live
+        // half is offered as references; the stale half is named, because a fact about content that has changed describes a
+        // version of the file that no longer exists and offering it would be worse than offering nothing.
+        ...(await (await import('./delivered-facts.js')).readDeliveredFacts(root, taskId).then(({ live, stale }) => ({
+            deliveredFacts: live.map((fact) => ({ path: fact.path, sha256: fact.sha256, note: fact.note })),
+            deliveredFactsChanged: stale.map((fact) => fact.path),
+        })).catch(() => ({}))),
         findingHistory: [
             ...(await readTrackedFindingsForBrief(root, taskId))
                 .filter((finding) => finding.source !== `adversarial-${node}`)
