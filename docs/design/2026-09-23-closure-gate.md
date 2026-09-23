@@ -126,3 +126,31 @@ not an option, and neither is loosening the rule to make fixtures pass: the rule
 obligation carries, then re-apply the criterion. **And one consequence needs deciding rather than discovering**: changes sealed
 before this rule — `wiring-coverage-check`'s six obligations among them — have findings with no reddening and could never
 close. AC-3's visibility is where that shows up, and it is the reason AC-3 is not optional.
+
+## Why AC-3's test kept reading an empty list — and it is a defect of the family this line keeps finding
+
+Two attempts, both ending at `readObligations` returning `[]` after `persistBlockingFindings` had demonstrably run. The cause,
+read from the source:
+
+```ts
+export async function readObligations(root, taskId) {
+    try {
+        const record = await readValidatedOptional('repair-obligations', obligationsPath(root, taskId));
+        return record?.obligations ?? [];
+    } catch {
+        return [];      // <- a validation failure and an absent file are the same answer
+    }
+}
+```
+
+**A record that fails validation is indistinguishable from a task with no obligations.** The second attempt asserted the setup
+before the subject and reported `expected [] to have a length of 2` — so the obligations were written and the read refused them,
+silently. That is the same shape as the empty-answer-from-an-uncovered-instrument (`kgs-f9`), and it is why four attempts on
+that clause and two here have failed for reasons the cases were not about.
+
+So AC-3's test is blocked on a **diagnostic** rather than on an assertion: the swallowed validation error has to be visible
+before a fixture can be trusted. Recorded here rather than worked around, because a fixture that cannot say why its input is
+missing is a fixture that will pass for the wrong reason the moment the input stops being missing.
+
+**AC-3's status in one line**: implemented, measured on the real change (12 obligations, 7 `evidence-only`), and **not pinned** —
+its row in the acceptance matrix has no test, which the seal surfaced mechanically.
