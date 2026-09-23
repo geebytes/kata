@@ -115,6 +115,44 @@ export async function runMatrixCommand(
     if (!acceptanceId) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --acceptance <AC-id>.' };
     }
+    // The **fourth** variant of the same gap, and the one that blocked a seal: a row's evidence command was written as
+    // `npx vitest run <selector>`, which the collector cannot append a selector to — so the seal refused with "declares a
+    // testSelector but command ... does not support selectors", and no command could correct it. Same shape as the selector,
+    // the statement and the implementation path before they got one.
+    const evidenceCommand = valueAfter(argv, '--command');
+    if (evidenceCommand !== undefined) {
+        if (evidenceCommand.trim().length === 0) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'A command correction requires a non-empty --command.' };
+        }
+        try {
+            const task = await readTask(root, change);
+            const matrix = task.acceptanceMatrix;
+            if (!matrix) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `${change} declares no acceptance matrix, so there is no row to correct.` };
+            }
+            const index = matrix.rows.findIndex((row) => row.acceptanceId === acceptanceId);
+            if (index === -1) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `Acceptance criterion ${acceptanceId} is not declared by this task, so it has no row to correct.` };
+            }
+            const previousCommands = (matrix.rows[index]?.evidence ?? []).map((entry) => entry.command);
+            const rows = matrix.rows.map((row, position) => (position === index
+                ? { ...row, evidence: (row.evidence ?? []).map((entry) => ({ ...entry, command: evidenceCommand })) }
+                : row));
+            const next = { ...matrix, rows };
+            const errors = validateMatrix(task.acceptance ?? [], next as never);
+            if (errors.length > 0) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `The corrected matrix does not validate: ${errors.map((entry) => entry.message).join('; ')}` };
+            }
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                return `${JSON.stringify({ ...current, acceptanceMatrix: next }, null, 2)}\n`;
+            });
+            return { command: 'matrix', taskId: change, action, updated: true, reason, acceptanceId, evidenceCommand, previousCommands };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
     // The third variant of the same gap, and the one that surfaced as a minor finding: a matrix row declared an
     // implementation path that does not exist (`src/quality/change-surface.ts`, a file this change never created), and the
     // brief's reading set then named it — so a reviewer was told to start reading a file that is not there. Rows were
