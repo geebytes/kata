@@ -413,7 +413,7 @@ repair it, because every repair adds surface for the next round to find the same
 | 4 | 5 | **5** |
 
 **What the change delivered, measured**: five acceptance criteria each with its own test file; `kata-cli falsify` with three
-steps and three refusals, verified end to end against real subprocesses; a second disposition for repairs whose subject is not
+steps and three refusals, exercised end to end against real subprocesses **by hand during this round — no declared check drives that path, which round 5 found and this sentence previously overstated (cg5-f1)**; a second disposition for repairs whose subject is not
 code; nine obligations closed through the falsifier route, the first time on this line that any closed that way; and **six
 decorative repairs of mine caught by the mechanism itself** — four by `kata-cli falsify` refusing them, and two by the
 independent rounds.
@@ -421,3 +421,21 @@ independent rounds.
 **What it did not deliver**: convergence, and the six ledger entries bound to a revision the change is not on (`cg4-f5`) mean
 that even the closure it did achieve rests on proofs about different content. That is disclosed rather than tidied: the change
 that exists to make a claim match its evidence ends with one of its own claims not matching.
+
+## Round 5, and the fifth data point
+
+Round 5 (382,177 tokens / 82 tool uses / 18 minutes — bounded as asked, and it returned a record) found two, both major:
+
+- **`cg5-f1`** — **this document overstated what was verified**: "`kata-cli falsify` … verified end to end against real
+  subprocesses" is a claim no declared check in the revision holds. It was exercised by hand during this round, and no test
+  drives the CLI's three-step path. **Corrected in place**, because a document that overstates in the change's own favour is the
+  same defect as a test that cannot fail — and I asked this round to check exactly that.
+- **`cg5-f2`** — AC-1's third clause is false as written.
+
+**And the review gate refused the record again**: `incomplete`, a criterion this revision changed is not covered — the fifth
+round in which the pass could not be admitted, and the third time for that specific reason.
+
+So the archive path is blocked, and that is the honest state rather than a step I can push through: **five rounds have produced
+7, no-record, 5, 5 and 2 findings, and none of them closed the change.** The measurement the close-out needed is now complete —
+not "the change has bugs" but **"this change cannot be finished by its author"**, which is the conclusion `repair-by-another-author`
+was opened to act on.
