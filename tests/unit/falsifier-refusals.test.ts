@@ -49,6 +49,7 @@ const base = {
 describe('the falsifier run refuses at each step it cannot verify', () => {
     it('refuses when the check does not pass before any mutation', async () => {
         const root = await workspace();
+        const taskId = 'f-task';
         const { run, calls } = runner([1, 1, 0]);
         const result = await runFalsification({ ...base, root, taskId: 'f-task', run });
         expect(result).toMatchObject({ recorded: false, refused: 'check_not_passing' });
@@ -78,3 +79,36 @@ describe('the falsifier run refuses at each step it cannot verify', () => {
     });
 });
 
+
+/**
+ * A reddening must not erase an absence, and it did.
+ *
+ * `recordFalsifierReddening` wrote `{ reddenings, updatedAt }` and nothing else, so recording a reddening **silently erased every
+ * recorded absence** — and the command reported what it recorded, not what it removed. Measured on `closure-gate`: `cg5-f1`'s
+ * absence was accepted at 16:34 and gone when the ledger was read after `cg5-f2`'s reddening was recorded; the seal then refused
+ * `cg5-f1` for having no disposition, which was true.
+ *
+ * The asymmetry was the tell: `recordFalsifierAbsence` preserved `reddenings` and this one did not preserve `absences`. Two
+ * shapes in one ledger, and only one writer knew about both.
+ */
+describe('the two shapes in one ledger do not erase each other', () => {
+    it('keeps a recorded absence when a reddening is recorded afterwards', async () => {
+        const root = await workspace();
+        const taskId = 'f-task';
+        const { recordFalsifierAbsence, recordFalsifierReddening, readFalsifierReddenings, readFalsifierAbsences } =
+            await import('../../src/quality/falsifier-reddenings.js');
+
+        await recordFalsifierAbsence(root, taskId, {
+            findingId: 'prose-fix', reason: 'the repair is to a document, so no check can redden',
+            revisionId: 'revision-1', recordedAt: '2026-09-23T00:00:00.000Z',
+        });
+        await recordFalsifierReddening(root, taskId, {
+            findingId: 'code-fix', check: 'npx vitest run x', mutation: 'm', revisionId: 'revision-1',
+            reddenedAt: '2026-09-23T00:01:00.000Z', observed: { before: 0, mutated: 1, after: 0 },
+        });
+
+        expect((await readFalsifierReddenings(root, taskId)).map((r) => r.findingId)).toEqual(['code-fix']);
+        // Before the fix this was empty, and the seal's refusal named the finding for having no disposition.
+        expect((await readFalsifierAbsences(root, taskId)).map((a) => a.findingId)).toEqual(['prose-fix']);
+    });
+});

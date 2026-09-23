@@ -66,6 +66,11 @@ export async function readFalsifierReddenings(root: string, taskId: string): Pro
  * Records a reddening. The caller supplies what only it can know — the mutation, because re-introducing a defect is the
  * repairer’s knowledge — and nothing else: the check and the revision are the ones the run actually used.
  */
+async function readAbsences(root: string, taskId: string): Promise<FalsifierAbsence[]> {
+    const record = await readValidatedOptional<FalsifierReddeningLedger>('falsifier-reddenings', falsifierReddeningsPath(root, taskId));
+    return record?.absences ?? [];
+}
+
 export async function recordFalsifierReddening(
     root: string,
     taskId: string,
@@ -78,7 +83,21 @@ export async function recordFalsifierReddening(
         // as a second fact.
         const reddenings = existing.filter((entry) => entry.findingId !== reddening.findingId);
         reddenings.push(reddening);
-        return `${JSON.stringify({ reddenings, updatedAt: reddening.reddenedAt }, null, 2)}\n`;
+        // **The absences are carried through, and they were not.** This writer wrote `{ reddenings, updatedAt }` and nothing
+        // else, so recording a reddening **erased every recorded absence** — and it did so silently, because the command
+        // reports what it recorded and not what it removed. Measured: `cg5-f1`'s absence was accepted at 16:34 and gone when
+        // the ledger was read after `cg5-f2`'s reddening was recorded; the seal then refused `cg5-f1` for having no
+        // disposition, which was true.
+        //
+        // The asymmetry is the tell: `recordFalsifierAbsence` preserves `reddenings` and this one did not preserve
+        // `absences`. Two shapes in one ledger, and only one writer knew about both — the same defect this line keeps
+        // finding, here as a writer that drops a sibling field.
+        // **Unconditionally, and my first version was conditioned on `existing.length === 0`** — which reads as "there are no
+        // reddenings yet, so there are no absences" and drops them in exactly the case that matters: the first reddening
+        // recorded beside an absence. The case caught it, and it is the same shape as the bug it fixes — a writer silently
+        // losing a sibling field, now via a condition rather than an omission.
+        const absences = await readAbsences(root, taskId);
+        return `${JSON.stringify({ reddenings, ...(absences.length > 0 ? { absences } : {}), updatedAt: reddening.reddenedAt }, null, 2)}\n`;
     });
     return reddening;
 }
