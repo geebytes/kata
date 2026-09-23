@@ -72,8 +72,12 @@ describe('the change surface has one derivation', () => {
         // Producer 3: the sealed change record's changed paths — a **different derivation** from the delta's, which is
         // exactly the pair wcc3-f1 measured (the brief's declared delta held three paths, the record for the same revision
         // held five). Enumerating only producers 1 and 2 would repeat the mistake that let f8 survive.
-        const { buildChangeRecord, readChangeRecord } = await import('../../src/quality/change-record.js');
-        await buildChangeRecord({
+        // `buildChangeRecord` computes a record; it does not persist one — the seal does that. Measured: without this
+        // write the fixture read an empty array and the test looked like a real divergence, when it was the fixture
+        // reading a file that was never created. That is why the previous commit refused to call the disagreement real.
+        const { buildChangeRecord, changeRecordPath, readChangeRecord } = await import('../../src/quality/change-record.js');
+        const { writeFile: writeRecord } = await import('node:fs/promises');
+        const built = await buildChangeRecord({
             root,
             taskId: 'one-derivation',
             revisionId: second,
@@ -84,6 +88,7 @@ describe('the change surface has one derivation', () => {
             contentDigests: { 'src/one.ts': 'aaa', 'src/two.ts': 'bbb' },
             baseContentDigests: { 'src/one.ts': 'aaa' },
         });
+        await writeRecord(changeRecordPath(root, 'one-derivation', second), `${JSON.stringify(built, null, 2)}\n`, 'utf8');
         const record = await readChangeRecord(root, 'one-derivation');
         const recorded = [...(record?.changedPaths ?? [])].sort();
 
