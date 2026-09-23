@@ -79,3 +79,45 @@ describe('an acceptance statement can be corrected through a governed path', () 
         expect(unchanged.error).toMatch(/already the declared one/);
     });
 });
+
+/**
+ * The third variant of the same gap, surfaced as a minor finding on this change's own matrix: AC-1's row declared
+ * `src/quality/change-surface.ts` as an implementation path — a file that does not exist, because the derivation lives in
+ * `adversarial.ts` — and the brief's reading set then named it, telling a reviewer to start with a file that is not there.
+ */
+describe('an implementation path can be corrected through the same governed path', () => {
+    it('corrects the row, and the correction validates', async () => {
+        const root = await fixture('impl-path');
+        const { mutateTaskArtefact } = await import('../../src/core/state.js');
+        const { taskPath } = await import('../../src/core/layout.js');
+        // Give the task a matrix whose row names a path, so the correction has something to change.
+        await mutateTaskArtefact(root, 'impl-path', taskPath(root, 'impl-path'), async (raw) => {
+            const current = JSON.parse(raw) as Record<string, unknown>;
+            return `${JSON.stringify({
+                ...current,
+                acceptanceMatrix: {
+                    version: 1,
+                    rows: [
+                        {
+                            acceptanceId: 'AC-1',
+                            implementationPaths: ['src/quality/change-surface.ts'],
+                            testPaths: ['tests/unit/x.test.ts'],
+                            evidence: [{ id: 'ac-1', kind: 'test', command: 'vitest', testSelector: 'tests/unit/x.test.ts' }],
+                            verificationLevel: 'unit',
+                        },
+                    ],
+                },
+            }, null, 2)}\n`;
+        });
+
+        const result = await runMatrixCommand(
+            ['set', '--change', 'impl-path', '--acceptance', 'AC-1', '--implementation-path', 'src/quality/adversarial.ts', '--reason', 'the derivation lives there, not in a file that was never created'],
+            root,
+        );
+        expect(result.updated).toBe(true);
+        expect(result.previousPaths).toEqual(['src/quality/change-surface.ts']);
+
+        const task = await readTask(root, 'impl-path');
+        expect(task.acceptanceMatrix?.rows[0]?.implementationPaths).toEqual(['src/quality/adversarial.ts']);
+    });
+});

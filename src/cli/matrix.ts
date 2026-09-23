@@ -115,6 +115,43 @@ export async function runMatrixCommand(
     if (!acceptanceId) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --acceptance <AC-id>.' };
     }
+    // The third variant of the same gap, and the one that surfaced as a minor finding: a matrix row declared an
+    // implementation path that does not exist (`src/quality/change-surface.ts`, a file this change never created), and the
+    // brief's reading set then named it — so a reviewer was told to start reading a file that is not there. Rows were
+    // declarable only at `open --bootstrap-file`, exactly as selectors and statements were before they got a command.
+    const implementationPaths = valueAfter(argv, '--implementation-path');
+    if (implementationPaths !== undefined) {
+        const paths = implementationPaths.split(',').map((path) => path.trim()).filter((path) => path.length > 0);
+        if (paths.length === 0) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'A path correction requires a non-empty --implementation-path (comma-separated for several).' };
+        }
+        try {
+            const task = await readTask(root, change);
+            const matrix = task.acceptanceMatrix;
+            if (!matrix) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `${change} declares no acceptance matrix, so there is no row to correct.` };
+            }
+            const index = matrix.rows.findIndex((row) => row.acceptanceId === acceptanceId);
+            if (index === -1) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `Acceptance criterion ${acceptanceId} is not declared by this task, so it has no row to correct.` };
+            }
+            const previousPaths = [...(matrix.rows[index]?.implementationPaths ?? [])];
+            const rows = matrix.rows.map((row, position) => (position === index ? { ...row, implementationPaths: paths } : row));
+            const next = { ...matrix, rows };
+            const errors = validateMatrix(task.acceptance ?? [], next as never);
+            if (errors.length > 0) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `The corrected matrix does not validate: ${errors.map((entry) => entry.message).join('; ')}` };
+            }
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                return `${JSON.stringify({ ...current, acceptanceMatrix: next }, null, 2)}\n`;
+            });
+            return { command: 'matrix', taskId: change, action, updated: true, reason, acceptanceId, implementationPaths: paths, previousPaths };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
     // A **statement** correction: the declaration that can be false as written. Measured on `wiring-coverage-check`, whose
     // AC-2 said the check "finds the 24 dead exported symbols" and AC-4 that a test asserts "the 15 guards measured to be
     // removable" — both numbers withdrawn, so no test could satisfy them without asserting a falsehood, and there was no
