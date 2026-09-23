@@ -19,7 +19,7 @@ import { isTerminalSeverity } from './finding-lifecycle.js';
  *   - I5: a disposition changes *when* a finding is read, never *whether* it must be seen.
  */
 
-export type FindingDisposition = 'open' | 'fixed' | 'deferred' | 'accepted';
+export type FindingDisposition = 'open' | 'fixed' | 'deferred' | 'accepted' | 'routed';
 
 export interface DispositionEvent {
     disposition: FindingDisposition;
@@ -176,6 +176,17 @@ export function dispositionDenial(
      */
     coverage?: { classification: string; dimension?: string; canonicalStatement?: string } | null,
 ): string | null {
+    // AC-4. `routed` is the one disposition allowed for **blocking and major**, because it is the exit for a finding whose
+    // repair lies outside the change that raised it — the case that until now had no answer but "repair it" (the loop) or
+    // `waive` (which sets findings to empty). Not a loophole: it requires a reason naming what will carry the finding, and
+    // the command checks that the named change exists.
+    if (disposition === 'routed') {
+        if (!reason?.trim()) {
+            return `Routing ${finding.id} requires --reason naming the change that will carry it: a finding may leave this `
+                + 'change, but it may not leave unnamed.';
+        }
+        return null;
+    }
     const beyondDeclared = coverage?.classification === 'beyond-declared-coverage';
     if (!mayBeDispositioned(finding.severity) && !beyondDeclared) {
         return `Finding ${finding.id} is '${finding.severity}' and must be repaired: only minor and nit findings can be `

@@ -70,3 +70,49 @@ describe('a review finding can be recorded from the command line', () => {
             .rejects.toThrow(/Usage: kata-cli findings add/);
     });
 });
+
+/**
+ * AC-4 of `kata-gate-surface`: the routed terminal disposition.
+ *
+ * Until this existed, a finding whose repair lay outside the change that raised it had two exits: repair it (the loop that
+ * `wiring-coverage-check` measured over three rounds) or `adversarial waive`, which replaces the node record with one that
+ * says it makes no claim to have looked — an erasure, not a resolution. `defer` and `accept` refuse `blocking` and `major`
+ * outright, so the middle route did not exist.
+ */
+describe('a finding can be routed to the change that will carry it', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('routes a major finding, and refuses a target that does not exist', async () => {
+        const root = await fixture('rout-ok');
+        await at(root, () => runFindingsCommand(['add', '--change', 'rout-ok', '--severity', 'major', '--message', 'repair lives elsewhere']));
+        const findingId = (JSON.parse(await readFile(join(root, '.kata', 'tasks', 'rout-ok', 'review.json'), 'utf8')) as {
+            findings: Array<{ id: string }>;
+        }).findings[0]!.id;
+
+        // A target that exists: the routed finding leaves this change and names where it goes.
+        await mkdir(join(root, '.kata', 'tasks', 'carrier-change'), { recursive: true });
+        const routed = await at(root, () => runFindingsCommand(['rout', '--change', 'rout-ok', '--id', findingId, '--to', 'carrier-change']));
+        expect(routed.to).toBe('carrier-change');
+
+        const record = JSON.parse(await readFile(join(root, '.kata', 'tasks', 'rout-ok', 'review.json'), 'utf8')) as {
+            findings: Array<{ id: string; disposition?: string }>;
+        };
+        // Dispositioned, not deleted: the finding is still there and says where it went.
+        expect(record.findings.find((finding) => finding.id === findingId)?.disposition).toBe('routed');
+
+        // A target nobody opened is a disappearance with a nicer name, so it is refused.
+        await expect(at(root, () => runFindingsCommand(['rout', '--change', 'rout-ok', '--id', findingId, '--to', 'nowhere'])))
+            .rejects.toThrow(/no such change exists/);
+    });
+
+    it('requires a reason, so a finding may leave but not leave unnamed', async () => {
+        const { dispositionDenial } = await import('../../src/quality/finding-disposition.js');
+        const finding = { id: 'f-major', source: 'review', severity: 'major', disposition: 'open' } as never;
+        expect(dispositionDenial(finding, 'routed', undefined, null)).toMatch(/requires --reason naming the change/);
+        expect(dispositionDenial(finding, 'routed', 'carried by kata-gate-surface', null)).toBeNull();
+        // And the refusal that made this disposition necessary is still in force for the other two.
+        expect(dispositionDenial(finding, 'deferred', 'later', null)).toMatch(/must be repaired/);
+    });
+});

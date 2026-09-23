@@ -19,6 +19,7 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
                 'list --change <task-id> [--disposition open|deferred|accepted|fixed]',
                 'defer --change <task-id> --id <finding-id> --reason "<why not now>" [--by <actor>]',
                 'accept --change <task-id> --id <finding-id> --reason "<why this is not a defect>" [--by <actor>]',
+                'rout --change <task-id> --id <finding-id> --to <change> [--reason "<why it belongs there>"]',
                 'carry --change <task-id> --to <task-or-ticket> [--reason "<note>"]',
             ],
             note: 'blocking and major findings cannot be deferred or accepted: they must be repaired.',
@@ -110,6 +111,28 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
             ...(acceptanceId ? { acceptanceId } : {}),
         });
         return { command: 'findings add', taskId, findingId: finding.id, severity: finding.severity };
+    }
+
+    // AC-4: the routed terminal disposition. A finding whose repair lies outside this change names what carries it, and
+    // the target is checked to exist — a routing to a change nobody opened is a disappearance with a nicer name.
+    if (subcommand === 'rout') {
+        const routId = valueAfter(rest, '--id');
+        const to = valueAfter(rest, '--to');
+        if (!routId || !to) throw new Error('Usage: kata-cli findings rout --change <task-id> --id <finding-id> --to <task-or-change>');
+        const { existsSync } = await import('node:fs');
+        if (!existsSync(`${root}/.kata/tasks/${to}`)) {
+            throw new Error(`Finding '${routId}' cannot be routed to '${to}': no such change exists. A routing must name something that will carry the finding.`);
+        }
+        const { applyDisposition: applyRout } = await import('../quality/finding-disposition.js');
+        const routFindings = await readTrackedFindings(root, taskId);
+        const routFinding = routFindings.find((entry) => entry.id === routId);
+        if (!routFinding) throw new Error(`Finding '${routId}' was not found in the review record or an adversarial pass of task '${taskId}'.`);
+        const routBy = valueAfter(rest, '--by') ?? 'user';
+        const routAt = new Date().toISOString();
+        const routReason = valueAfter(rest, '--reason') ?? 'carried by the named change';
+        const routWritten = await applyRout(root, taskId, routFinding.source, routId, { disposition: 'routed', reason: `routed to ${to}: ${routReason}`, by: routBy, at: routAt });
+        if (!routWritten) throw new Error(`Finding '${routId}' could not be written back to ${routFinding.source}.`);
+        return { command: 'findings rout', taskId, id: routId, to, severity: routFinding.severity, reason: routReason, by: routBy, at: routAt };
     }
 
     const disposition = subcommand === 'defer' ? 'deferred' : subcommand === 'accept' ? 'accepted' : null;
