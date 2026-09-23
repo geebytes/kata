@@ -143,3 +143,54 @@ One of the two has to change, and only one of them can be changed honestly:
 Also worth fixing regardless, because it is the same shape recorded twice already in this line of work: **`??` on an array
 treats "empty" as "present"**. Whatever is decided, the two derivations must be made one, so that "the record says the
 surface is empty" and "the gate has a non-empty remit" can never both be true.
+
+## What the second independent round added, and where each finding has to be repaired
+
+The second pass ran against `revision-109e944617d5d273` and returned 8 findings. Four were repaired inside
+`wiring-coverage-check`; **four cannot be**, and saying why is the point of this section.
+
+| finding | nature | where it can be repaired |
+|---|---|---|
+| `wcc2-f4` | my own f6 repair traded a false positive for a **false negative** — a comment counted as a consumer | **here** — repaired (`25fb022`), measured 3 → 6 findings |
+| `wcc2-f5` | `parseDeclaredLists` collected only single-quoted members, so a double-quoted list was invisible | **here** — repaired (`c294c1f`), measured 6 → 8 findings |
+| `wcc2-f6` | the artifacts claimed 24 dead exports while pinning 23, the 24th being f1's false positive | **here** — repaired (`fd0d746`) |
+| `wcc2-f7` | the design doc asserted the withdrawn numbers in three places after correcting one | **here** — repaired (`fd0d746`) |
+| **`wcc2-f1`** | **f8 recurs with a different signature**: the delta the brief hands out and the surface the gate verifies are two derivations | **not here** — `src/quality/adversarial.ts` |
+| **`wcc2-f8`** | the f8/f9 repairs were made in paths this change does not own, so the round cannot review them | **not here** — it *is* the observation that repairs left the change |
+| **`wcc2-f2`** | AC-4's statement ("reports the 15 guards measured on 2026-09-22") is false as written — 0 were decorative | **an act on the task declaration**, not on files |
+| **`wcc2-f3`** | AC-5's quantifier: the criterion as written cannot be satisfied literally, and my test asserts a narrower true rule | **an act on the task declaration** |
+
+### The two structural lessons, in the measurements
+
+**1. Repairing an instance does not repair a class.** f8 was "two derivations of the change surface". I unified the record
+with the gate and stopped there; the class has at least four producers (the record, the gate's remit, the brief's delta, the
+IR's scope), and `wcc2-f1` found the next pair immediately. A repair of a class needs a falsifier for the *class*: a test
+that enumerates every producer and asserts they agree. The test written for f8 asserts one pair, which is why the class
+survived.
+
+**2. The loop terminates by routing, not by repairing.** Four of the eight findings cannot be repaired in the change that
+found them — two because the repair lies in another change's paths, two because corrections belong to the task declaration.
+Repairing them anyway is what produced `wcc2-f8`, which is the change observing that it had certified a surface it could not
+review.
+
+The inclusion that has to hold for a repair round to converge:
+
+> repair set ⊆ reviewable set ⊆ accepted set
+
+Two instances from these two rounds: the f8/f9 repairs left the reviewable set (`wcc2-f8`), and the AC texts were never in
+the repair set (`wcc2-f2`, `wcc2-f3`).
+
+### What the next change has to be, then
+
+- **`kata-gate-surface`** — owns `src/quality/change-record.ts`, `src/quality/adversarial.ts` and
+  `src/workflow/orchestrator.ts`, and carries f8's remaining class (`wcc2-f1`: every producer of the change surface,
+  including the delta and the IR) with a falsifier that enumerates them all. f9's repair, made here and unreviewable here
+  (`wcc2-f8`), moves into it on the same grounds.
+- **a declaration-correction capability** — `matrix set` corrects a row's **selector** and was built for exactly this
+  reason (a declared selector that could not be corrected through a governed path). The acceptance **statement** has the
+  same problem and no such command, so two criteria in this change are false as written and cannot be made true
+  (`wcc2-f2`, `wcc2-f3`). Hand-editing `task.json` is what this line of work exists to stop; the honest answer is a
+  capability, not an edit.
+
+Until both exist, this change's honest state is: **the four in-scope findings repaired and verified, the four out-of-scope
+findings recorded with the path each one has to travel.**
