@@ -308,3 +308,32 @@ being unpinned. So the honest statement of the criterion's limit is:
 
 **And the same shape is why `cg3-f5` (the sealed revision declaring a deleted path) is not fixed here**: it is a repair to a
 declaration, and its falsifier would be the seal's own refusal — which is the mechanism, not a check.
+
+## The revision id is not stable across two seals of the same content — measured, and it is why the proofs keep invalidating
+
+Four times in this round a proof was recorded and then invalidated by a later seal. The fourth time is the one that shows the
+cause, because the tree was clean and the two revisions are the same in every way I can see:
+
+```
+revision-31fc4d5781f961ec  paths 28   (proofs recorded against this one)
+revision-7cd64168e6ecbccf  paths 28   (the seal produced this one)
+only in 31fc4d: (none)     only in 7cd641: (none)
+ownedPaths equal: true
+git status: clean
+```
+
+**Same paths, same owned paths, clean tree, different `revisionId`.** So something in the digest differs that is not a tracked
+file's content — the candidates are a check's side-effect file or the seal's own artefacts — and the consequence is the one that
+matters here:
+
+> **A proof bound to a revision is invalidated by the next seal of unchanged content**, which makes the sequence
+> "freeze → prove → seal" impossible: the seal that would close the obligation is the seal that invalidates the proof.
+
+This contradicts the guarantee the revision scheme is built on — unchanged content yields a byte-identical `revisionId` — and it
+is the same shape as the rest of this round: **a declaration (the revision id) that does not match the thing it names.** The
+falsifier binding is the first consumer that makes it visible, because it is the first thing that requires two seals of the same
+content to agree.
+
+**Not fixed here, and named rather than worked around**: the diagnosis needs the digest recomputed twice over one content set to
+see which entry moves, which is a measurement I did not have budget for. It belongs with the corrections, and it is the reason
+this change cannot close its own last three obligations.
