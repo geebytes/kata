@@ -122,8 +122,11 @@ describe('a refusal names the finding whose falsifier is missing', () => {
 
         const task = await (await import('../../src/core/task.js')).readTask(root, 'names');
         const preflight = await collectSealPreflight({ root, taskId: 'names', task: task as never, ownedPaths: [], options: { plannedEvidence: [] } as never }).catch((error) => ({ error: String(error) }));
-        const text = JSON.stringify(preflight);
-        // The finding is named, and it is not named through an acceptance id — which is the shape that made the clause false.
-        expect(text).toContain('the-finding-without-a-falsifier');
+        // **The message, not the payload.** The first version asserted the id appears anywhere in the result — and it appears in
+        // the obligation list, so the assertion held with the naming removed from the refusal: the seventh decorative check in
+        // this change, found by mutating it. The clause is about what the refusal says.
+        const blockers = JSON.stringify((preflight as { blockers?: unknown }).blockers ?? preflight);
+        expect(blockers).toContain('the-finding-without-a-falsifier');
+        expect(blockers).toContain('awaiting a falsifier or a recorded absence');
     });
 });
