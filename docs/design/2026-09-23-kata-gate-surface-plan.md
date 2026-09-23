@@ -264,3 +264,33 @@ green test, because the green one would have read as coverage.
 schema-invalid; a fixture asserting the surface while the criterion was about the record; an assertion on the brief's scope
 while the defect was in the gate; and now an assertion on the gate that never reaches the conjunct under test. Every one is a
 test whose subject was not the subject.
+
+## `kgs-f3`, resolved by measurement: my "fix" is a no-op at the call site
+
+Third attempt, and this one produced the answer rather than another green test.
+
+The gate calls the pool with **only** `revisionIds`:
+
+```ts
+(await issuedBriefPool(root, taskId, node, { revisionIds: [revisionId] })).accepted
+```
+
+and `issuedBriefPool` classifies an entry as accepted when `revisionIds.has(entry.revisionId) || manifestHashes.has(entry.manifestHash)`.
+With `manifestHashes` empty, **the content-matched branch can never be true at this call site** — so the `.filter((entry) =>
+entry.revisionId === revisionId)` I added changes nothing here. Measured: removing it leaves the entire suite green, including
+the e2e fixture that reaches the coverage conjunct.
+
+**So `kgs-f3`'s premise does not hold where the fix was applied.** The finding said the remit is "derived from any delta scope
+present in the issued-brief pool"; at this call site the pool only ever contains entries for this revision, so there is no
+second delta to take.
+
+Two honest dispositions, and the choice is a judgement rather than a measurement:
+
+1. **keep the filter as a defensive guard** — it is correct and costs nothing, but it is also **unpinnable at this call site**,
+   and this change's own rule is that a guard whose removal leaves the suite green is decorative. Keeping it means writing
+   down that it is defensive rather than load-bearing;
+2. **remove it**, and let the pool's contract (a delta is revision-relative) be stated where the pool is called, with the
+   `revisionIds`-only binding as the reason.
+
+**What is not in doubt**: three attempts produced no falsifier, and the reason is now known — the defect is unreachable there.
+Recording that is worth more than a green test, which is why all three attempts were deleted rather than kept.
