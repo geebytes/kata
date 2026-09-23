@@ -275,6 +275,16 @@ export async function recordFindingsForBatching(
 export async function closeBatchAfterSeal(
     root: string,
     taskId: string,
+    /**
+     * The revision this seal minted, and the carry's base.
+     *
+     * **The option existed and no caller supplied it.** The writer was fixed to put `baseRevisionId` on a carried-forward
+     * batch — and the batch a later round reads as the last *closed* one still had none, because this function took only a root
+     * and a task id and `closeRepairBatch` therefore never received a base. Measured: `batch-9` closed at
+     * `revision-1e0a2f0d2503bc5c`, `batch-10` was carried out of it with no base, and the delta path stayed unreachable —
+     * the same defect one layer out from where it was fixed.
+     */
+    baseRevisionId?: string,
 ): Promise<RepairBatch | CloseRefusal | null> {
     const batch = await openBatch(root, taskId);
     if (!batch) return null;
@@ -315,7 +325,8 @@ export async function closeBatchAfterSeal(
     const stillTracked = new Set(tracked.map((finding) => finding.id));
     const noLongerReported = batch.findings.filter((finding) => !stillTracked.has(finding.id)).map((finding) => finding.id);
 
-    return closeRepairBatch(root, taskId, { answered, deferred, noLongerReported });
+    // The base is what makes the next round's delta possible, and it comes from the revision this seal minted.
+    return closeRepairBatch(root, taskId, { answered, deferred, noLongerReported, ...(baseRevisionId ? { baseRevisionId } : {}) });
 }
 
 /**
