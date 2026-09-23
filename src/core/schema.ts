@@ -10,6 +10,7 @@ import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json
 import repairSchema from 'kata-asset:schemas/repair.schema.json';
 import repairObligationsSchema from 'kata-asset:schemas/repair-obligations.schema.json';
 import falsifierReddeningsSchema from 'kata-asset:schemas/falsifier-reddenings.schema.json';
+import repairAuthorsSchema from 'kata-asset:schemas/repair-authors.schema.json';
 import repairBatchSchema from 'kata-asset:schemas/repair-batch.schema.json';
 import scopeChangesSchema from 'kata-asset:schemas/scope-changes.schema.json';
 import revisionSchema from 'kata-asset:schemas/revision.schema.json';
@@ -37,6 +38,7 @@ const schemaText: Record<string, string> = {
   repair: repairSchema,
   'repair-obligations': repairObligationsSchema,
   'falsifier-reddenings': falsifierReddeningsSchema,
+  'repair-authors': repairAuthorsSchema,
   'repair-batch': repairBatchSchema,
   'scope-changes': scopeChangesSchema,
   revision: revisionSchema,

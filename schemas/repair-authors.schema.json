@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repair-authors",
+  "title": "Repair authors",
+  "description": "Who made a repair and what they were handed. Provenance rather than proof of independence: the ceiling is recorded in each entry rather than hidden.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repairs", "updatedAt"],
+  "properties": {
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["findingId", "session", "handed", "report", "recordedAt", "ceiling"],
+        "properties": {
+          "findingId": { "type": "string", "minLength": 1 },
+          "session": { "type": "string", "minLength": 1 },
+          "handed": { "type": "string", "minLength": 1 },
+          "report": { "type": "string", "minLength": 1 },
+          "recordedAt": { "type": "string", "minLength": 1 },
+          "ceiling": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  }
+}
