@@ -122,3 +122,32 @@ in the working tree and exited 1 under the seal — the seal runs a check agains
 data under `.kata/` is not part of it. **A test that only passes where its author's other changes happen to be is not a test**,
 which is the same defect as a check that cannot fail, one step over: a check that can only pass. The suite keeps the fixture case
 and this is the measurement.
+
+## The review round: seven findings, and the one that matters most is about this change's own behaviour
+
+Cost **351,864 tokens / 72 tool uses / 15.6 minutes** — the cheapest round on this line, and it returned a record. The gate
+refused it as `incomplete` (a criterion not covered), the same reason all five of `closure-gate`'s records were refused.
+
+| finding | what it says |
+|---|---|
+| `rba-f1` major | **`reportRounds` reports a number that is not what it claims** — the count treats targets as findings, which is the unit mistake I made and only half-fixed |
+| `rba-f2` major | **`unrecorded` does not do what its docstring says** — a field claiming more than it delivers |
+| `rba-f3` major | **AC-2's declared check does not test AC-2** — it reads three files as text and asserts strings |
+| `rba-f4` major | **AC-1's provenance record has no producer and no consumer in the tool** — `recordRepairAuthor` and `readRepairAuthors` are called by nothing but tests |
+| `rba-f5` minor | the evidence kept in place of the deleted real-data test is not the command's output |
+| `rba-f6` minor | **the sealed matrix binds each criterion to the wrong module** |
+| `rba-f7` minor | **the new report reads the adversarial records unvalidated, with corruption swallowed into absence** — "the defect this line fixed twice" |
+
+**And the finding that is about this change's behaviour rather than its code:**
+
+> **This change exists to make the repair author someone other than the author of the artifact. Its own repairs were made by its
+> author.** It built the entry point (`.pi/agents/kata-implementer.md`), the ledger and the criterion, and then used none of them
+> on itself — which is `rba-f4`'s class ("a mechanism with no consumer") raised to the level of the whole change.
+
+That is the honest answer to the question this change was opened to test. **Building the mechanism for cause ③ does not remove
+cause ③; using it does** — and the use is the next round, not this one.
+
+**What it confirms about the loop**, from the retrospective written while this round ran: the class regenerated exactly as
+predicted — four of seven findings are this change's own mechanisms not doing what they say — and the round cost a third of
+`closure-gate`'s because its brief carried no history. **The cheap round is the first one; the expensive rounds are the ones
+that carry their predecessors.**
