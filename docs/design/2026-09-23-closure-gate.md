@@ -282,3 +282,29 @@ Two consequences, and the second is a design one:
 verdict. The `kata-reviewer` type cannot write, so its result is its final message — and an empty final message loses everything.
 That is the same tension recorded above, one level up: a read-only reviewer cannot persist, so the round is only as durable as
 the model's last sentence.
+
+## The criterion assumes every repair is a source change — and two repairs are not
+
+Three of round 3's findings are repaired, and **only one of them can be falsified**:
+
+| finding | what the repair is | falsifiable? |
+|---|---|---|
+| `cg3-f2` | AC-4's rule moved to the file its selector names | **yes** — reverting `observedReddening` reddens it, and it is recorded |
+| `cg3-f1` | **a sentence in this document** | **no** — prose has no check to redden |
+| `cg3-f3` | **the enumeration in a test** | **no** — reverting the discovery to a literal list leaves every check green, because the fix *is* the test |
+
+So the seal refuses, correctly, and the reason is not that the repairs are wrong. **It is that the criterion assumes a shape
+every repair does not have**: it asks for *the check that must redden under the defect*, which presupposes the repair changed
+code that some check exercises. A repair to a test, or to a document, has no such check — and the two findings in that shape are
+exactly the two this round cannot close.
+
+**This is the third time the same gap has surfaced** — `cg-f7` was a prose correction, and `cg3-f1` is the finding *about* that
+being unpinned. So the honest statement of the criterion's limit is:
+
+> **A repair whose subject is not code cannot be falsified by mutating code.** The rule needs a second disposition — "no
+> falsifier exists for this repair, and here is why" — which is a recorded fact rather than an exception granted by whoever is
+> doing the repair. Otherwise the rule forces either a fake mutation or an obligation that can never close, and both are worse
+> than saying so.
+
+**And the same shape is why `cg3-f5` (the sealed revision declaring a deleted path) is not fixed here**: it is a repair to a
+declaration, and its falsifier would be the seal's own refusal — which is the mechanism, not a check.
