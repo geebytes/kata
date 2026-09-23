@@ -37,7 +37,10 @@ export async function recordAdversarialPass(
     const declaredPaths = brief.ir?.scope
         ? (brief.ir.scope.kind === 'delta' ? brief.ir.scope.changedPaths : brief.ir.scope.paths)
         : [];
-    const targets = [...new Set([...criteria, ...(sealed?.changedPaths ?? declaredPaths)])];
+    // `??` is wrong here: an empty array is not null, so a record that reported no changed paths silently discarded the
+    // declared ones. Measured (DIAG sealed= 0 declared= 1 targets= 1 ["AC-1"]) — the pass then claimed no path at all.
+    const surfacePaths = sealed?.changedPaths?.length ? sealed.changedPaths : declaredPaths;
+    const targets = [...new Set([...criteria, ...surfacePaths])];
     // R8: an observation must cite something openable at this revision. This fixture used `kind: 'analysis'` with a
     // made-up ref, which the (then citation-free) analysis rule accepted — the very defect R8 closed. It now cites a path
     // the fixture really created and the revision contains, which is what the claim below actually rests on.

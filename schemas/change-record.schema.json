@@ -31,28 +31,56 @@
     },
     "changedPaths": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "changedOutsideOwnership": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "ownedPaths": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "checks": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["checkId", "name", "command", "exitCode", "passed"],
+        "required": [
+          "checkId",
+          "name",
+          "command",
+          "exitCode",
+          "passed"
+        ],
         "additionalProperties": false,
         "properties": {
-          "checkId": { "type": "string" },
-          "name": { "type": "string" },
-          "command": { "type": "string" },
-          "exitCode": { "type": ["integer", "null"] },
-          "passed": { "type": "boolean" }
+          "checkId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -60,21 +88,53 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["checkId", "acceptanceId", "claimId", "statement", "expect", "actualExitCode", "missing"],
+        "required": [
+          "checkId",
+          "acceptanceId",
+          "claimId",
+          "statement",
+          "expect",
+          "actualExitCode",
+          "missing"
+        ],
         "additionalProperties": false,
         "properties": {
-          "checkId": { "type": "string", "minLength": 1 },
-          "acceptanceId": { "type": "string", "minLength": 1 },
-          "claimId": { "type": "string", "minLength": 1 },
-          "statement": { "type": "string" },
+          "checkId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acceptanceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claimId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "statement": {
+            "type": "string"
+          },
           "expect": {
             "type": "object",
-            "required": ["exitCode"],
+            "required": [
+              "exitCode"
+            ],
             "additionalProperties": false,
-            "properties": { "exitCode": { "type": "integer" } }
+            "properties": {
+              "exitCode": {
+                "type": "integer"
+              }
+            }
           },
-          "actualExitCode": { "type": ["integer", "null"] },
-          "missing": { "type": "boolean" }
+          "actualExitCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "missing": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -82,30 +142,72 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "severity", "disposition"],
+        "required": [
+          "id",
+          "severity",
+          "disposition"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "severity": { "type": "string", "minLength": 1 },
-          "disposition": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
     "counts": {
       "type": "object",
-      "required": ["changedPaths", "checks", "passing", "failures", "openFindings"],
+      "required": [
+        "changedPaths",
+        "checks",
+        "passing",
+        "failures",
+        "openFindings"
+      ],
       "additionalProperties": false,
       "properties": {
-        "changedPaths": { "type": "integer", "minimum": 0 },
-        "checks": { "type": "integer", "minimum": 0 },
-        "passing": { "type": "integer", "minimum": 0 },
-        "failures": { "type": "integer", "minimum": 0 },
-        "openFindings": { "type": "integer", "minimum": 0 }
+        "changedPaths": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failures": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "openFindings": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "judgement": {
       "type": "string",
       "minLength": 1
+    },
+    "surfaceBasis": {
+      "type": "string",
+      "enum": [
+        "content-diff",
+        "first-revision"
+      ],
+      "description": "Which derivation produced changedPaths. content-diff is a real change against a base; first-revision means there was no base, so the surface is the revision whole content — true of what the revision is, not of what it changed."
     }
   }
 }

@@ -2435,11 +2435,20 @@ export async function adversarialGateFor(
         // falsifiable. `ReviewState.coverage` is defined as "what this pass claims to have covered: a claim the gate
         // falsifies against the revision, not an opinion", so the gate must supply what the *pass* claimed, which is its
         // hypotheses' targets. A pass that speaks only for the criteria now genuinely fails to cover the code.
+        // One derivation, and the record is it. The old code had **two**: the record's surface, and a fallback to
+        // `Object.keys(revision.pathDigests)` when that surface was empty. They agreed only by accident — while the no-base
+        // diff happened to produce the whole revision — and f8 is what that accident cost: 669 changed paths, 658 of them
+        // outside ownership, against a brief naming 11, so a pass that reviewed exactly the briefed paths could never be
+        // admitted. Admission would have required claiming 658 paths it never examined.
+        //
+        // A first revision has no derivable *change* surface — its identity is the tree — so its remit is the criteria the
+        // task declares, which the predicate enforces through `criterionIds`. The surface stays a reported fact on the
+        // record. Where content identity **can** define a change (a later revision), nothing is relaxed.
         const sealedSurface = sealedRecord?.revisionId === revisionId ? sealedRecord.changedPaths : null;
-        const changeSurface = sealedSurface && sealedSurface.length > 0
-            ? sealedSurface
-            // A revision sealed before content identity existed has only the ownership table to offer; it is wrong in the
-            // direction the change record fixed, and is used only so such a task still gates at all.
+        const changeSurface = sealedRecord?.revisionId === revisionId
+            ? (sealedRecord.surfaceBasis === 'first-revision' ? [] : sealedRecord.changedPaths)
+            // No record for this revision: a revision sealed before content identity existed has only the ownership table
+            // to offer. Kept so such a task still gates at all.
             : (revision?.pathDigests ? Object.keys(revision.pathDigests) : []);
         // `coverage` is not a field a record carries: the declaration is derived from the revision (the criteria and the
         // changed paths the pass is answerable for) and merged with `hypotheses.targets`, which is what the pass spoke for.

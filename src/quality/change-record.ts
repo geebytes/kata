@@ -68,6 +68,15 @@ export interface ChangeRecord {
      */
     changedOutsideOwnership: string[];
     ownedPaths: string[];
+    /**
+     * Which derivation produced `changedPaths`, because the two are not equally meaningful.
+     *
+     * `content-diff` is the revision's own identity against its base — a real *change*. `first-revision` means there was
+     * no base, so the surface is the revision's whole content: a true statement about what the revision **is**, and not a
+     * statement about what it **changed**, because nothing can be. The gate reads this to decide its remit (see
+     * `adversarial.ts`); a reader reads it to know whether the surface is a change or an identity.
+     */
+    surfaceBasis: 'content-diff' | 'first-revision';
     checks: ChangeRecordCheck[];
     claimFailures: ChangeRecordClaimFailure[];
     openFindings: ChangeRecordFinding[];
@@ -201,8 +210,14 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
     // Reading only `git status` made the record's central field a function of whether the author happened to commit
     // first, and it failed silently in the direction that matters: an empty list is self-consistent with a clean tree,
     // so a record whose purpose is to stop a round's surface being understated reported that nothing had changed.
+    // The surface itself is unchanged by this: with no base the diff against `{}` yields the revision's whole content,
+    // which is what the record has always reported and what it still reports. What is new is that the **basis** travels
+    // with it — because the gate used to infer "is this a change?" from the surface being non-empty, which is how a first
+    // revision's identity came to be demanded as a change (f8: 669 paths, 658 outside ownership, against a brief of 11).
+    const baseDigests = input.baseContentDigests ?? input.basePathDigests;
+    const surfaceBasis: ChangeRecord['surfaceBasis'] = baseDigests ? 'content-diff' : 'first-revision';
     const fromRevision = diffPathDigests(
-        input.baseContentDigests ?? input.basePathDigests ?? {},
+        baseDigests ?? {},
         input.contentDigests ?? input.pathDigests ?? {},
     ).changedPaths;
     const changedPaths = [...new Set([...fromRevision, ...changedGitPaths(input.root)])].sort();
@@ -228,6 +243,7 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
         version: 1,
         taskId: input.taskId,
         revisionId: input.revisionId,
+        surfaceBasis,
         changedPaths,
         changedOutsideOwnership,
         ownedPaths,
