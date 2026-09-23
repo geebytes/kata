@@ -127,3 +127,30 @@ third file differs, and the surface does see it.
 AC-2 therefore closes as **measured, not implemented** — and this is the second time in this change that measuring before
 coding turned a finding into a correction of the finding rather than a code change (the first being AC-6's cause, which is
 upstream of the derivation that was suspected).
+
+## AC-4's second half: what "closes the obligation it produced" runs into
+
+Read, not guessed. Obligations close on **evidence**, not on a disposition:
+
+```ts
+// repair-batch.ts, at closure
+const resolved = new Set(obligations.filter((o) => o.resolvedAt).map((o) => o.findingId))
+const answered = batch.findings.filter((finding) => resolved.has(finding.id)).map((finding) => finding.id)
+if (answered.length > 0) { /* marks each answered finding `fixed` */ }
+```
+
+So a finding is "answered" when the **obligation** carries a `resolvedAt`, and `resolvedAt` is set by a seal that produces
+fresh passing evidence — not by any disposition. Two consequences for the routed disposition:
+
+1. **Marking a routed finding `answered` would write `fixed`**, which is false: it was not repaired, it was handed to
+   another change. The closure path assumes answered ⇔ repaired, and that assumption is exactly what a routed disposition
+   exists to break.
+2. So the second half is not a one-line addition — it is a **second closure rule**: an obligation may close because the
+   finding was routed, and the closure must record *which* change carries it rather than recording a repair.
+
+That is a design decision of the same shape as the ones already made in this change, and it belongs with them rather than
+being slipped into the closure code at the end of a session. Named here with its evidence so it is not re-derived.
+
+What already holds, and is what makes the second half tractable: the routed finding is **dispositioned, not deleted**
+(`a07158d`), and AC-6's pass history means no later record write can erase it (`6ba10c4`). The routing survives; what is
+missing is the closure rule that reads it.
