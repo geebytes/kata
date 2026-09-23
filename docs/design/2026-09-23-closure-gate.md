@@ -66,3 +66,44 @@ the same class again. Removing the class from the repair side removes those roun
   removing the class rather than by capping the count.
 - It does not retro-fit existing closed batches. A batch that closed on evidence alone stays closed; the record says so, and
   `status` reports the difference (AC-3).
+
+## How a falsifier gets shown reddening — the procedure, worked out
+
+The non-obvious part, and it decides the shape of the producer. A falsifier is *the check that must redden under the defect it
+names*. The defect is **fixed** by the time the repair is done, so the check **passes** — and a passing check proves nothing
+about its sensitivity. To show the check reddens, the defect has to be **back**:
+
+1. run the check → it must **pass** (the repair is in place; if it fails, the repair is not done and this is a different error)
+2. re-introduce the defect, run the check again → it must **fail** (that is the reddening)
+3. restore
+
+That is exactly the mutation verification this line has been doing by hand all session — revert the fix, watch the suite
+redden, restore — and it is the only procedure that measures what the criterion claims. The tool cannot invent step 2: knowing
+how to re-introduce a defect is knowledge only the repairer has, so **the mutation is declared** by Build alongside the
+falsifier, and the tool's job is to run the three steps and record what it observed rather than accept a claim about them.
+
+So the producer is a command with a shape like:
+
+```
+kata-cli falsify --change <id> --finding <finding-id> --check <selector> --mutation <command>
+```
+
+which records a fact — the finding, the check, the revision, and that the check reddened — and refuses if step 1 fails, step 2
+does not redden, or the restore does not return the tree to where it started. The record is what AC-1's criterion consumes; the
+refusals are what stop the producer from becoming another field a caller can type.
+
+### Slice order
+
+1. **The store and the criterion** (AC-1, AC-4): a reddening record and `obligationIsAnswered` requiring one for a
+   finding-shaped obligation, with the two directions tested — present closes, absent stays open — and "names a check that was
+   never run" staying open.
+2. **The producer** (AC-2): the three-step run, with the refusals above, and the hash/revision measured rather than supplied.
+3. **Visibility** (AC-3): `adversarial status` distinguishes answered-by-evidence from answered-and-falsified.
+4. **The class falsifier** (AC-5): enumerate every producer of the closure decision rather than asserting one pair — the
+   mistake `wcc2-f1` and `kgs3-f3` both punished.
+
+### What this change must not become
+
+A closure rule that refuses honest work. The refusal must fire on **one** thing — a missing reddening — and never on the shape
+of the check, the wording of the record, or whether the mutation looked convincing. If a criterion here can be satisfied by
+prose, the change has reproduced the class it exists to remove.
