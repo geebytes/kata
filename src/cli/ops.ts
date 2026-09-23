@@ -651,6 +651,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     if (subcommand === 'status') {
         const { progressSummary } = await import('../quality/adversarial-progress.js');
         const progress = await progressSummary(root, change);
+        // AC-4 promises a routed finding is visible in this command, so the dispositions come from the tracked view — the
+        // same one the disposition commands write through, so the report cannot disagree with what they stored.
+        const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+        const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as Array<{ id: string; severity: string; source: string; disposition: string; dispositionReason?: string }>);
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
         const { batchSaving, openBatch } = await import('../quality/repair-batch.js');
@@ -717,6 +721,18 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 open: batch ? { id: batch.id, openedAt: batch.openedAt, findings: batch.findings.map((finding) => finding.id), baseRevisionId: batch.baseRevisionId ?? null } : null,
                 ...saving,
             },
+            // AC-4's "is visible in adversarial status", which was **untrue** when the criterion was certified: the command
+            // reported nodes, progress and the open batch's finding ids, and never a finding's disposition — so a routed
+            // finding's disposition and the change carrying it were invisible exactly where the criterion promised them.
+            // Reported from the tracked view, which is the one the disposition commands write through.
+            findings: trackedForStatus.map((finding) => ({
+                id: finding.id,
+                severity: finding.severity,
+                source: finding.source,
+                disposition: finding.disposition,
+                // The carrier, for a routed finding: 'routed' without a destination does not answer "where did it go".
+                ...(finding.dispositionReason ? { dispositionReason: finding.dispositionReason } : {}),
+            })),
         };
     }
 
