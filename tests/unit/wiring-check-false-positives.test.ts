@@ -68,3 +68,44 @@ describe('the checks do not report a symbol that something consumes', () => {
         expect(subjects).toContain('z');
     });
 });
+
+/**
+ * wcc2-f4: the f6 repair traded a false positive for a **false negative**, which is the worse direction.
+ *
+ * f6's fix decided "is this list consumed by iteration?" by counting occurrences of the list's name — in raw text. So a
+ * **comment** that merely mentions the list made every member count as consumed, and the check stopped reporting members
+ * nothing consumes. Both directions now have a test, because a one-directional fix is what produced this.
+ */
+describe('neither a comment nor a string consumes a declaration', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('still reports a member whose list appears only in a comment', async () => {
+        const root = await fixture('comment-only');
+        const { writeFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        await writeFile(
+            join(root, 'src/mentioned.ts'),
+            [
+                "export const labels = ['only-a-comment'] as const;",
+                '// the labels list above is described here, and a reader might think that is a use',
+                'export const other = 1;',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const subjects = (await findUnconsumedDeclaredMembers({ root, surface: ['src/mentioned.ts'] })).map((f) => f.subject);
+        // The comment mentions the list and the member, and neither is a consumer.
+        expect(subjects).toContain('only-a-comment');
+    });
+
+    it('still accepts a member its list consumes by iteration', async () => {
+        const root = await fixture('iteration');
+        const subjects = (await findUnconsumedDeclaredMembers({ root, surface: ['src/x.ts'] })).map((f) => f.subject);
+        // The control from f6, kept: `modes.includes(mode)` names no member, and both are consumed as a set.
+        expect(subjects).not.toContain('standard');
+        expect(subjects).not.toContain('tdd');
+    });
+});

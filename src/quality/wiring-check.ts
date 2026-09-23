@@ -43,6 +43,27 @@ export class WiringInstrumentError extends Error {
 
 const SKIP = new Set(['node_modules', '.git', 'dist', 'tmp', '.kata', 'coverage']);
 
+/**
+ * Source with comments removed — because a mention in a comment is not a use.
+ *
+ * wcc2-f4, measured: the f6 repair decided "is this list consumed by iteration?" by counting occurrences of the
+ * list's name, and a **comment** that merely mentions the list made every member count as consumed. That traded the
+ * false positive it fixed for a **false negative**, which is the worse direction: this check exists to report members
+ * nothing consumes, and a comment is prose about the code, not the code.
+ *
+ * Known limit, stated rather than hidden: this is not a parser. A `//` inside a string literal (a URL) starts a
+ * comment here. That direction is safe for a *finding* check — it can only lose hits, never invent them — and using a
+ * real parser is a different change.
+ */
+function withoutComments(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/** Source with string and template literals blanked — a mention inside a string is not a reference to a value. */
+function withoutStrings(text: string): string {
+    return text.replace(/`[^`]*`/g, '""').replace(/'[^'\n]*'/g, '""').replace(/"[^"\n]*"/g, '""');
+}
+
 async function walkFiles(directory: string, root: string, out: string[] = []): Promise<string[]> {
     let entries: string[];
     try {
@@ -304,7 +325,9 @@ export async function findUnconsumedDeclaredMembers(options: DeclaredMemberOptio
             for (const member of list.members) {
                 const quoted = new RegExp(`['"\`]${escapeRegExp(member.value)}['"\`]`, 'g');
                 let references = 0;
-                for (const source of sources.values()) references += occurrences(source, quoted);
+                // Strings count for a **member** — that is where a member is compared (`mode === 'standard'`) — but
+                // comments do not. wcc2-f4: counting raw text let a comment about a list consume all of its members.
+                for (const source of sources.values()) references += occurrences(withoutComments(source), quoted);
                 // Subtract the one occurrence inside the declaration itself.
                 if (references - 1 > 0) continue;
                 // f6, measured: a member consumed as part of its **list** has no quoted occurrence of its own.
@@ -314,7 +337,9 @@ export async function findUnconsumedDeclaredMembers(options: DeclaredMemberOptio
                 // code contradicted it.
                 const listWord = new RegExp(`\\b${escapeRegExp(list.name)}\\b`, 'g');
                 let listReferences = 0;
-                for (const source of sources.values()) listReferences += occurrences(source, listWord);
+                // For the **list**, neither comments nor strings count: iterating a list means naming the binding, and a
+                // name inside a string is a coincidence (a label, a path, a log line).
+                for (const source of sources.values()) listReferences += occurrences(withoutStrings(withoutComments(source)), listWord);
                 // One occurrence is the declaration itself; anything more means the list is used somewhere.
                 if (listReferences - 1 > 0) continue;
                 findings.push({
