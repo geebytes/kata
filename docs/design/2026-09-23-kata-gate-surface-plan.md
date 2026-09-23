@@ -616,3 +616,17 @@ names the phantom.
 The finding is right, and its sharpest part is about me rather than the tool: **I built the correction command and then used it
 once, on the row I happened to be looking at.** A tool that exists is not a tool that was applied — which is the same distinction
 as the mechanism-with-no-consumer class, one step earlier in the chain.
+
+### Correction to the line above: the brief still names the phantom, and correctly so
+
+I claimed the brief no longer names the phantom path. **Measured, it does** (41,117-character brief, `change-surface.ts`
+present). The claim came from a check against an empty string — `--json` does not carry the brief text, so `includes` was false
+for a reason that had nothing to do with the matrix.
+
+What is true and verified: **no row of the acceptance matrix declares it any more** (all six rows declare paths that exist), and
+the brief names it because the **findings history** quotes it — `kgs3-f5`'s own message names the path. That is the history
+doing its job, not a declaration surviving.
+
+The lesson is the one this line keeps re-learning: a claim built on a check that could not have failed either way is not a
+measurement. The check that would have caught it is the one used for the matrix — compare against the thing that is supposed to
+be empty, and read the output rather than its absence.
