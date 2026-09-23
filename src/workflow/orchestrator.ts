@@ -1338,7 +1338,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             if (!adversarial.satisfied) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: `Review approval is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason)}`,
+                    error: `Review approval is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason, adversarial.detail)}`,
                     diagnostics: {
                         adversarial: { node: 'review', required: true, satisfied: false, reason: adversarial.reason ?? null },
                         nextAction: nextActionForTask(taskId, '/kata-review', 'reviewer', 'adversarial_review_pending'),

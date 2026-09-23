@@ -1473,7 +1473,16 @@ export async function candidateFreezeHashFor(root: string, taskId: string, node:
     return currentCandidateFreezeHash(task, revision, node);
 }
 
-export function adversarialReasonFor(reason: AdversarialGateReason | undefined): string {
+/**
+ * Why the gate refused, in words — and the gate's own reading of it, when it has one.
+ *
+ * f9, measured: `incomplete` was reported as "carries no falsification attempt". `incomplete` is the **predicate's**
+ * failing state — a criterion the revision changed is uncovered, a hypothesis is undischarged, an observation does not
+ * resolve, or the record contradicts itself — and "no attempt" is none of those. Measured live: a record carrying ten
+ * attempts and seven discharged hypotheses was refused with that sentence, which sends the reader to fix something that is
+ * not broken while the actual failing conjunct stays hidden. `detail` is computed by the predicate and was simply dropped.
+ */
+export function adversarialReasonFor(reason: AdversarialGateReason | undefined, detail?: string | null): string {
     switch (reason) {
         case 'missing': return 'No independent adversarial pass has been recorded for this revision.';
         case 'no_revision': return 'No revision is sealed yet, so there is nothing to attack independently.';
@@ -1481,7 +1490,11 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined):
         case 'not_fresh_context': return 'The recorded adversarial pass does not attest a fresh context.';
         case 'brief_mismatch': return 'The recorded adversarial pass answered a brief kata issued for a different revision.';
         case 'brief_not_issued': return 'The recorded adversarial pass carries a brief hash kata never issued for this node and revision — run `kata-cli adversarial brief --change <task-id> --node <verify|review>`, hand that brief to the clean-context reviewer, and record the hash it reports.';
-        case 'incomplete': return 'The recorded adversarial pass carries no falsification attempt, so it demonstrates nothing; record the round with at least one attempt.';
+        case 'incomplete': {
+            // The failing conjunct, named — not a cause invented for the occasion.
+            const basis = 'The recorded adversarial pass does not demonstrate what it claims: its judgement basis is incomplete — a criterion this revision changed is not covered by a discharged hypothesis, an observation does not resolve against something openable, or the record contradicts itself.';
+            return detail && detail.trim() ? `${basis} The gate's reading: ${detail.trim()}` : basis;
+        }
         case 'waived': return 'The independent adversarial pass was explicitly waived.';
         case 'delta_stale': return 'The pass is a delta, and the paths it declared do not cover everything that changed since its base revision — widen the range or run a full pass.';
         case 'delta_unavailable': return 'A delta pass was recorded against a revision that has no per-path digests, so the change surface cannot be verified; run a full pass.';

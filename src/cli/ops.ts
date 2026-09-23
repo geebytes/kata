@@ -644,7 +644,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             findings: (record.findings ?? []).map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
             ...(parsed.findingOrigins ? { findingOrigins: parsed.findingOrigins } : {}),
             gate: { satisfied: gate.satisfied, reason: gate.reason ?? null },
-            ...(gate.satisfied ? {} : { error: adversarialReasonFor(gate.reason) }),
+            ...(gate.satisfied ? {} : { error: adversarialReasonFor(gate.reason, gate.detail) }),
         };
     }
 

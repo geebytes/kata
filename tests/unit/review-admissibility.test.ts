@@ -341,3 +341,28 @@ describe('the reviewer cannot write a verdict', () => {
         expect(retiredRecordFields({ hypotheses: [] })).toEqual([]);
     });
 });
+
+/**
+ * f9 of the independent pass's findings, and the sentence I hit live.
+ *
+ * `incomplete` is the predicate's failing state — an uncovered criterion, an undischarged hypothesis, an unresolved
+ * observation, an inconsistent record. It was reported as "carries no falsification attempt", which is none of those.
+ * Measured: a record carrying **ten attempts and seven discharged hypotheses** was refused with that sentence, so the
+ * reader is sent to fix something that is not broken while the failing conjunct stays hidden. The predicate computes a
+ * `detail` for exactly this; the message path dropped it.
+ */
+describe('a refusal names the conjunct that failed', () => {
+    it('does not report an incomplete judgement basis as "no attempt"', async () => {
+        const { adversarialReasonFor } = await import('../../src/quality/adversarial.js');
+
+        const bare = adversarialReasonFor('incomplete');
+        expect(bare).toMatch(/judgement basis is incomplete/);
+        expect(bare).not.toMatch(/falsification attempt/);
+
+        // The gate's own reading travels with the reason when it has one.
+        const withDetail = adversarialReasonFor('incomplete', 'uncovered: src/quality/wiring-check.ts');
+        expect(withDetail).toContain('uncovered: src/quality/wiring-check.ts');
+        // An empty detail must not produce a dangling "The gate's reading:".
+        expect(adversarialReasonFor('incomplete', '   ')).not.toMatch(/gate's reading/);
+    });
+});
