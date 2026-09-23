@@ -96,11 +96,12 @@ describe('a finding can be routed to the change that will carry it', () => {
         const routed = await at(root, () => runFindingsCommand(['rout', '--change', 'rout-ok', '--id', findingId, '--to', 'carrier-change']));
         expect(routed.to).toBe('carrier-change');
 
-        const record = JSON.parse(await readFile(join(root, '.kata', 'tasks', 'rout-ok', 'review.json'), 'utf8')) as {
-            findings: Array<{ id: string; disposition?: string }>;
-        };
+        // Read through the validating reader, not a raw parse: this assertion passed while `routed` was schema-invalid,
+        // because a plain JSON.parse cannot tell a readable record from an unreadable one (kgs-f2, found by the same pass).
+        const { readTrackedFindings: trackedAfterRout } = await import('../../src/quality/finding-disposition.js');
+        const trackedRouted = await trackedAfterRout(root, 'rout-ok');
         // Dispositioned, not deleted: the finding is still there and says where it went.
-        expect(record.findings.find((finding) => finding.id === findingId)?.disposition).toBe('routed');
+        expect(trackedRouted.find((finding) => finding.id === findingId)?.disposition).toBe('routed');
 
         // A target nobody opened is a disappearance with a nicer name, so it is refused.
         await expect(at(root, () => runFindingsCommand(['rout', '--change', 'rout-ok', '--id', findingId, '--to', 'nowhere'])))
