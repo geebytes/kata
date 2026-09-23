@@ -498,3 +498,19 @@ only because it takes the unguarded path — a reddening cannot be recorded at a
 
 **Stated rather than worked around**: the sequence "freeze content, prove, seal" is what the guard exists to enforce, and it is
 unreachable when the proofs are themselves what the seal needs in order to close the obligations that block it.
+
+## The carry's base, and the invariant an existing case already enforced
+
+The carry was created with no base, so the batch a later round reads as the last *closed* one yielded no delta and every round
+reviewed the whole surface instead of the repair — the measured 2.5–2.7×.
+
+The cause was one layer out from where I first looked: the writer accepted a `baseRevisionId` option and **no caller supplied
+it**, so the carry was described as "based at the current revision" and created with nothing.
+
+**And my first fix was wrong in a way the suite already forbade.** I passed the revision the seal had just minted as the base, and
+`the base is never the revision that was just sealed, which would narrow to nothing` failed immediately — narrowing to the
+just-sealed revision means nothing changed. The base is what the repair was made *against*, so the carry inherits the closed
+batch's own base.
+
+That is the fourth time this round an existing case caught a fix of mine, and the sharpest: **the correct behaviour was already
+written down and I changed the code without reading it.**
