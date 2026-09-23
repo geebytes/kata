@@ -585,3 +585,23 @@ the wiring is there, the *reader* is not.
   2's findings arrived after that seal, so they belong to the *next* batch — which means the closure should be computed
   against the findings that existed when the batch's seal ran, not against every finding the record now holds. Today the
   batch accumulates findings from later rounds and can therefore never close.
+
+## ②'s producer: attempted, failed on a mis-anchored edit, reverted
+
+The producer is the pass delivering the facts it read, so the record path can write them into the ledger. Three parts, all
+small: the schema accepts `deliveredFacts` (array of `{path, note}`), the brief's `## Required result` asks for it, and
+`writeAdversarialRecord` calls `persistDeliveredFacts` — in the single write path rather than beside each caller, because a
+producer that lives next to its callers is one of them will forget. The hash stays the platform's to measure, never the pass's
+to assert.
+
+**The attempt failed and was reverted.** The anchor for the producer call — `const validated = validate<AdversarialRecord>(…)`
+— matched a different occurrence than the one inside `writeAdversarialRecord`, so the inserted `await` landed where it did not
+belong and `tsc` reported a syntax error at line 774. Reverted rather than left broken: `tsc` clean, 161 files / 1156 tests /
+0 failed, tree clean.
+
+That is the same class as the `insert`-tool defect recorded earlier in this line (an edit resolving somewhere other than
+intended, reporting success). The rule it teaches: **anchor an edit by reading the function body it belongs in, not by a string
+that also occurs elsewhere.**
+
+**State of ②**: the ledger (`4cbcf08`) and its consumer in the brief (`e8d3f3e`) are committed and mutation-verified. The
+producer is the one part left, and it is specified above.
