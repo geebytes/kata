@@ -188,3 +188,33 @@ I went looking at the filesystem.
 **Stated rather than tidied**: this change built the entry point, the ledger and the criterion for a repair author, and its own
 seven findings were repaired by its author, because the first attempt to use the mechanism produced nothing and nothing was there
 to notice.
+
+## Correction: the task-end mechanism does exist, and I claimed it did not
+
+I wrote that "nothing noticed it had ended". That is wrong, and the correction matters more than the sentence did.
+
+**Kata has a lifecycle: verify → review → judge → archive.** It tracks a change's phase, it reports what is owed, and it
+refuses to advance while anything is unresolved. After the failed dispatch, `status` reported:
+
+```
+phase hardVerify | obl 4 | blocking 0 | next /kata-build repair-by-another-author
+```
+
+**The four obligations were still open.** So the lifecycle *did* notice: a repair that produced nothing leaves the change exactly
+where it was, with the same obligations owed, and `status` says so. The mechanism exists and it worked.
+
+What does not exist is a **job-level** completion signal — the subagent's output file was removed and no notification arrived, so
+the only way I learned it had ended was by looking at the filesystem. But that is a fact about one dispatch, not about kata, and
+I overstated it into "there is no mechanism". **The mechanism is the phase lifecycle, and the lesson is that I should have been
+reading it instead of waiting for a notification.**
+
+### And this changes the design of cause ③, which is the useful part
+
+If the lifecycle already tracks whether a repair happened, then **"hand the repair to another author" does not need a new
+notification system or a new orchestration layer.** It needs the repair to happen *inside a phase the lifecycle already
+tracks* — a repair author is dispatched, its report is recorded, and **whether the repair happened is visible in `status` as
+whether the obligations closed.** The ledger and the command built for `rba-f4` are the missing consumer; the lifecycle is
+already the mechanism that notices.
+
+So the honest scope of the missing piece shrinks: not "orchestration", but **"the repair author is dispatched at a point the
+lifecycle reports on, and its report is recorded where `status` reads."**
