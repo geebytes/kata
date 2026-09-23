@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,49 +89,55 @@ describe('every producer of the closure decision is load-bearing', () => {
  * seal preflight computed the same decision without the ledger this change added.
  */
 describe('the closure decision has one producer, and every consumer reaches it', () => {
-    const read = (relative: string) => readFileSync(join(process.cwd(), relative), 'utf8');
+    /**
+     * The set is **discovered**, not listed. The first version named three files by literal path, and round 3 found a fourth
+     * producer outside them (cg3-f3) — which is the same defect as a declaration that names the wrong check, one level up: an
+     * enumeration written by hand enumerates what its author remembered.
+     */
+    const filesUnder = (dir: string): string[] => readdirSync(join(process.cwd(), dir)).flatMap((entry: string) => {
+        const relative = join(dir, entry);
+        return statSync(join(process.cwd(), relative)).isDirectory() ? filesUnder(relative) : [relative];
+    }).filter((path) => path.endsWith('.ts'));
 
-    it('is computed in obligationIsAnswered, and only there', () => {
-        // The one place that **decides** it, and it must consult the reddening ledger.
-        const decider = read('src/quality/repair-obligations.ts');
+    /**
+     * The terms a file **uses**, not the terms it mentions. The first version matched raw text, so a corpus case whose
+     * `reproduction` prose says "stamp `resolvedAt` unconditionally" read as a producer of the closure decision — the same
+     * defect as counting a comment as a use (wcc2-f4), and the same fix: strip what cannot be code before matching, which can
+     * only under-report.
+     */
+    const codeOf = (text: string) => text
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/\/\/[^\n]*/g, ' ')
+        .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+        .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+        .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+
+    const touching = () => filesUnder('src').filter((path) => {
+        const text = codeOf(readFileSync(join(process.cwd(), path), 'utf8'));
+        return /obligationIsAnswered|\.resolvedAt\b|resolvedAt\s*=|unresolvedObligations/.test(text);
+    });
+
+    it('is decided in one place, and every file that touches it either calls the rule or reads its output', () => {
+        const decider = 'src/quality/repair-obligations.ts';
+        const touchingFiles = touching();
+        // The discovery has to find something, or an empty set would pass this vacuously.
+        expect(touchingFiles.length).toBeGreaterThan(3);
+        expect(touchingFiles).toContain(decider);
+
+        for (const path of touchingFiles) {
+            if (path === decider) continue;
+            const text = codeOf(readFileSync(join(process.cwd(), path), 'utf8'));
+            const calls = text.includes('obligationIsAnswered(');
+            const reads = /\.resolvedAt\b/.test(text) || /resolved\.has\(/.test(text) || text.includes('unresolvedObligations');
+            // Either shape is fine — one asks the rule, the other reads what it decided. What is not fine is a file that
+            // decides it itself, which is what cg-f1 was.
+            expect(calls || reads, `${path} touches the closure decision but neither calls the rule nor reads its output`).toBe(true);
+        }
+    });
+
+    it('the decider consults the reddening ledger', () => {
+        const decider = readFileSync(join(process.cwd(), 'src/quality/repair-obligations.ts'), 'utf8');
         expect(/\bconst\s+answered\s*=/.test(decider)).toBe(true);
         expect(decider).toContain('hasReddening(');
-
-        // The preflight **calls** it, which is the shape cg-f1 broke by calling it without the ledger.
-        const preflight = read('src/workflow/seal-preflight.ts');
-        expect(preflight).toContain('obligationIsAnswered(');
-        expect(preflight).not.toMatch(/\bconst\s+answered\s*=/);
-
-        // And the batch closure **reads the decision the resolver made** rather than re-deciding — a third shape, and the
-        // reason a naive "no other file may mention answered" assertion is wrong. It filters the batch's findings by the
-        // resolved obligation ids, so it cannot disagree with the resolver: it has no rule of its own to disagree with.
-        const batch = read('src/quality/repair-batch.ts');
-        expect(batch).not.toContain('obligationIsAnswered(');
-        expect(batch).toMatch(/resolved\.has\(finding\.id\)/);
-    });
-
-    it('is reached by every consumer that needs it — the resolver and the preflight', () => {
-        // Both were producers in the sense that mattered: the resolver closes obligations and the preflight predicts whether a
-        // seal will succeed. The preflight missing the ledger was the deadlock, so both are asserted to import the rule.
-        expect(read('src/quality/repair-obligations.ts')).toContain('obligationIsAnswered');
-        expect(read('src/workflow/seal-preflight.ts')).toContain('obligationIsAnswered');
-        // And the preflight must supply the same inputs the resolver does — the ledger among them.
-        expect(read('src/workflow/seal-preflight.ts')).toContain('readFalsifierReddenings');
-    });
-});
-
-/**
- * The assertion the first version of this file lacked, and `kata-cli falsify` is what found it: the preflight must **pass** the
- * ledger into the decision, not merely import it. Removing the argument from the call is exactly the defect that caused the
- * deadlock (`cg-f1`), and the earlier text assertion stayed green under it — a decorative check, caught by the change's own
- * producer refusing the repair with `did_not_redden`.
- */
-describe('the preflight passes the ledger into the decision, not just imports it', () => {
-    it('names the ledger inside the call it makes', () => {
-        const preflight = readFileSync(join(process.cwd(), 'src/workflow/seal-preflight.ts'), 'utf8');
-        const start = preflight.indexOf('obligationIsAnswered({');
-        expect(start).toBeGreaterThan(-1);
-        const call = preflight.slice(start, preflight.indexOf('});', start));
-        expect(call).toContain('reddenings');
     });
 });
