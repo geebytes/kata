@@ -858,6 +858,25 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
     }
     const validated = validate<AdversarialRecord>('adversarial-review', record);
     const path = adversarialReviewPath(root, taskId, record.node);
+    // AC-6. The node record is a **single slot**, so the pass that writes last decides what is still open — and a finding
+    // the next pass does not re-raise disappears, which is what `wcc3-f8` measured (the current record's open set was the
+    // base's, and two findings raised between the seals were gone from every source the seal reads). A pass's record is
+    // evidence: writing a new one must not delete the previous one's statement. So the previous copy is appended to a
+    // history before it is replaced, and the tracked-findings source reads the history as well as the slot.
+    const historyPath = path.replace(/\.json$/, '-history.json');
+    try {
+        const replacing = JSON.parse(await readFile(path, 'utf8')) as { createdAt?: string; revisionId?: string };
+        const history = await readFile(historyPath, 'utf8')
+            .then((text) => JSON.parse(text) as Array<{ createdAt?: string }>)
+            .catch(() => [] as Array<{ createdAt?: string }>);
+        const already = history.some((entry) => entry.createdAt === replacing.createdAt);
+        if (!already) {
+            history.push(replacing as never);
+            await writeFile(historyPath, `${JSON.stringify(history, null, 2)}\n`, 'utf8');
+        }
+    } catch {
+        // Nothing to preserve yet: the first pass for this node.
+    }
     // The previous pass is snapshotted before it is replaced, so the comparison the design asked for (what did a delta
     // pass save against the full pass it narrowed?) has both sides. Without this the number is unrecoverable the moment
     // the record is overwritten — which is exactly why §11 could not be answered.

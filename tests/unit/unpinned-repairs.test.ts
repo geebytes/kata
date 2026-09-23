@@ -89,3 +89,62 @@ describe('a repair that was measured as unpinned', () => {
         expect(corpus.some((entry) => entry.id === 'guard-refuses-a-declared-test-citation')).toBe(true);
     });
 });
+
+/**
+ * AC-6 of `kata-gate-surface`: a later pass cannot delete an earlier pass's statement.
+ *
+ * `wcc3-f8` measured the opposite: the node record is a single slot, so the pass that writes last decides what is still
+ * open — and two findings raised between the seals were gone from every source the seal reads. Measured again while closing
+ * `wiring-coverage-check`: round 2's findings survived only in a file written by hand, because round 3's record replaced
+ * them.
+ */
+describe('a pass does not erase the findings of the pass before it', () => {
+    it('keeps a finding that the next pass does not re-raise', async () => {
+        const { mkdir, mkdtemp, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-pass-history-'));
+        try {
+            const { initLayout } = await import('../../src/core/layout.js');
+            const { createTask } = await import('../../src/core/task.js');
+            const { createTaskRevision } = await import('../../src/workflow/revision.js');
+            const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+            const { readTrackedFindings } = await import('../../src/quality/finding-disposition.js');
+
+            await initLayout(root);
+            await mkdir(join(root, 'src'), { recursive: true });
+            await createTask({ root, id: 'pass-history', title: 'pass-history', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+            await createTaskRevision({ root, taskId: 'pass-history', ownedPaths: ['src/x.ts'], checkIds: [] });
+
+            const base = {
+                node: 'review' as const,
+                status: 'recorded' as const,
+                revisionId: 'revision-one',
+                manifestHash: 'hash-one',
+                executedInFreshContext: true,
+                contextNote: 'a fixture',
+                hypotheses: [],
+                attempts: [],
+            };
+            await writeAdversarialRecord(root, 'pass-history', {
+                ...base,
+                createdAt: '2026-09-23T01:00:00.000Z',
+                findings: [{ id: 'raised-then-dropped', taskId: 'pass-history', severity: 'major', message: 'raised by the first pass' }],
+            } as never);
+            // The second pass does not mention it — which is exactly how a finding used to disappear.
+            await writeAdversarialRecord(root, 'pass-history', {
+                ...base,
+                createdAt: '2026-09-23T02:00:00.000Z',
+                findings: [],
+            } as never);
+
+            const tracked = await readTrackedFindings(root, 'pass-history');
+            const ids = tracked.map((finding) => finding.id);
+            expect(ids).toContain('raised-then-dropped');
+            // One finding is one finding: the slot and the history both carry it, and it appears once.
+            expect(ids.filter((id) => id === 'raised-then-dropped')).toHaveLength(1);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60000);
+});

@@ -115,14 +115,37 @@ export async function readTrackedFindings(root: string, taskId: string): Promise
     for (const finding of review?.findings ?? []) tracked.push(track(finding, 'review', bindingOf(review)));
 
     for (const node of ['verify', 'review'] as const) {
+        const path = adversarialReviewPath(root, taskId, node);
         const record = await readValidatedOptional<{ findings?: AdversarialFinding[]; revisionId?: string; manifestHash?: string }>(
             'adversarial-review',
-            adversarialReviewPath(root, taskId, node),
+            path,
         ).catch(() => null);
         for (const finding of record?.findings ?? []) tracked.push(track(finding, `adversarial-${node}`, bindingOf(record)));
+
+        // AC-6: the node record is one slot, so a pass that does not re-raise a finding would erase it. The history holds
+        // the passes it replaced, and a finding stays tracked until a disposition says otherwise — which is what "still
+        // open" has to mean if a later pass cannot delete an earlier one's statement.
+        const history = await readFile(path.replace(/\.json$/, '-history.json'), 'utf8')
+            .then((text) => JSON.parse(text) as Array<{ findings?: AdversarialFinding[]; revisionId?: string; manifestHash?: string }>)
+            .catch(() => [] as Array<{ findings?: AdversarialFinding[]; revisionId?: string; manifestHash?: string }>);
+        for (const past of history) {
+            for (const finding of past.findings ?? []) tracked.push(track(finding, `adversarial-${node}`, bindingOf(past)));
+        }
     }
 
-    return tracked;
+    // One finding is one finding, however many passes reported it: the live record's copy wins, because its disposition
+    // is the one a command can still change.
+    const byId = new Map<string, TrackedFinding>();
+    for (const finding of tracked) {
+        const seen = byId.get(finding.id);
+        if (!seen) {
+            byId.set(finding.id, finding);
+            continue;
+        }
+        if (seen.source.startsWith('adversarial-') === false && finding.source.startsWith('adversarial-')) continue;
+        byId.set(finding.id, finding);
+    }
+    return [...byId.values()];
 }
 
 /** What the brief and the close-of-task must show: everything not fixed, whichever way it was decided. */
