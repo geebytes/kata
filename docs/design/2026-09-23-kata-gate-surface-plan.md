@@ -241,3 +241,26 @@ reads as coverage.
 
 To pin `kgs-f3` the assertion has to be on `adversarialGateFor`'s remit: a pass that covers this revision's delta and not
 the foreign one must be admitted, and the same pass must be refused when the foreign delta is what the gate took.
+
+## `kgs-f3`'s falsifier: second attempt, also deleted, and why
+
+The second attempt moved the assertion to `adversarialGateFor` — the producer the finding is about — and built the case: a
+real issued brief for this revision, a content-matched entry for a foreign revision carrying `src/foreign.ts`, a file
+sorting first, and a pass answering exactly this revision's delta. It asserted the gate's `detail` does not name the foreign
+path.
+
+It passed. The mutation check then removed the revision filter again and **it stayed green** — so it pinned nothing either.
+
+**The reason is not established.** What is established: the assertion never reached the coverage conjunct. The gate reports
+`detail` only when a conjunct produces one, and this fixture does not satisfy the conjuncts that come first — so the remit
+the filter controls was never measured, and both attempts were asking a question the fixture could not pose.
+
+That is the honest state to leave: `kgs-f3`'s **code** is fixed and reviewed, its **falsifier does not exist**, and the next
+attempt needs a fixture that reaches the coverage conjunct (a sealed record for this revision, a pass with a judgement basis,
+grounded observations) before it can distinguish the two remits at all. Two failed attempts are recorded rather than one
+green test, because the green one would have read as coverage.
+
+**The pattern is the point, and it is now four instances in this change**: a case that passed while `routed` was
+schema-invalid; a fixture asserting the surface while the criterion was about the record; an assertion on the brief's scope
+while the defect was in the gate; and now an assertion on the gate that never reaches the conjunct under test. Every one is a
+test whose subject was not the subject.
