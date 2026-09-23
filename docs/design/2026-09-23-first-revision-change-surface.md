@@ -211,3 +211,52 @@ consequence worth stating plainly:
 
 Not fixed here, and named so it is not mistaken for a gap nobody saw: the same shape as f8 and `wcc2-f8`, one level up —
 the flow's notion of "resolved" is weaker than its notion of "obligated".
+
+## The routing decision, consolidated after three rounds
+
+`wiring-coverage-check` stops here, at `review`, with `verifyResult: PASS` on `revision-4d540d50f0d5895f` and its repair
+batches closed. The findings below are **not** repaired here and are **not** waived: they belong to a separate change,
+because every one of them is about machinery this change does not own.
+
+### Why "stop and route" rather than "repair once more"
+
+Three rounds, in numbers:
+
+| round | findings | repaired here | what the next round then found |
+|---|---:|---:|---|
+| 1 | 9 | **9** | 8 more |
+| 2 | 8 | **4** | 10 more |
+| 3 | 10 | — | *(would be a fourth list of the same class)* |
+
+Every round's repairs were verified. The class did not shrink; it **moved into the delta path** — which is what `wcc2-f1`
+predicted and `wcc3-f10` then measured end to end. And `wcc3-f2` closes the argument: the change surface **cannot see a
+repair that edits a file already hashed at both seals**, so a fourth round would not even see the third round's repairs.
+
+### What is routed, and to where
+
+All ids are in the adversarial record for `revision-4d540d50f0d5895f`; this table is the routing, not the evidence.
+
+| finding | what it is | target |
+|---|---|---|
+| `wcc2-f1` | the brief's delta and the gate's remit are two derivations of one concept | `kata-gate-surface` |
+| `wcc3-f10` | **measured**: a pass answering exactly the declared delta is refused by the gate that declared it | `kata-gate-surface` |
+| `wcc3-f1` | the brief's own delta, prose and change record disagree on the same revision | `kata-gate-surface` |
+| `wcc3-f2` | the surface cannot see an edit to a file hashed at both seals | `kata-gate-surface` |
+| `wcc3-f5` | the brief's reading set exceeds its own delta | `kata-gate-surface` |
+| `wcc3-f7` | the sealed evidence the brief recommends predates the delta it is offered for | `kata-gate-surface` |
+| `wcc3-f8` | the current change record drops a finding the previous record carried | `kata-gate-surface` |
+| `wcc3-f3` | a record states `answered` for findings the record itself lists as open | `kata-gate-surface` |
+| `wcc2-f8` | the f8/f9 repairs were made outside this change, so its own rounds cannot review them | `kata-gate-surface` (it inherits them) |
+| `wcc2-f2`, `wcc2-f3`, `wcc3-f9` | acceptance criteria false as written, and a stale declared selector | **a declaration-correction capability** |
+| `wcc2-f4`, `wcc2-f5`, `wcc2-f6`, `wcc2-f7` | repaired here (`25fb022`, `c294c1f`, `fd0d746`) | — |
+| `wcc3-f4`, `wcc3-f6` | the f5 widening is asserted one direction only; AC-1's declared selector does not run the command on a repository-shaped tree | **here**, if this change is reopened |
+
+### The one thing this change established that the next one needs
+
+`wcc3-f10` is the diagnosis in one line, and it was cheap to state and expensive to reach:
+
+> **The gate refuses an input that the same system generated.** The brief, the change record and the gate's remit are three
+> producers of one concept, and two of them disagree — measured on a real round, not argued.
+
+The next change's first acceptance criterion should be exactly that they cannot disagree, with a falsifier that enumerates
+every producer rather than asserting one pair.
