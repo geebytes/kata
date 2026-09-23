@@ -81,3 +81,48 @@ describe('a pass that answers the delta its brief declares is admissible', () =>
         });
     }, 60000);
 });
+
+/**
+ * `kgs-f6`: AC-1 requires a test that enumerates **every** producer of the change surface, and the enumeration named the
+ * brief's scope, the brief's prose and the change record — but not the gate's remit, which is the producer that decides
+ * whether a pass is admitted at all.
+ *
+ * The remit is observable here and nowhere else, because it is only reported when the coverage conjunct fires: this fixture
+ * reaches that conjunct (its original red was `the state does not cover: src/one.ts`). So the fourth producer is asserted
+ * from the other direction — a pass covering a path **outside** the declared delta must be refused for the declared path it
+ * left uncovered, which is only true if the remit is the declared delta and not the whole revision.
+ */
+describe('the gate\'s remit is the declared delta, observed through its refusal', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('refuses a pass that covers a path outside the delta and names the declared one', async () => {
+        const { root, base } = await fixture('remit-refusal');
+        const { issueAdversarialBrief, adversarialGateFor } = await import('../../src/quality/adversarial.js');
+        const { recordAdversarialPass } = await import('../helpers/adversarial.js');
+
+        const brief = await issueAdversarialBrief(root, 'remit-refusal', 'review', { since: base });
+        const declared = brief.ir?.scope?.kind === 'delta' ? [...brief.ir.scope.changedPaths] : [];
+        expect(declared.length).toBeGreaterThan(0);
+
+        // A pass that answers for a path the brief never named, and leaves the declared one uncovered.
+        await recordAdversarialPass(root, 'remit-refusal', 'review', {
+            hypotheses: [
+                {
+                    id: 'h-elsewhere',
+                    claim: 'the change is accounted for by reading a path outside the declared delta',
+                    targets: ['AC-1', 'src/one.ts'],
+                    method: 'source-read',
+                    outcome: 'refuted',
+                    observation: { kind: 'source', ref: 'src/one.ts', observed: 'a path outside the declared delta was read' },
+                },
+            ],
+        });
+
+        const gate = await adversarialGateFor(root, 'remit-refusal', 'review');
+        expect(gate.satisfied).toBe(false);
+        // The refusal names the declared path, which is the remit stating itself.
+        expect(String(gate.detail ?? '')).toContain(declared[0]!);
+    }, 60000);
+});
