@@ -192,3 +192,33 @@ await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
 ```
 
 Nothing was written: the code above is a plan, and the task files are untouched.
+
+## The archive block is not a missing matrix — it is a vacuous criterion
+
+Checked before using the capability that was just built, and it changes the answer.
+
+```
+major-finding-closure        criteria 1 | statements 34 chars | matrix false
+repair-obligation-deadlock   criteria 1 | statements 34 chars | matrix false
+review-record-integrity      criteria 5 | statements 146–201 chars | matrix true
+adversarial-admissibility    criteria 6 | statements 156–234 chars | matrix true
+```
+
+Both unarchivable changes carry **one 34-character criterion**: `AC-1 :: Implement the change successfully.` That is a
+placeholder from a shape that predates the strict bootstrap, and it asserts nothing.
+
+So `missingAcceptanceMatrix` is a **symptom**. Declaring a matrix for either task would satisfy the archive gate while
+certifying nothing — a matrix row saying "AC-1, evidenced by the test and typecheck the seal already collected" attached to a
+criterion that claims nothing. That is the same move this session has refused repeatedly under other names: making a gate
+pass rather than making the thing true.
+
+The honest options, and neither is "declare a matrix":
+
+1. **leave them unarchived.** Their `judge PASS` and `verify PASS` stand in the flow; they are historical records whose
+   subject is done. Archiving is bookkeeping, and the bookkeeping is what is broken;
+2. **correct the criteria first** — which `matrix set --statement` now makes possible — and then **re-run seal, verify,
+   review and judge against criteria that mean something**. Real work, and a decision: it is not obviously worth it for two
+   changes whose subjects landed days ago.
+
+Either way, **the capability just built is not what unblocks them**, and saying so before using it is the point. It does
+unblock what it was aimed at: `wiring-coverage-check`'s two criteria that are false as written can now be corrected.
