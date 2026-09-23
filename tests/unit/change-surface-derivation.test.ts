@@ -19,7 +19,7 @@ import { buildAdversarialBrief } from '../../src/quality/adversarial.js';
  */
 const cleanup: string[] = [];
 
-async function fixture(id: string): Promise<string> {
+async function fixture(id: string): Promise<{ root: string; first: string; second: string }> {
     const root = await mkdtemp(join(tmpdir(), `kata-surface-${id}-`));
     cleanup.push(root);
     await initLayout(root);
@@ -32,8 +32,11 @@ async function fixture(id: string): Promise<string> {
         ownedPaths: ['src/one.ts'],
         acceptance: [{ id: 'AC-1', statement: 'the surface has one derivation' }],
     } as never);
-    await createTaskRevision({ root, taskId: id, ownedPaths: ['src/one.ts'], checkIds: [] });
-    return root;
+    // Two revisions, because a delta only exists between two: the second changes a file the first hashed.
+    const first = await createTaskRevision({ root, taskId: id, ownedPaths: ['src/one.ts'], checkIds: [] });
+    await writeFile(join(root, 'src/two.ts'), 'export const two = 2;\n', 'utf8');
+    const second = await createTaskRevision({ root, taskId: id, ownedPaths: ['src/one.ts', 'src/two.ts'], checkIds: [] });
+    return { root, first: first.id, second: second.id };
 }
 
 describe('the change surface has one derivation', () => {
@@ -42,8 +45,10 @@ describe('the change surface has one derivation', () => {
     });
 
     it('the brief declares one scope, and its own prose does not contradict it', async () => {
-        const root = await fixture('one-derivation');
-        const brief = await buildAdversarialBrief(root, 'one-derivation', 'review');
+        const { root, first, second } = await fixture('one-derivation');
+        // `since` is what puts the round on the delta path without needing a closed repair batch: the same code path the
+        // default scope takes when a batch closes, reached explicitly.
+        const brief = await buildAdversarialBrief(root, 'one-derivation', 'review', { since: first });
 
         // Producer 1: the structured scope the round is bound to.
         const declared = brief.ir?.scope
@@ -63,6 +68,28 @@ describe('the change surface has one derivation', () => {
         const onlyInScope = declared.filter((path) => !prose.includes(path));
 
         expect({ onlyInProse, onlyInScope }).toEqual({ onlyInProse: [], onlyInScope: [] });
+
+        // Producer 3: the sealed change record's changed paths — a **different derivation** from the delta's, which is
+        // exactly the pair wcc3-f1 measured (the brief's declared delta held three paths, the record for the same revision
+        // held five). Enumerating only producers 1 and 2 would repeat the mistake that let f8 survive.
+        const { buildChangeRecord, readChangeRecord } = await import('../../src/quality/change-record.js');
+        await buildChangeRecord({
+            root,
+            taskId: 'one-derivation',
+            revisionId: second,
+            ownedPaths: ['src/one.ts', 'src/two.ts'],
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+            contentDigests: { 'src/one.ts': 'aaa', 'src/two.ts': 'bbb' },
+            baseContentDigests: { 'src/one.ts': 'aaa' },
+        });
+        const record = await readChangeRecord(root, 'one-derivation');
+        const recorded = [...(record?.changedPaths ?? [])].sort();
+
+        const onlyInRecord = recorded.filter((path) => !declared.includes(path));
+        const missingFromRecord = declared.filter((path) => !recorded.includes(path));
+        expect({ onlyInRecord, missingFromRecord }).toEqual({ onlyInRecord: [], missingFromRecord: [] });
 
         // Refuses to pass vacuously. A **full** round has no delta, so both producers agree trivially and this test would
         // go green while the defect it is written for lives — measured: on a minimal fixture it did exactly that. The
