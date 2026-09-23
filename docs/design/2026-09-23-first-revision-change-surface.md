@@ -194,3 +194,20 @@ the repair set (`wcc2-f2`, `wcc2-f3`).
 
 Until both exist, this change's honest state is: **the four in-scope findings repaired and verified, the four out-of-scope
 findings recorded with the path each one has to travel.**
+
+## Measured while closing this round: an obligation closes without the finding being addressed
+
+The seal that closed this round's repair batch (`revision-4d540d50f0d5895f`) took `unresolvedObligations` from **6 to 0** —
+while **four of the eight findings behind those obligations were never repaired**, because their repair lies outside this
+change (see the routing table above).
+
+So obligation closure is satisfied by **fresh, matrix-linked, passing evidence**, not by the finding having been dealt with.
+That is defensible in itself — the obligation's contract is "show a passing check on the current revision" — but it has a
+consequence worth stating plainly:
+
+> A repair batch can close every obligation while leaving findings unaddressed, and nothing in the flow reports the
+> difference. The four closed findings here are all `major`, and all four were routed out **by prose in a design document**,
+> which is exactly the kind of record this line of work exists to replace with a machine-checked one.
+
+Not fixed here, and named so it is not mistaken for a gap nobody saw: the same shape as f8 and `wcc2-f8`, one level up —
+the flow's notion of "resolved" is weaker than its notion of "obligated".
