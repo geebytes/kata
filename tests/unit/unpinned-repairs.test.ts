@@ -148,3 +148,61 @@ describe('a pass does not erase the findings of the pass before it', () => {
         }
     }, 60000);
 });
+
+/**
+ * `kgs3-f1`, the blocking finding from the second independent round — and it was a defect in the AC-6 repair itself.
+ *
+ * `readTrackedFindings` pushes the live node record first and each history entry after it, and the dedup loop kept the
+ * **later** copy, so a history entry overwrote the live record. Measured consequence: every disposition written through a
+ * command was invisible to every reader, and the sealed change record inherited the stale value — which is why
+ * `findings list` reported nine findings open while the record itself said one was fixed.
+ */
+describe('the tracked view reports the disposition the live record holds', () => {
+    it('does not let a history entry overwrite the live record', async () => {
+        const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-live-wins-'));
+        try {
+            const { initLayout } = await import('../../src/core/layout.js');
+            const { createTask } = await import('../../src/core/task.js');
+            const { createTaskRevision } = await import('../../src/workflow/revision.js');
+            const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+            const { readTrackedFindings } = await import('../../src/quality/finding-disposition.js');
+
+            await initLayout(root);
+            await mkdir(join(root, 'src'), { recursive: true });
+            await createTask({ root, id: 'live-wins', title: 'live-wins', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+            await createTaskRevision({ root, taskId: 'live-wins', ownedPaths: ['src/x.ts'], checkIds: [] });
+
+            const base = {
+                node: 'review' as const,
+                status: 'recorded' as const,
+                revisionId: 'revision-one',
+                manifestHash: 'hash-one',
+                executedInFreshContext: true,
+                contextNote: 'a fixture',
+                hypotheses: [],
+                attempts: [],
+            };
+            // The first pass reports it open; the second, which replaces the record, reports it fixed. The history keeps
+            // the open copy — and it must not win.
+            await writeAdversarialRecord(root, 'live-wins', {
+                ...base,
+                createdAt: '2026-09-23T01:00:00.000Z',
+                findings: [{ id: 'now-fixed', taskId: 'live-wins', severity: 'major', message: 'raised by the first pass' }],
+            } as never);
+            await writeAdversarialRecord(root, 'live-wins', {
+                ...base,
+                createdAt: '2026-09-23T02:00:00.000Z',
+                findings: [{ id: 'now-fixed', taskId: 'live-wins', severity: 'major', message: 'repaired', disposition: 'fixed' }],
+            } as never);
+
+            const tracked = await readTrackedFindings(root, 'live-wins');
+            const found = tracked.find((finding) => finding.id === 'now-fixed');
+            expect(found?.disposition).toBe('fixed');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60000);
+});

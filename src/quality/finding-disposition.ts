@@ -142,8 +142,13 @@ export async function readTrackedFindings(root: string, taskId: string): Promise
             byId.set(finding.id, finding);
             continue;
         }
-        if (seen.source.startsWith('adversarial-') === false && finding.source.startsWith('adversarial-')) continue;
-        byId.set(finding.id, finding);
+        // Same source: the **first** occurrence is the live record's, because the live record is read before the history.
+        // Keeping the later copy inverted this precedence (kgs3-f1): the history entry overwrote the live record, so every
+        // disposition written through a command was invisible to every reader and the sealed change record inherited the
+        // stale value.
+        if (seen.source === finding.source) continue;
+        // Different sources: the adversarial record is what a disposition command writes to, so it is the authoritative one.
+        if (!seen.source.startsWith('adversarial-') && finding.source.startsWith('adversarial-')) byId.set(finding.id, finding);
     }
     return [...byId.values()];
 }
