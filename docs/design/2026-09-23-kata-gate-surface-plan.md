@@ -630,3 +630,23 @@ doing its job, not a declaration surviving.
 The lesson is the one this line keeps re-learning: a claim built on a check that could not have failed either way is not a
 measurement. The check that would have caught it is the one used for the matrix — compare against the thing that is supposed to
 be empty, and read the output rather than its absence.
+
+## AC-5's second half: three fixture fixes, no assertion, and the surviving hypothesis
+
+The clause: the sealed evidence a brief offers must not predate the delta it is offered for. It is untested, and the
+implementation exists (`99e6223`). I tried three times to pin it and deleted the case each time:
+
+1. **The section split was wrong** — I cut the brief on heading text that did not match, so the assertion read a different
+   section. Fixed by printing the real section first.
+2. **The evidence filenames were wrong** — `readRecordedEvidence` filters on `${taskId}-`, so `before-the-delta.json` is a file
+   the reader never looks at. Measured from the source, fixed.
+3. **`diffHash` must be 64 hex** — the schema pins it to `^[a-fA-F0-9]{64}$`, and a readable placeholder makes the whole read
+   throw, which the brief swallows as an empty list. Measured from the schema, fixed.
+
+After all three the offered list was **still empty**, so the surviving hypothesis is that the brief filters evidence by
+**freshness** — `checkFreshness` compares the envelope's `diffHash` (or `scope.hash`) against the working tree, and an envelope
+dated 2020 or 2099 matches neither. If so the fixture must make the envelope's `diffHash` the current one and vary only
+`finishedAt`, which is what the clause is about.
+
+**Stated as a hypothesis rather than a conclusion, because the next attempt should test it first rather than fix a fourth
+fixture detail.** What is certain: the assertion never reached the offered list, so nothing about the clause was measured.
