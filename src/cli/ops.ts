@@ -966,3 +966,59 @@ async function currentRevisionManifest(
         ...(freeze ? { candidateFreezeSha256: freeze } : {}),
     };
 }
+
+/**
+ * `kata-cli falsify` — the CLI entry for closure-gate's producer.
+ *
+ * It exists so the chain is closed: a repair runs the check, re-introduces the defect, watches it redden, restores, and the
+ * fact is recorded — which is what the closure criterion now requires before a finding-shaped obligation can be answered.
+ * Without this entry the producer was reachable only from a test, which is the "mechanism with no consumer" class this line
+ * keeps finding.
+ *
+ * Every refusal is a reason rather than a silent failure, and nothing is recorded unless all three steps behaved: a check that
+ * does not pass first, does not redden under the mutation, or does not come back after the restore leaves the ledger empty.
+ */
+function valueAfter(argv: string[], flag: string): string | undefined {
+    const index = argv.indexOf(flag);
+    return index >= 0 ? argv[index + 1] : undefined;
+}
+
+export async function runFalsifyCommand(argv: string[]): Promise<Record<string, unknown>> {
+    const change = valueAfter(argv, '--change');
+    const finding = valueAfter(argv, '--finding');
+    const check = valueAfter(argv, '--check');
+    const mutation = valueAfter(argv, '--mutation');
+    const restore = valueAfter(argv, '--restore');
+    const missing = [
+        ['--change', change], ['--finding', finding], ['--check', check], ['--mutation', mutation], ['--restore', restore],
+    ].filter(([, value]) => !value).map(([flag]) => flag as string);
+    if (missing.length > 0) {
+        return {
+            command: 'falsify',
+            success: false,
+            error: `falsify needs ${missing.join(', ')}. The mutation and its restore are declared because re-introducing a defect is knowledge only the repairer has; the tool runs them and records what it saw.`,
+        };
+    }
+
+    const root = process.cwd();
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const { runFalsification } = await import('../quality/falsifier-run.js');
+    const revision = await readCurrentTaskRevision(root, change!).catch(() => null);
+
+    const result = await runFalsification({
+        root,
+        taskId: change!,
+        findingId: finding!,
+        check: check!,
+        mutation: mutation!,
+        restore: restore!,
+        revisionId: revision?.id ?? '(no revision)',
+        at: new Date().toISOString(),
+        run: async (command) => {
+            const { runProcess } = await import('../process/run.js');
+            const outcome = await runProcess('bash', ['-lc', command], { cwd: root });
+            return outcome.exitCode;
+        },
+    });
+    return { command: 'falsify', taskId: change, success: result.recorded, ...result };
+}

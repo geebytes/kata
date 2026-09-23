@@ -103,6 +103,7 @@ import { parseWikiArgs, runWikiCommand } from './cli/wiki.js';
 import {
     parseCometArgs,
     runAdversarialCommand,
+    runFalsifyCommand,
     runCodegraphCommand,
     runCollectCommand,
     runCometCommand,
@@ -317,6 +318,13 @@ async function runMain(argv: string[]): Promise<void> {
         // A sealed task's matrix could only be declared at `open`, so a declaration defect found later had no supported
         // correction. The command validates the corrected declaration before writing it.
         const result = await runMatrixCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'falsify') {
+        // A repair proves its falsifier reddens before the obligation it answers can close (closure-gate AC-2).
+        const result = await runFalsifyCommand(argv.slice(1));
         outputResult(result);
         return;
     }
