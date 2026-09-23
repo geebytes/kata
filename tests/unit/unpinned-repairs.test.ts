@@ -206,3 +206,73 @@ describe('the tracked view reports the disposition the live record holds', () =>
         }
     }, 60000);
 });
+
+/**
+ * `kgs3-f2`, claim one: the read-back guard added for `kgs-f1` was said to be **unsatisfiable for any finding that lives in
+ * an adversarial node record** — because the read-back returned the history's copy with the old disposition. That is a
+ * consequence of `kgs3-f1`'s inverted precedence rather than an independent defect, and with the precedence fixed the guard
+ * should be satisfiable. That claim was reached by reading the code, and this makes it a measurement.
+ */
+describe('a disposition on a finding in the adversarial record reads back', () => {
+    it('does not throw for a finding that lives in a node record', async () => {
+        const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-node-readback-'));
+        try {
+            const { initLayout } = await import('../../src/core/layout.js');
+            const { createTask } = await import('../../src/core/task.js');
+            const { createTaskRevision } = await import('../../src/workflow/revision.js');
+            const { writeAdversarialRecord } = await import('../../src/quality/adversarial.js');
+            const { applyDisposition, readTrackedFindings } = await import('../../src/quality/finding-disposition.js');
+
+            await initLayout(root);
+            await mkdir(join(root, 'src'), { recursive: true });
+            await createTask({ root, id: 'node-readback', title: 'node-readback', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+            await createTaskRevision({ root, taskId: 'node-readback', ownedPaths: ['src/x.ts'], checkIds: [] });
+
+            await writeAdversarialRecord(root, 'node-readback', {
+                node: 'review',
+                status: 'recorded',
+                revisionId: 'revision-one',
+                manifestHash: 'hash-one',
+                executedInFreshContext: true,
+                contextNote: 'a fixture',
+                createdAt: '2026-09-23T01:00:00.000Z',
+                hypotheses: [],
+                attempts: [],
+                findings: [{ id: 'in-a-node-record', taskId: 'node-readback', severity: 'minor', message: 'a minor finding' }],
+            } as never);
+
+            // A **second** pass, so the first record lands in the history carrying the old disposition — which is the
+            // condition the finding describes. Measured: without it the fixture had no history, the dedup had nothing to
+            // choose between, and the case passed under the mutation that restores the defect.
+            await writeAdversarialRecord(root, 'node-readback', {
+                node: 'review',
+                status: 'recorded',
+                revisionId: 'revision-one',
+                manifestHash: 'hash-one',
+                executedInFreshContext: true,
+                contextNote: 'a fixture',
+                createdAt: '2026-09-23T02:00:00.000Z',
+                hypotheses: [],
+                attempts: [],
+                findings: [{ id: 'in-a-node-record', taskId: 'node-readback', severity: 'minor', message: 'a minor finding' }],
+            } as never);
+
+            // The write must land and the guard must accept it: a minor finding may be deferred, and the read-back has to
+            // see the new disposition rather than the history's copy.
+            const written = await applyDisposition(root, 'node-readback', 'adversarial-review', 'in-a-node-record', {
+                disposition: 'deferred',
+                reason: 'not now',
+                by: 'user',
+                at: '2026-09-23T03:00:00.000Z',
+            });
+            expect(written).toBe(true);
+            const tracked = await readTrackedFindings(root, 'node-readback');
+            expect(tracked.find((finding) => finding.id === 'in-a-node-record')?.disposition).toBe('deferred');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60000);
+});
