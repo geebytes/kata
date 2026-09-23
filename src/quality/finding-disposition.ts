@@ -227,6 +227,21 @@ export async function applyDisposition(
         }
         return `${JSON.stringify(raw, null, 2)}\n`;
     });
+    // kgs-f1, the blocking finding, and it is the reason this line exists: `routed` was added to the type and the command
+    // but to no schema's enum, and this writer validated nothing — so routing a finding left the record schema-invalid, and
+    // every later read of it failed. The value was caught by an independent pass rather than by this path. So the write is
+    // checked against the same reader everything else uses: a disposition this platform cannot read back is refused here,
+    // at the moment it is written, rather than discovered by whoever reads the record next.
+    if (found) {
+        const readable = await readTrackedFindings(root, taskId).catch(() => null);
+        if (!readable || !readable.some((entry) => entry.id === findingId && entry.disposition === event.disposition)) {
+            throw new Error(
+                `Dispositioning '${findingId}' as '${event.disposition}' wrote a record this platform cannot read back. `
+                + 'The disposition is not accepted by the record schema, or the write did not land — either way the record is '
+                + 'now unreadable, so the write is refused rather than left for the next reader to discover.',
+            );
+        }
+    }
     return found;
 }
 

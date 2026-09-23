@@ -98,7 +98,8 @@
               "open",
               "fixed",
               "deferred",
-              "accepted"
+              "accepted",
+              "routed"
             ]
           },
           "dispositionReason": {
