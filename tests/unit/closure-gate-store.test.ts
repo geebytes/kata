@@ -87,3 +87,20 @@ describe('a record that fails validation is not an absent record', () => {
 
 
 
+
+/**
+ * The case `cg-f3` names, and its absence is why `kata-cli falsify` refused that repair with `did_not_redden`: the file's
+ * validation case was about `readObligations`, so the reddening ledger could go back to an unvalidated read that swallowed its
+ * failures and every test still passed. **A record that fails validation is not an absent record**, asserted for this ledger.
+ */
+describe('the reddening ledger is read through its schema, and a failure is not an absence', () => {
+    it('returns empty for a task with no ledger, and refuses to read an invalid one', async () => {
+        const root = await workspace();
+        expect(await readFalsifierReddenings(root, 'r-task')).toEqual([]);
+
+        const { mkdir: mk, writeFile: write } = await import('node:fs/promises');
+        await mk(join(root, '.kata/tasks/r-task'), { recursive: true });
+        await write(join(root, '.kata/tasks/r-task/falsifier-reddenings.json'), '{"reddenings":"not an array"}\n', 'utf8');
+        await expect(readFalsifierReddenings(root, 'r-task')).rejects.toThrow();
+    });
+});
