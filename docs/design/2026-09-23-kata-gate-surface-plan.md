@@ -154,3 +154,41 @@ being slipped into the closure code at the end of a session. Named here with its
 What already holds, and is what makes the second half tractable: the routed finding is **dispositioned, not deleted**
 (`a07158d`), and AC-6's pass history means no later record write can erase it (`6ba10c4`). The routing survives; what is
 missing is the closure rule that reads it.
+
+## The declaration-correction capability: what it is, and the constraint found before writing it
+
+Two changes cannot be archived and two acceptance criteria are false as written, and both come back to one missing
+capability: **a governed path for correcting a task's declaration.** `matrix set` covers a row's `testSelector` and
+explicitly disclaims the rest — its own docstring says "**not** a way to change the acceptance criteria. The statements and
+their ids are untouched." So the exclusion was designed, not forgotten, and lifting it is a decision rather than a repair.
+
+Two halves, and they unblock different things:
+
+| half | unblocks | size |
+|---|---|---|
+| `matrix set --statement "<corrected>" --reason "<why>"` | the two acceptance criteria `wiring-coverage-check` cannot satisfy as written | small |
+| declaring a **matrix** for a task that has none | archiving `major-finding-closure` and `repair-obligation-deadlock` (`missingAcceptanceMatrix: true`, and the archive refuses them while `status` reads green) | larger: rows are declarable only at `open --bootstrap-file` |
+
+**The constraint, checked before writing any code rather than after:**
+
+```
+acceptance item additionalProperties: false
+acceptance item props: id, statement, claims
+```
+
+So a correction history **cannot** live on the acceptance item — `statementHistory` there would make the task
+schema-invalid, which is a corruption rather than a feature. The previous statement has to be recorded **beside** the task,
+the way `scope change` records a grown surface and the change record carries `surfaceBasis`. That is the design; writing it
+on the acceptance item is what a blind implementation would have done, and it is precisely the class of damage this session
+has spent its time repairing elsewhere.
+
+The write path is already located and is the locked one every task mutation uses:
+
+```ts
+await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+    const current = JSON.parse(raw) as Record<string, unknown>;
+    return `${JSON.stringify({ ...current, acceptanceMatrix: next }, null, 2)}\n`;
+});
+```
+
+Nothing was written: the code above is a plan, and the task files are untouched.
