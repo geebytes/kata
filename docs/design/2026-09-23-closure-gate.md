@@ -439,3 +439,23 @@ So the archive path is blocked, and that is the honest state rather than a step 
 7, no-record, 5, 5 and 2 findings, and none of them closed the change.** The measurement the close-out needed is now complete —
 not "the change has bugs" but **"this change cannot be finished by its author"**, which is the conclusion `repair-by-another-author`
 was opened to act on.
+
+## B: the conclusion, and the seventh decorative check
+
+`cg5-f2` is disposed by making AC-1's clause true rather than deleting it — the refusal now names the finding whose falsifier is
+missing — and **the test for it was decorative on the first attempt**: it asserted the finding id appears anywhere in the
+preflight result, and it appears in the obligation list, so removing the naming from the refusal left it green. **The mutation
+found that, and it is the seventh check in this change that could not fail.** Fixed, and the mutation now reddens it.
+
+**That is the conclusion.** Five rounds produced 7, no-record, 5, 5 and 2 findings; none closed the change; every round's
+findings were about the previous round's repairs; and this round's own repair produced a decorative check within minutes of
+being written. The measurement is not "this change has bugs" — it is:
+
+> **A change whose subject is "a mechanism that does not do what it says" cannot be finished by the author who produces that
+> class at a rate of one per repair.** Five rounds is enough evidence for that, and `repair-by-another-author` exists to act on
+> it rather than to be a sixth round.
+
+**So `closure-gate` stops at `hardVerify`** with: five acceptance criteria implemented and each with its own test file; the
+falsifier mechanism built and used; nine obligations closed through it; seven decorative checks of mine caught by the mechanism
+itself; two findings routed; and the record of all of it in this document. What it does not have is a review record the gate
+will admit, and that is stated rather than pushed through.
