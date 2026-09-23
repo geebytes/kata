@@ -132,7 +132,11 @@ export async function runFindingsCommand(argv: string[]): Promise<Record<string,
         const routReason = valueAfter(rest, '--reason') ?? 'carried by the named change';
         const routWritten = await applyRout(root, taskId, routFinding.source, routId, { disposition: 'routed', reason: `routed to ${to}: ${routReason}`, by: routBy, at: routAt });
         if (!routWritten) throw new Error(`Finding '${routId}' could not be written back to ${routFinding.source}.`);
-        return { command: 'findings rout', taskId, id: routId, to, severity: routFinding.severity, reason: routReason, by: routBy, at: routAt };
+        // The routing is what answers the obligation, closed here rather than left for a seal that will never come: the
+        // finding is not being repaired in this change, so no seal here can produce the evidence that would close it.
+        const { resolveObligationsForRouting } = await import('../quality/repair-obligations.js');
+        const routClosed = await resolveObligationsForRouting(root, taskId, routId, to, routReason);
+        return { command: 'findings rout', taskId, id: routId, to, severity: routFinding.severity, reason: routReason, by: routBy, at: routAt, obligationsClosed: routClosed };
     }
 
     const disposition = subcommand === 'defer' ? 'deferred' : subcommand === 'accept' ? 'accepted' : null;

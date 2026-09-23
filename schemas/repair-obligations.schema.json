@@ -23,6 +23,7 @@
           "createdAt": { "type": "string", "minLength": 1 },
           "resolvedAt": { "type": "string", "minLength": 1 },
           "resolvedByRevisionId": { "type": "string", "minLength": 1 },
+          "resolvedByRouting": { "type": "object", "additionalProperties": false, "required": ["to", "reason"], "properties": { "to": { "type": "string", "description": "The change that will carry this finding." }, "reason": { "type": "string", "description": "Why it belongs there rather than here." } } },
           "resolvedEvidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
         }
       }

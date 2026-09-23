@@ -72,3 +72,46 @@ describe('a task can acquire the matrix it needs to be archivable', () => {
         expect((await readTask(other, 'declare-invalid')).acceptanceMatrix).toBeUndefined();
     });
 });
+
+/**
+ * AC-4's second half: routing a finding closes the obligation it produced.
+ *
+ * Until this existed, a routed finding left its obligation open forever. Obligations close on **evidence** — a seal
+ * producing fresh passing results — and a finding handed to another change will never be repaired here, so no seal in this
+ * change could ever close it. That is the loop `wiring-coverage-check` measured: six obligations whose findings are all
+ * routed, and no honest way to close them.
+ */
+describe('a routed finding closes its obligation, and the closure says where it went', () => {
+    it('records the carrier rather than claiming a repair', async () => {
+        const { mkdtemp, mkdir, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-rout-obligation-'));
+        try {
+            const { initLayout } = await import('../../src/core/layout.js');
+            const { createTask } = await import('../../src/core/task.js');
+            const { persistBlockingFindings, readObligations, resolveObligationsForRouting } = await import('../../src/quality/repair-obligations.js');
+            await initLayout(root);
+            await mkdir(join(root, 'src'), { recursive: true });
+            await createTask({ root, id: 'rout-obligation', title: 'rout-obligation', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+
+            await persistBlockingFindings(root, 'rout-obligation', [
+                { id: 'f-routed', severity: 'major', message: 'repair lives elsewhere' },
+            ]);
+            const before = await readObligations(root, 'rout-obligation');
+            expect(before.filter((obligation) => !obligation.resolvedAt)).toHaveLength(1);
+
+            const closed = await resolveObligationsForRouting(root, 'rout-obligation', 'f-routed', 'kata-gate-surface', 'the gate derivation lives there');
+            expect(closed).toBe(1);
+
+            const after = await readObligations(root, 'rout-obligation');
+            const obligation = after.find((entry) => entry.findingId === 'f-routed');
+            expect(obligation?.resolvedAt).toBeTruthy();
+            // The distinction the closure has to keep: handed over, not repaired.
+            expect(obligation?.resolvedByRouting).toEqual({ to: 'kata-gate-surface', reason: 'the gate derivation lives there' });
+            expect(obligation?.resolvedByRevisionId).toBeUndefined();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60000);
+});

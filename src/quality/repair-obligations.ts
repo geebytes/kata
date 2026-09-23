@@ -20,6 +20,13 @@ export interface RepairObligation {
   resolvedAt?: string;
   resolvedByRevisionId?: string;
   resolvedEvidenceIds?: string[];
+  /**
+   * AC-4's second half. An obligation may close because its finding was **routed** to another change rather than repaired,
+   * and when it does the closure says which change carries it — `resolvedByRevisionId` would claim a repair that never
+   * happened. Until this existed a routed finding left its obligation open forever: obligations close on evidence, so
+   * "already handed to someone else" had no way to be recorded.
+   */
+  resolvedByRouting?: { to: string; reason: string };
 }
 
 export interface ObligationRecord {
@@ -161,6 +168,35 @@ export async function resolveObligationsForRevision(
     }
     return existing;
   });
+}
+
+/**
+ * Closes the obligations a routed finding produced.
+ *
+ * Called where the routing happens, not from a reader: resolving state on a read would make `status` mutate the task. The
+ * closure records the carrier, so a later reader can tell "repaired" from "handed to another change" — which is the whole
+ * reason the routed disposition exists.
+ */
+export async function resolveObligationsForRouting(
+  root: string,
+  taskId: string,
+  findingId: string,
+  to: string,
+  reason: string,
+): Promise<number> {
+  const now = new Date().toISOString();
+  let closed = 0;
+  await updateObligations(root, taskId, (existing) => {
+    for (const obligation of existing) {
+      if (obligation.resolvedAt) continue;
+      if (obligation.findingId !== findingId) continue;
+      obligation.resolvedAt = now;
+      obligation.resolvedByRouting = { to, reason };
+      closed += 1;
+    }
+    return existing;
+  });
+  return closed;
 }
 
 export async function reopenObligation(
