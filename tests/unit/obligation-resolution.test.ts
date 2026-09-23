@@ -1,3 +1,4 @@
+import { reddenAllTasks } from '../helpers/reddening.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,6 +43,7 @@ describe('resolving a repair obligation', () => {
         // AC to resolve left every such obligation permanently open, and the seal correctly refused on it forever.
         await persistBlockingFindings(root, 'unscoped-task', [{ id: 'finding-1', severity: 'major', message: 'a major finding' }]);
 
+        await reddenAllTasks(root);
         await resolveObligationsForRevision(root, 'unscoped-task', 'revision-1', ['AC-1'], ['evidence-1'], undefined, [passing('evidence-1')]);
 
         const [obligation] = await readObligations(root, 'unscoped-task');
@@ -54,6 +56,7 @@ describe('resolving a repair obligation', () => {
         const root = await fixture('empty-task');
         await persistBlockingFindings(root, 'empty-task', [{ id: 'finding-1', severity: 'blocking', message: 'a blocking finding' }]);
 
+        await reddenAllTasks(root);
         await resolveObligationsForRevision(root, 'empty-task', 'revision-1', ['AC-1'], [], undefined, []);
 
         // A revision that proved nothing answers nothing: the refusal is the point, not an edge case.
@@ -65,6 +68,7 @@ describe('resolving a repair obligation', () => {
         const root = await fixture('scoped-task');
         await persistBlockingFindings(root, 'scoped-task', [{ id: 'finding-1', severity: 'blocking', acceptanceId: 'AC-2', message: 'a blocking finding' }]);
 
+        await reddenAllTasks(root);
         await resolveObligationsForRevision(root, 'scoped-task', 'revision-1', ['AC-1'], ['evidence-1'], undefined, [passing('evidence-1')]);
 
         // AC-2 is not satisfied, so the obligation it raised is not answered — the criterion still gates it.

@@ -1,3 +1,4 @@
+import { reddenAllTasks } from '../helpers/reddening.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,6 +58,7 @@ describe('a major review finding follows the severity gate, in both the ladder a
         await recordFinding({ root, taskId, severity, message: `a ${severity} finding`, acceptanceId: 'AC-1' });
         // Clear the obligation the recording raised, so the earlier `repair_unresolved_obligations` branch does not
         // pre-empt the finding branch under test — the discharge of the obligation is a separate mechanism.
+        await reddenAllTasks(root);
         await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], ['e1'], undefined, [passing('e1')]);
         return root;
     }

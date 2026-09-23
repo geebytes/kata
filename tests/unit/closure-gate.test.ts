@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { hasReddening, readFalsifierReddenings, recordFalsifierReddening } from '../../src/quality/falsifier-reddenings.js';
+import { obligationIsAnswered } from '../../src/quality/repair-obligations.js';
 
 const cleanup: string[] = [];
 afterEach(async () => {
@@ -57,5 +58,47 @@ describe('the falsifier-reddening ledger', () => {
     it('reads an empty ledger for a task that has never recorded one', async () => {
         const root = await workspace();
         expect(await readFalsifierReddenings(root, 'r-task')).toEqual([]);
+    });
+});
+
+/**
+ * AC-1's criterion, and its RED was the change's whole reason: before this, **two of these three failed with
+ * `expected true to be false`** — an obligation with no reddening closed on passing evidence alone, so a repair that added an
+ * assertion which cannot fail closed exactly like one that added an assertion which can.
+ */
+describe('a finding-shaped obligation needs a reddening, not only evidence', () => {
+    const obligation = { id: 'obl-1', findingId: 'a-finding', acceptanceId: 'AC-1', raisedAt: '2026-09-23T01:00:00.000Z' } as never;
+    const evidence = [{ id: 'e1', exitCode: 0, kind: 'test', command: 'npx vitest run tests/unit/x.test.ts' }] as never;
+
+    it('stays open when no falsifier has been shown reddening', () => {
+        const answered = obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
+        expect(answered.answered).toBe(false);
+    });
+
+    it('closes when the finding has a recorded reddening', () => {
+        const answered = obligationIsAnswered({
+            obligation,
+            resolvedAcceptanceIds: ['AC-1'],
+            evidence,
+            reddenings: [{ findingId: 'a-finding', check: 'tests/unit/x.test.ts', mutation: 'revert the guard', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z' }],
+        } as never);
+        expect(answered.answered).toBe(true);
+    });
+
+    it('does not close on a reddening recorded for a different finding', () => {
+        const answered = obligationIsAnswered({
+            obligation,
+            resolvedAcceptanceIds: ['AC-1'],
+            evidence,
+            reddenings: [{ findingId: 'another-finding', check: 'tests/unit/y.test.ts', mutation: 'revert something else', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z' }],
+        } as never);
+        expect(answered.answered).toBe(false);
+    });
+
+    it('leaves an obligation with no finding behind it alone', () => {
+        // An obligation raised by a failed criterion has no falsifier to show — the rule fires on one thing only.
+        const fromCriterion = { id: 'obl-2', acceptanceId: 'AC-1', raisedAt: '2026-09-23T01:00:00.000Z' } as never;
+        const answered = obligationIsAnswered({ obligation: fromCriterion, resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
+        expect(answered.answered).toBe(true);
     });
 });

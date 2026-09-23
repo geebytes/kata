@@ -134,6 +134,12 @@ export function obligationIsAnswered(input: {
     resolvedAcceptanceIds: string[];
     evidence: EvidenceEnvelope[];
     matrix?: AcceptanceMatrix;
+    /**
+     * The falsifier reddenings recorded for this task (closure-gate, AC-1). An obligation **produced by a finding** is not
+     * answered by evidence alone: the finding’s own check has to have been shown reddening, or the repair might be an
+     * assertion that cannot fail. An obligation with no finding behind it is unaffected.
+     */
+    reddenings?: Array<{ findingId: string }>;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -141,9 +147,16 @@ export function obligationIsAnswered(input: {
         ? evidence.filter((item) => item.exitCode === 0 && evidenceMatchesRow(row, item.command, item.kind, item.checkId))
         : evidence.filter((item) => item.exitCode === 0);
     const evidenceIds = matchedEvidence.map((item) => item.id);
-    const answered = obligation.acceptanceId
+    const answeredByEvidence = obligation.acceptanceId
         ? resolvedAcceptanceIds.includes(obligation.acceptanceId) && (!matrix || evidenceIds.length > 0)
         : evidenceIds.length > 0;
+    // A finding-shaped obligation also needs its falsifier shown reddening. The refusal fires on **one** thing — a missing
+    // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
+    // work is the failure mode this criterion must not have.
+    const falsified = obligation.findingId
+        ? (input.reddenings ?? []).some((reddening) => reddening.findingId === obligation.findingId)
+        : true;
+    const answered = answeredByEvidence && falsified;
     return { answered, evidenceIds };
 }
 
@@ -157,10 +170,14 @@ export async function resolveObligationsForRevision(
   evidence: EvidenceEnvelope[] = [],
 ): Promise<RepairObligation[]> {
   const now = new Date().toISOString();
+  // Read here rather than accepted as an argument: this is the seal’s path, and a caller that had to remember to pass the
+  // reddenings is a caller that will forget.
+  const { readFalsifierReddenings } = await import('./falsifier-reddenings.js');
+  const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}) });
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings });
       if (!verdict.answered) continue;
       obligation.resolvedAt = now;
       obligation.resolvedByRevisionId = revisionId;

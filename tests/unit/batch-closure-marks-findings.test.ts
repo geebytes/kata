@@ -1,3 +1,4 @@
+import { reddenAllTasks } from '../helpers/reddening.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +57,7 @@ describe('a closed batch marks its answered findings', () => {
         expect((await resolveBriefMode(root, taskId, 'review')).mode).toBe('verify');
 
         // The seal resolves the obligation from its evidence, then closes the batch.
+        await reddenAllTasks(root);
         await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], ['evidence-1'], undefined, [passing('evidence-1')]);
         const closed = await closeBatchAfterSeal(root, taskId);
 

@@ -1,3 +1,5 @@
+import { reddenAllTasks } from '../helpers/reddening.js';
+import { readFalsifierReddenings } from '../../src/quality/falsifier-reddenings.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -57,7 +59,12 @@ describe('the seal and the resolver agree about answerability', () => {
             const [obligation] = await readObligations(root, taskId);
 
             // What the preflight reads — a verdict computed without touching anything.
-            const dryVerdict = obligationIsAnswered({ obligation: obligation!, resolvedAcceptanceIds: testCase.resolvedAcceptanceIds, evidence: testCase.evidence }).answered;
+            // The reddening must exist before **both** paths read it: this case compares the dry verdict with what the
+            // resolver does, so supplying it to one and not the other would make them disagree for a reason the case is
+            // not about.
+            await reddenAllTasks(root);
+            const reddenings = await readFalsifierReddenings(root, taskId);
+            const dryVerdict = obligationIsAnswered({ obligation: obligation!, resolvedAcceptanceIds: testCase.resolvedAcceptanceIds, evidence: testCase.evidence, reddenings }).answered;
 
             // What the resolver does — the same inputs, and it may commit the answer.
             await resolveObligationsForRevision(root, taskId, 'revision-1', testCase.resolvedAcceptanceIds, testCase.evidence.map((item) => item.id), undefined, testCase.evidence);
