@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { addAdversarialFinding, resolveBriefMode, writeAdversarialRecord } from '../../src/quality/adversarial.js';
-import { closeBatchAfterSeal, openRepairBatch } from '../../src/quality/repair-batch.js';
+
+import { closeRepairBatch, closeBatchAfterSeal, openRepairBatch } from '../../src/quality/repair-batch.js';
 import { readTrackedFindings } from '../../src/quality/finding-disposition.js';
 import { persistBlockingFindings, resolveObligationsForRevision } from '../../src/quality/repair-obligations.js';
 import type { EvidenceEnvelope } from '../../src/quality/evidence.js';

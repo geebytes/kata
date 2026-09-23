@@ -164,6 +164,12 @@ export async function closeRepairBatch(
                 id: `batch-${record.batches.length + 1}`,
                 openedAt: new Date().toISOString(),
                 findings: [...unaccounted],
+                // **The base, without which the comment above is false.** The carry was described as "the next batch based at
+                // the current revision" and was created without a base — so the batch that a later round reads as the last
+                // closed one carried no revision, `defaultBriefScope` could not derive a delta from it, and the next round
+                // reviewed the whole surface instead of the repair. That is the measured cost of this line: 2.5-2.7x per
+                // round, and the delta path was unreachable because of one missing field in the code meant to unblock it.
+                ...(options.baseRevisionId ? { baseRevisionId: options.baseRevisionId } : {}),
             };
             record.batches.push(carry);
         }
