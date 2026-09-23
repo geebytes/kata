@@ -219,3 +219,22 @@ incremental notes.
 Recorded because the tension will be met again by anyone who reads "read-only reviewer" and "persist as you go" in the same
 brief, and because the honest current state is: **a crashed `kata-reviewer` round leaves nothing, and the instruction telling it
 otherwise is noise it cannot act on.**
+
+## The independent round on closure-gate: seven findings, and the answer to the question it was asked
+
+Cost: **406,492 tokens / 107 tool uses / 19 minutes** on the  subagent — against 1.0–4.9M for the  rounds on this line. It ran with  only, so it could not invoke the CLI and returned the record as text for the host to file.
+
+The question was whether this change passes its own test. It does not.
+
+- **blocking** `cg-f1` — The seal preflight's dry run omits the reddening ledger, so `obligationIsAnswered` returns answered=false for EVERY obligation carrying a `findingId` (the only shape persistBlockingFindings ever creates). collectSealPreflight therefore denies every seal while any finding-shaped obligation is open, and the resolver that would close it runs only after a successful seal — a permanent deadlock, and pr
+- **major** `cg-f2` — `FalsifierReddening.revisionId` is recorded and never consumed: `obligationIsAnswered` narrows the parameter to `Array<{ findingId: string }>` and compares only `findingId`. The field's own docstring — 'Recorded so a later re-seal cannot inherit a stale proof' — is therefore false, and the freshness property the design leans on ('the revision it reddened on are measured') buys nothing: a reddening
+- **major** `cg-f3` — The new ledger is the one task artefact read without a schema and with the error swallowing this change removed elsewhere: readFalsifierReddenings returns [] for both a missing file and a corrupt/invalid one. It reproduces, in the change's own new file, the defect the change documents as fixed in readObligations ('a record that fails validation read exactly like a task with no obligations ... the 
+- **major** `cg-f4` — AC-4's declared check does not test AC-4. tests/unit/falsifier-refusals.test.ts asserts the producer's three refusals; AC-4 is about closure — 'a falsifier that names a check which was never run does not close the obligation'. The closure rule consults neither `check` nor any ran/unran fact, and recordFalsifierReddening is a plain write with no linkage to a run, so a record naming an unrun check c
+- **major** `cg-f5` — AC-5's declared check does not test AC-5. tests/unit/closure-gate-producers.test.ts enumerates the four INPUTS of obligationIsAnswered, not the producers of the closure decision, so the thing the criterion exists to catch — 'a second derivation of answered ... caught rather than added' — is not caught. A second derivation (a copy of the rule in the preflight dry run, or repair-batch.ts:277-278's s
+- **major** `cg-f6` — The revision's other changed file, src/cli/matrix.ts, ships its new atomic correction (`matrix set --from-file`) with no test — the branch the design credits with unblocking this change's own seal is untested, and its `previousSelectors` audit output is unasserted. The revision's own declarations also no longer match the tree: ownedPaths and pathDigests carry tests/unit/closure-gate.test.ts, which
+- **minor** `cg-f7` — A false sentence in the change surface: docs/design/2026-09-23-closure-gate.md states the `--command`/`--selector` single-branch defect is 'also measured, and fixed in the same pass'. It is not fixed — each correction branch still ends in an early `return`, so `matrix set --command X --selector Y` still applies only the first. This is the declared-path prose-accuracy class the change's own history
+
+**The blocking one is a permanent deadlock this change introduced**: the seal preflight dry-runs  without the reddening ledger, so it answers false for every finding-shaped obligation — the only shape  creates — and the resolver that would close one runs only after a successful seal. Two derivations of "answered", and this change updated one.
+
+**And it found the class it was asked about, in this change**: `cg-f3` is the new ledger being read without a schema and with the error swallowed — the defect fixed in `readObligations` an hour earlier, reproduced in the module written to avoid it. `cg-f4` and `cg-f5` are "the declared check does not test the criterion", the same shape as `kgs3-f3`.
+
