@@ -2520,12 +2520,16 @@ export async function adversarialGateFor(
         // Measured before this: the brief declared one surface and the gate demanded another. A pass holding exactly the
         // declared delta was refused for a path the brief never named (`wcc3-f10`), and the two derivations only ever
         // agreed by accident. This is the third source for one concept and the only one the gate never read.
-        // kgs-f3. The pool accepts an entry matching by revision **or by content**, so a brief issued for a different
-        // revision with the same owned-path content is in the same list — and a delta is relative to *its own* base. Taking
-        // any delta in the pool would reintroduce exactly what this reads were added to remove: a second derivation.
+        // kgs-f3. The pool accepts an entry by revision **or by content**, and a delta is relative to its own base — so a
+        // brief issued for a different revision carrying the same owned-path content would hand the gate another round's
+        // remit. That cannot happen here, and the reason is the binding rather than a filter: this call passes
+        // `revisionIds` only, so `manifestHashes` is empty and the content-matched branch can never be true. Measured:
+        // adding `.filter((entry) => entry.revisionId === revisionId)` changed nothing — the whole suite, including the e2e
+        // fixture that reaches the coverage conjunct, stayed green when it was removed. It was therefore deleted rather
+        // than kept: a guard whose removal leaves the suite green is decorative, which is this change's own rule. The
+        // contract it stood for lives here instead — **bind by revision, because a delta belongs to one**.
         const issuedDelta = revisionId
             ? (await issuedBriefPool(root, taskId, node, { revisionIds: [revisionId] })).accepted
-                .filter((entry) => entry.revisionId === revisionId)
                 .map((entry) => entry.scope ?? entry.ir?.scope)
                 .find((scope) => scope?.kind === 'delta')?.changedPaths ?? null
             : null;
