@@ -106,3 +106,19 @@ obligation owed by the person who made it.**
 The second candidate (a new field on the revision) is rejected for the reason this line keeps giving: **a new store is another
 place declaration and reality can diverge**, and the existing mechanism plus a structural construction covers what the new field
 would have claimed to.
+
+## The real-data measurement, as evidence rather than as a test
+
+```
+$ kata-cli rounds --change closure-gate
+rounds: 4 | findings per round: 7, 5, 5, 2 | targets about the previous round: 28 | share: 0.85
+```
+
+That is the number the change exists to produce: `closure-gate`'s convergence ratio, which until now could only be reached by
+listing a directory and reading five records by hand.
+
+**And it is recorded here rather than asserted in the suite, because of what the seal found**: the case that asserted it passed
+in the working tree and exited 1 under the seal — the seal runs a check against the sealed content, and another change's runtime
+data under `.kata/` is not part of it. **A test that only passes where its author's other changes happen to be is not a test**,
+which is the same defect as a check that cannot fail, one step over: a check that can only pass. The suite keeps the fixture case
+and this is the measurement.
