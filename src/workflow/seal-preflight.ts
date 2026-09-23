@@ -18,6 +18,7 @@ import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
 import { obligationIsAnswered, readObligations } from '../quality/repair-obligations.js';
+import { readFalsifierReddenings } from '../quality/falsifier-reddenings.js';
 import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**
@@ -160,6 +161,12 @@ export async function collectSealPreflight(input: {
         async () => {
             const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
             if (unresolved.length === 0) return;
+            // **The reddening ledger, read here too.** The preflight dry-runs the same rule the resolver applies, and this
+            // change taught the rule a new input without teaching the preflight — so the preflight answered false for every
+            // finding-shaped obligation (the only shape `persistBlockingFindings` creates) and refused every seal, while the
+            // resolver that could close one runs only after a successful seal. A permanent deadlock, and the second
+            // derivation of "answered" this line keeps producing.
+            const reddenings = await readFalsifierReddenings(root, taskId);
             const answerable = new Set(
                 unresolved
                     .filter((obligation) =>
@@ -167,6 +174,7 @@ export async function collectSealPreflight(input: {
                             obligation,
                             resolvedAcceptanceIds,
                             evidence: plannedEvidence,
+                            reddenings,
                             ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
                         }).answered,
                     )

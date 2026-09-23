@@ -47,7 +47,7 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
             obligation,
             resolvedAcceptanceIds: ['AC-1'],
             evidence,
-            reddenings: [{ findingId: 'a-finding', check: 'tests/unit/x.test.ts', mutation: 'revert the guard', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z' }],
+            reddenings: [{ findingId: 'a-finding', check: 'tests/unit/x.test.ts', mutation: 'revert the guard', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 } }],
         } as never);
         expect(answered.answered).toBe(true);
     });
@@ -57,7 +57,7 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
             obligation,
             resolvedAcceptanceIds: ['AC-1'],
             evidence,
-            reddenings: [{ findingId: 'another-finding', check: 'tests/unit/y.test.ts', mutation: 'revert something else', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z' }],
+            reddenings: [{ findingId: 'another-finding', check: 'tests/unit/y.test.ts', mutation: 'revert something else', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 } }],
         } as never);
         expect(answered.answered).toBe(false);
     });

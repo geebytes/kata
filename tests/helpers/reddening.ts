@@ -13,7 +13,7 @@ import { recordFalsifierReddening } from '../../src/quality/falsifier-reddenings
  *
  * Every task under the fixture root is covered, so a fixture does not have to know its own task id.
  */
-export async function reddenAllTasks(root: string): Promise<string[]> {
+export async function reddenAllTasks(root: string, revisionId = 'revision-fixture'): Promise<string[]> {
     const tasksDir = join(root, '.kata/tasks');
     let taskIds: string[] = [];
     try {
@@ -30,8 +30,9 @@ export async function reddenAllTasks(root: string): Promise<string[]> {
                 findingId: obligation.findingId,
                 check: 'tests/unit/fixture.test.ts',
                 mutation: 'the fixture states that the defect was re-introduced to show the check reddens',
-                revisionId: 'revision-fixture',
+                revisionId,
                 reddenedAt: '2026-09-23T02:00:00.000Z',
+                observed: { before: 0, mutated: 1, after: 0 },
             });
             reddened.push(obligation.findingId);
         }

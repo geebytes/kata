@@ -62,9 +62,11 @@ describe('the seal and the resolver agree about answerability', () => {
             // The reddening must exist before **both** paths read it: this case compares the dry verdict with what the
             // resolver does, so supplying it to one and not the other would make them disagree for a reason the case is
             // not about.
-            await reddenAllTasks(root);
+            // The revision this case resolves against, so both paths see a reddening that counts for it.
+            const resolving = 'revision-1';
+            await reddenAllTasks(root, resolving);
             const reddenings = await readFalsifierReddenings(root, taskId);
-            const dryVerdict = obligationIsAnswered({ obligation: obligation!, resolvedAcceptanceIds: testCase.resolvedAcceptanceIds, evidence: testCase.evidence, reddenings }).answered;
+            const dryVerdict = obligationIsAnswered({ obligation: obligation!, resolvedAcceptanceIds: testCase.resolvedAcceptanceIds, evidence: testCase.evidence, reddenings, revisionId: resolving }).answered;
 
             // What the resolver does — the same inputs, and it may commit the answer.
             await resolveObligationsForRevision(root, taskId, 'revision-1', testCase.resolvedAcceptanceIds, testCase.evidence.map((item) => item.id), undefined, testCase.evidence);

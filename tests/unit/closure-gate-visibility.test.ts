@@ -59,7 +59,7 @@ describe('the status report distinguishes how an obligation was answered', () =>
             check: 'tests/unit/x.test.ts',
             mutation: 'revert',
             revisionId: 'revision-one',
-            reddenedAt: '2026-09-23T02:00:00.000Z',
+            reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 },
         });
         // The setup, before the subject.
         expect((await readObligations(root, 'vis')).map((obligation) => obligation.findingId).sort())

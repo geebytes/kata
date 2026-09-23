@@ -76,6 +76,9 @@ export async function runFalsification(input: {
         mutation,
         revisionId,
         reddenedAt: at,
+        // What the producer observed, recorded rather than described: AC-4's rule is that a falsifier naming a check which was
+        // never run does not close an obligation, and this is the fact that distinguishes the two.
+        observed: { before: first, mutated, after: restored },
     };
     await recordFalsifierReddening(root, taskId, reddening);
     return { recorded: true, reddening };

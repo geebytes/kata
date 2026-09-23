@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
+import { hasReddening, type FalsifierReddening as FalsifierReddeningLike } from './falsifier-reddenings.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evidenceMatchesRow, getMatrixRowForAc } from './acceptance-matrix.js';
@@ -139,7 +140,9 @@ export function obligationIsAnswered(input: {
      * answered by evidence alone: the finding’s own check has to have been shown reddening, or the repair might be an
      * assertion that cannot fail. An obligation with no finding behind it is unaffected.
      */
-    reddenings?: Array<{ findingId: string }>;
+    reddenings?: FalsifierReddeningLike[];
+    /** The revision being resolved, so a reddening recorded for different content cannot answer for this one. */
+    revisionId?: string;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -154,7 +157,7 @@ export function obligationIsAnswered(input: {
     // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
     // work is the failure mode this criterion must not have.
     const falsified = obligation.findingId
-        ? (input.reddenings ?? []).some((reddening) => reddening.findingId === obligation.findingId)
+        ? hasReddening(input.reddenings ?? [], obligation.findingId, input.revisionId)
         : true;
     const answered = answeredByEvidence && falsified;
     return { answered, evidenceIds };
@@ -177,7 +180,7 @@ export async function resolveObligationsForRevision(
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings });
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, revisionId });
       if (!verdict.answered) continue;
       obligation.resolvedAt = now;
       obligation.resolvedByRevisionId = revisionId;

@@ -58,7 +58,7 @@ describe('the preflight reasons about the checks that will run', () => {
         // whole point: the over-promise was the preflight counting a check the collector was going to skip.
         // The obligation here has a finding behind it, so the reddening has to be supplied or the verdict is false for a
         // reason this case is not about — the case is about which checks the run will actually produce.
-        const reddenings = [{ findingId: obligation.findingId! }];
+        const reddenings = [{ findingId: obligation.findingId!, check: 'tests/unit/fixture.test.ts', mutation: 'the fixture re-introduced the defect', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 } }];
         expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence: produced, reddenings }).answered).toBe(false);
         // And with a seal-tier check present, both agree it is answerable.
         const withSealTier = executedChecks([frozen, sealTier], false);

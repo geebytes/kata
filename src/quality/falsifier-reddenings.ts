@@ -17,9 +17,9 @@
  * re-introduce a defect is knowledge only the repairer has — so the mutation is declared, and the tool records what it
  * observed rather than accepting a claim about it.
  */
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { kataDir } from '../core/layout.js';
+import { readValidatedOptional } from '../core/schema.js';
 
 export type FalsifierReddening = {
     findingId: string;
@@ -27,9 +27,16 @@ export type FalsifierReddening = {
     check: string;
     /** The mutation that re-introduced the defect, declared by the repairer because only it knows. */
     mutation: string;
-    /** The revision the reddening was observed on. Recorded so a later re-seal cannot inherit a stale proof. */
+    /** The revision the reddening was observed on. **Consumed** by the criterion, so a later re-seal cannot inherit a stale proof. */
     revisionId: string;
     reddenedAt: string;
+    /**
+     * The three exit codes the producer observed: the check before the mutation, under it, and after the restore.
+     *
+     * This is what makes "the check ran" a recorded fact rather than a claim — AC-4's rule is that a falsifier naming a check
+     * which was never run does not close the obligation, and a record with no observed runs is exactly that.
+     */
+    observed: { before: number; mutated: number; after: number };
 };
 
 export type FalsifierReddeningLedger = {
@@ -42,12 +49,11 @@ export function falsifierReddeningsPath(root: string, taskId: string): string {
 }
 
 export async function readFalsifierReddenings(root: string, taskId: string): Promise<FalsifierReddening[]> {
-    try {
-        const parsed = JSON.parse(await readFile(falsifierReddeningsPath(root, taskId), 'utf8')) as FalsifierReddeningLedger;
-        return Array.isArray(parsed.reddenings) ? parsed.reddenings : [];
-    } catch {
-        return [];
-    }
+    // Validated, and **not swallowed**: this module was written an hour after the same defect was fixed in `readObligations`,
+    // and the independent round found it here — a ledger read without a schema, with a failure reading as an absence. The
+    // only artefact in the task store read that way, in the change whose subject is exactly this.
+    const record = await readValidatedOptional<FalsifierReddeningLedger>('falsifier-reddenings', falsifierReddeningsPath(root, taskId));
+    return record?.reddenings ?? [];
 }
 
 /**
@@ -71,7 +77,26 @@ export async function recordFalsifierReddening(
     return reddening;
 }
 
-/** True when this finding has a reddening recorded — the single question the closure criterion asks. */
-export function hasReddening(reddenings: FalsifierReddening[], findingId: string): boolean {
-    return reddenings.some((reddening) => reddening.findingId === findingId);
+/**
+ * True when this finding has a reddening recorded that **counts** — the single question the closure criterion asks.
+ *
+ * Three conditions, and each exists because of a finding: the finding must match; the revision must be the one being
+ * resolved, or a later re-seal inherits a proof about different content; and the runs must have been observed, or a record
+ * that merely names a check closes an obligation (AC-4).
+ */
+export function hasReddening(
+    reddenings: FalsifierReddening[],
+    findingId: string,
+    revisionId?: string,
+): boolean {
+    return reddenings.some((reddening) =>
+        reddening.findingId === findingId
+        && (revisionId === undefined || reddening.revisionId === revisionId)
+        && observedReddening(reddening));
+}
+
+/** The three observed exit codes have to be the shape a reddening actually has: green, red, green. */
+function observedReddening(reddening: FalsifierReddening): boolean {
+    const observed = reddening.observed;
+    return Boolean(observed) && observed.before === 0 && observed.mutated !== 0 && observed.after === 0;
 }

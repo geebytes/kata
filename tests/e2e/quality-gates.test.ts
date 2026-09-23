@@ -577,7 +577,7 @@ describe('acceptance matrix closure', () => {
         });
         expect(allObligations[0]!.resolvedAt).toBeUndefined();
 
-        await reddenAllTasks(root);
+        await reddenAllTasks(root, 'revision-2');
         await resolveObligationsForRevision(root, taskId, 'revision-2', ['AC-1'], ['evidence-1']);
         const resolved = await readObligations(root, taskId);
         expect(resolved[0]!.resolvedAt).toBeDefined();
@@ -662,7 +662,7 @@ describe('acceptance matrix closure', () => {
         const unresolved = await readObligations(root, taskId);
         expect(unresolved.filter((o) => !o.resolvedAt)).toHaveLength(1);
 
-        await reddenAllTasks(root);
+        await reddenAllTasks(root, 'revision-3');
         await resolveObligationsForRevision(root, taskId, 'revision-3', ['AC-1'], ['evidence-x']);
         const resolved = await readObligations(root, taskId);
         expect(resolved.filter((o) => !o.resolvedAt)).toHaveLength(0);
@@ -756,7 +756,7 @@ describe('acceptance matrix closure', () => {
             { kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root },
         ]);
 
-        await reddenAllTasks(root);
+        await reddenAllTasks(root, 'revision-1');
         await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], [unrelated.id], matrix, [unrelated]);
 
         expect((await readObligations(root, taskId))[0]!.resolvedAt).toBeUndefined();
@@ -835,7 +835,7 @@ describe('acceptance matrix closure', () => {
             { kind: 'test', command: 'vitest run unrelated.test.ts', importResult: { exitCode: 0 }, cwd: root },
             { kind: 'test', command: 'vitest run foo.test.ts', importResult: { exitCode: 0 }, cwd: root },
         ]);
-        await reddenAllTasks(root);
+        await reddenAllTasks(root, 'revision-1');
         await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], [unrelated.id, matched.id], matrix, [unrelated, matched]);
         expect((await readObligations(root, taskId))[0]!.resolvedEvidenceIds).toEqual([matched.id]);
     });

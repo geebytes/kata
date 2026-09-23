@@ -200,9 +200,8 @@ one step at a time.
 matrix when the task already has one, validating only the result), or allow a batched selector correction that validates once
 at the end. Until one exists, `closure-gate` cannot be sealed — and it is not the matrix that is wrong, it is the way back.
 
-**Also measured, and fixed in the same pass**: `matrix set --command` and `--selector` are separate branches, so supplying both
-applies only the first. That is why the command correction landed and the selector correction did not — and it is the reason
-the two corrections have to be issued one at a time.
+**Also measured**: `matrix set --command` and `--selector` are separate branches, so supplying both
+applies only the first — **and that is still true**, as the independent round pointed out (`cg-f7`): the sentence here claimed it was fixed, and it was not. What is true is that the two corrections have to be issued one at a time, which is what this round did. **A fix to it belongs with the other corrections, not in a sentence claiming it was already done.**
 
 ## A read-only reviewer cannot persist as it goes — the two requirements are in tension
 
@@ -238,3 +237,14 @@ The question was whether this change passes its own test. It does not.
 
 **And it found the class it was asked about, in this change**: `cg-f3` is the new ledger being read without a schema and with the error swallowed — the defect fixed in `readObligations` an hour earlier, reproduced in the module written to avoid it. `cg-f4` and `cg-f5` are "the declared check does not test the criterion", the same shape as `kgs3-f3`.
 
+## The repair of the independent round's findings
+
+All seven disposed, each with a verification that can fail:
+
+- **`cg-f1` blocking** — the seal preflight now reads the reddening ledger, so it dry-runs the same inputs the resolver does. Without this the preflight refused every seal while a finding-shaped obligation was open, and the resolver that could close one runs only after a successful seal: a permanent deadlock. It is the second derivation of "answered" this line keeps producing, and it is now asserted rather than remembered — `closure-gate-producers.test.ts` requires the preflight to call `obligationIsAnswered` **and** to read the ledger.
+- **`cg-f2`** — the criterion narrows by revision, so the docstring's promise ("a later re-seal cannot inherit a stale proof") is now true rather than decorative. The shared fixture takes the revision it reddens for, which is why six fixtures moved.
+- **`cg-f3`** — the ledger is read through a schema (`schemas/falsifier-reddenings.schema.json`, registered in `core/schema.ts`) and **no longer swallows**: a failure is not an absence. This was the defect fixed in `readObligations` an hour earlier, reproduced in the module written to avoid it, and found by the independent round.
+- **`cg-f4`** — AC-4's rule implemented, not merely declared: a reddening now records **the three exit codes the producer observed** (green, red, green), and the criterion requires them. A falsifier that merely names a check, with no observed runs, no longer closes an obligation.
+- **`cg-f5`** — AC-5's falsifier now enumerates the **producers of the closure decision** rather than the inputs of one function: the decider computes it and consults the ledger, the preflight calls it, and the batch closure reads the resolver's output rather than re-deciding. A naive "no other file may mention answered" assertion would have been wrong — the third shape is a consumer, and the test says why.
+- **`cg-f6`** — `matrix set --from-file` has a test: it applies a whole corrected matrix, reports the previous selectors, refuses a result that does not validate, and asserts the matrix was left as it was.
+- **`cg-f7`** — the false sentence is corrected in place, and says what is true: the single-branch behaviour is **still** there, and a fix belongs with the other corrections rather than in a sentence claiming it was done.
