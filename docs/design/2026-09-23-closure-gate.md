@@ -248,3 +248,37 @@ All seven disposed, each with a verification that can fail:
 - **`cg-f5`** — AC-5's falsifier now enumerates the **producers of the closure decision** rather than the inputs of one function: the decider computes it and consults the ledger, the preflight calls it, and the batch closure reads the resolver's output rather than re-deciding. A naive "no other file may mention answered" assertion would have been wrong — the third shape is a consumer, and the test says why.
 - **`cg-f6`** — `matrix set --from-file` has a test: it applies a whole corrected matrix, reports the previous selectors, refuses a result that does not validate, and asserts the matrix was left as it was.
 - **`cg-f7`** — the false sentence is corrected in place, and says what is true: the single-branch behaviour is **still** there, and a fix belongs with the other corrections rather than in a sentence claiming it was done.
+
+## Round 2 produced no record, and its last thought was a real defect
+
+Cost: **658,523 tokens / 85 tool uses / 17 minutes**, and the round ended mid-analysis with no record — its final message was
+empty. What it left behind is a `thinking` part whose last line names something true, verified independently:
+
+> *the reddening ledger records 6 reddenings (cg-f1..cg-f6), all bound to revision-0aa79bf2959193f4 … but those reddenings were
+> produced by `node tmp/mutate-all.mjs <id>` applied to the tree at the time. Note the mutation file lives at `tmp/` — untracked
+> files under tmp/ are not part of the …*
+
+Checked, and it holds:
+
+```
+git check-ignore -v tmp/mutate-all.mjs   ->  .gitignore:17:tmp/
+paths in the revision: 27, any tmp/: 0
+the ledger records: mutation "node tmp/mutate-all.mjs cg-f1"
+```
+
+**So the recorded proof references a script that does not exist in the sealed revision.** Nobody can reproduce a reddening from
+the revision alone, which is the whole point of recording it: the record says "this check was shown reddening" and the way to
+show it is outside the artefact. It is the same shape as the rest of this line — **the evidence does not travel with the thing
+it certifies.**
+
+Two consequences, and the second is a design one:
+
+1. **My use of the tool is at fault here**: the mutation command should be self-contained (an inline `node -e`, or a path inside
+   the revision), and the six reddenings for this change are weaker evidence than they look for that reason.
+2. **The tool could require it**: a `mutation` that names a path absent from the revision is a proof nobody can re-run. That
+   belongs with the other corrections rather than in a sentence claiming the record is reproducible.
+
+**And a second thing the round did not get to say**: it produced no record at all, so its 658K tokens bought no finding and no
+verdict. The `kata-reviewer` type cannot write, so its result is its final message — and an empty final message loses everything.
+That is the same tension recorded above, one level up: a read-only reviewer cannot persist, so the round is only as durable as
+the model's last sentence.
