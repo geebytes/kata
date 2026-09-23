@@ -50,8 +50,10 @@ describe('a change reports its review rounds and how many findings are about the
         // count can be lower than the number of rounds actually run.
         expect(report.rounds.map((round) => round.revisionId)).toEqual(['revision-one', 'revision-two']);
         expect(report.rounds.map((round) => round.findings)).toEqual([3, 3]);
-        expect(report.aboutThePreviousRound).toBe(2);
-        expect(report.shareAboutThePreviousRound).toBeCloseTo(2 / 3);
+        expect(report.targetsAboutThePreviousRound).toBe(2);
+        // The share is over **targets**, not findings: the union of the hypotheses targets is four paths
+        // (src/changed.ts, src/other.ts, AC-1, src/untouched.ts) and two of them are about the previous round.
+        expect(report.shareAboutThePreviousRound).toBeCloseTo(2 / 4);
     });
 
     it('reports the rounds of the real change this was written from', async () => {
@@ -60,6 +62,6 @@ describe('a change reports its review rounds and how many findings are about the
         const report = await reportRounds(process.cwd(), 'closure-gate', 'review');
         expect(report.rounds.length).toBe(4);
         expect(report.rounds.at(-1)?.findings).toBe(2);
-        expect(report.aboutThePreviousRound).toBeGreaterThan(0);
+        expect(report.targetsAboutThePreviousRound).toBeGreaterThan(0);
     });
 });

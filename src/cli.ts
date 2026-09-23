@@ -115,6 +115,7 @@ import { runFindingsCommand } from './cli/findings.js';
 import { runBaselineCommand } from './cli/baseline.js';
 import { runScopeCommand } from './cli/scope.js';
 import { runMatrixCommand } from './cli/matrix.js';
+import { runRoundsCommand } from './cli/rounds.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
     isResumableWorkflowCommand,
@@ -318,6 +319,14 @@ async function runMain(argv: string[]): Promise<void> {
         // A sealed task's matrix could only be declared at `open`, so a declaration defect found later had no supported
         // correction. The command validates the corrected declaration before writing it.
         const result = await runMatrixCommand(argv.slice(1));
+        outputResult(result);
+        return;
+    }
+
+    if (command === 'rounds') {
+        // AC-3: the loop's cost is reported, because it was invisible — closure-gate's five rounds were reconstructed by hand
+        // from a directory listing to reach the conclusion that the change could not be finished by its author.
+        const result = await runRoundsCommand(argv.slice(1));
         outputResult(result);
         return;
     }

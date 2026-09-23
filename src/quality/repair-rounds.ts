@@ -24,8 +24,13 @@ export type RoundReport = {
     node: string;
     /** One entry per round that left a record, oldest first. */
     rounds: ReviewRound[];
-    /** Rounds whose findings are about artifacts the previous round changed, and the share that is. */
-    aboutThePreviousRound: number;
+    /**
+     * **Targets** in the latest round that name a path the previous round changed — not findings, because a finding does not
+     * carry targets and a hypothesis does. The first version divided this by the finding count, which mixed two units and
+     * reported a share of 14 on real data.
+     */
+    targetsAboutThePreviousRound: number;
+    /** The share of the latest round's targets that are about the previous round's changes. */
     shareAboutThePreviousRound: number | null;
     /** True when the rounds do not account for every brief issued — a round that produced nothing. */
     unrecorded: boolean;
@@ -64,9 +69,9 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     return {
         node,
         rounds,
-        aboutThePreviousRound,
-        shareAboutThePreviousRound: rounds.length > 0 && live
-            ? aboutThePreviousRound / Math.max(1, rounds.at(-1)?.findings ?? 0)
+        targetsAboutThePreviousRound: aboutThePreviousRound,
+        shareAboutThePreviousRound: live
+            ? aboutThePreviousRound / Math.max(1, allTargets(live))
             : null,
         unrecorded,
     };
@@ -76,6 +81,11 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
  * A finding is "about the previous round's repairs" when something it targeted is a path the previous round changed. The
  * targets are the round's own statement of what it examined, so this asks the record rather than guessing from prose.
  */
+function allTargets(live: Record<string, unknown>): number {
+    const hypotheses = Array.isArray(live.hypotheses) ? (live.hypotheses as Array<{ targets?: string[] }>) : [];
+    return new Set(hypotheses.flatMap((hypothesis) => hypothesis.targets ?? [])).size;
+}
+
 async function countAboutThePreviousRound(
     root: string,
     taskId: string,
