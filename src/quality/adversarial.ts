@@ -497,9 +497,12 @@ this content; attacking it again is welcome only as a finding against the decisi
 
 ${input.findingHistoryNote ? `${input.findingHistoryNote}\n\n` : ''}${classRows}
 
-Earlier findings in each class, in full:
+Open findings in each class, in full — a repaired one is named by id only, because its prose is not something this pass
+needs to read again:
 
-${history.map((finding) => `- [${finding.class}] ${finding.severity} ${finding.id}: ${finding.message} (${finding.disposition})`).join('\n')}
+${history.filter((finding) => finding.disposition !== 'fixed').map((finding) => `- [${finding.class}] ${finding.severity} ${finding.id}: ${finding.message} (${finding.disposition})`).join('\n') || '- (none open)'}
+
+Already repaired on this content: ${history.filter((finding) => finding.disposition === 'fixed').map((finding) => finding.id).join(', ') || '(none)'}
 
 `
         : '';
@@ -740,6 +743,12 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 
 ## Required result
 
+Every finding carries a **falsifier**: the check that must redden under the defect it names. Not a repair recipe — the
+repair is not yours to design, and a recipe would make this pass a second author of the change, which is the one thing it
+exists not to be. A falsifier is what you already have: the counterexample you ran, the command whose output shows the
+defect, the observation that refutes the claim. Handing it over is what lets the repair be checked instead of believed, and
+it costs you nothing you have not already paid.
+
 Return exactly one JSON object, and nothing else:
 
 \`\`\`json
@@ -757,7 +766,7 @@ Return exactly one JSON object, and nothing else:
     { "hypothesis": "<what you tried to show was false>", "method": "<what you did>", "outcome": "refuted | confirmed | inconclusive", "evidence": "<the observed result>" }
   ],
   "findings": [
-    { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>" }
+    { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>", "falsifier": "<the check that must redden under this defect — a declared selector, a command, or the observation you already made that refutes it>" }
   ],
   "createdAt": "<ISO timestamp>"
 }

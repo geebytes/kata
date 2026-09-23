@@ -67,7 +67,10 @@ describe('§3.3 the review input is compiled once, and the brief stops paying tw
                 class: 'durability',
                 severity: 'major',
                 message: 'the seal persists artefacts before rejecting an escaped owned path',
-                disposition: 'fixed',
+                // **Open**, because a repaired finding is now named by id only: its prose is not something the next pass
+                // needs to read again, and carrying it was 29.5% of the brief measured on a real round. A fixed finding
+                // here would make this case assert the old behaviour rather than the rule.
+                disposition: 'open',
             }],
         });
 
