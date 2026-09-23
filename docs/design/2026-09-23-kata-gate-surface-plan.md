@@ -724,3 +724,28 @@ precisely because cost is the thing being measured.
 **Where it fits**: it is a **host-side plugin**, so kata cannot require it — it is an executor capability, and the honest
 statement is "the executor may declare it; the receipt records what was declared". For the repair/implement side, which has no
 independence requirement, it can be adopted plainly.
+
+## Why review "must" use a subprocess — it does not, and the framing was mine
+
+I have been writing "the review child is a `pi -p` process" as though the design required it. It does not. What the design
+requires is three capabilities — a context that did not author the change (`fresh_context`), read-only (`read_only_fs`), and a
+bounded tool set (`bounded_tools`) — and a subprocess is **one** way to obtain them:
+
+| route | `fresh_context` | `read_only_fs` | `bounded_tools` | measured |
+|---|---|---|---|---|
+| `pi -p` subprocess | by flags — **my carefulness, not a construction** | kernel-enforced under `bwrap` | argv allowlist | ran twice, real passes |
+| platform subagent (`Agent`) | **by construction** — the platform makes the session | **no** on this machine (`Explore` carries bash; no allowlist parameter) | yes, by default | b4-A: 41 tool uses, 1.2M tokens, zero findings because it could not read its packet |
+| declared executor command | whatever it declares | whatever it declares | whatever it declares | not built |
+
+**Why I ended up in the first row**: I granted `bash` first and then needed a sandbox to make read-only true. The escalation
+was self-inflicted, and I recorded that when the subagent question first came up — a subprocess is right only when kernel
+isolation or platform-unavailable telemetry is needed, and neither should be improvised.
+
+**And it has a cost that matters more now**: freshness is *my* memory of the right flags rather than a platform construction,
+and a missed flag fails silently with nothing detecting it. That is the same class as `executedInFreshContext: true` — a
+declaration where a construction is available.
+
+**Which flips the conclusion for the Magic Context question**: the transcript is a **session** problem, and session management
+is the platform's machinery. A platform subagent is the more likely place for reclaim to apply than a one-shot `pi -p` child.
+So the earlier blocker — the platform's subagent having no tool allowlist on this machine — is now worth **solving** rather
+than working around.
