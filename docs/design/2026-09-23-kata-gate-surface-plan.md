@@ -558,3 +558,30 @@ Round 2: 86 turns at 114,559 average input. If the round read the delta (a handf
 were externalised so the context plateaued around 35K instead of climbing to 205K, the same round would cost roughly
 86 × 35K ≈ **3M rather than 9.9M** — back to round 1's level, and **decreasing** from there as the delta stays small. That is
 the shape ordinary practice has, and it is reachable with machinery this design already describes.
+
+## Lever 1's root cause, measured: the batch closure is refused and its refusal is discarded
+
+Lever 1 was "review the delta, not the surface" — and round 2 did not get a delta, reporting `no repair batch has closed, so
+there is nothing to narrow against`. The cause is a chain of four measured facts, and the last one is why nobody saw it.
+
+1. **`repair-batch.json` holds one batch, `batch-1`, with a base revision and `closedAt: undefined`** — it never closed.
+2. **It was refused, correctly.** `closeBatchAfterSeal` refuses with `open_terminal_findings` when a `blocking`/`major`
+   finding is neither answered (a resolved obligation), deferred, nor reported-as-no-longer-open. Measured on this change:
+   **12 terminal findings in the batch, 7 answered by resolved obligations, 5 unaccounted** — and the five are exactly round
+   2's findings, raised *after* the seal that resolved round 1's.
+3. **The refusal is discarded.** `orchestrator.ts:803` calls `await closeBatchAfterSeal(root, taskId).catch(() => null);` —
+   the returned refusal object is dropped, and the seal reports success regardless.
+4. **The consequence surfaces only as cost.** An unclosed batch means the next round gets no delta, so it reviews the whole
+   change surface instead of the repair — which is the difference between round 1's 2.82M tokens and round 2's 9.88M.
+
+**So the cost driver the review loop pays for is a refusal nobody read.** The mechanism is not missing and not misordered —
+it runs, decides correctly, and its answer is thrown away. That is the "mechanism exists, never wired" class one level down:
+the wiring is there, the *reader* is not.
+
+**What the fix needs**, and it is a design choice rather than a line change:
+
+- **surface the refusal** so a seal that leaves a batch open says so, and `status` reports why the next round has no delta;
+- **decide what a later round's findings do to an earlier batch.** A batch is "one seal and one delta round per node"; round
+  2's findings arrived after that seal, so they belong to the *next* batch — which means the closure should be computed
+  against the findings that existed when the batch's seal ran, not against every finding the record now holds. Today the
+  batch accumulates findings from later rounds and can therefore never close.
