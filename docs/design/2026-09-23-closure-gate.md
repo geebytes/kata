@@ -309,7 +309,7 @@ being unpinned. So the honest statement of the criterion's limit is:
 **And the same shape is why `cg3-f5` (the sealed revision declaring a deleted path) is not fixed here**: it is a repair to a
 declaration, and its falsifier would be the seal's own refusal — which is the mechanism, not a check.
 
-## The revision id is not stable across two seals of the same content — measured, and it is why the proofs keep invalidating
+## The revision id IS stable — and the proof bound a stale revision, which is a different and smaller defect
 
 Four times in this round a proof was recorded and then invalidated by a later seal. The fourth time is the one that shows the
 cause, because the tree was clean and the two revisions are the same in every way I can see:
@@ -337,3 +337,26 @@ content to agree.
 **Not fixed here, and named rather than worked around**: the diagnosis needs the digest recomputed twice over one content set to
 see which entry moves, which is a measurement I did not have budget for. It belongs with the corrections, and it is the reason
 this change cannot close its own last three obligations.
+
+
+## Correction: the digest is stable, and the real cause is a stale binding
+
+The section above concluded that the revision id is unstable. **That conclusion was wrong**, and one comparison shows it: the
+two revisions differ in exactly one path's digest —
+
+```
+tests/unit/closure-gate-criterion.test.ts
+  31fc4d: 1a58c8c9efe02e84d7ec50da58f91c9aa4847be88afb2ba461659df5d3f78dc5
+  7cd641: c754ec1754ddee0bda0e2bfe3ff43f213f98674c1f88ddf3c6cef3135a575c3d
+```
+
+— and that file **really did change** between the two: step 1 of this round added four cases to it. So the digest was right both
+times, and the defect is one level down:
+
+> **`kata-cli falsify` binds a proof to `readCurrentTaskRevision` — the last *sealed* revision — not to the content in the
+> working tree.** So after any unsealed edit, a proof is recorded against a revision the tree no longer corresponds to, and the
+> next seal mints a different one and invalidates it.
+
+That is the same class as everything else in this round, one more time: **a record that names something other than what it is
+about.** And it is fixable where it lives, which the unstable-digest reading was not: the command must refuse to record a proof
+about content no sealed revision describes.

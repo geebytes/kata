@@ -1044,6 +1044,24 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
     const { runFalsification } = await import('../quality/falsifier-run.js');
     const revision = await readCurrentTaskRevision(root, change!).catch(() => null);
+    // **The tree has to be what the revision describes.** A proof is about content: binding it to the last sealed revision
+    // while the working tree has moved on records a fact about something that no longer exists, and the next seal mints a
+    // different revision and invalidates it — which is exactly how four proofs were lost this round. Refusing here is the
+    // difference between a proof and a claim about a proof.
+    if (revision) {
+        const { computePathDigests } = await import('../workflow/revision.js');
+        const sealed = revision.pathDigests ?? {};
+        const current = await computePathDigests(root, Object.keys(sealed));
+        const drifted = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
+        if (drifted.length > 0) {
+            return {
+                command: 'falsify',
+                taskId: change,
+                success: false,
+                error: `The working tree is not what ${revision.id} describes: ${drifted.length} path(s) differ, starting with ${drifted[0]}. Seal first, then prove — a proof recorded now would be about content no revision names.`,
+            };
+        }
+    }
 
     const result = await runFalsification({
         root,
