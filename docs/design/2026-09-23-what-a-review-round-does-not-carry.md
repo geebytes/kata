@@ -80,3 +80,32 @@ Three things follow, in order of what they cost to do:
    re-read a surface a closed batch would have narrowed.
 3. **Ask for optimality explicitly, and accept "this is the first thing that works" as an answer** — a rule that never asks
    cannot be said to have considered it, but demanding a proof of optimality would produce prose nobody can check.
+
+## The delta path's verification moves to a clean instance, and why
+
+Chosen: **not** to rebuild `closure-gate`'s batch chain. Its gap was created before the fix and has propagated two
+generations (`batch-10` carried out of `batch-9` with no base, `batch-11` inheriting it), so verifying the delta there would mean
+either editing history or re-anchoring a chain that exists only as a record of what happened.
+
+**The clean instance is `repair-by-another-author`, and it already has what is needed:**
+
+```
+batch-1 | OPEN | base revision-daf33fefeb9f0bff | findings rba-f1, rba-f2, rba-f3, rba-f4
+```
+
+**A first batch, created by its seal, with the base.** The chain is unbroken because it has no carries yet.
+
+### And the precondition the attempt made explicit
+
+A delta exists when the batch a later round reads as the last *closed* one has a base that differs from the current revision —
+and a batch only closes at a seal, and a seal only proceeds when the obligations are answered. So:
+
+> **The delta path is reachable only after a change's findings are repaired and its batch closes. It is a reward for
+> convergence, not a shortcut around it.**
+
+That is the right design and it is worth stating, because it means the 2.5–2.7× cannot be collected on a change that has not
+done its repairs — which is exactly what the five rounds of `closure-gate` were: a change whose findings were never closed.
+
+**So the next step for the lever is not a measurement but a repair**: `repair-by-another-author`'s four major findings, then its
+seal, then the brief that should come back a delta. And the measurement to take is the brief's `mode` and the round's token cost
+against the three cold rounds on this line (351K, 382K, 468K).
