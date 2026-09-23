@@ -61,3 +61,4 @@ describe('a delta brief reads its delta', () => {
         expect(listed.filter((path) => !declared.includes(path))).toEqual([]);
     });
 });
+
