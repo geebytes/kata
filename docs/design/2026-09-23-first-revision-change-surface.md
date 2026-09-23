@@ -92,3 +92,54 @@ Consequence for the next attempt: **f9 is what makes it diagnosable.** Before `9
 falsification attempt" regardless of the conjunct, so an attempt could not tell coverage from discharge from grounding. Now
 it names the failing conjunct and carries the predicate's `detail` — so the first step of the next attempt is to re-apply
 the site-1 change, run one failing fixture, and **read the reason it now prints** instead of inferring it.
+
+## Settled by experiment: the two sides disagree because of the fallback, not the diff
+
+The one-line experiment this record asked for, run on `workflow-resume.test.ts > rejects approval that would reuse review
+findings from another revision`:
+
+```
+DIAG sealed= 0  declared= 1  targets= 1  ["AC-1"]
+```
+
+Reading it:
+
+- `sealed` is **not null** — the change record is readable, and `sealed.changedPaths.length` is **0**;
+- so `sealed?.changedPaths ?? declaredPaths` evaluates to **`[]`** — **an empty array is not null, so `??` does not fall
+  back**, and the one declared path the helper had is discarded;
+- `targets` therefore contains the criterion and **no paths at all**.
+
+Meanwhile the gate's remit is non-empty, because `adversarial.ts:2427` falls back to `Object.keys(revision.pathDigests)`.
+**That fallback is a different source from the one the record uses**, so the two sides disagree — and they disagreed only
+after site 1 stopped producing the whole-tree surface.
+
+### What this changes about the diagnosis
+
+The record and the gate are **not** reading the same derivation. `change-record.ts` derives the surface from
+`baseContentDigests` diffed against `contentDigests` **plus git**; the gate's fallback derives it from the revision's
+`pathDigests` keys. With no base, the first produced the whole revision (so they happened to agree), and site 1 made it
+produce nothing (so the fallback took over and they diverged).
+
+So f8 is not one defect with two sites; it is **two different derivations that agreed by accident**:
+
+| | Source | First revision |
+|---|---|---|
+| record | `{}` diff ∪ git | the whole revision (or, after site 1, nothing) |
+| gate fallback | `pathDigests` keys | the whole revision |
+
+### The narrowed question
+
+Given both derivations yield "the whole revision" for a first revision, the deadlock is **inherent to the pair**:
+
+> "a first revision's surface is the whole tree" **and** "every surface path must be claimed by a hypothesis"
+
+One of the two has to change, and only one of them can be changed honestly:
+
+- keep the surface as the whole tree and **stop requiring coverage of it** for a first revision — the surface stays a
+  reported fact, the remit becomes the criteria the brief declares; or
+- keep the requirement and give the first revision a surface that is not the whole tree — which is the option table above,
+  and every entry there is weaker than content identity.
+
+Also worth fixing regardless, because it is the same shape recorded twice already in this line of work: **`??` on an array
+treats "empty" as "present"**. Whatever is decided, the two derivations must be made one, so that "the record says the
+surface is empty" and "the gate has a non-empty remit" can never both be true.
