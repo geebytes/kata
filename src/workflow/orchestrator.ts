@@ -798,9 +798,23 @@ async function cmdBuild(
     // that carry a resolvedAt, so closing before resolving refused every batch on its first successful seal — one run
     // late, with the refusal swallowed by this `.catch`. Same ordering class as the seal that refused the run whose
     // evidence would answer it.
+    // Lever 1's root cause, measured: this result was discarded, and the consequence was invisible until it showed up as
+    // cost. An unclosed batch means the next round gets no delta — so it reviews the whole change surface instead of the
+    // repair, which is the difference between 2.82M and 9.88M tokens on the change this was measured on. The mechanism was
+    // never missing: it runs, decides correctly, and its answer was thrown away. So the answer is read.
+    let batchClosure: { closed: boolean; reason?: string; findings?: string[] } | undefined;
     if (evidence.every(isPassing)) {
         const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
-        await closeBatchAfterSeal(root, taskId).catch(() => null);
+        const closure = await closeBatchAfterSeal(root, taskId).catch(() => null);
+        if (closure && 'refused' in closure && closure.refused) {
+            batchClosure = {
+                closed: false,
+                reason: closure.reason,
+                findings: (closure.findings ?? []).map((finding) => finding.id),
+            };
+        } else if (closure) {
+            batchClosure = { closed: true };
+        }
     }
     // A review repair is outstanding only when the manifest changed, which the preflight just established; resolving
     // it here is what closes the repair against the revision that superseded it.
@@ -836,6 +850,9 @@ async function cmdBuild(
             // was the seal's decision (run `--seal --frozen` to include them).
             ...(deferredChecks.length > 0 ? { deferredChecks } : {}),
             wikiClosure,
+            // A batch left open is reported rather than swallowed: it is the reason the next round has no delta to narrow
+            // against, and "why is the next review expensive" should be answerable from the seal that caused it.
+            ...(batchClosure ? { batchClosure } : {}),
             ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : 'build-option' } : {}),
             ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
             ...(revision ? { revisionId: revision.id } : {}),
