@@ -380,3 +380,41 @@ finding, which is the shape this whole change exists to remove, appearing in its
 
 Telling them apart is cheap — read `closeBatch`'s caller and the batch record's state — and it is the next step rather than a
 guess. What is certain is the measurement: after a repair seal, `obligations 0` and `findings 9 open` are both true at once.
+
+## Round 2's cost, measured
+
+```
+turns 86 | total input 9,852,106 | output 25,192 | cacheRead 0 | cacheWrite 0
+final context 204,949 | replay factor 48.1x | average input per turn 114,559
+context at 25/50/75/90% of turns: 64,571 / 115,905 / 161,910 / 191,382
+```
+
+**99.7% of the tokens are input; 0.26% is output.** The round is not expensive to *think* with — it is expensive to
+*re-send*. `cacheRead: 0` throughout, so nothing was discounted, and every one of the 86 turns paid the accumulated context
+in full: **each context token was sent about 48 times.**
+
+The growth curve is the cause and it is nearly linear — 64K by a quarter of the way through, 192K by nine tenths — so the
+context kept accumulating for the whole round rather than settling. Two things made this round heavier than the previous one
+(9.88M against 2.82M for a comparable number of tool calls):
+
+- **I asked for a broader sweep**: "examine all ten selectors, and for each ask what would make it fail". That means reading
+  large sources early — `adversarial.ts` alone is 2,400+ lines — and carrying them for eighty turns.
+- **The brief now carries the previous round's nine findings with their dispositions** (29,789 chars against 19,640).
+
+The brief's own size is 6% of one turn, which is the same negligible fraction measured before; it is not the driver. The
+driver is turns × accumulated context, with no prefix caching and no externalised state — the retrieval-layer lever this
+change has never implemented.
+
+## What the findings say about how this can be closed
+
+Four of the seven are about **my own repairs** — including the blocking one. That is the answer to the question the round was
+asked, and it is worth stating plainly: **this class cannot be closed by writing more tests, because the author writing them
+is the one who cannot see the blind spot.** Round 1's repairs produced round 2's material.
+
+The class is "the assertion does not test what it claims", and there is exactly one way to make that a measurement rather
+than a judgement: **an acceptance criterion's selector must be shown to redden under the defect it names.** That harness
+already exists — it is `wiring-coverage-check`'s lever 1, and it costs **zero tokens** because it runs locally.
+
+So the same move is both the quality fix and the cost lever: **stop paying 3–10M tokens a round for an independent pass to
+find this class, and make the mechanical harness refuse an unpinned selector before the round is ever dispatched.** The
+independent pass should be left with what only it can do — the semantic findings, like the blocking one this round.
