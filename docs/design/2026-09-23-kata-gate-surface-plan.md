@@ -337,3 +337,20 @@ remove.
 So the honest state stands: **`kgs-f9`'s code fix is correct and unpinned, and pinning it needs a fixture that reaches that
 check — which means the record must satisfy every conjunct before it.** That is a fixture-building task with a known
 prerequisite, not a guess, and it is the third falsifier in this change deleted rather than kept green.
+
+## minor ②'s falsifier: attempted, deleted, and the reason is a wrong split
+
+The last finding. The case wrote a schema-valid evidence envelope finished in 2020 into the evidence directory, built a delta
+brief, and asserted the sealed-evidence section either offers it or **says it was withheld**. It failed with the captured
+section reading `The gate already ran these agains…` — a different section, so the split on the heading text is wrong.
+
+**What is established**: the base revision really does carry `createdAt` (checked in a real revision record), so
+`sinceAt` is populated and the withholding path is reachable; and `readRecordedEvidence` reads every envelope in the evidence
+directory, so a stale one is easy to have and easy to offer — which is what makes the case worth having.
+
+**What is not**: whether the withholding works, because the assertion never looked at the right text. The next step is to
+print the brief's actual section around that heading rather than guess its shape — the same lesson as the five attempts
+before it, and the reason this one was deleted too rather than kept.
+
+So `kata-gate-surface` closes its repair batch with **eight of nine findings dispositioned and verified, one (minor ②)
+unfixed and its falsifier's obstacle named**.
