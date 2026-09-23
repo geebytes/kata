@@ -541,3 +541,47 @@ describe('the legacy rule and the derived rule are compared case by case', () =>
         }
     }, 30000);
 });
+
+/**
+ * f3 of the independent pass's findings: AC-5 quantifies over the **whole corpus**, and the declared selector pinned one
+ * case by id.
+ *
+ * The changelog records that a general rule was written first, failed on two `guard-false-negative` cases, and was replaced
+ * by the single-case assertion. So the rule has to be one that is *true of every case*, and the reason the first attempt
+ * failed is worth stating: those cases' reproductions describe the **harm** (a guard refusing an honest report) while their
+ * expected verdict is the honest conclusion. "The reproduction's wording matches the verdict" cannot hold — the
+ * reproduction says how to reconstruct the revision, the verdict says what a correct verifier must reach.
+ *
+ * What does hold for every case is the coherence between the two things a case declares about a correct verifier: the
+ * verdict it must reach and the findings it must name. A verdict of `defects_found` with nothing named, or
+ * `no_defect_found` while naming defects, is a case no verifier could satisfy — and every optimisation is scored against
+ * these, so a self-contradictory case would make the referee wrong rather than the change.
+ */
+describe('AC-5 over the whole corpus, not one case', () => {
+    it('holds for every case that a verdict and the findings it names cannot contradict each other', async () => {
+        const { admissibilityCorpus } = await import('../../src/eval/admissibility-corpus.js');
+        const cases = admissibilityCorpus();
+        expect(cases.length).toBeGreaterThan(0);
+
+        const offenders: string[] = [];
+        for (const entry of cases) {
+            const findings = entry.expectedFindings ?? [];
+            if (entry.expectedVerdict === 'defects_found' && findings.length === 0) {
+                offenders.push(`${entry.id}: defects_found while naming no finding`);
+            }
+            if (entry.expectedVerdict === 'no_defect_found' && findings.length > 0) {
+                offenders.push(`${entry.id}: no_defect_found while naming ${findings.length} finding(s)`);
+            }
+            if (new Set(findings).size !== findings.length) {
+                offenders.push(`${entry.id}: the same finding id is named twice`);
+            }
+        }
+        expect(offenders).toEqual([]);
+
+        // Not a blanket pass: the rule has to be exercised in both directions, or it would hold on an empty corpus too.
+        expect(cases.some((entry) => entry.expectedVerdict === 'defects_found')).toBe(true);
+        expect(cases.some((entry) => entry.expectedVerdict === 'no_defect_found')).toBe(true);
+        // And the class the first rule failed on is present, so a future edit to those cases is covered too.
+        expect(cases.some((entry) => entry.kinds.includes('guard-false-negative'))).toBe(true);
+    });
+});
