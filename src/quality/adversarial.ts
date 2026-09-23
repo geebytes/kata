@@ -1794,7 +1794,7 @@ export async function buildAdversarialBrief(
         // M1: point at the envelopes and name the project's own checks, so the reviewer can read rather than re-derive.
         evidencePaths: await evidenceEnvelopePaths(root, taskId, evidence),
         declaredChecks: (await readProjectQualityChecks(root)).map((check) => ({ id: check.name, name: check.name })),
-        readingSet: await buildReadingSet(root, taskId, revision),
+        readingSet: await buildReadingSet(root, taskId, revision, immutableScope),
     };
     const ir = compileReviewIr(briefInput);
     const candidateFreeze = candidateFreezeForBrief(task, revision, node, ir);
@@ -2059,8 +2059,16 @@ async function buildReadingSet(
     root: string,
     taskId: string,
     revision: { id: string; pathDigests?: Record<string, string>; ownedPaths: string[] } | null,
+    scope?: AdversarialBriefScope,
 ): Promise<Array<{ path: string; why: string }>> {
     if (!revision?.pathDigests) return [];
+    // AC-5, measured (wcc3-f5): a delta round's brief listed seven paths while its own delta held three — because the set
+    // was built from the revision-wide surface **plus** every collaborator of every criterion, so it named files this round
+    // is not about. A delta round's reading set is its delta, which is the same scope object the brief declares and the
+    // same one the gate now uses as its remit: one concept, one source.
+    if (scope?.kind === 'delta') {
+        return scope.changedPaths.map((path) => ({ path, why: 'changed in this delta' }));
+    }
     const { changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
     const surface = await changeSurfaceAgainstWorkspace(root, revision as never);
     // The sealed revision's content *is* the unit under review, so a clean working tree is not "nothing to read": the
