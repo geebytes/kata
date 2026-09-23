@@ -284,6 +284,12 @@ export interface AdversarialBriefInput {
      */
     delta?: {
         from: string;
+        /**
+         * When the base revision was sealed. AC-5's second half: the sealed evidence a brief offers is only worth reading
+         * if it was produced **after** the base — measured (`wcc3-f7`), the envelopes offered to a delta round were written
+         * before the delta existed, so they described a revision the round is not about.
+         */
+        sinceAt?: string;
         changedPaths: string[];
         added: string[];
         modified: string[];
@@ -439,15 +445,25 @@ export function renderAdversarialBrief(input: AdversarialBriefInput): string {
         : '- (no evidence has been recorded for this revision)';
 
     const declared = new Set((input.declaredChecks ?? []).map((check) => check.name));
-    const sealedEvidence = input.evidence.length > 0
-        ? input.evidence
+    // AC-5, second half. An envelope written before the base revision describes a revision this round is not about, so
+    // offering it as "read this instead of re-running" points the reviewer at stale material. Withheld rather than
+    // silently dropped: the count and the reason are stated, because a silently shortened list reads as "this is all".
+    const sinceAt = input.delta?.sinceAt;
+    const stale = sinceAt
+        ? input.evidence.filter((item) => item.finishedAt && item.finishedAt < sinceAt)
+        : [];
+    const offered = stale.length > 0 ? input.evidence.filter((item) => !stale.includes(item)) : input.evidence;
+    const sealedEvidence = offered.length > 0
+        ? offered
             .map((item) => {
                 const where = (input.evidencePaths ?? []).find((entry) => entry.id === item.id)?.path;
                 const worthReading = item.checkId && declared.has(item.checkId);
                 return `- ${item.checkId ?? item.id} | exit=${item.exitCode} | ${item.command}${where ? ` | read: ${where}` : ''}${worthReading ? ' | **this is a project-declared check: read its result, do not re-run it**' : ''}`;
             })
             .join('\n')
-        : '- (nothing is sealed yet, so there is nothing to read)';
+        : stale.length > 0
+            ? `- (nothing sealed after ${sinceAt}; ${stale.length} envelope(s) were produced before the delta's base and are withheld — re-run the declared checks if you need them)`
+            : '- (nothing is sealed yet, so there is nothing to read)';
 
     const findings = (input.reviewFindings ?? []).length > 0
         ? (input.reviewFindings ?? []).map((finding) => `- ${finding.severity ?? 'unknown'}: ${finding.message ?? ''}`).join('\n')
@@ -1715,7 +1731,7 @@ export async function buildAdversarialBrief(
 
     // F2: a `--since` brief is a delta brief, and it is only honest when the change surface is knowable. A revision
     // sealed before per-path digests existed yields `delta_unavailable` — the caller is told, never handed a guess.
-    let delta: { from: string; changedPaths: string[]; added: string[]; modified: string[]; removed: string[]; attempts?: Array<Record<string, string>>; findings?: Array<{ id: string; severity: string; message: string; disposition: string }> } | undefined;
+    let delta: { from: string; sinceAt?: string; changedPaths: string[]; added: string[]; modified: string[]; removed: string[]; attempts?: Array<Record<string, string>>; findings?: Array<{ id: string; severity: string; message: string; disposition: string }> } | undefined;
     let deltaReport: { from: string; changedPaths: string[] } | { unavailable: string } | null = null;
     let immutableScope: AdversarialBriefScope = { kind: 'full' };
     // C4: what scope this round gets by default. A batch that just closed leaves a base revision to measure against, and
@@ -1750,6 +1766,7 @@ export async function buildAdversarialBrief(
                     added: surface.added,
                     modified: surface.modified,
                     removed: surface.removed,
+                    sinceAt: (base as { createdAt?: string }).createdAt,
                     attempts: (previous?.attempts ?? []) as unknown as Array<Record<string, string>>,
                     findings: (await readTrackedFindings(root, taskId)).map(({ id, severity, message, disposition }) => ({ id, severity, message, disposition })),
                 };
