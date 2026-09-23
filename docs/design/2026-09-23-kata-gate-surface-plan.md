@@ -665,3 +665,35 @@ already refuses to guess (`delta_unavailable` when a revision predates per-path 
 So the next attempt starts by asserting the precondition rather than the behaviour — `brief.delta` (or the reported scope) must
 say delta — and only then asserts which envelopes are offered. That is the same rule this clause has now taught three times in a
 row: **an assertion that fails for a reason you did not anticipate reports your instrument, not your subject.**
+
+## What the transcript is actually made of — measured, and it corrects the answer I gave
+
+Round 2's event stream, categorised by bytes:
+
+```
+52%  tool results — what the reviewer READ     400,088
+37%  reasoning (thinking)                      284,314
+10%  tool-call arguments                        78,631
+ 0%  assistant text                               3,626
+```
+
+**This corrects what I said an hour earlier** — that the transcript is dominated by the reviewer's own reasoning. It is not:
+**just over half of it is content the reviewer read**, and that half is exactly what the retrieval layer addresses.
+
+So the honest breakdown of why the two levers are unsolved is now precise:
+
+- **The 52% needs slices, not a ledger.** My ledger removes the *re-read* of unchanged content; it does not reduce the first
+  read. Cutting the 52% itself means reading **less per read** — a content-addressed slice instead of a whole file — and that
+  needs something sitting between the reviewer and the filesystem. The reviewer reads with its own tools, so that something is
+  the **executor's** design, and the executor does not exist: b4 is blocked on two host prerequisites, one of which (a
+  subagent tool whitelist) this machine does not have.
+- **The 37% needs compaction**, which is a harness feature and the review child runs `pi -p` — one-shot, with no compaction
+  loop. Nothing kata does touches it.
+- **The 48× replay applies to all of it**, and prefix caching is measured-impossible at this endpoint: the gateway's Redis
+  cache is whole-response and the upstream does no prefix caching. **Caveat I should have stated earlier: that was measured
+  against one upstream.** Another endpoint may cache, and that is a provider choice rather than a code change.
+
+**And the sharpest statement of the ledger's own ceiling, which is unmeasured**: its benefit is bounded by *how much of a
+later round's reading is content that has not changed since an earlier round read it*. In a delta round that could be large; in
+a cold round it is zero. Nobody has measured that number, which means the ledger's value is currently an argument rather than a
+measurement — the same shape as the claims this line keeps correcting.
