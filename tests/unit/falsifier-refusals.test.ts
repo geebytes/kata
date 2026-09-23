@@ -62,7 +62,9 @@ describe('the falsifier run refuses at each step it cannot verify', () => {
         const { run, calls } = runner([0, 0, 0]);
         const result = await runFalsification({ ...base, root, taskId: 'f-task', run });
         expect(result).toMatchObject({ recorded: false, refused: 'did_not_redden' });
-        expect(calls).toEqual(['CHECK', 'MUTATE', 'CHECK']);
+        // **The restore runs even when the run refuses.** Measured by using the tool on this change: an early return left the
+        // defect in the working tree, so a declined falsification damaged the workspace it was inspecting.
+        expect(calls).toEqual(['CHECK', 'MUTATE', 'CHECK', 'RESTORE', 'CHECK']);
         expect(await readFalsifierReddenings(root, 'f-task')).toEqual([]);
     });
 

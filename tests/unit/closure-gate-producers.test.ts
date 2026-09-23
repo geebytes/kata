@@ -119,3 +119,19 @@ describe('the closure decision has one producer, and every consumer reaches it',
         expect(read('src/workflow/seal-preflight.ts')).toContain('readFalsifierReddenings');
     });
 });
+
+/**
+ * The assertion the first version of this file lacked, and `kata-cli falsify` is what found it: the preflight must **pass** the
+ * ledger into the decision, not merely import it. Removing the argument from the call is exactly the defect that caused the
+ * deadlock (`cg-f1`), and the earlier text assertion stayed green under it — a decorative check, caught by the change's own
+ * producer refusing the repair with `did_not_redden`.
+ */
+describe('the preflight passes the ledger into the decision, not just imports it', () => {
+    it('names the ledger inside the call it makes', () => {
+        const preflight = readFileSync(join(process.cwd(), 'src/workflow/seal-preflight.ts'), 'utf8');
+        const start = preflight.indexOf('obligationIsAnswered({');
+        expect(start).toBeGreaterThan(-1);
+        const call = preflight.slice(start, preflight.indexOf('});', start));
+        expect(call).toContain('reddenings');
+    });
+});

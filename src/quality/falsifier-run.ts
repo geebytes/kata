@@ -52,16 +52,18 @@ export async function runFalsification(input: {
 
     await run(mutation);
     const mutated = await run(check);
+    // **The restore runs on every path after the mutation**, including the one that refuses: found by using this tool on this
+    // change, where a `did_not_redden` refusal returned early and left the defect in the working tree. A tool that damages the
+    // workspace when it declines is worse than one that declines.
+    await run(restore);
+    const restored = await run(check);
     if (mutated === 0) {
         return {
             recorded: false,
             refused: 'did_not_redden',
-            detail: 'The check passed with the defect re-introduced, so it is not sensitive to this defect and proves nothing.',
+            detail: 'The check passed with the defect re-introduced, so it is not sensitive to this defect and proves nothing. The mutation was restored.',
         };
     }
-
-    await run(restore);
-    const restored = await run(check);
     if (restored !== 0) {
         return {
             recorded: false,
