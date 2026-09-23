@@ -37,6 +37,10 @@ export type FalsifierReddening = {
      * which was never run does not close the obligation, and a record with no observed runs is exactly that.
      */
     observed: { before: number; mutated: number; after: number };
+    /** What the tree was when the three steps ran, so a reader can see whether this proof still describes the content. */
+    observedTreeDigest?: string;
+    /** The declared paths that differed from the sealed revision at that moment. */
+    observedDrift?: string[];
 };
 
 export type FalsifierReddeningLedger = {

@@ -1048,19 +1048,31 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     // while the working tree has moved on records a fact about something that no longer exists, and the next seal mints a
     // different revision and invalidates it — which is exactly how four proofs were lost this round. Refusing here is the
     // difference between a proof and a claim about a proof.
+    // **The drift is recorded, not refused**, and the change is measured rather than argued.
+    //
+    // The guard's purpose is real: a proof is about content, and one recorded against a tree that has moved on is a claim about
+    // something that no longer exists. But refusing here made the sequence unreachable — the seal refuses while an obligation
+    // lacks a disposition, the proof refused while the tree was not what the sealed revision described, and the seal is what
+    // would make the tree match. Measured: `cg5-f2` could not be proved at all in that state, while `cg5-f1`'s absence went
+    // through because the absence path has no guard — the same defect one door over, in the fix written for it.
+    //
+    // And the guard's own claim was weaker than its message: it compared digests over the revision's **owned** paths only, so a
+    // change outside ownership was invisible while the message said "the working tree is not what the revision describes"
+    // (`cg4-f2`, confirmed by the tool refusing over six paths that did not include the one I had edited).
+    //
+    // So the fact travels with the proof instead: `observedTreeDigest` is what the tree was when the three steps ran, and the
+    // reader can see whether it still matches. Detection rather than prevention is the honest shape here, because prevention
+    // cannot be reached when the proof is what the seal needs.
+    let observedTreeDigest: string | undefined;
+    let observedDrift: string[] = [];
     if (revision) {
         const { computePathDigests } = await import('../workflow/revision.js');
         const sealed = revision.pathDigests ?? {};
         const current = await computePathDigests(root, Object.keys(sealed));
-        const drifted = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
-        if (drifted.length > 0) {
-            return {
-                command: 'falsify',
-                taskId: change,
-                success: false,
-                error: `The working tree is not what ${revision.id} describes: ${drifted.length} path(s) differ, starting with ${drifted[0]}. Seal first, then prove — a proof recorded now would be about content no revision names.`,
-            };
-        }
+        observedDrift = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
+        observedTreeDigest = Object.keys(sealed).sort()
+            .map((path) => `${path}:${current[path] ?? ''}`)
+            .join('\n');
     }
 
     const result = await runFalsification({
@@ -1071,6 +1083,8 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         mutation: mutation!,
         restore: restore!,
         revisionId: revision?.id ?? '(no revision)',
+        observedTreeDigest,
+        observedDrift,
         at: new Date().toISOString(),
         run: async (command) => {
             const { runProcess } = await import('../process/run.js');

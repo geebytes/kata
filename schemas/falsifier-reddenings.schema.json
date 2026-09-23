@@ -63,6 +63,15 @@
                 "type": "integer"
               }
             }
+          },
+          "observedTreeDigest": {
+            "type": "string"
+          },
+          "observedDrift": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

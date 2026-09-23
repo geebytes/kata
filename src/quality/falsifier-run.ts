@@ -36,10 +36,21 @@ export async function runFalsification(input: {
     restore: string;
     /** The revision this is being observed on. */
     revisionId: string;
+    /**
+     * What the tree was when the three steps ran, over the revision's declared paths.
+     *
+     * Recorded rather than guarded against, and the measurement is why: refusing to prove while the tree drifted from the
+     * sealed revision made the sequence unreachable — the seal refuses while an obligation lacks a disposition, and the seal is
+     * what would make the tree match. A proof that carries what it observed lets a reader see staleness instead of being
+     * blocked by it.
+     */
+    observedTreeDigest?: string;
+    /** The declared paths that differed from the sealed revision when this ran, so the drift is visible rather than implied. */
+    observedDrift?: string[];
     at: string;
     run: CommandRunner;
 }): Promise<FalsifierRunResult> {
-    const { root, taskId, findingId, check, mutation, restore, revisionId, at, run } = input;
+    const { root, taskId, findingId, check, mutation, restore, revisionId, observedTreeDigest, observedDrift, at, run } = input;
 
     const first = await run(check);
     if (first !== 0) {
@@ -77,6 +88,8 @@ export async function runFalsification(input: {
         check,
         mutation,
         revisionId,
+                ...(observedTreeDigest ? { observedTreeDigest } : {}),
+                ...(observedDrift?.length ? { observedDrift } : {}),
         reddenedAt: at,
         // What the producer observed, recorded rather than described: AC-4's rule is that a falsifier naming a check which was
         // never run does not close an obligation, and this is the fact that distinguishes the two.
