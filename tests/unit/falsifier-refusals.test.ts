@@ -44,17 +44,35 @@ const base = {
     at: '2026-09-23T02:00:00.000Z',
 };
 
-describe('the falsifier run records a reddening it observed', () => {
-    it('records when the check passes, reddens under the mutation, and passes again after the restore', async () => {
-        const root = await workspace();
-        const { run, calls } = runner([0, 1, 0]);
 
+/** AC-4: the three refusals, one per step — each is a reason rather than a silent failure, and nothing is recorded unless all three steps behaved. */
+describe('the falsifier run refuses at each step it cannot verify', () => {
+    it('refuses when the check does not pass before any mutation', async () => {
+        const root = await workspace();
+        const { run, calls } = runner([1, 1, 0]);
         const result = await runFalsification({ ...base, root, taskId: 'f-task', run });
-        expect(result.recorded).toBe(true);
-        // The order matters and is asserted: pass, mutate, fail, restore, pass.
-        expect(calls).toEqual(['CHECK', 'MUTATE', 'CHECK', 'RESTORE', 'CHECK']);
-        const stored = await readFalsifierReddenings(root, 'f-task');
-        expect(stored).toHaveLength(1);
-        expect(stored[0]?.mutation).toBe('MUTATE');
+        expect(result).toMatchObject({ recorded: false, refused: 'check_not_passing' });
+        // Nothing was mutated: a check that is already red says nothing about the repair.
+        expect(calls).toEqual(['CHECK']);
+        expect(await readFalsifierReddenings(root, 'f-task')).toEqual([]);
+    });
+
+    it('refuses when the check does not redden under the mutation', async () => {
+        const root = await workspace();
+        const { run, calls } = runner([0, 0, 0]);
+        const result = await runFalsification({ ...base, root, taskId: 'f-task', run });
+        expect(result).toMatchObject({ recorded: false, refused: 'did_not_redden' });
+        expect(calls).toEqual(['CHECK', 'MUTATE', 'CHECK']);
+        expect(await readFalsifierReddenings(root, 'f-task')).toEqual([]);
+    });
+
+    it('refuses when the restore does not bring the check back', async () => {
+        const root = await workspace();
+        const { run } = runner([0, 1, 1]);
+        const result = await runFalsification({ ...base, root, taskId: 'f-task', run });
+        expect(result).toMatchObject({ recorded: false, refused: 'restore_failed' });
+        // A reddening observed on a tree that never came back cannot be attributed to the mutation alone.
+        expect(await readFalsifierReddenings(root, 'f-task')).toEqual([]);
     });
 });
+

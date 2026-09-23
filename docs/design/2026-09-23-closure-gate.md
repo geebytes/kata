@@ -175,3 +175,31 @@ than committed red — a red test cannot be committed and a green one that canno
 
 **What AC-3 stands on, unchanged**: implemented, measured on the real change (12 obligations reported, 7 `evidence-only`), and
 not pinned. Its matrix row has no test, and the seal says so mechanically.
+
+## The seal found a dead end: five rows sharing a selector can never be separated
+
+The split worked — five test files, one per criterion, 167 files / 1175 tests green. Then the matrix corrections, and they are
+**impossible through the governed path**:
+
+```
+matrix set --selector tests/unit/closure-gate-criterion.test.ts
+  -> "That correction would leave a selector declared by more than one criterion
+      (tests/unit/closure-gate.test.ts declared by AC-2, AC-3, AC-4, AC-5)."
+```
+
+The guard is right: one evidence file per selector, so a shared selector cannot evidence two criteria. **But the correction
+path edits one row at a time, and after changing any single row the other four still share** — so every first step is refused,
+and there is no first step. `matrix declare` refuses a second declaration, so the whole matrix cannot be replaced either.
+
+**This is the fifth variant of one gap**, and the sharpest: the first four were "a declaration that no longer matches reality
+has no governed correction". This one is **"a declaration that no longer matches reality has a correction that cannot be
+applied, because the guard refuses every intermediate state"** — a correction path whose own precondition is unreachable
+one step at a time.
+
+**Two honest ways out, both needing a decision rather than a workaround**: make the correction atomic (accept a whole corrected
+matrix when the task already has one, validating only the result), or allow a batched selector correction that validates once
+at the end. Until one exists, `closure-gate` cannot be sealed — and it is not the matrix that is wrong, it is the way back.
+
+**Also measured, and fixed in the same pass**: `matrix set --command` and `--selector` are separate branches, so supplying both
+applies only the first. That is why the command correction landed and the selector correction did not — and it is the reason
+the two corrections have to be issued one at a time.
