@@ -66,13 +66,46 @@ export async function runMatrixCommand(
 ): Promise<MatrixCommandResult> {
     const action = argv[0] ?? '';
     const change = valueAfter(argv, '--change');
-    if (action !== 'set' || !change) {
-        throw new Error('Usage: kata-cli matrix set --change <task-id> --acceptance <AC-id> --selector <test path> --reason "<why>"');
+    if ((action !== 'set' && action !== 'declare') || !change) {
+        throw new Error('Usage: kata-cli matrix set --change <task-id> --acceptance <AC-id> --selector <test path> --reason "<why>" · kata-cli matrix declare --change <task-id> --from-file <matrix.json> --reason "<why>"');
     }
     const root = resolveWorkspaceRoot(rootOverride);
     const acceptanceId = valueAfter(argv, '--acceptance');
     const selector = valueAfter(argv, '--selector');
     const reason = valueAfter(argv, '--reason');
+
+    // The other half: a task that has **no** matrix cannot be archived, and its status reads green while it is refused.
+    // Measured: `major-finding-closure` and `repair-obligation-deadlock` both report `judge PASS`, `verify PASS`, zero
+    // failing evidence and zero obligations, and `archive` refuses them for `missingAcceptanceMatrix` — a field the status
+    // payload carries and neither the ladder nor the refusal message names. Rows were declarable only at
+    // `open --bootstrap-file`, so a task created before that existed had no way to acquire one.
+    if (action === 'declare') {
+        const fromFile = valueAfter(argv, '--from-file');
+        const why = valueAfter(argv, '--reason');
+        if (!fromFile || !why?.trim()) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'Declaring a matrix requires --from-file <matrix.json> and --reason "<why>".' };
+        }
+        try {
+            const { readFile: read } = await import('node:fs/promises');
+            const declared = JSON.parse(await read(`${root}/${fromFile}`, 'utf8')) as { version?: number; rows?: unknown[] };
+            const declaredTask = await readTask(root, change);
+            if (declaredTask.acceptanceMatrix) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `${change} already declares a matrix; declaring a second would discard the first silently. Correct it with matrix set instead.` };
+            }
+            const next = { version: declared.version ?? 1, rows: (declared.rows ?? []) };
+            const errors = validateMatrix(declaredTask.acceptance ?? [], next as never);
+            if (errors.length > 0) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `The declared matrix does not validate: ${errors.map((entry) => entry.message).join('; ')}` };
+            }
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                return `${JSON.stringify({ ...current, acceptanceMatrix: next }, null, 2)}\n`;
+            });
+            return { command: 'matrix', taskId: change, action, updated: true, reason: why, rows: next.rows.length };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
 
     // A corrected declaration is a decision, and an unexplained one is the drift this records — the same rule
     // `scope change` applies to a grown surface.
