@@ -1011,9 +1011,24 @@ function valueAfter(argv: string[], flag: string): string | undefined {
 export async function runFalsifyCommand(argv: string[]): Promise<Record<string, unknown>> {
     const change = valueAfter(argv, '--change');
     const finding = valueAfter(argv, '--finding');
+    const none = argv.includes('--none');
+    const why = valueAfter(argv, '--reason');
     const check = valueAfter(argv, '--check');
     const mutation = valueAfter(argv, '--mutation');
     const restore = valueAfter(argv, '--restore');
+    // A repair whose subject is not code has no check that can redden, so its disposition is a **recorded absence with a
+    // reason** — a fact written by this command rather than an exception the repair grants itself (cg3-f1, cg3-f3).
+    if (none) {
+        if (!change || !finding || !why?.trim()) {
+            return { command: 'falsify', success: false, error: '--none needs --change, --finding and --reason: the absence is recorded so it can be audited, not so it can be claimed.' };
+        }
+        const workspace = process.cwd();
+        const { readCurrentTaskRevision: readRevision } = await import('../workflow/revision.js');
+        const { recordFalsifierAbsence } = await import('../quality/falsifier-reddenings.js');
+        const revision = await readRevision(workspace, change).catch(() => null);
+        const absence = await recordFalsifierAbsence(workspace, change, { findingId: finding, reason: why, revisionId: revision?.id ?? '(no revision)', recordedAt: new Date().toISOString() });
+        return { command: 'falsify', taskId: change, success: true, recorded: true, absence };
+    }
     const missing = [
         ['--change', change], ['--finding', finding], ['--check', check], ['--mutation', mutation], ['--restore', restore],
     ].filter(([, value]) => !value).map(([flag]) => flag as string);

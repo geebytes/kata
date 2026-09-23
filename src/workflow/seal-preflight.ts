@@ -18,7 +18,7 @@ import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
 import { obligationIsAnswered, readObligations } from '../quality/repair-obligations.js';
-import { readFalsifierReddenings } from '../quality/falsifier-reddenings.js';
+import { readFalsifierReddenings, readFalsifierAbsences } from '../quality/falsifier-reddenings.js';
 import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**
@@ -167,6 +167,7 @@ export async function collectSealPreflight(input: {
             // resolver that could close one runs only after a successful seal. A permanent deadlock, and the second
             // derivation of "answered" this line keeps producing.
             const reddenings = await readFalsifierReddenings(root, taskId);
+            const absences = await readFalsifierAbsences(root, taskId);
             const answerable = new Set(
                 unresolved
                     .filter((obligation) =>
@@ -175,6 +176,7 @@ export async function collectSealPreflight(input: {
                             resolvedAcceptanceIds,
                             evidence: plannedEvidence,
                             reddenings,
+                            absences,
                             ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
                         }).answered,
                     )

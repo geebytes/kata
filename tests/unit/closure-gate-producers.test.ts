@@ -138,6 +138,8 @@ describe('the closure decision has one producer, and every consumer reaches it',
     it('the decider consults the reddening ledger', () => {
         const decider = readFileSync(join(process.cwd(), 'src/quality/repair-obligations.ts'), 'utf8');
         expect(/\bconst\s+answered\s*=/.test(decider)).toBe(true);
-        expect(decider).toContain('hasReddening(');
+        // The disposition, which is a reddening **or** a recorded absence — the second shape exists because a repair to a test
+        // or a document has no check that can redden (cg3-f1, cg3-f3).
+        expect(decider).toContain('hasFalsifierDisposition(');
     });
 });

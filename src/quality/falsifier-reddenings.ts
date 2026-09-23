@@ -41,6 +41,8 @@ export type FalsifierReddening = {
 
 export type FalsifierReddeningLedger = {
     reddenings: FalsifierReddening[];
+    /** Optional so a ledger written before this shape existed stays valid. */
+    absences?: FalsifierAbsence[];
     updatedAt: string;
 };
 
@@ -99,4 +101,55 @@ export function hasReddening(
 function observedReddening(reddening: FalsifierReddening): boolean {
     const observed = reddening.observed;
     return Boolean(observed) && observed.before === 0 && observed.mutated !== 0 && observed.after === 0;
+}
+
+/**
+ * A repair whose subject is not code, so **no check can be shown reddening** — recorded rather than granted.
+ *
+ * The criterion asks for the check that must redden under the defect, which presupposes the repair changed code some check
+ * exercises. A repair to a test, or to a document, has no such check — and the third independent round produced exactly two of
+ * those: cg3-f1 (a sentence in a design doc) and cg3-f3 (the enumeration inside a test), which no mutation could redden.
+ *
+ * Without this shape the rule forces one of two worse things: a fake mutation, or an obligation that can never close. So the
+ * absence is a **recorded fact with a reason** — written by a command, visible in `status`, and never something a repair
+ * grants itself silently.
+ */
+export type FalsifierAbsence = {
+    findingId: string;
+    /** Why no falsifier exists for this repair. Required, because the shape exists to be explained rather than used. */
+    reason: string;
+    revisionId: string;
+    recordedAt: string;
+};
+
+export async function readFalsifierAbsences(root: string, taskId: string): Promise<FalsifierAbsence[]> {
+    const record = await readValidatedOptional<FalsifierReddeningLedger>('falsifier-reddenings', falsifierReddeningsPath(root, taskId));
+    return record?.absences ?? [];
+}
+
+export async function recordFalsifierAbsence(root: string, taskId: string, absence: FalsifierAbsence): Promise<FalsifierAbsence> {
+    const { mutateTaskArtefact } = await import('../core/state.js');
+    await mutateTaskArtefact(root, taskId, falsifierReddeningsPath(root, taskId), async () => {
+        const record = await readValidatedOptional<FalsifierReddeningLedger>('falsifier-reddenings', falsifierReddeningsPath(root, taskId));
+        const absences = (record?.absences ?? []).filter((entry) => entry.findingId !== absence.findingId);
+        absences.push(absence);
+        return `${JSON.stringify({ reddenings: record?.reddenings ?? [], absences, updatedAt: absence.recordedAt }, null, 2)}\n`;
+    });
+    return absence;
+}
+
+/**
+ * The disposition a repair carries: a reddening, or a recorded absence. **One question, two shapes** — and the second is not a
+ * loophole: it is a fact written by a command with a reason, which is what makes it auditable rather than granted.
+ */
+export function hasFalsifierDisposition(
+    reddenings: FalsifierReddening[],
+    absences: FalsifierAbsence[],
+    findingId: string,
+    revisionId?: string,
+): boolean {
+    if (hasReddening(reddenings, findingId, revisionId)) return true;
+    return absences.some((absence) => absence.findingId === findingId
+        && (revisionId === undefined || absence.revisionId === revisionId)
+        && absence.reason.trim().length > 0);
 }

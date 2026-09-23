@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
-import { hasReddening, type FalsifierReddening as FalsifierReddeningLike } from './falsifier-reddenings.js';
+import { hasFalsifierDisposition, type FalsifierAbsence, type FalsifierReddening as FalsifierReddeningLike } from './falsifier-reddenings.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evidenceMatchesRow, getMatrixRowForAc } from './acceptance-matrix.js';
@@ -141,6 +141,8 @@ export function obligationIsAnswered(input: {
      * assertion that cannot fail. An obligation with no finding behind it is unaffected.
      */
     reddenings?: FalsifierReddeningLike[];
+    /** Repairs whose subject is not code, so no check can be shown reddening. Recorded, with a reason. */
+    absences?: FalsifierAbsence[];
     /** The revision being resolved, so a reddening recorded for different content cannot answer for this one. */
     revisionId?: string;
 }): { answered: boolean; evidenceIds: string[] } {
@@ -157,7 +159,7 @@ export function obligationIsAnswered(input: {
     // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
     // work is the failure mode this criterion must not have.
     const falsified = obligation.findingId
-        ? hasReddening(input.reddenings ?? [], obligation.findingId, input.revisionId)
+        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId, input.revisionId)
         : true;
     const answered = answeredByEvidence && falsified;
     return { answered, evidenceIds };
@@ -175,12 +177,13 @@ export async function resolveObligationsForRevision(
   const now = new Date().toISOString();
   // Read here rather than accepted as an argument: this is the seal’s path, and a caller that had to remember to pass the
   // reddenings is a caller that will forget.
-  const { readFalsifierReddenings } = await import('./falsifier-reddenings.js');
+  const { readFalsifierReddenings, readFalsifierAbsences } = await import('./falsifier-reddenings.js');
   const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
+  const absences = await readFalsifierAbsences(root, taskId).catch(() => []);
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, revisionId });
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, absences, revisionId });
       if (!verdict.answered) continue;
       obligation.resolvedAt = now;
       obligation.resolvedByRevisionId = revisionId;
