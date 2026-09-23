@@ -449,6 +449,11 @@
             "type": "string",
             "minLength": 1
           },
+          "falsifier": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The check that must redden under this defect: a declared selector, a command, or the observation that refutes the claim. The brief asks every finding to carry one, so the write path must accept it."
+          },
           "path": {
             "type": "string",
             "minLength": 1

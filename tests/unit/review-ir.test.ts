@@ -185,3 +185,38 @@ describe('§3.3 the review input is compiled once, and the brief stops paying tw
         expect(ir.hash).not.toBe(withoutContract.hash);
     });
 });
+
+/**
+ * The brief now asks every finding to carry a `falsifier` — and a schema with `additionalProperties: false` that does not
+ * list it would **refuse** a record written by a pass that followed the brief. That is the R1 class this change exists to
+ * remove (the brief prescribing a shape the write path rejects), so the field is accepted here and this pins it.
+ */
+describe('a finding may carry the falsifier the brief asks for', () => {
+    it('is accepted by the record schema', async () => {
+        const { validate } = await import('../../src/core/schema.js');
+        const record = {
+            node: 'review',
+            status: 'recorded',
+            revisionId: 'revision-one',
+            manifestHash: 'hash-one',
+            briefSha256: 'a'.repeat(64),
+            executedInFreshContext: true,
+            contextNote: 'a fixture',
+            createdAt: '2026-09-23T00:00:00.000Z',
+            hypotheses: [],
+            attempts: [],
+            findings: [
+                {
+                    id: 'carries-a-falsifier',
+                    taskId: 'a-task',
+                    severity: 'major',
+                    message: 'the remit is taken from any delta in the pool',
+                    path: 'src/quality/adversarial.ts',
+                    falsifier: 'tests/e2e/declared-delta-is-admissible.test.ts must redden when the remit is wrong',
+                },
+            ],
+        };
+        // Throws if the schema refuses it — which is what the brief/path mismatch would look like.
+        expect(() => validate('adversarial-review', record)).not.toThrow();
+    });
+});
