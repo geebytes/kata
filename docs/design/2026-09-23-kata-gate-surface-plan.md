@@ -749,3 +749,27 @@ declaration where a construction is available.
 is the platform's machinery. A platform subagent is the more likely place for reclaim to apply than a one-shot `pi -p` child.
 So the earlier blocker — the platform's subagent having no tool allowlist on this machine — is now worth **solving** rather
 than working around.
+
+## Correction: the missing host capability was not missing — I had not looked at the platform's own extension point
+
+§10.2 recorded that the local Agent facility cannot restrict a subagent's tools, that `Explore` carries bash, and therefore that
+`read_only_fs` cannot honestly be claimed — concluding strict review is structurally uncertifiable on this machine. **That
+conclusion was wrong.**
+
+The platform supports **custom agent types**, declared as markdown with frontmatter in `.pi/agents/<name>.md` (project) or
+`/data/work/pi/agents/<name>.md` (global), picked up automatically — and the frontmatter carries `tools:` and `isolated:`. The
+repository already ships several such agents (`artifact-code-reviewer`, `artifact-coverage-reviewer`, `claim-verifier`), every one
+of them declaring `tools: read, grep, find, ls` with `isolated: true`.
+
+So a read-only reviewer is **constructible**: no bash, no write, no edit, and no extension tools. That is `read_only_fs` by
+construction rather than by instruction — and it is the same distinction that made the subprocess route's flag-based freshness
+the weaker one.
+
+**What this changes**: the subagent route can satisfy all three capabilities review requires — `fresh_context` by the platform
+making the session, `read_only_fs` by the declared tool set, `bounded_tools` by the same declaration — without a supervisor,
+without `bwrap`, and without kata deciding how isolation is achieved. The blocker I recorded was my ignorance of an extension
+point, not a missing capability.
+
+`.pi/agents/kata-reviewer.md` is added with exactly that frontmatter. **Whether it is picked up is unverified**: the agent
+registry is resolved when a session starts, so this needs a reload before a round can use it, and that must be measured rather
+than assumed.
