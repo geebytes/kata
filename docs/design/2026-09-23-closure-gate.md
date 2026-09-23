@@ -360,3 +360,41 @@ times, and the defect is one level down:
 That is the same class as everything else in this round, one more time: **a record that names something other than what it is
 about.** And it is fixable where it lives, which the unstable-digest reading was not: the command must refuse to record a proof
 about content no sealed revision describes.
+
+## Round 4: five more findings, and both of my questions answered against me
+
+Cost: **468,041 tokens / 118 tool uses / 27.5 minutes**, and it returned a record. The two questions I gave it were "is the
+newest guard's falsifier real" and "is every recorded disposition actually binding". Both answers were no:
+
+- **`cg4-f3`** — **the guard is pinned by nothing.** The refusal I added this round, because four proofs were lost to a stale
+  binding, is reached by no test. That is the sixth decorative repair in this change, and it is the one I predicted when
+  dispatching the round.
+- **`cg4-f2`** — **the guard checks less than its message prints.** It compares digests over the revision's own path map, which
+  is built from `ownedPaths` — so a change *outside* ownership is not caught, while the message says "the working tree is not
+  what the revision describes".
+- **`cg4-f5`** — **six of the nine ledger entries are bound to a revision the change is not on.** `cg-f1..cg-f6` are recorded at
+  `revision-0aa79bf2959193f4`; the sealed revision is `revision-1e0a2f0d2503bc5c`. So the six obligations that closed "by
+  falsifier" closed on proofs about different content — which is the very defect this round's guard exists to prevent, already
+  present in the ledger.
+- **`cg4-f1`** — **the preflight still calls `obligationIsAnswered` without a `revisionId`** while the resolver passes one, so
+  the two still answer the same question differently. This is `cg-f1`'s shape recurring one input over: the fix taught the
+  resolver a new input and left the preflight behind, exactly as the first fix did.
+- **`cg4-f4`** — `cg3-f4`'s repair (the report narrowing by revision) is not pinned either.
+
+## The honest verdict on this change, from its own history
+
+| round | findings | of which about the previous round's repairs |
+|---|---|---|
+| 1 | 7 (1 blocking) | — |
+| 2 | **no record** (658K tokens) | — |
+| 3 | 5 | 3 |
+| 4 | 5 | **5** |
+
+**Every finding in round 4 is about a repair made in round 3**, and every round-3 finding was about a round-2 repair. The change
+has not converged, and the reason is structural rather than a matter of effort: **the repairs are made by the same author whose
+blind spot the review exists to find, and each repair adds surface the next round can find the same class in.** The class is
+"a mechanism that does not do what it says" — and a change whose subject is that class produces it faster than it removes it,
+because every mechanism it adds is another chance to say more than it does.
+
+**That is worth recording as the change's own conclusion**, because the alternative — one more repair round — has now been
+tried four times with the same result.
