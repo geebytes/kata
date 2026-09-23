@@ -20,7 +20,7 @@ import { createTaskRevision } from '../../src/workflow/revision.js';
  */
 const cleanup: string[] = [];
 
-async function fixture(id: string, editBeforeCurrent: boolean): Promise<{ root: string; base: string }> {
+async function fixture(id: string, editBeforeCurrent: boolean): Promise<{ root: string; base: string; current: string }> {
     const root = await mkdtemp(join(tmpdir(), `kata-surface-visibility-${id}-`));
     cleanup.push(root);
     await initLayout(root);
@@ -46,8 +46,8 @@ async function fixture(id: string, editBeforeCurrent: boolean): Promise<{ root: 
         await writeFile(join(root, 'src/settled.ts'), 'export const settled = 1;\n// touched after the base seal\n', 'utf8');
     }
     await writeFile(join(root, 'src/later.ts'), 'export const later = 2;\n', 'utf8');
-    await createTaskRevision({ root, taskId: id, ownedPaths: ['src/settled.ts', 'src/later.ts'], checkIds: [] });
-    return { root, base: base.id };
+    const current = await createTaskRevision({ root, taskId: id, ownedPaths: ['src/settled.ts', 'src/later.ts'], checkIds: [] });
+    return { root, base: base.id, current: current.id };
 }
 
 async function surfaceOf(root: string, id: string, base: string): Promise<string[]> {
@@ -57,17 +57,42 @@ async function surfaceOf(root: string, id: string, base: string): Promise<string
     return scope?.kind === 'delta' ? [...scope.changedPaths] : [];
 }
 
+/** The record the seal writes, read back — the producer the gate measures a pass against (kgs-f4). */
+async function recordOf(root: string, id: string, current: string): Promise<string[]> {
+    const { buildChangeRecord, changeRecordPath, readChangeRecord } = await import('../../src/quality/change-record.js');
+    const { writeFile: write } = await import('node:fs/promises');
+    const built = await buildChangeRecord({
+        root,
+        taskId: id,
+        revisionId: current,
+        ownedPaths: ['src/settled.ts', 'src/later.ts'],
+        evidence: [],
+        claimFailures: [],
+        findings: [],
+        contentDigests: { 'src/settled.ts': 'aaa', 'src/later.ts': 'bbb' },
+        baseContentDigests: { 'src/settled.ts': 'aaa' },
+    });
+    await write(changeRecordPath(root, id), `${JSON.stringify(built, null, 2)}\n`, 'utf8');
+    return [...((await readChangeRecord(root, id))?.changedPaths ?? [])];
+}
+
 describe('the surface reports a path changed exactly when its content differs', () => {
     afterEach(async () => {
         await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
     });
 
     it('reports the path that differs, and not the one already settled in the base', async () => {
-        const { root, base } = await fixture('surface-visibility', true);
+        const { root, base, current } = await fixture('surface-visibility', true);
         const changed = await surfaceOf(root, 'surface-visibility', base);
         expect(changed).toContain('src/later.ts');
         // The repair case: its content is the base's content, so reporting it would be the defect.
         expect(changed).not.toContain('src/settled.ts');
+
+        // The same property on the record — the producer the gate reads. Asserting only the brief left the criterion
+        // half-verified, and the half it left out is the one that decides a pass (kgs-f4).
+        const recorded = await recordOf(root, 'surface-visibility', current);
+        expect(recorded).toContain('src/later.ts');
+        expect(recorded).not.toContain('src/settled.ts');
     });
 
     it('reports the same path when it really does differ between the two revisions', async () => {
