@@ -109,3 +109,27 @@ describe('neither a comment nor a string consumes a declaration', () => {
         expect(subjects).not.toContain('tdd');
     });
 });
+
+/**
+ * wcc2-f5: only single-quoted members were collected, so a list written with double quotes was invisible — while the
+ * consumption test already accepted all three quote styles. The two disagreed, and the check silently reported nothing.
+ */
+describe('a member is a member whatever it is quoted with', () => {
+    afterEach(async () => {
+        await Promise.all(cleanup.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    });
+
+    it('reports an unconsumed member from a double-quoted list', async () => {
+        const root = await fixture('double-quoted');
+        const { writeFile } = await import('node:fs/promises');
+        const { join } = await import('node:path');
+        await writeFile(
+            join(root, 'src/quoted.ts'),
+            ['export const styles = ["never-consumed"] as const;', 'export const other = 1;', ''].join('\n'),
+            'utf8',
+        );
+
+        const subjects = (await findUnconsumedDeclaredMembers({ root, surface: ['src/quoted.ts'] })).map((f) => f.subject);
+        expect(subjects).toContain('never-consumed');
+    });
+});

@@ -263,7 +263,10 @@ export function parseDeclaredLists(file: string, text: string): DeclaredList[] {
                     continue;
                 }
                 if (char === stringQuote) {
-                    if (stringQuote === "'" && depth === 1 && braceDepth === 0) {
+                    // wcc2-f5: only single-quoted members were collected, so a list written with double quotes was
+                    // invisible to this check — and the consumption test already accepts all three quote styles, so the
+                    // two disagreed. A member literal is a member whatever it is quoted with.
+                    if (depth === 1 && braceDepth === 0) {
                         members.push({ value: current, line: lineOf(text, currentStart) });
                     }
                     stringQuote = null;
