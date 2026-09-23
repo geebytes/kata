@@ -463,3 +463,55 @@ broken: `tsc` clean, 160 files / 1151 tests / 0 failed, tree clean.
 
 The remaining step is one import — `listRepositoryFiles` into `adversarialGateFor`, or threading the `files` the gate already
 computes — plus the input field and the predicate filter. Everything else in the design above is settled.
+
+## Does the architecture admit an unbounded review → repair → review loop?
+
+**Yes — and there is no structural bound on it.** Measured: `rg "maxRounds|roundLimit|roundCount|repairRounds" src/` returns **nothing**, and the
+number of rounds a change has had is visible only by listing `.kata/tasks/<id>/adversarial-briefs/` (two files for this
+change, one per revision). Nothing counts them and nothing stops them.
+
+### Two loops, and only one of them is unbounded
+
+- **`verify → repair → verify` terminates.** Verify is deterministic: it asks whether the evidence is current, complete and
+  attributable to the criteria. Measured on this change: it failed twice — once because a commit after the seal superseded the
+  revision, once for a missing Wiki closure — and both ended with a deterministic action (re-seal; record the closure), not
+  with a review round. A deterministic check over a finite artefact converges.
+- **`review → repair → review` does not.** Review is an open-ended search, and every repair mints a revision, which makes the
+  review record `stale_revision` and forces a fresh pass. So a repair **cannot** be the last step: it guarantees another round.
+
+### Why it does not converge, structurally
+
+The artefact each round reviews **contains the previous round's repair** — and the repair is written by the agent whose blind
+spot the review exists to find. So:
+
+```
+R(n+1) = repair(R(n), findings(n))
+findings(n+1) = review(R(n+1))
+```
+
+If repair and review were both sound this would reach a fixed point. It does not, because `repair` reproduces the class
+`review` finds. **Measured: four of round 2's seven findings are about round 1's repairs**, including the blocking one — a
+defect in the repair whose purpose was to stop a finding from being erased.
+
+### What bounds it today, and why that is not a bound
+
+**The human at the gates.** `review_gate`, `judge_gate` and `archive_gate` each require explicit confirmation, so the loop
+cannot run away on its own. It is therefore a **cost** loop rather than a runaway one — and the cost is measured: round 1 was
+2.82M tokens, round 2 9.88M, and the per-round figure is dominated by turns × accumulated context with no prefix caching.
+
+**The termination condition that exists is statistical**: the loop ends when a round happens to produce no blocking or major
+finding, because only those open obligations. Nothing guarantees it, and the class reproduction is precisely what prevents it.
+
+**And there is a second, quieter non-termination**: obligations close on **evidence**, not on "the finding was fixed" —
+`kgs3-f6` measured three untested criterion clauses while the batch closed with `obligations 0`. So the *apparent* end of the
+loop can be false, and the same finding returns in the next round.
+
+### The three things that would make it converge
+
+1. **Mechanical repair acceptance** — a finding's falsifier must be shown reddening before its obligation closes. This stops
+   the class from reproducing: a repair that ships an un-pinned assertion would be refused rather than certified. *Designed in
+   this change; not built.*
+2. **A round bound with a stated outcome** — after N rounds a finding may be closed only by a falsifier or by routing, so the
+   loop must either converge or be **recorded as not converged**. Silence is what makes it unbounded.
+3. **Measure the loop** — record the trajectory (findings per round, the share of them about the previous repair, tokens per
+   round) so "this is round five" is a number rather than a discovery. Today it is a directory listing.
