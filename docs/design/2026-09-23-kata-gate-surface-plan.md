@@ -418,3 +418,26 @@ already exists — it is `wiring-coverage-check`'s lever 1, and it costs **zero 
 So the same move is both the quality fix and the cost lever: **stop paying 3–10M tokens a round for an independent pass to
 find this class, and make the mechanical harness refuse an unpinned selector before the round is ever dispatched.** The
 independent pass should be left with what only it can do — the semantic findings, like the blocking one this round.
+
+## `kgs3-f3`: the block added for `kgs-f6` was decorative, and it is deleted
+
+The finding is right and the reason is precise: the block recorded a pass targeting `['AC-1','src/one.ts']` and asserted the
+refusal detail names the declared path. **Both the correct remit and the one the fix replaced produce that same refusal** —
+any remit containing `src/two.ts` leaves it uncovered when the pass covers only `src/one.ts`, so the assertion holds either
+way and the block could not fail.
+
+What actually distinguishes the remits is already asserted, by the case above it: **a pass covering exactly the declared delta
+is admitted**. With the remit taken from the brief that is true; with the remit taken from the whole revision it is false,
+because `src/one.ts` would then be uncovered. So the new block added no discriminating power over the case that already
+existed, and it is **deleted rather than kept** — a test that cannot fail reads as coverage, which is the class this change
+exists to remove.
+
+The remaining two from this round are recorded with what they need:
+
+- **`kgs3-f4`** — AC-2's repaired selector asserts the change record with hand-written content digests under an `mkdtemp` root
+  where `runGit` fails, so `changedGitPaths` is `[]` and the git term of the derivation is bypassed. Pinning it needs a
+  fixture that is a **git repository**, which is a fixture-building task rather than a line change.
+- **`kgs3-f7`** — `undeclaredTestPaths` scans only `attempts[].evidence` and `looksLikeTestPath` treats any test-shaped token
+  as a citation, so **this very round's record was refused** because one attempt mentioned a fixture's test path. The guard
+  cannot tell "ran this test" from "mentioned this test" in free text, which is a design question about where the citation
+  should be recorded rather than a predicate tweak.
