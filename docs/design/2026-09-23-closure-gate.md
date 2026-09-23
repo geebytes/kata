@@ -154,3 +154,24 @@ missing is a fixture that will pass for the wrong reason the moment the input st
 
 **AC-3's status in one line**: implemented, measured on the real change (12 obligations, 7 `evidence-only`), and **not pinned** —
 its row in the acceptance matrix has no test, which the seal surfaced mechanically.
+
+## AC-3's third attempt: the producer returns nothing, and the working fixture differs by one field
+
+With the swallowed validation failure removed, the third attempt localised it in one step: **`persistBlockingFindings` itself
+returns `[]`**, so nothing was ever written and no reader could have found it. The two earlier attempts were asking the reader.
+
+The working fixture is next door — `tests/unit/obligation-resolution.test.ts` persists `major` and `blocking` findings and then
+asserts `obligation.resolvedAt` is defined, and it passes. Its setup differs from mine in exactly one visible way:
+
+```ts
+// theirs
+await createTask({ root, id, title: 'Resolution', acceptance: [{ id: 'AC-1', statement: 'A repair is accounted for.' }] });
+// mine
+await createTask({ root, id: 'ac3', title: 'ac3', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+```
+
+So the next experiment is one line: use their shape. That is recorded rather than guessed at, and the case is deleted rather
+than committed red — a red test cannot be committed and a green one that cannot fail is worse than none.
+
+**What AC-3 stands on, unchanged**: implemented, measured on the real change (12 obligations reported, 7 `evidence-only`), and
+not pinned. Its matrix row has no test, and the seal says so mechanically.

@@ -147,3 +147,29 @@ describe('every producer of the closure decision is load-bearing', () => {
 });
 
 
+
+/**
+ * A validation failure and an absent file were the same answer: `readObligations` wrapped its read in a `catch` that returned
+ * `[]`, so a record that failed validation read exactly like a task with no obligations. That hid the cause of two failed
+ * attempts at AC-3 — the setup assertion reported `expected [] to have a length of 2` while the obligations had in fact been
+ * written — and it is the same shape as an instrument's empty answer standing in for "could not answer".
+ */
+describe('a record that fails validation is not an absent record', () => {
+    it('returns empty for a task with no record, and refuses to read an invalid one', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-readoblig-'));
+        cleanup.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'ro', title: 'ro', ownedPaths: ['src/x.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+        const { readObligations } = await import('../../src/quality/repair-obligations.js');
+
+        // No file: an absence, and an empty list is the honest answer.
+        expect(await readObligations(root, 'ro')).toEqual([]);
+
+        // A file that is there and wrong: this must be reported, not read as an absence.
+        const { mkdir: mk, writeFile: write } = await import('node:fs/promises');
+        await mk(join(root, '.kata/tasks/ro'), { recursive: true });
+        await write(join(root, '.kata/tasks/ro/repair-obligations.json'), '{"obligations":"not an array"}\n', 'utf8');
+        await expect(readObligations(root, 'ro')).rejects.toThrow();
+    });
+});
+

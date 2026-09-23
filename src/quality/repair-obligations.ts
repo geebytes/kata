@@ -35,12 +35,12 @@ export interface ObligationRecord {
 }
 
 export async function readObligations(root: string, taskId: string): Promise<RepairObligation[]> {
-  try {
-    const record = await readValidatedOptional<ObligationRecord>('repair-obligations', obligationsPath(root, taskId));
-    return record?.obligations ?? [];
-  } catch {
-    return [];
-  }
+  // **No catch.** `readValidatedOptional` already distinguishes the two cases — a missing file is `null`, an invalid one
+  // throws — and swallowing that threw the difference away, so a record that failed validation read exactly like a task with
+  // no obligations. Measured: it hid the cause of two failed attempts at closure-gate's AC-3, and it is the same shape as the
+  // empty answer from an uncovered instrument (kgs-f9). A caller that wants to treat "cannot read" as "none" can say so.
+  const record = await readValidatedOptional<ObligationRecord>('repair-obligations', obligationsPath(root, taskId));
+  return record?.obligations ?? [];
 }
 
 export async function hasUnresolvedObligations(root: string, taskId: string): Promise<boolean> {
