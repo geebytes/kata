@@ -1316,6 +1316,11 @@ export function evaluateAdversarialGate(
         declaredTestSelectors?: string[];
         /** Test paths the current sealed change record proves existed before this pass; citation is allowed, authorship is not. */
         sealedRevisionTestSelectors?: string[];
+        /**
+         * The test-shaped paths that exist in the repository right now (kgs3-f7). A path a pass **wrote** is here; a path an
+         * attempt merely mentioned in prose may not be, and the guard could not tell the two apart in free text.
+         */
+        existingTestPaths?: string[];
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
         /**
@@ -1436,7 +1441,17 @@ export function evaluateAdversarialGate(
         ...(input.declaredTestSelectors ?? []),
         ...(input.sealedRevisionTestSelectors ?? []),
     ])];
-    const undeclared = permittedTests.length > 0 ? undeclaredTestPaths(record, permittedTests) : [];
+    // kgs3-f7. `looksLikeTestPath` treats any test-shaped token in an attempt's free-text evidence as a citation, so a record
+    // that merely *described* a fixture's test path was refused — measured: that happened to the independent round which
+    // reported it. The guard exists to catch a test the pass **wrote**, and a written test exists on disk, so a cited path
+    // that is not there is not a citation of a run. Narrowing it cannot let an authored test through — that one exists by
+    // definition — which is why this is precision rather than a loosening. **Fail closed**: with no list the guard cannot
+    // tell a mention from a run, so it keeps refusing, which is today's behaviour rather than an opened hole.
+    const existing = input.existingTestPaths;
+    const undeclared = permittedTests.length > 0
+        ? undeclaredTestPaths(record, permittedTests)
+            .filter((path) => !existing || existing.length === 0 || existing.includes(path))
+        : [];
     if (undeclared.length > 0) {
         return {
             satisfied: false,
@@ -2495,6 +2510,10 @@ export async function adversarialGateFor(
         ...(sealedRecord?.revisionId === revisionId
             ? { sealedRevisionTestSelectors: Object.keys(revision?.pathDigests ?? {}) }
             : {}),
+        // kgs3-f7: the fact the predicate cannot derive, supplied by the caller that already reads the repository. The import
+        // is inline at the use site, which is the pattern this file already uses.
+        existingTestPaths: (await (await import('../core/repository-identity.js')).listRepositoryFiles(root).catch(() => [] as string[]))
+            .filter((path) => looksLikeTestPath(path)),
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,
