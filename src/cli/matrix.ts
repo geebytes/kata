@@ -112,6 +112,39 @@ export async function runMatrixCommand(
     if (!reason || !reason.trim()) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --reason: a declaration that changes shape is a decision, and an unexplained one is the drift this records.' };
     }
+    // **An atomic correction** — the way out of a dead end rather than a convenience. The one-row-at-a-time path cannot
+    // separate two criteria that share a selector: changing any single row leaves the others sharing it, the guard refuses
+    // that intermediate state, and `declare` refuses a second declaration — so there is no first step. This accepts the whole
+    // corrected matrix and validates **only the result**, which is the state that has to be right.
+    const correctedFile = valueAfter(argv, '--from-file');
+    if (correctedFile !== undefined) {
+        if (!reason?.trim()) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'Correcting a matrix requires --reason "<why>".' };
+        }
+        try {
+            const { readFile: read } = await import('node:fs/promises');
+            const task = await readTask(root, change);
+            if (!task.acceptanceMatrix) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `${change} declares no acceptance matrix, so there is nothing to correct — declare one first.` };
+            }
+            const parsed = JSON.parse(await read(correctedFile, 'utf8')) as { rows?: unknown } | unknown[];
+            const next = { ...task.acceptanceMatrix, ...(Array.isArray(parsed) ? { rows: parsed } : parsed) };
+            const errors = validateMatrix(task.acceptance ?? [], next as never);
+            if (errors.length > 0) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: `The corrected matrix does not validate: ${errors.map((entry) => entry.message).join('; ')}` };
+            }
+            // Reported so the correction is auditable: what each row's selector was, and what it became.
+            const previousSelectors = (task.acceptanceMatrix.rows ?? []).map((row) => ({ acceptanceId: row.acceptanceId, testSelector: row.testPaths?.[0] ?? null }));
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                return `${JSON.stringify({ ...current, acceptanceMatrix: next }, null, 2)}\n`;
+            });
+            return { command: 'matrix', taskId: change, action, updated: true, reason, previousSelectors, rows: (next as { rows?: unknown[] }).rows?.length ?? 0 };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
     if (!acceptanceId) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --acceptance <AC-id>.' };
     }
