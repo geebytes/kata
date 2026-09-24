@@ -48,6 +48,17 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         means: 'one decision has two entrances and only one records it, so the decision happens and the trace does not',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
     },
+    {
+        classId: 'output-with-one-unguaranteed-channel',
+        // **The fifth, and the one that answered "is the set closed" with a no.** It is not any of the four: not one concept
+        // derived twice, not a declaration read as reality, not a check that cannot fail, not a decision with two entrances. It is
+        // a **required output whose only channel is the process reaching its natural end** — and it is measured: three of six
+        // dispatched review rounds produced no record, each ending with the same sentence ("I already know the answer; let me
+        // confirm it"), and one of them had found a route the design never enumerated, which survived only because a human read
+        // four megabytes of transcript.
+        means: 'a required output has exactly one channel and that channel is not guaranteed, so a process that ends early produces nothing',
+        coveredBy: ['tests/unit/record-salvage.test.ts'],
+    },
 ];
 
 /**

@@ -808,6 +808,18 @@ round is spent.
 
 **Report what this round cost, in the record's \`usage\` field** — \`total_tokens\`, \`tool_uses\` and \`duration_ms\`, as your own harness reports them. It is recorded because the loop's price is otherwise invisible: this line's seven rounds cost 351,864 / 658,523 / 347,000 / 400,000 / 875,572 / 510,836 / 1,073,271 tokens and the two most expensive produced **zero** findings because they never wrote a record, while the cheapest produced seven. Cost and yield are not correlated here, so this is not a target to drive down — it is the only way \"the cost has not fallen\" becomes a fact something can fail on.
 
+**Emit the record as soon as you have your findings, then keep working — the last record you emit is the record.** This is a
+correction to the brief's own shape, and it is measured: **three of six dispatched rounds on this line produced no record at all**,
+each ending with the same sentence (*"I already know the answer; let me confirm it"*). A record that exists only as your final
+message is an output whose only channel is the round reaching its natural end, so a pass that investigates until its budget runs out
+loses the record — **and loses everything in it**: the coverage, the \`falsifier\`/\`impact\`/\`classInstances\` values, the findings. One
+of those rounds had found a route the design never enumerated, and it survived only because a human read four megabytes of transcript
+by hand.
+
+So: send a complete record once your first hypothesis is concluded, and send a fuller one when you have more. The dispatcher reads
+the **last** record in your transcript, not only the final message, and a partially-investigated change with a real record beats a
+thorough one with nothing.
+
 **This requirement was missing from this brief, and it is the measured cause of seven refused records on this line**: every
 review round on two changes was returned as incomplete for a condition the brief never stated, so the reviewers could not comply
 with it and the rounds were repeated. **Check your targets against the remit list before you write the record** — and if a path

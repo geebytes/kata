@@ -177,7 +177,7 @@ describe('E — a round may close when its classes are covered, not when its fin
 describe('the four classes, and the checks that cover them', () => {
     it('covers every class with a declared check that exists', async () => {
         const { CLASS_COVERAGE } = await import('../../src/quality/class-coverage.js');
-        expect(CLASS_COVERAGE.length).toBeGreaterThanOrEqual(4);
+        expect(CLASS_COVERAGE.length).toBeGreaterThanOrEqual(5);
         for (const entry of CLASS_COVERAGE) {
             expect(entry.classId.length).toBeGreaterThan(0);
             expect(entry.means.length).toBeGreaterThan(20);

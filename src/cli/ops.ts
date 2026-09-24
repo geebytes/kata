@@ -258,6 +258,28 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     const node = nodeArg ?? 'verify';
     if (!isAdversarialNode(node)) throw new Error(`Unknown adversarial node: ${nodeArg}. Expected one of: ${adversarialNodes.join('|')}`);
 
+    // **The second channel for a required output.** A brief requires a complete JSON record as the pass's final message, so a pass
+    // that investigates until its budget ends produces nothing — three of six rounds, each ending with the same sentence, and one of
+    // them had found a route the design never enumerated. The salvage command reads the transcript for the last record a pass
+    // emitted before it stopped, which turns "a human read four megabytes by hand" into one command.
+    if (subcommand === 'salvage') {
+        const from = argValue(rest, '--from');
+        if (!from) throw new Error('Usage: kata-cli adversarial salvage --change <task-id> --from <transcript-file>');
+        const { readFile } = await import('node:fs/promises');
+        const { salvageRecord } = await import('../quality/record-salvage.js');
+        const transcript = await readFile(from, 'utf8').catch(() => null);
+        if (transcript === null) {
+            return { command: 'adversarial salvage', taskId: change, salvage: null, reason: `no transcript at ${from}` };
+        }
+        const found = salvageRecord(transcript);
+        return {
+            command: 'adversarial salvage',
+            taskId: change,
+            salvage: found ? { record: found.record, fromEnd: found.fromEnd } : null,
+            ...(found ? {} : { reason: 'the transcript holds no complete record, so the round produced none — a finding about the round rather than about the change' }),
+        };
+    }
+
     if (subcommand === 'brief') {
         const since = argValue(rest, '--since');
         // K2: the request is the contract a host answers. Emitting it here means a host never has to read kata's private
