@@ -67,12 +67,60 @@ describe('a change reports its review rounds and how many findings are about the
         expect(report.shareAboutThePreviousRound).toBeCloseTo(2 / 4);
     });
 
-    it('reports nothing for a task that has had no rounds, rather than failing', () => {
-        // The real-data check that used to live here — `closure-gate` reporting four rounds and a share of 0.85 — was moved out
-        // of the suite: the seal runs a check against the sealed content, and another change's runtime data under `.kata/` is
-        // not part of it, so the case exited 1 in the seal and passed in the working tree. A test that only passes where its
-        // author's other changes happen to be is not a test. The measurement is recorded in the design doc as evidence instead.
-        expect(true).toBe(true);
+    it('reports nothing for a task that has had no rounds, rather than failing', async () => {
+        // **This case used to be `expect(true).toBe(true)`** — a green check that demonstrated no behaviour, sitting in the
+        // selector the gate certifies AC-3 against (`rba-f12`). It only called `reportRounds` in its title. A task with no
+        // rounds is the boundary the report exists for (the module docstring's "a round that produced nothing leaves no
+        // trace"), so it is now exercised and asserted.
+        //
+        // The real-data check that used to live here — `closure-gate` reporting four rounds and a share of 0.85 — was moved
+        // out of the suite: the seal runs a check against the sealed content, and another change's runtime data under
+        // `.kata/` is not part of it, so the case exited 1 in the seal and passed in the working tree. A test that only
+        // passes where its author's other changes happen to be is not a test. The measurement is recorded in the design doc
+        // as a re-derived transcript instead.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'no-rounds', title: 'Rounds', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+
+        const report = await reportRounds(root, 'no-rounds', 'review');
+        expect(report.rounds).toEqual([]);
+        // No previous round, so the question is unanswerable rather than answered with zero.
+        expect(report.targetsAboutThePreviousRound).toBeNull();
+        expect(report.shareAboutThePreviousRound).toBeNull();
+        expect(report.unrecorded).toBe(false);
+    });
+
+    it('reports two rounds on the same revision as unanswerable, not as a measured zero', async () => {
+        // `rba-f10`: `shareAboutThePreviousRound` was `about / max(1, allTargets(live))` with `about` defaulting to 0, so a
+        // round whose previous round sat on the **same revision** — no surface to be about — reported `share: 0`, which a
+        // reader takes as perfect convergence. This is the case on disk for `closure-gate` (rounds 4 and 5 both on
+        // `revision-1e0a2f0d2503bc5c`). An unanswerable question reads as unanswerable.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'same-revision', title: 'Rounds', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        const dir = join(root, '.kata/tasks/same-revision');
+        await mkdir(join(dir, 'revisions'), { recursive: true });
+        await writeFile(join(dir, 'revisions/revision-one.json'), JSON.stringify({
+            id: 'revision-one',
+            pathDigests: { 'src/changed.ts': 'a'.repeat(64) },
+            contentDigests: { 'src/changed.ts': 'a'.repeat(64) },
+        }), 'utf8');
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-one', findings: [1, 2], createdAt: '2026-09-23T01:00:00.000Z' },
+        ]), 'utf8');
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-one',
+            createdAt: '2026-09-23T02:00:00.000Z',
+            findings: [{ id: 'f1' }, { id: 'f2' }],
+            hypotheses: [{ targets: ['src/changed.ts'] }],
+        }), 'utf8');
+
+        const report = await reportRounds(root, 'same-revision', 'review');
+        expect(report.rounds).toHaveLength(2);
+        expect(report.targetsAboutThePreviousRound).toBeNull();
+        expect(report.shareAboutThePreviousRound).toBeNull();
     });
 });
 

@@ -1914,7 +1914,7 @@ export async function buildAdversarialBrief(
     const scopeBase = resolvedScope.since;
     if (scopeBase) {
         const { readTaskRevision } = await import('../workflow/revision.js');
-        const { changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
+        const { revisionChangeSurface, changeSurfaceAgainstWorkspace } = await import('./revision-delta.js');
         const base = await readTaskRevision(root, taskId, scopeBase).catch(() => null)
             ?? await findRevisionByManifest(root, taskId, scopeBase)
             ?? null;
@@ -1922,7 +1922,22 @@ export async function buildAdversarialBrief(
         if (!base) {
             deltaReport = { unavailable: `no revision matching '${scopeBase}' was found for task '${taskId}'` };
         } else {
-            const surface = await changeSurfaceAgainstWorkspace(root, base, revision);
+            // **The surface must be the one the gate verifies against** (`rba-f9`). This used
+            // `changeSurfaceAgainstWorkspace` alone — owned-path manifest plus live `git status` — while the gate verifies
+            // a recorded delta with `revisionChangeSurface`, which diffs the two revisions' `contentDigests`. On the delta
+            // round this was written for, the brief declared 4 paths while the sealed revision's content surface held 18,
+            // so the gate answered `delta_stale` naming the 14 missing ones: two derivations of one quantity, which is the
+            // class this line keeps removing.
+            //
+            // The sealed content surface is the authority **when it is available**, because that is precisely the set the
+            // gate will require the pass's declared scope to cover; a brief that declares less than it is refused. When the
+            // sealed surface cannot answer (`delta_unavailable`, or `unchanged` because the round is editing before it
+            // re-seals), the workspace comparison is the fallback — the same fallback the gate takes, and the only source
+            // that sees the round's own uncommitted edits.
+            const sealed = revisionChangeSurface(base, revision);
+            const surface = sealed.status === 'available'
+                ? sealed
+                : await changeSurfaceAgainstWorkspace(root, base, revision);
             if (surface.status === 'delta_unavailable') {
                 deltaReport = { unavailable: surface.reason };
             } else if (surface.status === 'unchanged') {

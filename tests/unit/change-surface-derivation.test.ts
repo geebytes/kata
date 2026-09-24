@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
-import { createTaskRevision } from '../../src/workflow/revision.js';
+import { createTaskRevision, readTaskRevision } from '../../src/workflow/revision.js';
 import { buildAdversarialBrief } from '../../src/quality/adversarial.js';
 
 /**
@@ -106,5 +107,49 @@ describe('the change surface has one derivation', () => {
             note: 'this fixture must exercise the delta path, or the assertion above proves nothing',
             scopeKind: brief.ir?.scope?.kind ?? 'none',
         }).toEqual({ note: 'this fixture must exercise the delta path, or the assertion above proves nothing', scopeKind: 'delta' });
+    });
+
+    it('issues a delta scope that is the surface the gate verifies against, not the workspace-only one', async () => {
+        // `rba-f9`: the brief issued its delta from `changeSurfaceAgainstWorkspace` — the owned-path manifest plus live
+        // `git status` — while the gate verifies a recorded delta with `revisionChangeSurface`, which diffs the two
+        // revisions' `contentDigests`. A repair committed outside the declaration was therefore in the gate's surface and
+        // absent from the brief's, and the gate refused the round's own record with `delta_stale`. Two derivations of one
+        // quantity; the brief must issue the one the gate measures.
+        const root = await mkdtemp(join(tmpdir(), 'kata-surface-delta-'));
+        cleanup.push(root);
+        await initLayout(root);
+        execFileSync('git', ['init', '--quiet'], { cwd: root });
+        execFileSync('git', ['config', 'user.email', 'kata@example.test'], { cwd: root });
+        execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src/one.ts'), 'export const one = 1;\n', 'utf8');
+        await createTask({
+            root, id: 'delta-scope', title: 'delta-scope', ownedPaths: ['src/one.ts'],
+            acceptance: [{ id: 'AC-1', statement: 'the brief issues the gate\'s surface' }],
+        } as never);
+        execFileSync('git', ['add', '-A'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'base'], { cwd: root });
+        const base = await createTaskRevision({ root, taskId: 'delta-scope', ownedPaths: ['src/one.ts'], checkIds: [] });
+        // The repair commits a path outside the declaration, and the round re-seals — so the workspace is clean and only
+        // the sealed content snapshots can see the change.
+        await writeFile(join(root, 'src/outside.ts'), 'export const outside = 2;\n', 'utf8');
+        execFileSync('git', ['add', '-A'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'the repair changed a path outside the declaration'], { cwd: root });
+        const current = await createTaskRevision({ root, taskId: 'delta-scope', ownedPaths: ['src/one.ts'], checkIds: [] });
+
+        const brief = await buildAdversarialBrief(root, 'delta-scope', 'review', { since: base.id });
+        const declared = brief.ir?.scope?.kind === 'delta' ? [...brief.ir.scope.changedPaths] : [];
+
+        // The gate's surface for the same pair of revisions — the one the pass must cover or be refused `delta_stale`.
+        const { revisionChangeSurface } = await import('../../src/quality/revision-delta.js');
+        const sealed = revisionChangeSurface(
+            await readTaskRevision(root, 'delta-scope', base.id),
+            await readTaskRevision(root, 'delta-scope', current.id),
+        );
+        expect(sealed.status).toBe('available');
+        if (sealed.status === 'available') {
+            expect([...declared].sort()).toEqual([...sealed.changedPaths].sort());
+            expect(declared).toContain('src/outside.ts');
+        }
     });
 });
