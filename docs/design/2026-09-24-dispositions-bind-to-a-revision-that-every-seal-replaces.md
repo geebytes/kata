@@ -54,3 +54,30 @@ falsifiable criterion rather than a convenience:
 `contentDigests` is already in the revision and the seal already computes it, so the change is a binding rather than a new
 mechanism — the same shape as this line's other fixes, and the reason it belongs as its own governed change rather than a patch to
 this one.
+
+## And the round that was meant to verify all of it answered a brief from an earlier session
+
+The delta round came back with a record that the gate refused, correctly, with `brief_mismatch`:
+
+| | the packet I issued | what the record claimed |
+|---|---|---|
+| revision | `revision-becb49c9303042ca` | **`revision-daf33fefeb9f0bff`** |
+| briefSha256 | `5311df322d34e8c98d12…` | **`cdc2f3774ebc01131968…`** |
+| mode | delta | **cold** |
+
+`cdc2f377…` is **the earlier round's brief** — the cold one, 17,587 characters, from before this change's delta path worked at
+all. So the record it returned was a stale one, and its seven findings (`rba-f1`…`rba-f7`) are the batch I had already repaired and
+disposed of hours earlier.
+
+**Two things follow, and they point in opposite directions.**
+
+**The mechanisms all worked.** `brief_mismatch` is the K2 binding, and this is the first time on this line it caught a real
+mismatch rather than being tested in a fixture: a record that answers a different brief than the one issued is not a review of this
+revision, and the gate said so with the two hashes. My dispatch prompt named the packet path, the revision, the delta framing, the
+coverage requirement and the three record fields — **and none of that is in the record**, which is the signature of a stale answer
+rather than a misunderstood instruction.
+
+**And `impact` and `classInstances` are still unverified.** Measured on that record: `falsifier` present in 7 of 7, `impact` in
+**0 of 7**, `classInstances` in **0 of 7**. Both were added this session, so a record from an earlier round could not carry them —
+which means **this round cannot say whether either field works**, and the previous claim that they were "in use" has to be withdrawn
+until a round answers the brief it was actually given.
