@@ -10,7 +10,7 @@
  * nothing to report) and is also the reason the count can be lower than the number of rounds actually run. `closure-gate` had
  * five attempts and four records, and `unrecorded` is reported for exactly that reason rather than being papered over.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { kataDir } from '../core/layout.js';
 
@@ -61,9 +61,18 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     if (live && !rounds.some((round) => key(round) === key(toRound(live)))) rounds.push(toRound(live));
 
     // A round that left no record is invisible here, so the briefs are what say whether every attempt is accounted for.
+    // **A round is a brief issued, and a record is a round that left something behind.** The first version asked whether the
+    // latest brief file existed and whether there were no rounds at all — which is false the moment a round exists, so the
+    // field was never true and its docstring described something the code could not report. Measured on `closure-gate`: five
+    // briefs across four files, four records, and `unrecorded` false.
     const briefsDir = join(kataDir(root), 'tasks', taskId, 'adversarial-briefs');
-    const briefs = await readJson<{ briefs?: unknown[] }>(join(briefsDir, `${node}-${rounds.at(-1)?.revisionId ?? ''}.json`));
-    const unrecorded = briefs !== null && rounds.length === 0;
+    const briefFiles = await readdir(briefsDir).catch(() => [] as string[]);
+    let issued = 0;
+    for (const file of briefFiles.filter((name) => name.startsWith(`${node}-`) && name.endsWith('.json'))) {
+        const entry = await readJson<{ briefs?: unknown[] }>(join(briefsDir, file));
+        issued += entry?.briefs?.length ?? 0;
+    }
+    const unrecorded = issued > rounds.length;
 
     const aboutThePreviousRound = await countAboutThePreviousRound(root, taskId, node, rounds, live);
     return {
@@ -95,6 +104,15 @@ async function countAboutThePreviousRound(
 ): Promise<number> {
     if (rounds.length < 2 || !live) return 0;
     const previous = rounds.at(-2);
+    // **f1 is not fixed here, and this is where it has to be.** The code reads the previous revision's `pathDigests` keys
+    // and calls them "the paths the previous round changed" — but that map is the revision's **owned** paths, so the share is
+    // over ownership rather than over what changed, wrong in both directions: a declared path that did not change counts, and
+    // a changed path outside the declaration does not. `revisionChangeSurface` exists for this and is what the gate uses.
+    //
+    // I tried it and could not pin it: the fixture writes revision files that `readTaskRevision` does not resolve, so the
+    // change surface came back empty and the case reported 0 where it expects 2. Rather than commit a half-applied fix, the
+    // attempt is reverted and recorded — the next attempt starts from "make `readTaskRevision` find the fixture's revisions",
+    // which is a fixture problem rather than a logic one.
     const previousRevision = await readJson<{ pathDigests?: Record<string, string> }>(
         join(kataDir(root), 'tasks', taskId, 'revisions', `${previous?.revisionId}.json`),
     );
