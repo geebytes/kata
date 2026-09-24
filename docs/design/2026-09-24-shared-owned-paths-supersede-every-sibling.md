@@ -68,3 +68,23 @@ I proposed narrowing the declarations as the only option that removes the cause.
 **And one change is nearly free.** `wiring-coverage-check` declares 11 paths and exactly one drifted — `tests/unit/unpinned-repairs.test.ts`, which I edited today for another change. Its surface is otherwise its own: `scripts/wiring-check.mjs`, `src/quality/wiring-check.ts`, its five test files and two design docs. It is one re-seal from being current, and its six obligations are then answerable.
 
 **The residual collision is a shared test file.** `tests/unit/unpinned-repairs.test.ts` is declared by both `wiring-coverage-check` and `kata-gate-surface` and drifted for both, so whichever re-seals second supersedes the first — unless that path is assigned to exactly one of them. That is the general shape of the fix: **each shared path assigned to one change, not removed from all**, because a path declared by nobody is a path whose edits no revision measures.
+
+## Why the narrowing was proposed, measured, and then not applied
+
+I recorded a scope decision for `closure-gate` removing four paths — `src/cli/matrix.ts` (another change's subject) and `src/cli/ops.ts`,
+`src/core/schema.ts`, `src/quality/repair-obligations.ts` (plumbing the active change owns) — and **did not apply it**, because applying
+it trades away something worse than the collision.
+
+**A declaration is what a revision certifies.** `closure-gate`'s acceptance criteria are about the falsification machinery, and
+`src/quality/repair-obligations.ts` and `src/workflow/seal-preflight.ts` are that machinery. Narrowing the declaration so its revision
+covers fewer paths does not make the change independent of those paths; it makes its evidence cover less than its claim and then report
+`current`. That is this line's own defect class wearing a new coat: a revision whose declaration reads narrower than what its criteria
+are about, reported as current.
+
+So the two goals cannot both hold — *"each shared path assigned to one change"* and *"a change declares what it must certify"* — and
+the second is the one a gate may not give up. The collision is therefore not a declaration problem at all; it is a concurrency
+problem, and its fix is that **one change's cycle runs at a time, with no other change's edits landing in between**, which is the
+serialization already recorded rather than a declaration edit.
+
+The scope decision stays unapplied in the record, with its reason, because a decision that was thought through and rejected is worth
+more than one that was never made.
