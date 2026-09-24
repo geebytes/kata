@@ -306,12 +306,25 @@ If Judge returns FAIL for any acceptance criterion:
 
 2. **Fix only the scoped files** — Judge reports which acceptance criteria failed. Don't touch unrelated code. Unrelated changes will be rejected by `enforceRepairScope`.
 
-3. **Rebuild** — first repair and test the scoped implementation, then collect fresh evidence:
+3. **Fix every open finding in one revision, then seal once.** A seal mints a revision, and a revision invalidates the review
+   record that produced the findings — so **sealing after each finding buys a round per finding**. Measured: `closure-gate` had five
+   review rounds and could not close one of them; with its repairs batched into one revision and a record the gate would admit, it
+   needed two. The batch closes when its findings are answered, and each finding now names the class it belongs to
+   (`classInstances`) and what its repair will touch (`impact`), so one revision can answer all of them.
+
+4. **The repair is made by a session that did not write the code the finding is about.** That is the whole reason the repair layer
+   exists: measured on this line, seven of the tests written during repairs could not fail, two repairs fixed one instance of a
+   class with several, and every one of those was written by the author whose blind spot the review round exists to find. Dispatch
+   the repair to a fresh session — `.pi/agents/kata-implementer.md` is one, with write access confined to a scratch copy — and
+   **record who made it**: `kata-cli repair-author record --change <taskId> --finding <id> --session <s> --handed <h> --report <r>`.
+   A repair whose record cannot say who made it is the shape this layer exists to remove.
+
+5. **Rebuild** — first repair and test the scoped implementation, then collect fresh evidence:
    ```bash
    kata-cli build --change <taskId> --seal
    ```
 
-4. **Re-verify**:
+6. **Re-verify**
    ```bash
    kata-cli verify --change <taskId>
    ```
