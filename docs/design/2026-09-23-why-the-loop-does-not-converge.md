@@ -70,3 +70,44 @@ author the round exists to check. Three of those four are now built or half-buil
 
 **What to stop doing**: running the expensive instrument five times on one change. The mechanical gates are free, they catch the
 same class, and they should run **before** the first round rather than after the fifth.
+
+## Why the rounds appear, with the causes separated and measured
+
+Three sources, and only one of them is the work:
+
+| source | mechanism | evidence |
+|---|---|---|
+| **1. Structural — unavoidable** | a repair changes content → the revision changes → the review record is `stale_revision` → a new round is required | by design; a review of content that no longer exists concludes nothing |
+| **2. Inflationary — pure waste** | **the gate refuses the record as `incomplete` for a condition the brief never stated** | **seven records across two changes, zero admitted** |
+| **3. Regenerating — the author's** | the repair introduces the class it removes | round N+1's findings are about round N's repairs; **seven decorative checks caught** |
+
+### Layer 2 is the largest, and it is a briefing defect
+
+The gate refuses a record when a path in its remit is not named by any hypothesis's `targets`. **The brief never said so**: no
+occurrence of "every path", "each path", "must be claimed", "remit", "uncovered" or "incomplete" anywhere in its 35,038
+characters. So every reviewer on this line was judged by a condition it had not been given, and **each refusal cost a round** —
+seven of them, at 350–660K tokens each.
+
+I had been adding the requirement by hand to each dispatch prompt, which is why the later rounds got closer without ever being
+admitted. **It is now in the brief**, next to the record's required shape, with the reason and the instruction to check `targets`
+against the remit before writing.
+
+### Layer 3 is the repair's, and the answer to "is it the previous round's repair plan?"
+
+**Partly, and the three causes are measured**: the repair is written by the same author whose blind spot the round exists to find;
+it fixes an instance rather than the class (`wcc2-f1` and `kgs3-f3` are both "the repair was applied to one derivation of a
+concept that has several"); and its test is written to pass rather than to fail — **seven decorative checks, caught by the
+falsifier mechanism rather than by reading.**
+
+**But the round count is not mainly the repairs' fault.** `closure-gate` had five rounds and could not close one of them; with a
+record the gate would admit and repairs batched into one revision, that change needed two.
+
+### So how to reduce the rounds
+
+1. **Make the record admissible** — the brief states what the gate checks. *Done, and it is one paragraph.*
+2. **Batch the repairs** — one revision for a batch of findings, not one per finding. *The mechanism exists; `closure-gate`'s
+   batches were never closed.*
+3. **Keep the repair and the falsifier requirements** — they caught seven decorative checks and are the only reason the repair
+   layer is visible at all.
+4. **Do not add a round limit as the primary lever.** It caps the tail; it does not remove the two causes above, and it trades
+   quality for cost. It belongs after 1–3, not instead of them.
