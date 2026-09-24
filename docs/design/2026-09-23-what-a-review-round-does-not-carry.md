@@ -131,3 +131,36 @@ five findings were about round 3's repairs — but the *number* I kept quoting w
 better understood than it was. What remains true is the qualitative statement, measured by reading the findings: **each round's
 findings are about the previous round's repairs.** What does not remain is a number for it, and the tool now needs a pair of
 rounds on *different* revisions to produce one.
+
+## The delta round measured: the remit narrowed 64% and the cost rose 27%
+
+The first delta round this line has ever run, on `repair-by-another-author`, against the cold round before it on the same change:
+
+| | cold (round 1) | delta (round 2) | change |
+|---|---|---|---|
+| **tokens** | **351,864** | **445,709** | **+27%** |
+| tool uses | 72 | 62 | −14% |
+| brief | 17,587 chars | 35,038 chars | +99% |
+| **remit** | **11 paths** | **4 paths** | **−64%** |
+
+**The remit is what the lever was supposed to narrow, and it narrowed by two thirds. The cost went up.** So the 2.5–2.7× estimate does
+not reproduce here, and the reason is the equation measured earlier on this line rather than a surprise: **the cost is turns ×
+accumulated context, and the brief grew by 99% because it carries the previous round's findings and dispositions.** The remit
+decides *what is read*; the brief and the transcript decide *how much is re-read* — and the second term is the larger one.
+
+**And the round itself said so, which is worth more than my own reading of it.** `rba-f9` (major) states that the delta scope this
+round was issued with is not the revision's change surface, and challenges the design doc's claim that the lever's precondition is
+met. **The claim was mine and it was premature**: a delta scope existed, which is what I verified, and a delta scope that narrows
+the remit does not by itself reduce the cost — which is what I asserted next without measuring.
+
+**What the delta round did buy, and it is real**: 62 tool uses against 72, on a quarter of the paths — so the round read less of the
+change and spent its budget on the repair. **What it did not buy is tokens**, and the tokens are what the goal is stated in.
+
+### And the honest state of the lever, after this
+
+- **The precondition** (a closed batch with a base that differs from the current revision) **is now reachable** — that part was
+  real and is verified.
+- **The 2.5–2.7× estimate came from a hypothesis-scoped round in an earlier experiment**, not from a narrower remit. This round is
+  the first evidence that the two are not the same thing, and it points the other way.
+- **The term that would move the number is the brief's growth and the transcript's replay**, neither of which a delta scope
+  touches.
