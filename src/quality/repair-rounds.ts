@@ -55,11 +55,24 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
         recordedAt: String(record.createdAt ?? ''),
     });
     const rounds = history.map(toRound);
-    // **A round is a record, not a revision.** The first version deduped the live record by `revisionId`, and two rounds can
-    // run on the same revision — round 4 and round 5 of the change this was written from did — so it reported three rounds
-    // where four left records. Identity is the record: its revision and when it was made.
-    const key = (round: ReviewRound) => `${round.revisionId}@${round.recordedAt}`;
-    if (live && !rounds.some((round) => key(round) === key(toRound(live)))) rounds.push(toRound(live));
+    // **A round is a record, not a revision** — the first version deduped by `revisionId` alone and two rounds can run on
+    // one revision, so it reported three rounds where four left records. **And the second version's key — `revisionId@createdAt`
+    // — is not unique either**, measured: `.kata/tasks/repair-by-another-author/adversarial-review-history.json` held
+    // `revision-daf33fefeb9f0bff @ 2026-09-23T13:45:00.000Z` while the live record was
+    // `revision-becb49c9303042ca @ 2026-09-23T13:45:00.000Z` — the *same* `createdAt`, a different revision, because a record
+    // is written with the timestamp of the pass it *replaces*. So three unequal keys for two recorded passes, in an order that
+    // was not oldest-first, and the share below took its base from the wrong entry.
+    //
+    // Identity is now the whole record, compared as a value: two records are the same round when every field matches. That is
+    // weaker than a hash and stronger than a key assembled from two fields that can each coincide — the failure the two earlier
+    // versions shared was assuming a pair of fields identifies a record.
+    const fingerprint = (record: Record<string, unknown>) => JSON.stringify(
+        Object.keys(record).sort().map((field) => [field, record[field]]),
+    );
+    const seen = new Set(history.map(fingerprint));
+    if (live && !seen.has(fingerprint(live))) rounds.push(toRound(live));
+    // Ordered oldest-first by when the record says it was made, which is what `rounds.at(-2)` below assumes.
+    rounds.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
 
     // A round that left no record is invisible here, so the briefs are what say whether every attempt is accounted for.
     // **A round is a brief issued, and a record is a round that left something behind.** The first version asked whether the

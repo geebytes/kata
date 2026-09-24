@@ -144,3 +144,36 @@ describe('a round that produced nothing is reported rather than papered over', (
         expect(report.unrecorded).toBe(true);
     });
 });
+
+/**
+ * A round is ordered by when it was *made*, and a record carries the timestamp of the pass it *replaces*.
+ *
+ * Measured on `repair-by-another-author`: `adversarial-review-history.json` held
+ * `revision-daf33fefeb9f0bff @ 2026-09-23T13:45:00.000Z` while the live record was
+ * `revision-becb49c9303042ca @ 2026-09-23T13:45:00.000Z` — the live record inherits the *old* timestamp because it replaced that
+ * record. Two recorded passes, an order that was not oldest-first, and `rounds.at(-2)` then took the share's base from an entry
+ * the live record was never measured against: numerator and denominator belonged to different rounds.
+ *
+ * A key built from `revisionId@createdAt` does not collide on that pair (the revisions differ) — which is why the first version
+ * of this case could not fail. What the pair breaks is the **ordering**.
+ */
+describe('a round is ordered by when it was made, not by the timestamp it inherited', () => {
+    it('keeps a later round last even when it carries an earlier createdAt than its predecessor', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        // A round at 01:10, and the live round that replaced the one from 13:45 the day before.
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-a', createdAt: '2026-09-24T01:10:00.000Z', findings: [{ id: 'f1' }] },
+        ]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
+            { revisionId: 'revision-b', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f2' }] },
+        ));
+        const report = await reportRounds(root, 't');
+        expect(report.rounds).toHaveLength(2);
+        // Ordered by what the record says it was made at, so the 13:45 record sorts first and 01:10 is the latest round.
+        expect(report.rounds.at(-1)?.revisionId).toBe('revision-a');
+    });
+});
