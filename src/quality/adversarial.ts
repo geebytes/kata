@@ -8,6 +8,7 @@ import type { EvidenceEnvelope } from './evidence.js';
 import type { TaskRecord } from '../core/task.js';
 import type { TaskRevision } from '../workflow/revision.js';
 import { isTerminalSeverity } from './finding-lifecycle.js';
+import type { FindingReproduction } from './reviewer.js';
 import {
     requiredCapabilitiesForNode,
     verifyExecutionReceipt,
@@ -86,6 +87,11 @@ export interface AdversarialFinding {
      * type is a field the transport can drop without anything failing — which is what `track()` did (`rba8-f1`).
      */
     impact?: string;
+    /**
+     * How a review confirmed the finding, when a review recorded it and an adversarial pass carried it forward. Declared here for
+     * the same reason the three above are: a field absent from the type is a field a by-name transport drops silently (`rba10-f3`).
+     */
+    reproduction?: FindingReproduction;
     classInstances?: string[];
     falsifier?: string;
     dispositionReason?: string;
@@ -1001,6 +1007,20 @@ async function persistDeliveredFacts(
 }
 
 export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
+    // **The record and its history are written under the task lock** (`rba10-f4`): they are the artefact this change exists to make
+    // trustworthy, and they were the one pair of files in a task written outside it while the dispositions stored beside them were
+    // written inside. The lock is taken around the whole read-modify-write, because the sequence the history depends on —
+    // read the record being replaced, append it, write both — is exactly what a concurrent writer interleaves.
+    const { withTaskLock } = await import('../core/state.js');
+    // **The delivered facts are persisted before the lock is taken**, because their producer takes the same lock
+    // (`recordDeliveredFact` → `mutateTaskArtefact` → `withTaskLock`) and re-entry is refused. Measured when `rba10-f4`'s fix
+    // moved this write under the lock: the inner call was refused, `persistDeliveredFacts`'s `.catch(() => undefined)` swallowed
+    // it, and a pass that delivered a fact recorded none — a lock re-entry reading as "nothing was delivered".
+    await persistDeliveredFacts(root, taskId, record.deliveredFacts, record.createdAt ?? new Date().toISOString());
+    return withTaskLock(root, taskId, async () => writeAdversarialRecordLocked(root, taskId, record));
+}
+
+async function writeAdversarialRecordLocked(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
     // The policy is stamped, not accepted from the caller: a pass that ran under a different one is a different pass,
     // and the gate reads this field. It is stamped **in place** rather than through a spread, because the carry-forward
     // below reassigns `findings` on this object and the written copy has to be that same object.
@@ -1017,10 +1037,8 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
     }
     const validated = validate<AdversarialRecord>('adversarial-review', record);
     const path = adversarialReviewPath(root, taskId, record.node);
-    // The producer for the delivered-fact ledger, in the single write path rather than beside each caller: a producer that
-    // lives next to its callers is one of them will forget. The hashes are taken here, from the content, so a pass cannot
-    // assert what a file contains — only that it read it.
-    await persistDeliveredFacts(root, taskId, validated.deliveredFacts, validated.createdAt ?? new Date().toISOString());
+    // The producer for the delivered-fact ledger lives in the single write path rather than beside each caller — see
+    // `writeAdversarialRecord`, which calls it before taking the lock this function runs under.
     // AC-6. The node record is a **single slot**, so the pass that writes last decides what is still open — and a finding
     // the next pass does not re-raise disappears, which is what `wcc3-f8` measured (the current record's open set was the
     // base's, and two findings raised between the seals were gone from every source the seal reads). A pass's record is

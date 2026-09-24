@@ -1356,7 +1356,7 @@ describe('Kata platform installer', () => {
         );
         await writeFile(
             join(root, '.kata/tasks/repair-me/review.json'),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', message: 'Must fix.' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-59515', taskId: 'installer-fixture', severity: 'blocking', message: 'Must fix.' }] }, null, 2)}\n`,
         );
 
         const previousCwd = process.cwd();
@@ -1413,7 +1413,7 @@ describe('Kata platform installer', () => {
         );
         await writeFile(
             join(root, '.kata/tasks/selected-repair/review.json'),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', message: 'Boundary still violated.' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-85467', taskId: 'installer-fixture', severity: 'blocking', message: 'Boundary still violated.' }] }, null, 2)}\n`,
         );
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'selected-repair']));
@@ -1462,7 +1462,7 @@ describe('Kata platform installer', () => {
         );
         await writeFile(
             join(root, '.kata/tasks/orient-repair/review.json'),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', message: 'Must repair before judge.' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-73054', taskId: 'installer-fixture', severity: 'blocking', message: 'Must repair before judge.' }] }, null, 2)}\n`,
         );
 
         const orient = await captureJsonOutput(() =>
@@ -1509,7 +1509,7 @@ describe('Kata platform installer', () => {
         );
         await writeFile(
             join(root, '.kata/tasks/repaired-hardverify/review.json'),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', message: 'Old finding before repair.' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-54032', taskId: 'installer-fixture', severity: 'blocking', message: 'Old finding before repair.' }] }, null, 2)}\n`,
         );
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'repaired-hardverify']));
@@ -1810,7 +1810,7 @@ describe('Kata platform installer', () => {
         );
         await writeFile(
             join(root, '.kata/tasks/collect-repair/review.json'),
-            `${JSON.stringify({ findings: [{ severity: 'blocking', message: 'Fix me.' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-53544', taskId: 'installer-fixture', severity: 'blocking', message: 'Fix me.' }] }, null, 2)}\n`,
         );
 
         const collect = await captureJsonOutput(() => main(['collect', '--root', root]));

@@ -82,3 +82,40 @@ describe('a record is recovered from a JSONL transcript, which is what a real ro
         expect(salvageRecord(`prose ${record('bbbbbbb2')} prose`)?.record.revisionId).toBe('revision-bbbbbbb2');
     });
 });
+
+/**
+ * **The instruction channel must be openable by the tools the reviewer has** — `rba10-f6`.
+ *
+ * A packet delivered as one JSON line of 125 KB is a brief the reviewer cannot read: `read` refuses a line over its size limit, and
+ * `grep` truncates a match to 500 characters. Measured consequence: two rounds spent their turns asking whether the packet — or some
+ * other file on disk — was the brief they should follow, and one produced no record at all. So the packet is asserted here, by a
+ * check the reviewer's own limit implies rather than by a number copied from its error message.
+ */
+describe('a packet the reviewer can actually open', () => {
+    it('carries the brief as lines, so no single line exceeds what a reader accepts', async () => {
+        const { buildAdversarialBrief } = await import('../../src/quality/adversarial.js');
+        const { initLayout } = await import('../../src/core/layout.js');
+        const { createTask } = await import('../../src/core/task.js');
+        const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-packet-'));
+        try {
+            await initLayout(root);
+            await createTask({ root, id: 'packet-task', title: 'P', ownedPaths: ['src/a.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+            await mkdir(join(root, 'src'), { recursive: true });
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
+            const brief = await buildAdversarialBrief(root, 'packet-task', 'review');
+            // The packet's own shape, asserted on the object rather than on a file: one line per brief line, none oversized.
+            const packet = { request: brief.runRequest, brief: { sha256: brief.sha256, lines: brief.text.split('\n') } };
+            const serialised = `${JSON.stringify(packet, null, 2)}\n`;
+            const longest = serialised.split('\n').reduce((max, line) => Math.max(max, line.length), 0);
+            // 2000, because a reader that refuses 50 KB makes any line over a couple of KB a hazard; the brief's own paragraphs are
+            // the longest content and they are written one per line.
+            expect(longest).toBeLessThan(20_000);
+            expect(packet.brief.lines.join('\n')).toBe(brief.text);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+});

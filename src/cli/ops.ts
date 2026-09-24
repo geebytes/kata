@@ -343,11 +343,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             // The packet a round is run from: the request, and **verbatim** the brief it names. Emitting the request
             // alone left a host unable to feed the session the material its own `briefSha256` refers to, which made
             // reading kata's private state the only alternative — the dependency K2 exists to remove.
-            await writeFile(
-                emitRequest,
-                `${JSON.stringify({ request: brief.runRequest, brief: { sha256: brief.sha256, text: brief.text } }, null, 2)}\n`,
-                'utf8',
-            );
+            //
+            // **A brief's text is written as its own lines, not as one JSON string** (`rba10-f6`): the reviewer's tools are
+            // read/grep/find/ls, `read` refuses a line over its size limit, and `grep` truncates a match to 500 characters — so
+            // a JSON-encoded brief of 125 KB is a brief the reviewer **cannot read**, which is why two rounds spent their turns
+            // asking whether the packet or some other file on disk was theirs. The line array keeps the packet JSON while making
+            // every line of the instruction channel openable.
+            const packet = { request: brief.runRequest, brief: { sha256: brief.sha256, lines: brief.text.split('\n') } };
+            await writeFile(emitRequest, `${JSON.stringify(packet, null, 2)}\n`, 'utf8');
         }
         const { reverificationCostFor } = await import('../quality/adversarial.js');
         return {
@@ -718,7 +721,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const currentRevisionId = currentRevisionForStatus?.id;
         // The fallback is typed from `TrackedFinding` rather than restated, because a restated shape drifts: this one had
         // already lost `impact` before it was added, and would have lost it again.
-        const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as TrackedFinding[]);
+        // See `navigation.ts`: the callee throws on an invalid record and a `.catch` here would turn that back into an empty
+        // list, which is the input `roundMayClose` reads as "nothing to cover" (`rba10-f1`).
+        const trackedForStatus = await readTrackedFindings(root, change);
         // **The termination condition review lacked, reported where the ladder reads.** Measured: `closure-gate` ran five rounds and
         // `repair-by-another-author` seven, every round's findings about the previous round's repairs — because the loop had no state
         // meaning "this is enough". `roundMayClose` is that state: a round may close when every class an open terminal finding names

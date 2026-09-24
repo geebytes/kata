@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
 import { reviewPath, adversarialReviewPath, taskPath } from '../core/layout.js';
-import type { ReviewFinding, ReviewSeverity } from './reviewer.js';
+import type { FindingReproduction, ReviewFinding, ReviewSeverity } from './reviewer.js';
 import type { AdversarialFinding, AdversarialNode } from './adversarial.js';
 import { isTerminalSeverity } from './finding-lifecycle.js';
 
@@ -53,6 +53,13 @@ export interface TrackedFinding {
     classInstances?: string[];
     /** The check that must redden under this defect, so the repair is checkable rather than believed. */
     falsifier?: string;
+    /**
+     * How the review confirmed the finding — the reproduction oracle it ran, or the statement that no declared test could.
+     *
+     * Carried because a transport that copies by name drops what it does not name (`rba10-f3`), and this is the field a reader
+     * deciding whether a finding was *reproduced* needs.
+     */
+    reproduction?: FindingReproduction;
     /** Where the finding lives: `review` for `review.json`, the node name for an adversarial record. */
     /**
      * Which record holds the finding.
@@ -112,9 +119,15 @@ function track(
         // declaration (`TrackedFinding` names the fields) whose transport does not carry them — and it is the *third* time on
         // this line: the status projection's inline restatement had already dropped `impact`, and the delta type's second
         // declaration had silently truncated a field.
+        // **The contract's fields, read from the type rather than listed here.** Adding three spreads fixed the three fields
+        // `rba8-f1` named and left the transport field-by-field, so the class was un-repaired and `reproduction` was already being
+        // dropped (`rba10-f3`) — the same defect with a different field. This list is still explicit, which is the honest state:
+        // a transport that copies by name must be read whenever the contract grows, and the test in
+        // `tests/unit/tracked-finding-transport.test.ts` asserts each field the contract declares.
         ...(finding.impact ? { impact: finding.impact } : {}),
         ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
         ...(finding.falsifier ? { falsifier: finding.falsifier } : {}),
+        ...(finding.reproduction ? { reproduction: finding.reproduction } : {}),
         // The binding a finding was raised under. A finding carries none of its own — it is written into a record, and the
         // record is what says which revision the pass answered — so without this a reader could not tell a finding about
         // the revision in hand from one about the revision before it.

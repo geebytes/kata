@@ -408,12 +408,13 @@ describe('the receipt arrives on its own channel, and the request is handed over
             const dir = adversarialBriefsDir(root, 'receipt-channel');
             const file = (await readdir(dir)).find((name) => name.endsWith('.json'))!;
             const persisted = JSON.parse(await readFile(join(dir, file), 'utf8')) as { briefs: Array<{ runRequest?: unknown; text?: string }> };
-            const packet = JSON.parse(emitted) as { request: unknown; brief: { sha256?: string; text?: string } };
+            // `rba10-f6`: the packet carries the brief as **lines** so a reviewer whose reader refuses a long line can open it.
+            const packet = JSON.parse(emitted) as { request: unknown; brief: { sha256?: string; lines?: string[] } };
             expect(JSON.stringify(packet.request)).toBe(JSON.stringify(persisted.briefs[0]?.runRequest));
             // And the material that request names, so a host can run the round without reading kata's private state.
             // Without it the executor had no brief to feed the session — an ignorant reviewer, which §1.3 is explicit
             // about being worse than a cold one.
-            expect(packet.brief.text).toBe(persisted.briefs[0]?.text);
+            expect((packet.brief.lines ?? []).join('\n')).toBe(persisted.briefs[0]?.text);
             expect(packet.brief.sha256).toBe((packet.request as { briefSha256?: string }).briefSha256);
             expect(packet.brief.sha256).toMatch(/^[0-9a-f]{64}$/);
         } finally {

@@ -207,7 +207,7 @@ describe('workflow guidance', () => {
       );
       await writeFile(
         join(root, '.kata/tasks', taskId, 'review.json'),
-        `${JSON.stringify({ revisionId: 'revision-old', findings: [{ severity: 'blocking' }] }, null, 2)}\n`,
+        `${JSON.stringify({ revisionId: 'revision-old', status: 'pending', findings: [{ id: 'finding-navigation-fixture', taskId, severity: 'blocking', message: 'a stale blocking finding' }] }, null, 2)}\n`,
       );
       await writeFile(
         join(root, '.kata/tasks', taskId, 'verify.json'),

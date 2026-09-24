@@ -182,7 +182,11 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         const { coveredClasses } = await import('../quality/class-coverage.js');
         const { roundMayClose } = await import('../quality/finding-lifecycle.js');
         const { classesOfFindings } = await import('../quality/class-coverage.js');
-        const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId).catch(() => []);
+        // **Not swallowed** (`rba10-f1`): `readTrackedFindings` was changed to throw on an invalid record rather than read it as
+        // an absent one, and then both production callers wrapped the call in `.catch(() => [])` — so a schema-invalid record still
+        // arrived as an empty list and `roundMayClose([])` still returned `mayClose: true`. A swallow at the call site defeats a
+        // throw at the callee, and the verdict is what the caller computes.
+        const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId);
         void classesOfFindings;
         // **A disposition in either store closes the finding**, which is the same rule `repairBriefing` applies: a finding carries
         // an absence in the falsifier ledger while one store still reads `open`, so a closure verdict computed from one store says

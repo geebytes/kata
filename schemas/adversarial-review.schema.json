@@ -492,6 +492,28 @@
               "minLength": 1
             },
             "description": "Where else this same defect exists, as the pass observed it. A finding names one location; the class it belongs to usually has several, and a repair that fixes one instance leaves the rest for the next round to find. Measured cost: two repairs on this line fixed one derivation of a concept with four producers, and each time the next round found the next producer."
+          },
+          "reproduction": {
+            "type": "object",
+            "description": "How the review confirmed the finding, carried forward from the review record so a reader can tell a reproduced finding from one whose test is missing.",
+            "properties": {
+              "findingId": {
+                "type": "string"
+              },
+              "ranChecks": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "missingTest": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "findingId",
+              "missingTest"
+            ]
           }
         }
       }
