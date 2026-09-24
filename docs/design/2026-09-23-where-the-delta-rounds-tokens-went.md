@@ -75,3 +75,31 @@ characters.** The history added to the second round is larger than everything th
 round's hypotheses, their outcomes, and the method that settled each — "for reference rather than re-execution" — and is asked to
 decide which of those conclusions still hold now that four paths changed. **That is reasoning work over prior material, and it is
 where the output side grew**, while the input side (what it actually read) went down.
+
+## The user's point, and it is right: my comparison was confounded
+
+I concluded "remit −64%, tokens +27%, so the delta remit does not reduce cost". **Two variables changed at once** — the remit
+narrowed from 11 paths to 4 **and** the brief grew by 10,742 characters of the previous round's hypotheses — and I attributed the
+whole difference to the first.
+
+Separated, the input side moved the way the narrowing predicts:
+
+| | cold (11 paths) | delta (4 paths) | change |
+|---|---|---|---|
+| input + cacheRead | 1,989,953 | 1,901,753 | **−4.4%** |
+| tool uses | 72 | 62 | **−14%** |
+| tool-result share of content bytes | 29% | 24% | **−5pp** |
+| **per path** (input + cacheRead ÷ paths) | 180,905 | **475,438** | **+163%** |
+
+**So the narrowing does reduce the input side — in absolute terms, −4.4% on 64% fewer paths.** And the last row is the honest
+qualification rather than a refutation: **the history's cost is not per-path.** It is a fixed block that the round must reason over
+regardless of how many paths it covers, so on a four-path remit it dominates, and the more history is carried the worse the
+per-path figure looks.
+
+**Which makes the lever's value conditional rather than nil**: narrowing the remit helps, and how much it helps depends on how
+much fixed material the brief carries alongside it. That is exactly what the running experiment separates — same revision, same
+four paths, the 10,742-character block removed.
+
+**And it means the claim to make is narrower than either of my two versions**: not "it does not reduce cost" (confounded) and not
+"it reduces cost" (unmeasured in isolation), but **"the remit narrowing reduces the input side measurably, and whether that
+survives the brief's fixed history is the measurement in flight."**
