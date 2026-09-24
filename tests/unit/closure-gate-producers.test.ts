@@ -229,3 +229,27 @@ describe('the delta history is limited to the paths that changed', () => {
         expect(source).toContain('if (relevantClaims.size === 0) return (record?.attempts ?? [])');
     });
 });
+
+/**
+ * The delta history is shortened **and says so**.
+ *
+ * The filter alone would have been silent: a reviewer handed six attempts where eleven were recorded would read the list as
+ * complete. Measured after the change: six of eleven attempts are withheld on this change, the block is 253 characters instead of
+ * 10,742, and the brief says which six and why — with an offer of the full list.
+ */
+describe('a shortened history states what it withheld', () => {
+    it('renders the withheld count and the reason', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        expect(source).toContain('attemptsWithheld');
+        expect(source).toContain('further attempt(s) are withheld');
+        expect(source).toContain('Ask for the full list if you need it');
+    });
+
+    it('declares the delta type once, so a field cannot be accepted by one declaration and rejected by another', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        // The restatement is gone: `attemptsWithheld` was rejected by it while the named type accepted it, which is how the
+        // silent version shipped. The status projection's fallback type had drifted the same way, and lost `impact`.
+        expect(source).not.toContain('let delta: { from: string; sinceAt?: string; changedPaths: string[]');
+        expect(source).toContain("let delta: AdversarialBriefInput['delta'] | undefined;");
+    });
+});

@@ -577,6 +577,10 @@ ${(input.delta.attempts ?? []).length > 0
         .map((attempt) => `- ${attempt.hypothesis ?? '(no hypothesis)'} → ${attempt.outcome ?? '(no outcome)'} (${attempt.method ?? 'no method'}${attempt.toolUses === undefined ? '' : `, ${attempt.toolUses} calls`})`)
         .join('\n')
     : '- (none recorded)'}
+${(input.delta.attemptsWithheld ?? 0) > 0
+    ? `- (${input.delta.attemptsWithheld} further attempt(s) are withheld: their hypotheses named no path this delta changed, so`
+        + ' their conclusions do not bear on the repair. Ask for the full list if you need it.)'
+    : ''}
 
 Earlier findings and what was decided about them:
 ${(input.delta.findings ?? []).length > 0
@@ -1300,6 +1304,11 @@ export const BRIEF_VOLATILE_INPUTS = [
  * anyway is reasoning paid on every turn. Measured: removing the whole block from a delta round cut the bill 25% and the reasoning
  * 44%; this keeps the part that bears on the repair.
  */
+function countWithheldAttempts(previous: unknown, changedPaths: string[]): number {
+    const record = previous as { attempts?: Array<Record<string, string>> };
+    return (record?.attempts ?? []).length - selectRelevantAttempts(previous, changedPaths).length;
+}
+
 function selectRelevantAttempts(previous: unknown, changedPaths: string[]): Array<Record<string, string>> {
     const record = previous as { attempts?: Array<Record<string, string>>; hypotheses?: Array<{ claim?: string; targets?: string[] }> };
     const changed = new Set(changedPaths);
@@ -1867,7 +1876,11 @@ export async function buildAdversarialBrief(
 
     // F2: a `--since` brief is a delta brief, and it is only honest when the change surface is knowable. A revision
     // sealed before per-path digests existed yields `delta_unavailable` — the caller is told, never handed a guess.
-    let delta: { from: string; sinceAt?: string; changedPaths: string[]; added: string[]; modified: string[]; removed: string[]; attempts?: Array<Record<string, string>>; findings?: Array<{ id: string; severity: string; message: string; disposition: string }> } | undefined;
+    // **The delta type, declared once.** It existed twice — a named type and this inline restatement — and the two had already
+    // drifted: adding `attemptsWithheld` to the named one was rejected here, because the object literal satisfies whichever
+    // declaration is nearest. A restated shape is a shape that drifts, which is the same defect the status projection's fallback
+    // type had (it had silently lost `impact`). This one is now derived from the named type.
+    let delta: AdversarialBriefInput['delta'] | undefined;
     let deltaReport: { from: string; changedPaths: string[] } | { unavailable: string } | null = null;
     let immutableScope: AdversarialBriefScope = { kind: 'full' };
     // C4: what scope this round gets by default. A batch that just closed leaves a base revision to measure against, and
@@ -1913,6 +1926,9 @@ export async function buildAdversarialBrief(
                     // tells the reviewer; carrying it costs reasoning on every turn. What is withheld is counted rather than
                     // dropped silently, because a shortened list reads as "this is all".
                     attempts: selectRelevantAttempts(previous, surface.changedPaths),
+                    // **Counted, because a shortened list reads as "this is all"** — the same discipline as telemetry that reports
+                    // what it could not measure rather than zero.
+                    attemptsWithheld: countWithheldAttempts(previous, surface.changedPaths),
                     findings: (await readTrackedFindings(root, taskId)).map(({ id, severity, message, disposition }) => ({ id, severity, message, disposition })),
                 };
                 deltaReport = { from: base.id, changedPaths: surface.changedPaths };
