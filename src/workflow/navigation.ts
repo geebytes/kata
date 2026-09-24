@@ -184,8 +184,16 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         const { classesOfFindings } = await import('../quality/class-coverage.js');
         const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId).catch(() => []);
         void classesOfFindings;
+        // **A disposition in either store closes the finding**, which is the same rule `repairBriefing` applies: a finding carries
+        // an absence in the falsifier ledger while one store still reads `open`, so a closure verdict computed from one store says
+        // "may close" about work a briefing would still hand out. One rule, asked in both places.
+        const { readFalsifierReddenings, readFalsifierAbsences } = await import('../quality/falsifier-reddenings.js');
+        const disposed = new Set([
+            ...(await readFalsifierReddenings(root, taskId).catch(() => [])).map((entry) => entry.findingId),
+            ...(await readFalsifierAbsences(root, taskId).catch(() => [])).map((entry) => entry.findingId),
+        ]);
         const open = tracked
-            .filter((finding) => finding.disposition === 'open')
+            .filter((finding) => finding.disposition === 'open' && !disposed.has(finding.id))
             .map((finding) => ({ id: finding.id, severity: finding.severity, ...(finding.classInstances ? { classInstances: finding.classInstances } : {}) }));
         const verdict = roundMayClose(open, CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy })));
         // **The loop's price, beside its termination condition.** Seven recorded rounds cost 351,864 / 658,523 / 347,000 / 400,000 /

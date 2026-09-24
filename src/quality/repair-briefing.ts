@@ -41,6 +41,9 @@ export interface RepairBriefing {
     /**
      * What the previous rounds cost, so the repair author can see the trade in front of it.
      *
+     * **Read from `readUpstreamSummary`'s `roundCost`**, not computed here: one derivation, so the number a repair author sees is the
+     * number `status` reports.
+     *
      * **Measured**: seven rounds on this line cost 351,864 / 658,523 / 347,000 / 400,000 / 875,572 / 510,836 / 1,073,271 tokens and
      * produced 7 / 0 / 5 / 5 / 0 / 7 findings — the two most expensive produced nothing because they never wrote a record, and the
      * cheapest produced seven. A repair that leaves the revision current makes the next round a delta round, which cost 2.5–2.7×
@@ -61,9 +64,20 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
     const task = await readTask(root, taskId).catch(() => null);
     void task;
 
+    // **A finding with a recorded disposition is not open, whichever store says so.** Measured: the cost finding carries an
+    // absence in the falsifier ledger while `review.json` still reads `open`, because a disposition is written into one store and
+    // the other is not told — so a briefing reading one store hands a repair author work that is already done. The rule is the
+    // stricter of the two: anything disposed anywhere is disposed.
+    const disposedInLedger = new Set([
+        ...(await (await import('./falsifier-reddenings.js')).readFalsifierReddenings(root, taskId).catch(() => [])).map((entry) => entry.findingId),
+        ...(await (await import('./falsifier-reddenings.js')).readFalsifierAbsences(root, taskId).catch(() => [])).map((entry) => entry.findingId),
+    ]);
+    const isDisposed = (id: string, disposition?: string): boolean =>
+        disposedInLedger.has(id) || (disposition !== undefined && disposition !== 'open');
+
     const findings: RepairBriefing['findings'] = [];
     for (const finding of tracked) {
-        if (finding.disposition !== 'open') continue;
+        if (isDisposed(finding.id, finding.disposition)) continue;
         if (finding.severity !== 'blocking' && finding.severity !== 'major') continue;
         const classId = classOf[finding.id];
         const entry = CLASS_COVERAGE.find((candidate) => candidate.classId === classId);
@@ -84,7 +98,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         const id = typeof finding.id === 'string' ? finding.id : '';
         if (!id || findings.some((entry) => entry.id === id)) continue;
         const disposition = typeof finding.disposition === 'string' ? finding.disposition : 'open';
-        if (disposition !== 'open') continue;
+        if (isDisposed(id, disposition)) continue;
         const severity = typeof finding.severity === 'string' ? finding.severity : 'minor';
         if (severity !== 'blocking' && severity !== 'major') continue;
         const classId = classOf[id];
@@ -105,13 +119,22 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
     for (const finding of findings) {
         if (finding.classId) counts.set(finding.classId, (counts.get(finding.classId) ?? 0) + 1);
     }
-    const cost = await (await import('./round-cost.js')).reportRoundCost(root, taskId).catch(() => null);
+    // **Read from the report the ladder already carries, rather than computed a second time.** `readUpstreamSummary` computes
+    // `roundCost` and this module computed its own — two derivations of one quantity, which is the class this line spent seven rounds
+    // on, in miniature, inside the module written to consume the fields that class left unconsumed. So this one reads the report.
+    const cost = await (await import('../workflow/navigation.js'))
+        .readUpstreamSummary(root, taskId)
+        .then((summary) => {
+            const reported = (summary as { roundCost?: { totalTokens: number; rounds: number } }).roundCost;
+            return reported ? { totalTokens: reported.totalTokens, rounds: reported.rounds } : null;
+        })
+        .catch(() => null);
     return {
         findings,
         classes: CLASS_COVERAGE
             .filter((entry) => (counts.get(entry.classId) ?? 0) > 0)
             .map((entry) => ({ classId: entry.classId, means: entry.means, instances: counts.get(entry.classId) ?? 0 })),
-        ...(cost && cost.totalTokens > 0 ? { cost: { totalTokens: cost.totalTokens, rounds: cost.rounds.length } } : {}),
+        ...(cost && cost.totalTokens > 0 ? { cost: { totalTokens: cost.totalTokens, rounds: cost.rounds } } : {}),
     };
 }
 
