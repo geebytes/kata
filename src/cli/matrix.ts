@@ -145,6 +145,37 @@ export async function runMatrixCommand(
         }
     }
 
+    // **The fifth correction, and the one that had no path at all.** `ownedPaths` is declared at `open` and nothing could
+    // change it — measured while scoping a change whose every needed file was owned by a *different* change, which makes a
+    // revision `superseded` the moment either moves. Selector, statement and implementation path each got a command; this is
+    // the same gap one field up, and its absence forces the unverifiable write (`task.json` by hand) this platform exists to
+    // remove.
+    const ownedPathsCorrection = valueAfter(argv, '--owned-paths');
+    if (ownedPathsCorrection !== undefined) {
+        const paths = ownedPathsCorrection.split(',').map((path) => path.trim()).filter((path) => path.length > 0);
+        if (paths.length === 0) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: 'An owned-path correction requires a non-empty --owned-paths (comma-separated for several).' };
+        }
+        try {
+            const task = await readTask(root, change);
+            const previousPaths = [...(task.ownedPaths ?? [])];
+            // Normalized through the same root-relative resolver `open` uses, so an absolute path or one escaping the root is
+            // refused here for the reason it is refused there.
+            const { normalizeOwnedPaths } = await import('../workflow/revision.js');
+            const normalized = normalizeOwnedPaths(root, paths);
+            if (normalized.length === 0) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: 'An owned-path correction must name at least one path that is inside the repository.' };
+            }
+            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
+                const current = JSON.parse(raw) as Record<string, unknown>;
+                return `${JSON.stringify({ ...current, ownedPaths: normalized }, null, 2)}\n`;
+            });
+            return { command: 'matrix', taskId: change, action, updated: true, reason, ownedPaths: normalized, previousPaths };
+        } catch (error) {
+            return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
     if (!acceptanceId) {
         return { command: 'matrix', taskId: change, action, updated: false, error: 'A matrix correction requires --acceptance <AC-id>.' };
     }
