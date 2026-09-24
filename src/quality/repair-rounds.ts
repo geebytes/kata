@@ -29,7 +29,8 @@ export type RoundReport = {
      * carry targets and a hypothesis does. The first version divided this by the finding count, which mixed two units and
      * reported a share of 14 on real data.
      */
-    targetsAboutThePreviousRound: number;
+    /** Null when the change surface could not be derived — not zero, which would be a measured answer. */
+    targetsAboutThePreviousRound: number | null;
     /** The share of the latest round's targets that are about the previous round's changes. */
     shareAboutThePreviousRound: number | null;
     /** True when the rounds do not account for every brief issued — a round that produced nothing. */
@@ -79,9 +80,10 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
         node,
         rounds,
         targetsAboutThePreviousRound: aboutThePreviousRound,
-        shareAboutThePreviousRound: live
-            ? aboutThePreviousRound / Math.max(1, allTargets(live))
-            : null,
+        // Both null together, because a share needs a numerator: reporting a share over an unavailable count is the defect.
+        shareAboutThePreviousRound: aboutThePreviousRound === null || !live
+            ? null
+            : aboutThePreviousRound / Math.max(1, allTargets(live)),
         unrecorded,
     };
 }
@@ -101,8 +103,8 @@ async function countAboutThePreviousRound(
     node: string,
     rounds: ReviewRound[],
     live: Record<string, unknown> | null,
-): Promise<number> {
-    if (rounds.length < 2 || !live) return 0;
+): Promise<number | null> {
+    if (rounds.length < 2 || !live) return null;
     const previous = rounds.at(-2);
     // **The change surface, not the owned-path manifest** (f1). The first version read the previous revision's
     // `pathDigests` keys and called them "the paths the previous round changed" — but that map is the revision's **owned**
@@ -116,9 +118,13 @@ async function countAboutThePreviousRound(
     const { revisionChangeSurface } = await import('./revision-delta.js');
     const base = await readTaskRevision(root, taskId, previous?.revisionId ?? '').catch(() => null);
     const current = await readTaskRevision(root, taskId, String(live.revisionId ?? '')).catch(() => null);
-    if (!base) return 0;
+    if (!base) return null;
     const delta = revisionChangeSurface(base, current);
-    const changed = new Set(delta.status === 'available' ? delta.changedPaths : []);
+    // **`null` when the derivation could not answer, and `0` only when it did and the answer is none** (rba-f10). The
+    // first version returned 0 for both, so a share of 0.000 was reported for a question the tool had no way to answer — the
+    // same defect as a measured zero standing in for an unmeasured one, which this line has recorded twice already.
+    if (delta.status !== 'available') return null;
+    const changed = new Set(delta.changedPaths);
     if (changed.size === 0) return 0;
 
     const hypotheses = Array.isArray(live.hypotheses) ? (live.hypotheses as Array<{ targets?: string[] }>) : [];
