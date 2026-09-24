@@ -138,3 +138,22 @@ uses, so it was not idle; it ended without a record.
 **So this experiment establishes the cost half and not the quality half**: removing the history makes a delta round 25% cheaper, and
 **whether it makes it worse is unmeasured** — the one round that would have said so returned nothing. **Stated as such rather than
 claimed either way**: the cost lever is measured, and the quality question is open, with one failed observation.
+
+## Two corrections from trying to compress the class section
+
+**1. The findings do carry a path, and I said they did not.** I concluded from a 22% reduction that "a finding carries a `path`
+only when the pass knew which file it was about". Counted: `repair-by-another-author` 6/6, its history 7/7, `closure-gate` 2/2 and
+its history 17/17 — **every finding carries a path.** So the filter withheld four because four were about unchanged paths, which is
+correct behaviour rather than a data gap. **The wrong claim is withdrawn.**
+
+**2. And the class section's filter withheld nothing, which does not add up.** I applied the same filter to
+`## Findings by class`'s "open findings in full" — with 17+ findings against a four-path delta, most should have been withheld and
+a note should have rendered. It rendered nothing and the section grew by 1,970 characters, entirely my own explanatory prose.
+
+**So it is reverted rather than kept**: a filter that adds 1,970 characters and removes nothing is the decorative mechanism this
+line has spent a whole change removing, and keeping it "because it will help later" is how a brief grows while a measurement says
+it should shrink.
+
+**And the "withheld nothing" is left as an open question rather than a conclusion.** The candidate explanations are that the filter
+did not run — `input.delta?.changedPaths` reaching it as undefined — or that the class section's history is filtered upstream
+before it arrives. Either is checkable in one read, and I did not have the budget to check it before writing this.
