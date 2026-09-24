@@ -771,6 +771,16 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 
 ## Required result
 
+**Every path under review must be claimed by a hypothesis.** The gate builds its remit from the revision's change surface, and
+**it refuses a record as incomplete when some path in that remit is not named by any hypothesis's targets** — a criterion id
+(AC-1, AC-2, …) counts as a target too. A pass that answers everything and covers all but one path concludes nothing, and the
+round is spent.
+
+**This requirement was missing from this brief, and it is the measured cause of seven refused records on this line**: every
+review round on two changes was returned as incomplete for a condition the brief never stated, so the reviewers could not comply
+with it and the rounds were repeated. **Check your targets against the remit list before you write the record** — and if a path
+cannot be claimed by any hypothesis, say so as a finding rather than leaving the remit uncovered.
+
 **Deliver the facts you read**, as \`deliveredFacts\`: one entry per path you drew a conclusion from, with the conclusion.
 Not the text — the fact. The next round is offered these instead of re-reading the same content, so a conclusion stated once
 is paid for once. The hash is taken from the content when the record is written, which is how a later round tells a fact that

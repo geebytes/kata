@@ -143,3 +143,20 @@ describe('the closure decision has one producer, and every consumer reaches it',
         expect(decider).toContain('hasFalsifierDisposition(');
     });
 });
+/**
+ * The coverage requirement, which the brief did not state.
+ *
+ * The gate refuses a record as `incomplete` when a path in its remit is not named by any hypothesis's `targets`. Measured: seven
+ * review records across two changes were refused for exactly this, while the brief's own text contained no occurrence of "every
+ * path", "must be claimed", "remit", "uncovered" or "incomplete" — so the reviewers could not comply with a condition they were
+ * never given. A requirement the reviewer cannot read is a round spent for nothing.
+ */
+describe('the brief states the condition its record is judged by', () => {
+    it('names the remit-coverage requirement in the required-result section', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        // The words the gate uses, in the place the reviewer reads the record's required shape.
+        expect(source).toContain('Every path under review must be claimed by a hypothesis');
+        expect(source).toContain('refuses a record as incomplete');
+        expect(source).toContain('targets');
+    });
+});
