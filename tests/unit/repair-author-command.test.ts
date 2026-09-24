@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
+import { giveDisposition } from '../helpers/disposition.js';
 import { runRepairAuthorCommand } from '../../src/cli/repair-author.js';
 
 const roots: string[] = [];
@@ -31,6 +32,9 @@ async function workspace(): Promise<string> {
 describe('the repair-author command produces and consumes the provenance record', () => {
     it('records a report and reads it back, from the command rather than from a test', async () => {
         const root = await workspace();
+        // A disposition is a precondition of a repair author, not an optional companion: the write consumes the falsification
+        // rule, so a repair has to have been shown to work before anyone can be recorded as having done it.
+        await giveDisposition(root, 'c-task', 'f-1');
         const previous = process.cwd();
         process.chdir(root);
         try {

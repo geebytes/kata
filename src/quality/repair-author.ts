@@ -14,6 +14,7 @@
 import { join } from 'node:path';
 import { kataDir } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
+import { hasFalsifierDisposition, readFalsifierAbsences, readFalsifierReddenings } from './falsifier-reddenings.js';
 
 export type RepairAuthorRecord = {
     findingId: string;
@@ -24,6 +25,18 @@ export type RepairAuthorRecord = {
     /** What the author returned: the changes, the falsifier it ran, or why none exists. */
     report: string;
     recordedAt: string;
+    /**
+     * **The disposition this repair consumed** — a reddening this finding has, or a recorded absence carrying a reason.
+     *
+     * AC-2 says the repair author's disposition *follows the rule the falsification mechanism established and consumes it rather
+     * than restating it*, and until now nothing joined a repair to a disposition at all: `repair-author.ts` did not import the
+     * ledger, the entry had no field for it, and no code compared the two by `findingId`. So the criterion's claim was about a
+     * link that did not exist — `rba4-f2` measured it, and calls this the change's headline claim being asserted by no criterion.
+     *
+     * Recorded as the *shape* of what closed it rather than as a copy of the rule: a repair whose disposition is missing is
+     * refused at the write, so a provenance record can never describe a repair that was not shown to work.
+     */
+    disposition: 'reddening' | 'absence';
     /** Stated, not hidden: this is provenance, not proof of independence. */
     ceiling: string;
 };
@@ -49,11 +62,23 @@ export async function readRepairAuthors(root: string, taskId: string): Promise<R
 export async function recordRepairAuthor(
     root: string,
     taskId: string,
-    repair: Omit<RepairAuthorRecord, 'recordedAt' | 'ceiling'> & { recordedAt?: string },
+    repair: Omit<RepairAuthorRecord, 'recordedAt' | 'ceiling' | 'disposition'> & { recordedAt?: string },
 ): Promise<RepairAuthorRecord> {
     const { mutateTaskArtefact } = await import('../core/state.js');
+    // **The rule is consumed, not restated.** The ledger decides whether this repair has a disposition, and the same function
+    // the closure criterion asks is the one asked here — a second copy of "the repair is done" is the class this line has spent
+    // a change removing. A repair with no disposition is refused rather than recorded: provenance that cannot say the repair was
+    // shown to work is provenance for something that may not have happened.
+    const [reddenings, absences] = await Promise.all([
+        readFalsifierReddenings(root, taskId).catch(() => []),
+        readFalsifierAbsences(root, taskId).catch(() => []),
+    ]);
+    if (!hasFalsifierDisposition(reddenings, absences, repair.findingId)) {
+        throw new Error(`repair-author record: '${repair.findingId}' has no recorded disposition — a falsifier shown reddening, or an absence carrying a reason. Record that first (\`kata-cli falsify\`): a repair whose disposition is missing has not been shown to work, and a provenance record for it would say who made a repair nobody can check.`);
+    }
     const entry: RepairAuthorRecord = {
         ...repair,
+        disposition: reddenings.some((reddening) => reddening.findingId === repair.findingId) ? 'reddening' : 'absence',
         recordedAt: repair.recordedAt ?? new Date().toISOString(),
         ceiling: CEILING,
     };

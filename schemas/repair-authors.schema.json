@@ -5,24 +5,64 @@
   "description": "Who made a repair and what they were handed. Provenance rather than proof of independence: the ceiling is recorded in each entry rather than hidden.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repairs", "updatedAt"],
+  "required": [
+    "repairs",
+    "updatedAt"
+  ],
   "properties": {
     "repairs": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["findingId", "session", "handed", "report", "recordedAt", "ceiling"],
+        "required": [
+          "findingId",
+          "session",
+          "handed",
+          "report",
+          "recordedAt",
+          "ceiling",
+          "disposition"
+        ],
         "properties": {
-          "findingId": { "type": "string", "minLength": 1 },
-          "session": { "type": "string", "minLength": 1 },
-          "handed": { "type": "string", "minLength": 1 },
-          "report": { "type": "string", "minLength": 1 },
-          "recordedAt": { "type": "string", "minLength": 1 },
-          "ceiling": { "type": "string", "minLength": 1 }
+          "findingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session": {
+            "type": "string",
+            "minLength": 1
+          },
+          "handed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "report": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recordedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ceiling": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "reddening",
+              "absence"
+            ],
+            "description": "The disposition this repair consumed, recorded as its shape rather than as a copy of the rule: the write refuses a repair whose finding has no disposition, so a provenance record can never describe a repair that has not been shown to work."
+          }
         }
       }
     },
-    "updatedAt": { "type": "string", "minLength": 1 }
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    }
   }
 }
