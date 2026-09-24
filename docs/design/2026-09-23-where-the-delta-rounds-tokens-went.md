@@ -50,3 +50,28 @@ sessions. **So the dominant term is not replay-at-full-price; it is cache reads 
   and compare reasoning tokens.
 - **And the metric this line has been reporting is the wrong one.** `input + output` excludes 80–84% of the bill. Every cost claim
   on this line should be restated in billed tokens, and the ones that are not are not comparable.
+
+## What the brief is, and what "its history" is
+
+The brief is the reviewer's **entire instruction set** — a rendered document, persisted at
+`.kata/tasks/<id>/adversarial-briefs/<node>-<revision>.json` and handed over as `brief.text` in the packet. It is the answer to
+"a review without a checklist is only an ignorant review": what the change is, the acceptance contract and each criterion's check,
+the evidence the author recorded, the sealed evidence it may read instead of re-running, where to start reading, the budget as
+hard limits, the rules, and the exact shape of the record it must return.
+
+**"Its history" is the part of the brief that carries earlier rounds' work**, and on this delta round it is:
+
+| section | chars | what it carries |
+|---|---|---|
+| **`## This is a delta pass`** | **11,703** | **the delta's exact path list, and "earlier attempts, for reference rather than re-execution" — the previous round's hypotheses with their outcomes and how each was settled** |
+| `## What a previous round read` | 5,899 | the delivered-facts ledger: each path with its content hash and the conclusion drawn, so re-reading it would learn the same thing |
+| `## Already known, already decided — do not re-report these` | 356 | the previous round's findings, so the next round does not rediscover them |
+| `## Findings recorded so far` | 92 | nearly empty |
+
+**18,050 characters — 52% of the 35,038-character brief.** And for scale: **the cold round's entire brief was 17,587
+characters.** The history added to the second round is larger than everything the first round was given.
+
+**That is what the +99% brief growth is, and it is the candidate cause of the +54% reasoning.** The reviewer is handed the previous
+round's hypotheses, their outcomes, and the method that settled each — "for reference rather than re-execution" — and is asked to
+decide which of those conclusions still hold now that four paths changed. **That is reasoning work over prior material, and it is
+where the output side grew**, while the input side (what it actually read) went down.
