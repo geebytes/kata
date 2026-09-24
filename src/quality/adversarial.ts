@@ -335,6 +335,14 @@ export interface AdversarialBriefInput {
     findingHistory?: Array<{ class: string; severity: string; id: string; message: string; disposition: string }>;
     /** An optional explanation of how `class` was determined, printed with the table so the grouping is auditable. */
     findingHistoryNote?: string;
+    /**
+     * How many open findings the delta withheld from the class history because their path did not change.
+     *
+     * **Counted rather than dropped silently**: a shortened list reads as a complete one, which is the discipline the attempts
+     * and delta-findings filters already follow — this one did not, and was the only filter on this line that did not say what
+     * it did.
+     */
+    findingHistoryWithheld?: number;
 }
 
 /**
@@ -521,6 +529,11 @@ needs to read again:
 ${history.filter((finding) => finding.disposition !== 'fixed').map((finding) => `- [${finding.class}] ${finding.severity} ${finding.id}: ${finding.message} (${finding.disposition})`).join('\n') || '- (none open)'}
 
 Already repaired on this content: ${history.filter((finding) => finding.disposition === 'fixed').map((finding) => finding.id).join(', ') || '(none)'}
+${(input.findingHistoryWithheld ?? 0) > 0
+    ? `
+**${input.findingHistoryWithheld} open finding(s) are named by id only**: their path did not change in this delta, so their`
+        + ' messages are not re-read here. Ask for them if you need them.'
+    : ''}
 
 `
         : '';
@@ -2050,6 +2063,7 @@ export async function buildAdversarialBrief(
                     || !finding.path
                     || immutableScope.changedPaths.includes(finding.path)),
         ].filter((entry, index, all) => all.findIndex((other) => other.id === entry.id) === index),
+        findingHistoryWithheld: await countWithheldClassHistory(root, taskId, node, immutableScope),
         // M1: point at the envelopes and name the project's own checks, so the reviewer can read rather than re-derive.
         evidencePaths: await evidenceEnvelopePaths(root, taskId, evidence),
         declaredChecks: (await readProjectQualityChecks(root)).map((check) => ({ id: check.name, name: check.name })),
@@ -2463,6 +2477,29 @@ async function readTrackedFindingsForBrief(root: string, taskId: string) {
  * snapshots the record it replaces into `.kata/tasks/<id>/passes/<node>-<stamp>.json` and never rewrites it, so that
  * snapshot is the node's own history that can be read without moving the brief it answered.
  */
+/**
+ * How many open findings the delta's filter removed from the class history.
+ *
+ * Computed at the same place and from the same two sources as the filter, so the number and the list cannot disagree — a count
+ * taken from somewhere else is a second derivation of one quantity, which is the class this line keeps removing.
+ */
+async function countWithheldClassHistory(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    scope: { kind: string; changedPaths?: string[] } | undefined,
+): Promise<number> {
+    if (!scope || scope.kind !== 'delta' || !scope.changedPaths) return 0;
+    const changed = new Set(scope.changedPaths);
+    const outside = (finding: { path?: string; disposition?: string }) =>
+        (finding.disposition ?? 'open') !== 'fixed' && Boolean(finding.path) && !changed.has(finding.path as string);
+    const tracked = (await readTrackedFindingsForBrief(root, taskId)).filter((finding) => finding.source !== `adversarial-${node}`);
+    const archived = await readArchivedPassFindings(root, taskId, node);
+    const ids = new Set<string>();
+    for (const finding of [...tracked, ...archived]) if (outside(finding)) ids.add(finding.id);
+    return ids.size;
+}
+
 async function readArchivedPassFindings(
     root: string,
     taskId: string,

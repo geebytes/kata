@@ -275,3 +275,21 @@ describe('the delta findings list is limited to what the delta is about', () => 
         expect(source).not.toContain('Earlier findings and what was decided about them');
     });
 });
+
+/**
+ * The class section states what it withheld.
+ *
+ * It was the only one of the three brief filters that did not: the attempts filter says how many it withheld, the delta findings
+ * filter says how many it withheld, and this one shortened the list silently — which is the one thing this line's own discipline
+ * says a shortened list must not do, because a shorter list reads as a complete one. Measured on this change: three open findings
+ * are named by id only.
+ */
+describe('the class section states what it withheld', () => {
+    it('renders the count and the reason', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        expect(source).toContain('findingHistoryWithheld');
+        expect(source).toContain('open finding(s) are named by id only');
+        // And the count is computed from the same two sources as the filter, so the number and the list cannot disagree.
+        expect(source).toContain('async function countWithheldClassHistory');
+    });
+});
