@@ -484,6 +484,14 @@
             "type": "string",
             "minLength": 1,
             "description": "What else the repair will touch: the other call sites, the fixtures, the second derivation of the same concept. An observation the pass already holds — not a repair recipe, which would make this pass a second author of the fix. Measured cost of its absence: one repair broke eleven fixtures across six files and the suite was the only thing that said so."
+          },
+          "classInstances": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Where else this same defect exists, as the pass observed it. A finding names one location; the class it belongs to usually has several, and a repair that fixes one instance leaves the rest for the next round to find. Measured cost: two repairs on this line fixed one derivation of a concept with four producers, and each time the next round found the next producer."
           }
         }
       }

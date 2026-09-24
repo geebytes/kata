@@ -49,6 +49,8 @@ export interface TrackedFinding {
      * files, and running the suite was the only thing that said so.**
      */
     impact?: string;
+    /** Where else the same defect exists, so one revision can fix the class rather than one instance of it. */
+    classInstances?: string[];
     /** Where the finding lives: `review` for `review.json`, the node name for an adversarial record. */
     /**
      * Which record holds the finding.

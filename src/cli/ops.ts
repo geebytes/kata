@@ -764,6 +764,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 // the measured cost of its absence: one repair broke eleven fixtures across six files, and running the suite was
                 // the only thing that said so.
                 ...(finding.impact ? { impact: finding.impact } : {}),
+                // The class, because "this is one of four producers" is what a fixer needs to fix all four in one revision.
+                ...(finding.classInstances?.length ? { classInstances: finding.classInstances } : {}),
             })),
         };
     }

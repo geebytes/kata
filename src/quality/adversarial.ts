@@ -787,6 +787,13 @@ is paid for once. The hash is taken from the content when the record is written,
 still describes the file from one that does not: **you do not need to hash anything, and you cannot** — that is the platform's
 to measure, not yours to assert.
 
+Every finding also names **the class it is an instance of and where else that class appears**, as \`classInstances\`: the other
+producers of the same value, the other call sites that re-derive the same rule, the other gates that make the same decision.
+**A finding names one location; the class usually has several, and a repair that fixes one instance leaves the rest for the next
+round to find.** Measured on this line: two repairs fixed one derivation of a concept that has four producers, and each time the
+next round found the next producer. Listing them is what lets one revision fix the class instead of one instance of it — which is
+also what lets a repair batch close, since a batch closes when its findings are answered.
+
 Every finding also carries an **impact**: what else the repair will touch — the other call sites, the fixtures that will
 break, the second derivation of the same concept. **This is an observation you already hold, not a repair recipe** — you have
 just read the call sites, so you know what a change there reaches, and recording it does not make this pass the author of the

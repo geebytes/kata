@@ -187,3 +187,26 @@ describe('a finding carries the impact of its repair, and the writer accepts wha
         expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('impact?: string;');
     });
 });
+
+/**
+ * The class a finding belongs to, which is what lets one revision fix the class instead of one instance.
+ *
+ * Measured: two repairs on this line fixed one derivation of a concept that has four producers — the change surface — and each time
+ * the next round found the next producer (`wcc2-f1`, then `kgs3-f3`). A finding names one location; listing the class is what turns
+ * "fix this" into "fix these", and it is also what lets a repair batch close, since a batch closes when its findings are answered.
+ */
+describe('a finding names the class it is an instance of', () => {
+    it('is prescribed by the brief and accepted by the schema', () => {
+        const brief = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        const schema = JSON.parse(readFileSync(new URL('../../schemas/adversarial-review.schema.json', import.meta.url), 'utf8'));
+        expect(brief).toContain('the class it is an instance of and where else that class appears');
+        // The invariant R1 states, which this line has broken once already: what the brief prescribes, the writer must accept.
+        expect(schema.properties.findings.items.properties.classInstances).toBeDefined();
+        expect(schema.properties.findings.items.properties.classInstances.type).toBe('array');
+    });
+
+    it('is surfaced where the fixer reads it', () => {
+        expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('classInstances?: string[];');
+        expect(readFileSync(new URL('../../src/cli/ops.ts', import.meta.url), 'utf8')).toContain('finding.classInstances');
+    });
+});
