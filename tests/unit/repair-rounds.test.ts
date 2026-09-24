@@ -25,6 +25,9 @@ async function fixture(id: string): Promise<string> {
     await mkdir(dir, { recursive: true });
     await mkdir(join(dir, 'revisions'), { recursive: true });
     // Two recorded rounds, the second of which changed two paths.
+    await mkdir(join(dir, 'adversarial-briefs'), { recursive: true });
+    await writeFile(join(dir, 'adversarial-briefs/review-revision-one.json'), JSON.stringify({ version: 1, node: 'review', revisionId: 'revision-one', briefs: [{ sha256: 'a'.repeat(64) }] }), 'utf8');
+    await writeFile(join(dir, 'adversarial-briefs/review-revision-two.json'), JSON.stringify({ version: 1, node: 'review', revisionId: 'revision-two', briefs: [{ sha256: 'b'.repeat(64) }] }), 'utf8');
     await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
         { revisionId: 'revision-one', findings: [1, 2, 3], createdAt: '2026-09-23T01:00:00.000Z' },
     ]), 'utf8');
@@ -70,5 +73,26 @@ describe('a change reports its review rounds and how many findings are about the
         // not part of it, so the case exited 1 in the seal and passed in the working tree. A test that only passes where its
         // author's other changes happen to be is not a test. The measurement is recorded in the design doc as evidence instead.
         expect(true).toBe(true);
+    });
+});
+
+/**
+ * `rba-f2`: the field's docstring said "True when the rounds do not account for every brief issued — a round that produced
+ * nothing", and the code could never report it. It asked whether the latest brief file existed and whether there were **no rounds
+ * at all**, which is false the moment a round exists. Measured on `closure-gate`: five briefs across four files, four records.
+ */
+describe('a round that produced nothing is reported rather than papered over', () => {
+    it('reports unrecorded when more briefs were issued than rounds left a record', async () => {
+        const root = await fixture('unrecorded');
+        const dir = join(root, '.kata/tasks/unrecorded');
+        // Two rounds are recorded by the fixture; three briefs were issued, so one round left nothing behind.
+        await writeFile(join(dir, 'adversarial-briefs/review-revision-extra.json'), JSON.stringify({
+            version: 1, node: 'review', revisionId: 'revision-extra',
+            briefs: [{ sha256: 'a'.repeat(64) }],
+        }), 'utf8');
+
+        const report = await reportRounds(root, 'unrecorded', 'review');
+        expect(report.rounds).toHaveLength(2);
+        expect(report.unrecorded).toBe(true);
     });
 });
