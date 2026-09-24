@@ -145,6 +145,11 @@ export function obligationIsAnswered(input: {
     absences?: FalsifierAbsence[];
     /** The revision being resolved, so a reddening recorded for different content cannot answer for this one. */
     revisionId?: string;
+    /**
+     * The content of the revision being resolved, so a disposition binds to **what it proved** rather than to a seal's id —
+     * measured, a seal's id derives from 718 content digests, so any later commit expired proofs about files it never touched.
+     */
+    pathDigests?: Record<string, string>;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -159,7 +164,7 @@ export function obligationIsAnswered(input: {
     // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
     // work is the failure mode this criterion must not have.
     const falsified = obligation.findingId
-        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId, input.revisionId)
+        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId, input.revisionId, input.pathDigests)
         : true;
     const answered = answeredByEvidence && falsified;
     return { answered, evidenceIds };
@@ -180,10 +185,17 @@ export async function resolveObligationsForRevision(
   const { readFalsifierReddenings, readFalsifierAbsences } = await import('./falsifier-reddenings.js');
   const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
   const absences = await readFalsifierAbsences(root, taskId).catch(() => []);
+  // **The content being resolved, so a disposition binds to what it proved** rather than to a seal's id. Read here for the
+  // same reason the reddenings are: a caller that had to remember this is a caller that will forget, and the failure is
+  // silent — every disposition expires and the obligation stays open however well the repair went.
+  const resolvedPathDigests = await (await import('../workflow/revision.js'))
+      .readTaskRevision(root, taskId, revisionId)
+      .then((revision) => revision.pathDigests)
+      .catch(() => undefined);
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, absences, revisionId });
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, absences, revisionId, ...(resolvedPathDigests ? { pathDigests: resolvedPathDigests } : {}) });
       if (!verdict.answered) continue;
       obligation.resolvedAt = now;
       obligation.resolvedByRevisionId = revisionId;

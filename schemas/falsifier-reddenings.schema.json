@@ -72,6 +72,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "pathDigests": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The content the three steps ran against — the files this proof is about, and the binding the closure criterion prefers. `revisionId` is the fallback, because a seal's id derives from every content digest it sees (measured: 718), so binding to it expired proofs about files a later commit never touched."
           }
         }
       }
@@ -107,6 +114,13 @@
           "recordedAt": {
             "type": "string",
             "minLength": 1
+          },
+          "pathDigests": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The content the recorded absence is about, for the same reason a reddening carries it."
           }
         }
       }

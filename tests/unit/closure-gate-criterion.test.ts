@@ -114,3 +114,55 @@ describe('a repair with no falsifier says so, and only with a reason', () => {
         expect(String(refused.error)).toContain('--reason');
     });
 });
+
+/**
+ * A disposition binds to the content it proved, not to a seal's id.
+ *
+ * Measured: `revisionIdFor` derives the id from **every** content digest a seal sees — 718 of them on this change, far wider
+ * than its eleven owned paths — so comparing ids made every disposition expire on any later commit, including one touching a file
+ * the proof never mentioned. The consequence is that a repair could not demonstrate that it had worked: six dispositions on this
+ * line were recorded twice and stale twice, and "freeze content, prove, seal immediately" could not be satisfied because the seal
+ * that would close the obligation was the seal that invalidated the proof.
+ */
+describe('a disposition binds to the content it was recorded against', () => {
+    it('counts when the proven content still matches, even though the revision id has moved', () => {
+        const record = {
+            findingId: 'f1',
+            check: 'npm test',
+            mutation: 'mutate',
+            revisionId: 'revision-old',
+            pathDigests: { 'src/a.ts': 'aaa' },
+            observed: { before: 0, mutated: 1, after: 0 },
+            reddenedAt: '2026-01-01T00:00:00.000Z',
+        };
+        // The same content under a later seal: the id differs, the files do not.
+        expect(hasReddening([record], 'f1', 'revision-new', { 'src/a.ts': 'aaa', 'src/other.ts': 'zzz' })).toBe(true);
+    });
+
+    it('does not count when the content it proved has changed', () => {
+        const record = {
+            findingId: 'f1',
+            check: 'npm test',
+            mutation: 'mutate',
+            revisionId: 'revision-old',
+            pathDigests: { 'src/a.ts': 'aaa' },
+            observed: { before: 0, mutated: 1, after: 0 },
+            reddenedAt: '2026-01-01T00:00:00.000Z',
+        };
+        expect(hasReddening([record], 'f1', 'revision-new', { 'src/a.ts': 'bbb' })).toBe(false);
+    });
+
+    it('falls back to the revision for a record written before the content was captured', () => {
+        const legacy = {
+            findingId: 'f1',
+            check: 'npm test',
+            mutation: 'mutate',
+            revisionId: 'revision-old',
+            observed: { before: 0, mutated: 1, after: 0 },
+            reddenedAt: '2026-01-01T00:00:00.000Z',
+        };
+        // No content on the record: judged by the weaker rule it was written under, rather than silently accepted.
+        expect(hasReddening([legacy], 'f1', 'revision-old', { 'src/a.ts': 'aaa' })).toBe(true);
+        expect(hasReddening([legacy], 'f1', 'revision-new', { 'src/a.ts': 'aaa' })).toBe(false);
+    });
+});

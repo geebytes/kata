@@ -168,6 +168,12 @@ export async function collectSealPreflight(input: {
             // derivation of "answered" this line keeps producing.
             const reddenings = await readFalsifierReddenings(root, taskId);
             const absences = await readFalsifierAbsences(root, taskId);
+            // **The content about to be sealed**, so the dry run asks the same question the resolver asks — with the same
+            // binding. Omitting it here would leave the preflight comparing revision and the resolver comparing content,
+            // which is the two-derivations shape this line keeps removing.
+            const plannedPathDigests = await (await import('../workflow/revision.js'))
+                .computePathDigests(root, task.ownedPaths ?? [])
+                .catch(() => undefined);
             const answerable = new Set(
                 unresolved
                     .filter((obligation) =>
@@ -177,6 +183,7 @@ export async function collectSealPreflight(input: {
                             evidence: plannedEvidence,
                             reddenings,
                             absences,
+                            ...(plannedPathDigests ? { pathDigests: plannedPathDigests } : {}),
                             ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
                         }).answered,
                     )

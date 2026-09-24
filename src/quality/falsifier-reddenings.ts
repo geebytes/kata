@@ -29,6 +29,15 @@ export type FalsifierReddening = {
     mutation: string;
     /** The revision the reddening was observed on. **Consumed** by the criterion, so a later re-seal cannot inherit a stale proof. */
     revisionId: string;
+    /**
+     * The content the three steps actually ran against — the files this proof is about.
+     *
+     * **This is the good binding, and `revisionId` is the fallback.** `revisionIdFor` derives the id from *every* content
+     * digest a seal sees — measured, 718 of them, well beyond a change's owned paths — so binding to the id made every
+     * disposition expire on any later commit: a repair could never demonstrate that it had worked, and six dispositions on
+     * this line were recorded twice and stale twice. A disposition is a claim about content, and this field is that content.
+     */
+    pathDigests?: Record<string, string>;
     reddenedAt: string;
     /**
      * The three exit codes the producer observed: the check before the mutation, under it, and after the restore.
@@ -105,19 +114,53 @@ export async function recordFalsifierReddening(
 /**
  * True when this finding has a reddening recorded that **counts** — the single question the closure criterion asks.
  *
- * Three conditions, and each exists because of a finding: the finding must match; the revision must be the one being
- * resolved, or a later re-seal inherits a proof about different content; and the runs must have been observed, or a record
- * that merely names a check closes an obligation (AC-4).
+ * **The binding is to content, not to a revision id.** It used to compare `revisionId` strings, and that made every disposition
+ * expire on any later commit: `revisionIdFor` derives the id from the **content digests**, which cover far more than the
+ * change's owned paths — measured, a seal's `contentDigests` held 718 entries and two revisions separated only by edits to
+ * `src/quality/adversarial.ts`, a path this change does not own. So "freeze content, prove, seal immediately" could not be
+ * satisfied: the seal that would close an obligation was the seal that invalidated the proof, and a change could never
+ * demonstrate that its own repair had worked. Measured cost: six dispositions recorded twice and stale twice.
+ *
+ * A disposition is a claim about **content** — the defect was re-introduced and this check reddened. So it counts when the
+ * content it was recorded against still matches, which is what `pathDigests` on the record is for: the files the three steps
+ * actually ran against. A commit touching something else does not invalidate it; a change to those files does.
+ *
+ * Three conditions, and each exists because of a finding: the finding must match; the content must still be what the proof was
+ * about, or a later seal inherits a proof about different content; and the runs must have been observed, or a record that merely
+ * names a check closes an obligation (AC-4).
  */
 export function hasReddening(
     reddenings: FalsifierReddening[],
     findingId: string,
     revisionId?: string,
+    currentPathDigests?: Record<string, string>,
 ): boolean {
     return reddenings.some((reddening) =>
         reddening.findingId === findingId
-        && (revisionId === undefined || reddening.revisionId === revisionId)
+        && revisionCounts(reddening.revisionId, reddening.pathDigests, revisionId, currentPathDigests)
         && observedReddening(reddening));
+}
+
+/**
+ * Whether a disposition still describes the content it was recorded against.
+ *
+ * **The content digests are the binding when both sides have them**, because that is what the claim is about. A record without
+ * them — every record written before this change — falls back to the revision id, so an existing disposition is neither
+ * silently accepted nor silently rejected: it is judged by the weaker rule it was written under, which is the honest reading of
+ * a record that did not capture the better one.
+ */
+function revisionCounts(
+    recordedRevisionId: string,
+    recordedPathDigests: Record<string, string> | undefined,
+    currentRevisionId?: string,
+    currentPathDigests?: Record<string, string>,
+): boolean {
+    if (currentRevisionId === undefined) return true;
+    const recorded = recordedPathDigests ?? {};
+    if (Object.keys(recorded).length > 0 && currentPathDigests) {
+        return Object.entries(recorded).every(([path, digest]) => currentPathDigests[path] === digest);
+    }
+    return recordedRevisionId === currentRevisionId;
 }
 
 /** The three observed exit codes have to be the shape a reddening actually has: green, red, green. */
@@ -141,7 +184,10 @@ export type FalsifierAbsence = {
     findingId: string;
     /** Why no falsifier exists for this repair. Required, because the shape exists to be explained rather than used. */
     reason: string;
+    /** The revision it was recorded on — the fallback binding, for records written before the content was captured. */
     revisionId: string;
+    /** The content the absence is about, so a commit touching something else does not expire it. */
+    pathDigests?: Record<string, string>;
     recordedAt: string;
 };
 
@@ -170,9 +216,10 @@ export function hasFalsifierDisposition(
     absences: FalsifierAbsence[],
     findingId: string,
     revisionId?: string,
+    currentPathDigests?: Record<string, string>,
 ): boolean {
-    if (hasReddening(reddenings, findingId, revisionId)) return true;
+    if (hasReddening(reddenings, findingId, revisionId, currentPathDigests)) return true;
     return absences.some((absence) => absence.findingId === findingId
-        && (revisionId === undefined || absence.revisionId === revisionId)
+        && revisionCounts(absence.revisionId, absence.pathDigests, revisionId, currentPathDigests)
         && absence.reason.trim().length > 0);
 }

@@ -1074,11 +1074,14 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     // cannot be reached when the proof is what the seal needs.
     let observedTreeDigest: string | undefined;
     let observedDrift: string[] = [];
+    let observedPathDigests: Record<string, string> = {};
     if (revision) {
         const { computePathDigests } = await import('../workflow/revision.js');
         const sealed = revision.pathDigests ?? {};
         const current = await computePathDigests(root, Object.keys(sealed));
         observedDrift = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
+        // The content this proof is about, so the disposition survives a commit that touches something else.
+        observedPathDigests = Object.fromEntries(Object.entries(sealed).filter(([path]) => current[path] === sealed[path]));
         observedTreeDigest = Object.keys(sealed).sort()
             .map((path) => `${path}:${current[path] ?? ''}`)
             .join('\n');
@@ -1094,6 +1097,7 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         revisionId: revision?.id ?? '(no revision)',
         observedTreeDigest,
         observedDrift,
+        pathDigests: observedPathDigests,
         at: new Date().toISOString(),
         run: async (command) => {
             const { runProcess } = await import('../process/run.js');

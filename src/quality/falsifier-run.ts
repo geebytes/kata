@@ -47,10 +47,18 @@ export async function runFalsification(input: {
     observedTreeDigest?: string;
     /** The declared paths that differed from the sealed revision when this ran, so the drift is visible rather than implied. */
     observedDrift?: string[];
+    /**
+     * The content the three steps ran against — the files this proof is about, and the binding the closure criterion prefers.
+     *
+     * `revisionId` is the fallback for records written before this field existed, because `revisionIdFor` derives the id from
+     * *every* content digest a seal sees (measured: 718), so a commit touching anything at all would otherwise expire a proof
+     * about a file it never touched.
+     */
+    pathDigests?: Record<string, string>;
     at: string;
     run: CommandRunner;
 }): Promise<FalsifierRunResult> {
-    const { root, taskId, findingId, check, mutation, restore, revisionId, observedTreeDigest, observedDrift, at, run } = input;
+    const { root, taskId, findingId, check, mutation, restore, revisionId, observedTreeDigest, observedDrift, pathDigests, at, run } = input;
 
     const first = await run(check);
     if (first !== 0) {
@@ -90,6 +98,7 @@ export async function runFalsification(input: {
         revisionId,
                 ...(observedTreeDigest ? { observedTreeDigest } : {}),
                 ...(observedDrift?.length ? { observedDrift } : {}),
+                ...(pathDigests && Object.keys(pathDigests).length > 0 ? { pathDigests } : {}),
         reddenedAt: at,
         // What the producer observed, recorded rather than described: AC-4's rule is that a falsifier naming a check which was
         // never run does not close an obligation, and this is the fact that distinguishes the two.
