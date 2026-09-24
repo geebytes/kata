@@ -62,67 +62,7 @@
     "findings": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "taskId",
-          "severity",
-          "message"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "taskId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "acceptanceId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "severity": {
-            "type": "string",
-            "enum": [
-              "blocking",
-              "major",
-              "minor",
-              "nit"
-            ]
-          },
-          "disposition": {
-            "type": "string",
-            "enum": [
-              "open",
-              "fixed",
-              "deferred",
-              "accepted",
-              "routed"
-            ]
-          },
-          "dispositionReason": {
-            "type": "string",
-            "minLength": 1
-          },
-          "dispositionBy": {
-            "type": "string",
-            "minLength": 1
-          },
-          "dispositionAt": {
-            "type": "string",
-            "minLength": 1
-          },
-          "message": {
-            "type": "string",
-            "minLength": 1
-          },
-          "path": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
+        "$ref": "https://kata.dev/schemas/review-finding.schema.json"
       }
     }
   }

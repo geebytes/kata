@@ -61,6 +61,30 @@ const schemaText: Record<string, string> = {
  */
 const ajv = new Ajv2020({ allErrors: true, verbose: true, strict: false });
 
+/**
+ * Every bundled schema is registered by its `$id` **before anything is compiled**, so a schema may `$ref` another instead of
+ * restating it.
+ *
+ * **One definition is the point.** `review.schema.json`'s `findings.items` and `review-finding.schema.json` disagreed — the
+ * writer validated the array it read back against the narrower one while the file carried a `disposition` — and a single
+ * routed finding made `findings add` fail permanently, so the change could not record a finding at all.
+ *
+ * Registering here rather than lazily in `compile` is what makes it safe: Ajv raises "schema with key or id already exists"
+ * for a duplicate `addSchema`, and `getSchema` does not report a document that was compiled as a root, so a guard by lookup
+ * still let the second registration through.
+ */
+for (const bundled of Object.values(schemaText)) {
+    const parsed = JSON.parse(bundled) as { $id?: string };
+    if (!parsed.$id) continue;
+    // Idempotent by construction: Ajv's own duplicate guard is unreliable here — `getSchema` does not report a document that
+    // was compiled as a root, and the same module can be evaluated more than once in a test process.
+    try {
+        ajv.addSchema(parsed);
+    } catch {
+        // Already registered: the `$id` is present either way, which is all a `$ref` needs.
+    }
+}
+
 const compiled = new Map<string, ValidateFunction>();
 
 /** `/relations/3/type` → `$.relations[3].type`, with JSON Pointer unescaping. */
@@ -119,7 +143,14 @@ function compile(schemaName: string): ValidateFunction {
     if (cached) return cached;
     const text = schemaText[schemaName];
     if (text === undefined) throw new Error(`Unknown schema: ${schemaName}`);
-    const validate = ajv.compile(JSON.parse(text) as object);
+    const document = JSON.parse(text) as { $id?: string };
+    // **Compile by `$id`, not by the freshly parsed object.** Every bundled schema is registered at module init so a schema
+    // may `$ref` another instead of restating it — and Ajv refuses to compile a *different object* carrying the same `$id`
+    // ("schema with key or id already exists"). The registered validator is looked up instead, which is also what keeps one
+    // definition in one place: `review.schema.json`'s `findings.items` and `review-finding.schema.json` disagreed for
+    // exactly this reason, and the disagreement let a single routed finding block `findings add` permanently.
+    const validate = document.$id ? ajv.getSchema(document.$id) : undefined;
+    if (!validate) throw new Error(`Schema ${schemaName} is not registered by an $id`);
     compiled.set(schemaName, validate);
     return validate;
 }

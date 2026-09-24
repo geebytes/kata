@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/scope-changes.schema.json",
   "title": "scope-changes",
   "type": "object",
   "required": [

@@ -1,11 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/handoff-packet.schema.json",
   "type": "object",
-  "required": ["protocolVersion", "id", "taskId", "createdAt", "from", "to", "phase", "repository", "task", "context", "permissions", "nextAction"],
+  "required": [
+    "protocolVersion",
+    "id",
+    "taskId",
+    "createdAt",
+    "from",
+    "to",
+    "phase",
+    "repository",
+    "task",
+    "context",
+    "permissions",
+    "nextAction"
+  ],
   "properties": {
-    "protocolVersion": { "type": "integer", "minimum": 1 },
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-    "taskId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
-    "createdAt": { "type": "string", "minLength": 1 }
+    "protocolVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    }
   }
 }

@@ -29,7 +29,8 @@
         "blocking",
         "major",
         "minor",
-        "note"
+        "note",
+        "nit"
       ]
     },
     "message": {
@@ -81,6 +82,29 @@
           "type": "boolean"
         }
       }
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "open",
+        "fixed",
+        "deferred",
+        "accepted",
+        "routed"
+      ],
+      "description": "Set by a disposition command (`findings defer|accept|rout`) or by the closure rule marking a finding fixed. Absent means open — a record that carries no disposition has not been decided, which is different from one disposed of as nothing."
+    },
+    "dispositionReason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dispositionBy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dispositionAt": {
+      "type": "string",
+      "minLength": 1
     }
   }
 }
