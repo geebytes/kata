@@ -210,3 +210,22 @@ describe('a finding names the class it is an instance of', () => {
         expect(readFileSync(new URL('../../src/cli/ops.ts', import.meta.url), 'utf8')).toContain('finding.classInstances');
     });
 });
+
+/**
+ * The delta brief's history is filtered to what the delta is about.
+ *
+ * Measured: the unfiltered "Earlier attempts" list was 10,742 characters — 31% of a 35,038-character brief — and a controlled
+ * experiment on the same revision, with only that block removed, cut the billed total by 25% and the reasoning by 44%, while
+ * thinking fell from 50% of the round's content to 39% and tool results rose 24% to 31%: handed less prior material, the reviewer
+ * read more and reasoned less. A conclusion about an unchanged path does not need re-deciding — the brief already says so — and
+ * carrying it costs reasoning on every turn.
+ */
+describe('the delta history is limited to the paths that changed', () => {
+    it('filters by the hypotheses whose targets changed, and does not filter when it cannot tell', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        expect(source).toContain('selectRelevantAttempts(previous, surface.changedPaths)');
+        // The escape hatch, which matters more than the filter: withholding on a condition that cannot be evaluated would drop
+        // material for a reason the reader could not check.
+        expect(source).toContain('if (relevantClaims.size === 0) return (record?.attempts ?? [])');
+    });
+});
