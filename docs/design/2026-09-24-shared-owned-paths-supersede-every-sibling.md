@@ -49,3 +49,22 @@ frozen while another completes"*. The honest options are:
 
 Option 2 is the only one that removes the cause rather than paying it four times, and it is the same shape as every other fix on this
 line: the paths are a declaration, and the declaration is what makes siblings collide.
+
+## The narrowing question, measured
+
+I proposed narrowing the declarations as the only option that removes the cause. Measured per path, and the proposal needs splitting:
+
+| change | owned | drifted | where the drift is |
+|---|---|---|---|
+| `closure-gate` | 28 | 14 | src 8, tests 5, schemas 1 |
+| `kata-gate-surface` | 19 | 11 | src 4, tests 4, schemas 2, docs 1 |
+| `review-record-integrity` | 27 | 14 | src 7, tests 5, schemas 1, docs 1 |
+| **`wiring-coverage-check`** | **11** | **1** | **tests 1** |
+
+**Narrowing does not substitute for a re-seal.** For `closure-gate` five of its *own* test files drifted as well — it repaired them after sealing — so removing the shared `src/` and `schemas/` paths from the declaration would leave a revision that is still not current. The declaration is not the cause; content changed after the seal.
+
+**What narrowing does buy is durability.** A re-seal over the full surface mints a revision that the next sibling edit to any shared file supersedes again; a re-seal over the change's own paths cannot be superseded except by editing those. So the two are not alternatives — the narrow-then-re-seal is the variant that survives.
+
+**And one change is nearly free.** `wiring-coverage-check` declares 11 paths and exactly one drifted — `tests/unit/unpinned-repairs.test.ts`, which I edited today for another change. Its surface is otherwise its own: `scripts/wiring-check.mjs`, `src/quality/wiring-check.ts`, its five test files and two design docs. It is one re-seal from being current, and its six obligations are then answerable.
+
+**The residual collision is a shared test file.** `tests/unit/unpinned-repairs.test.ts` is declared by both `wiring-coverage-check` and `kata-gate-surface` and drifted for both, so whichever re-seals second supersedes the first — unless that path is assigned to exactly one of them. That is the general shape of the fix: **each shared path assigned to one change, not removed from all**, because a path declared by nobody is a path whose edits no revision measures.
