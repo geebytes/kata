@@ -10,10 +10,15 @@
  * | a check reads a declaration while its message claims reality | `cg4-f2`, `rba5-f1/f2/f3`, the seal refusal, `rba7-f1/f4` |
  * | a check that cannot fail | eight decorative checks, caught by mutation rather than by reading |
  * | one decision, several entrances, one leaves no trace | five, the last being `matrix set --owned-paths` |
+ * | **a required output with one unguaranteed channel** | **three of six dispatched rounds produced no record** |
  *
  * Disposing of seventeen findings one at a time reproduces the class — that is the measured history, seven rounds of it. Naming the
- * four classes and covering each with a check that reddens when it returns is what makes the loop end, and it is also what
+ * classes and covering each with a check that reddens when it returns is what makes the loop end, and it is also what
  * `roundMayClose` asks before a round may close.
+ *
+ * **The set is not closed at four, and the fifth was found by a round whose record was lost** — see
+ * `docs/design/2026-09-24-the-fifth-class.md`. Four of the five are about how a mechanism is built; the fifth is about how a process
+ * is scheduled, which is why reading code did not find it and three failed rounds did.
  *
  * Each entry names the check, so the claim is auditable rather than asserted. `tests/unit/class-invariants.test.ts` holds all four,
  * and each was verified to redden under a mutation that reintroduces its class.
