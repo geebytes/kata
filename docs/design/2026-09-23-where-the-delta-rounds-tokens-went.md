@@ -157,3 +157,26 @@ it should shrink.
 **And the "withheld nothing" is left as an open question rather than a conclusion.** The candidate explanations are that the filter
 did not run — `input.delta?.changedPaths` reaching it as undefined — or that the class section's history is filtered upstream
 before it arrives. Either is checkable in one read, and I did not have the budget to check it before writing this.
+
+## The class-section question, answered: a path filter would withhold 5 of 13, and my two attempts to apply it did not
+
+The open question was why the class section's filter withheld nothing. Counted, on `repair-by-another-author`:
+
+| | findings |
+|---|---|
+| all tracked | **13** |
+| open | **13** |
+| **whose path is in the delta** | **8** |
+| **whose path is not** | **5** |
+
+So **a path filter would withhold 5 of 13 — about 38% of that section's 14,918 characters, roughly 5,700.** The lever is real.
+
+**And my two attempts to apply it withheld nothing, twice.** First at render time, in the class section: the renderer receives
+`findingHistory` entries typed `{class, severity, id, message, disposition}` — **no `path`** — so `finding.path` was `undefined` for
+every entry and the "keep what cannot be judged" fallback kept all of them. Second before the mapping, where the tracked findings do
+carry `path`: that attempt also withheld nothing, and I did not establish why.
+
+**So the state is: the lever is measured, and the two places I tried to pull it are not the place it works.** The candidates for the
+second failure are that `readTrackedFindingsForBrief` returns entries whose `path` is absent, or that `immutableScope` is not a
+delta at that point in the builder — either is one read, and I have reverted both attempts rather than leave a filter that adds
+prose and removes nothing.
