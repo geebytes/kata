@@ -2,14 +2,14 @@
 
 ## The defect, at its most precise
 
-`repair-by-another-author` corrected its own `ownedPaths` from 11 to 22 paths this round — first directly, then, once I found the
+`repair-by-another-author` corrected its own `ownedPaths` from 11 paths this round — first directly, then, once I found the
 governed route, through `kata-cli scope change` + `kata-cli scope apply`, which recorded the decision as `scope-1`. Its sealed
 revision still carries **11**. So there are now **two declarations of one surface**:
 
 | declaration | value | what it is |
 |---|---|---|
 | `revision.ownedPaths` | 11 | frozen when the revision was minted |
-| `task.ownedPaths` | 22 | corrected since, with a recorded reason |
+| `task.ownedPaths` | 22 at the time; **23** now | corrected since, with a recorded reason (`scope-1`, then `scope-2` added `src/workflow/revision.ts`) |
 
 and the check that decides freshness reads the **older** one:
 
@@ -19,8 +19,9 @@ and the check that decides freshness reads the **older** one:
     }
 
 `repair-entry.ts` reads that `current` and refuses a seal with *"the sealed revision still matches the workspace"*. The message is
-false: **eleven of the twenty-two declared paths are not in the hash that was checked**, and the files I changed this round
-(`src/cli/matrix.ts`, two test files, one schema test) are all in the eleven that were not.
+false: **eleven of the paths the task had declared at that moment were not in the hash that was checked** (twelve now, against the
+23 the task declares), and the files I changed this round (`src/cli/matrix.ts`, two test files, one schema test) are all in the set
+that were not.
 
 ## And `scope apply` says exactly the right thing while its own door is shut
 

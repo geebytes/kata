@@ -189,6 +189,38 @@ describe('machine-generated change record', () => {
         expect(changeRecordPath(root, 'record-task')).toContain(join('.kata', 'tasks', 'record-task'));
     });
 
+    it('names the base its change surface was measured against', async () => {
+        // `rba7-a4abcec8`: a brief and a change record published 57 and 11 changed paths for the **same revision** and read
+        // as a disagreement about one comparison. They were two content diffs against two different bases — and only the
+        // brief named its base, so a reader could not tell. The record already had the fact (`baseContentDigests`); it now
+        // names it, so the two surfaces are comparable instead of contradictory.
+        const root = await tempRoot();
+        await writeFile(join(root, 'src/changed.ts'), 'export const changed = 2;\n', 'utf8');
+        execFileSync('git', ['add', 'src/changed.ts'], { cwd: root });
+        execFileSync('git', ['commit', '--quiet', '-m', 'change'], { cwd: root });
+
+        const record = await buildChangeRecord({
+            root,
+            taskId: 'record-task',
+            revisionId: 'revision-with-base',
+            baseRevisionId: 'revision-base',
+            ownedPaths: ['src'],
+            evidence: [],
+            claimFailures: [],
+            findings: [],
+            basePathDigests: { 'src/untouched.ts': 'base-digest' },
+            pathDigests: { 'src/untouched.ts': 'base-digest', 'src/changed.ts': 'changed-digest' },
+        });
+        expect(record.baseRevisionId).toBe('revision-base');
+
+        // A first revision has no base, and the field is absent rather than a placeholder — a first-revision surface is not a
+        // change against something, and saying it is would be the same misreading one level up.
+        const first = await buildChangeRecord({
+            root, taskId: 'record-task', revisionId: 'revision-first', ownedPaths: [], evidence: [], claimFailures: [], findings: [],
+        });
+        expect(first.baseRevisionId).toBeUndefined();
+    });
+
     it('derives the change surface from content identity, so a path changed outside the declaration is reported', async () => {
         // R3/R4, found by an adversarial pass on 2026-09-22. `changedPaths` is built from `contentDigests` when they are
         // supplied, and falls back to `pathDigests`; the gate must use the same surface the record publishes. Measured on

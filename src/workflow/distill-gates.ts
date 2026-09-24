@@ -2,7 +2,7 @@ import type { EvidenceEnvelope } from '../quality/evidence.js';
 import { checkFreshness, computeDiffHash, readRecordedEvidence } from '../quality/evidence.js';
 import { readValidatedOptional } from '../core/schema.js';
 import { join } from 'node:path';
-import { readTaskRevision, revisionStatus } from './revision.js';
+import { readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
@@ -34,9 +34,11 @@ export async function freshPassingTestEvidence(
         if (envelope.kind !== 'test' || envelope.exitCode !== 0) continue;
         if (envelope.revisionId) {
             const revision = await readTaskRevision(root, taskId, envelope.revisionId);
-            // `declaration-moved` is not `current`: evidence bound to a revision whose surface the task has outgrown cannot be
-            // the evidence an archive rests on, and `continue` is the same answer `superseded` gets for the same reason.
-            if ((await revisionStatus(root, revision, taskId)).status !== 'current') continue;
+            // **The one predicate every consumer asks**, rather than `!== 'current'` spelled out here: a second spelling is
+            // what let `orchestrator.ts` keep the two-state question and answer `declaration-moved` differently (rba7-f2).
+            // `declaration-moved` is not current: evidence bound to a revision whose surface the task has outgrown cannot be
+            // the evidence an archive rests on, and the same answer `superseded` gets for the same reason.
+            if (!revisionIsCurrent(await revisionStatus(root, revision, taskId))) continue;
             return { evidence: envelope, revisionId: envelope.revisionId };
         }
         if (checkFreshness(envelope, currentDiffHash).fresh) return { evidence: envelope };

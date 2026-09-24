@@ -388,6 +388,40 @@ describe('Workflow resume and lifecycle', () => {
         ]);
     });
 
+    it('fails readiness for a revision the task has outgrown, the same answer the distill gate gives', async () => {
+        // `rba7-f2`: `cmdVerify` asked the two-state question (`=== 'superseded'`) while `distill-gates` refused the same
+        // revision's evidence, so a `declaration-moved` revision got a PASS from verify and a refusal from the gate — two
+        // derivations of one fact. The task's declaration grows (no owned content changes), and verify must fail readiness
+        // with the same scope the superseded case uses, because both mean the sealed revision no longer describes the task.
+        const root = await tempRoot();
+        await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
+        await runCommand('open', 'wf-revision-declaration-moved', root, {
+            acceptance: [{ id: 'AC-1', statement: 'A grown declaration supersedes the sealed revision.' }],
+        });
+        const taskPath = join(root, '.kata/tasks/wf-revision-declaration-moved/task.json');
+        const task = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...task, ownedPaths: ['task-owned.txt'] }, null, 2)}\n`);
+        await runCommand('design', 'wf-revision-declaration-moved', root);
+        await runCommand('build', 'wf-revision-declaration-moved', root, {
+            checks: [{ kind: 'test', command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }],
+        });
+
+        // The declaration grows and **no owned file changes** — the shape `declaration-moved` names, and the one the old
+        // two-state read called `current`.
+        const sealedTask = JSON.parse(await readFile(taskPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(taskPath, `${JSON.stringify({ ...sealedTask, ownedPaths: ['task-owned.txt', 'added-later.txt'] }, null, 2)}\n`);
+        await adversarial(root, 'wf-revision-declaration-moved');
+        const verify = await runCommand('verify', 'wf-revision-declaration-moved', root);
+
+        expect(verify.success).toBe(false);
+        expect(verify.diagnostics).toMatchObject({ revisionStatus: 'declaration-moved' });
+        // Without the consumer fix this returned a PASS stamped with the grown-out revision id, while the distill gate would
+        // drop the very evidence it rested on.
+        expect(verify.diagnostics?.acceptanceResults).toEqual([
+            expect.objectContaining({ id: 'AC-1', result: 'FAIL', repairScope: 'revision_superseded' }),
+        ]);
+    });
+
     it('/kata-judge refuses to skip the explicit review gate after build', async () => {
         const root = await tempRoot();
         await runCommand('open', 'wf-no-skip-judge-test', root, {

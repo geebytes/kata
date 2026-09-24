@@ -46,7 +46,7 @@ export interface TaskRevision {
  * Whether a sealed revision still describes what it is asked about, and **in which of two ways it can have stopped**.
  *
  * The check used to have two states and to hash `revision.ownedPaths` — the declaration frozen when the revision was minted. But
- * a task's declaration can be corrected after that: this change grew its own from 11 paths to 22 with `scope change` +
+ * a task's declaration can be corrected after that: this change grew its own from 11 paths to 23 with `scope change` +
  * `scope apply`, and the revision kept eleven. So there were **two declarations of one surface**, the check read the older, and
  * `repair-entry.ts` printed "the sealed revision still matches the workspace" — a claim about the workspace decided from a
  * declaration eleven of whose twenty-two paths the check had never hashed.
@@ -55,11 +55,23 @@ export interface TaskRevision {
  * the change's declared surface any more (re-seal, which takes on the new declaration), and `superseded` says the content it
  * described has since changed (the verdict bound to it cannot stand). Collapsing them is what made a refusal say something it had
  * not checked.
+ *
+ * **And `declaration-moved` is exactly the comparison of the two declarations, and nothing more.** It does *not* say the
+ * revision's own content is untouched — the `superseded` check above runs first and hashes that content, so a revision whose
+ * owned files changed never reaches this state. Naming the state after the declaration it measured, rather than after the content
+ * it did not, is the whole of this comment: the previous wording ("its own content is untouched") was a content claim read off a
+ * set comparison, the class this change exists to remove.
  */
 export type RevisionStatus =
   | { status: 'current' }
-  /** The task's declared surface has moved since this revision was minted; its own content is untouched. */
-  | { status: 'declaration-moved'; revisionOwnedPaths: string[]; taskOwnedPaths: string[] }
+  /**
+   * The task's declared paths and the revision's disagree **as sets**, which is the fact this state reports — the payload is
+   * `added` (declared by the task, not carried by the revision) and `removed` (carried by the revision, no longer declared).
+   * No content of the newly declared paths is read here: whether the revision's own content is unchanged is the `superseded`
+   * question, answered above before this branch is reached. Re-seal is the action, because a seal is what adopts the task's new
+   * declaration.
+   */
+  | { status: 'declaration-moved'; revisionOwnedPaths: string[]; taskOwnedPaths: string[]; added: string[]; removed: string[] }
   | { status: 'superseded'; expectedManifestHash: string; revisionManifestHash: string };
 
 /**
@@ -188,16 +200,82 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
   // **And the declaration itself can have moved**, which the hash above cannot see because it is taken over the old one. A
   // revision whose owned paths are no longer the task's is not about the change's declared surface — and calling that
   // `current` is what let a seal refusal claim the workspace matched while eleven declared paths were never hashed.
-  if (taskId) {
-    const task = await readTask(root, taskId).catch(() => null);
-    const taskOwnedPaths = task?.ownedPaths ?? [];
-    const same = taskOwnedPaths.length === revision.ownedPaths.length
-      && taskOwnedPaths.every((path: string) => revision.ownedPaths.includes(path));
-    if (!same) {
-      return { status: 'declaration-moved', revisionOwnedPaths: [...revision.ownedPaths], taskOwnedPaths: [...taskOwnedPaths] };
-    }
+  if (!taskId) return { status: 'current' };
+  // **A task that could not be read is an error, not an empty declaration** (rba7-f4). `readTask` validates, so a
+  // schema-drifted or unparseable `task.json` throws; the previous `.catch(() => null)` plus `?? []` converted that throw into
+  // `taskOwnedPaths: []`, and every revision then read as `declaration-moved` carrying a declaration the task does not have.
+  // An absence (ENOENT) is genuinely no declaration to compare and stays `current`; anything else is rethrown, which is the
+  // line `readCurrentTaskRevision` above already draws.
+  const task = await readTask(root, taskId).catch((error: unknown) => {
+    const cause = (error as { cause?: unknown } | null)?.cause;
+    if (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!task) return { status: 'current' };
+  const taskOwnedPaths = normalizeOwnedPaths(root, task.ownedPaths ?? []);
+  const revisionOwnedPaths = [...revision.ownedPaths];
+  const same = taskOwnedPaths.length === revisionOwnedPaths.length
+    && taskOwnedPaths.every((path: string) => revisionOwnedPaths.includes(path));
+  if (!same) {
+    // The payload is the **declaration fact**, split into the two directions an operator acts on: paths the task declares
+    // that the revision does not carry, and paths the revision carries that the task no longer declares. Neither names a
+    // digest, because no digest was taken of the newly declared paths here.
+    const revisionSet = new Set(revisionOwnedPaths);
+    const taskSet = new Set(taskOwnedPaths);
+    return {
+      status: 'declaration-moved',
+      revisionOwnedPaths,
+      taskOwnedPaths,
+      added: taskOwnedPaths.filter((path) => !revisionSet.has(path)),
+      removed: revisionOwnedPaths.filter((path) => !taskSet.has(path)),
+    };
   }
   return { status: 'current' };
+}
+
+/**
+ * **The one question every consumer asks**: does this sealed revision still describe what it is asked about?
+ *
+ * It exists because `revisionStatus` acquired a third state and one consumer kept asking the two-state question —
+ * `orchestrator.ts` read `status?.status === 'superseded'`, so a `declaration-moved` revision took the readiness path while
+ * `distill-gates.ts` refused the same revision's evidence (rba7-f2). The two answers disagreed because each consumer spelled
+ * the comparison out itself. Routing every consumer through one predicate is what makes the next state impossible to answer
+ * two ways: there is nothing to spell out, so there is nothing to spell differently.
+ */
+export function revisionIsCurrent(status: RevisionStatus): boolean {
+  return status.status === 'current';
+}
+
+/**
+ * The content a falsifier proof is **about**: the task's current declaration, or the revision's sealed owned set when the task
+ * declares none.
+ *
+ * This is the single source both doors of `kata-cli falsify` read (rba7-f5, rba7-f6). It used to be `revision.pathDigests`
+ * alone — the revision's frozen declaration — so a proof whose mutation was in a file the task has since declared but the
+ * revision never carried (measured: `src/workflow/revision.ts`, declared by the task's 23 paths but not the revision's 11)
+ * recorded digests for eleven paths that did not include the mutation's file, and the binding then either expired on the next
+ * unrelated re-seal or credited content it never described. The absence door already read `task.ownedPaths`; there is now one
+ * declaration for both doors, which is the class this change exists to remove.
+ */
+export async function falsifierProofSurface(
+  root: string,
+  taskId: string,
+  revision: TaskRevision,
+): Promise<{ surface: string[]; pathDigests: Record<string, string>; drift: string[]; treeDigest: string }> {
+  const taskOwnedPaths = await readTask(root, taskId)
+    .then((task) => task.ownedPaths ?? [])
+    .catch(() => [] as string[]);
+  const sealed = revision.pathDigests ?? {};
+  // **The task's declaration is the surface, exactly as the absence door reads it**; the sealed set is the fallback for a
+  // task that declares none, which is the shape `resolveSealOwnedPaths` already orders the two sources in. Not unioned: a
+  // path the revision carried but the task no longer declares would be recorded here and then be absent from the revision a
+  // later seal mints over the smaller declaration, which would make the proof count against a surface it does not describe.
+  const surface = taskOwnedPaths.length > 0 ? normalizeOwnedPaths(root, taskOwnedPaths) : Object.keys(sealed).sort();
+  const current = surface.length > 0 ? await computePathDigests(root, surface) : {};
+  // The drift is a question only the **sealed** digests can answer: a declared path the revision never carried is not drift.
+  const drift = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
+  const treeDigest = surface.map((path) => `${path}:${current[path] ?? ''}`).join('\n');
+  return { surface, pathDigests: current, drift, treeDigest };
 }
 
 /**

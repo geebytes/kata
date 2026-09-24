@@ -66,4 +66,18 @@ describe('repair and next-action vocabularies', () => {
             expect(rendered).toContain(`\`${scope}\``);
         }
     });
+
+    it('names both ways a sealed revision stops describing the task, not only the content one', () => {
+        // `rba7-cde9a7da`: `revision_superseded` is emitted for **both** non-current states — a declared path's content moved,
+        // and the task's declaration moved without any owned content changing — while the scope guide described only the first.
+        // The three states exist so a refusal can say which happened; a vocabulary that names one of them re-collapses the two
+        // at the point every operator and agent reads. This is the guide edit's falsifier: reverting the sentence to its
+        // one-case form reddens it.
+        const verify = skillCommands.find((command) => command.id === 'kata-verify');
+        const rendered = renderSkill(verify!, 'generic');
+        const line = rendered.split('\n').find((row) => row.includes('`revision_superseded`'));
+        expect(line).toBeDefined();
+        expect(line).toMatch(/owned file changed|declared task-owned path changed/i);
+        expect(line).toMatch(/declared surface moved|declaration/i);
+    });
 });

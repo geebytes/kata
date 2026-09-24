@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -51,8 +51,53 @@ describe('a revision reports whether the task has outgrown its declaration', () 
         // The two sets are both reported, because "which paths are new" is the question an operator asks next.
         expect(status.status === 'declaration-moved' ? status.revisionOwnedPaths : []).toEqual(['src/a.ts']);
         expect(status.status === 'declaration-moved' ? status.taskOwnedPaths : []).toEqual(['src/a.ts', 'src/b.ts']);
-        // And the content is untouched — that is why this is a different state from `superseded`, not a subcase of it.
+        // **The payload is the declaration difference, split by direction** (`rba7-f1`). The state is a comparison of two
+        // declarations, so what it can honestly report is which paths are newly declared and which are no longer — not a
+        // digest of a path it never hashed. `added` is the newly declared `src/b.ts`; `removed` is empty.
+        expect(status.status === 'declaration-moved' ? status.added : []).toEqual(['src/b.ts']);
+        expect(status.status === 'declaration-moved' ? status.removed : []).toEqual([]);
+        // And the payload carries no manifest hash, because this state did not measure content — the `superseded` field is
+        // absent. That is what keeps the state from reading as a content claim it did not make (`rba7-f1`).
         expect(status.status === 'declaration-moved' ? status : {}).not.toHaveProperty('expectedManifestHash');
+    });
+
+    it('reports a removed declaration too, so a narrowing is not read as growth', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-declared-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'd-task', title: 'Declared', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts', 'src/b.ts'] });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src/a.ts'), 'sealed\n', 'utf8');
+        await writeFile(join(root, 'src/b.ts'), 'sealed too\n', 'utf8');
+        const revision = await createTaskRevision({ root, taskId: 'd-task', ownedPaths: ['src/a.ts', 'src/b.ts'] });
+        // The declaration narrows rather than grows: a correction can go either way, and both are the same disagreement.
+        await mutateTaskArtefact(root, 'd-task', taskPath(root, 'd-task'), async (raw) => {
+            const current = JSON.parse(raw) as Record<string, unknown>;
+            return `${JSON.stringify({ ...current, ownedPaths: ['src/a.ts'] }, null, 2)}\n`;
+        });
+        const status = await revisionStatus(root, revision, 'd-task');
+        expect(status.status).toBe('declaration-moved');
+        expect(status.status === 'declaration-moved' ? status.added : []).toEqual([]);
+        expect(status.status === 'declaration-moved' ? status.removed : []).toEqual(['src/b.ts']);
+    });
+
+    it('does not report a declaration verdict when the task cannot be read, and says so instead', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-declared-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'd-task', title: 'Declared', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src/a.ts'), 'sealed\n', 'utf8');
+        const revision = await createTaskRevision({ root, taskId: 'd-task', ownedPaths: ['src/a.ts'] });
+        // **Drift the task, not the revision** (`rba7-f4`). `readTask` validates, so a `task.json` that no longer matches
+        // its schema throws. The previous reader caught that throw and substituted `?? []`, so the function returned
+        // `declaration-moved` with `taskOwnedPaths: []` — an error reported as a fact about a declaration the task does not
+        // have. A revision whose declaration disagrees can be repaired; a task that cannot be read cannot, and the two must
+        // not look the same.
+        const raw = JSON.parse(await readFile(taskPath(root, 'd-task'), 'utf8')) as Record<string, unknown>;
+        delete raw.acceptance;
+        await writeFile(taskPath(root, 'd-task'), JSON.stringify(raw, null, 2));
+        await expect(revisionStatus(root, revision, 'd-task')).rejects.toThrow(/does not match its schema/);
     });
 
     it('still says superseded when the content moved, which takes precedence', async () => {

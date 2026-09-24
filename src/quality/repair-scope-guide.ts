@@ -6,7 +6,7 @@ import { repairScopes, type RepairScope } from './judge.js';
  */
 const repairScopeGuide: Record<RepairScope, string> = {
     missing_test_evidence: 'write a test for the acceptance criterion',
-    revision_superseded: 'a declared task-owned path changed after sealing; rebuild to create the next revision',
+    revision_superseded: 'the sealed revision no longer describes the task — either a declared task-owned path changed after sealing, or the task\'s declared surface moved; rebuild to create the next revision',
     stale_evidence: 'legacy repository-scoped evidence changed after collection; rebuild',
     failing_evidence: 'tests or checks failed',
     blocking_review_finding: 'a reviewer blocked this acceptance',

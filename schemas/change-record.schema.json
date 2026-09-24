@@ -29,6 +29,11 @@
       "type": "string",
       "minLength": 1
     },
+    "baseRevisionId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The revision whose content changedPaths was measured against, when there was one. Recorded so the surface a brief issues and the surface the record seals are comparable rather than two unnamed comparisons (rba7-a4abcec8)."
+    },
     "changedPaths": {
       "type": "array",
       "items": {

@@ -298,7 +298,7 @@ If Judge returns FAIL for any acceptance criterion:
    - `stale_evidence` — legacy repository-scoped evidence changed after collection; rebuild
    - `failing_evidence` — tests or checks failed
    - `blocking_review_finding` — a reviewer blocked this acceptance
-   - `revision_superseded` — a declared task-owned path changed after sealing; rebuild to create the next revision
+   - `revision_superseded` — the sealed revision no longer describes the task — either a declared task-owned path changed after sealing, or the task's declared surface moved; rebuild to create the next revision
    - `cross_revision_evidence` — the acceptance is covered by evidence from more than one revision; seal one revision
    - `insufficient_evidence_level` — the acceptance requires integration or entrypoint evidence that is missing; add it
    - `unresolved_repair_obligation` — a repair obligation from the review or the Judge is still unresolved

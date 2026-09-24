@@ -2,8 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { initLayout, taskPath } from '../../src/core/layout.js';
+import { createTask } from '../../src/core/task.js';
+import { mutateTaskArtefact } from '../../src/core/state.js';
+import { createTaskRevision } from '../../src/workflow/revision.js';
 import { computeDiffHash } from '../../src/quality/evidence.js';
-import { assertDistillGates, evaluateDistillGates, evaluateReviewClearance } from '../../src/workflow/distill-gates.js';
+import { evaluateDistillGates, evaluateReviewClearance, freshPassingTestEvidence, assertDistillGates } from '../../src/workflow/distill-gates.js';
 
 /**
  * The distill gate used to decide all three conditions itself, from a single projection file
@@ -157,5 +161,36 @@ describe('distill gates', () => {
 
         await writeJudge(root, { acceptance: [{ id: 'AC-1', result: 'FAIL', repairScope: 'failing_evidence' }] });
         expect((await evaluateDistillGates(root, taskId)).judge).toMatchObject({ passed: false, reason: 'failing_acceptance' });
+    });
+
+    it('drops evidence bound to a revision whose task declaration has since moved', async () => {
+        // `rba7-f3`: the `declaration-moved` branch in `freshPassingTestEvidence` had no case that entered it — the only
+        // evidence-binding fixture corrected the task declaration to equal the revision's first, so the call was ever only
+        // exercised in the `current` direction and deleting the branch left the suite green. A guard whose removal leaves the
+        // suite green is decorative by this change's own rule, so this is that branch's case: seal a revision, bind passing
+        // evidence to it, then grow the task's declaration without touching the owned content.
+        const root = await mkdtemp(join(tmpdir(), 'kata-distill-gate-'));
+        roots.push(root);
+        await initLayout(root);
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src', 'owned.ts'), 'sealed\n', 'utf8');
+        await createTask({ root, id: taskId, title: 'Gate', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/owned.ts'] });
+        const revision = await createTaskRevision({ root, taskId, ownedPaths: ['src/owned.ts'] });
+        // Passing test evidence **bound to that revision**, which is the envelope the branch exists to judge.
+        await recordEvidence(root, `${taskId}-test.json`, { id: 'bound-evidence', revisionId: revision.id });
+        const diffHash = await computeDiffHash(root);
+
+        // Before the declaration moves, the evidence is the fresh evidence the gate is looking for.
+        expect((await freshPassingTestEvidence(root, taskId, diffHash))?.evidence.id).toBe('bound-evidence');
+
+        // The declaration grows and no owned file changes: exactly the shape `declaration-moved` names.
+        await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (raw) => {
+            const current = JSON.parse(raw) as Record<string, unknown>;
+            return `${JSON.stringify({ ...current, ownedPaths: ['src/owned.ts', 'src/added.ts'] }, null, 2)}\n`;
+        });
+
+        // The revision is no longer current, so the evidence cannot be what an archive rests on. Removing the branch makes
+        // this return the bound evidence and reddens the assertion.
+        expect(await freshPassingTestEvidence(root, taskId, diffHash)).toBeNull();
     });
 });

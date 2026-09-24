@@ -1043,20 +1043,19 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         // **An absence binds to content too**, and to the content it is *about*: a repair whose subject is a declaration or a
         // document still names the files it concerns, and without digests the record falls back to the revision id — which
         // every later seal replaces, so the three absences on this change stayed open through four seals while the reddenings
-        // beside them closed. The set is the change's owned paths, read from the task, because that is what an absence for a
-        // non-code repair is a statement about.
-        const ownedPaths = await (await import('../core/task.js')).readTask(workspace, change)
-            .then((task) => task.ownedPaths ?? [])
-            .catch(() => [] as string[]);
-        const { computePathDigests } = await import('../workflow/revision.js');
-        const absencePathDigests = ownedPaths.length > 0
-            ? await computePathDigests(workspace, ownedPaths).catch(() => undefined)
+        // beside them closed. The surface is **the task's current declaration** (the revision's sealed set when the task
+        // declares none) — the same `falsifierProofSurface` the reddening door uses (rba7-f5, rba7-f6). The two doors used
+        // to read two different declarations (`task.ownedPaths` here, `revision.pathDigests` there) of the same quantity,
+        // which is the class this change exists to remove.
+        const { falsifierProofSurface } = await import('../workflow/revision.js');
+        const absenceSurface = revision
+            ? await falsifierProofSurface(workspace, change, revision).catch(() => undefined)
             : undefined;
         const absence = await recordFalsifierAbsence(workspace, change, {
             findingId: finding,
             reason: why,
             revisionId: revision?.id ?? '(no revision)',
-            ...(absencePathDigests && Object.keys(absencePathDigests).length > 0 ? { pathDigests: absencePathDigests } : {}),
+            ...(absenceSurface && Object.keys(absenceSurface.pathDigests).length > 0 ? { pathDigests: absenceSurface.pathDigests } : {}),
             recordedAt: new Date().toISOString(),
         });
         return { command: 'falsify', taskId: change, success: true, recorded: true, absence };
@@ -1095,19 +1094,20 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     // So the fact travels with the proof instead: `observedTreeDigest` is what the tree was when the three steps ran, and the
     // reader can see whether it still matches. Detection rather than prevention is the honest shape here, because prevention
     // cannot be reached when the proof is what the seal needs.
+    // **The proof's surface is the task's current declaration, not the older revision's** (rba7-f5, rba7-f6). Seeding from
+    // `revision.pathDigests` bound the proof to the revision's frozen owned set — a declaration the task can outgrow — so a
+    // proof of a fix in a path the task has since declared (the mutation's own file) named eleven paths that did not include
+    // it, and the binding then expired on the next unrelated re-seal or credited content it never described. Both doors of
+    // this command now read one surface, `falsifierProofSurface`, over the task's declaration (the sealed set as fallback).
     let observedTreeDigest: string | undefined;
     let observedDrift: string[] = [];
     let observedPathDigests: Record<string, string> = {};
     if (revision) {
-        const { computePathDigests } = await import('../workflow/revision.js');
-        const sealed = revision.pathDigests ?? {};
-        const current = await computePathDigests(root, Object.keys(sealed));
-        observedDrift = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
-        // The content this proof is about, so the disposition survives a commit that touches something else.
-        observedPathDigests = Object.fromEntries(Object.entries(sealed).filter(([path]) => current[path] === sealed[path]));
-        observedTreeDigest = Object.keys(sealed).sort()
-            .map((path) => `${path}:${current[path] ?? ''}`)
-            .join('\n');
+        const { falsifierProofSurface } = await import('../workflow/revision.js');
+        const proof = await falsifierProofSurface(root, change!, revision);
+        observedDrift = proof.drift;
+        observedPathDigests = proof.pathDigests;
+        observedTreeDigest = proof.treeDigest;
     }
 
     const result = await runFalsification({

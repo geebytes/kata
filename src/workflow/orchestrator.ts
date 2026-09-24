@@ -21,7 +21,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionStatus, workspaceDrift } from './revision.js';
+import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
@@ -705,6 +705,7 @@ async function cmdBuild(
             root,
             taskId,
             revisionId: revision.id,
+            ...(baseRevision ? { baseRevisionId: baseRevision.id } : {}),
             ownedPaths,
             evidence,
             // The revision's content identity is what the record's surface is derived from; live `git status` is added
@@ -1233,7 +1234,12 @@ async function cmdVerify(
             diagnostics: { mode: 'verify', frozenTierMissing: frozenGaps },
         };
     }
-    const verifyResult = status?.status === 'superseded'
+    // **Both non-current states fail readiness, for the reason distill-gates refuses the same evidence** (rba7-f2). This
+    // read `status?.status === 'superseded'`, so a `declaration-moved` revision took the normal readiness path and the verdict
+    // was then stamped with that revision's id — while `distill-gates.ts` skips the very envelope, because a revision the task
+    // has outgrown cannot be the basis of an archive. Two answers to one state is the shape this line keeps removing; both
+    // consumers now ask `revisionIsCurrent`, so there is one answer, and the diagnostics report which of the two it was.
+    const verifyResult = status && !revisionIsCurrent(status)
         ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id)
         : evaluateReadiness(taskId, task.acceptance, evidence, findings, currentDiffHash, scopeHashes, matrix, unresolvedObligations, task.workflowProfile?.reviewMode);
     if (revisionId) verifyResult.revisionId = revisionId;

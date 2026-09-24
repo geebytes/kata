@@ -91,6 +91,39 @@ describe('a change reports its review rounds and how many findings are about the
         expect(report.unrecorded).toBe(false);
     });
 
+    it('reports null when the previous round\u2019s revision artefact is missing, not a measured zero', async () => {
+        // `rba7-0ef9357e` claimed `countAboutThePreviousRound` returned `0` when the previous round's revision file is
+        // missing, so the report stated `share: 0` for a question it could not answer. In the current code every one of
+        // those paths returns `null` (`!base` at the read, and `delta.status !== 'available'` after it), so the claim does
+        // not hold — but nothing pinned it, and a "cannot answer" that silently becomes "answered zero" is the shape it
+        // named. This is the case: two rounds are recorded, the earlier one's `revisions/<id>.json` is absent.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'missing-base', title: 'Rounds', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        const dir = join(root, '.kata/tasks/missing-base');
+        await mkdir(dir, { recursive: true });
+        // Only the live revision exists; the predecessor's artefact is deliberately not written.
+        await mkdir(join(dir, 'revisions'), { recursive: true });
+        await writeFile(join(dir, 'revisions/revision-two.json'), JSON.stringify({
+            id: 'revision-two',
+            pathDigests: { 'src/changed.ts': 'b'.repeat(64) },
+            contentDigests: { 'src/changed.ts': 'b'.repeat(64) },
+        }), 'utf8');
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-one-missing', findings: [1], createdAt: '2026-09-23T01:00:00.000Z' },
+        ]), 'utf8');
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-two', createdAt: '2026-09-23T02:00:00.000Z', findings: [{ id: 'f1' }],
+            hypotheses: [{ targets: ['src/changed.ts'] }],
+        }), 'utf8');
+
+        const report = await reportRounds(root, 'missing-base', 'review');
+        expect(report.rounds).toHaveLength(2);
+        expect(report.targetsAboutThePreviousRound).toBeNull();
+        expect(report.shareAboutThePreviousRound).toBeNull();
+    });
+
     it('reports two rounds on the same revision as unanswerable, not as a measured zero', async () => {
         // `rba-f10`: `shareAboutThePreviousRound` was `about / max(1, allTargets(live))` with `about` defaulting to 0, so a
         // round whose previous round sat on the **same revision** — no surface to be about — reported `share: 0`, which a

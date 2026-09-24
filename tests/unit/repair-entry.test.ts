@@ -231,6 +231,11 @@ describe('a superseded seal authorises the re-seal from hardVerify', () => {
 
         expect(authorization.authorized).toBe(false);
         expect(authorization.denial).toContain('kata-cli verify --change <task>');
+        // `rba7-a4e3edc4`: the denial used to end "the sealed revision still matches the workspace", a claim about the working
+        // tree that the check behind it — a hash over the revision's declared owned paths — cannot make. The wording here is the
+        // falsifier: restoring the workspace claim reddens it.
+        expect(authorization.denial).not.toMatch(/matches the workspace/);
+        expect(authorization.denial).toMatch(/declared/i);
     });
 });
 });

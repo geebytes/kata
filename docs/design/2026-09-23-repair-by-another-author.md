@@ -109,26 +109,31 @@ would have claimed to.
 
 ## The real-data measurement, as evidence rather than as a test
 
+The command emits **one JSON line** (`runRoundsCommand` returns an object and `src/cli.ts` writes it through `outputResult`
+with no `RenderOptions.human`), so that — not the human-shaped rendering below — is what a shell captures:
+
 ```
-$ kata-cli rounds --change closure-gate
-**Measured at the time (2026-09-24, superseded — see below):** rounds: 4 | findings per round: 7, 5, 5, 2 | targets about
-the previous round: 28 | share: 0.85
-
-**And the current output of the command that produces it** (`kata-cli rounds --change repair-by-another-author`, 2026-09-24):
-
-    rounds: 3 | findings per round: 7, 6, 5 | targets about the previous round: 17 | share: 0.4722 | unrecorded: true
-
-**This line was rewritten rather than corrected** (`rba4-f4`), because correcting a number only re-arms the drift: the first figure
-was a measurement of a change that has since had another round, and any number copied into prose goes stale the next time the
-command runs. The measurement belongs in the change's evidence, where it is dated and reproducible; what belongs here is the
-command. The difference between the two figures is also instructive: `share` fell from 0.85 to 0.4722 because the number is now
-computed over the **change surface** rather than over the owned-path manifest (`rba-f1`), and `rounds` fell from 4 to 3 because a
-record that the dedup key collapsed is now counted once (`rba4-f1`). Two of this line's own defects were hiding inside the number it
-was quoting.
+$ kata-cli rounds --change repair-by-another-author
+{"command":"rounds","taskId":"repair-by-another-author","success":true,"node":"review","rounds":[…],"targetsAboutThePreviousRound":17,"shareAboutThePreviousRound":0.4722,"unrecorded":true}
 ```
 
-That is the number the change exists to produce: `closure-gate`'s convergence ratio, which until now could only be reached by
-listing a directory and reading five records by hand.
+Read as fields, on 2026-09-24: **`rounds: 3 | findings per round: 7, 6, 5 | targets about the previous round: 17 | share:
+0.4722 | unrecorded: true`**. A previous version of this section printed that rendering under a `$ kata-cli rounds --change
+closure-gate` prompt and called it the command's output; it was neither that command's stdout nor, later, its command.
+
+**Measured earlier and superseded** (`rba4-f4`, `rba7-3fe71b87`): `rounds: 4 | findings per round: 7, 5, 5, 2 | targets about
+the previous round: 28 | share: 0.85`, on `closure-gate`. Kept as the measurement it was: the `28` was that revision's
+owned-path set, not its change surface, so the repaired code does not produce it at all — `closure-gate` now reports
+`targets: 10 | share: 0.303`, computed over the change surface (`rba-f1`) with the live record paired to its own predecessor
+(`rba5-f5`).
+
+**This line was rewritten rather than corrected** (`rba4-f4`), because correcting a number only re-arms the drift: any number
+copied into prose goes stale the next time the command runs. What belongs here is the command; the measurement belongs in the
+change's evidence, dated and reproducible.
+
+That is the number the change exists to produce: a convergence ratio, which until now could only be reached by listing a
+directory and reading five records by hand. It is read as **fields**, because the command emits JSON — the rendering above is a
+reading of that line and not a transcript of it (`rba7-3fe71b87`, `rba7-6ebc475b`).
 
 **And it is recorded here rather than asserted in the suite, because of what the seal found**: the case that asserted it passed
 in the working tree and exited 1 under the seal — the seal runs a check against the sealed content, and another change's runtime

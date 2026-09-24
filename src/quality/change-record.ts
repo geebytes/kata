@@ -54,6 +54,17 @@ export interface ChangeRecord {
     taskId: string;
     revisionId: string;
     /**
+     * The revision this one's change surface was measured **against**, when there was one.
+     *
+     * `rba7-a4abcec8` measured the gap this field closes: the issued brief for a revision named its base (`since:
+     * revision-daf33fefeb9f0bff`, 57 changed paths) while the sealed record for that same revision reported 11 — because the
+     * record's base was `revision-e64139639a2833ef`. Both were correct content diffs; they differed because they measured
+     * different bases, and **only one of the two artefacts named its base**, so the difference read as a disagreement about
+     * one revision rather than two comparisons of one. The base is a fact the record already had (it is what
+     * `baseContentDigests` is). Naming it makes the two surfaces comparable instead of contradictory.
+     */
+    baseRevisionId?: string;
+    /**
      * Every path this revision changed: its own content identity against its base, plus whatever the working tree
      * reports as changed since the seal. Derived from the revision and git, never from the ownership declaration.
      */
@@ -90,6 +101,11 @@ export interface ChangeRecordInput {
     root: string;
     taskId: string;
     revisionId: string;
+    /**
+     * The revision whose content `changedPaths` is measured against, when there is one. Recorded rather than inferred, so a
+     * reader can tell *which* comparison produced the surface (`rba7-a4abcec8`).
+     */
+    baseRevisionId?: string;
     ownedPaths: string[];
     evidence: Array<{ id?: string; checkId?: string; name?: string; command?: string; exitCode: number | null; passed?: boolean }>;
     claimFailures: ChangeRecordClaimFailure[];
@@ -243,6 +259,7 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
         version: 1,
         taskId: input.taskId,
         revisionId: input.revisionId,
+        ...(input.baseRevisionId ? { baseRevisionId: input.baseRevisionId } : {}),
         surfaceBasis,
         changedPaths,
         changedOutsideOwnership,

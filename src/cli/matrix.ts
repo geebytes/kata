@@ -166,11 +166,45 @@ export async function runMatrixCommand(
             if (normalized.length === 0) {
                 return { command: 'matrix', taskId: change, action, updated: false, error: 'An owned-path correction must name at least one path that is inside the repository.' };
             }
-            await mutateTaskArtefact(root, change, taskPath(root, change), async (raw) => {
-                const current = JSON.parse(raw) as Record<string, unknown>;
-                return `${JSON.stringify({ ...current, ownedPaths: normalized }, null, 2)}\n`;
+            // An idempotent correction is not a scope decision: the surface did not move, so there is nothing to record and
+            // the governed route refuses an empty change by design. Answer it as the no-op it is rather than turning a
+            // re-application of the same declaration into a refusal.
+            const currentNormalized = normalizeOwnedPaths(root, previousPaths);
+            const unchanged = currentNormalized.length === normalized.length
+                && normalized.every((path) => currentNormalized.includes(path));
+            if (unchanged) {
+                return { command: 'matrix', taskId: change, action, updated: true, reason, ownedPaths: normalized, previousPaths, unchanged: true };
+            }
+            // **And it records a scope decision, the way `scope change` + `scope apply` does** (rba7-05cdd65c). This branch
+            // used to write `task.ownedPaths` directly and nothing else, so the growth of the audited surface — the thing
+            // `scope.ts`'s own docstring says these commands exist to make visible — left no trace: `scope show` reported
+            // `changes: 0` and no `unreportedGrowth`. Two entrances to one decision, and only one of them recorded it. So the
+            // direct write is gone and the governed route does both: **record the decision, then apply it**, so a refusal
+            // writes nothing at all and the surface still lands on the same value. `allowConflicts` is set because this branch
+            // never checked conflicts before and refusing here would turn a working correction into a dead end — but the
+            // conflicts are returned, so the decision they acknowledge is visible rather than silent.
+            const { recordScopeChange, applyScopeChange } = await import('../quality/scope-change.js');
+            const recorded = await recordScopeChange(root, change, {
+                next: normalized,
+                current: previousPaths,
+                reason,
+                by: 'user',
+                allowConflicts: true,
             });
-            return { command: 'matrix', taskId: change, action, updated: true, reason, ownedPaths: normalized, previousPaths };
+            if ('refused' in recorded) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: recorded.refused };
+            }
+            const applied = await applyScopeChange(root, change, recorded.id);
+            if (!applied.applied) {
+                return { command: 'matrix', taskId: change, action, updated: false, error: applied.reason ?? 'the recorded scope change could not be applied' };
+            }
+            return {
+                command: 'matrix', taskId: change, action, updated: true, reason,
+                ownedPaths: applied.ownedPaths ?? normalized,
+                previousPaths,
+                scopeChangeId: recorded.id,
+                ...(recorded.conflicts?.length ? { conflicts: recorded.conflicts } : {}),
+            };
         } catch (error) {
             return { command: 'matrix', taskId: change, action, updated: false, error: error instanceof Error ? error.message : String(error) };
         }

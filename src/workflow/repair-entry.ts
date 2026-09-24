@@ -4,7 +4,7 @@ import type { Phase } from '../core/state.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import type { RepairPayload } from '../quality/repair.js';
-import { readCurrentTaskRevision, revisionStatus } from './revision.js';
+import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, taskPath, judgePath } from '../core/layout.js';
 
@@ -38,7 +38,7 @@ function denial(entryPhase: RepairEntryPhase, message: string): RepairAuthorizat
  *
  * **`declaration-moved` counts, and that is the fix.** The check used to ask only `superseded` — whether the content it
  * described had changed — and hashed `revision.ownedPaths`, so a task whose declaration grew afterwards (this change: 11 paths to
- * 22, via `scope change` + `scope apply`) read as current while eleven declared paths had never been hashed. `repair-entry.ts`
+ * 23, via `scope change` + `scope apply`) read as current while twelve declared paths had never been hashed. `repair-entry.ts`
  * then refused a seal with "the sealed revision still matches the workspace", a claim about the workspace decided from the older
  * declaration — and the seal it refused is the only thing that can take on the newer one.
  */
@@ -46,7 +46,7 @@ async function revisionNoLongerDescribes(root: string, taskId: string): Promise<
     const revision = await readCurrentTaskRevision(root, taskId);
     if (!revision) return null;
     const status = await revisionStatus(root, revision, taskId);
-    return status.status === 'current' ? null : revision;
+    return revisionIsCurrent(status) ? null : revision;
 }
 
 /** hardVerify: a verify FAIL whose failed acceptance scopes are all repairable, or a re-seal of a stale verdict. */
@@ -82,9 +82,16 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
     if (!isRepairable) {
         return denial(
             entryPhase,
-            'Build cannot run from hardVerify without a repairable verify FAIL result, and the sealed revision still '
-            + 'matches the workspace. Run `kata-cli verify --change <task>` to record what is missing, or make the '
-            + 'change the verdict asks for.',
+            // **The message says what was checked, which is the declaration — not the workspace** (rba7-a4e3edc4, cg4-f2).
+            // It read "the sealed revision still matches the workspace", but the only freshness check behind it hashes
+            // `revision.ownedPaths`, so a workspace changed outside that declared set reads as current and the sentence was
+            // false about the working tree. The claim is withdrawn rather than re-worded: `revisionStatus` answers the
+            // declaration question, and claiming more than it answered is the class this change exists to remove. The
+            // unsettled part — whether the workspace outside the declaration has moved — is reported to the operator as
+            // `kata-cli verify`, which reads it, rather than asserted here.
+            'Build cannot run from hardVerify without a repairable verify FAIL result, and the sealed revision\'s declared '
+            + 'manifest is unchanged (a change outside its owned paths is not seen by this check). Run '
+            + '`kata-cli verify --change <task>` to record what is missing, or make the change the verdict asks for.',
         );
     }
 
