@@ -253,3 +253,23 @@ describe('a shortened history states what it withheld', () => {
         expect(source).toContain("let delta: AdversarialBriefInput['delta'] | undefined;");
     });
 });
+
+/**
+ * The delta's findings list is limited to the paths that changed, and says what it withheld.
+ *
+ * Measured before: the block was 20,147 characters — 29% of a 69,746-character brief and 94% of the delta section — because it
+ * carried every tracked finding with its full message. After: 15,749 characters and four findings withheld.
+ *
+ * **And the limit is the data, not the filter**: a finding carries a `path` only when the pass that filed it knew which file it was
+ * about, and one that does not is kept — withholding on a condition that cannot be evaluated would drop material for a reason the
+ * reader could not check. That is why the reduction is 22% rather than the whole block, and it is the same shape as `rba-f11`'s
+ * unit mismatch: the record does not carry what the criterion assumed it carried.
+ */
+describe('the delta findings list is limited to what the delta is about', () => {
+    it('filters by path, keeps what it cannot judge, and counts what it withheld', () => {
+        const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        expect(source).toContain('selectRelevantFindings(await readTrackedFindings(root, taskId), surface.changedPaths)');
+        expect(source).toContain('!finding.path || changed.has(finding.path)');
+        expect(source).toContain('further finding(s) are withheld');
+    });
+});

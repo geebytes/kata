@@ -311,6 +311,8 @@ export interface AdversarialBriefInput {
          * telemetry that reports what it could not measure rather than zero.
          */
         attemptsWithheld?: number;
+        /** How many prior findings the delta withheld because their path did not change. Counted, never dropped silently. */
+        findingsWithheld?: number;
         findings?: Array<{ id: string; severity: string; message: string; disposition: string }>;
     };
     /**
@@ -586,6 +588,10 @@ Earlier findings and what was decided about them:
 ${(input.delta.findings ?? []).length > 0
     ? (input.delta.findings ?? []).map((finding) => `- ${finding.severity} ${finding.id} [${finding.disposition}]: ${finding.message}`).join('\n')
     : '- (none recorded)'}
+${(input.delta.findingsWithheld ?? 0) > 0
+    ? `- (${input.delta.findingsWithheld} further finding(s) are withheld: their path did not change in this delta, so their`
+        + ' conclusions do not need re-deciding. Ask for the full list if you need it.)'
+    : ''}
 
 `
         : '';
@@ -1304,6 +1310,23 @@ export const BRIEF_VOLATILE_INPUTS = [
  * anyway is reasoning paid on every turn. Measured: removing the whole block from a delta round cut the bill 25% and the reasoning
  * 44%; this keeps the part that bears on the repair.
  */
+/**
+ * The prior findings that bear on the paths this delta changed.
+ *
+ * A finding carries a `path` when the pass that filed it knew which file it was about; one that does not is kept, because
+ * withholding on a condition that cannot be evaluated would drop material for a reason the reader could not check. A finding
+ * whose path did not change is a conclusion that does not need re-deciding, and carrying it costs reasoning on every turn.
+ */
+function selectRelevantFindings<T extends { path?: string }>(findings: T[], changedPaths: string[]): T[] {
+    const changed = new Set(changedPaths);
+    return findings.filter((finding) => !finding.path || changed.has(finding.path));
+}
+
+/** How many findings the delta withheld, so a shortened list never reads as "this is all". */
+function countWithheldFindings<T extends { path?: string }>(findings: T[], changedPaths: string[]): number {
+    return findings.length - selectRelevantFindings(findings, changedPaths).length;
+}
+
 function countWithheldAttempts(previous: unknown, changedPaths: string[]): number {
     const record = previous as { attempts?: Array<Record<string, string>> };
     return (record?.attempts ?? []).length - selectRelevantAttempts(previous, changedPaths).length;
@@ -1929,7 +1952,14 @@ export async function buildAdversarialBrief(
                     // **Counted, because a shortened list reads as "this is all"** — the same discipline as telemetry that reports
                     // what it could not measure rather than zero.
                     attemptsWithheld: countWithheldAttempts(previous, surface.changedPaths),
-                    findings: (await readTrackedFindings(root, taskId)).map(({ id, severity, message, disposition }) => ({ id, severity, message, disposition })),
+                    // **Only the findings that bear on the paths this delta changed, and the count of what was withheld.**
+                    // Measured: this block was 20,147 characters — 29% of a 69,746-character brief, and 94% of the delta
+                    // section — because it carried every tracked finding with its full message, while a conclusion about a
+                    // path that did not change does not need re-deciding. Same treatment as the attempts block, which went
+                    // from 10,742 characters to 253 under it.
+                    findings: selectRelevantFindings(await readTrackedFindings(root, taskId), surface.changedPaths)
+                        .map(({ id, severity, message, disposition }) => ({ id, severity, message, disposition })),
+                    findingsWithheld: countWithheldFindings(await readTrackedFindings(root, taskId), surface.changedPaths),
                 };
                 deltaReport = { from: base.id, changedPaths: surface.changedPaths };
                 immutableScope = { kind: 'delta', from: base.id, changedPaths: surface.changedPaths };
