@@ -57,3 +57,36 @@ they did not (10 per hypothesis, before and after).
 **The requirement is therefore satisfiable, but not by this list.** It is satisfied by the two levers that attack the dominant
 term, and of those only one is measured — which is the same conclusion this line reached before: **measure the lever, then build
 it, not the other way round.**
+
+## The final answer, with the first measured counter-example
+
+Asked whether the plan meets "cost down without review quality down". Every lever on this line, with its state:
+
+| lever | measured? | result |
+|---|---|---|
+| **Delta remit narrowing** | **yes — this round** | **remit −64%, tokens +27%** — **it does not reduce cost** |
+| Mechanical gates before the first round | yes | 0 tokens, catches 4 of 6 findings in one round → quality per token up, total unchanged |
+| Impact radius in the finding | no | ~0.1% of a turn |
+| **Hypothesis-scoped rounds** | yes, earlier | **2.5–2.7×** — and **not from a narrower remit**, which is what this round established |
+| Prefix caching | yes | impossible at this endpoint (`cacheRead: 0` on byte-identical requests) |
+| Round budget | no | caps the tail; **trades quality for cost** |
+| **Fewer turns per hypothesis** | **no** | **a dominant-term lever** |
+| **Externalised context per turn** | **no** | **a dominant-term lever**, built and unmeasured |
+| Repair by another author | no | the one attempt produced nothing, because I emptied its worktree |
+
+**So: the requirement is satisfiable in principle, and exactly one lever has a measured number — hypothesis-scoped rounds at
+2.5–2.7×. The lever just tested, which was the one this line had been treating as the cost fix, does not deliver it.**
+
+**And the reason is the equation, which every result here agrees with and no lever has touched:**
+
+```
+total ≈ turns × accumulated context per turn
+```
+
+**The remit decides what is read; the brief and the transcript decide how much is re-read.** This round narrowed the first by 64%
+and grew the second by 99%, and the cost followed the second. The two levers that attack the dominant term — fewer turns per
+hypothesis, and less accumulated context per turn — are the two that have never been measured on this line.
+
+**One more honest note on quality, since the requirement is "without quality down"**: the delta round found six things, two of them
+major, and **one of the majors (`rba-f9`) challenges a claim I made in this very document** — that the delta lever's precondition
+being met meant something for cost. It did not. **The quality did not go down; my claim did.**
