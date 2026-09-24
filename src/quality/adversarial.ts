@@ -787,6 +787,12 @@ is paid for once. The hash is taken from the content when the record is written,
 still describes the file from one that does not: **you do not need to hash anything, and you cannot** — that is the platform's
 to measure, not yours to assert.
 
+Every finding also carries an **impact**: what else the repair will touch — the other call sites, the fixtures that will
+break, the second derivation of the same concept. **This is an observation you already hold, not a repair recipe** — you have
+just read the call sites, so you know what a change there reaches, and recording it does not make this pass the author of the
+fix. It is what the fixer cannot see from the finding alone: **measured on this line, one repair broke eleven fixtures across
+six files and running the suite was the only thing that said so.**
+
 Every finding carries a **falsifier**: the check that must redden under the defect it names. Not a repair recipe — the
 repair is not yours to design, and a recipe would make this pass a second author of the change, which is the one thing it
 exists not to be. A falsifier is what you already have: the counterexample you ran, the command whose output shows the

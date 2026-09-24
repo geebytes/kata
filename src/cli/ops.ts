@@ -654,6 +654,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // AC-4 promises a routed finding is visible in this command, so the dispositions come from the tracked view — the
         // same one the disposition commands write through, so the report cannot disagree with what they stored.
         const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+        type TrackedFinding = Awaited<ReturnType<typeof readTrackedFindings>>[number];
         // AC-3: an obligation answered by evidence and one answered **and falsified** were indistinguishable, so a batch that
         // closed on evidence alone read exactly like one whose repairs were shown to bite. Reported per obligation, from the
         // same ledger the criterion reads — and a change sealed before the criterion existed shows up here as evidence-only
@@ -666,7 +667,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // with the rule it reports on (cg3-f4).
         const { readCurrentTaskRevision } = await import('../workflow/revision.js');
         const currentRevisionId = (await readCurrentTaskRevision(root, change).catch(() => null))?.id;
-        const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as Array<{ id: string; severity: string; source: string; disposition: string; dispositionReason?: string }>);
+        // The fallback is typed from `TrackedFinding` rather than restated, because a restated shape drifts: this one had
+        // already lost `impact` before it was added, and would have lost it again.
+        const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as TrackedFinding[]);
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
         const { batchSaving, openBatch } = await import('../quality/repair-batch.js');
@@ -757,6 +760,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 disposition: finding.disposition,
                 // The carrier, for a routed finding: 'routed' without a destination does not answer "where did it go".
                 ...(finding.dispositionReason ? { dispositionReason: finding.dispositionReason } : {}),
+                // The impact travels with the finding, so the fixer reads what it will touch without re-deriving it — which is
+                // the measured cost of its absence: one repair broke eleven fixtures across six files, and running the suite was
+                // the only thing that said so.
+                ...(finding.impact ? { impact: finding.impact } : {}),
             })),
         };
     }

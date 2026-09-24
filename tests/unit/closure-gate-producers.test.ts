@@ -160,3 +160,30 @@ describe('the brief states the condition its record is judged by', () => {
         expect(source).toContain('targets');
     });
 });
+
+/**
+ * The impact a finding carries, and the invariant that keeps it usable.
+ *
+ * The pass is asked for what else the repair will touch — an observation it already holds, since it has just read the call sites.
+ * Measured cost of its absence: one repair broke eleven fixtures across six files, and running the suite was the only thing that
+ * said so. **The invariant is the one that caught me before**: whatever the brief prescribes, the writer must accept, or a pass
+ * obeying its own brief has its record refused.
+ */
+describe('a finding carries the impact of its repair, and the writer accepts what the brief asks for', () => {
+    it('is prescribed by the brief and accepted by the schema', () => {
+        const brief = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
+        const schema = JSON.parse(readFileSync(new URL('../../schemas/adversarial-review.schema.json', import.meta.url), 'utf8'));
+        expect(brief).toContain('Every finding also carries an **impact**');
+        // The field the brief prescribes must exist in the schema, which is `additionalProperties: false` — the defect that made
+        // a pass obeying the falsifier clause unable to record anything at all.
+        expect(schema.properties.findings.items.properties.impact).toBeDefined();
+        expect(String(schema.properties.findings.items.properties.impact.description)).toContain('not a repair recipe');
+    });
+
+    it('is surfaced where the fixer reads it', () => {
+        const ops = readFileSync(new URL('../../src/cli/ops.ts', import.meta.url), 'utf8');
+        // A field nothing reads is this line's oldest finding; the status projection is where a fixer sees a finding.
+        expect(ops).toContain('finding.impact');
+        expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('impact?: string;');
+    });
+});

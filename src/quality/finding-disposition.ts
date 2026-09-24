@@ -41,6 +41,14 @@ export interface TrackedFinding {
     dispositionReason?: string;
     dispositionBy?: string;
     dispositionAt?: string;
+    /**
+     * What else the repair will touch, as the pass that filed it observed.
+     *
+     * Not a repair recipe — the pass is not the fix's author — but an observation it already holds: it has just read the call
+     * sites, so it knows what a change there reaches. **Measured cost of its absence: one repair broke eleven fixtures across six
+     * files, and running the suite was the only thing that said so.**
+     */
+    impact?: string;
     /** Where the finding lives: `review` for `review.json`, the node name for an adversarial record. */
     /**
      * Which record holds the finding.
