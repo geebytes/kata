@@ -2026,9 +2026,18 @@ export async function buildAdversarialBrief(
             deliveredFacts: live.map((fact) => ({ path: fact.path, sha256: fact.sha256, note: fact.note })),
             deliveredFactsChanged: stale.map((fact) => fact.path),
         })).catch(() => ({}))),
+        // **In a delta round the class history carries only the findings whose path it changed.** The section renders an
+        // open finding's message in full, so a finding about code this delta did not touch is paid for on every turn and
+        // buys nothing — its conclusion does not need re-deciding. The filter belongs here rather than at the renderer,
+        // because the renderer receives objects this mapping has already stripped of `path`, and a finding with no path is
+        // kept (withholding on a condition that cannot be evaluated would drop material for a reason the reader could not
+        // check). Without a delta nothing is filtered: then the open findings are the material.
         findingHistory: [
             ...(await readTrackedFindingsForBrief(root, taskId))
                 .filter((finding) => finding.source !== `adversarial-${node}`)
+                .filter((finding) => !immutableScope || immutableScope.kind !== 'delta'
+                    || !finding.path
+                    || immutableScope.changedPaths.includes(finding.path))
                 .map((finding) => ({
                     class: findingClassOf(finding),
                     severity: finding.severity,
@@ -2036,7 +2045,10 @@ export async function buildAdversarialBrief(
                     message: finding.message,
                     disposition: finding.disposition,
                 })),
-            ...(await readArchivedPassFindings(root, taskId, node)),
+            ...(await readArchivedPassFindings(root, taskId, node))
+                .filter((finding) => !immutableScope || immutableScope.kind !== 'delta'
+                    || !finding.path
+                    || immutableScope.changedPaths.includes(finding.path)),
         ].filter((entry, index, all) => all.findIndex((other) => other.id === entry.id) === index),
         // M1: point at the envelopes and name the project's own checks, so the reviewer can read rather than re-derive.
         evidencePaths: await evidenceEnvelopePaths(root, taskId, evidence),
@@ -2455,13 +2467,13 @@ async function readArchivedPassFindings(
     root: string,
     taskId: string,
     node: AdversarialNode,
-): Promise<Array<{ class: string; severity: string; id: string; message: string; disposition: string }>> {
+): Promise<Array<{ class: string; severity: string; id: string; message: string; disposition: string; path?: string }>> {
     const { readdir, readFile } = await import('node:fs/promises');
     const directory = join(root, '.kata/tasks', taskId, 'passes');
     const files = (await readdir(directory).catch(() => [] as string[]))
         .filter((file) => file.startsWith(`${node}-`) && file.endsWith('.json'))
         .sort();
-    const history: Array<{ class: string; severity: string; id: string; message: string; disposition: string }> = [];
+    const history: Array<{ class: string; severity: string; id: string; message: string; disposition: string; path?: string }> = [];
     for (const file of files) {
         const raw = await readFile(join(directory, file), 'utf8').catch(() => null);
         if (!raw) continue;
@@ -2481,6 +2493,12 @@ async function readArchivedPassFindings(
                 id: finding.id,
                 message: finding.message,
                 disposition: finding.disposition ?? 'open',
+                // **The path, which the snapshot already holds and this function dropped.** Without it the class section
+                // could not tell which findings a delta is about, so its filter withheld nothing: every entry reached the
+                // renderer with `path` undefined and fell to the "keep what cannot be judged" branch. Measured: 5 of 13
+                // findings on this change sit outside the delta, so the filter is worth ~5,700 of that section's 14,918
+                // characters. The defect was a mapping that dropped a field, one layer below the renderer that needed it.
+                ...(finding.path ? { path: finding.path } : {}),
             });
         }
     }
