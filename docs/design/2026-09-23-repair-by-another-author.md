@@ -111,7 +111,20 @@ would have claimed to.
 
 ```
 $ kata-cli rounds --change closure-gate
-rounds: 4 | findings per round: 7, 5, 5, 2 | targets about the previous round: 28 | share: 0.85
+**Measured at the time (2026-09-24, superseded — see below):** rounds: 4 | findings per round: 7, 5, 5, 2 | targets about
+the previous round: 28 | share: 0.85
+
+**And the current output of the command that produces it** (`kata-cli rounds --change repair-by-another-author`, 2026-09-24):
+
+    rounds: 3 | findings per round: 7, 6, 5 | targets about the previous round: 17 | share: 0.4722 | unrecorded: true
+
+**This line was rewritten rather than corrected** (`rba4-f4`), because correcting a number only re-arms the drift: the first figure
+was a measurement of a change that has since had another round, and any number copied into prose goes stale the next time the
+command runs. The measurement belongs in the change's evidence, where it is dated and reproducible; what belongs here is the
+command. The difference between the two figures is also instructive: `share` fell from 0.85 to 0.4722 because the number is now
+computed over the **change surface** rather than over the owned-path manifest (`rba-f1`), and `rounds` fell from 4 to 3 because a
+record that the dedup key collapsed is now counted once (`rba4-f1`). Two of this line's own defects were hiding inside the number it
+was quoting.
 ```
 
 That is the number the change exists to produce: `closure-gate`'s convergence ratio, which until now could only be reached by

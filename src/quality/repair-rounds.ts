@@ -137,8 +137,10 @@ async function countAboutThePreviousRound(
     // first version returned 0 for both, so a share of 0.000 was reported for a question the tool had no way to answer — the
     // same defect as a measured zero standing in for an unmeasured one, which this line has recorded twice already.
     if (delta.status !== 'available') return null;
+    // **No empty-surface branch here** (rba4-f5): a surface with no changed paths reports `unchanged`, and the status check
+    // above already returned `null` for anything that is not `available` — so the branch could never be taken, and unreachable
+    // code reads like a case that is handled. An available delta has at least one path.
     const changed = new Set(delta.changedPaths);
-    if (changed.size === 0) return 0;
 
     const hypotheses = Array.isArray(live.hypotheses) ? (live.hypotheses as Array<{ targets?: string[] }>) : [];
     const targeted = new Set(hypotheses.flatMap((hypothesis) => hypothesis.targets ?? []));
