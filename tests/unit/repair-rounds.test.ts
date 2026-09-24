@@ -29,7 +29,15 @@ async function fixture(id: string): Promise<string> {
         { revisionId: 'revision-one', findings: [1, 2, 3], createdAt: '2026-09-23T01:00:00.000Z' },
     ]), 'utf8');
     await writeFile(join(dir, 'revisions/revision-one.json'), JSON.stringify({
-        pathDigests: { 'src/changed.ts': 'a'.repeat(64), 'src/other.ts': 'b'.repeat(64) },
+        pathDigests: { 'src/changed.ts': 'a'.repeat(64), 'src/other.ts': 'b'.repeat(64), 'src/untouched.ts': 'c'.repeat(64) },
+        // **contentDigests, because the change surface derives from content and not from the owned-path manifest** — the
+        // distinction f1 is about, and the reason the first attempt at this fix reported 0 where the case expects 2.
+        contentDigests: { 'src/changed.ts': 'a'.repeat(64), 'src/other.ts': 'b'.repeat(64), 'src/untouched.ts': 'c'.repeat(64) },
+    }), 'utf8');
+    await writeFile(join(dir, 'revisions/revision-two.json'), JSON.stringify({
+        id: 'revision-two',
+        pathDigests: { 'src/changed.ts': 'd'.repeat(64), 'src/other.ts': 'e'.repeat(64), 'src/untouched.ts': 'c'.repeat(64) },
+        contentDigests: { 'src/changed.ts': 'd'.repeat(64), 'src/other.ts': 'e'.repeat(64), 'src/untouched.ts': 'c'.repeat(64) },
     }), 'utf8');
     await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
         revisionId: 'revision-two',

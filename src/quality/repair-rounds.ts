@@ -104,19 +104,21 @@ async function countAboutThePreviousRound(
 ): Promise<number> {
     if (rounds.length < 2 || !live) return 0;
     const previous = rounds.at(-2);
-    // **f1 is not fixed here, and this is where it has to be.** The code reads the previous revision's `pathDigests` keys
-    // and calls them "the paths the previous round changed" — but that map is the revision's **owned** paths, so the share is
-    // over ownership rather than over what changed, wrong in both directions: a declared path that did not change counts, and
-    // a changed path outside the declaration does not. `revisionChangeSurface` exists for this and is what the gate uses.
+    // **The change surface, not the owned-path manifest** (f1). The first version read the previous revision's
+    // `pathDigests` keys and called them "the paths the previous round changed" — but that map is the revision's **owned**
+    // paths, so the share was over ownership rather than over what changed, wrong in both directions: a declared path that did
+    // not change counted, and a changed path outside the declaration did not. `revisionChangeSurface` exists for this and is
+    // what the gate uses.
     //
-    // I tried it and could not pin it: the fixture writes revision files that `readTaskRevision` does not resolve, so the
-    // change surface came back empty and the case reported 0 where it expects 2. Rather than commit a half-applied fix, the
-    // attempt is reverted and recorded — the next attempt starts from "make `readTaskRevision` find the fixture's revisions",
-    // which is a fixture problem rather than a logic one.
-    const previousRevision = await readJson<{ pathDigests?: Record<string, string> }>(
-        join(kataDir(root), 'tasks', taskId, 'revisions', `${previous?.revisionId}.json`),
-    );
-    const changed = new Set(Object.keys(previousRevision?.pathDigests ?? {}));
+    // The first attempt failed because the fixture wrote only `pathDigests`, while a revision carries both that and
+    // `contentDigests` — and the surface derives from the latter. The fixture is fixed with it.
+    const { readTaskRevision } = await import('../workflow/revision.js');
+    const { revisionChangeSurface } = await import('./revision-delta.js');
+    const base = await readTaskRevision(root, taskId, previous?.revisionId ?? '').catch(() => null);
+    const current = await readTaskRevision(root, taskId, String(live.revisionId ?? '')).catch(() => null);
+    if (!base) return 0;
+    const delta = revisionChangeSurface(base, current);
+    const changed = new Set(delta.status === 'available' ? delta.changedPaths : []);
     if (changed.size === 0) return 0;
 
     const hypotheses = Array.isArray(live.hypotheses) ? (live.hypotheses as Array<{ targets?: string[] }>) : [];

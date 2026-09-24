@@ -109,3 +109,25 @@ done its repairs — which is exactly what the five rounds of `closure-gate` wer
 **So the next step for the lever is not a measurement but a repair**: `repair-by-another-author`'s four major findings, then its
 seal, then the brief that should come back a delta. And the measurement to take is the brief's `mode` and the round's token cost
 against the three cold rounds on this line (351K, 382K, 468K).
+
+## The 0.85 was measuring the wrong thing, and the real number is 0
+
+`kata-cli rounds --change closure-gate` used to report `share 0.85`, and I quoted it repeatedly as the measurement that the rounds
+chase the previous round's repairs. It was computed over the previous revision's **`pathDigests` keys** — which is the revision's
+**owned-path manifest**, not its change surface. So it was wrong in both directions: a declared path that never changed counted,
+and a changed path outside the declaration did not.
+
+Fixed (`rba-f1`) to derive from `revisionChangeSurface`, the same derivation the gate uses. **The real number for that pair is 0**:
+
+```
+rounds 4 | targets about the previous round 0 | share 0.000 | unrecorded true
+```
+
+**And that is correct rather than a regression**: rounds 4 and 5 of `closure-gate` ran on the **same revision**
+(`revision-1e0a2f0d2503bc5c`), so there was no change surface between them to be about. The hand measurement stands — round 4's
+five findings were about round 3's repairs — but the *number* I kept quoting was an artifact of measuring ownership.
+
+**So the honest correction is that this line's headline convergence figure was wrong**, in the direction that made the loop look
+better understood than it was. What remains true is the qualitative statement, measured by reading the findings: **each round's
+findings are about the previous round's repairs.** What does not remain is a number for it, and the tool now needs a pair of
+rounds on *different* revisions to produce one.
