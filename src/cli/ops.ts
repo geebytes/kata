@@ -1035,7 +1035,25 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         const { readCurrentTaskRevision: readRevision } = await import('../workflow/revision.js');
         const { recordFalsifierAbsence } = await import('../quality/falsifier-reddenings.js');
         const revision = await readRevision(workspace, change).catch(() => null);
-        const absence = await recordFalsifierAbsence(workspace, change, { findingId: finding, reason: why, revisionId: revision?.id ?? '(no revision)', recordedAt: new Date().toISOString() });
+        // **An absence binds to content too**, and to the content it is *about*: a repair whose subject is a declaration or a
+        // document still names the files it concerns, and without digests the record falls back to the revision id — which
+        // every later seal replaces, so the three absences on this change stayed open through four seals while the reddenings
+        // beside them closed. The set is the change's owned paths, read from the task, because that is what an absence for a
+        // non-code repair is a statement about.
+        const ownedPaths = await (await import('../core/task.js')).readTask(workspace, change)
+            .then((task) => task.ownedPaths ?? [])
+            .catch(() => [] as string[]);
+        const { computePathDigests } = await import('../workflow/revision.js');
+        const absencePathDigests = ownedPaths.length > 0
+            ? await computePathDigests(workspace, ownedPaths).catch(() => undefined)
+            : undefined;
+        const absence = await recordFalsifierAbsence(workspace, change, {
+            findingId: finding,
+            reason: why,
+            revisionId: revision?.id ?? '(no revision)',
+            ...(absencePathDigests && Object.keys(absencePathDigests).length > 0 ? { pathDigests: absencePathDigests } : {}),
+            recordedAt: new Date().toISOString(),
+        });
         return { command: 'falsify', taskId: change, success: true, recorded: true, absence };
     }
     const missing = [
