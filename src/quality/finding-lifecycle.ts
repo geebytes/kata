@@ -41,6 +41,23 @@ export type ClassCoverage = {
  * the class returns is the defect this whole design exists to remove (the line recorded eight decorative checks before the
  * falsification mechanism started catching them).
  */
+/**
+ * A finding whose class is not recorded is **invisible** to the termination condition, and that is a hole rather than a class.
+ *
+ * `roundMayClose` reads each open terminal finding's `classInstances`; one that carries none contributes nothing, so a pass that
+ * recorded findings without that field would let the round close with nothing covered. The field is required by the brief, and a
+ * requirement is only real where something fails without it — so this names the findings that would slip through, and the round
+ * cannot close while any exists.
+ */
+export function findingsWithoutAClass(
+    findings: ReadonlyArray<{ id: string; severity: string; classInstances?: readonly string[] }>,
+): Array<{ id: string; severity: string }> {
+    return findings
+        .filter((finding) => isTerminalSeverity(finding.severity))
+        .filter((finding) => !finding.classInstances || finding.classInstances.length === 0)
+        .map((finding) => ({ id: finding.id, severity: finding.severity }));
+}
+
 export function classesNeedingCoverage(
     findings: ReadonlyArray<{ id: string; severity: string; classInstances?: readonly string[] }>,
     coverage: ReadonlyArray<ClassCoverage>,
@@ -57,18 +74,35 @@ export function classesNeedingCoverage(
     return [...needed.values()];
 }
 
-/** Whether a round may close: every class an open terminal finding names is covered by a check. */
+/** Whether a round may close: every class an open terminal finding names is covered by a check, **and every one names a class**. */
 export function roundMayClose(
     findings: ReadonlyArray<{ id: string; severity: string; classInstances?: readonly string[] }>,
     coverage: ReadonlyArray<ClassCoverage>,
-): { mayClose: boolean; reason: string; open: ClassCoverage[] } {
+): { mayClose: boolean; reason: string; open: ClassCoverage[]; classless: Array<{ id: string; severity: string }> } {
+    // **A finding with no class is checked first**, because it is the one case the class table cannot speak about: the round would
+    // close having covered nothing for it, and silence is what makes it invisible.
+    const classless = findingsWithoutAClass(findings);
     const open = classesNeedingCoverage(findings, coverage);
+    if (classless.length > 0) {
+        return {
+            mayClose: false,
+            reason: `findings that name no class, so no check can be said to cover them: ${classless.map((entry) => entry.id).join(', ')} — the termination condition reads classInstances, and one that names none contributes nothing`,
+            open,
+            classless,
+        };
+    }
     if (open.length === 0) {
-        return { mayClose: true, reason: 'every class an open terminal finding names is covered by a check that reddens when it returns', open };
+        return {
+            mayClose: true,
+            reason: 'every class an open terminal finding names is covered by a check that reddens when it returns',
+            open,
+            classless,
+        };
     }
     return {
         mayClose: false,
         reason: `classes with no covering check: ${open.map((entry) => entry.classId).join(', ')} — a repair without one promises the next round the same class`,
         open,
+        classless,
     };
 }

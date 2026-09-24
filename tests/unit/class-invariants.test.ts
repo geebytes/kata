@@ -234,3 +234,29 @@ describe('F — a producer with a consumer (a negative result, recorded)', () =>
         expect(test).toContain('classInstances');
     });
 });
+
+/**
+ * **The hole in the termination condition, closed.** `roundMayClose` reads each open terminal finding's `classInstances`; one that
+ * carries none contributes nothing, so a pass that recorded findings without that field would let the round close having covered
+ * nothing for them. The field is required by the brief — and a requirement is only real where something fails without it.
+ */
+describe('G — a finding that names no class cannot close the round', () => {
+    it('refuses to close and names the classless findings', async () => {
+        const { roundMayClose } = await import('../../src/quality/finding-lifecycle.js');
+        const verdict = roundMayClose(
+            [{ id: 'classless-one', severity: 'major' }],
+            [{ classId: 'one-concept-several-derivations', covered: true, coveredBy: ['tests/unit/class-invariants.test.ts'] }],
+        );
+        // Without this the verdict would be mayClose: true — the class table has nothing to say about a finding that names no class.
+        expect(verdict.mayClose).toBe(false);
+        expect(verdict.reason).toContain('classless-one');
+        expect(verdict.classless.map((entry) => entry.id)).toEqual(['classless-one']);
+    });
+
+    it('does not refuse for a non-terminal finding, because those are dispositions rather than repairs', async () => {
+        const { roundMayClose } = await import('../../src/quality/finding-lifecycle.js');
+        const verdict = roundMayClose([{ id: 'minor-one', severity: 'minor' }], []);
+        expect(verdict.mayClose).toBe(true);
+        expect(verdict.classless).toEqual([]);
+    });
+});
