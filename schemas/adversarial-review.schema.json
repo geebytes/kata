@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kata.dev/schemas/adversarial-review.schema.json",
   "title": "Kata independent adversarial review record",
-  "description": "One adversarial pass over a sealed revision, executed in a clean context. `status: recorded` carries what the adversarial reviewer attempted and found; `status: waived` records an explicit decision to proceed without it. Whether the pass really ran in a fresh context is attested by the executing agent — kata can gate on the attestation and on the brief it was given, not on the host's session.",
+  "description": "One adversarial pass over a sealed revision, executed in a clean context. `status: recorded` carries what the adversarial reviewer attempted and found; `status: waived` records an explicit decision to proceed without it. Whether the pass really ran in a fresh context is attested by the executing agent \u2014 kata can gate on the attestation and on the brief it was given, not on the host's session.",
   "type": "object",
   "required": [
     "node",
@@ -34,7 +34,7 @@
       "type": "string"
     },
     "candidateFreezeSha256": {
-      "description": "The CandidateFreeze this pass certified (§7.4): the content snapshot plus the semantic contract it answered. Stamped so a completed certification can be reused for the freezes it is still valid for, instead of being expired by a revision id that moves on any re-seal.",
+      "description": "The CandidateFreeze this pass certified (\u00a77.4): the content snapshot plus the semantic contract it answered. Stamped so a completed certification can be reused for the freezes it is still valid for, instead of being expired by a revision id that moves on any re-seal.",
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
@@ -43,11 +43,11 @@
       "type": "string"
     },
     "governanceManifestHash": {
-      "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
+      "description": "The governance-text surface at the time of this verdict (\u00a722/\u00a724). A text-only edit expires what this surface was verified for, and nothing else.",
       "type": "string"
     },
     "instrumentManifestHash": {
-      "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
+      "description": "The declared-instrument surface at the time of this verdict (\u00a724.4). Editing a declared instrument expires the instrument surface only \u2014 not the pass about the deliverable.",
       "type": "string"
     },
     "baseManifestHash": {
@@ -109,11 +109,11 @@
       "minLength": 1
     },
     "elapsedMs": {
-      "description": "How long the pass took, reported by the executor. Recorded so a delta pass can be compared with the full pass it narrowed (design §11: the saving had never been measured).",
+      "description": "How long the pass took, reported by the executor. Recorded so a delta pass can be compared with the full pass it narrowed (design \u00a711: the saving had never been measured).",
       "type": "integer"
     },
     "toolUses": {
-      "description": "How many tool calls the pass made, reported by the executor. The turn loop, not the CPU, is what a pass mostly costs (design §1), so this is the first term of that cost to become visible.",
+      "description": "How many tool calls the pass made, reported by the executor. The turn loop, not the CPU, is what a pass mostly costs (design \u00a71), so this is the first term of that cost to become visible.",
       "type": "integer"
     },
     "mode": {
@@ -251,7 +251,7 @@
       }
     },
     "receipt": {
-      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Host-authored, measured and bound: it arrives on its own channel (`--receipt-file`) rather than in the reviewer's result body, and the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires. Authorship separation is process and tool policy, not cryptography — a receipt a single-user machine could forge is out of scope here.",
+      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Host-authored, measured and bound: it arrives on its own channel (`--receipt-file`) rather than in the reviewer's result body, and the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires. Authorship separation is process and tool policy, not cryptography \u2014 a receipt a single-user machine could forge is out of scope here.",
       "type": "object",
       "required": [
         "runId",
@@ -313,7 +313,7 @@
             "completionReport": {
               "type": "string",
               "minLength": 1,
-              "description": "The platform's completion line verbatim — what the relayed figures were transcribed from."
+              "description": "The platform's completion line verbatim \u2014 what the relayed figures were transcribed from."
             }
           }
         },
@@ -405,7 +405,7 @@
             "minLength": 1
           },
           "toolUses": {
-            "description": "How many tool calls this attempt took (§18.7). Per attempt rather than per pass so a costly hypothesis is visible while it runs, which is when the decision to stop is made.",
+            "description": "How many tool calls this attempt took (\u00a718.7). Per attempt rather than per pass so a costly hypothesis is visible while it runs, which is when the decision to stop is made.",
             "type": "integer",
             "minimum": 0
           }
@@ -483,7 +483,7 @@
           "impact": {
             "type": "string",
             "minLength": 1,
-            "description": "What else the repair will touch: the other call sites, the fixtures, the second derivation of the same concept. An observation the pass already holds — not a repair recipe, which would make this pass a second author of the fix. Measured cost of its absence: one repair broke eleven fixtures across six files and the suite was the only thing that said so."
+            "description": "What else the repair will touch: the other call sites, the fixtures, the second derivation of the same concept. An observation the pass already holds \u2014 not a repair recipe, which would make this pass a second author of the fix. Measured cost of its absence: one repair broke eleven fixtures across six files and the suite was the only thing that said so."
           },
           "classInstances": {
             "type": "array",
@@ -497,7 +497,7 @@
       }
     },
     "findingOrigins": {
-      "description": "How many of this pass's findings were caused by the previous repair (design §F3): recorded so the marginal cost of fixing is on the same account as the cost of finding.",
+      "description": "How many of this pass's findings were caused by the previous repair (design \u00a7F3): recorded so the marginal cost of fixing is on the same account as the cost of finding.",
       "type": "object",
       "required": [
         "causedByPreviousRepair"
@@ -523,6 +523,34 @@
     "testPolicy": {
       "type": "string",
       "const": "reuse_declared_tests_only"
+    },
+    "usage": {
+      "type": "object",
+      "description": "What the round cost, recorded so the loop's price is a fact rather than an impression. Measured on this line: seven rounds cost 351,864 / 658,523 / 347,000 / 400,000 / 875,572 / 510,836 / 1,073,271 tokens and produced 7 / 0 / 5 / 5 / 0 / 7 findings \u2014 the two most expensive produced zero because they never wrote a record, so cost and yield are not correlated and the number exists to be discussed rather than driven down.",
+      "properties": {
+        "total_tokens": {
+          "type": "number"
+        },
+        "input_tokens": {
+          "type": "number"
+        },
+        "output_tokens": {
+          "type": "number"
+        },
+        "cache_read_input_tokens": {
+          "type": "number"
+        },
+        "tool_uses": {
+          "type": "number"
+        },
+        "duration_ms": {
+          "type": "number"
+        },
+        "context_percent": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

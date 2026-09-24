@@ -310,6 +310,31 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
+    if (command === 'repair-briefing') {
+        // **The consumer `impact` and `classInstances` never had.** Both were added to the finding contract and read by nothing, so a
+        // repair author decided how large its repair must be without them — and eight repairs on this line fixed one instance of a
+        // class with several. This renders the three questions before the repair rather than leaving them to be rediscovered.
+        const change = parseChangeArg(argv.slice(1)) ?? '';
+        if (!change) throw new Error('Usage: kata-cli repair-briefing --change <task-id> [--json]');
+        const { repairBriefing, renderRepairBriefing } = await import('./quality/repair-briefing.js');
+        const { readUpstreamSummary, resolveWorkspaceRoot } = await import('./workflow/navigation.js').then(async (mod) => ({
+            readUpstreamSummary: mod.readUpstreamSummary,
+            resolveWorkspaceRoot: (await import('./core/layout.js')).resolveWorkspaceRoot,
+        }));
+        void readUpstreamSummary;
+        const root = resolveWorkspaceRoot();
+        const briefing = await repairBriefing(root, change);
+        // `outputResult` honours the global `--json`, so the prose is only for a human read: printing both made the JSON
+        // unparseable, which is a defect in the tool rather than in the test that found it (this line's class again).
+        // `outputResult` renders the object it is given, so the briefing *is* the payload: wrapping it in prose made the human
+        // rendering the only one, which is why the JSON path returned a string instead of the fields.
+        outputResult(
+            { ...briefing, rendered: renderRepairBriefing(briefing) } as unknown as Record<string, unknown>,
+            { human: (result) => String(result.rendered ?? '') },
+        );
+        return;
+    }
+
     if (command === 'scope') {
         const result = await runScopeCommand(argv.slice(1));
         outputResult(result);

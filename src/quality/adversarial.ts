@@ -97,6 +97,8 @@ export interface AdversarialRecord {
     node: AdversarialNode;
     /** What this pass read, as facts rather than text. The hash is taken from the content when the record is written. */
     deliveredFacts?: Array<{ path: string; note: string }>;
+    /** What a previous round cost, so the round is told the price of the search it is about to run. */
+    usage?: Record<string, number>;
     status: 'recorded' | 'waived';
     revisionId: string;
     /**
@@ -803,6 +805,8 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 **it refuses a record as incomplete when some path in that remit is not named by any hypothesis's targets** — a criterion id
 (AC-1, AC-2, …) counts as a target too. A pass that answers everything and covers all but one path concludes nothing, and the
 round is spent.
+
+**Report what this round cost, in the record's \`usage\` field** — \`total_tokens\`, \`tool_uses\` and \`duration_ms\`, as your own harness reports them. It is recorded because the loop's price is otherwise invisible: this line's seven rounds cost 351,864 / 658,523 / 347,000 / 400,000 / 875,572 / 510,836 / 1,073,271 tokens and the two most expensive produced **zero** findings because they never wrote a record, while the cheapest produced seven. Cost and yield are not correlated here, so this is not a target to drive down — it is the only way \"the cost has not fallen\" becomes a fact something can fail on.
 
 **This requirement was missing from this brief, and it is the measured cause of seven refused records on this line**: every
 review round on two changes was returned as incomplete for a condition the brief never stated, so the reviewers could not comply

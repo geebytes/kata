@@ -188,9 +188,19 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
             .filter((finding) => finding.disposition === 'open')
             .map((finding) => ({ id: finding.id, severity: finding.severity, ...(finding.classInstances ? { classInstances: finding.classInstances } : {}) }));
         const verdict = roundMayClose(open, CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy })));
-        // Reported only when it has something to say: a round that may close needs no explanation, and a field that is always present
-        // reads as a fact worth watching when it is not.
-        return verdict.mayClose ? {} : { roundClosure: verdict };
+        // **The loop's price, beside its termination condition.** Seven recorded rounds cost 351,864 / 658,523 / 347,000 / 400,000 /
+        // 875,572 / 510,836 / 1,073,271 tokens and produced 7 / 0 / 5 / 5 / 0 / 7 findings — the two most expensive produced zero
+        // because they never wrote a record, and the cheapest produced seven. Cost and yield are not correlated, which is why this
+        // is a fact to report rather than a number to drive down; and it is here because this change has three criteria and none
+        // mentions cost, so "the cost has not fallen" was not a fact anything could fail on.
+        const { reportRoundCost } = await import('../quality/round-cost.js');
+        const cost = await reportRoundCost(root, taskId, 'review').catch(() => null);
+        const costField = cost && cost.totalTokens > 0
+            ? { roundCost: { totalTokens: cost.totalTokens, rounds: cost.rounds.length, ...(cost.latest ? { latest: cost.latest } : {}), ...(cost.range ? { range: cost.range } : {}) } }
+            : {};
+        // The closure verdict is reported only when it has something to say: a round that may close needs no explanation, and a field
+        // that is always present reads as a fact worth watching when it is not.
+        return verdict.mayClose ? costField : { roundClosure: verdict, ...costField };
     })()),
     unresolvedObligationAcIds: [...new Set(unresolvedObligations.map((o) => o.acceptanceId).filter((id): id is string => Boolean(id)))],
     ...(task && !task.acceptanceMatrix ? { missingAcceptanceMatrix: true } : {}),

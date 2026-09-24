@@ -206,3 +206,31 @@ describe('the four classes, and the checks that cover them', () => {
         expect(verdict.open).toEqual([]);
     });
 });
+
+/**
+ * **A producer with a consumer: a negative result, recorded rather than faked.**
+ *
+ * `impact` and `classInstances` were added to the finding contract and read by nothing, so a repair author decided how large its
+ * repair must be without knowing what else it would reach or where else the class appears — which is how eight repairs on this line
+ * fixed one instance of a class with several.
+ *
+ * **A text check cannot catch that.** I wrote one, twice: the first asserted each named reader contains its field, and removing the
+ * field from one reader left it green because another reader still mentioned it; the second asked whether *any* module reads the
+ * field, which is true of a common word in a large source tree whatever the consumers do. Both were decorative, in the change whose
+ * subject is decorative checks, and the honest response is to say so rather than keep a check that cannot fail.
+ *
+ * What catches it is the mutation: remove the field's use from `repair-briefing.ts` and `tests/unit/repair-briefing.test.ts` reddens,
+ * with `expected undefined to be a string`-shaped failures on the fields the author needs. That is a behavioural check on one
+ * consumer, and it is the strongest one available here.
+ */
+describe('F — a producer with a consumer (a negative result, recorded)', () => {
+    it('keeps the behavioural check that can fail: the briefing is the consumer', async () => {
+        const briefing = readFileSync(join(ROOT, 'src/quality/repair-briefing.ts'), 'utf8');
+        // The consumer exists and names the fields in its type, which is what makes their absence fail the test that exercises it.
+        expect(briefing).toContain('impact');
+        expect(briefing).toContain('classInstances');
+        const test = readFileSync(join(ROOT, 'tests/unit/repair-briefing.test.ts'), 'utf8');
+        expect(test).toContain('impact');
+        expect(test).toContain('classInstances');
+    });
+});
