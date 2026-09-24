@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode } from '../quality/review-execution.js';
 import { join } from 'node:path';
-import { CLASS_COVERAGE } from '../quality/class-coverage.js';
+import { CLASS_COVERAGE, coveredClasses } from '../quality/class-coverage.js';
 import { roundMayClose } from '../quality/finding-lifecycle.js';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
@@ -271,11 +271,35 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         if (transcript === null) {
             return { command: 'adversarial salvage', taskId: change, salvage: null, reason: `no transcript at ${from}` };
         }
-        const found = salvageRecord(transcript);
+        // **The identity of the brief this round was issued, when it can be established.** A transcript holds the brief's own
+        // history — complete records of earlier rounds — so "the biggest record-shaped object" is not the round being salvaged.
+        // `--expect-revision` names it; otherwise the current sealed revision is used, which is what a round in flight is about.
+        const expectRevision = argValue(rest, '--expect-revision')
+            ?? (await (await import('../workflow/revision.js')).readCurrentTaskRevision(root, change).catch(() => null))?.id;
+        const found = salvageRecord(transcript, expectRevision ? { revisionId: expectRevision } : undefined);
+        // **Validated with the platform's own reader, not with the structural guess that found it.** A salvaged record the gate
+        // would refuse is not a salvage: reporting one would replace a round's real output with something inadmissible, and a
+        // transcript holds the brief's own template and any schema example quoted in it — measured, a round that had no record
+        // reported a hit whose `revisionId` was the literal `${input.revisionId ?? ''}`.
+        // The platform's own validator, not a second one written here — `validate` throws with the schema's own message.
+        const { validate } = await import('../core/schema.js');
+        let admissible = false;
+        let invalidReason = '';
+        if (found) {
+            try {
+                validate('adversarial-review', found.record);
+                admissible = true;
+            } catch (error) {
+                invalidReason = error instanceof Error ? error.message : String(error);
+            }
+        }
         return {
             command: 'adversarial salvage',
             taskId: change,
-            salvage: found ? { record: found.record, fromEnd: found.fromEnd } : null,
+            salvage: found && admissible ? { record: found.record, fromEnd: found.fromEnd } : null,
+            ...(found && !admissible
+                ? { reason: `a record-shaped object was found but does not pass the platform's own reader: ${invalidReason.slice(0, 240)}` }
+                : {}),
             ...(found ? {} : { reason: 'the transcript holds no complete record, so the round produced none — a finding about the round rather than about the change' }),
         };
     }
@@ -706,8 +730,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 severity: tracked.severity,
                 ...(tracked.classInstances ? { classInstances: tracked.classInstances } : {}),
             }));
-            const coverage = CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy }));
-            return roundMayClose(findings, coverage);
+            // See `coveredClasses`: the coverage comes from the table rather than from a literal this call site writes
+            // (`rba8-f2` — the literal made the predicate's uncovered branch unreachable, so the verdict could not fail).
+            return roundMayClose(findings, coveredClasses());
         })();
         // Reported beside the findings it is about, so `status` answers "may this round close?" rather than leaving the operator to
         // infer it from a count. The reason names the uncovered classes, because the next action is to cover a class rather than to

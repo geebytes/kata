@@ -58,6 +58,10 @@ describe('a repair that was measured as unpinned', () => {
                 // accepts this value, and the writer's retired-field refusal is what rejects the record. With an
                 // unknown-string placeholder the schema rejected it first, which would have hidden the retirement.
                 verdict: 'no_defect_found',
+                // The template gained `usage` when the round-cost report was added, and a pass copying the template writes it. The
+                // fixture supplies a valid object for the same reason it supplies `deliveredFacts`: the invariant is that any
+                // field the template prescribes is accepted by the writer, so the value is fixed rather than the field trimmed.
+                usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
                 createdAt: '2026-09-22T00:00:00.000Z',
             };
 

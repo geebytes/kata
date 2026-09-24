@@ -179,7 +179,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         // **One derivation, five call sites.** Computed here rather than passed in, because five callers passing their own answer is how
         // this line produced six instances of "one concept derived in several places". The findings and the coverage table are read
         // from the sources the disposition commands already write through.
-        const { CLASS_COVERAGE } = await import('../quality/class-coverage.js');
+        const { coveredClasses } = await import('../quality/class-coverage.js');
         const { roundMayClose } = await import('../quality/finding-lifecycle.js');
         const { classesOfFindings } = await import('../quality/class-coverage.js');
         const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId).catch(() => []);
@@ -195,7 +195,9 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         const open = tracked
             .filter((finding) => finding.disposition === 'open' && !disposed.has(finding.id))
             .map((finding) => ({ id: finding.id, severity: finding.severity, ...(finding.classInstances ? { classInstances: finding.classInstances } : {}) }));
-        const verdict = roundMayClose(open, CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy })));
+        // **Derived from the table, not written here** (`rba8-f2`): the literal `covered: true` made the predicate's uncovered
+        // branch unreachable, so the verdict could not fail.
+        const verdict = roundMayClose(open, coveredClasses());
         // **The loop's price, beside its termination condition.** Seven recorded rounds cost 351,864 / 658,523 / 347,000 / 400,000 /
         // 875,572 / 510,836 / 1,073,271 tokens and produced 7 / 0 / 5 / 5 / 0 / 7 findings — the two most expensive produced zero
         // because they never wrote a record, and the cheapest produced seven. Cost and yield are not correlated, which is why this

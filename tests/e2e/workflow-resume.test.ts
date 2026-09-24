@@ -338,6 +338,7 @@ describe('Workflow resume and lifecycle', () => {
             join(root, '.kata/tasks/wf-old-review-ignored/review.json'),
             `${JSON.stringify({
                 revisionId: 'revision-old',
+                status: 'pending',
                 findings: [{ id: 'finding-old-blocker', taskId: 'wf-review-repair-stale-findings', severity: 'blocking', message: 'Old blocker' }],
             }, null, 2)}\n`,
             'utf8',
@@ -761,7 +762,7 @@ describe('Workflow resume and lifecycle', () => {
         });
         await writeFile(
             join(root, `.kata/tasks/${taskId}/review.json`),
-            `${JSON.stringify({ findings: [{ id: 'finding-1', taskId: 'wf-build-review-repair-test', severity: 'blocking', message: 'Must repair' }] }, null, 2)}\n`,
+            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-1', taskId: 'wf-build-review-repair-test', severity: 'blocking', message: 'Must repair' }] }, null, 2)}\n`,
         );
         await writeWikiClosure(root, taskId, {
             decision: 'not_applicable',

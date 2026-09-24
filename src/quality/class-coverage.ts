@@ -91,3 +91,21 @@ export async function classesOfFindings(root: string, taskId: string): Promise<R
     }
     return classOf;
 }
+
+/**
+ * The coverage the class table actually implies — **derived, not supplied by the caller**.
+ *
+ * `ClassCoverage.covered` was a field on the predicate's input type and `CoverageEntry` has no such field, so both production call
+ * sites wrote the literal `true` for every entry (`rba8-f2`): the uncovered branch of `classesNeedingCoverage` was unreachable from
+ * production, and the round-closure verdict was a constant. That is the class table's second entry in its own machinery — a
+ * predicate reading a declaration (`covered`) while claiming to have read whether a check exists.
+ *
+ * A class is covered when it names a check; that is what this returns, so no caller can invent the answer.
+ */
+export function coveredClasses(): Array<{ classId: string; covered: boolean; coveredBy: readonly string[] }> {
+    return CLASS_COVERAGE.map((entry) => ({
+        classId: entry.classId,
+        covered: entry.coveredBy.length > 0,
+        coveredBy: entry.coveredBy,
+    }));
+}

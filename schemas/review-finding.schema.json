@@ -92,7 +92,7 @@
         "accepted",
         "routed"
       ],
-      "description": "Set by a disposition command (`findings defer|accept|rout`) or by the closure rule marking a finding fixed. Absent means open — a record that carries no disposition has not been decided, which is different from one disposed of as nothing."
+      "description": "Set by a disposition command (`findings defer|accept|rout`) or by the closure rule marking a finding fixed. Absent means open \u2014 a record that carries no disposition has not been decided, which is different from one disposed of as nothing."
     },
     "dispositionReason": {
       "type": "string",
@@ -105,6 +105,21 @@
     "dispositionAt": {
       "type": "string",
       "minLength": 1
+    },
+    "impact": {
+      "type": "string",
+      "description": "What else the repair will touch, as the pass that filed the finding observed. Required by the brief; forbidden by this schema until it was measured, which is why 22 of this change's own findings are invalid."
+    },
+    "classInstances": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Where else the same defect exists, so one revision can fix the class rather than one instance. The termination condition reads this field through a finding's transport, so a transport that drops it makes the field invisible \u2014 see track() in finding-disposition.ts."
+    },
+    "falsifier": {
+      "type": "string",
+      "description": "The check that must redden under this defect, so the repair is checkable rather than believed. Required by the brief on every finding."
     }
   }
 }

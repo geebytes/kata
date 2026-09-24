@@ -80,6 +80,14 @@ export interface AdversarialFinding {
      * happened the first time this was used.
      */
     disposition?: 'open' | 'fixed' | 'deferred' | 'accepted';
+    /**
+     * The three fields the brief requires on every finding: what else the repair reaches, where else the class appears, and the
+     * check that must redden. Declared here because this is the type the brief's record is parsed into, and a field absent from the
+     * type is a field the transport can drop without anything failing — which is what `track()` did (`rba8-f1`).
+     */
+    impact?: string;
+    classInstances?: string[];
+    falsifier?: string;
     dispositionReason?: string;
     dispositionBy?: string;
     dispositionAt?: string;
@@ -850,7 +858,9 @@ exists not to be. A falsifier is what you already have: the counterexample you r
 defect, the observation that refutes the claim. Handing it over is what lets the repair be checked instead of believed, and
 it costs you nothing you have not already paid.
 
-Return exactly one JSON object, and nothing else:
+Return exactly one JSON object, and nothing else. **Copy this template's property list exactly** — a field the prose requires and
+the template omits is a field a pass following its own instructions will not write, which is how \`usage\` was invisible for a whole
+line of rounds (\`rba8-f4\`), and how \`impact\`/\`classInstances\` came back absent while being required in three places.
 
 \`\`\`json
 {
@@ -867,8 +877,9 @@ Return exactly one JSON object, and nothing else:
     { "hypothesis": "<what you tried to show was false>", "method": "<what you did>", "outcome": "refuted | confirmed | inconclusive", "evidence": "<the observed result>" }
   ],
   "findings": [
-    { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>", "falsifier": "<the check that must redden under this defect — a declared selector, a command, or the observation you already made that refutes it>" }
+    { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>", "falsifier": "<the check that must redden under this defect — a declared selector, a command, or the observation you already made that refutes it>", "impact": "<what else a repair will reach: the call sites and fixtures you just read>", "classInstances": ["<the class this defect is an instance of>"] }
   ],
+  "usage": { "total_tokens": 0, "tool_uses": 0, "duration_ms": 0 },
   "deliveredFacts": [
     { "path": "<a path you read>", "note": "<what you concluded from it>" }
   ],

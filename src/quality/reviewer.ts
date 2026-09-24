@@ -14,6 +14,13 @@ export interface ReviewFindingInput {
   severity: ReviewSeverity;
   message: string;
   path?: string;
+  /**
+   * The three fields the brief requires on every finding, declared here because a type is a transport: the schema accepted them
+   * and this interface did not, so a review-recorded finding could not carry them (`rba8-f1`).
+   */
+  impact?: string;
+  classInstances?: string[];
+  falsifier?: string;
 }
 
 /**
@@ -39,6 +46,10 @@ export interface ReviewFinding {
   message: string;
   path?: string;
   reproduction?: FindingReproduction;
+  /** See `ReviewFindingInput`: the brief requires these, so the type that carries a finding must name them. */
+  impact?: string;
+  classInstances?: string[];
+  falsifier?: string;
 }
 
 export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFinding> {
@@ -50,6 +61,9 @@ export async function recordFinding(input: ReviewFindingInput): Promise<ReviewFi
     severity: input.severity,
     message: input.message,
     ...(input.path ? { path: input.path } : {}),
+    ...(input.impact ? { impact: input.impact } : {}),
+    ...(input.classInstances ? { classInstances: input.classInstances } : {}),
+    ...(input.falsifier ? { falsifier: input.falsifier } : {}),
   };
 
   const reviewPath = layoutReviewPath(root, input.taskId);

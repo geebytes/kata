@@ -51,6 +51,8 @@ export interface TrackedFinding {
     impact?: string;
     /** Where else the same defect exists, so one revision can fix the class rather than one instance of it. */
     classInstances?: string[];
+    /** The check that must redden under this defect, so the repair is checkable rather than believed. */
+    falsifier?: string;
     /** Where the finding lives: `review` for `review.json`, the node name for an adversarial record. */
     /**
      * Which record holds the finding.
@@ -102,6 +104,17 @@ function track(
         ...(dispositioned.dispositionReason ? { dispositionReason: dispositioned.dispositionReason } : {}),
         ...(dispositioned.dispositionBy ? { dispositionBy: dispositioned.dispositionBy } : {}),
         ...(dispositioned.dispositionAt ? { dispositionAt: dispositioned.dispositionAt } : {}),
+        // **The three fields the contract declares and this function was dropping** (`rba8-f1`, blocking). A field-by-field
+        // reconstruct is a transport, and a transport that omits a field makes it invisible to every reader downstream —
+        // measured: `roundMayClose` fed a list whose `classInstances` was always undefined and therefore returned
+        // `mayClose: true` unconditionally, `repairBriefing`'s tracked branch emitted no `impact` or `classInstances`, and
+        // `classesOfFindings` could never acquire a class for a finding a pass had filed. That is this change's own class — a
+        // declaration (`TrackedFinding` names the fields) whose transport does not carry them — and it is the *third* time on
+        // this line: the status projection's inline restatement had already dropped `impact`, and the delta type's second
+        // declaration had silently truncated a field.
+        ...(finding.impact ? { impact: finding.impact } : {}),
+        ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
+        ...(finding.falsifier ? { falsifier: finding.falsifier } : {}),
         // The binding a finding was raised under. A finding carries none of its own — it is written into a record, and the
         // record is what says which revision the pass answered — so without this a reader could not tell a finding about
         // the revision in hand from one about the revision before it.
@@ -121,7 +134,13 @@ function track(
 export async function readTrackedFindings(root: string, taskId: string): Promise<TrackedFinding[]> {
     const tracked: TrackedFinding[] = [];
 
-    const review = await readValidatedOptional<{ findings?: ReviewFinding[]; revisionId?: string; manifestHash?: string }>('review', reviewPath(root, taskId)).catch(() => null);
+    // **A record that fails validation must not read as an absent record.** These two reads used `.catch(() => null)`, so a pass
+    // whose record missed a required field contributed *no findings at all* — silently, and indistinguishably from a pass that
+    // recorded none. Measured while writing the transport falsifier: a fixture whose hypothesis said `conclusion` instead of
+    // `outcome` produced an empty list with no error, and a termination condition reading that list would report "may close".
+    // `readValidatedOptional` already distinguishes a missing file (null) from an invalid one (throw), which is exactly how
+    // `readObligations` was fixed for the same defect (`cg-f3`); this re-introduced the swallow one layer down.
+    const review = await readValidatedOptional<{ findings?: ReviewFinding[]; revisionId?: string; manifestHash?: string }>('review', reviewPath(root, taskId));
     for (const finding of review?.findings ?? []) tracked.push(track(finding, 'review', bindingOf(review)));
 
     for (const node of ['verify', 'review'] as const) {
@@ -129,7 +148,7 @@ export async function readTrackedFindings(root: string, taskId: string): Promise
         const record = await readValidatedOptional<{ findings?: AdversarialFinding[]; revisionId?: string; manifestHash?: string }>(
             'adversarial-review',
             path,
-        ).catch(() => null);
+        );
         for (const finding of record?.findings ?? []) tracked.push(track(finding, `adversarial-${node}`, bindingOf(record)));
 
         // AC-6: the node record is one slot, so a pass that does not re-raise a finding would erase it. The history holds
