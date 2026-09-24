@@ -256,3 +256,19 @@ an ending.** A job that has not reported is a job whose state is unknown, and "u
 - **The job ran to completion and reported** — the mechanism I said was missing is the notification, and it works.
 - **It produced no repair, and that is my doing**: I emptied its scratch copy at around the point it was gathering files.
 - **The change's hypothesis is therefore still untested**, and the reason is not the mechanism but the operator.
+
+## `rba-f3`: AC-2 declared another change's deliverable
+
+AC-2 as written was about the falsifier **producer** — "the command that reddened and the revision it reddened on are measured by
+the tool that ran it, and a caller-supplied value is refused" — which is `closure-gate`'s mechanism, built and tested there. **This
+change consumes that rule rather than producing it**, so the criterion described a deliverable this change does not own and its
+declared selector could not test it. The finding was right, and the honest repair is to correct the statement rather than to write
+a test that reaches into another change's code.
+
+AC-2 now states what this change delivers: **the repair author's report is produced by the tool rather than typed in by the party
+it describes** — the command writes what it was handed and what it returned, and a report missing any of those three facts is
+refused rather than recorded with a blank. Its selector is the behavioural case that drives it
+(`tests/unit/repair-author-command.test.ts`), and its implementation paths are the command and the ledger it writes.
+
+**All three corrections went through `matrix set`** — statement, selector, implementation path — which is the third time this
+line has used that command, and the second time on its own declarations.
