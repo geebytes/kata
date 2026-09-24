@@ -2,6 +2,7 @@
 .kata/
 .llmwiki/
 node_modules/
+node_modules
 dist/
 
 # Comet change runtime state. Durable artifacts stay tracked: the change's .comet.yaml and
