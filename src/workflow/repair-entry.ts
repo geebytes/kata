@@ -33,10 +33,20 @@ function denial(entryPhase: RepairEntryPhase, message: string): RepairAuthorizat
 }
 
 /** Fresh evidence after sealing supersedes the revision the verdict was bound to. */
-async function revisionSuperseded(root: string, taskId: string): Promise<{ id: string; manifestHash: string } | null> {
+/**
+ * A sealed revision that no longer describes what it is asked about, in **either** of the two ways it can stop.
+ *
+ * **`declaration-moved` counts, and that is the fix.** The check used to ask only `superseded` — whether the content it
+ * described had changed — and hashed `revision.ownedPaths`, so a task whose declaration grew afterwards (this change: 11 paths to
+ * 22, via `scope change` + `scope apply`) read as current while eleven declared paths had never been hashed. `repair-entry.ts`
+ * then refused a seal with "the sealed revision still matches the workspace", a claim about the workspace decided from the older
+ * declaration — and the seal it refused is the only thing that can take on the newer one.
+ */
+async function revisionNoLongerDescribes(root: string, taskId: string): Promise<{ id: string; manifestHash: string } | null> {
     const revision = await readCurrentTaskRevision(root, taskId);
     if (!revision) return null;
-    return (await revisionStatus(root, revision)).status === 'superseded' ? revision : null;
+    const status = await revisionStatus(root, revision, taskId);
+    return status.status === 'current' ? null : revision;
 }
 
 /** hardVerify: a verify FAIL whose failed acceptance scopes are all repairable, or a re-seal of a stale verdict. */
@@ -57,7 +67,7 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
     // with evidence that no longer matches. Without this the task had to run a verify it knew would FAIL merely to have
     // the phase moved back — a whole round-trip per re-seal, and the same "authorised but unrecognised" shape as the
     // review and judge deadlocks.
-    if (await revisionSuperseded(root, taskId)) {
+    if (await revisionNoLongerDescribes(root, taskId)) {
         return {
             authorized: true,
             entryPhase,
@@ -119,7 +129,7 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
-    const superseded = (await revisionSuperseded(root, taskId)) !== null;
+    const superseded = (await revisionNoLongerDescribes(root, taskId)) !== null;
     if (!severityAuthorized && !superseded) {
         return denial(entryPhase, 'Build cannot run from review without blocking (or strict-mode major) review findings, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
     }
@@ -158,7 +168,7 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     const judgeRepairable = judge.result === 'FAIL'
         && failedAcceptance.length > 0
         && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
-    const supersededRecord = judgeRepairable ? null : await revisionSuperseded(root, taskId);
+    const supersededRecord = judgeRepairable ? null : await revisionNoLongerDescribes(root, taskId);
     if (!judgeRepairable && !supersededRecord) {
         return denial(entryPhase, 'Build cannot run from judge without a repairable judge FAIL result, or a superseded sealed revision');
     }

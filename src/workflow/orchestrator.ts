@@ -1207,7 +1207,9 @@ async function cmdVerify(
     const ignoredReviewFindings = revisionId && !bindsToRevision(review, await currentRevisionIdentity(root, taskId)) ? review.findings.length : 0;
     const findings = ignoredReviewFindings > 0 ? [] : review.findings;
     const revision = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
-    const status = revision ? await revisionStatus(root, revision) : undefined;
+    // With the task id, so a revision whose declaration the task has since outgrown reads as `declaration-moved` rather than
+    // `current` — the status payload is where an operator learns which of the two happened.
+    const status = revision ? await revisionStatus(root, revision, taskId) : undefined;
     const drift = revision ? await workspaceDrift(root, revision.ownedPaths) : [];
     const obligations = await readObligations(root, taskId);
     const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);

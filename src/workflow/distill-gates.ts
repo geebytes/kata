@@ -34,7 +34,9 @@ export async function freshPassingTestEvidence(
         if (envelope.kind !== 'test' || envelope.exitCode !== 0) continue;
         if (envelope.revisionId) {
             const revision = await readTaskRevision(root, taskId, envelope.revisionId);
-            if ((await revisionStatus(root, revision)).status !== 'current') continue;
+            // `declaration-moved` is not `current`: evidence bound to a revision whose surface the task has outgrown cannot be
+            // the evidence an archive rests on, and `continue` is the same answer `superseded` gets for the same reason.
+            if ((await revisionStatus(root, revision, taskId)).status !== 'current') continue;
             return { evidence: envelope, revisionId: envelope.revisionId };
         }
         if (checkFreshness(envelope, currentDiffHash).fresh) return { evidence: envelope };

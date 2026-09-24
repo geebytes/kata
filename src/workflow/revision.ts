@@ -1,3 +1,4 @@
+import { readTask } from '../core/task.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { isIgnoredRepositoryPath, maxTreeHashFileBytes, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
@@ -41,8 +42,24 @@ export interface TaskRevision {
   ownershipConflictsAcknowledged?: boolean;
 }
 
+/**
+ * Whether a sealed revision still describes what it is asked about, and **in which of two ways it can have stopped**.
+ *
+ * The check used to have two states and to hash `revision.ownedPaths` — the declaration frozen when the revision was minted. But
+ * a task's declaration can be corrected after that: this change grew its own from 11 paths to 22 with `scope change` +
+ * `scope apply`, and the revision kept eleven. So there were **two declarations of one surface**, the check read the older, and
+ * `repair-entry.ts` printed "the sealed revision still matches the workspace" — a claim about the workspace decided from a
+ * declaration eleven of whose twenty-two paths the check had never hashed.
+ *
+ * **The two ways are different facts and they call for different actions**: `declaration-moved` says the revision is not about
+ * the change's declared surface any more (re-seal, which takes on the new declaration), and `superseded` says the content it
+ * described has since changed (the verdict bound to it cannot stand). Collapsing them is what made a refusal say something it had
+ * not checked.
+ */
 export type RevisionStatus =
   | { status: 'current' }
+  /** The task's declared surface has moved since this revision was minted; its own content is untouched. */
+  | { status: 'declaration-moved'; revisionOwnedPaths: string[]; taskOwnedPaths: string[] }
   | { status: 'superseded'; expectedManifestHash: string; revisionManifestHash: string };
 
 /**
@@ -160,14 +177,27 @@ export async function readCurrentTaskRevision(root: string, taskId: string): Pro
   }
 }
 
-export async function revisionStatus(root: string, revision: TaskRevision): Promise<RevisionStatus> {
+export async function revisionStatus(root: string, revision: TaskRevision, taskId?: string): Promise<RevisionStatus> {
   // Freshness remains scoped to the declared manifest. `contentDigests` names
   // what the sealed revision contained and powers its delta; using the whole
   // snapshot here would make a later unrelated file invalidate valid evidence.
   const manifestHash = await computeManifestHash(root, revision.ownedPaths);
-  return manifestHash === revision.manifestHash
-    ? { status: 'current' }
-    : { status: 'superseded', expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
+  if (manifestHash !== revision.manifestHash) {
+    return { status: 'superseded', expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
+  }
+  // **And the declaration itself can have moved**, which the hash above cannot see because it is taken over the old one. A
+  // revision whose owned paths are no longer the task's is not about the change's declared surface — and calling that
+  // `current` is what let a seal refusal claim the workspace matched while eleven declared paths were never hashed.
+  if (taskId) {
+    const task = await readTask(root, taskId).catch(() => null);
+    const taskOwnedPaths = task?.ownedPaths ?? [];
+    const same = taskOwnedPaths.length === revision.ownedPaths.length
+      && taskOwnedPaths.every((path: string) => revision.ownedPaths.includes(path));
+    if (!same) {
+      return { status: 'declaration-moved', revisionOwnedPaths: [...revision.ownedPaths], taskOwnedPaths: [...taskOwnedPaths] };
+    }
+  }
+  return { status: 'current' };
 }
 
 /**

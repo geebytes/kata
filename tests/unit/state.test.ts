@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
+import { mutateTaskArtefact } from '../../src/core/state.js';
+import { taskPath } from '../../src/core/layout.js';
 import { transition, type Actor, type Phase } from '../../src/core/state.js';
 import { computeDiffHash } from '../../src/quality/evidence.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
@@ -186,6 +188,13 @@ describe('Kata task state transitions', () => {
             id: 'task-revision-gates',
             title: 'Revision gates ignore unrelated drift',
             acceptance: [{ id: 'AC-1', statement: 'One revision owns the gate chain.' }],
+        });
+        // The task's declaration and the revision's must agree, or the new third state (`declaration-moved`) fires and the case
+        // would be measuring that instead of the drift it is about. The task defaulted to `tasks/<id>`; the revision names a
+        // real file, so the declaration is corrected to match — which is the shape a change actually has.
+        await mutateTaskArtefact(root, task.id, taskPath(root, task.id), async (raw) => {
+            const current = JSON.parse(raw) as Record<string, unknown>;
+            return `${JSON.stringify({ ...current, ownedPaths: ['owned.txt'] }, null, 2)}\n`;
         });
         const revision = await createTaskRevision({ root, taskId: task.id, ownedPaths: ['owned.txt'] });
         for (const phase of ['plan', 'implement', 'hardVerify', 'review', 'judge'] as const) {
