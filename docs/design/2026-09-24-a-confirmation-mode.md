@@ -1,4 +1,10 @@
-# A confirmation mode, so a repair is confirmed rather than re-reviewed
+# A confirmation mode — designed, then withdrawn before implementation
+
+> **Status: withdrawn.** This document is kept because the design and the reason it was abandoned are both worth more than the
+> deletion. **The mode was never implemented.** The reasoning below is preserved verbatim, and the section at the end states what
+> killed it.
+
+## The design as it stood
 
 ## The measurement that asks for it
 
@@ -74,3 +80,40 @@ A confirmation round is smaller than a search round but **not zero** — it read
 search rounds on this line cost 350K–875K tokens each; the target is one order below, and **the first confirmation round's cost is
 itself the measurement** that says whether the design worked. If it lands at the search rounds' cost, the mode is decorative and the
 honest response is to delete it rather than keep it for the name.
+
+---
+
+## Why it was withdrawn
+
+**Three problems, in order of severity.**
+
+**1. The trigger condition can never hold, because a repair invalidates the proof it is confirmed by.** The mode selects itself when
+every open blocking or major finding has a recorded reddening or absence. But the falsify command binds a reddening to the current
+revision's `pathDigests` — measured today while recording the proof for another finding: the reddening carried eleven paths while
+`task.ownedPaths` was twenty-three — so **repairing a finding and re-sealing moves the revision and expires its own proof.** That is
+`finding-237b2268`, recorded in this change. So the state the mode waits for is destroyed by the act of reaching it, and the mode
+would in practice be selected by me — which is the thing the design existed to remove.
+
+**2. It switches off the most productive kind of finding.** Every high-value finding on this line is about a **class** — one concept
+with several call sites where one was updated and the others were not (`rba5-f1/f2/f3`, `kgs-f1`, and the sixth instance of the
+declaration class found today). None of those was reachable through any single finding's falsifier. They came from reading a whole
+surface and noticing that a mechanism says one thing and does another — and the confirmation mode deliberately removes that action. A
+mode that makes a round cheaper by removing the class sweep buys cost with the only thing worth buying.
+
+**3. The class is not a property of a finding, and the design assumed it was.** "I fixed one instance of six" is about the *shape* of
+a repair, not about any finding's claim, so the rule "new findings must be against the repair's claim" would have excluded exactly the
+finding that mattered. `classInstances` already collects this and **nothing consumes it yet** — the right answer starts there.
+
+**And underneath all three: the mode optimises a quantity that is not the bottleneck.** The two most expensive rounds on this line
+(874,572 and 658,523 tokens) produced **zero** findings because they never wrote a record, not because they searched too much; the
+cheapest recorded round (351,864 tokens) produced seven findings, three of them "my acceptance checks do not test their own
+criteria". **Cost and yield are not correlated here.** What is correlated is whether the record lands and whether the round's scope is
+right. So the honest ranking of this line's bottlenecks is:
+
+| rank | bottleneck | state |
+|---|---|---|
+| 1 | **a round can spend a million tokens and leave nothing** | 2 rounds, 1.53M tokens, 0 findings |
+| 2 | **the repair author is the artefact author** | the mechanism exists in this change and has been used successfully once |
+| 3 | **no class-level invariant** | `classInstances` is collected and unconsumed; six instances repaired one at a time |
+
+Confirmation is a fourth, and it is the cheapest to build and the least likely to matter.
