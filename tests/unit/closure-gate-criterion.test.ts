@@ -38,13 +38,14 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
     const evidence = [{ id: 'e1', exitCode: 0, kind: 'test', command: 'npx vitest run tests/unit/x.test.ts' }] as never;
 
     it('stays open when no falsifier has been shown reddening', () => {
-        const answered = obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
+        const answered = obligationIsAnswered({ obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
         expect(answered.answered).toBe(false);
     });
 
     it('closes when the finding has a recorded reddening', () => {
         const answered = obligationIsAnswered({
             obligation,
+            revisionId: 'revision-one',
             resolvedAcceptanceIds: ['AC-1'],
             evidence,
             reddenings: [{ findingId: 'a-finding', check: 'tests/unit/x.test.ts', mutation: 'revert the guard', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 } }],
@@ -55,6 +56,7 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
     it('does not close on a reddening recorded for a different finding', () => {
         const answered = obligationIsAnswered({
             obligation,
+            revisionId: 'revision-one',
             resolvedAcceptanceIds: ['AC-1'],
             evidence,
             reddenings: [{ findingId: 'another-finding', check: 'tests/unit/y.test.ts', mutation: 'revert something else', revisionId: 'revision-one', reddenedAt: '2026-09-23T02:00:00.000Z', observed: { before: 0, mutated: 1, after: 0 } }],
@@ -65,7 +67,7 @@ describe('a finding-shaped obligation needs a reddening, not only evidence', () 
     it('leaves an obligation with no finding behind it alone', () => {
         // An obligation raised by a failed criterion has no falsifier to show — the rule fires on one thing only.
         const fromCriterion = { id: 'obl-2', acceptanceId: 'AC-1', raisedAt: '2026-09-23T01:00:00.000Z' } as never;
-        const answered = obligationIsAnswered({ obligation: fromCriterion, resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
+        const answered = obligationIsAnswered({ obligation: fromCriterion, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence, reddenings: [] } as never);
         expect(answered.answered).toBe(true);
     });
 });
@@ -96,7 +98,7 @@ describe('a repair with no falsifier says so, and only with a reason', () => {
     };
 
     it('closes an obligation when the absence carries a reason', () => {
-        expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, absences: [absence] } as never).answered).toBe(true);
+        expect(obligationIsAnswered({ obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence, absences: [absence] } as never).answered).toBe(true);
     });
 
     it('stays open when the reason is empty — the shape exists to be explained', () => {
@@ -136,7 +138,7 @@ describe('a disposition binds to the content it was recorded against', () => {
             reddenedAt: '2026-01-01T00:00:00.000Z',
         };
         // The same content under a later seal: the id differs, the files do not.
-        expect(hasReddening([record], 'f1', 'revision-new', { 'src/a.ts': 'aaa', 'src/other.ts': 'zzz' })).toBe(true);
+        expect(hasReddening([record], 'f1', { revisionId: 'revision-new', pathDigests: { 'src/a.ts': 'aaa', 'src/other.ts': 'zzz' } })).toBe(true);
     });
 
     it('does not count when the content it proved has changed', () => {
@@ -149,7 +151,7 @@ describe('a disposition binds to the content it was recorded against', () => {
             observed: { before: 0, mutated: 1, after: 0 },
             reddenedAt: '2026-01-01T00:00:00.000Z',
         };
-        expect(hasReddening([record], 'f1', 'revision-new', { 'src/a.ts': 'bbb' })).toBe(false);
+        expect(hasReddening([record], 'f1', { revisionId: 'revision-new', pathDigests: { 'src/a.ts': 'bbb' } })).toBe(false);
     });
 
     it('falls back to the revision for a record written before the content was captured', () => {
@@ -162,7 +164,40 @@ describe('a disposition binds to the content it was recorded against', () => {
             reddenedAt: '2026-01-01T00:00:00.000Z',
         };
         // No content on the record: judged by the weaker rule it was written under, rather than silently accepted.
-        expect(hasReddening([legacy], 'f1', 'revision-old', { 'src/a.ts': 'aaa' })).toBe(true);
-        expect(hasReddening([legacy], 'f1', 'revision-new', { 'src/a.ts': 'aaa' })).toBe(false);
+        expect(hasReddening([legacy], 'f1', { revisionId: 'revision-old', pathDigests: { 'src/a.ts': 'aaa' } })).toBe(true);
+        expect(hasReddening([legacy], 'f1', { revisionId: 'revision-new', pathDigests: { 'src/a.ts': 'aaa' } })).toBe(false);
+    });
+});
+
+/**
+ * The binding is one required argument, and a missing one is a refusal rather than a default pass.
+ *
+ * `rba5-f1`, `rba5-f2` and `rba5-f3` (found by an independent round) were three call sites that each forgot a different half of it:
+ * the repair-author write passed neither, the seal preflight passed the digests and no revision, `adversarial status` passed the
+ * revision and no digests. The old guard opened with `if (currentRevisionId === undefined) return true`, written so an early
+ * caller that knew nothing would not break — and that default made forgetting **silent**: in two of those four paths the content
+ * binding this change added did not run at all, and the guard reported success.
+ */
+describe('a disposition with no binding to judge against is not still true', () => {
+    const record = {
+        findingId: 'f1', check: 'npm test', mutation: 'mutate', revisionId: 'revision-old',
+        pathDigests: { 'src/a.ts': 'aaa' },
+        observed: { before: 0, mutated: 1, after: 0 }, reddenedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    it('refuses when there is no binding, rather than defaulting to true', () => {
+        // The defect the three findings share: this used to be `true`, so a caller that passed nothing silently passed.
+        expect(hasReddening([record], 'f1')).toBe(false);
+    });
+
+    it('answers from the content when the binding carries it', () => {
+        expect(hasReddening([record], 'f1', { revisionId: null, pathDigests: { 'src/a.ts': 'aaa' } })).toBe(true);
+        expect(hasReddening([record], 'f1', { revisionId: null, pathDigests: { 'src/a.ts': 'bbb' } })).toBe(false);
+    });
+
+    it('falls back to the revision id only when the record has no content of its own', () => {
+        const legacy = { ...record, pathDigests: undefined };
+        expect(hasReddening([legacy], 'f1', { revisionId: 'revision-old', pathDigests: null })).toBe(true);
+        expect(hasReddening([legacy], 'f1', { revisionId: 'revision-new', pathDigests: null })).toBe(false);
     });
 });

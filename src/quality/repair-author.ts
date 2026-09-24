@@ -14,7 +14,7 @@
 import { join } from 'node:path';
 import { kataDir } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
-import { hasFalsifierDisposition, readFalsifierAbsences, readFalsifierReddenings } from './falsifier-reddenings.js';
+import { hasFalsifierDisposition, hasReddening, readFalsifierAbsences, readFalsifierReddenings } from './falsifier-reddenings.js';
 
 export type RepairAuthorRecord = {
     findingId: string;
@@ -73,12 +73,23 @@ export async function recordRepairAuthor(
         readFalsifierReddenings(root, taskId).catch(() => []),
         readFalsifierAbsences(root, taskId).catch(() => []),
     ]);
-    if (!hasFalsifierDisposition(reddenings, absences, repair.findingId)) {
+    // **Both halves of the binding, and they are the ones the closure rule will use** (rba5-f1): this call passed neither, so
+    // the guard's first line returned true and the content binding added by this change never ran on the path the criterion
+    // lives on. The current revision and its content are read here for the same reason the resolver reads them.
+    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    const currentRevision = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    const binding = currentRevision
+        ? { revisionId: currentRevision.id, pathDigests: currentRevision.pathDigests ?? null }
+        : undefined;
+    if (!hasFalsifierDisposition(reddenings, absences, repair.findingId, binding)) {
         throw new Error(`repair-author record: '${repair.findingId}' has no recorded disposition — a falsifier shown reddening, or an absence carrying a reason. Record that first (\`kata-cli falsify\`): a repair whose disposition is missing has not been shown to work, and a provenance record for it would say who made a repair nobody can check.`);
     }
     const entry: RepairAuthorRecord = {
         ...repair,
-        disposition: reddenings.some((reddening) => reddening.findingId === repair.findingId) ? 'reddening' : 'absence',
+        // **The same decision, not a weaker one** (rba5-f4): this read the mere presence of a reddening entry while the check
+        // above consumed the rule, so a reddening the rule does not count (an observation that is not green/red/green) would
+        // have been recorded as the shape that closed it.
+        disposition: hasReddening(reddenings, repair.findingId, binding) ? 'reddening' : 'absence',
         recordedAt: repair.recordedAt ?? new Date().toISOString(),
         ceiling: CEILING,
     };

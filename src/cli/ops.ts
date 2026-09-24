@@ -666,7 +666,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // The same predicate the criterion applies, narrowing included: a report computed with a weaker rule can disagree
         // with the rule it reports on (cg3-f4).
         const { readCurrentTaskRevision } = await import('../workflow/revision.js');
-        const currentRevisionId = (await readCurrentTaskRevision(root, change).catch(() => null))?.id;
+        const currentRevisionForStatus = await readCurrentTaskRevision(root, change).catch(() => null);
+        const currentRevisionId = currentRevisionForStatus?.id;
         // The fallback is typed from `TrackedFinding` rather than restated, because a restated shape drifts: this one had
         // already lost `impact` before it was added, and would have lost it again.
         const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as TrackedFinding[]);
@@ -749,7 +750,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 // different facts and a default would erase it.
                 answeredBy: obligation.resolvedAt
                     ? obligation.findingId
-                        ? (hasReddening(reddenings, obligation.findingId, currentRevisionId) ? 'evidence-and-falsifier' : 'evidence-only')
+                        // **The same two halves the rule asks about** (rba5-f3): this passed a revision and no content, so it
+                        // answered a weaker question than the criterion and could report a stale-proof obligation as answered.
+                        ? (hasReddening(reddenings, obligation.findingId, { revisionId: currentRevisionId ?? null, pathDigests: currentRevisionForStatus?.pathDigests ?? null })
+                            ? 'evidence-and-falsifier'
+                            : 'evidence-only')
                         : 'evidence'
                     : null,
             })),

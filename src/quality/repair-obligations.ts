@@ -144,12 +144,14 @@ export function obligationIsAnswered(input: {
     /** Repairs whose subject is not code, so no check can be shown reddening. Recorded, with a reason. */
     absences?: FalsifierAbsence[];
     /** The revision being resolved, so a reddening recorded for different content cannot answer for this one. */
-    revisionId?: string;
+    /** The revision being resolved, or `null` when there is none — the binding refuses rather than defaulting to "still true". */
+    revisionId?: string | null;
     /**
      * The content of the revision being resolved, so a disposition binds to **what it proved** rather than to a seal's id —
      * measured, a seal's id derives from 718 content digests, so any later commit expired proofs about files it never touched.
      */
-    pathDigests?: Record<string, string>;
+    /** The content of that revision, when it has one. */
+    pathDigests?: Record<string, string> | null;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -164,7 +166,8 @@ export function obligationIsAnswered(input: {
     // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
     // work is the failure mode this criterion must not have.
     const falsified = obligation.findingId
-        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId, input.revisionId, input.pathDigests)
+        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId,
+            { revisionId: input.revisionId ?? null, pathDigests: input.pathDigests ?? null })
         : true;
     const answered = answeredByEvidence && falsified;
     return { answered, evidenceIds };

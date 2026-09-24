@@ -132,14 +132,33 @@ export async function recordFalsifierReddening(
 export function hasReddening(
     reddenings: FalsifierReddening[],
     findingId: string,
-    revisionId?: string,
-    currentPathDigests?: Record<string, string>,
+    binding?: DispositionBinding,
 ): boolean {
     return reddenings.some((reddening) =>
         reddening.findingId === findingId
-        && revisionCounts(reddening.revisionId, reddening.pathDigests, revisionId, currentPathDigests)
+        && revisionCounts(reddening.revisionId, reddening.pathDigests, binding)
         && observedReddening(reddening));
 }
+
+/**
+ * What a disposition is judged against: the content being resolved, and the revision it belongs to.
+ *
+ * **One argument, because four call sites each forgot a different half of it** (`rba5-f1`, `rba5-f2`, `rba5-f3` — found by an
+ * independent round). The old signature took `revisionId` and `pathDigests` as two independent optional parameters, and the
+ * guard's first line was `if (currentRevisionId === undefined) return true` — written so an early caller that knew nothing would
+ * not break. That default made forgetting **silent**: the repair-author write passed neither, the seal preflight passed the
+ * digests but not the revision, and `adversarial status` passed the revision but not the digests. In two of those four paths the
+ * content binding added by this change did not run at all, and the guard reported success.
+ *
+ * So the binding is now one required object, and `params` absent is a **refusal**, not a pass: a rule whose default is "this
+ * counts" is a rule that stops being asked the moment a caller is careless.
+ */
+export type DispositionBinding = {
+    /** The revision being resolved, or `null` when there is no revision to judge against. */
+    revisionId: string | null;
+    /** The content of that revision, when it has one. */
+    pathDigests: Record<string, string> | null;
+};
 
 /**
  * Whether a disposition still describes the content it was recorded against.
@@ -148,19 +167,23 @@ export function hasReddening(
  * them — every record written before this change — falls back to the revision id, so an existing disposition is neither
  * silently accepted nor silently rejected: it is judged by the weaker rule it was written under, which is the honest reading of
  * a record that did not capture the better one.
+ *
+ * And when the binding itself is absent, the answer is **no**: without knowing what is being resolved there is nothing to have
+ * matched, so "cannot tell" must not read as "still true".
  */
 function revisionCounts(
     recordedRevisionId: string,
     recordedPathDigests: Record<string, string> | undefined,
-    currentRevisionId?: string,
-    currentPathDigests?: Record<string, string>,
+    binding: DispositionBinding | undefined,
 ): boolean {
-    if (currentRevisionId === undefined) return true;
+    if (!binding) return false;
+    const { revisionId: currentRevisionId, pathDigests: currentPathDigests } = binding;
+    if (currentRevisionId === null && !currentPathDigests) return false;
     const recorded = recordedPathDigests ?? {};
     if (Object.keys(recorded).length > 0 && currentPathDigests) {
         return Object.entries(recorded).every(([path, digest]) => currentPathDigests[path] === digest);
     }
-    return recordedRevisionId === currentRevisionId;
+    return currentRevisionId !== null && recordedRevisionId === currentRevisionId;
 }
 
 /** The three observed exit codes have to be the shape a reddening actually has: green, red, green. */
@@ -215,11 +238,10 @@ export function hasFalsifierDisposition(
     reddenings: FalsifierReddening[],
     absences: FalsifierAbsence[],
     findingId: string,
-    revisionId?: string,
-    currentPathDigests?: Record<string, string>,
+    binding?: DispositionBinding,
 ): boolean {
-    if (hasReddening(reddenings, findingId, revisionId, currentPathDigests)) return true;
+    if (hasReddening(reddenings, findingId, binding)) return true;
     return absences.some((absence) => absence.findingId === findingId
-        && revisionCounts(absence.revisionId, absence.pathDigests, revisionId, currentPathDigests)
+        && revisionCounts(absence.revisionId, absence.pathDigests, binding)
         && absence.reason.trim().length > 0);
 }

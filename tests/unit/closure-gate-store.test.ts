@@ -41,8 +41,10 @@ describe('the falsifier-reddening ledger', () => {
         const read = await readFalsifierReddenings(root, 'r-task');
         expect(read).toHaveLength(1);
         expect(read[0]?.findingId).toBe('a-finding');
-        expect(hasReddening(read, 'a-finding')).toBe(true);
-        expect(hasReddening(read, 'another-finding')).toBe(false);
+        expect(hasReddening(read, 'a-finding', { revisionId: 'revision-one', pathDigests: null })).toBe(true);
+        expect(hasReddening(read, 'another-finding', { revisionId: 'revision-one', pathDigests: null })).toBe(false);
+        // And the binding is what decides it: the same record under a revision it does not name is **not** answered.
+        expect(hasReddening(read, 'a-finding', { revisionId: 'revision-two', pathDigests: null })).toBe(false);
     });
 
     it('re-recording the same finding replaces rather than duplicates, so one finding has one reddening', async () => {

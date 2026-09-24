@@ -183,7 +183,11 @@ export async function collectSealPreflight(input: {
                             evidence: plannedEvidence,
                             reddenings,
                             absences,
+                            // **Both halves, and that is the change** (rba5-f2): this computed the content and passed it while
+                            // omitting the revision, and the guard's first line returned true for a missing revision — so the
+                            // digests it had just computed were never consulted.
                             ...(plannedPathDigests ? { pathDigests: plannedPathDigests } : {}),
+                            revisionId: null,
                             ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
                         }).answered,
                     )

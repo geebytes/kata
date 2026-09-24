@@ -46,7 +46,7 @@ describe('a reddening with no observed runs does not close an obligation', () =>
 
     it('stays open when the reddening records no runs', () => {
         const answered = obligationIsAnswered({
-            obligation, resolvedAcceptanceIds: ['AC-1'], evidence,
+            obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence,
             reddenings: [{ ...base }],
         } as never);
         expect(answered.answered).toBe(false);
@@ -55,7 +55,7 @@ describe('a reddening with no observed runs does not close an obligation', () =>
     it('stays open when the recorded runs are not the shape a reddening has', () => {
         // The mutation did not redden, or the restore did not bring it back: either way it is not a reddening.
         const answered = obligationIsAnswered({
-            obligation, resolvedAcceptanceIds: ['AC-1'], evidence,
+            obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence,
             reddenings: [{ ...base, observed: { before: 0, mutated: 0, after: 0 } }],
         } as never);
         expect(answered.answered).toBe(false);
@@ -63,7 +63,7 @@ describe('a reddening with no observed runs does not close an obligation', () =>
 
     it('closes when the runs are the shape a reddening has', () => {
         const answered = obligationIsAnswered({
-            obligation, resolvedAcceptanceIds: ['AC-1'], evidence,
+            obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence,
             reddenings: [{ ...base, observed: { before: 0, mutated: 1, after: 0 } }],
         } as never);
         expect(answered.answered).toBe(true);
@@ -86,16 +86,16 @@ describe('a reddening for another revision does not close an obligation', () => 
 
     it('stays open when the reddening was observed on a different revision', () => {
         const answered = obligationIsAnswered({
-            obligation, resolvedAcceptanceIds: ['AC-1'], evidence,
-            reddenings: [reddening], revisionId: 'revision-two',
+            obligation, revisionId: 'revision-two', resolvedAcceptanceIds: ['AC-1'], evidence,
+            reddenings: [reddening],
         } as never);
         expect(answered.answered).toBe(false);
     });
 
     it('closes when it was observed on the revision being resolved', () => {
         const answered = obligationIsAnswered({
-            obligation, resolvedAcceptanceIds: ['AC-1'], evidence,
-            reddenings: [reddening], revisionId: 'revision-one',
+            obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence,
+            reddenings: [reddening],
         } as never);
         expect(answered.answered).toBe(true);
     });

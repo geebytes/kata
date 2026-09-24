@@ -41,7 +41,7 @@ describe('every producer of the closure decision is load-bearing', () => {
     const matrix = { version: 1, rows: [{ acceptanceId: 'AC-1', implementationPaths: ['src/x.ts'], testPaths: ['tests/unit/x.test.ts'], evidence: [{ id: 'e1', kind: 'test', command: 'npx vitest run tests/unit/x.test.ts', testSelector: 'tests/unit/x.test.ts' }], verificationLevel: 'unit' }] } as never;
 
     // The baseline: every producer present, and the obligation is answered.
-    const baseline = { obligation: finding, resolvedAcceptanceIds: ['AC-1'], evidence, matrix, reddenings: [reddening] };
+    const baseline = { obligation: finding, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence, matrix, reddenings: [reddening] };
 
     it('answers when all four producers agree', () => {
         expect(obligationIsAnswered({ ...baseline } as never).answered).toBe(true);

@@ -1,19 +1,30 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /**
- * Record a disposition so a repair author can be recorded at all.
+ * Record a disposition so a repair author can be recorded at all, against a revision that exists.
  *
  * **The rule is consumed, not restated**: `recordRepairAuthor` refuses a repair whose finding has no reddening and no recorded
- * absence, because provenance that cannot say the repair was shown to work is provenance for something that may not have
- * happened. That makes a disposition a precondition of every repair-author case rather than an optional companion, which is what
- * `rba4-f2` measured — nothing joined a repair to a disposition before this.
+ * absence, and it asks that question with the **same binding the closure criterion asks with** — the current revision and its
+ * content. A task with no sealed revision therefore has no binding, and a missing binding is a refusal rather than a default pass
+ * (`rba5-f1`). So this seals one first, which is the rule being consumed rather than worked around.
  */
 export async function giveDisposition(root: string, taskId: string, findingId: string): Promise<void> {
+    const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+    const { readTask } = await import('../../src/core/task.js');
     const { recordFalsifierReddening } = await import('../../src/quality/falsifier-reddenings.js');
+    const task = await readTask(root, taskId);
+    const revision = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: task.ownedPaths ?? ['tests/fixture.txt'] })
+        .catch(() => null);
+    const current = revision?.revision ?? null;
     await recordFalsifierReddening(root, taskId, {
         findingId,
         check: 'true',
         mutation: 'false',
-        revisionId: 'revision-fixture',
+        revisionId: current?.id ?? 'revision-fixture',
         observed: { before: 0, mutated: 1, after: 0 },
         reddenedAt: '2026-01-01T00:00:00.000Z',
+        ...(current?.pathDigests ? { pathDigests: current.pathDigests } : {}),
     });
 }
