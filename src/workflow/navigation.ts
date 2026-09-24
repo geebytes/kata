@@ -169,6 +169,29 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
     unresolvedObligations: unresolvedObligations.length,
+    // **May this round close?** Reported where the ladder reads, because the loop's missing termination condition is what made seven
+    // rounds: `closure-gate` ran five and this change seven, and every round's findings were about the previous round's repairs —
+    // a repair is new code and the round exists to find defects in new code. The condition that can fail is not "no findings" (each
+    // repair produces material) but "every class an open terminal finding names is covered by a check that reddens when the class
+    // returns". `roundClosure` carries that verdict and names the uncovered classes, so the next action is to cover a class rather
+    // than to repair one more instance.
+    ...(await (async () => {
+        // **One derivation, five call sites.** Computed here rather than passed in, because five callers passing their own answer is how
+        // this line produced six instances of "one concept derived in several places". The findings and the coverage table are read
+        // from the sources the disposition commands already write through.
+        const { CLASS_COVERAGE } = await import('../quality/class-coverage.js');
+        const { roundMayClose } = await import('../quality/finding-lifecycle.js');
+        const { classesOfFindings } = await import('../quality/class-coverage.js');
+        const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId).catch(() => []);
+        void classesOfFindings;
+        const open = tracked
+            .filter((finding) => finding.disposition === 'open')
+            .map((finding) => ({ id: finding.id, severity: finding.severity, ...(finding.classInstances ? { classInstances: finding.classInstances } : {}) }));
+        const verdict = roundMayClose(open, CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy })));
+        // Reported only when it has something to say: a round that may close needs no explanation, and a field that is always present
+        // reads as a fact worth watching when it is not.
+        return verdict.mayClose ? {} : { roundClosure: verdict };
+    })()),
     unresolvedObligationAcIds: [...new Set(unresolvedObligations.map((o) => o.acceptanceId).filter((id): id is string => Boolean(id)))],
     ...(task && !task.acceptanceMatrix ? { missingAcceptanceMatrix: true } : {}),
     ...(mixedRevision ? { mixedRevisionEvidence: true } : {}),

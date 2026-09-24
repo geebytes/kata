@@ -1,6 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode } from '../quality/review-execution.js';
 import { join } from 'node:path';
+import { CLASS_COVERAGE } from '../quality/class-coverage.js';
+import { roundMayClose } from '../quality/finding-lifecycle.js';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
@@ -671,6 +673,24 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // The fallback is typed from `TrackedFinding` rather than restated, because a restated shape drifts: this one had
         // already lost `impact` before it was added, and would have lost it again.
         const trackedForStatus = await readTrackedFindings(root, change).catch(() => [] as TrackedFinding[]);
+        // **The termination condition review lacked, reported where the ladder reads.** Measured: `closure-gate` ran five rounds and
+        // `repair-by-another-author` seven, every round's findings about the previous round's repairs — because the loop had no state
+        // meaning "this is enough". `roundMayClose` is that state: a round may close when every class an open terminal finding names
+        // is covered by a check that reddens when the class returns. Reporting it here makes the next action "cover the class" rather
+        // than "repair one more instance", which is the difference the seven rounds were paying for.
+        const classCoverage = (() => {
+            const findings = trackedForStatus.map((tracked) => ({
+                id: tracked.id,
+                severity: tracked.severity,
+                ...(tracked.classInstances ? { classInstances: tracked.classInstances } : {}),
+            }));
+            const coverage = CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy }));
+            return roundMayClose(findings, coverage);
+        })();
+        // Reported beside the findings it is about, so `status` answers "may this round close?" rather than leaving the operator to
+        // infer it from a count. The reason names the uncovered classes, because the next action is to cover a class rather than to
+        // repair one more instance.
+        const roundClosure = classCoverage;
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
         const { batchSaving, openBatch } = await import('../quality/repair-batch.js');

@@ -171,6 +171,9 @@ export async function collectSealPreflight(input: {
             // **The content about to be sealed**, so the dry run asks the same question the resolver asks — with the same
             // binding. Omitting it here would leave the preflight comparing revision and the resolver comparing content,
             // which is the two-derivations shape this line keeps removing.
+            const { CLASS_COVERAGE } = await import('../quality/class-coverage.js');
+            const coveredClasses = CLASS_COVERAGE.map((entry) => entry.classId);
+            const classOf = await (await import('../quality/class-coverage.js')).classesOfFindings(root, taskId);
             const plannedPathDigests = await (await import('../workflow/revision.js'))
                 .computePathDigests(root, task.ownedPaths ?? [])
                 .catch(() => undefined);
@@ -183,6 +186,11 @@ export async function collectSealPreflight(input: {
                             evidence: plannedEvidence,
                             reddenings,
                             absences,
+                            // **The same class table the resolver passes**, for the reason `cg-f1` recorded: the preflight and the
+                            // resolver are two consumers of one question, and the first version of this fix taught the resolver a new
+                            // input and left the preflight behind — which is exactly the shape of the defect it was fixing.
+                            coveredClasses,
+                            classOf,
                             // **Both halves, and that is the change** (rba5-f2): this computed the content and passed it while
                             // omitting the revision, and the guard's first line returned true for a missing revision — so the
                             // digests it had just computed were never consulted.

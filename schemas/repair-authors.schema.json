@@ -21,8 +21,7 @@
           "handed",
           "report",
           "recordedAt",
-          "ceiling",
-          "disposition"
+          "ceiling"
         ],
         "properties": {
           "findingId": {
@@ -55,7 +54,7 @@
               "reddening",
               "absence"
             ],
-            "description": "The disposition this repair consumed, recorded as its shape rather than as a copy of the rule: the write refuses a repair whose finding has no disposition, so a provenance record can never describe a repair that has not been shown to work."
+            "description": "The disposition this repair consumed, recorded as its shape rather than as a copy of the rule. **Required on write** — the writer refuses a repair whose finding has no disposition, so no new record can lack it — and tolerated on read, because the records written before this field existed are judged by the rule they were written under rather than refused by a rule they could not have known."
           }
         }
       }

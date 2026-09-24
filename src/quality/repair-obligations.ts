@@ -152,6 +152,10 @@ export function obligationIsAnswered(input: {
      */
     /** The content of that revision, when it has one. */
     pathDigests?: Record<string, string> | null;
+    /** The classes a declared check covers, so a finding whose repair is class-level closes rather than owing an instance proof. */
+    coveredClasses?: readonly string[];
+    /** Which class each finding is an instance of, as the round that recorded it named it. */
+    classOf?: Readonly<Record<string, string>>;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -165,8 +169,17 @@ export function obligationIsAnswered(input: {
     // A finding-shaped obligation also needs its falsifier shown reddening. The refusal fires on **one** thing — a missing
     // reddening — never on the shape of the check or the wording of the record, because a closure rule that refuses honest
     // work is the failure mode this criterion must not have.
+    // **A third shape, and the one that ends the loop.** A finding-shaped obligation was answered by a reddening or a recorded
+    // absence — both *instance* dispositions, and seven rounds of instance-level repair each produced a new instance (7/6/5/5/7
+    // findings on this line, every round about the previous round's repairs). The third shape is the **class-level** one: the
+    // finding names the class it is an instance of, and a declared check covers that class, so a new instance fails in the suite
+    // rather than in a future round. `coveredClasses` is that table, read from `class-coverage.ts`, and it is deliberately the same
+    // fact `roundMayClose` asks before a round may close — one derivation, consulted by both the closure rule and the sweep.
+    const coveredByClass = obligation.findingId
+        ? (input.coveredClasses ?? []).includes(input.classOf?.[obligation.findingId] ?? '')
+        : false;
     const falsified = obligation.findingId
-        ? hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId,
+        ? coveredByClass || hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId,
             { revisionId: input.revisionId ?? null, pathDigests: input.pathDigests ?? null })
         : true;
     const answered = answeredByEvidence && falsified;
@@ -195,10 +208,18 @@ export async function resolveObligationsForRevision(
       .readTaskRevision(root, taskId, revisionId)
       .then((revision) => revision.pathDigests)
       .catch(() => undefined);
+  // **Read once, outside the mutation**, for the same reason the reddenings are read here rather than by each caller — and because
+  // the mutation callback is synchronous, which is how the first version of this failed to compile rather than to answer wrongly.
+  const { CLASS_COVERAGE } = await import('./class-coverage.js');
+  const coveredClasses = CLASS_COVERAGE.map((entry) => entry.classId);
+  const classOf = await (await import('./class-coverage.js')).classesOfFindings(root, taskId);
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {
       if (obligation.resolvedAt) continue;
-      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, absences, revisionId, ...(resolvedPathDigests ? { pathDigests: resolvedPathDigests } : {}) });
+      // **The class table is passed in here, at the one place that resolves obligations**, rather than at each caller: the
+      // preflight and this resolver answered the same question differently once already (`cg-f1`), and a second input each had to
+      // remember is exactly how that happened.
+      const verdict = obligationIsAnswered({ obligation, resolvedAcceptanceIds, evidence, ...(matrix ? { matrix } : {}), reddenings, absences, revisionId, ...(resolvedPathDigests ? { pathDigests: resolvedPathDigests } : {}), coveredClasses, classOf });
       if (!verdict.answered) continue;
       obligation.resolvedAt = now;
       obligation.resolvedByRevisionId = revisionId;
