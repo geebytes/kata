@@ -272,3 +272,31 @@ refused rather than recorded with a blank. Its selector is the behavioural case 
 
 **All three corrections went through `matrix set`** — statement, selector, implementation path — which is the third time this
 line has used that command, and the second time on its own declarations.
+
+## The delta path is reachable, and this is the first time on this line
+
+The chain that had to hold, and now does:
+
+```
+batch-1 | closed | base revision-daf33fefeb9f0bff | findings rba-f1..f4
+batch-2 | OPEN   | base revision-daf33fefeb9f0bff | findings rba-f1..f4   ← inherited, not empty
+sealed revision: revision-48f7fb8e31c67fc9          ← differs from the base, so there is a surface
+```
+
+And the brief issued for the next round reports:
+
+```
+scope: repair batch batch-1 started from revision-daf33fefeb9f0bff:
+       the round after a bounded repair measures what the repair changed
+Paths under review: docs/design/2026-09-23-repair-by-another-author.md,
+                    src/cli.ts, src/quality/repair-rounds.ts, tests/unit/repair-rounds.test.ts
+```
+
+**Four paths instead of the whole change surface.** The round before it reviewed eleven. That narrowing is the 2.5–2.7× lever's
+precondition, and until now it had never been reached on this line: every round of `closure-gate` reported "no repair batch has
+closed, so there is nothing to narrow against", and the one batch that did close had no base to narrow against.
+
+**The lever's precondition is met; its measurement is the next round's cost.** For comparison, the cold round on this change cost
+351,864 tokens with a 17,587-character brief and an eleven-path remit; this delta's brief is 35,038 characters because it carries
+round 1's findings and dispositions, and its remit is four paths. **The measurement to take is tokens, not brief length** — the
+brief is 3–6% of a turn, and the remit is what the turns read.
