@@ -55,24 +55,35 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
         recordedAt: String(record.createdAt ?? ''),
     });
     const rounds = history.map(toRound);
-    // **A round is a record, not a revision** — the first version deduped by `revisionId` alone and two rounds can run on
-    // one revision, so it reported three rounds where four left records. **And the second version's key — `revisionId@createdAt`
-    // — is not unique either**, measured: `.kata/tasks/repair-by-another-author/adversarial-review-history.json` held
-    // `revision-daf33fefeb9f0bff @ 2026-09-23T13:45:00.000Z` while the live record was
-    // `revision-becb49c9303042ca @ 2026-09-23T13:45:00.000Z` — the *same* `createdAt`, a different revision, because a record
-    // is written with the timestamp of the pass it *replaces*. So three unequal keys for two recorded passes, in an order that
-    // was not oldest-first, and the share below took its base from the wrong entry.
+    // **Identity went through three versions, and each failed differently.** (1) `revisionId` alone collapsed two rounds that ran
+    // on one revision. (2) `revisionId@createdAt` is not unique either, because a record is written with the timestamp of the
+    // pass it *replaces*. (3) Comparing whole records then counted **the same round twice** once a finding was appended to the
+    // live copy — measured on this task: `becb49c9303042ca` appeared in the history and as the live record with different
+    // `findings`, so four entries for three rounds.
     //
-    // Identity is now the whole record, compared as a value: two records are the same round when every field matches. That is
-    // weaker than a hash and stronger than a key assembled from two fields that can each coincide — the failure the two earlier
-    // versions shared was assuming a pair of fields identifies a record.
-    const fingerprint = (record: Record<string, unknown>) => JSON.stringify(
-        Object.keys(record).sort().map((field) => [field, record[field]]),
-    );
-    const seen = new Set(history.map(fingerprint));
-    if (live && !seen.has(fingerprint(live))) rounds.push(toRound(live));
-    // Ordered oldest-first by when the record says it was made, which is what `rounds.at(-2)` below assumes.
-    rounds.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
+    // A revision that appears both in the history and live is **one round**: the history holds the copy that was replaced, and
+    // the two rounds that really shared a revision differed in more than their revision id — which is what the record's own
+    // `attempts` and `hypotheses` describe, and what a fingerprint over those two fields captures without depending on a
+    // value the writer inherits.
+    const identity = (record: Record<string, unknown>) => {
+        const revision = String(record.revisionId ?? '(none)');
+        const hypotheses = Array.isArray(record.hypotheses) ? JSON.stringify(record.hypotheses) : '';
+        const attempts = Array.isArray(record.attempts) ? JSON.stringify(record.attempts) : '';
+        return `${revision}#${hypotheses}#${attempts}`;
+    };
+    const seen = new Set(history.map(identity));
+    if (live && !seen.has(identity(live))) rounds.push(toRound(live));
+    // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass (see `writeAdversarialRecord`),
+    // so sorting by it put the live record **before** a history record that was actually earlier — measured:
+    // `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`, where the live record is the middle one. The live record is the
+    // latest by construction, because it is the one the previous pass was replaced with; so it is moved to the end and the
+    // history keeps its own order. That removes the need to believe a timestamp the writer copies.
+    const historyRounds = history.map(toRound);
+    const liveRound = live ? toRound(live) : null;
+    const pushedLive = liveRound !== null && !seen.has(identity(live as Record<string, unknown>));
+    const ordered = pushedLive ? [...historyRounds, liveRound] : historyRounds;
+    rounds.length = 0;
+    rounds.push(...ordered);
 
     // A round that left no record is invisible here, so the briefs are what say whether every attempt is accounted for.
     // **A round is a brief issued, and a record is a round that left something behind.** The first version asked whether the
@@ -118,7 +129,11 @@ async function countAboutThePreviousRound(
     live: Record<string, unknown> | null,
 ): Promise<number | null> {
     if (rounds.length < 2 || !live) return null;
-    const previous = rounds.at(-2);
+    // **The round before the live one, by construction rather than by sort position** (rba5-f5): the list ends with the live
+    // record when it was appended, so `at(-2)` is its predecessor. Reading `at(-2)` off a timestamp ordering put the live
+    // record itself there and the share came out `null` for a change that had both a previous and a latest round.
+    const liveAt = String(live.revisionId ?? '');
+    const previous = rounds.at(-2)?.revisionId === liveAt ? rounds.at(-3) : rounds.at(-2);
     // **The change surface, not the owned-path manifest** (f1). The first version read the previous revision's
     // `pathDigests` keys and called them "the paths the previous round changed" — but that map is the revision's **owned**
     // paths, so the share was over ownership rather than over what changed, wrong in both directions: a declared path that did

@@ -157,23 +157,53 @@ describe('a round that produced nothing is reported rather than papered over', (
  * A key built from `revisionId@createdAt` does not collide on that pair (the revisions differ) — which is why the first version
  * of this case could not fail. What the pair breaks is the **ordering**.
  */
-describe('a round is ordered by when it was made, not by the timestamp it inherited', () => {
-    it('keeps a later round last even when it carries an earlier createdAt than its predecessor', async () => {
+describe('the latest round is the live record, and the share pairs it with its predecessor', () => {
+    /**
+     * `rba5-f5`, and it is a finding against the decision that closed `rba4-f1`: that repair changed the identity key and left
+     * the pairing the same finding named. The share still read `previous = rounds.at(-2)` while ordering by `recordedAt` — a
+     * value the writer **inherits from the pass it replaces** — so on this task's own artefacts the live record sorted into the
+     * middle, `at(-2)` was the live record itself, `revisionChangeSurface(live, live)` answered `unchanged`, and
+     * `targetsAboutThePreviousRound` was `null` for a change that had both a previous and a latest round.
+     *
+     * So the ordering is not a claim about timestamps: **the live record is the latest by construction**, because it is what the
+     * previous pass was replaced with. This case seeds the shape that broke it — a history record whose `recordedAt` is later
+     * than the live record's — and asserts the pairing.
+     */
+    it('keeps the live record last, so the share pairs it with its own predecessor', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
         roots.push(root);
         const { mkdir, writeFile } = await import('node:fs/promises');
         const dir = join(root, '.kata/tasks/t');
         await mkdir(dir, { recursive: true });
-        // A round at 01:10, and the live round that replaced the one from 13:45 the day before.
+        // The live record inherits the timestamp of the pass it replaced, so it looks *earlier* than a later round.
         await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
-            { revisionId: 'revision-a', createdAt: '2026-09-24T01:10:00.000Z', findings: [{ id: 'f1' }] },
+            { revisionId: 'revision-b', createdAt: '2026-09-24T01:10:00.000Z', findings: [{ id: 'f1' }] },
         ]));
         await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
-            { revisionId: 'revision-b', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f2' }] },
+            { revisionId: 'revision-a', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f2' }] },
         ));
         const report = await reportRounds(root, 't');
         expect(report.rounds).toHaveLength(2);
-        // Ordered by what the record says it was made at, so the 13:45 record sorts first and 01:10 is the latest round.
+        // The live round is last despite carrying the earlier timestamp — which is the whole point.
         expect(report.rounds.at(-1)?.revisionId).toBe('revision-a');
+    });
+
+    it('counts a revision that appears in the history and live as one round, not two', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        // Measured on this task: the history held the replaced copy of `becb49c9303042ca` while the live record was the same
+        // revision with an appended finding, and comparing whole records counted four entries for three rounds.
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-a', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f1' }] },
+        ]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
+            { revisionId: 'revision-a', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f1' }, { id: 'f2' }] },
+        ));
+        const report = await reportRounds(root, 't');
+        // One revision, one round — the appended finding does not make a second one.
+        expect(report.rounds).toHaveLength(1);
     });
 });
