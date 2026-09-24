@@ -270,6 +270,8 @@ describe('the delta findings list is limited to what the delta is about', () => 
         const source = readFileSync(new URL('../../src/quality/adversarial.ts', import.meta.url), 'utf8');
         expect(source).toContain('selectRelevantFindings(await readTrackedFindings(root, taskId), surface.changedPaths)');
         expect(source).toContain('!finding.path || changed.has(finding.path)');
-        expect(source).toContain('further finding(s) are withheld');
+        expect(source).toContain('are withheld from it');
+        // And the copy that made it a duplicate is gone: the class section is the one place the findings are listed.
+        expect(source).not.toContain('Earlier findings and what was decided about them');
     });
 });

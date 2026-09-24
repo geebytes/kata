@@ -584,13 +584,11 @@ ${(input.delta.attemptsWithheld ?? 0) > 0
         + ' their conclusions do not bear on the repair. Ask for the full list if you need it.)'
     : ''}
 
-Earlier findings and what was decided about them:
-${(input.delta.findings ?? []).length > 0
-    ? (input.delta.findings ?? []).map((finding) => `- ${finding.severity} ${finding.id} [${finding.disposition}]: ${finding.message}`).join('\n')
-    : '- (none recorded)'}
-${(input.delta.findingsWithheld ?? 0) > 0
-    ? `- (${input.delta.findingsWithheld} further finding(s) are withheld: their path did not change in this delta, so their`
-        + ' conclusions do not need re-deciding. Ask for the full list if you need it.)'
+The findings that bear on these paths are in **Findings by class, and what was done about each** below — the same list, in one
+place. It is not repeated here: it was, and the two copies were 30,667 characters between them, 47% of a brief that is paid for on
+every turn. ${(input.delta.findingsWithheld ?? 0) > 0
+    ? `**${input.delta.findingsWithheld} finding(s) whose path did not change are withheld from it** — their conclusions do not need`
+        + ' re-deciding; ask for the full list if you need it.'
     : ''}
 
 `
