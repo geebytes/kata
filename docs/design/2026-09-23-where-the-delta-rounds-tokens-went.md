@@ -103,3 +103,38 @@ four paths, the 10,742-character block removed.
 **And it means the claim to make is narrower than either of my two versions**: not "it does not reduce cost" (confounded) and not
 "it reduces cost" (unmeasured in isolation), but **"the remit narrowing reduces the input side measurably, and whether that
 survives the brief's fixed history is the measurement in flight."**
+
+## The experiment ran: the history costs 25% of the bill and 44% of the reasoning
+
+Same revision (`revision-48f7fb8e31c67fc9`), same four paths, same model and agent type. The only difference: the 10,742-character
+`Earlier attempts` block removed, taking the brief from 35,038 to 24,383 characters.
+
+| | control (with history) | **treatment (without)** | change |
+|---|---|---|---|
+| assistant turns | 21 | 22 | +1 |
+| tool uses | 62 | 63 | +1 |
+| input | 153,401 | 264,753 | +73% |
+| cacheRead | 1,748,352 | 1,227,648 | **−30%** |
+| output | 292,308 | 152,811 | **−48%** |
+| — of which reasoning | 277,549 | 155,075 | **−44%** |
+| **billed total** | **2,194,061** | **1,645,212** | **−25%** |
+| content bytes: thinking | 50% | **39%** | |
+| content bytes: tool results | 24% | **31%** | |
+
+**So the history's cost is real and it is measurable: 25% of the billed tokens, and 44% of the reasoning.** And the shape of the
+change is the hypothesis confirmed rather than a coincidence — **thinking fell from 50% of the round's content to 39%, while tool
+results rose from 24% to 31%**: handed less prior material to reason over, the reviewer read more and reasoned less. **Input rose
+73% for the same reason** — it went and looked, because it was not told.
+
+**That is the answer to the user's earlier question about what the +27% was**: the reported figure was the non-cached part of a bill
+whose dominant term (cacheRead) was *lower* in the delta round, and whose increase came from reasoning over the brief's history.
+
+### And the quality half did not come back
+
+**The treatment round's record did not parse**, and its final message was a fragment — "Let me confirm the precise line-level
+behaviour and the AC-3 wording provenance" — so **there is nothing to compare its findings against.** It ran 22 turns and 63 tool
+uses, so it was not idle; it ended without a record.
+
+**So this experiment establishes the cost half and not the quality half**: removing the history makes a delta round 25% cheaper, and
+**whether it makes it worse is unmeasured** — the one round that would have said so returned nothing. **Stated as such rather than
+claimed either way**: the cost lever is measured, and the quality question is open, with one failed observation.
