@@ -1704,12 +1704,17 @@ function acceptanceContractFor(task: TaskRecord): AcceptanceContractEntry[] {
         });
 }
 function undeclaredTestPaths(record: AdversarialRecord, declared: string[]): string[] {
-    const declaredSet = new Set(declared);
+    // **Comparable names on both sides** (`measured recording round 10`): a record may cite `closure-gate-visibility.test.ts` — a bare
+    // filename, which is how a reader refers to a file it opened — while a declaration names `tests/unit/closure-gate-visibility.test.ts`.
+    // Comparing them literally refused a citation the pass had declared, which is the same defect as refusing one it had read. A
+    // basename identifies a test file in this repository (they are unique), so the comparison is on basenames.
+    const asName = (path: string): string => path.split('/').pop() ?? path;
+    const declaredSet = new Set(declared.map(asName));
     const cited = new Set<string>();
     for (const attempt of record.attempts ?? []) {
         for (const path of testPathsIn(attempt.evidence ?? '')) cited.add(path);
     }
-    return [...cited].filter((path) => looksLikeTestPath(path) && !declaredSet.has(path)).sort();
+    return [...cited].filter((path) => looksLikeTestPath(path) && !declaredSet.has(asName(path))).sort();
 }
 
 /** The findings an adversarial pass confirmed that must be resolved before the node passes. */
