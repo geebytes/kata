@@ -771,6 +771,13 @@ that stopped it, and the round's verdict becomes \`budget_exhausted\` — which 
 unexamined set so the next round's scope is chosen from facts instead of a guess. What is not acceptable is reporting
 completeness you did not reach: that is the state this budget exists to make impossible.
 
+**Write as you go, and emit the record early.** Measured across fourteen dispatched rounds on this repository: every round that
+produced a record accumulated **17,636 to 67,358 characters of assistant text**, while the two that produced none wrote **599** and **0**
+— and their *thinking* ran to 583,914 and 536,527 characters, which is invisible to every instrument here. So the failure mode is not
+reading too much; it is **never writing**. Put a first complete record down as soon as you have findings, then keep working and emit an
+improved one: the last record you emit is the record, an earlier one costs nothing, and a thorough investigation that landed nothing has
+produced nothing.
+
 **Batch the commands.** Independent commands belong in **one** invocation. Merge several queries against the same file
 into one; prefer one test invocation over several; prefer reading a file the tool already opened over re-opening it; one
 \`grep\`/\`find\` sweep with several patterns, not one per pattern. The cost is in process launches and output volume, not
@@ -2136,10 +2143,28 @@ export const REVIEW_GATE_CONDITIONS: ReadonlyArray<{
         what: '`brief_mismatch`',
     },
     {
+        reason: 'brief_not_issued',
+        condition:
+            'A record with **no** `briefSha256` is refused, as is one carrying a hash kata never issued for this node and revision. The hash is how the gate knows your record answers the question it asked.',
+        what: '`brief_not_issued`',
+    },
+    {
         reason: 'stale_revision',
         condition:
             'The record is about the revision this brief names. If the tree moves after a record lands, that record stays true and stops certifying — which is why nothing is edited between a seal and the archive it certifies.',
         what: '`stale_revision`',
+    },
+    {
+        reason: 'receipt_unbound',
+        condition:
+            'If the host runs this node under capability control, the receipt it produces must name **this** run. A receipt naming a different one proves nothing about yours, and the refusal says so.',
+        what: '`receipt_unbound`, the host\'s receipt names another run',
+    },
+    {
+        reason: 'capability_missing',
+        condition:
+            'A bound receipt must advertise everything this node requires — `fresh_context` and, for a strict node, `read_only_fs`. What the host advertises is the host\'s business; knowing what the node needs is yours.',
+        what: '`capability_missing`, the host\'s receipt omits something the node requires',
     },
     {
         reason: 'not_fresh_context',

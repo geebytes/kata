@@ -50,15 +50,64 @@ describe('every condition the gate judges by is stated in the brief', () => {
         'not_fresh_context',
         'stale_revision',
         'executor_unavailable',
+        'receipt_unbound',
+        'capability_missing',
+        'brief_not_issued',
     ];
 
     /**
-     * The reasons that describe a **state of the task or the host** rather than a property of the record, listed explicitly so the carve-out
-     * is a decision rather than an omission: `no_revision` and `brief_not_issued` are "nothing has been sealed or issued yet", and
-     * `delta_stale` / `delta_unavailable` are "the remit could not be derived" — no record can satisfy or violate any of them, so there is
-     * nothing for a brief to state about the record.
+     * The reasons that describe a **state of the task or of the host's launch** rather than a property of the record. Each is listed
+     * with why, because the difference between a carve-out and an omission is whether somebody wrote the reason down.
+     *
+     * `missing` — the task request itself is absent; `waived` — a node the task's mode does not require; `not_required` — no pass is owed
+     * for this node; `no_revision` — nothing has been sealed yet, so there is no revision to be about; `delta_stale` and
+     * `delta_unavailable` — the remit could not be derived, a fact about the revision pair rather than about the record.
+     *
+     * **What this list cannot prove is that a carve-out is correct** — only that somebody made it. The auditing round that found the
+     * first version's omissions was reading the mapping, not the test; the test's job is to make the mapping impossible to leave implicit.
      */
-    const TASK_OR_HOST_STATES: AdversarialGateReason[] = ['no_revision', 'brief_not_issued', 'delta_stale', 'delta_unavailable'] as never;
+    const TASK_OR_HOST_STATES: AdversarialGateReason[] = [
+        'missing',
+        'waived',
+        'not_required',
+        'no_revision',
+        'delta_stale',
+        'delta_unavailable',
+    ];
+
+    /** Every member of the union, so a new refusal cannot enter without a decision recorded in this file. */
+    const EVERY_REASON: AdversarialGateReason[] = [
+        'missing',
+        'no_revision',
+        'stale_revision',
+        'not_fresh_context',
+        'brief_mismatch',
+        'brief_not_issued',
+        'incomplete',
+        'waived',
+        'delta_stale',
+        'delta_unavailable',
+        'undeclared_test_path',
+        'not_required',
+        'executor_unavailable',
+        'receipt_unbound',
+        'capability_missing',
+    ];
+
+    it('classifies every member of the union, so a new refusal cannot enter unclassified', () => {
+        const classified = new Set([...PASS_FACING, ...TASK_OR_HOST_STATES]);
+        const unclassified = EVERY_REASON.filter((reason) => !classified.has(reason));
+        expect(
+            unclassified,
+            `these refusals are in neither list, so nobody decided whether a pass can act on them: ${unclassified.join(', ')}`,
+        ).toEqual([]);
+        const both = PASS_FACING.filter((reason) => TASK_OR_HOST_STATES.includes(reason));
+        expect(both, 'a reason cannot be both a condition a pass satisfies and a state it cannot').toEqual([]);
+        // The union is the code's union rather than this file's memory of it: 15 members at the time of writing, asserted so a sixteenth
+        // arriving without this list being updated is a failure rather than a silent gap.
+        expect(EVERY_REASON.length).toBe(15);
+        expect(new Set(EVERY_REASON).size).toBe(15);
+    });
 
     it('has a row for every refusal that judges the pass', () => {
         const covered = new Set(REVIEW_GATE_CONDITIONS.map((row) => row.reason));
