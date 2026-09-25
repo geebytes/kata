@@ -741,8 +741,13 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const { classesOfFindings: classesForStatus, coveredClasses: coveredForStatus } = await import('../quality/class-coverage.js');
         const classOfForStatus = await classesForStatus(root, change).catch(() => ({} as Record<string, string[]>));
         const coveredSetForStatus = new Set(coveredForStatus().filter((entry) => entry.covered).map((entry) => entry.classId));
+        // **The same quantifier the criterion uses** (`cg9-f2`): this read `some` — any one named class covered — while
+        // `obligationIsAnswered` asks `classCoverageOf`, which requires **every** named class. So AC-3's corrected sentence ("status and
+        // the criterion cannot disagree") was false the moment a finding named an uncovered class beside a covered one, which is what
+        // the same hour's `cg8-f1` repair made reachable.
+        const { classCoverageOf } = await import('../quality/finding-lifecycle.js');
         const coveredByClassFor = (findingId: string): boolean =>
-            (classOfForStatus[findingId] ?? []).some((classId) => coveredSetForStatus.has(classId));
+            classCoverageOf({ classInstances: classOfForStatus[findingId] ?? [] }, coveredForStatus()).covered;
         // **The termination condition review lacked, reported where the ladder reads.** Measured: `closure-gate` ran five rounds and
         // `repair-by-another-author` seven, every round's findings about the previous round's repairs — because the loop had no state
         // meaning "this is enough". `roundMayClose` is that state: a round may close when every class an open terminal finding names

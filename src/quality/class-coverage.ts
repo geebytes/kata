@@ -45,6 +45,9 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
     {
         classId: 'one-concept-several-derivations',
         means: 'a concept is re-derived at each call site, so one site is updated and the others keep the old answer',
+        // **The second entry `cg8-f1` named and its repair left** (`cg9-f1`): the check greps for one predicate's identifiers, so a
+        // re-derivation of the same concept under other names is green — and that re-derivation is this class's own `means`.
+        uncoveredInstances: 'a re-derivation of the same predicate under other identifiers',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
     },
     {

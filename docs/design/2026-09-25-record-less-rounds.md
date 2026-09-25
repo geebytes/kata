@@ -1,4 +1,4 @@
-# Rounds that produced no record: seven measurements
+# Rounds that produced no record: eight measurements
 
 **Eight of the twenty-five dispatched rounds on this line have produced no record** — and four of them are the four rounds of one change. This document is the conclusion rather than another
 dispatch, because the data has been stable across the last three and one hypothesis has been disproved at each stage.
@@ -29,8 +29,8 @@ round 4 used 165 — more than any successful round — and both produced nothin
 **It is not the citation guard**, which was over-refusing for several of these rounds and is now a declaration check — `R13` and
 `R10` both ran before the fix, but `R11` ran after it and still stopped.
 
-**And it is not the pass's behaviour being different.** Every one of the seven ended with `stopReason: stop` and no error, and five of
-the seven ended immediately after a sentence of the same shape: *the last thing I have to do is verify something before writing*. The
+**And it is not the pass's behaviour being different.** Every one of the eight ended with `stopReason: stop` and no error, and five of
+the eight ended immediately after a sentence of the same shape: *the last thing I have to do is verify something before writing*. The
 record is the pass's only required output, it is the last thing it does, and the pass stops before it.
 
 ## What is left, and it is not a claim I can act on

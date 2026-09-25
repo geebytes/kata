@@ -205,14 +205,17 @@ describe('the four classes, and the checks that cover them', () => {
         // **The predicate, not a literal** (`wcc6-f3`): this passed `covered: true` for every class it listed, so the case held whatever the
         // table said. It asks the function that decides it now.
         const verdict = roundMayClose(open, coveredClasses());
-        // **And one of these findings is no longer closable** (`cg8-f1`): `a-check-that-cannot-fail` records an uncovered defining
-        // instance, so for the third route's purpose — "a new instance of that class fails in the declared covering check" — it is not
-        // covered. A finding naming it therefore keeps the round open, which is the honest answer rather than the convenient one.
+        // **And the findings naming an uncovered class are no longer closable** (`cg8-f1`, `cg9-f1`): two entries record an uncovered
+        // defining instance — `a-check-that-cannot-fail`, whose check finds only constant assertions, and `one-concept-several-derivations`,
+        // whose check greps one predicate's identifiers and is green for a re-derivation under other names. For the third route's
+        // purpose — "a new instance of that class fails in the declared covering check" — neither is covered, so findings naming them keep
+        // the round open. That is the honest answer rather than the convenient one.
         expect(verdict.mayClose).toBe(false);
-        expect(verdict.open.map((entry) => entry.classId)).toEqual(['a-check-that-cannot-fail']);
-        // And the same findings minus that one do close, so the rule is about that class and not about the list.
-        const withoutIt = open.filter((finding) => !finding.classInstances.includes('a-check-that-cannot-fail'));
-        expect(roundMayClose(withoutIt, coveredClasses()).mayClose).toBe(true);
+        expect(verdict.open.map((entry) => entry.classId).sort()).toEqual(['a-check-that-cannot-fail', 'one-concept-several-derivations']);
+        // And the findings that name neither do close, so the rule is about those classes and not about the list.
+        const withoutThem = open.filter((finding) => !finding.classInstances.includes('a-check-that-cannot-fail')
+            && !finding.classInstances.includes('one-concept-several-derivations'));
+        expect(roundMayClose(withoutThem, coveredClasses()).mayClose).toBe(true);
     });
 });
 
