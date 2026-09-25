@@ -1120,14 +1120,12 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         // to read two different declarations (`task.ownedPaths` here, `revision.pathDigests` there) of the same quantity,
         // which is the class this change exists to remove.
         const { falsifierProofSurface } = await import('../workflow/revision.js');
-        // Same binding as the reddening door, for the same reason: the criterion compares against **the revision's** content, so
-        // an absence that records the working tree at the moment of recording can only match a revision sealed from it. The
-        // sealed digests are the honest answer here, and the computed surface is the fallback for a revision that carries none.
+        // Same binding as the reddening door, and for the same measured reason: the revision a seal mints from this tree carries
+        // these digests, so recording anything else makes the recorder and the criterion disagree.
         const absenceSurface = revision
             ? await falsifierProofSurface(workspace, change, revision).catch(() => undefined)
             : undefined;
-        const sealedAbsence = revision?.pathDigests ?? {};
-        const absenceDigests = Object.keys(sealedAbsence).length > 0 ? sealedAbsence : absenceSurface?.pathDigests;
+        const absenceDigests = absenceSurface?.pathDigests;
         const absence = await recordFalsifierAbsence(workspace, change, {
             findingId: finding,
             reason: why,
@@ -1171,19 +1169,17 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     // So the fact travels with the proof instead: `observedTreeDigest` is what the tree was when the three steps ran, and the
     // reader can see whether it still matches. Detection rather than prevention is the honest shape here, because prevention
     // cannot be reached when the proof is what the seal needs.
-    // **The proof binds to the content the revision describes, not to the working tree** — and the difference is what made
-    // five dispositions on `kata-gate-surface` unreadable while their work was real.
+    // **The proof records the content that will be sealed — the working tree — and that is the rule, not an accident.**
     //
-    // The criterion compares a disposition's recorded digests against **the revision it is being resolved for**
-    // (`revisionCounts`). So a proof that records the working tree as it is *now* can only match a revision sealed from that
-    // same content; measured on this task, `falsify` recorded `291e4daa5c1a` for a file the revision names as `a176c56ce1aa`,
-    // and 11 of the revision's 19 paths had moved — so every disposition recorded here was refused, correctly, by a rule that
-    // was being handed the wrong half of the comparison.
+    // The criterion compares a disposition's digests against the revision it is being resolved for. The revision a *successful*
+    // seal mints is computed from the working tree at the moment of sealing, so a disposition recorded from that same tree
+    // matches it by construction. Measured, both ways: `revision-71ed04c4248be3fe` (minted by a seal) has **19 of 19** digests
+    // equal to the working tree, while a proof seeded from the *previous* revision's frozen set had **8 of 19** — because 11
+    // paths had moved since that revision was sealed.
     //
-    // The surface is the **revision's own `pathDigests`**, and the drift is measured against it: that is the question the
-    // criterion asks ("does the revision I am bound to still describe what I proved?"), it needs no declaration, and where the
-    // revision carries no digests the proof records the task's declaration with the drift reported — the honest fallback, not a
-    // silent substitution. `falsifierProofSurface` still supplies the tree digest and the drift, over the revision's set.
+    // I changed this to the revision's sealed set and it was wrong: it made the recorder and the criterion disagree for exactly
+    // the reason the ordering discipline exists. The rule is *record, then seal immediately* — and it is checkable rather than a
+    // promise, because both sides compute the same tree.
     let observedTreeDigest: string | undefined;
     let observedDrift: string[] = [];
     let observedPathDigests: Record<string, string> = {};
@@ -1192,8 +1188,7 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         const proof = await falsifierProofSurface(root, change!, revision);
         observedDrift = proof.drift;
         observedTreeDigest = proof.treeDigest;
-        const sealed = revision.pathDigests ?? {};
-        observedPathDigests = Object.keys(sealed).length > 0 ? sealed : proof.pathDigests;
+        observedPathDigests = proof.pathDigests;
     }
 
     const result = await runFalsification({

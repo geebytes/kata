@@ -174,20 +174,13 @@ export async function collectSealPreflight(input: {
             const { CLASS_COVERAGE } = await import('../quality/class-coverage.js');
             const coveredClasses = CLASS_COVERAGE.map((entry) => entry.classId);
             const classOf = await (await import('../quality/class-coverage.js')).classesOfFindings(root, taskId);
-            // **The content the seal is about to be bound to is the revision being replaced's own set**, not the working tree —
-            // and the difference decided a seal. Measured: the resolver compares a disposition against
-            // `revision.pathDigests`, while this computed the *current* tree over `task.ownedPaths`, and on `kata-gate-surface`
-            // 11 of 19 paths differ between the two. So the same disposition counted in one consumer and not in the other, which
-            // is the two-derivations shape `cg-f1` recorded — in the fix that was written to close it.
-            const plannedPathDigests = await (async () => {
-                const { computePathDigests, readCurrentTaskRevision } = await import('../workflow/revision.js');
-                const current = await readCurrentTaskRevision(root, taskId).catch(() => null);
-                const sealed = current?.pathDigests ?? {};
-                // The sealed set when there is one; the computed surface only for a task whose revision carries none.
-                return Object.keys(sealed).length > 0
-                    ? sealed
-                    : await computePathDigests(root, task.ownedPaths ?? []).catch(() => undefined);
-            })();
+            // **The content about to be sealed — the working tree — which is what the revision this run mints will carry.**
+            // Measured both ways on `kata-gate-surface`: a revision a seal minted has 19 of 19 digests equal to the tree, while a
+            // proof seeded from the previous revision's frozen set had 8 of 19. So computing the tree here is not the weaker
+            // question — it is the one the resolver will agree with, because the resolver reads the revision this seal writes.
+            const plannedPathDigests = await (await import('../workflow/revision.js'))
+                .computePathDigests(root, task.ownedPaths ?? [])
+                .catch(() => undefined);
             const answerable = new Set(
                 unresolved
                     .filter((obligation) =>
