@@ -169,3 +169,20 @@ deadline instruction written as "stop" rather than "emit first, keep reading".
 **The workflow's problem is not that its gates are wrong. It is that a process whose certification is destroyed by its own repairs, whose
 correctness depends on a global ordering, and whose loop has no fixed point for mechanism-building work is presented as a ladder each change
 climbs alone.**
+
+## 7. Measured after this document was written: `adversarial-admissibility` stopped at the host wall, and its round found four instances of item 1
+
+The change whose subject is the admission rule itself (`src/quality/review-state.ts`) re-sealed, passed `verify`, and its closing round returned an accepted record — and then the gate refused with **`executor_unavailable`**.
+
+Its four findings are all instances of item 1 in the fix plan, found by a pass reading the module I asked it to read:
+
+| severity | finding |
+|---|---|
+| **blocking** | the **discharge** conjunct refuses an entire record when any single hypothesis is `inconclusive`, and the brief never says so — while the brief *does* grant that running out of envelope is "a result, not a failure" |
+| major | the **grounding** conjunct refuses a `source` ref of the form `path:907-929`, while the brief says only that an observation must *name something openable at this revision* |
+| major | the **grounding** conjunct for the `analysis` kind resolves only against instruments the task declared, a registry the brief never mentions |
+| major | a **strict** node demands an execution receipt this host cannot produce — architecture #722 working as designed |
+
+**So two of the twelve changes are unarchivable on this host by construction**: this one and `review-record-integrity`, both `strict`, both refused by the same fail-closed capability check rather than by any evidence. That is not a defect; it is the contract doing exactly what it says. What it means practically is that a strict change needs a *different host*, and nothing in the change's own state can say which wall it is behind until it stops hitting the first one — `adversarial-admissibility` spent four days at `hardVerify` believing it needed a round.
+
+The three rule findings are carried with their reasons and are answered by a single change: **state the condition in the brief**.
