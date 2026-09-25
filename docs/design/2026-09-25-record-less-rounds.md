@@ -1,6 +1,6 @@
 # Rounds that produced no record: seven measurements
 
-**Seven of the twenty dispatched rounds on this line have produced no record.** This document is the conclusion rather than another
+**Eight of the twenty-five dispatched rounds on this line have produced no record** — and four of them are the four rounds of one change. This document is the conclusion rather than another
 dispatch, because the data has been stable across the last three and one hypothesis has been disproved at each stage.
 
 ## The measurements
@@ -14,7 +14,8 @@ dispatch, because the data has been stable across the last three and one hypothe
 | R11 | kata-gate-surface | 725,626 | 211 | 35.0 | `stop` — **its worktree was destroyed mid-run, by me** |
 | R13 | repair-by-another-author | 486,185 | 68 | 19.0 | `stop` — "since I must cover every path" |
 | R4 | review-record-integrity | 1,220,349 | 165 | 50.0 | `stop` — "verify a few claims before writing the record" |
-| **total** | | **4,803,411** | **778** | **≈176** | |
+| R5 | review-record-integrity | 437,283 | 48 | 10.0 | `stop` — "verify the headline evidence with targeted greps" |
+| **total** | | **5,240,694** | **826** | **≈186** | |
 
 ## What is disproved
 
@@ -56,3 +57,19 @@ the two hypotheses already disproved and with the brief's instruction moved to t
 and deleted its worktree while it was still working, after 35 minutes. Its changes were recovered from the git worktree, and the
 lesson — *a job that has not reported is a job in an unknown state, and unknown is not finished* — is the same one the falsification
 mechanism enforces one layer down.
+
+## One change produced no record in **every** round, and that is its subject
+
+`review-record-integrity` has had **four** dispatched rounds and **none** produced a record. Its brief is not different: it carries
+the same early-record instruction (measured — the sentence is in the packet), the same three declaration requirements, and a *smaller*
+packet than the changes whose rounds succeeded (32 KB / 388 lines against 46 KB / 434). Its review mode is `strict`, which requires
+more, not less.
+
+What is different is the subject. **This change is about what a record must contain** — the change record, the delta derived from git,
+the record-integrity rules. A pass whose subject is the record is a pass that, before writing its own, goes to verify the record's
+claims once more; four rounds ended on that sentence, the last one after ten minutes and forty-eight tool calls with most of its budget
+untouched.
+
+That is a hypothesis with one measurement behind it and it is **not** offered as a mechanism: the honest statement is that the change
+whose subject is the record has produced a record in zero of four attempts, and that every one of them stopped immediately after
+announcing a verification step — the same ending the four other record-less rounds have.
