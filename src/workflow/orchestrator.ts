@@ -1771,8 +1771,25 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     const { readTrackedFindings: readFindings, unfixed: unfixedFindings } = await import('../quality/finding-disposition.js');
     const tracked = await readFindings(root, taskId);
     const stillUnfixed = unfixedFindings(tracked);
+    // **An answered obligation is a decision, and this check has to see the same one everything else sees** (measured on
+    // `wiring-coverage-check`): the refusal's own words are "Repair them, **or record evidence that they do not hold**", and the command
+    // that records that evidence is `kata-cli falsify --none`, which writes to the falsifier ledger — while this filter read
+    // `finding.disposition`, which no command writes for a blocking or major finding. So the exit the refusal names was unreachable by
+    // the command it implies, and a change whose evidence was recorded could not be archived. This is the seventh consumer of one
+    // question to be repaired for reading a copy (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, the review admission, `findings
+    // accept`, `navigation`), and the fix is the same: ask the ledger and the obligations, not the stored field.
+    const { readFalsifierReddenings, readFalsifierAbsences, hasFalsifierDisposition } =
+        await import('../quality/falsifier-reddenings.js');
+    const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
+    const absences = await readFalsifierAbsences(root, taskId).catch(() => []);
+    const answeredIds = new Set((await (await import('../quality/repair-obligations.js')).readObligations(root, taskId).catch(() => []))
+        .filter((obligation) => obligation.resolvedAt)
+        .map((obligation) => obligation.findingId)
+        .filter((id): id is string => Boolean(id)));
     const openBlocking = stillUnfixed.filter((finding) => finding.disposition === 'open'
-        && (finding.severity === 'blocking' || finding.severity === 'major'));
+        && (finding.severity === 'blocking' || finding.severity === 'major')
+        && !answeredIds.has(finding.id)
+        && !hasFalsifierDisposition(reddenings, absences, finding.id));
     if (openBlocking.length > 0) {
         return {
             command: 'archive',
