@@ -41,7 +41,22 @@ async function main(): Promise<number> {
         process.stderr.write(`no packet at ${packetPath}\n`);
         return 2;
     }
-    const packet = JSON.parse(packetRaw) as ReviewPacket;
+    // **The packet delivers the brief as `lines`, and the reference runner's contract says `text`** — a mismatch that only exists because
+    // the line-per-entry shape was introduced later, so a reviewer's own `read`/`grep` can open a brief that used to be one 125 KB line.
+    // Measured: passing the packet through unchanged crashed the runner with `Cannot read properties of undefined (reading 'trim')`, which
+    // is the reference asking for a field the packet no longer carries. Normalising here rather than editing the reference keeps the
+    // contract's text as the single thing a session is handed, and the join is the inverse of the split kata performed.
+    const raw = JSON.parse(packetRaw) as {
+        request: ReviewPacket['request'];
+        brief?: { sha256?: string; text?: string; lines?: string[] };
+    };
+    const packet: ReviewPacket = {
+        request: raw.request,
+        brief: {
+            sha256: raw.brief?.sha256 ?? '',
+            text: raw.brief?.text ?? (raw.brief?.lines ?? []).join('\n'),
+        },
+    };
 
     // The model is not a decision kata makes, and a spawned pi cannot see the parent session's provider registration — measured: without an
     // explicit model a subprocess call fails with `Request is missing x-opencode-session`. So the host supplies it, and the default is the
