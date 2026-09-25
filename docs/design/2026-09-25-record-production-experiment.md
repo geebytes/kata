@@ -363,3 +363,31 @@ Its closing round said so explicitly — *"**Record emitted at call 45.** I have
 Its second finding is the concrete instance: `kgsr15-f3` is dispositioned `'fixed'` in that revision's record *while the defect it names is live in the revision the seal produced* — the record overstates one repair, and the overstatement came from the rule rather than from me. That is the distinction this line settled hours earlier in `kgsr13-f1` — *an answered obligation says the fix was proven effective, not that the defect disappeared* — and the batch closure violates it in the one direction that flatters the record.
 
 Both are recorded as real and unrepaired, carried explicitly, and named in `--findings-carried-to` rather than disposed by a sentence claiming they do not hold.
+
+## The deadline is not what discriminates — **writing anything at all is**
+
+Fourteen rounds are now measurable, and tabulating them changed the conclusion. `first record` is the tool call at which the record-shaped message appeared, `text` is the total assistant text, `thinking` is the reasoning volume:
+
+| round | tools | first record | text | thinking |
+|---|---:|---:|---:|---:|
+| `18e66cba` | 36 | **36** | 17,636 | 120,684 |
+| `58100891` | 47 | **31** | 67,358 | 277,037 |
+| `5945877a` | 31 | **29** | 46,137 | 286,247 |
+| `9f74c777` | 50 | 50 | 19,937 | 278,569 |
+| `1637c397` | 78 | **35** | 22,211 | 424,842 |
+| `b5b9a3bf` | 75 | 75 | 42,724 | 592,932 |
+| `1d87e51b` | 53 | 53 | 23,919 | 741,298 |
+| `db6861de` | 98 | 49 | 66,794 | 554,719 |
+| `5d467ceb` | 68 | 68 | 22,055 | 1,233,026 |
+| `8577f8fc` | 89 | 89 | 57,724 | 814,893 |
+| `045b7f18` | 96 | 96 | 27,672 | 1,367,462 |
+| `09848d59` | 40 | 40 | 28,826 | 480,869 |
+| **`3b3db848`** | **58** | **none** | **599** | 536,527 |
+| **`2f56e080`** | **69** | **none** | **0** | 583,914 |
+
+**Two things are visible and only one of them was in my hypothesis.**
+
+1. **The deadline does not make a pass emit early — it makes it emit at all.** Rounds given "emit by 45" emitted at 68, 75, 89, 96 and 116. Every one of them still produced a record. So its effect is real (0 of 8 on a change before it; 13 of 14 after) but it is not a scheduler.
+2. **The discriminator is whether the pass writes anything.** Every recorded round accumulated **17,636 to 67,358 characters of text**; the two that produced nothing wrote **599** and **0**. A pass that reads 69 times and writes nothing is not a pass that will be saved by a better deadline — and its 583,914 characters of *thinking* are invisible to every instrument this repository has, including my own accounting, which is why "0 characters" is a misleading statement about it.
+
+**So the intervention for item 2 of the fix plan changes**: the brief should require **text**, not a tool-call number — *"write one sentence after every ten tool calls, and the first sentence of your record must exist before your 30th"*. The deadline was the right shape and the wrong quantity.
