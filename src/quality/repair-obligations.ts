@@ -210,8 +210,13 @@ export async function resolveObligationsForRevision(
       .catch(() => undefined);
   // **Read once, outside the mutation**, for the same reason the reddenings are read here rather than by each caller — and because
   // the mutation callback is synchronous, which is how the first version of this failed to compile rather than to answer wrongly.
-  const { CLASS_COVERAGE } = await import('./class-coverage.js');
-  const coveredClasses = CLASS_COVERAGE.map((entry) => entry.classId);
+  // **The predicate that answers the question, not a restatement of it** (`wcc4-f1`). This listed every class id in the table while
+  // the two producers asked `coveredClasses()` — which answers "does this class name a covering check?" — so an entry with
+  // `coveredBy: []` counted as covered here and uncovered there. Two derivations of one question, and this was the one that could
+  // not answer it: a class is covered when it names a check, and that is the only thing either consumer may read.
+  const coveredClasses = (await import('./class-coverage.js')).coveredClasses()
+      .filter((entry) => entry.covered)
+      .map((entry) => entry.classId);
   const classOf = await (await import('./class-coverage.js')).classesOfFindings(root, taskId);
   return updateObligations(root, taskId, (existing) => {
     for (const obligation of existing) {

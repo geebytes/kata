@@ -225,13 +225,25 @@ describe('the four classes, and the checks that cover them', () => {
  */
 describe('F — a producer with a consumer (a negative result, recorded)', () => {
     it('keeps the behavioural check that can fail: the briefing is the consumer', async () => {
-        const briefing = readFileSync(join(ROOT, 'src/quality/repair-briefing.ts'), 'utf8');
-        // The consumer exists and names the fields in its type, which is what makes their absence fail the test that exercises it.
-        expect(briefing).toContain('impact');
-        expect(briefing).toContain('classInstances');
-        const test = readFileSync(join(ROOT, 'tests/unit/repair-briefing.test.ts'), 'utf8');
-        expect(test).toContain('impact');
-        expect(test).toContain('classInstances');
+        // **Behaviour, not the presence of a word** (`wcc4-f2`). This case asserted `toContain('impact')` over two source files,
+        // so deleting the rendering lines it was supposed to protect left it green — the ninth check on this line that could not
+        // fail, inside the change whose own table declares such checks a covered class. The measurement below is the one that
+        // reddens: a finding that carries the field is rendered with it, and one that does not is not.
+        // `renderRepairBriefing` is the pure function that draws the fields, so the check calls it directly with a finding that
+        // carries them and one that does not. The mutation that reddens is deleting the two `if (finding.impact) …` lines.
+        const { renderRepairBriefing } = await import('../../src/quality/repair-briefing.js');
+        const base = { classes: [], findings: [] as unknown[] } as Record<string, unknown>;
+        const withFields = renderRepairBriefing({
+            ...base,
+            findings: [{ id: 'f-with', severity: 'major', message: 'm', path: 'src/a.ts', impact: 'the six fixtures', classInstances: ['one-concept-several-derivations'] }],
+        } as never);
+        expect(withFields).toContain('the six fixtures');
+        expect(withFields).toContain('one-concept-several-derivations');
+        const withoutFields = renderRepairBriefing({
+            ...base,
+            findings: [{ id: 'f-without', severity: 'major', message: 'm', path: 'src/a.ts' }],
+        } as never);
+        expect(withoutFields).not.toContain('the six fixtures');
     });
 });
 
@@ -258,5 +270,27 @@ describe('G — a finding that names no class cannot close the round', () => {
         const verdict = roundMayClose([{ id: 'minor-one', severity: 'minor' }], []);
         expect(verdict.mayClose).toBe(true);
         expect(verdict.classless).toEqual([]);
+    });
+});
+
+/**
+ * **One derivation of "is this class covered?"** — `wcc4-f1`, found by the fourth round of a sibling change.
+ *
+ * The resolver listed every class id in the table while the two producers asked `coveredClasses()`, so an entry with
+ * `coveredBy: []` counted as covered in the resolver and uncovered in the producers. The falsifier is a class that names no check:
+ * it must not be reported as covered by the predicate the consumers read, and adding it to `CLASS_COVERAGE` must not make the
+ * resolver treat it as covered.
+ */
+describe('a class with no covering check is not covered', () => {
+    it('is reported uncovered by the one predicate every consumer reads', async () => {
+        const { coveredClasses, CLASS_COVERAGE } = await import('../../src/quality/class-coverage.js');
+        const derived = coveredClasses();
+        expect(derived.length).toBe(CLASS_COVERAGE.length);
+        // Every class in the table today names a check, so this asserts the relationship rather than the count — and a future
+        // entry with no check is exactly what this reddens on.
+        for (const entry of derived) {
+            expect(entry.covered).toBe(entry.coveredBy.length > 0);
+        }
+        expect(derived.every((entry) => entry.covered)).toBe(true);
     });
 });
