@@ -78,26 +78,40 @@ export function replacedCopyFilter(
     // What decides it: the live record names the `createdAt` of the record it replaced, the history is read by the caller and passed in,
     // and an entry that is itself a replacement names what *it* replaced. The walk follows that as far as the records carry it.
     if (!live) return () => true;
-    // **The key is the record's own `createdAt` plus what it replaced, not the count of what it announced** (`rba-r16-f1`): a round that
-    // confirms two findings through the CLI the brief instructs reviewers to use produces a pair whose count grows between the write of
-    // the relation and the read, so a count-based key cannot match. The record's own `createdAt` is unique per write and is what a
-    // replacement inherits — which is precisely the ambiguity the second half must break, and the second half is *which record the
-    // replacement says it replaced*, carried on the replacement itself.
-    const keyOf = (record: { createdAt?: unknown }): string => String(record.createdAt ?? '');
-    const byKey = new Map<string, Record<string, unknown>>();
-    for (const record of history) {
-        byKey.set(keyOf(record as { createdAt?: unknown; findings?: unknown }), record);
-    }
+    // **The identity is the content, and the relation is the chain.** Five versions of this test have been wrong, and the reason each was
+    // wrong is the reason the answer needs both halves:
+    //
+    //   * `createdAt` alone is not unique — two records written in the same second carry the same value, and that is constructible;
+    //   * the finding count is not stable — a round that confirms findings through the CLI the brief instructs reviewers to use grows the
+    //     count between the write of the relation and the read;
+    //   * the revision is neither — a re-stamp moves it for one round and leaves it for another;
+    //   * and `live.history` is a field no producer writes, so a walk that read it was a single step.
+    //
+    // So: **a record is identified by its content**, and **the relation says which content it replaced**. A finding's `id` is what the
+    // CLI appends and never rewrites, so the identity that survives both an append and a re-stamp is the set of ids the record held.
+    const contentOf = (record: Record<string, unknown>): string => {
+        const ids = Array.isArray(record.findings)
+            ? (record.findings as Array<{ id?: unknown }>).map((finding) => String(finding?.id ?? '')).sort()
+            : [];
+        return `${String(record.createdAt ?? '')}|${ids.join(',')}`;
+    };
+    const byContent = new Map<string, Record<string, unknown>>();
+    for (const record of history) byContent.set(contentOf(record), record);
     const dropped = new Set<string>();
     let cursor: Record<string, unknown> | null = live;
     for (let steps = 0; cursor && steps < 64; steps += 1) {
         const at: unknown = cursor.replacedCreatedAt;
         if (typeof at !== 'string') break;
-        const key: string = String(at);
+        // The replaced content: same write second, and the ids the replacement says it inherited.
+        const inherited: string | null = Array.isArray(cursor.replacedFindingIds)
+            ? (cursor.replacedFindingIds as unknown[]).map((id) => String(id)).sort().join(',')
+            : null;
+        if (inherited === null) break;
+        const key: string = `${at}|${inherited}`;
         dropped.add(key);
-        cursor = byKey.get(key) ?? null;
+        cursor = byContent.get(key) ?? null;
     }
-    return (record) => !dropped.has(keyOf(record as { createdAt?: unknown; findings?: unknown }));
+    return (record) => !dropped.has(contentOf(record));
 }
 
 

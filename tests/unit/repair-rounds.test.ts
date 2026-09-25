@@ -239,7 +239,7 @@ describe('the latest round is the live record, and the share pairs it with its p
                 revisionId: 'revision-a',
                 createdAt: '2026-09-23T13:45:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
-                replacedFindings: 1,
+                replacedFindingIds: ['f1'],
                 findings: [{ id: 'f1' }, { id: 'f2' }],
             },
         ));
@@ -265,7 +265,7 @@ describe('the latest round is the live record, and the share pairs it with its p
                 revisionId: 'revision-newer',
                 createdAt: '2026-09-24T06:10:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
-                replacedFindings: 1,
+                replacedFindingIds: ['f1'],
                 findings: [{ id: 'f1' }],
             },
         ));
@@ -274,3 +274,26 @@ describe('the latest round is the live record, and the share pairs it with its p
         expect(report.rounds.at(-1)?.revisionId).toBe('revision-newer');
     });
 });
+
+    it('counts two records written in the same second as two rounds, because the ids differ', async () => {
+        // **The shape that killed the `createdAt`-only key** (`rba-r16-f1`, and constructed while repairing it): two writes in one second
+        // carry the same timestamp and different findings. An identity that is the timestamp alone merges them; the identity is the
+        // content — the timestamp *and* the ids the record held.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-same', createdAt: '2026-09-25T10:00:00.000Z', findings: [{ id: 'f1' }] },
+        ]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-same',
+            createdAt: '2026-09-25T10:00:00.000Z',
+            replacedCreatedAt: '2026-09-25T10:00:00.000Z',
+            replacedFindingIds: ['f2'],
+            findings: [{ id: 'f2' }],
+        }));
+        const report = await reportRounds(root, 't');
+        expect(report.rounds).toHaveLength(2);
+    });

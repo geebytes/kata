@@ -131,7 +131,13 @@ export interface AdversarialRecord {
      * `createdAt` alone does not separate the two records when a replacement keeps the timestamp it inherited, and that is one of the two
      * shapes this pair exists to name (`rba-r15-f1`).
      */
-    replacedFindings?: number;
+    /**
+     * The ids the replaced record held — the other half of its identity.
+     *
+     *  alone is not unique (two writes in one second), and a count is not stable (the CLI appends one finding at a time), so the
+     * identity that survives both is the set of ids the record carried.
+     */
+    replacedFindingIds?: string[];
     /**
      * Test files this pass **read** and argued from, which it did not write. Declared for the same reason: a test a pass read is on
      * disk exactly as one it wrote is, so the record is the only place the distinction exists.
@@ -1106,7 +1112,11 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
         // not its timestamp alone.
         if (replaced.createdAt) {
             record.replacedCreatedAt = replaced.createdAt;
-            record.replacedFindings = Array.isArray(replaced.findings) ? replaced.findings.length : 0;
+            // **The ids, not a count** (`rba-r16-f1`): a count is not stable between the write of the relation and the read, because the
+            // CLI the brief instructs reviewers to use appends one finding at a time. The ids are what the record held and are never rewritten.
+            record.replacedFindingIds = Array.isArray(replaced.findings)
+                ? (replaced.findings as Array<{ id?: unknown }>).map((finding) => String(finding?.id ?? ''))
+                : [];
         }
     } catch {
         // The first pass for this node replaced nothing.
