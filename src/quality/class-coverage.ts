@@ -45,7 +45,15 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
     },
     {
         classId: 'a-check-that-cannot-fail',
-        means: 'an assertion is green whichever implementation runs, so it demonstrates nothing — including checking a value the defect also produces',
+        // **The means matches what the covering check can see** (`wcc5-f3`). This read 'an assertion is green whichever
+        // implementation runs … **including** checking a value the defect also produces', and the check covers only the first half: it
+        // finds constant assertions (`expect(true).toBe(true)`). The second half — an assertion that checks a value the defect also
+        // produces — is the class's defining instance and nothing detects it, so listing it here claimed coverage the check does not
+        // have. It is recorded as the uncovered form rather than deleted, because it is the form that matters most.
+        means: 'an assertion is green whichever implementation runs, so it demonstrates nothing — a constant assertion, which the '
+            + 'covering check finds. **Its defining instance is not covered: an assertion that checks a value the defect also '
+            + 'produces.** No check detects that today, so a repair may satisfy this class with a weaker property and the round would '
+            + 'close on it.',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
     },
     {

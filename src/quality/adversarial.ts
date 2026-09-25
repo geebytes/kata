@@ -1460,7 +1460,13 @@ export function evaluateAdversarialGate(
          * The test-shaped paths that exist in the repository right now (kgs3-f7). A path a pass **wrote** is here; a path an
          * attempt merely mentioned in prose may not be, and the guard could not tell the two apart in free text.
          */
-        existingTestPaths?: string[];
+        /**
+         * Every test-shaped file that exists, with its **modification time** — because the question this guard asks is *did the pass
+         * write this test?*, and the fact that answers it is when the file appeared relative to the brief.
+         */
+        existingTestPaths?: Array<{ readonly path: string; readonly mtime: string }>;
+        /** When the revision under review was sealed: a test that appeared after it is the shape of one this pass wrote. */
+        sealedAt?: string | null;
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
         /**
@@ -1587,16 +1593,34 @@ export function evaluateAdversarialGate(
     // that is not there is not a citation of a run. Narrowing it cannot let an authored test through — that one exists by
     // definition — which is why this is precision rather than a loosening. **Fail closed**: with no list the guard cannot
     // tell a mention from a run, so it keeps refusing, which is today's behaviour rather than an opened hole.
-    // **The predicate was inverted, and it refused every honest record that cited a test it read** (`measured recording round 8
-    // of kata-gate-surface`): this kept a path when `existing.includes(path)` — that is, when the test **exists on disk** — while
-    // the rule is that a path existing on disk is what a pass may *cite* and a path that does **not** exist is the shape of one
-    // it **wrote**. So the filter preserved exactly the citations it was added to permit and dropped the ones it was added to
-    // catch, and the guard's own comment described the opposite of what it did. With no list the guard cannot tell a mention from
-    // a run and keeps refusing, which is fail-closed and stays.
-    const existing = input.existingTestPaths;
+    // **The question is *did this pass write the test it cites?*, and it took three attempts to ask it without lying in one
+    // direction or the other.**
+    //
+    //   1. `existing.includes(path)` — admit what is on disk. Refuses nothing a pass wrote, because a written test is on disk.
+    //   2. `!existing.includes(path)` — admit only what is *not* on disk. Refuses every test a pass legitimately **read**, because
+    //      reading a file does not remove it. (Measured: round 8 of `kata-gate-surface` was refused for citing a test it read.)
+    //   3. *in the sealed revision's content* — admit what the seal carried. Refuses a pass that cites a test belonging to
+    //      **another change**, which is ordinary and honest: round 5 of `wiring-coverage-check` argued from three tests it read and
+    //      wrote none of.
+    //
+    // All three answer a proxy. The fact that answers the question directly is **when the file appeared**: a test the pass wrote did
+    // not exist when the brief was issued, and one it read did. So `existingTestPaths` is a path → modification time map, and the
+    // test is `mtime <= issuedAt` — which a read-only pass cannot forge, because writing the file is what moves its mtime. Where no
+    // clock is available the guard cannot tell a mention from a run and keeps refusing: fail closed, as before.
+    // **The seal's own time is the baseline**: the brief is issued for a revision, the pass runs after it, and a test the pass wrote
+    // was therefore created after the revision was sealed. `record.createdAt` would be too late (the pass writes it at the end, so
+    // every test it wrote would look pre-existing) and a brief timestamp is not in the record.
+    const sealedAt = input.sealedAt ? Date.parse(input.sealedAt) : Number.NaN;
+    const preexisting = input.existingTestPaths;
     const undeclared = permittedTests.length > 0
-        ? undeclaredTestPaths(record, permittedTests)
-            .filter((path) => !existing || existing.length === 0 || !existing.includes(path))
+        ? undeclaredTestPaths(record, permittedTests).filter((path) => {
+            if (!preexisting || preexisting.length === 0 || !Number.isFinite(sealedAt)) return true;
+            const seen = preexisting.find((entry) => entry.path === path);
+            // Absent, or modified after the brief was issued: the shape of a test this pass wrote.
+            if (!seen) return true;
+            const at = Date.parse(seen.mtime);
+            return !Number.isFinite(at) || at > sealedAt;
+        })
         : [];
     if (undeclared.length > 0) {
         return {
@@ -2756,8 +2780,21 @@ export async function adversarialGateFor(
             : {}),
         // kgs3-f7: the fact the predicate cannot derive, supplied by the caller that already reads the repository. The import
         // is inline at the use site, which is the pattern this file already uses.
-        existingTestPaths: (await (await import('../core/repository-identity.js')).listRepositoryFiles(root).catch(() => [] as string[]))
-            .filter((path) => looksLikeTestPath(path)),
+        // **With each file's modification time**, because the guard's question is *did the pass write this test?* and the only fact
+        // that answers it is when the file appeared relative to the brief (`wcc5` measured a pass refused for citing three tests it
+        // read and wrote none of, belonging to other changes).
+        existingTestPaths: await (async () => {
+            const { listRepositoryFiles } = await import('../core/repository-identity.js');
+            const { stat } = await import('node:fs/promises');
+            const { join } = await import('node:path');
+            const files = (await listRepositoryFiles(root).catch(() => [] as string[])).filter((path) => looksLikeTestPath(path));
+            const withTimes = await Promise.all(files.map(async (path) => {
+                const info = await stat(join(root, path)).catch(() => null);
+                return info ? { path, mtime: info.mtime.toISOString() } : null;
+            }));
+            return withTimes.filter((entry): entry is { path: string; mtime: string } => entry !== null);
+        })(),
+        ...(revision?.createdAt ? { sealedAt: revision.createdAt } : {}),
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,

@@ -1,6 +1,6 @@
 import { readTask } from '../core/task.js';
 import { readTrackedFindings } from './finding-disposition.js';
-import { classesOfFindings, CLASS_COVERAGE } from './class-coverage.js';
+import { classesOfFindings, coveredClasses, CLASS_COVERAGE } from './class-coverage.js';
 import { readFile } from 'node:fs/promises';
 import { taskPath } from '../core/layout.js';
 
@@ -86,7 +86,11 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         // Every class the finding names, and this is covered when **any** of them is — the same union the criterion and
         // `roundMayClose` ask (`kgsr7-f4`).
         const classIds = classOf[finding.id] ?? [];
-        const entry = CLASS_COVERAGE.find((candidate) => classIds.includes(candidate.classId));
+        // **The predicate, not a third lookup** (`wcc5-f2`): this searched `CLASS_COVERAGE` directly while `coveredClasses()` is the
+        // one place that decides "covered" (`coveredBy.length > 0`). Two of three derivations were removed by `wcc4-f1` and this is
+        // the third, in the module that repair produced — a lookup that agrees today and can disagree the moment the predicate grows
+        // a condition, which is exactly how the first two came apart.
+        const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
         findings.push({
             id: finding.id,
             severity: finding.severity,
@@ -108,7 +112,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         const severity = typeof finding.severity === 'string' ? finding.severity : 'minor';
         if (severity !== 'blocking' && severity !== 'major') continue;
         const classIds = classOf[id] ?? [];
-        const entry = CLASS_COVERAGE.find((candidate) => classIds.includes(candidate.classId));
+        const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
         findings.push({
             id,
             severity,
@@ -137,6 +141,8 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         .catch(() => null);
     return {
         findings,
+        // The table, not a predicate: this asks for every class and its description, so it is a listing rather than a coverage
+        // question —  is what a coverage question must ask.
         classes: CLASS_COVERAGE
             .filter((entry) => (counts.get(entry.classId) ?? 0) > 0)
             .map((entry) => ({ classId: entry.classId, means: entry.means, instances: counts.get(entry.classId) ?? 0 })),
