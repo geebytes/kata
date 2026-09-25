@@ -250,3 +250,27 @@ Measured on the live repository: three changes carry a closure verdict today (`a
 * **Against**: a blocking defect would remain in the code, certified, and the mechanism would be a guard whose default lets an unfixed defect through — the shape this line has now found eleven times. The gate's strength is one of two invariants this work has refused to trade (with revision identity), and weakening it is not a repair I should land on my own authority.
 
 So the honest state is: **the bound is visible, nameable and actionable; whether it also excuses an unfixed blocking finding is the user's call**, and the arguments are written down rather than decided.
+
+## 12. Fix item 6 was already implemented — and the plan item was written from a diagnosis I later retracted
+
+**Measured before doing the work: the certification binding is already content-based, in four rules, and I nearly rebuilt it.** `src/quality/adversarial.ts` around line 1625:
+
+```ts
+const sameRevision = record.revisionId === input.revisionId;
+const sameContent  = Boolean(record.manifestHash) && record.manifestHash === input.manifestHash;
+const sameFreeze   = … record.candidateFreezeSha256 === input.candidateFreezeSha256;   // §7.4
+const surfaceUnchanged = !sameRevision && !sameContent && … record.codeManifestHash === input.codeManifestHash;
+```
+
+so a record is refused as `stale_revision` only when **all four** fail — which means:
+
+* **an identical re-seal does not expire a pass** (`sameContent` over the owned manifest), which is the case the plan item was about;
+* **a change committed outside the declaration does not expire it** either, because §7.4's freeze identity covers more than `ownedPaths` — and the sibling defect I recorded earlier (`adversarial.ts` is not an owned path while `contentDigests` has 718 entries) is exactly why that rule exists;
+* **a governance-text or instrument edit does not expire a code pass**, as long as something cheap re-read the sentences (`claimsVerified`);
+* and only a change to **the code surface the revision declares** does — which is the correct answer, because the revision is the unit of certification.
+
+**All four fields are populated on every real record** — `manifestHash`, `codeManifestHash`, `candidateFreezeSha256` and `revisionId` are present on the four archived changes' records I checked — and the behaviour is pinned by `tests/unit/adversarial-brief-binding.test.ts` (*"a recorded pass survives the state behind its brief moving afterwards"*) and `tests/unit/revision-delta.test.ts:98` (*"says unchanged when the content is identical, even if the revision id moved"*).
+
+**So the plan item is withdrawn rather than landed**, and the reason matters: it was written when I believed a disposition's expiry proved the revision id was unstable for identical content. That diagnosis was **retracted the same day** — the two ids differed because the content really differed — so item 6 was answering a problem that the four rules above had already solved. What remains is the case I named in the same paragraph at the time: a **declared path the pass never examined** expiring the pass. That is not spurious staleness — the revision is what the pass certified — and the lever for it is ordering, which is item 3 and is landed.
+
+**This is the third time on this line that a plan item's premise did not survive measurement** (the `createdAt` instability, the record count `rounds == records`, and now this). The pattern is worth naming: a plan written from a diagnosis is only as good as the diagnosis, and re-reading the mechanism before implementing is cheaper than implementing a mechanism that exists.
