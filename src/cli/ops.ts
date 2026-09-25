@@ -1158,6 +1158,28 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     const check = valueAfter(argv, '--check');
     const mutation = valueAfter(argv, '--mutation');
     const restore = valueAfter(argv, '--restore');
+    // **The subject of a disposition must be a finding that exists** (measured): four absences were recorded on this repository
+    // under *short* ids — `kgsr14-f1`, which is how a listing renders a finding — while the task's records hold
+    // `kgsr14-f1-the-seal-writes-its-record-...`. The ledger accepted all four, the preflight asked by the finding's own id, found
+    // none of them, and the seal kept refusing for work that had been done. `falsify` validates every refusal it can measure — a
+    // check that did not pass, a defect that did not redden, a tree that did not return — and took its *subject* on trust; a writer
+    // whose key is never checked against its reader's vocabulary is the class this line spent a day removing.
+    if (change && finding) {
+        const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+        const known = await readTrackedFindings(process.cwd(), change).catch(() => null);
+        if (known && known.length > 0 && !known.some((entry) => entry.id === finding)) {
+            const prefixMatches = known.filter((entry) => entry.id.startsWith(finding)).map((entry) => entry.id);
+            return {
+                command: 'falsify',
+                taskId: change,
+                success: false,
+                error: `No finding in ${change} carries the id '${finding}', so a disposition for it would be written against nothing. `
+                    + (prefixMatches.length > 0
+                        ? `Did you mean ${prefixMatches.map((id) => `'${id}'`).join(' or ')}?`
+                        : `The task's records hold ${known.length} finding(s); the reader that has to be satisfied looks them up by this exact string.`),
+            };
+        }
+    }
     // A repair whose subject is not code has no check that can redden, so its disposition is a **recorded absence with a
     // reason** — a fact written by this command rather than an exception the repair grants itself (cg3-f1, cg3-f3).
     if (none) {
