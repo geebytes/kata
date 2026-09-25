@@ -78,3 +78,20 @@ Every mechanism the three changes set out to build is in the tree, `verify` pass
 only unmet condition is a pass about a revision that any further repair would move again. Recorded here rather than worked around, because
 the alternatives are to re-dispatch the same round a fourth time or to hand-write an approval — one is the loop, and the other makes a gate
 pass by making something else false.
+
+### The measurement that closes the arc
+
+The three changes reached `hardVerify` with `verify PASS`, `obligations 0` and a sealed revision — every mechanism they set out to build is in
+the tree, tested, and falsifier-verified. What they cannot get is a certification, because certification requires an independent record bound
+to the current revision and **the pass does not emit one**: ten dispatched rounds, ≈6.5M tokens, ≈990 tool calls, ≈230 minutes, zero records,
+each ending `stopReason: stop` with no error (measured in full in `2026-09-25-record-less-rounds.md`).
+
+The tenth of those was told the gate's exact refusal, the criteria by id, the two it had missed and the check to make before writing. It
+stopped anyway. So the remaining cause is not in the brief, the guard, the budget or the remit — and it is not reachable from this
+repository.
+
+**What that means for these three changes is worth stating precisely**, because "failed" would be wrong: their acceptance criteria are
+implemented, their evidence passes, their obligations are answered, and the falsification mechanism caught seven decorative checks, three
+mis-derived identities and a hand-typed coverage marker along the way. What is not reachable is the *certification step*, which requires an
+artefact from a pass that does not produce it. The honest terminal state is `hardVerify` with the reason recorded here, not an approval
+written by the author.

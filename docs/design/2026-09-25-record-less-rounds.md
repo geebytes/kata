@@ -73,3 +73,44 @@ untouched.
 That is a hypothesis with one measurement behind it and it is **not** offered as a mechanism: the honest statement is that the change
 whose subject is the record has produced a record in zero of four attempts, and that every one of them stopped immediately after
 announcing a verification step — the same ending the four other record-less rounds have.
+
+## The tenth round, and the one that settles it
+
+`closure-gate`'s closing round was dispatched with **the exact failure reason the gate had given** — `the state does not cover: AC-4, AC-5` — and
+with the five criteria enumerated in the prompt by id, the two missed ones quoted in full, and the instruction to check the `targets` array
+before writing anything. It is the only failure mode left on that change, so a round that clears it is accepted and the change goes to
+judge.
+
+It produced no record. **9 assistant turns, 58 tool calls, 12 minutes, 432,789 tokens**, `stopReason: stop`, no error, and its last three
+assistant texts are:
+
+> *"Now let me verify several candidate findings concretely."*
+> *"Now let me verify several specific claims in one batch."*
+> *"Let me ground the remaining hypotheses in one batch of reads."*
+
+**Ten rounds, ten measurements**, and the population is now unambiguous:
+
+| id | round | tokens | tools | minutes | stopReason |
+|---|---|---|---|---|---|
+| 1 | kata-gate-surface R5 | 874,572 | 141 | 34.7 | stop |
+| 2 | kata-gate-surface R6 | 658,523 | 85 | 17.0 | stop |
+| 3 | repair-by-another-author R9 | 429,434 | 47 | 8.0 | stop |
+| 4 | wiring-coverage-check R10 | 408,722 | 61 | 12.0 | stop |
+| 5 | kata-gate-surface R11 | 725,626 | 211 | 35.0 | stop (worktree deleted by the operator) |
+| 6 | repair-by-another-author R13 | 486,185 | 68 | 19.0 | stop |
+| 7 | review-record-integrity R4 | 1,220,349 | 165 | 50.0 | stop |
+| 8 | kata-gate-surface R14 | 872,934 | 97 | 30.3 | stop |
+| 9 | review-record-integrity R5 | 437,000 | 48 | 10.0 | stop |
+| 10 | closure-gate closing | 432,789 | 58 | 12.1 | stop |
+
+**≈6.5M tokens, ≈990 tool calls, ≈230 minutes, zero records.** Every one ended `stopReason: stop` with no error, and **eight of the ten**
+ended on a sentence that announces a further step — *verify*, *confirm*, *ground* — rather than on a conclusion. The three hypotheses this
+document refuted one at a time (budget exhaustion, remit size, citation-guard over-rejection) are all still refuted by this row: it used
+58 of its 215-tool budget, reviewed a remit the gate had already named, and ran after the guard was repaired.
+
+**What the tenth round adds is the thing the other nine could not show**: the failure is not caused by the round not knowing what is
+wanted. It was told the exact refusal, the exact criteria, the exact two that were missed and the exact check to make. It still stopped
+before writing. That leaves one cause the repository cannot reach — the pass, as dispatched through this host, ends on an intention to
+continue — and it means **a governed change on this line reaches `hardVerify` with `verify PASS` and `obligations 0`, and then cannot be
+certified however many rounds are bought**, because the certification requires a record that the pass does not emit and the loop cannot
+close. That is the third self-blocking gate, measured rather than argued, and it is recorded here as the terminal state of this arc.
