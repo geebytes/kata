@@ -114,3 +114,45 @@ before writing. That leaves one cause the repository cannot reach — the pass, 
 continue — and it means **a governed change on this line reaches `hardVerify` with `verify PASS` and `obligations 0`, and then cannot be
 certified however many rounds are bought**, because the certification requires a record that the pass does not emit and the loop cannot
 close. That is the third self-blocking gate, measured rather than argued, and it is recorded here as the terminal state of this arc.
+
+
+## Correction: it is not a loss, it is an absence — measured at the transcript level
+
+The table above was assembled round by round by hand, and the count depends on which population you take. Measured across **every** dispatched
+round on this line (62 rounds with at least one tool call):
+
+| | rounds |
+|---|---|
+| produced a record | **34** |
+| produced none | **28** |
+
+**And the 28 are not rounds whose record was lost. They are rounds that wrote almost nothing at all.** The signature is the ratio of output to
+tool use, and it is not subtle:
+
+```
+  141 chars / 165 tools   aa183e24   ← the whole round, ~50 minutes
+  172 chars /  48 tools   488d9a71
+  237 chars /  28 tools   480f14e6
+  599 chars /  58 tools   3b3db848   ← the tenth, dispatched as the decisive test
+  907 chars /  47 tools   99024140
+ 1131 chars / 141 tools   73958595
+ 1248 chars /  48 tools   9514d814
+ 1673 chars /  84 tools   2527edc7
+ 2648 chars / 128 tools   bf83bac6
+```
+
+Against a producing round at `11,232 / 97` and another at `29,621 / 116`. **A round that reads 165 times and emits 141 characters has not lost
+a record — it never produced one**, and there is nothing for `salvage` to recover, which is why `salvage` correctly reports *"the transcript
+holds no complete record"* rather than a partial one.
+
+**Two mechanism facts are real but secondary, and neither would have saved these rounds:**
+
+1. **The required output has exactly one channel** — the pass's final message. That is the fifth class named in this line's table
+   (`output-with-one-unguaranteed-channel`), and `salvage` is its mitigation: it reads the transcript and recovers a **complete** record, which
+   it did three times. It cannot recover a record that was never assembled.
+2. **The reviewer holds `read`, `grep`, `find`, `ls` — no `write`.** So a pass cannot park partial work even if it wants to. But the
+   measurement above says there would have been nothing to park: these rounds emitted 141–2,648 characters, none of them a hypothesis object.
+
+**So "the record was lost" is the wrong description and it suggests the wrong fix.** Incremental or asynchronous recording preserves *partial
+material*; this failure is upstream of the transport — the pass reads, announces further reading, and stops. The honest statement is that on this
+line **28 of 62 rounds produced no conclusion**, and their output volume shows it before any of their behaviour does.
