@@ -369,6 +369,11 @@ async function runMain(argv: string[]): Promise<void> {
         // A repair proves its falsifier reddens before the obligation it answers can close (closure-gate AC-2).
         const result = await runFalsifyCommand(argv.slice(1));
         outputResult(result);
+        // **A refusal has to be one** (`aad-r7-f2`, found by a round this repository executed). This returned `{success: false}` and the
+        // process exited **0**, so a script or CI step that checks the exit status — the only mechanism by which a command refuses
+        // anything — proceeded on a falsify that recorded nothing. Measured against the rest of the repository: `scripts/wiring-check.mjs`
+        // sets `process.exitCode` from its run and `src/policy/guard-script.ts` exits 2 on a denial.
+        if (result.success === false) process.exitCode = 1;
         return;
     }
 
@@ -457,7 +462,10 @@ async function runMain(argv: string[]): Promise<void> {
         // declared by more than one change, and a sibling's repair moves its revision — measured at eleven minutes once, at the cost of a
         // round. `--require-current` is the guard form, so a lane step can refuse rather than trust the operator to look.
         const { runLaneCommand } = await import('./cli/lane.js');
-        outputResult(await runLaneCommand(change, workspaceRoot, { requireCurrent: argv.includes('--require-current') }));
+        const lane = await runLaneCommand(change, workspaceRoot, { requireCurrent: argv.includes('--require-current') });
+        outputResult(lane);
+        // The whole point of `--require-current` is that a lane step can refuse; a guard whose exit status is 0 refuses nothing.
+        if (argv.includes('--require-current') && lane.success === false) process.exitCode = 1;
         return;
     }
 

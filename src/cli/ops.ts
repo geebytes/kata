@@ -753,20 +753,19 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // meaning "this is enough". `roundMayClose` is that state: a round may close when every class an open terminal finding names
         // is covered by a check that reddens when the class returns. Reporting it here makes the next action "cover the class" rather
         // than "repair one more instance", which is the difference the seven rounds were paying for.
-        const classCoverage = (() => {
-            const findings = trackedForStatus.map((tracked) => ({
-                id: tracked.id,
-                severity: tracked.severity,
-                ...(tracked.classInstances ? { classInstances: tracked.classInstances } : {}),
-            }));
-            // See `coveredClasses`: the coverage comes from the table rather than from a literal this call site writes
-            // (`rba8-f2` — the literal made the predicate's uncovered branch unreachable, so the verdict could not fail).
-            return roundMayClose(findings, coveredClasses());
-        })();
-        // Reported beside the findings it is about, so `status` answers "may this round close?" rather than leaving the operator to
-        // infer it from a count. The reason names the uncovered classes, because the next action is to cover a class rather than to
-        // repair one more instance.
-        const roundClosure = classCoverage;
+        // **One derivation of the closure verdict, read rather than recomputed** (`aad-r7-f1`, a major finding from a round this repository
+        // executed). This block used to build its own verdict by handing `roundMayClose` **every** tracked finding, with no disposition test
+        // and no subtraction of what the falsifier ledger closed — while `readUpstreamSummary`, which the ladder acts on, hands it only
+        // findings whose disposition is `open` and which no recorded reddening or absence closed. On any task with a terminal finding
+        // that had been repaired, routed or closed by an absence, the two disagreed: this reported `mayClose: false` and named classes
+        // while the ladder computed `mayClose: true` and advanced to judge. The file's own `cg3-f4` note forbids exactly that — *"a report
+        // computed with a weaker rule can disagree with the rule it reports on"* — and a weaker rule is what a report wants least, because
+        // the operator reads this and the machinery obeys the other.
+        const { readUpstreamSummary: readUpstreamForClosure } = await import('../workflow/navigation.js');
+        const roundClosure = (await readUpstreamForClosure(root, change)).roundClosure
+            // Absent means the round may close, which is the same fact the ladder acts on; the shape is reported only when there is
+            // something to act on, so an operator never reads a `mayClose: true` field as a state worth watching.
+            ?? { mayClose: true as const, reason: 'every class an open terminal finding names is covered by a check that reddens when it returns', open: [], classless: [] };
         // C1: the repair batch the platform opens and closes on this task's behalf, named here so acting on the user's
         // behalf is never something they have to infer. `batchSaving` counts from the record, not from an estimate.
         const { batchSaving, openBatch } = await import('../quality/repair-batch.js');
@@ -886,6 +885,10 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                         return drift ? { proofObservedDrift: drift } : {};
                     })(),
             })),
+            // **Projected, because a verdict nobody reads is a verdict that was never computed for anyone** (`aad-r7-f1`): the block above
+            // built this value and dropped it, so the field an operator would have acted on did not exist while the ladder acted on its own
+            // copy. It is now the ladder's own value, reported here rather than derived here.
+            roundClosure,
             findings: trackedForStatus.map((finding) => ({
                 id: finding.id,
                 severity: finding.severity,

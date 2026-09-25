@@ -104,6 +104,33 @@ describe('the host executor core', () => {
         expect(killed()).toBe('capability_missing');
     });
 
+    it('produces no receipt when the session ended without a result', async () => {
+        // **Measured by a round this runner executed** (`aad-r7-f4`, blocking). A spawn that never started ends the stream on `error`
+        // without emitting anything; no stop condition fires, and before this case existed the round came back `completed` with four-zero
+        // telemetry and the host's constant capability list. That is a receipt for a round nothing ran, and a record paired with it would
+        // certify a node no session ever examined — the agent's own assertion replaced by the host's.
+        const { adapter } = adapterFor([{ kind: 'output', bytes: 12 }]);
+        const outcome = await runReviewRound({ packet: packet(), adapter, now: () => 0 });
+
+        expect(outcome.status).toBe('executor_unavailable');
+        expect(outcome.receipt).toBeUndefined();
+        expect(outcome.reason).toContain('no reviewer result');
+    });
+
+    it('reports a figure it could not measure as null rather than as zero', async () => {
+        // The other half of the same finding: `truncations: 0` is the positive claim "measured, and it was zero", so a host with no
+        // truncation counter used to make the channel built to name unmeasured fields report that nothing was unmeasured.
+        const { adapter } = adapterFor([
+            { kind: 'tool_call', tool: 'read' },
+            { kind: 'reviewer_result', text: JSON.stringify({ hypotheses: [] }) },
+        ]);
+        const outcome = await runReviewRound({ packet: packet(), adapter, now: () => 0 });
+
+        expect(outcome.receipt?.telemetry.toolCalls).toBe(1);
+        expect(outcome.receipt?.telemetry.outputBytes).toBeNull();
+        expect(outcome.receipt?.telemetry.truncations).toBeNull();
+    });
+
     it('stops a round that exceeds the tool-call envelope, and never calls it completed', async () => {
         const events: SessionEvent[] = Array.from({ length: 12 }, () => ({ kind: 'tool_call' as const, tool: 'read' }));
         const { adapter, killed } = adapterFor(events);

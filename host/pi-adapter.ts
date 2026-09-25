@@ -152,7 +152,23 @@ class PiSession implements IsolatedSession {
                     this.push({ kind: 'output', bytes: Buffer.byteLength(part.text, 'utf8') });
                 }
             }
-            if (typeof message?.usage?.totalTokens === 'number') this.push({ kind: 'output', bytes: 0, tokens: message.usage.totalTokens });
+            // **What this round is charged, not what one turn's context cost** (`aad-r7-f3`). Each `turn_end` reports the usage of *that API
+            // call*, whose input is the whole conversation so far — so summing `totalTokens` counts the same context once per turn, and a
+            // 65-minute round reported **11.75 M tokens** on this host where the session's own completion line said far less. The billed
+            // quantity is what each call *added*: its output, plus the input it sent that no earlier call had cached. `cacheRead` is excluded
+            // because those tokens were billed when they were first written, and a figure that double-counts them is a figure an operator
+            // cannot act on.
+            const usage = message?.usage as
+                | { input?: number; output?: number; reasoning?: number; cacheRead?: number }
+                | undefined;
+            if (usage) {
+                const billed = (usage.input ?? 0) - (usage.cacheRead ?? 0) + (usage.output ?? 0) + (usage.reasoning ?? 0);
+                if (billed > 0) this.push({ kind: 'output', bytes: 0, tokens: billed });
+            }
+            // `truncations` is deliberately **not** pushed: this adapter has no truncation counter, and a field it cannot measure must stay
+            // unmeasured rather than be reported as a zero that reads like a measurement.
+            const toolResultBytes = Buffer.byteLength(JSON.stringify(event.toolResults ?? []), 'utf8');
+            if (toolResultBytes > 2) this.push({ kind: 'output', bytes: toolResultBytes });
             return;
         }
         if (event.type === 'agent_end') {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -94,19 +94,29 @@ describe('every condition the gate judges by is stated in the brief', () => {
         'capability_missing',
     ];
 
-    it('classifies every member of the union, so a new refusal cannot enter unclassified', () => {
+    it('classifies every member of the union the gate declares, read from the source, so a new refusal cannot enter unclassified', async () => {
+        // **The union is read from the code, not remembered here** (`aad-r7-f6`, a major finding from a round this repository executed).
+        // The first version compared three hand-written literals against each other plus `expect(EVERY_REASON.length).toBe(15)`, so adding
+        // a sixteenth member to `AdversarialGateReason` and changing nothing else left the file **green** — the new reason was neither
+        // classified nor required to have a row, which is exactly the case this test's own comment claimed was impossible. A guard against
+        // unclassified refusals that holds its own copy of the list is a guard over the copy.
+        const source = await readFile('src/quality/adversarial.ts', 'utf8');
+        const declared = source.slice(source.indexOf('export type AdversarialGateReason'));
+        const union = [...declared.slice(0, declared.indexOf(';')).matchAll(/\|\s*'([a-z_]+)'/g)].map((match) => match[1] as AdversarialGateReason);
+        expect(union.length, 'the union did not parse, so this test would assert nothing').toBeGreaterThan(5);
+
         const classified = new Set([...PASS_FACING, ...TASK_OR_HOST_STATES]);
-        const unclassified = EVERY_REASON.filter((reason) => !classified.has(reason));
+        const unclassified = union.filter((reason) => !classified.has(reason));
         expect(
             unclassified,
             `these refusals are in neither list, so nobody decided whether a pass can act on them: ${unclassified.join(', ')}`,
         ).toEqual([]);
         const both = PASS_FACING.filter((reason) => TASK_OR_HOST_STATES.includes(reason));
         expect(both, 'a reason cannot be both a condition a pass satisfies and a state it cannot').toEqual([]);
-        // The union is the code's union rather than this file's memory of it: 15 members at the time of writing, asserted so a sixteenth
-        // arriving without this list being updated is a failure rather than a silent gap.
-        expect(EVERY_REASON.length).toBe(15);
-        expect(new Set(EVERY_REASON).size).toBe(15);
+        // And the other direction: a name this file classifies that the code does not declare is a decision about nothing.
+        const declaredSet = new Set(union);
+        const orphans = [...classified].filter((reason) => !declaredSet.has(reason));
+        expect(orphans, `this file classifies refusals the gate does not declare: ${orphans.join(', ')}`).toEqual([]);
     });
 
     it('has a row for every refusal that judges the pass', () => {

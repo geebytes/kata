@@ -62,11 +62,19 @@ export interface HostAdapter {
 
 export type ExecutionStatus = 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled' | 'executor_unavailable';
 
+/**
+ * Telemetry, with `null` for a figure the host could not measure.
+ *
+ * **The distinction is load-bearing and was missing** (`aad-r7-f3`, found by a round this runner executed): every field used to be a
+ * `number` accumulated with `+= event.x ?? 0`, so a host that never measured `truncations` reported **`0`** — the positive claim *"measured,
+ * and it was zero"* rather than *"not measured"*. The schema already allows `null` and `unmeasuredTelemetry` exists precisely to name the
+ * gaps, so a runner that cannot express a gap makes that whole channel report nothing.
+ */
 export interface ReviewExecutionTelemetry {
-    toolCalls: number;
-    outputBytes: number;
-    tokens: number;
-    truncations: number;
+    toolCalls: number | null;
+    outputBytes: number | null;
+    tokens: number | null;
+    truncations: number | null;
 }
 
 export interface ReviewExecutionReceipt {
@@ -132,22 +140,27 @@ export async function runReviewRound(options: RoundOptions): Promise<RoundOutcom
         return { status: 'executor_unavailable', reason: `the host did not provide ${missing.join(', ')}, which this node requires` };
     }
 
-    const telemetry: ReviewExecutionTelemetry = { toolCalls: 0, outputBytes: 0, tokens: 0, truncations: 0 };
+    // `null` means *not measured*, so each field stays null until an event actually reports it. A host that emits no telemetry at all produces a
+    // receipt that says so, rather than four zeros the operator would read as measurements.
+    const telemetry: ReviewExecutionTelemetry = { toolCalls: null, outputBytes: null, tokens: null, truncations: null };
+    const bump = (field: keyof ReviewExecutionTelemetry, by: number): void => {
+        telemetry[field] = (telemetry[field] ?? 0) + by;
+    };
     let reviewerResult: string | undefined;
     let hypotheses = 0;
     let stopped: { status: ExecutionStatus; reason: string } | undefined;
 
     for await (const event of session.events) {
-        if (event.kind === 'tool_call') telemetry.toolCalls += 1;
-        if (event.kind === 'output') telemetry.outputBytes += event.bytes ?? 0;
+        if (event.kind === 'tool_call') bump('toolCalls', 1);
+        if (event.kind === 'output' && typeof event.bytes === 'number') bump('outputBytes', event.bytes);
         if (event.kind === 'reviewer_result' && typeof event.text === 'string') reviewerResult = event.text;
-        telemetry.tokens += event.tokens ?? 0;
-        telemetry.truncations += event.truncations ?? 0;
+        if (typeof event.tokens === 'number') bump('tokens', event.tokens);
+        if (typeof event.truncations === 'number') bump('truncations', event.truncations);
         if (event.kind === 'reviewer_result') hypotheses += countHypotheses(event.text);
 
-        if (telemetry.toolCalls > request.budget.maxToolCalls) {
+        if ((telemetry.toolCalls ?? 0) > request.budget.maxToolCalls) {
             stopped = { status: 'budget_exhausted', reason: `the round used ${telemetry.toolCalls} tool calls against a limit of ${request.budget.maxToolCalls}` };
-        } else if (telemetry.outputBytes > request.budget.maxOutputBytes) {
+        } else if ((telemetry.outputBytes ?? 0) > request.budget.maxOutputBytes) {
             stopped = { status: 'budget_exhausted', reason: `the round produced ${telemetry.outputBytes} output bytes against a limit of ${request.budget.maxOutputBytes}` };
         } else if (hypotheses > request.budget.maxHypotheses) {
             stopped = { status: 'budget_exhausted', reason: `the round raised ${hypotheses} hypotheses against a limit of ${request.budget.maxHypotheses}` };
@@ -162,11 +175,25 @@ export async function runReviewRound(options: RoundOptions): Promise<RoundOutcom
         return { status: stopped.status, reason: stopped.reason };
     }
 
+    // **A receipt is written only when a session produced a result, and this was missing** (`aad-r7-f4`, a *blocking* finding from a round this
+    // runner executed). `PiSession.finish()` ends the event stream on both `close` **and** `error`, so a spawn that never started — a missing
+    // executable, a permission failure — drained the loop immediately, tripped no stop condition, and returned `completed` with a receipt
+    // carrying the host's constant capability list and four-zero telemetry. A record paired with that receipt would certify a node **no
+    // session ever examined**: the agent's own assertion, replaced by the host's. The result is the one thing a session can only produce by
+    // running, so its absence is a refusal rather than an empty conclusion.
+    if (reviewerResult === undefined) {
+        return {
+            status: 'executor_unavailable',
+            reason: `the session produced no reviewer result, so there is nothing to certify — the round ran under an enforced envelope and `
+                + `ended without a conclusion (tool calls so far: ${telemetry.toolCalls ?? 'unmeasured'})`,
+        };
+    }
+
     const status: ExecutionStatus = 'completed';
     return {
         status,
         reason: 'the round ran to a conclusion under an enforced envelope',
-        ...(reviewerResult === undefined ? {} : { reviewerResult }),
+        reviewerResult,
         receipt: {
             runId: request.runId,
             requestSha256: request.requestSha256,
