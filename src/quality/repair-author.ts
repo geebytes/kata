@@ -76,10 +76,23 @@ export async function recordRepairAuthor(
     // **Both halves of the binding, and they are the ones the closure rule will use** (rba5-f1): this call passed neither, so
     // the guard's first line returned true and the content binding added by this change never ran on the path the criterion
     // lives on. The current revision and its content are read here for the same reason the resolver reads them.
-    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
+    // **The same half the producer records** (`rba12-f2`). `kata-cli falsify` records the working tree — the content the next seal
+    // will mint — and this read the *current sealed* revision, so the two agreed only when nothing had been edited between the
+    // recording and this call, which is a coincidence rather than a rule. Measured on a sibling change: a revision a seal minted has
+    // 19 of 19 digests equal to the tree it was minted from, while the previous revision's set had 8 of 19 after a repair touched an
+    // owned path — so binding to the sealed set refuses exactly the repairs that changed something, which is every repair.
+    //
+    // The tree is read here for the same reason the resolver reads its own inputs rather than accepting them: a caller that had to
+    // remember this is a caller that will forget, and the failure is silent.
+    const { readCurrentTaskRevision, computePathDigests } = await import('../workflow/revision.js');
+    const { readTask } = await import('../core/task.js');
     const currentRevision = await readCurrentTaskRevision(root, taskId).catch(() => null);
-    const binding = currentRevision
-        ? { revisionId: currentRevision.id, pathDigests: currentRevision.pathDigests ?? null }
+    const task = await readTask(root, taskId).catch(() => null);
+    const treeDigests = task?.ownedPaths?.length
+        ? await computePathDigests(root, task.ownedPaths).catch(() => null)
+        : null;
+    const binding = treeDigests || currentRevision
+        ? { revisionId: currentRevision?.id ?? null, pathDigests: treeDigests ?? currentRevision?.pathDigests ?? null }
         : undefined;
     if (!hasFalsifierDisposition(reddenings, absences, repair.findingId, binding)) {
         throw new Error(`repair-author record: '${repair.findingId}' has no recorded disposition — a falsifier shown reddening, or an absence carrying a reason. Record that first (\`kata-cli falsify\`): a repair whose disposition is missing has not been shown to work, and a provenance record for it would say who made a repair nobody can check.`);

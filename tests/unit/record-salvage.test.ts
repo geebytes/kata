@@ -180,3 +180,24 @@ describe('salvage takes the last record, not the longest', () => {
         expect(JSON.stringify(found)).not.toContain('early-finding');
     });
 });
+
+/**
+ * **The template exclusion must not swallow a real record** — `rba12-f3`.
+ *
+ * My first fix for `rba11-f2` rejected any record whose first 6000 serialised characters contained an angle-bracketed token. That is
+ * broader than the defect: a real record can quote one — a finding about the template, an observation naming `<something>` — and an
+ * excluded real record is worse than a salvaged template, because the round's findings are then invisible. The template's signature is
+ * narrower: its **values** are placeholders, in the fields a pass fills with prose.
+ */
+describe('a real record quoting a placeholder is still a record', () => {
+    it('salvages a record whose finding message mentions the template', () => {
+        const record = JSON.stringify({
+            node: 'review', status: 'recorded', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+            hypotheses: [{ id: 'h1', claim: 'the template leaks into transcripts', targets: ['AC-1'], method: 'source-read', outcome: 'confirmed' }],
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed', evidence: 'read the brief and found the block' }],
+            findings: [{ id: 'a-real-finding', taskId: 't', severity: 'major', message: 'the brief carries <how this pass ran> in its template', path: 'src/a.ts' }],
+        });
+        const found = salvageRecord(`Final record:\n${record}`, { revisionId: 'revision-aaaaaaaaaaaaaaaa' });
+        expect(JSON.stringify(found)).toContain('a-real-finding');
+    });
+});

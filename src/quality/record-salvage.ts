@@ -105,7 +105,12 @@ function salvageFromText(transcript: string, expected?: { readonly revisionId?: 
                 // passes too. Measured in the issued packet: line 636 carries the real id inside the template block. The
                 // template's own signature is that its values are **placeholders in angle brackets**, and a real record never
                 // carries `<…>` in place of a hypothesis's method or a finding's id.
-                !/<[a-z][^>]*>/i.test(JSON.stringify(parsed).slice(0, 6000));
+                // **Narrow enough not to drop a real record** (`rba12-f3`): testing the first 6000 characters of the whole serialised
+                // record for any angle-bracketed token excluded a record whose *own content* quotes one — a finding message about the
+                // template, or an observation naming `<something>`. The template's signature is narrower than that: its values are
+                // placeholders, so what identifies it is an angle-bracketed token **as a value**, in the fields the template fills
+                // with prose. Measured on a real round: its template has `<what you asserted was false>` in `hypotheses[].claim`.
+                !templatePlaceholder(parsed);
             if (looksLikeARecord) candidates.push({ record: parsed, at: start });
         } catch {
             // Not JSON from this brace; the next one may be.
@@ -147,6 +152,23 @@ export function salvageFromJsonl(transcript: string, expected?: { readonly revis
     }
     if (candidates.length === 0) return null;
     return candidates.sort((a, b) => b.index - a.index)[0].found;
+}
+
+/**
+ * Whether an object is the brief's own **template** rather than a record a pass wrote.
+ *
+ * The template's values are placeholders in angle brackets, and the fields that carry them are the ones a pass fills with prose. Testing
+ * the whole serialised record for `/<[a-z][^>]*>/` was too broad (`rba12-f3`): a record quoting one of those placeholders — a finding
+ * about the template, an observation naming `<something>` — was excluded, and an excluded real record is worse than a salvaged template.
+ */
+function templatePlaceholder(parsed: Record<string, unknown>): boolean {
+    const value = (v: unknown): boolean => typeof v === 'string' && /^<[^>]+>$/.test(v.trim());
+    const hypotheses = (parsed.hypotheses ?? []) as Array<Record<string, unknown>>;
+    const attempts = (parsed.attempts ?? []) as Array<Record<string, unknown>>;
+    const findings = (parsed.findings ?? []) as Array<Record<string, unknown>>;
+    // The template's own fields, and the shape a pass never produces: every one of them a bare placeholder.
+    const probe = [hypotheses[0]?.claim, hypotheses[0]?.method, attempts[0]?.method, findings[0]?.message, parsed.contextNote, parsed.briefSha256];
+    return probe.filter((v) => v !== undefined).some(value);
 }
 
 function collectStrings(value: unknown, out: string[], depth = 0): void {

@@ -28,6 +28,7 @@ describe('a repair author is told the three questions before it decides how larg
         await mkdir(join(root, '.kata/tasks/b-task'), { recursive: true });
         await writeFile(join(root, '.kata/tasks/b-task/review.json'), `${JSON.stringify({
             revisionId: 'revision-x',
+            status: 'pending',
             findings: [{
                 id: 'finding-one', taskId: 'b-task', severity: 'major', path: 'src/a.ts',
                 message: 'a mechanism says one thing and does another',

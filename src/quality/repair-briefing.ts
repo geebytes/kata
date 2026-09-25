@@ -54,11 +54,15 @@ export interface RepairBriefing {
 
 /** Reads the open terminal findings and renders what a repair author needs to know before it starts. */
 export async function repairBriefing(root: string, taskId: string): Promise<RepairBriefing> {
-    const tracked = await readTrackedFindings(root, taskId).catch(() => []);
+    // **Not swallowed** (`rba12-f4`): `readTrackedFindings` was changed to throw on a schema-invalid record rather than read it as
+    // an absent one, and this module — written after that change — wrapped it in `.catch(() => [])` again. A briefing computed from an
+    // empty list describes no findings, which is the opposite of what a repair author needs, and the failure is silent.
+    const tracked = await readTrackedFindings(root, taskId);
     const classOf = await classesOfFindings(root, taskId);
     // Findings live in two stores and the repair batch reads the tracked one; the briefing reads the same one so it cannot
     // describe a different batch than the one the repair is against.
-    const review = await readFile(taskPath(root, taskId).replace(/task\.json$/, 'review.json'), 'utf8')
+    const { reviewPath: reviewRecordPath } = await import('../core/layout.js');
+    const review = await readFile(reviewRecordPath(root, taskId), 'utf8')
         .then((raw) => JSON.parse(raw) as { findings?: Array<Record<string, unknown>> })
         .catch(() => null);
     const task = await readTask(root, taskId).catch(() => null);

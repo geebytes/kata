@@ -44,7 +44,21 @@ export async function reportRoundCost(root: string, taskId: string, node = 'revi
         .then((raw) => JSON.parse(raw) as Array<Record<string, unknown>>)
         .catch(() => [] as Array<Record<string, unknown>>);
     const live = await readAdversarialRecord(root, taskId, node as never).catch(() => null);
-    const records = [...history, ...(live ? [live as unknown as Record<string, unknown>] : [])];
+    // **A revision in both the history and the live slot is one round** (`rba12-f1`). `reportRounds` documents and implements that
+    // rule for the same pair of files; this counted the record twice, so a change's cost was inflated by the size of its most recent
+    // round *and* the round count disagreed with AC-3's own report — two derivations of one quantity, in the two modules written to
+    // report it. The identity is the one `reportRounds` settled on after three attempts: a revision, its hypotheses and its attempts.
+    const seen = new Set<string>();
+    const records = [...history, ...(live ? [live as unknown as Record<string, unknown>] : [])].filter((record) => {
+        const key = JSON.stringify([
+            (record as { revisionId?: string }).revisionId ?? '',
+            ((record as { hypotheses?: unknown[] }).hypotheses ?? []).length,
+            ((record as { attempts?: unknown[] }).attempts ?? []).length,
+        ]);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
     const rounds: RoundCost[] = [];
     for (const record of records) {
         const usage = (record as { usage?: Record<string, number> }).usage ?? {};

@@ -91,3 +91,52 @@ describe('a repair that changed an owned path can be recorded', () => {
         }
     });
 });
+
+/**
+ * **A repair recorded after the disposition and *before* the seal is accepted** — `rba12-f2`.
+ *
+ * `recordRepairAuthor` bound a disposition to the current **sealed** revision while `kata-cli falsify` records the working tree, so
+ * the two agreed only when nothing had been edited between the recording and this call. That is a coincidence rather than a rule: the
+ * producer records the content the next seal will mint, and this consumer must ask about the same content.
+ *
+ * The falsifier is the edit: the disposition is taken, the owned path changes, and the repair is recorded before any seal. Revert the
+ * binding to `readCurrentTaskRevision().pathDigests` and this reddens.
+ */
+describe('a repair recorded before the seal is accepted', () => {
+    it('binds what the producer recorded, not the older revision', async () => {
+        const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const { initLayout } = await import('../../src/core/layout.js');
+        const { createTask } = await import('../../src/core/task.js');
+        const { createTaskRevision, computePathDigests } = await import('../../src/workflow/revision.js');
+        const { recordFalsifierReddening } = await import('../../src/quality/falsifier-reddenings.js');
+        const { recordRepairAuthor } = await import('../../src/quality/repair-author.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-author-pre-seal-'));
+        try {
+            await initLayout(root);
+            await createTask({ root, id: 'pre-seal', title: 'P', ownedPaths: ['src/a.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+            await mkdir(join(root, 'src'), { recursive: true });
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
+            await createTaskRevision({ root, taskId: 'pre-seal', ownedPaths: ['src/a.ts'], checkIds: [] });
+            const before = await computePathDigests(root, ['src/a.ts']);
+            await recordFalsifierReddening(root, 'pre-seal', {
+                findingId: 'f-pre-seal', check: 'true', mutation: 'false', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+                observed: { before: 0, mutated: 1, after: 0 }, reddenedAt: '2026-01-01T00:00:00.000Z', pathDigests: before,
+            });
+            // The repair lands after the proof and before any seal: the state the old binding refused.
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 2;\n', 'utf8');
+            const after = await computePathDigests(root, ['src/a.ts']);
+            await recordFalsifierReddening(root, 'pre-seal', {
+                findingId: 'f-pre-seal', check: 'true', mutation: 'false', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+                observed: { before: 0, mutated: 1, after: 0 }, reddenedAt: '2026-01-01T00:00:01.000Z', pathDigests: after,
+            });
+            await expect(recordRepairAuthor(root, 'pre-seal', {
+                findingId: 'f-pre-seal', session: 'a session that did not write it', handed: 'the findings and their falsifiers',
+                report: 'changed src/a.ts to 2', recordedAt: '2026-01-01T00:00:00.000Z',
+            })).resolves.toBeDefined();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+});
