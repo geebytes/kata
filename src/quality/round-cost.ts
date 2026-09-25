@@ -52,7 +52,7 @@ export async function reportRoundCost(root: string, taskId: string, node = 'revi
     // round of its own. A key over the record cannot express that, and the two modules reporting different round counts is the defect
     // this line has produced four times.
     const { replacedCopyFilter } = await import('./repair-rounds.js');
-    const keep = replacedCopyFilter(live as Record<string, unknown> | null);
+    const keep = replacedCopyFilter(live as Record<string, unknown> | null, history);
     const records = [...history.filter(keep), ...(live ? [live as unknown as Record<string, unknown>] : [])];
     const rounds: RoundCost[] = [];
     for (const record of records) {

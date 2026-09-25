@@ -60,21 +60,32 @@ async function readJson<T>(path: string): Promise<T | null> {
  * Exported because two modules report a change's rounds — `reportRounds` and `roundCost` — and they produced different counts once
  * before by restating this (`kgsr8-f2`). A key over one record cannot express containment, so the test is a function of the pair.
  */
-export function replacedCopyFilter(live: Record<string, unknown> | null): (record: Record<string, unknown>) => boolean {
-    // **The chain, walked by the pair `writeAdversarialRecord` records** (`rba-r14-f1`, `rba-r15-f1`, `rba-r15-f2`). Two earlier
-    // versions asked the records' own fields and each was wrong in one direction, because a replacement can inherit the revision (a
-    // re-stamp) *or* keep it while findings accumulate. What decides it is which record replaced which, and it is recorded as a *pair* —
-    // the replaced record's `createdAt` and its finding count — because a replacement that inherits the timestamp has the same
-    // `createdAt`, which is exactly one of the two shapes this exists to name.
+export function replacedCopyFilter(
+    live: Record<string, unknown> | null,
+    /** The node's history, which lives in its own file rather than on the live record — the caller reads it, and this needs it. */
+    history: ReadonlyArray<Record<string, unknown>> = [],
+): (record: Record<string, unknown>) => boolean {
+    // **The chain, walked by the relation `writeAdversarialRecord` records** (`rba-r14-f1`, `rba-r15-f1`, `rba-r15-f2`, `rba-r16-f1`,
+    // `rba-r16-f2`). Four versions of this test have now been wrong, and the failure of each is worth keeping:
     //
-    // The walk follows the chain as far as the records carry it: the live record names what it replaced, and a history entry that is
-    // itself a replacement names what *it* replaced. The previous version ended its own loop at the first step while its comment
-    // described a walk, which is the second minor this repairs.
+    //   1. asking the records' own fields — a replacement inherits the revision (a re-stamp) *or* keeps it while findings accumulate, so
+    //      no field pair separates the shapes;
+    //   2. recording the pair `(createdAt, finding count)` — but a round that confirms findings through the CLI the brief instructs
+    //      reviewers to use (`adversarial finding add`, once per finding) grows the count between the write of the relation and the read;
+    //   3. walking `live.history` — **a field no producer writes**, because the history is its own file, so the walk was one step while
+    //      its comment described a chain.
+    //
+    // What decides it: the live record names the `createdAt` of the record it replaced, the history is read by the caller and passed in,
+    // and an entry that is itself a replacement names what *it* replaced. The walk follows that as far as the records carry it.
     if (!live) return () => true;
-    const keyOf = (record: { createdAt?: unknown; findings?: unknown }): string =>
-        `${String(record.createdAt ?? '')}#${Array.isArray(record.findings) ? record.findings.length : 0}`;
+    // **The key is the record's own `createdAt` plus what it replaced, not the count of what it announced** (`rba-r16-f1`): a round that
+    // confirms two findings through the CLI the brief instructs reviewers to use produces a pair whose count grows between the write of
+    // the relation and the read, so a count-based key cannot match. The record's own `createdAt` is unique per write and is what a
+    // replacement inherits — which is precisely the ambiguity the second half must break, and the second half is *which record the
+    // replacement says it replaced*, carried on the replacement itself.
+    const keyOf = (record: { createdAt?: unknown }): string => String(record.createdAt ?? '');
     const byKey = new Map<string, Record<string, unknown>>();
-    for (const record of Array.isArray(live.history) ? (live.history as Array<Record<string, unknown>>) : []) {
+    for (const record of history) {
         byKey.set(keyOf(record as { createdAt?: unknown; findings?: unknown }), record);
     }
     const dropped = new Set<string>();
@@ -82,7 +93,7 @@ export function replacedCopyFilter(live: Record<string, unknown> | null): (recor
     for (let steps = 0; cursor && steps < 64; steps += 1) {
         const at: unknown = cursor.replacedCreatedAt;
         if (typeof at !== 'string') break;
-        const key: string = `${at}#${Number(cursor.replacedFindings ?? 0)}`;
+        const key: string = String(at);
         dropped.add(key);
         cursor = byKey.get(key) ?? null;
     }
@@ -110,7 +121,7 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     //
     // **There is no key for a round** — `recordIdentity` was deleted rather than kept "for a consumer that needs a stable key", because
     // no such consumer exists (`rba-r14-f2`: it was matched only by its own definition and by the comment claiming a consumer).
-    const historyRounds = history.filter(replacedCopyFilter(live as unknown as Record<string, unknown> | null)).map(toRound);
+    const historyRounds = history.filter(replacedCopyFilter(live as unknown as Record<string, unknown> | null, history)).map(toRound);
     // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass, so sorting by it put the live record
     // before a history record that was actually earlier — measured: `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`. The live record
     // is the latest by construction, because it is what the previous pass was replaced with.
