@@ -97,3 +97,23 @@ claimed only AC-1 … AC-3. **The deadline is the same lever for both halves**: 
 the record it emits claims what it has examined — so the treatment for those three is one round each with the deadline, plus the five criteria
 named in the prompt. Whether their records then meet the same `executor_unavailable` wall is the next measurement, and it is cheap because it
 happens at the gate rather than after 60 minutes of reading.
+
+
+## And it was cheaper, by an order of magnitude, on the same change
+
+The harness reports the treatment round as **134,282 tokens, 36 tool uses, 204 seconds (3.4 minutes)**. The eight baseline rounds on this same
+change:
+
+| round | tokens | tools | minutes |
+|---|---:|---:|---:|
+| `review-record-integrity` R4 | 1,220,349 | 165 | 50.0 |
+| `review-record-integrity` R5 | 437,000 | 48 | 10.0 |
+| others | 400,000 – 900,000 | 48 – 141 | 8 – 35 |
+
+**3.4 minutes against 8–50**, producing the record none of them produced. That is not a coincidence of the deadline alone — it is what the
+deadline *is*: those rounds were not slow because the change is hard, they were slow because reading has no natural end, and the deadline is the
+only thing in the brief that gives it one. A round that must conclude by call 30 cannot spend fifty minutes not concluding.
+
+So the measured answer to the question this experiment was designed around — *is the missing record a mechanism problem, or a lost-record
+problem?* — is neither. It is a **stopping problem**, the fix is one sentence in the dispatch prompt, and the same sentence makes the round an
+order of magnitude cheaper.
