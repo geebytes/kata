@@ -881,7 +881,7 @@ ${mode === 'cold' ? '2. Decide what to attack first. There is no claim list: for
 (AC-1, AC-2, …) counts as a target too. A pass that answers everything and covers all but one path concludes nothing, and the
 round is spent.
 
-**Report what this round cost, in the record's \`usage\` field** — \`total_tokens\`, \`tool_uses\` and \`duration_ms\`, as your own harness reports them. It is recorded because the loop's price is otherwise invisible: this line's seven rounds cost 351,864 / 658,523 / 347,000 / 400,000 / 875,572 / 510,836 / 1,073,271 tokens and the two most expensive produced **zero** findings because they never wrote a record, while the cheapest produced seven. Cost and yield are not correlated here, so this is not a target to drive down — it is the only way \"the cost has not fallen\" becomes a fact something can fail on.
+**Report what this round cost, and only what you can observe.** The usage field is optional and a pass has no instrument for its own token count or wall time: measured, two records on this repository reported total_tokens 0 and duration_ms 0 — the values the template used to show — against a harness-measured 134,282 tokens and 3.4 minutes in one case and 449,147 and 19 minutes in the other. Report the fields you can see, tool_uses among them, and omit the ones you cannot; the host fills those from what it measured. The price is recorded because the loop's cost is otherwise invisible — this line's rounds cost 351,864 to 1,073,271 tokens, the two most expensive produced zero findings because they never wrote a record, and the cheapest produced seven. Cost and yield are not correlated here, so this is not a target to drive down: it is how the sentence that the cost has not fallen becomes a fact something can fail on.
 
 **Emit the record as soon as you have your findings, then keep working — the last record you emit is the record.** This is a
 correction to the brief's own shape, and it is measured: **three of six dispatched rounds on this line produced no record at all**,
@@ -954,7 +954,6 @@ line of rounds (\`rba8-f4\`), and how \`impact\`/\`classInstances\` came back ab
   "findings": [
     { "id": "<stable id>", "taskId": "${input.taskId}", "severity": "blocking | major | minor | nit", "message": "<the defect and how you confirmed it>", "path": "<file>", "falsifier": "<the check that must redden under this defect — a declared selector, a command, or the observation you already made that refutes it>", "impact": "<what else a repair will reach: the call sites and fixtures you just read>", "classInstances": ["<the class this defect is an instance of>"] }
   ],
-  "usage": { "total_tokens": 0, "tool_uses": 0, "duration_ms": 0 },
   "deliveredFacts": [
     { "path": "<a path you read>", "note": "<what you concluded from it>" }
   ],
