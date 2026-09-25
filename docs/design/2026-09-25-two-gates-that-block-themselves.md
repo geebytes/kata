@@ -119,3 +119,34 @@ record.
 
 That distinction is the arc's own summary: **every gate that refused could be repaired, and the last one to refuse was refusing on evidence
 it could not see.** The one thing no repair reached is a pass that emits a record.
+
+## 5. Both changes blocked at `judge` were blocked by their own declaration, and repairing the declaration freed them
+
+`major-finding-closure` and `repair-obligation-deadlock` had both been stuck for four days at `judge` with a judge PASS, and `archive` refused them with:
+
+```
+Archive requires a current-revision Judge PASS before transition:
+Cannot enter distill until fresh evidence, reviewer clearance, and judge PASS are present
+```
+
+Their declared paths included **three of their own OpenSpec files** — `proposal.md`, the spec, `tasks.md` — and the archive step had moved those into
+`openspec/changes/archive/2026-09-21-<id>/`. So the revision could never be `current` again, its evidence could never be fresh, and the
+freshness `archive` requires was destroyed by the archive step it also requires. **Same defect as the two other gates in this document, and the
+same shape: a condition nothing can satisfy.**
+
+**What actually freed them was repairing the declaration, not the code.** `matrix set --owned-paths` repointed the three at where they are, and
+the other 26 (and 15) paths were **recovered from the sealed revision's own `pathDigests`** rather than from memory — after I had already made
+the mistake this note exists to record: **the first attempt replaced the whole list with the three**, because `--owned-paths` **sets** the
+declaration rather than patching it. The command returned `previousPaths` and that is what let the loss be seen and undone.
+
+Then `build --seal` minted `revision-21e96836735597af` and `revision-d0e12c17c4f05e10`, and **both verify PASS with zero obligations** — the
+work had been finished for four days; only the declaration was stale.
+
+**Two consequences worth stating:**
+
+1. **The measurement that mattered was "do the declared paths exist?"** — three of 29 and three of 18 did not, and nothing in the ladder said so.
+   The refusal named freshness, evidence and clearance; the cause was three paths. That is the ninth instance of this line's class, and the
+   first one where the instance and the cause were four days apart.
+2. **A declaration correction is an unreviewed act.** `--owned-paths` writes `task.json` and (unlike `scope change`) leaves no
+   `scope-changes.json` entry, so the repair that made these two able to proceed is recorded only in this document and in the commit. That is the
+   same "one decision, two entry points, one leaves no trace" defect recorded when the command was added, and it is now on its second instance.
