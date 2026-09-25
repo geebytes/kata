@@ -349,3 +349,17 @@ so the gate's own acceptance contract prints AC-1 with check row `(none)` and *"
 That is why this change was reported as stuck at `judge` for four days: it was never stuck on freshness — it was **measured against a criterion that asserts nothing**, and a PASS over it certifies nothing. The declaration repair I made earlier today (repointing its three moved OpenSpec paths) let the seal and judge proceed; **this finding says the thing they proceeded over is empty**, which is a different and more serious statement, and the honest response is not to archive it.
 
 Its own repair is a `matrix set` — a declaration change, not a source change, and therefore *possibly* one that does not move the revision whose record found it. That is the next measurement, and it belongs in the next session rather than in a fabricated acceptance statement at the end of this one.
+
+## Seven archived, and the second change through the lane found a defect in my own bookkeeping
+
+`kata-gate-surface` is **archived** — the second change through the serialised lane, and it went end to end: re-seal (`obl 10 → 0` at the preflight, the four absences plus the six criteria obligations resolved together) → verify PASS → one round → record accepted → review approved → **judge PASS on all six criteria** → archive.
+
+Its closing round said so explicitly — *"**Record emitted at call 45.** I have my findings; here is the first complete record, then I keep working."* — and it then kept working, which is what the deadline is for.
+
+**And it found a defect in the closure rule, which is mine:**
+
+> `closeBatchAfterSeal` builds `answered` from the findings whose obligation carries a `resolvedAt`, then writes disposition **`'fixed'`** for each — while `obligationIsAnswered` accepts a **recorded absence** as answering an obligation. So a finding that was declared **unrepaired** is stamped **fixed** when its batch closes.
+
+Its second finding is the concrete instance: `kgsr15-f3` is dispositioned `'fixed'` in that revision's record *while the defect it names is live in the revision the seal produced* — the record overstates one repair, and the overstatement came from the rule rather than from me. That is the distinction this line settled hours earlier in `kgsr13-f1` — *an answered obligation says the fix was proven effective, not that the defect disappeared* — and the batch closure violates it in the one direction that flatters the record.
+
+Both are recorded as real and unrepaired, carried explicitly, and named in `--findings-carried-to` rather than disposed by a sentence claiming they do not hold.
