@@ -152,3 +152,24 @@ ref string against the revision's readable paths with no tolerance for a `:line`
 That is the **eighth instance of this line's own class** — a check judging by a condition its reader was never told — and it lives in
 `src/quality/review-state.ts`, owned by `adversarial-admissibility`, so it is recorded rather than repaired here (repairing it would touch a path
 this change does not own and mint the revision that voids the pass).
+
+
+## The two rounds' costs, from the harness rather than from the record — and the record's `usage` is wrong
+
+The harness reports the treatment rounds' actual cost. The records report their own, and the two do not agree:
+
+| round | harness (measured) | the record's own `usage` |
+|---|---|---|
+| `review-record-integrity` | 134,282 tokens · 36 tools · **3.4 min** | **0 tokens** · 25 tools · **0 ms** |
+| `closure-gate` | 216,185 tokens · 47 tools · **7.7 min** | 214,000 tokens · 40 tools · **18 min** |
+
+The token figures are close; **the durations are not** — 18 minutes claimed against 7.7 measured, and 0 against 3.4. A pass has no instrument for
+its own wall time or token count, so `usage` is a field whose **producer cannot know the value**, and the brief asks for it anyway (twice today:
+the field was added so that cost could become reportable, after this line's own review of why cost was never a failable criterion).
+
+So the required field is currently a **guess**, and one of the two guesses is a zero. The honest reading is that `usage` is decorative as
+produced — the number that matters is the host's, which the host already has and does not put in the record. That is the same shape as the
+missing-record problem one layer down: **a required output whose producer has no channel to the fact.**
+
+Cost for the record, then, from the only source that measures it: **3.4 and 7.7 minutes for two rounds that produced the only accepted passes
+their changes have had**, against 8–50 minutes for the rounds that produced nothing.
