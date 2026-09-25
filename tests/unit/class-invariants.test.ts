@@ -141,6 +141,7 @@ describe('the classes this change exists to remove, asked of the whole repositor
 describe('E — a round may close when its classes are covered, not when its findings are gone', () => {
     it('refuses to close while a class has no covering check', async () => {
         const { roundMayClose } = await import('../../src/quality/finding-lifecycle.js');
+        const { coveredClasses } = await import('../../src/quality/class-coverage.js');
         const verdict = roundMayClose(
             [{ id: 'f1', severity: 'major', classInstances: ['one-concept-several-derivations'] }],
             [],
@@ -190,7 +191,7 @@ describe('the four classes, and the checks that cover them', () => {
     });
 
     it('lets the open findings close under the table, which is the termination the loop lacked', async () => {
-        const { CLASS_COVERAGE } = await import('../../src/quality/class-coverage.js');
+        const { coveredClasses } = await import('../../src/quality/class-coverage.js');
         const { roundMayClose } = await import('../../src/quality/finding-lifecycle.js');
         // The findings this change is holding open, each naming the class it is an instance of.
         const open = [
@@ -201,7 +202,9 @@ describe('the four classes, and the checks that cover them', () => {
             { id: 'finding-237b2268', severity: 'major', classInstances: ['one-concept-several-derivations', 'declaration-claiming-reality'] },
             { id: 'finding-05cdd65c', severity: 'minor', classInstances: ['one-decision-several-entrances'] },
         ];
-        const verdict = roundMayClose(open, CLASS_COVERAGE.map((entry) => ({ classId: entry.classId, covered: true, coveredBy: entry.coveredBy })));
+        // **The predicate, not a literal** (`wcc6-f3`): this passed `covered: true` for every class it listed, so the case held whatever the
+        // table said. It asks the function that decides it now.
+        const verdict = roundMayClose(open, coveredClasses());
         expect(verdict.mayClose).toBe(true);
         expect(verdict.open).toEqual([]);
     });

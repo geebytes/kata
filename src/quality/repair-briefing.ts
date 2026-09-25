@@ -90,7 +90,11 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         // one place that decides "covered" (`coveredBy.length > 0`). Two of three derivations were removed by `wcc4-f1` and this is
         // the third, in the module that repair produced — a lookup that agrees today and can disagree the moment the predicate grows
         // a condition, which is exactly how the first two came apart.
+        // **`covered`, not the entry's existence** (`wcc6-f1`): `find` returns an entry for every class in the table, so `entry ? true :
+        // false` reported coverage the predicate had not decided — the third derivation renamed rather than removed. The predicate's own
+        // field is what the criterion reads.
         const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
+        const classCovered = entry?.covered === true;
         findings.push({
             id: finding.id,
             severity: finding.severity,
@@ -99,7 +103,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             ...(finding.impact ? { impact: finding.impact } : {}),
             ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
             ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
-            ...(entry ? { classCovered: true, coveredBy: entry.coveredBy } : { classCovered: false }),
+            ...(classCovered ? { classCovered: true, coveredBy: entry?.coveredBy ?? [] } : { classCovered: false }),
         });
     }
     // The review store carries the same fields for the findings the review flow recorded, and a briefing that reported only the
@@ -113,6 +117,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         if (severity !== 'blocking' && severity !== 'major') continue;
         const classIds = classOf[id] ?? [];
         const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
+        const classCovered = entry?.covered === true;
         findings.push({
             id,
             severity,
@@ -121,7 +126,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             ...(typeof finding.impact === 'string' ? { impact: finding.impact } : {}),
             ...(Array.isArray(finding.classInstances) ? { classInstances: finding.classInstances as string[] } : {}),
             ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
-            ...(entry ? { classCovered: true, coveredBy: entry.coveredBy } : { classCovered: false }),
+            ...(classCovered ? { classCovered: true, coveredBy: entry?.coveredBy ?? [] } : { classCovered: false }),
         });
     }
 
