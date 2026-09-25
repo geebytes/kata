@@ -221,3 +221,27 @@ And the deadline should be stated at about **1.45 × the intended point**, becau
 **What the treatment did and did not fix, stated plainly:** it fixed *the record never being produced* — six for six against 28 of 62. It did
 not fix *the record being complete*, and one over-strict instruction of mine turned a budget-rich pass into an abandoned one. Both halves are
 now measured, and only the first is a kata defect.
+
+## Where this leaves the twelve changes
+
+Measured at the end of the arc, with five archived:
+
+| change | phase | last result | what is left |
+|---|---|---|---|
+| `check-log-artifact-missing` | **archive** | judge PASS | — |
+| `worktree-no-commit-message` | **archive** | judge PASS | — |
+| `wiring-coverage-check` | **archive** | judge PASS | — |
+| `closure-gate` | **archive** | judge PASS | — (nine rounds; the deadline produced the record the gate accepted) |
+| `repair-obligation-deadlock` | **archive** | judge PASS | — (four days at `judge`, freed by repairing its own declaration) |
+| `major-finding-closure` | hardVerify | verify PASS, obl 0 | one round with the corrected deadline |
+| `repair-by-another-author` | hardVerify | verify PASS, obl 0 | one round (running) |
+| `adversarial-admissibility` | hardVerify | verify PASS, obl 0 | one round |
+| `review-record-integrity` | review | verify PASS | an **executor receipt**: this host advertises `fresh_context` and `read_only_fs` as agent properties and has no receipt mechanism, and kata refuses rather than trust a self-report |
+| `kata-gate-surface` | judge | **judge FAIL `stale_evidence`** | it reached `satisfied: true` (`no_defect_found`) with review approved and no blocking finding, and then my repair of another change's blocking finding edited `src/quality/adversarial.ts`, an owned path of both — its seal is 11:50, that file moved at 14:12 UTC |
+| `adequacy-task`, `wiki-enrich` | (no state) | — | not initialised |
+
+**The remaining blockers are three, and none of them is a missing record:**
+
+1. **Shared `ownedPaths` give readiness a shelf life measured in minutes.** `kata-gate-surface` was certifiable and was superseded by a sibling's repair. This is constraint #689 in the live workflow, and the only untried lever for it is the one recorded earlier and never executed: **run one change's whole cycle without letting any other change's edit land in between.**
+2. **A strict change needs a host capability receipt this host cannot produce** — `review-record-integrity`, blocked correctly by a fail-closed check rather than by evidence.
+3. **My own deadline instruction was over-strict once**, which cost `major-finding-closure` a round; the corrected form is written above and that change is re-running under it.
