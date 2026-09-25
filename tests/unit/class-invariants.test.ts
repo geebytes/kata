@@ -66,10 +66,18 @@ describe('the classes this change exists to remove, asked of the whole repositor
         const offenders: string[] = [];
         for (const file of claims) {
             const source = read(file);
-            const quotesItAsWithdrawn = /withdrawn|no longer|used to (say|print|claim)|stopped (saying|printing)/i.test(source);
             const namesWorkspace = /still matches the workspace/i.test(source);
             const readsContent = /computeContentDigests|contentDigests|computeManifestHash|pathDigests/.test(source);
-            if (namesWorkspace && !readsContent && !quotesItAsWithdrawn) offenders.push(file);
+            // **An exemption is a named list, not a vocabulary** (`cg10-f1`): my first version guessed whether a mention was a *quote* from
+            // words like "withdrawn" or "used to" — and `repair-entry.ts`, the very instance this check exists for, contains them, so the
+            // exemption swallowed the finding. A text check cannot tell a quoted claim from a live one, so the files allowed to mention the
+            // sentence without reading content are enumerated by path, and a new one is a decision rather than a guess.
+            const EXEMPT = [
+                // Explains what it stopped printing, and prints the two states instead. Its message composes the refusal from
+                // `revisionStatus`, which hashes content — the claim lives in this comment, not in a live string.
+                'src/workflow/repair-entry.ts',
+            ];
+            if (namesWorkspace && !readsContent && !EXEMPT.some((allowed) => file.endsWith(allowed))) offenders.push(file);
         }
         expect(offenders, `a workspace claim with no content read: ${offenders.join(', ')}`).toEqual([]);
     });
