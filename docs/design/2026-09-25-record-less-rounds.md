@@ -48,7 +48,7 @@ the two hypotheses already disproved and with the brief's instruction moved to t
    real transcript.
 2. **The brief instructs an early record, and it is not enough** — a sentence is not a mechanism, and this document says so rather
    than repeating it in the next dispatch.
-3. **A run that produces no record is still visible**: `status` reports `unrecorded: true` by comparing issued briefs against recorded
+3. **A run that produces no record is still visible**: `kata-cli rounds` reports `unrecorded: true` (and the brief renders it) by comparing issued briefs against recorded
    rounds, so a change cannot silently appear to have had fewer rounds than it did.
 
 ## The one that was mine
