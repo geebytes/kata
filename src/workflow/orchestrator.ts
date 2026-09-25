@@ -1378,13 +1378,24 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // `review --approve` refused for ever, however the finding was disposed and whatever the obligations said. Every other
             // consumer asks the tracked view, which merges the history and derives `fixed` from a resolved obligation; this is the
             // fifth call site to be repaired for reading the record instead (after `cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`).
+            // **A finding is cleared by an answered obligation or a recorded decision, and by nothing else.** The first version asked
+            // the tracked view's `disposition`, which had been made to derive `fixed` from a resolved obligation — too wide: a ladder
+            // that counts open majors must still see a finding whose evidence answered the obligation, because the obligation answers
+            // "has this repair been shown to work", not "is this defect gone" (`kgsr13-f1`, measured on the routing fixtures).
             const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+            const { readObligations } = await import('../quality/repair-obligations.js');
             const trackedNow = await readTrackedFindings(root, taskId).catch(() => []);
+            const answeredObligations = new Set((await readObligations(root, taskId).catch(() => []))
+                .filter((obligation) => obligation.resolvedAt)
+                .map((obligation) => obligation.findingId)
+                .filter((id): id is string => Boolean(id)));
             const gateSeverities = (await readTask(root, taskId)).workflowProfile?.reviewMode === 'strict'
                 ? ['blocking', 'major']
                 : ['blocking'];
             const adversarialFindings = trackedNow
-                .filter((finding) => (finding.disposition ?? 'open') === 'open' && gateSeverities.includes(finding.severity))
+                .filter((finding) => (finding.disposition ?? 'open') === 'open'
+                    && !answeredObligations.has(finding.id)
+                    && gateSeverities.includes(finding.severity))
                 .map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, ...(finding.path ? { path: finding.path } : {}) }));
             if (adversarialFindings.length > 0) {
                 // C1: findings that gate a node belong to a repair batch, opened when they are recorded (not when they are

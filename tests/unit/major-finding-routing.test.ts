@@ -58,6 +58,10 @@ describe('a major review finding follows the severity gate, in both the ladder a
         await recordFinding({ root, taskId, severity, message: `a ${severity} finding`, acceptanceId: 'AC-1' });
         // Clear the obligation the recording raised, so the earlier `repair_unresolved_obligations` branch does not
         // pre-empt the finding branch under test — the discharge of the obligation is a separate mechanism.
+        //
+        // **And that separation is load-bearing** (`kgsr13-f1`): answering an obligation says "this repair has been shown to work",
+        // which is not the same as "this defect is gone". So the discharge must NOT remove the finding from the severity count —
+        // which is why the resolver does not write a finding disposition, and why this fixture keeps its finding visible.
         await reddenAllTasks(root, 'revision-1');
         await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], ['e1'], undefined, [passing('e1')]);
         return root;

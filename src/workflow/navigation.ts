@@ -1,3 +1,4 @@
+import { readTrackedFindings } from '../quality/finding-disposition.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Phase } from '../core/state.js';
@@ -135,7 +136,23 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const review = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), binding)
     : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
-  const findings = review?.findings ?? [];
+  // **The sixth consumer of one question, and the one that decides the ladder's next action** (`kgsr13-f1`). It read `review.json`
+  // raw — findings carry no disposition there — so `blockingFindings`/`majorFindings` counted findings that had already been fixed,
+  // accepted below the bar or routed, and a routed finding gated the ladder for ever. Every other consumer was repaired for this
+  // same shape within one day (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, the review admission, `findings accept`); this one was
+  // missed because it reads the file directly rather than through the tracked view.
+  // **Counted by its own disposition, not by whether an obligation answered it** (`kgsr13-f1`, measured on the routing fixtures):
+  // an answered obligation says "this repair has been shown to work", which is not the same as "this defect is gone", and a ladder
+  // that cannot see a severity after its obligation is answered cannot route it. A finding is out of the count when a *decision*
+  // was recorded on it — `fixed`, `accepted`, `deferred` or `routed` — and the tracked view is what carries those.
+  const trackedFindings = await readTrackedFindings(root, taskId).catch(() => []);
+  const findings = trackedFindings
+    .filter((finding) => (finding.disposition ?? 'open') === 'open')
+    // **Still bound to the current evidence revision**, which is what the record read did before: a finding raised against a
+    // revision that is no longer current is stale, exactly as a stale review record is, and `readTrackedFindings` carries no such
+    // filter because its other consumers ask about a task's findings rather than about one revision's.
+    .filter((finding) => !currentRevisionId || !finding.revisionId || finding.revisionId === currentRevisionId)
+    .map((finding) => ({ severity: finding.severity }));
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
