@@ -573,6 +573,20 @@
         }
       },
       "additionalProperties": false
+    },
+    "wroteTests": {
+      "type": "array",
+      "description": "The test files this pass created. A pass may not leave one behind, and declaring none is the ordinary case \u2014 the field exists so the check refuses self-contradiction rather than inferring authorship from the filesystem, which cannot answer it.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "readTests": {
+      "type": "array",
+      "description": "Test files this pass read and argued from, which it did not write. Declared because no filesystem fact distinguishes a test a pass read from one it wrote \u2014 the file exists either way \u2014 so the record states it and the guard checks the record against itself.",
+      "items": {
+        "type": "string"
+      }
     }
   }
 }
