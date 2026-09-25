@@ -117,3 +117,38 @@ only thing in the brief that gives it one. A round that must conclude by call 30
 So the measured answer to the question this experiment was designed around — *is the missing record a mechanism problem, or a lost-record
 problem?* — is neither. It is a **stopping problem**, the fix is one sentence in the dispatch prompt, and the same sentence makes the round an
 order of magnitude cheaper.
+
+
+## Second measurement, and the first change this line has archived after nine rounds
+
+The same treatment was then applied to `closure-gate`, which had run **nine** rounds and never once produced a record the gate would accept
+(its last was refused `the state does not cover: AC-4, AC-5`). The dispatch prompt carried the deadline at **call 30** and the five criteria
+named by id.
+
+**Result:** the pass emitted a record at **call 31**, kept working, and emitted a final one at **call 47** — *"I have covered all five criteria
+and all ten changed paths."* Both halves landed: the deadline made it emit, and naming the criteria made what it emitted cover the remit.
+
+The gate then refused it three times, each refusal smaller than the last, and each one a **record-shape** defect rather than a missing one:
+
+| refusal | what it was | the fix |
+|---|---|---|
+| `the state does not cover: AC-4, AC-5` | the *previous* round, which claimed three criteria | name the criteria (done) |
+| `hypothesis h6 did not converge and carries no observation` | `h6`'s outcome was `inconclusive`, and only `confirmed`/`refuted`/`ruled_out` converge | `h6`'s own finding (`cg11-f6`) **was** its counterexample, so `refuted` is what it recorded — not a rewording but the value its evidence supports |
+| `the observation for h1 … h6 does not resolve at revision-7adf4f820b63ddfd` | every `ref` was prose (`"src/x.ts (fn, fn) and schemas/y.json"`, or with line ranges); `resolves()` requires a `source` ref to be **exactly** one readable path | each observation anchored at the single file it is about, with the original prose kept in `observed` |
+
+With those, `adversarialGateFor` returned **`satisfied: true`, `verdict: defects_found`** — the first accepted pass this change has had. Then
+review approved → **judge PASS on all five criteria** → **`phase: archive`**.
+
+**So `closure-gate` is archived.** Nine rounds produced nothing acceptable; one round with a deadline produced a record that the gate accepted at
+the third refusal, and each refusal was a field rather than a finding.
+
+### The one mechanism defect this exposed, stated because it will recur
+
+The third refusal is a check whose condition the brief never states: the brief says an `observation` *"must name something openable at this
+revision"*, and every one of the six refs named something openable **with line numbers and a parenthetical** — but `resolves()` compares the
+ref string against the revision's readable paths with no tolerance for a `:line` suffix or a parenthetical. A pass citing
+`src/quality/adversarial.ts:907-929` is refused for a citation it cannot know is malformed.
+
+That is the **eighth instance of this line's own class** — a check judging by a condition its reader was never told — and it lives in
+`src/quality/review-state.ts`, owned by `adversarial-admissibility`, so it is recorded rather than repaired here (repairing it would touch a path
+this change does not own and mint the revision that voids the pass).
