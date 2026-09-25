@@ -18,6 +18,13 @@ export async function recordAdversarialPass(
         findings?: Array<{ id: string; taskId: string; severity: 'blocking' | 'major' | 'minor' | 'nit'; message: string; path?: string }>;
         executedInFreshContext?: boolean;
         briefSha256?: string;
+        /**
+         * Test files the pass **read** and argued from. Optional here because most fixtures cite nothing; a fixture that tests the
+         * citation guard sets it, because the guard's question is answered by the declaration rather than by the filesystem.
+         */
+        readTests?: string[];
+        /** Test files the pass created. The ordinary value is none. */
+        wroteTests?: string[];
     } = {},
 ): Promise<void> {
     // Issued, not merely rendered: the gate binds the record to a brief kata handed out, so a fixture that only
@@ -68,6 +75,8 @@ export async function recordAdversarialPass(
         contextNote: 'Fixture ran the brief in a subagent with no prior conversation.',
         briefSha256: options.briefSha256 ?? brief.sha256,
         executedBy: 'fixture-adversary',
+        ...(options.readTests ? { readTests: options.readTests } : {}),
+        ...(options.wroteTests ? { wroteTests: options.wroteTests } : {}),
         hypotheses: options.hypotheses ?? defaultHypotheses,
         attempts: options.attempts ?? [{
             hypothesis: 'The acceptance criterion is only satisfied by the shape of the test, not by the behaviour.',
