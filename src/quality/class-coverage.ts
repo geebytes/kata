@@ -139,6 +139,12 @@ export function coveredClasses(): Array<{ classId: string; covered: boolean; cov
         classId: entry.classId,
         // **Coverage is "a check catches a new instance", not "a class names a check"** (`cg8-f1`). An entry that records an uncovered
         // defining instance does not answer the third route's promise, so it is reported uncovered however many checks it names.
+        // **`covered` is a hand-typed marker, and that is stated rather than dressed up** (`cg10-f1`): a check cannot be asked whether
+        // it would catch an instance it has never seen, so this flag reads a marker a human set, and the marker is honest only because the
+        // check it names was measured. What makes it evidence rather than declaration is that the check can redden: check B reads the
+        // source *including comments* and flagged the one entry whose covering check was vacuous — which is how `declaration-claiming-reality`
+        // was found to be covered by a loop that never ran. So the entry stays `covered`, and the sentence that says a new instance would
+        // fail there is a claim about a measured check, not about the word in this table.
         covered: entry.coveredBy.length > 0 && !entry.uncoveredInstances,
         coveredBy: entry.coveredBy,
     }));

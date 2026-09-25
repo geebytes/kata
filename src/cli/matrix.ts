@@ -293,7 +293,18 @@ export async function runMatrixCommand(
     // removable" — both numbers withdrawn, so no test could satisfy them without asserting a falsehood, and there was no
     // governed way to say so. The statements and their ids are what this command was documented not to touch; that was a
     // design, and this is the decision to lift it for statements only.
-    const statement = valueAfter(argv, '--statement');
+    // **`--statement-file` exists because a statement is prose and prose reaches the shell badly** (`cg10-f4`, measured): the AC-2
+    // correction on `closure-gate` was passed as `--statement "… `runFalsifyCommand` takes `--check` …"`, the backticks were command
+    // substitution, and the statement landed on disk as "—  takes them from ,  and  and writes them into the record unchanged" — three
+    // names replaced by nothing, silently, by the shell rather than by kata. A file has one channel and cannot be reworded in transit.
+    const statementFile = valueAfter(argv, '--statement-file');
+    const statementFromFile = statementFile === undefined
+        ? undefined
+        : await import('node:fs/promises').then((fs) => fs.readFile(statementFile, 'utf8')).then((text) => text.trim()).catch(() => undefined);
+    if (statementFile !== undefined && statementFromFile === undefined) {
+        return { command: 'matrix', taskId: change, action, updated: false, error: `--statement-file ${statementFile} could not be read.` };
+    }
+    const statement = statementFromFile ?? valueAfter(argv, '--statement');
     if (statement !== undefined) {
         if (!statement.trim()) {
             return { command: 'matrix', taskId: change, action, updated: false, error: 'A statement correction requires a non-empty --statement.' };
