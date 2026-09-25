@@ -192,6 +192,25 @@ export async function readTrackedFindings(root: string, taskId: string): Promise
         // Different sources: the adversarial record is what a disposition command writes to, so it is the authoritative one.
         if (!seen.source.startsWith('adversarial-') && finding.source.startsWith('adversarial-')) byId.set(finding.id, finding);
     }
+    // **A disposition is derived from the evidence, not only written by a closure.** `closeBatchAfterSeal` marks an *answered* finding
+    // fixed at the moment the batch closes — but an obligation can be resolved *after* its batch closed (measured: two blocking findings
+    // in `kata-gate-surface`'s batch-1 and batch-2, whose obligations are resolved and whose dispositions never moved off `open`), and a
+    // finding that keeps reading as `open` after its obligation is answered blocks a review admission with no command able to clear it.
+    // So the resolution is consulted here too: a resolved obligation is the fact, and `open` alongside it is a stale slot value.
+    const { readObligations } = await import('./repair-obligations.js');
+    const resolved = new Set(
+        (await readObligations(root, taskId).catch(() => []))
+            .filter((obligation) => obligation.resolvedAt)
+            .map((obligation) => obligation.findingId)
+            .filter((id): id is string => Boolean(id)),
+    );
+    if (resolved.size > 0) {
+        for (const [id, finding] of byId) {
+            if (finding.disposition === 'open' && resolved.has(id)) {
+                byId.set(id, { ...finding, disposition: 'fixed', dispositionReason: finding.dispositionReason ?? 'resolved by the obligation that tracked it' });
+            }
+        }
+    }
     return [...byId.values()];
 }
 
