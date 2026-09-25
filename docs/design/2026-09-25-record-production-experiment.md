@@ -279,3 +279,21 @@ numbers — which is why both survived a reading and only the recorded event fix
 **One thing is disclosed rather than tested:** a mutation restoring the timestamp inference passes the suite, because the writer's inheritance
 contract currently makes the two agree on every shape constructible from it (an append inherits its timestamp by construction). What
 `replacedBy` buys is that the consumer no longer depends on that contract holding. That is a soundness argument, and it is recorded as one.
+
+
+## The serialisation constraint, measured to the minute
+
+`kata-gate-surface` re-sealed as `revision-a118c21c7b83ebbf` at **14:24:15 UTC**, `verify` passed, its round returned an accepted record
+(`satisfied: true`, `defects_found`), and review was **approved**. Then `judge` failed every criterion with `stale_evidence` — because
+`src/quality/adversarial.ts`, which this change declares, **moved at 14:35:14 UTC**: eleven minutes after the seal, when I committed the repair
+of `repair-by-another-author`'s round-18 blocking finding.
+
+So the collision is not abstract and not occasional. **The order of work is a constraint on the correctness of the result:**
+
+> A change can only be certified while no other change's repair edits a path it declares. Since nine changes share six central files, the change
+> whose repairs touch the most shared paths must be **finished first**, and the others re-seal only after it is done — otherwise every later repair
+> invalidates every earlier seal, and the last one to finish is the only one that can be archived.
+
+That is the third time this has been measured on this line in one day (`kata-gate-surface` twice, from two different sibling repairs), and it
+is the reason five changes are archived and four are not: the five that finished did so in an order that happened to work, and nothing in the
+ladder expresses the order.
