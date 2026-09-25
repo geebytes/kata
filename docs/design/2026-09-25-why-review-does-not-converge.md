@@ -186,3 +186,23 @@ Its four findings are all instances of item 1 in the fix plan, found by a pass r
 **So two of the twelve changes are unarchivable on this host by construction**: this one and `review-record-integrity`, both `strict`, both refused by the same fail-closed capability check rather than by any evidence. That is not a defect; it is the contract doing exactly what it says. What it means practically is that a strict change needs a *different host*, and nothing in the change's own state can say which wall it is behind until it stops hitting the first one — `adversarial-admissibility` spent four days at `hardVerify` believing it needed a round.
 
 The three rule findings are carried with their reasons and are answered by a single change: **state the condition in the brief**.
+
+## 8. The 2.1 case, repaired: `major-finding-closure`'s vacuous criterion
+
+The ladder had already named the step — `next: /kata-design`, reason **`migrate_legacy_acceptance_matrix`** — and the change's `task.acceptance` was a single placeholder:
+
+```json
+{ "id": "AC-1", "statement": "Implement the change successfully." }
+"acceptanceMatrix": null
+```
+
+so the gate's own contract printed `AC-1 — (none) — asserts: (no check answers this criterion)` while `judge.json` recorded `AC-1: PASS` with `npm test` as its evidence. **Two derivations of whether the criterion holds, and the certifying one asserted nothing** — which is why the change looked stuck at `judge` for four days when it was never stuck on freshness.
+
+The migration, in the order the tooling requires:
+
+1. **`task.acceptance`** — four criteria, each a sentence from the change's own spec, replacing the placeholder. (There is no governed command for adding a criterion; the design step's guard permits task-owned `.kata` paths, and `matrix declare` validates rows against `acceptance`, so the acceptance list has to exist first. That is the unverifiable `task.json` write the platform otherwise removes, and it is worth a correction path of its own.)
+2. **`matrix declare`** — four rows, each declaring implementation paths, a selector and an evidence row. It refused the first attempt correctly: *"Matrix row references unknown acceptance criterion: AC-2"*.
+3. **`claims` attempted and removed.** A claim is a checkable sentence with its own command, and it makes the contract informative — but the claim runner spawns the command directly, and `npx vitest run …` returned **exit 127** for all four, so every claim failed. Rather than shape a command to please the runner, the claims were dropped and the criteria rest on the matrix selectors every other change uses; the contract renders them with the renderer's own honest text, *"(no assertion text declared for this row — check whether the selector tests the criterion)"*.
+4. **Seal** → `revision-8068d6e6b564642c`, obligations `2 → 0`, and `verify` PASS with `failedAcceptance 0`.
+
+**The one thing that is not yet answered:** whether the four criteria are *true*, which is the round now running. A criterion written by the author of the code is exactly the claim a review exists to falsify, and I have just written four.
