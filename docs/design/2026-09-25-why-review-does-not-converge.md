@@ -274,3 +274,29 @@ so a record is refused as `stale_revision` only when **all four** fail — which
 **So the plan item is withdrawn rather than landed**, and the reason matters: it was written when I believed a disposition's expiry proved the revision id was unstable for identical content. That diagnosis was **retracted the same day** — the two ids differed because the content really differed — so item 6 was answering a problem that the four rules above had already solved. What remains is the case I named in the same paragraph at the time: a **declared path the pass never examined** expiring the pass. That is not spurious staleness — the revision is what the pass certified — and the lever for it is ordering, which is item 3 and is landed.
 
 **This is the third time on this line that a plan item's premise did not survive measurement** (the `createdAt` instability, the record count `rounds == records`, and now this). The pattern is worth naming: a plan written from a diagnosis is only as good as the diagnosis, and re-reading the mechanism before implementing is cheaper than implementing a mechanism that exists.
+
+## 13. Fix item 7 is refused by a deliberate rule — and the lever is item 2, not a better salvage
+
+**The proposal was: `salvage` assembles a best-effort record from partial material, reported `inconclusive`, so a round's work is at least visible.** Two measurements refuse it.
+
+**First, the material is not there.** The 28 rounds that produced no record wrote 141–2,648 characters of text, and the decisive case — round 10 of `closure-gate`, dispatched with the gate's exact refusal and the two missing criteria named — wrote **599 characters across 9 assistant messages, every one of them a "let me …", with no hypothesis objects and no findings at all**. A best-effort record assembled from 599 characters of intent is a record that says nothing, and it would be *worse* than none: the gate would have something to refuse while the round's real contribution stayed unknown. `salvage` already recovers every round that had something to recover — four complete records so far — and `extract-record.py` repairs the three malformations (truncated foot, missing `createdAt`, a stray comma) measured so far.
+
+**Second, the gate would refuse the record it produced, by design.** A record carrying a hypothesis with `outcome: 'inconclusive'` is refused **whole** — and so is one carrying `abandoned` — because *"a limit must not be laundered into a pass"*, asserted by two tests named `derives budget_exhausted when a hypothesis was abandoned to a limit`. So a best-effort record would either be refused (useless) or would have to drop the un-converged hypotheses (a record that reports finishing what it did not finish, which is the state the budget exists to make impossible).
+
+**So item 7 is withdrawn, and the lever for the same problem is item 2, which is landed**: the failure was never that salvage is weak, it was that a pass could read 69 times and write nothing. Requiring text rather than watching a tool-call count addresses the cause; better salvage would have addressed a symptom that the measurement does not show.
+
+---
+
+## The fix plan, closed
+
+| # | item | outcome |
+|---|---|---|
+| **1** | every condition a gate judges by is stated in the brief | **landed**, then **audited by a round** and repaired (its own list covered 6 of 15 union members) |
+| **2** | require writing, not a tool-call count | **landed**, shape corrected by tabulating fourteen rounds |
+| **3** | `kata-cli lane` — the order of work, made checkable | **landed**; all four archived changes report `superseded` today, so the drift is the normal state rather than an edge case |
+| **4** | `roundMayClose` as the round's conclusion criterion | **half landed**: the ladder now names the bound (`cover_uncovered_classes`) and does not overrule a real gate. The half that would excuse an unfixed blocking finding is **written down with both arguments and left to the user**, because it would weaken a gate this work has refused to trade |
+| **5** | `falsify` refuses a subject that does not exist; `usage` is the host's | **landed** |
+| **6** | bind certification to the content a pass reviewed | **withdrawn — already implemented** in four rules, from a diagnosis I retracted the same day |
+| **7** | `salvage` assembles a best-effort record | **withdrawn — refused by a deliberate rule**, and the material measured too thin to assemble from |
+
+**Three of the seven plan items did not survive contact with the mechanism** (4's second half weakens a gate, 6 already existed, 7 is refused by design), and that ratio is the honest result of writing a plan from a day's diagnosis: the diagnoses were worth making, and each one had to be re-measured before it was acted on. The four that landed are mechanical, small, and each was verified by a mutation that reddens.
