@@ -1782,6 +1782,10 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         await import('../quality/falsifier-reddenings.js');
     const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
     const absences = await readFalsifierAbsences(root, taskId).catch(() => []);
+    // The content about to be judged, computed once — a filter callback cannot await, which the first version of this tried to.
+    const archivePathDigests = await (await import('../workflow/revision.js'))
+        .computePathDigests(root, (await (await import('../core/task.js')).readTask(root, taskId).catch(() => null))?.ownedPaths ?? [])
+        .catch(() => null);
     const answeredIds = new Set((await (await import('../quality/repair-obligations.js')).readObligations(root, taskId).catch(() => []))
         .filter((obligation) => obligation.resolvedAt)
         .map((obligation) => obligation.findingId)
@@ -1789,7 +1793,10 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     const openBlocking = stillUnfixed.filter((finding) => finding.disposition === 'open'
         && (finding.severity === 'blocking' || finding.severity === 'major')
         && !answeredIds.has(finding.id)
-        && !hasFalsifierDisposition(reddenings, absences, finding.id));
+        // **With the binding**, because an absence without one never counts (`revisionCounts` returns false for a missing binding — which
+        // is the fail-closed behaviour that keeps a disposition from counting against content it was not recorded about). The content is
+        // the working tree, which is what the next seal would mint, exactly as the seal preflight computes it.
+        && !hasFalsifierDisposition(reddenings, absences, finding.id, { revisionId: null, pathDigests: archivePathDigests }));
     if (openBlocking.length > 0) {
         return {
             command: 'archive',
