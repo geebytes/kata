@@ -52,23 +52,24 @@ describe('the classes this change exists to remove, asked of the whole repositor
      * unless the code that produces it hashed content.
      */
     it('B — no refusal claims the workspace unless the code read content', () => {
-        // **Comments and literals are stripped first.** My first version matched the phrase wherever it appeared, and
-        // `repair-entry.ts` legitimately *quotes* the withdrawn sentence in a comment explaining what it stopped saying — so the
-        // check reported a file that had already been repaired. A text assertion that cannot tell a mention from a use is the
-        // same failure as a check that cannot fail.
-        // **Comments only.** A message is a string literal, so literals must survive — I first stripped both, copying the
-        // narrowing used for `classInstances`, and that narrowing is wrong here because it removes the only place a claim can
-        // live. A record of a repaired defect is a comment; a live claim is a literal.
-        const strip = (source: string): string => source
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            .replace(/^\s*\/\/.*$/gm, '');
-        const claims = sources.filter((file) => /matches the workspace|the workspace\b[^.]{0,40}(unchanged|matches)/i.test(strip(read(file))));
+        // **Comments are kept, and the reason is this check's own history** (`cg10-f1`): an earlier version stripped comments so a
+        // file that legitimately *quotes* the withdrawn sentence would not be flagged — and the sentence this class is about **is a
+        // comment**, because that is where a sentence about what a check did lives. So stripping comments removed the claim and left
+        // the check passing vacuously: `claims` was empty, the loop never ran, and the check that exists to catch *a declaration read
+        // as reality* was itself a declaration read as reality — the third instance of its own class, and the second inside its own
+        // repair.
+        //
+        // A quote and a claim are told apart by the second conjunct instead: a file that **states** the workspace matches while reading no
+        // content is the instance, and a file that names the sentence as *withdrawn* is not claiming it — a decidable difference in the
+        // text, unlike "is this comment quoted or live".
+        const claims = sources.filter((file) => /matches the workspace|the workspace\b[^.]{0,40}(unchanged|matches)/i.test(read(file)));
         const offenders: string[] = [];
         for (const file of claims) {
-            const source = strip(read(file));
+            const source = read(file);
+            const quotesItAsWithdrawn = /withdrawn|no longer|used to (say|print|claim)|stopped (saying|printing)/i.test(source);
             const namesWorkspace = /still matches the workspace/i.test(source);
             const readsContent = /computeContentDigests|contentDigests|computeManifestHash|pathDigests/.test(source);
-            if (namesWorkspace && !readsContent) offenders.push(file);
+            if (namesWorkspace && !readsContent && !quotesItAsWithdrawn) offenders.push(file);
         }
         expect(offenders, `a workspace claim with no content read: ${offenders.join(', ')}`).toEqual([]);
     });
