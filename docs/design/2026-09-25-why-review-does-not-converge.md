@@ -206,3 +206,20 @@ The migration, in the order the tooling requires:
 4. **Seal** → `revision-8068d6e6b564642c`, obligations `2 → 0`, and `verify` PASS with `failedAcceptance 0`.
 
 **The one thing that is not yet answered:** whether the four criteria are *true*, which is the round now running. A criterion written by the author of the code is exactly the claim a review exists to falsify, and I have just written four.
+
+## 9. `major-finding-closure` archived — and the round audited the criteria I had migrated an hour earlier
+
+Eight archived. The migration of §8 completed: seal `revision-8068d6e6b564642c` → verify PASS → one round → record accepted → review approved → **judge PASS on all four criteria** → archive.
+
+**And the round did exactly what it was dispatched for: it checked whether my four criteria are tested by their selectors, and found three of them wider than their checks** — including, in its own words, a defect in *the invariant I landed the same hour*:
+
+| finding | what it measured |
+|---|---|
+| **major** | the invariant's `PASS_FACING` list is **hand-written and enumerates 6 of the union's 15 members**, while its docstring claims the carve-out is "a decision rather than an omission" — and two of the unlisted members (`receipt_unbound`, `capability_missing`) judge the record. A hand-written enumeration guarding against unstated conditions is the same defect one level up. |
+| **major** | AC-1's "come from one rule rather than two" is **false as written**: six gate sites derive a mode-dependent severity pair inline while the obligation producer asks `isTerminalSeverity`, so the two sets differ on a `std` task. |
+| **major** | AC-2's selector cannot establish either half — the approval assertion is green under the defect it names (the gate refuses first, for a different reason), and the ladder assertion is outranked by the unresolved-obligations branch. |
+| minor ×3 | AC-3's selector exercises only one branch; AC-4's behaviour has two sources; `reportRounds` reports a number for a round count the design document says is not derivable. |
+
+**One lever made the honest repair cheap, and it is worth naming: `matrix set --statement` corrects a criterion without moving the revision.** `revisionStatus` stayed `current` across all four corrections, so narrowing a criterion to what its check establishes costs nothing and does not void the round that found the overreach. Two criteria were narrowed that way; the four remaining findings are carried with measured reasons, `mfc-r7-f2` first.
+
+**What this hour shows about the loop, stated plainly:** I migrated four criteria, and within the hour a round found three of them defective and one more defective still in the fix I wrote to prevent that class. That is not a workflow failure — it is the mechanism working exactly as designed, on the author who wrote it. What made it survivable is that the correction was a *declaration* correction rather than a source change, so the round it responded to was not destroyed by the response.
