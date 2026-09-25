@@ -45,9 +45,11 @@ contradicts itself when it cites a test it does not list — which is a real inc
 
 ## What to do meanwhile
 
-**Stop flipping the predicate.** Four attempts is enough to establish that no fifth proxy will work, and each attempt has cost a round:
-rounds 8, 9 and 12 of one change and round 5 of another were each refused by a form of this guard. The current form is the fourth
-(mtime), it fails closed when it cannot tell, and it refuses honest records — which is worse for the loop than admitting a written
-test, because a refused record costs a whole round and an admitted one costs nothing that a reviewer would not have caught anyway.
+**The fifth form is live** (and this paragraph said otherwise until round 11 of `kata-gate-surface` read it, which is itself the defect
+this line keeps producing: a document claiming a state the code had left). The record declares the tests it read and wrote, the guard
+refuses only a citation no declaration names, and the brief states the requirement — because the first version of the change shipped the
+guard without the requirement, and a round was refused for a condition it was never told.
 
-The honest state is recorded here and in the class table rather than patched further, and the fifth form belongs to its own change.
+**What is still true** is the warning the four dead forms earn: no proxy over world state can answer this question, and a fifth proxy
+would fail the way the first four did. What replaced them is not a fifth proxy — it is a different kind of check, which is why the
+account above is kept rather than deleted.

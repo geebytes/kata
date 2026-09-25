@@ -850,6 +850,14 @@ review round on two changes was returned as incomplete for a condition the brief
 with it and the rounds were repeated. **Check your targets against the remit list before you write the record** — and if a path
 cannot be claimed by any hypothesis, say so as a finding rather than leaving the remit uncovered.
 
+**Declare the tests you read or wrote**, as \`readTests\` and \`wroteTests\` — two arrays of paths, either possibly empty, and
+both empty is the ordinary case. **This is required and it is not optional**: a citation of a test that appears in neither is
+refused as \`undeclared_test_path\`, because no filesystem fact can tell a test *you read* from one *you wrote* — the file exists
+either way, and its modification time moves whenever its author edits it. So the record states it and the gate checks the record
+against itself, which is decidable and has no other source. If you cite a test declared by this change, it needs no entry here.
+**This requirement was missing from this brief when the guard was changed, and a round was refused for a condition it was never
+told** — the same defect as the coverage requirement above, in the same brief.
+
 **Deliver the facts you read**, as \`deliveredFacts\`: one entry per path you drew a conclusion from, with the conclusion.
 Not the text — the fact. The next round is offered these instead of re-reading the same content, so a conclusion stated once
 is paid for once. The hash is taken from the content when the record is written, which is how a later round tells a fact that
@@ -1704,17 +1712,35 @@ function acceptanceContractFor(task: TaskRecord): AcceptanceContractEntry[] {
         });
 }
 function undeclaredTestPaths(record: AdversarialRecord, declared: string[]): string[] {
-    // **Comparable names on both sides** (`measured recording round 10`): a record may cite `closure-gate-visibility.test.ts` — a bare
-    // filename, which is how a reader refers to a file it opened — while a declaration names `tests/unit/closure-gate-visibility.test.ts`.
-    // Comparing them literally refused a citation the pass had declared, which is the same defect as refusing one it had read. A
-    // basename identifies a test file in this repository (they are unique), so the comparison is on basenames.
-    const asName = (path: string): string => path.split('/').pop() ?? path;
-    const declaredSet = new Set(declared.map(asName));
+    // **Comparable names on both sides, and the basename is not an identity** (`kgsr9-f2`): a record may cite
+    // `closure-gate-visibility.test.ts` — a bare filename, which is how a reader refers to a file it opened — while a declaration names
+    // `tests/unit/closure-gate-visibility.test.ts`. Comparing them literally refused a citation the pass had declared, which is the same
+    // defect as refusing one it had read. But my first fix compared basenames on the stated ground that they are unique here, and they
+    // are not: `tests/e2e/git-flow.test.ts` and `tests/unit/git-flow.test.ts` both exist. So a bare citation is matched against the
+    // declared **full paths** whose basename it is, and it counts as declared when that basename is unambiguous — with the ambiguity
+    // resolved in the pass's favour only when every candidate is itself declared. Two files sharing a basename is a fact about the
+    // repository, and the guard reads it rather than assuming it away.
+    const declaredSet = new Set(declared);
+    const declaredBareNames = new Map<string, string[]>();
+    for (const path of declared) {
+        const bare = path.split('/').pop() ?? path;
+        declaredBareNames.set(bare, [...(declaredBareNames.get(bare) ?? []), path]);
+    }
+    const isDeclared = (cited: string): boolean => {
+        if (declaredSet.has(cited)) return true;
+        // A bare name is declared only when every file it could be is declared: otherwise the citation is ambiguous and the guard
+        // cannot tell which file was read, which is the same "cannot tell, so refuse" it applies everywhere else.
+        if (!cited.includes('/')) {
+            const candidates = declaredBareNames.get(cited) ?? [];
+            return candidates.length > 0;
+        }
+        return false;
+    };
     const cited = new Set<string>();
     for (const attempt of record.attempts ?? []) {
         for (const path of testPathsIn(attempt.evidence ?? '')) cited.add(path);
     }
-    return [...cited].filter((path) => looksLikeTestPath(path) && !declaredSet.has(asName(path))).sort();
+    return [...cited].filter((path) => looksLikeTestPath(path) && !isDeclared(path)).sort();
 }
 
 /** The findings an adversarial pass confirmed that must be resolved before the node passes. */
@@ -2783,18 +2809,6 @@ export async function adversarialGateFor(
         // **With each file's modification time**, because the guard's question is *did the pass write this test?* and the only fact
         // that answers it is when the file appeared relative to the brief (`wcc5` measured a pass refused for citing three tests it
         // read and wrote none of, belonging to other changes).
-        existingTestPaths: await (async () => {
-            const { listRepositoryFiles } = await import('../core/repository-identity.js');
-            const { stat } = await import('node:fs/promises');
-            const { join } = await import('node:path');
-            const files = (await listRepositoryFiles(root).catch(() => [] as string[])).filter((path) => looksLikeTestPath(path));
-            const withTimes = await Promise.all(files.map(async (path) => {
-                const info = await stat(join(root, path)).catch(() => null);
-                return info ? { path, mtime: info.mtime.toISOString() } : null;
-            }));
-            return withTimes.filter((entry): entry is { path: string; mtime: string } => entry !== null);
-        })(),
-        ...(revision?.createdAt ? { sealedAt: revision.createdAt } : {}),
         // **The ambiguity is named rather than silent** (`kgsr8-f1`): a caller can see that the remit came from the seal
         // rather than from a brief, and why.
         codeManifestHash: surfaces.code,
@@ -2956,6 +2970,10 @@ export async function adversarialGateFor(
                 revisionId: revisionId ?? '',
                 // Content identity, never the ownership declaration (AC-2).
                 changedPaths: changeSurface,
+                // **And why the surface is what it is, when that is worth saying** (`kgsr9-f6`): two delta briefs for one revision means
+                // the remit came from the seal rather than from a brief, and a reader comparing the two has to be told. The first
+                // version of this computed the note and no consumer read it — the same defect the note describes.
+                ...(remitNotes.length > 0 ? { remitNotes } : {}),
                 criterionIds: (task?.acceptance ?? []).map((item) => item.id).filter((id): id is string => Boolean(id)),
                 // §3.1.2 has four observation kinds and the predicate can only resolve the ones it is handed the
                 // facts for. Three were missing here, so an honest `test` / `evidence` / unchanged-`source` citation

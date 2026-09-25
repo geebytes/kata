@@ -43,11 +43,13 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         means: 'a check reads a declaration (an owned-path set, a manifest, a task field) while its message claims to have read reality',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
 
-        // **And the citation guard is its live instance, recorded rather than patched** (`docs/design/2026-09-25-the-citation-guard-cannot-be-answered.md`):
-        // it infers whether a pass wrote a test from the state of the world — file existence, content, mtime, revision digest — and every
+        // **And the citation guard was its live instance, and was the one that got away from it** (`docs/design/2026-09-25-the-citation-guard-cannot-be-answered.md`):
+        // it inferred whether a pass wrote a test from the state of the world — file existence, content, mtime, revision digest — and every
         // one of those moves for reasons unrelated to the pass, so four successive predicates each refused honest records in a different
-        // direction. The form that could answer it is a self-consistency check on the record (`wroteTests` declared and citations checked
-        // against it), which belongs to its own change.
+        // direction. **The replacement is a check of a different kind**: the record declares the tests it read and wrote and the guard
+        // refuses only a citation no declaration names, which is decidable and consults no world state. It is the one instance of this
+        // class on this line that was removed rather than repaired, and it took four failed repairs to see that the class was not the
+        // guard's shape but *what it was reading*.
     },
     {
         classId: 'a-check-that-cannot-fail',
