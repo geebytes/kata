@@ -84,7 +84,8 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
     for (const finding of tracked) {
         if (isDisposed(finding.id, finding.disposition)) continue;
         if (finding.severity !== 'blocking' && finding.severity !== 'major') continue;
-        // Every class the finding names, and this is covered when **any** of them is — the same union the criterion and
+        // **Every class the finding names, and it is covered only when all of them are** (`rba-r15-f3`): the comment said
+        // "any" while the code calls `classCoverageOf`, whose contract is the conjunction — the union the criterion asks.
         // `roundMayClose` ask (`kgsr7-f4`).
         const classIds = classOf[finding.id] ?? [];
         // **The predicate, not a third lookup** (`wcc5-f2`): this searched `CLASS_COVERAGE` directly while `coveredClasses()` is the

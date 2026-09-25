@@ -61,22 +61,32 @@ async function readJson<T>(path: string): Promise<T | null> {
  * before by restating this (`kgsr8-f2`). A key over one record cannot express containment, so the test is a function of the pair.
  */
 export function replacedCopyFilter(live: Record<string, unknown> | null): (record: Record<string, unknown>) => boolean {
-    // **The chain, not the fields** (`rba-r14-f1`, `rba-r14-f3`). Two earlier versions of this test asked the records' own fields and each
-    // was wrong in one direction, because a replacement can inherit the revision (a re-stamp) *or* keep it while findings accumulate —
-    // this line has measured both shapes and they are indistinguishable by any field pair. What decides it is which record replaced
-    // which, and `writeAdversarialRecord` records that as `replacedCreatedAt` on the record it writes.
+    // **The chain, walked by the pair `writeAdversarialRecord` records** (`rba-r14-f1`, `rba-r15-f1`, `rba-r15-f2`). Two earlier
+    // versions asked the records' own fields and each was wrong in one direction, because a replacement can inherit the revision (a
+    // re-stamp) *or* keep it while findings accumulate. What decides it is which record replaced which, and it is recorded as a *pair* —
+    // the replaced record's `createdAt` and its finding count — because a replacement that inherits the timestamp has the same
+    // `createdAt`, which is exactly one of the two shapes this exists to name.
     //
-    // So a history record is the replaced copy of the live one when the live record's chain reaches it: walk `replacedCreatedAt` back,
-    // and every createdAt on that walk names the same round.
+    // The walk follows the chain as far as the records carry it: the live record names what it replaced, and a history entry that is
+    // itself a replacement names what *it* replaced. The previous version ended its own loop at the first step while its comment
+    // described a walk, which is the second minor this repairs.
     if (!live) return () => true;
-    const replaced = new Set<string>();
-    for (let cursor: Record<string, unknown> | null = live, steps = 0; cursor && steps < 64; steps += 1) {
-        const at = cursor.replacedCreatedAt;
-        if (typeof at !== 'string') break;
-        replaced.add(at);
-        cursor = null;
+    const keyOf = (record: { createdAt?: unknown; findings?: unknown }): string =>
+        `${String(record.createdAt ?? '')}#${Array.isArray(record.findings) ? record.findings.length : 0}`;
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const record of Array.isArray(live.history) ? (live.history as Array<Record<string, unknown>>) : []) {
+        byKey.set(keyOf(record as { createdAt?: unknown; findings?: unknown }), record);
     }
-    return (record) => !replaced.has(String(record.createdAt ?? ''));
+    const dropped = new Set<string>();
+    let cursor: Record<string, unknown> | null = live;
+    for (let steps = 0; cursor && steps < 64; steps += 1) {
+        const at: unknown = cursor.replacedCreatedAt;
+        if (typeof at !== 'string') break;
+        const key: string = `${at}#${Number(cursor.replacedFindings ?? 0)}`;
+        dropped.add(key);
+        cursor = byKey.get(key) ?? null;
+    }
+    return (record) => !dropped.has(keyOf(record as { createdAt?: unknown; findings?: unknown }));
 }
 
 

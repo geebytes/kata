@@ -126,6 +126,13 @@ export interface AdversarialRecord {
      */
     replacedCreatedAt?: string;
     /**
+     * How many findings the replaced record held — the other half of its identity.
+     *
+     * `createdAt` alone does not separate the two records when a replacement keeps the timestamp it inherited, and that is one of the two
+     * shapes this pair exists to name (`rba-r15-f1`).
+     */
+    replacedFindings?: number;
+    /**
      * Test files this pass **read** and argued from, which it did not write. Declared for the same reason: a test a pass read is on
      * disk exactly as one it wrote is, so the record is the only place the distinction exists.
      */
@@ -1092,8 +1099,15 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
     // or two is not derivable from their fields — a replacement inherits the revision *or* keeps it while findings accumulate, and this
     // line has measured both. The fact that decides it is which record replaced which, and the only moment it exists is here.
     try {
-        const replaced = JSON.parse(await readFile(path, 'utf8')) as { createdAt?: string };
-        if (replaced.createdAt && replaced.createdAt !== record.createdAt) record.replacedCreatedAt = replaced.createdAt;
+        const replaced = JSON.parse(await readFile(path, 'utf8')) as { createdAt?: string; findings?: unknown[] };
+        // **Recorded even when the timestamps are equal** (`rba-r15-f1`): the shape this field exists for — a replacement that keeps the
+        // revision and appends a finding — carries the replaced record's own `createdAt`, so the equality check that was meant to skip a
+        // self-replacement also skipped exactly one of the two shapes the field names. The separator is the replaced record's identity,
+        // not its timestamp alone.
+        if (replaced.createdAt) {
+            record.replacedCreatedAt = replaced.createdAt;
+            record.replacedFindings = Array.isArray(replaced.findings) ? replaced.findings.length : 0;
+        }
     } catch {
         // The first pass for this node replaced nothing.
     }

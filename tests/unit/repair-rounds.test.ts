@@ -239,6 +239,7 @@ describe('the latest round is the live record, and the share pairs it with its p
                 revisionId: 'revision-a',
                 createdAt: '2026-09-23T13:45:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
+                replacedFindings: 1,
                 findings: [{ id: 'f1' }, { id: 'f2' }],
             },
         ));
@@ -264,6 +265,7 @@ describe('the latest round is the live record, and the share pairs it with its p
                 revisionId: 'revision-newer',
                 createdAt: '2026-09-24T06:10:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
+                replacedFindings: 1,
                 findings: [{ id: 'f1' }],
             },
         ));
