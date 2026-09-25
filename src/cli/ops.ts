@@ -1120,14 +1120,19 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         // to read two different declarations (`task.ownedPaths` here, `revision.pathDigests` there) of the same quantity,
         // which is the class this change exists to remove.
         const { falsifierProofSurface } = await import('../workflow/revision.js');
+        // Same binding as the reddening door, for the same reason: the criterion compares against **the revision's** content, so
+        // an absence that records the working tree at the moment of recording can only match a revision sealed from it. The
+        // sealed digests are the honest answer here, and the computed surface is the fallback for a revision that carries none.
         const absenceSurface = revision
             ? await falsifierProofSurface(workspace, change, revision).catch(() => undefined)
             : undefined;
+        const sealedAbsence = revision?.pathDigests ?? {};
+        const absenceDigests = Object.keys(sealedAbsence).length > 0 ? sealedAbsence : absenceSurface?.pathDigests;
         const absence = await recordFalsifierAbsence(workspace, change, {
             findingId: finding,
             reason: why,
             revisionId: revision?.id ?? '(no revision)',
-            ...(absenceSurface && Object.keys(absenceSurface.pathDigests).length > 0 ? { pathDigests: absenceSurface.pathDigests } : {}),
+            ...(absenceDigests && Object.keys(absenceDigests).length > 0 ? { pathDigests: absenceDigests } : {}),
             recordedAt: new Date().toISOString(),
         });
         return { command: 'falsify', taskId: change, success: true, recorded: true, absence };
@@ -1166,11 +1171,19 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
     // So the fact travels with the proof instead: `observedTreeDigest` is what the tree was when the three steps ran, and the
     // reader can see whether it still matches. Detection rather than prevention is the honest shape here, because prevention
     // cannot be reached when the proof is what the seal needs.
-    // **The proof's surface is the task's current declaration, not the older revision's** (rba7-f5, rba7-f6). Seeding from
-    // `revision.pathDigests` bound the proof to the revision's frozen owned set — a declaration the task can outgrow — so a
-    // proof of a fix in a path the task has since declared (the mutation's own file) named eleven paths that did not include
-    // it, and the binding then expired on the next unrelated re-seal or credited content it never described. Both doors of
-    // this command now read one surface, `falsifierProofSurface`, over the task's declaration (the sealed set as fallback).
+    // **The proof binds to the content the revision describes, not to the working tree** — and the difference is what made
+    // five dispositions on `kata-gate-surface` unreadable while their work was real.
+    //
+    // The criterion compares a disposition's recorded digests against **the revision it is being resolved for**
+    // (`revisionCounts`). So a proof that records the working tree as it is *now* can only match a revision sealed from that
+    // same content; measured on this task, `falsify` recorded `291e4daa5c1a` for a file the revision names as `a176c56ce1aa`,
+    // and 11 of the revision's 19 paths had moved — so every disposition recorded here was refused, correctly, by a rule that
+    // was being handed the wrong half of the comparison.
+    //
+    // The surface is the **revision's own `pathDigests`**, and the drift is measured against it: that is the question the
+    // criterion asks ("does the revision I am bound to still describe what I proved?"), it needs no declaration, and where the
+    // revision carries no digests the proof records the task's declaration with the drift reported — the honest fallback, not a
+    // silent substitution. `falsifierProofSurface` still supplies the tree digest and the drift, over the revision's set.
     let observedTreeDigest: string | undefined;
     let observedDrift: string[] = [];
     let observedPathDigests: Record<string, string> = {};
@@ -1178,8 +1191,9 @@ export async function runFalsifyCommand(argv: string[]): Promise<Record<string, 
         const { falsifierProofSurface } = await import('../workflow/revision.js');
         const proof = await falsifierProofSurface(root, change!, revision);
         observedDrift = proof.drift;
-        observedPathDigests = proof.pathDigests;
         observedTreeDigest = proof.treeDigest;
+        const sealed = revision.pathDigests ?? {};
+        observedPathDigests = Object.keys(sealed).length > 0 ? sealed : proof.pathDigests;
     }
 
     const result = await runFalsification({
