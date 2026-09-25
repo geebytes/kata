@@ -237,3 +237,16 @@ Eight archived. The migration of §8 completed: seal `revision-8068d6e6b564642c`
 | **7** | `salvage` assembling a best-effort record | **partially landed** | `salvage` already recovered four complete records from transcripts, and three malformed ones were repaired by hand (`extract-record.py`), which shows the channel leaks in three ways: never emitted, truncated, or valid JSON with a schema-required field missing. |
 
 **One lever is not on the list and should be, because it made the honest repair free**: **`matrix set --statement` corrects an acceptance criterion without moving the revision.** `revisionStatus` stayed `current` across four corrections in one case, so narrowing a criterion to what its check establishes does not destroy the round that found the overreach. Without it, repairing three over-wide criteria would have minted a revision and voided the round that found them — the loop multiplying itself, for a declaration fix.
+
+## 11. Fix item 4, split: the bound is now *used*, and the half that would weaken the gate is not
+
+**Landed — the ladder names the closure bound.** `roundClosure` ("every class an open terminal finding names is covered by a check that reddens when the class returns") was computed and reported on `status`, and **nothing acted on it**: the operator read it while the ladder went on sending the change back to repair an instance of an already-covered class, one round at a time. `suggestCandidateAction` now returns `cover_uncovered_classes` — *cover the class rather than repair one more instance* — and it deliberately does **not** overrule a real gate: an open blocking finding, an unresolved obligation or a failed verify still routes to repair first. Four cases pin that ordering, and deleting the branch reddens one with `expected 'judge_reviewed_change' to be 'cover_uncovered_classes'`.
+
+Measured on the live repository: three changes carry a closure verdict today (`adversarial-admissibility`, `review-record-integrity`, `kata-gate-surface` — the last now archived, whose verdict named *findings that name no class*), so the verdict is not theoretical.
+
+**Not landed, because it needs a decision I should not make alone.** The other half of item 4 is the change that would make the bound *bind the gate*: a blocking finding whose class is covered by a check would no longer hold review approval, on the argument that the class cannot recur silently and the instance is recorded and carried to a ticket. Both halves have real weight:
+
+* **For**: the loop's measured shape is that findings per round rise rather than fall, because every repair is new code; "dispose of everything" is an open set, and a bound that is only *reported* changes nothing about when the loop ends.
+* **Against**: a blocking defect would remain in the code, certified, and the mechanism would be a guard whose default lets an unfixed defect through — the shape this line has now found eleven times. The gate's strength is one of two invariants this work has refused to trade (with revision identity), and weakening it is not a repair I should land on my own authority.
+
+So the honest state is: **the bound is visible, nameable and actionable; whether it also excuses an unfixed blocking finding is the user's call**, and the arguments are written down rather than decided.
