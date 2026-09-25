@@ -297,3 +297,26 @@ So the collision is not abstract and not occasional. **The order of work is a co
 That is the third time this has been measured on this line in one day (`kata-gate-surface` twice, from two different sibling repairs), and it
 is the reason five changes are archived and four are not: the five that finished did so in an order that happened to work, and nothing in the
 ladder expresses the order.
+
+## The serialised lane worked on its first real run, and it corrected my own claim on the way
+
+`repair-by-another-author` is **archived** — six now — and it went end to end in one uninterrupted pass:
+
+```
+repair the blocking finding → record every disposition against the working tree → verify (FAIL) →
+build --seal as revision-594dfa53ff978bc0 (the preflight resolves the obligations against exactly that
+content: obl 10 → 0) → verify PASS → one round with the deadline → record → review approved →
+judge PASS on AC-1, AC-2 and AC-3 → archive
+```
+
+**Nothing was edited between the seal and the archive**, which is the whole protocol, and it is the first time on this line that a change reached `archive` without its readiness being destroyed mid-flight.
+
+**And its closing round corrected something I had written an hour earlier as a success.** I recorded that the chain fix made `rounds == records` for the first time (closure-gate 10/10, this change 8/8, `kata-gate-surface` 9/9) and presented the agreement as evidence the rule works. The round measured the field instead:
+
+```
+of the 40 records on disk — 38 carry no replacedBy, 2 carry 'round', and not one carries 'append'
+```
+
+**So the append-drop rule has never fired on any record this repository has produced.** The agreement I read as correctness is the rule being **inert** on legacy data, and for a record written before the field existed the round count **is not derivable** at all — the two shapes are indistinguishable.
+
+That is the honest form of the defect, and it is the *third* time this line has reached the same shape: **a quantity nobody can measure must be reported as unmeasurable, not as a number.** `share` got there (`Math.max(1, …)` manufactured a denominator), `roundCost` got there (a self-reported zero), and the round count needs it next — because the eighth repair of `replacedCopyFilter` would be an eighth version of one function, and the class-level answer is a *reporting* change, not another predicate.
