@@ -126,6 +126,15 @@ export interface AdversarialRecord {
      */
     replacedCreatedAt?: string;
     /**
+     * **Which event produced this write** (`rba-r18-f2`, found by an independent pass and it is the root cause the consumer kept papering
+     * over): `'append'` when a finding was added to the record already in the slot, `'round'` when a fresh pass replaced it.
+     *
+     * Without it the consumer *inferred* the shape from `createdAt === replacedCreatedAt`, and that inference is not sound: an append
+     * rewrites the live record and **overwrites its link to the round it replaced with a link to itself**, so the field the inference rests
+     * on stops describing the event. The writer is the only place that knows, so it records it here.
+     */
+    replacedBy?: 'append' | 'round';
+    /**
      * How many findings the replaced record held — the other half of its identity.
      *
      * `createdAt` alone does not separate the two records when a replacement keeps the timestamp it inherited, and that is one of the two
@@ -998,7 +1007,7 @@ export async function addAdversarialFinding(
         scope: { kind: 'full' },
     };
     const findings = [...(draft.findings ?? []).filter((entry) => entry.id !== candidate.id), candidate];
-    await writeAdversarialRecord(root, taskId, { ...draft, findings });
+    await writeAdversarialRecord(root, taskId, { ...draft, findings }, 'append');
     // A terminal finding owes a repair, and the obligation is what lets that repair be **accounted for**: a repair batch
     // reads `answered` from obligations carrying a `resolvedAt`. Creating one only for review findings (the sole caller of
     // `persistBlockingFindings`) left a batch opened on an adversarial finding with nothing that could ever resolve, so the
@@ -1046,7 +1055,7 @@ async function persistDeliveredFacts(
     }
 }
 
-export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
+export async function writeAdversarialRecord(root: string, taskId: string, record: AdversarialRecord, replacedBy: 'append' | 'round' = 'round'): Promise<AdversarialRecord> {
     // **The record and its history are written under the task lock** (`rba10-f4`): they are the artefact this change exists to make
     // trustworthy, and they were the one pair of files in a task written outside it while the dispositions stored beside them were
     // written inside. The lock is taken around the whole read-modify-write, because the sequence the history depends on —
@@ -1057,10 +1066,10 @@ export async function writeAdversarialRecord(root: string, taskId: string, recor
     // moved this write under the lock: the inner call was refused, `persistDeliveredFacts`'s `.catch(() => undefined)` swallowed
     // it, and a pass that delivered a fact recorded none — a lock re-entry reading as "nothing was delivered".
     await persistDeliveredFacts(root, taskId, record.deliveredFacts, record.createdAt ?? new Date().toISOString());
-    return withTaskLock(root, taskId, async () => writeAdversarialRecordLocked(root, taskId, record));
+    return withTaskLock(root, taskId, async () => writeAdversarialRecordLocked(root, taskId, record, replacedBy));
 }
 
-async function writeAdversarialRecordLocked(root: string, taskId: string, record: AdversarialRecord): Promise<AdversarialRecord> {
+async function writeAdversarialRecordLocked(root: string, taskId: string, record: AdversarialRecord, replacedBy: 'append' | 'round'): Promise<AdversarialRecord> {
     // The policy is stamped, not accepted from the caller: a pass that ran under a different one is a different pass,
     // and the gate reads this field. It is stamped **in place** rather than through a spread, because the carry-forward
     // below reassigns `findings` on this object and the written copy has to be that same object.
@@ -1123,6 +1132,8 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
         // not its timestamp alone.
         if (replaced.createdAt) {
             record.replacedCreatedAt = replaced.createdAt;
+            // The event, recorded where it is known (`rba-r18-f2`).
+            record.replacedBy = replacedBy;
             // **The ids, not a count** (`rba-r16-f1`): a count is not stable between the write of the relation and the read, because the
             // CLI the brief instructs reviewers to use appends one finding at a time. The ids are what the record held and are never rewritten.
             record.replacedFindingIds = Array.isArray(replaced.findings)

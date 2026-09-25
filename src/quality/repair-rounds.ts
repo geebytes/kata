@@ -78,45 +78,46 @@ export function replacedCopyFilter(
     // What decides it: the live record names the `createdAt` of the record it replaced, the history is read by the caller and passed in,
     // and an entry that is itself a replacement names what *it* replaced. The walk follows that as far as the records carry it.
     if (!live) return () => true;
-    // **`createdAt` is not an identity, but it is the shape** (`rba-r17-f1`, found by an independent pass and it is the sharpest finding
-    // this change has had). The writer records the relation on *every* write after the first — an in-round append and a fresh pass
-    // replacing the previous round's record alike — and the two are different events:
+    // **A round is identified by the events that produced it, not by reading the timestamps back** (`rba-r18-f1`, `rba-r18-f2` — two
+    // independent passes, and the sixth version of this test). The history is a stack of snapshots, and the snapshots of one round are
+    // exactly the records an `append` write produced:
     //
-    //   * an **append** adds findings to the same round, so it *inherits* the timestamp: `createdAt === replacedCreatedAt`;
-    //   * a **fresh pass** is a new round, so it gets a new timestamp: `createdAt !== replacedCreatedAt`.
+    //   * `replacedBy === 'append'` → the write added findings to the record already in the slot, so the record it names is an **older
+    //     snapshot of the same round** and is dropped;
+    //   * `replacedBy === 'round'` → a fresh pass replaced a different round, and that round **stays counted**.
     //
-    // The previous version walked the whole chain regardless and dropped every content it reached, so a fresh pass — the normal case, one
-    // round per dispatch — dropped its entire ancestry. Measured on `closure-gate`: **7 rounds reported against 10 records on disk**, and
-    // because `countAboutThePreviousRound` needs two rounds, `targetsAboutThePreviousRound` and `shareAboutThePreviousRound` went null for
-    // every change. The whole of AC-3's product was gone, and it looked like it was working because the number was a plausible 7.
-    //
-    // So the walk continues only while it is following *appends*: a record whose timestamp differs from its replacement's is a round of its
-    // own and is counted, and the chain stops there — its own ancestry is its own successor's business, not this walk's.
-    // **The identity is the content** (versions 1-5 of this, each wrong in a different direction, are kept above): `createdAt` plus the
-    // sorted ids the record held, because a finding's `id` is what the CLI appends and never rewrites and therefore survives both an
-    // append and a re-stamp.
-    const contentOf = (record: Record<string, unknown>): string => {
-        const ids = Array.isArray(record.findings)
-            ? (record.findings as Array<{ id?: unknown }>).map((finding) => String(finding?.id ?? '')).sort()
-            : [];
-        return `${String(record.createdAt ?? '')}|${ids.join(',')}`;
-    };
+    // The retired version inferred the shape from `createdAt === replacedCreatedAt`, and that inference is unsound in both directions,
+    // measured: an append *overwrites* the live record's link with a link to itself, so a fresh pass over an appended round walked an empty
+    // chain and dropped nothing — `closure-gate` reported 7 rounds against 10 records — while the same rule in the other direction left
+    // **both** snapshots of an appended round in the count, so a change that ran two rounds reported three. Both numbers were plausible,
+    // which is why both survived a reading.
+    const idsOf = (record: Record<string, unknown>): string =>
+        (Array.isArray(record.findings)
+            ? (record.findings as Array<{ id?: unknown }>).map((finding) => String(finding?.id ?? ''))
+            : []).sort().join(',');
+    const contentOf = (record: Record<string, unknown>): string => `${String(record.createdAt ?? '')}|${idsOf(record)}`;
+    const predecessorOf = (record: Record<string, unknown>): string | null =>
+        record.replacedBy === 'append' && typeof record.replacedCreatedAt === 'string'
+            ? `${record.replacedCreatedAt}|${(Array.isArray(record.replacedFindingIds) ? (record.replacedFindingIds as unknown[]).map((id) => String(id)) : []).sort().join(',')}`
+            : null;
+
     const byContent = new Map<string, Record<string, unknown>>();
     for (const record of history) byContent.set(contentOf(record), record);
     const dropped = new Set<string>();
+    // Every record that some other record names as its append predecessor is a snapshot of that other record's round.
+    const links: Array<Record<string, unknown> | null> = [...history, live];
+    for (const record of links) {
+        if (!record) continue;
+        const predecessor = predecessorOf(record);
+        if (predecessor) dropped.add(predecessor);
+    }
+    // And the chain is followed, so a round appended to three times keeps only its newest snapshot.
     let cursor: Record<string, unknown> | null = live;
     for (let steps = 0; cursor && steps < 64; steps += 1) {
-        const at: unknown = cursor.replacedCreatedAt;
-        if (typeof at !== 'string') break;
-        // Only an append inherits the timestamp; anything else is a different round and stays counted.
-        if (at !== String(cursor.createdAt ?? '')) break;
-        const inherited: string | null = Array.isArray(cursor.replacedFindingIds)
-            ? (cursor.replacedFindingIds as unknown[]).map((id) => String(id)).sort().join(',')
-            : null;
-        if (inherited === null) break;
-        const key: string = `${at}|${inherited}`;
-        dropped.add(key);
-        cursor = byContent.get(key) ?? null;
+        const predecessor = predecessorOf(cursor);
+        if (!predecessor) break;
+        dropped.add(predecessor);
+        cursor = byContent.get(predecessor) ?? null;
     }
     return (record) => !dropped.has(contentOf(record));
 }

@@ -240,6 +240,7 @@ describe('the latest round is the live record, and the share pairs it with its p
                 createdAt: '2026-09-23T13:45:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
                 replacedFindingIds: ['f1'],
+                replacedBy: 'append',
                 findings: [{ id: 'f1' }, { id: 'f2' }],
             },
         ));
@@ -274,6 +275,8 @@ describe('the latest round is the live record, and the share pairs it with its p
                 createdAt: '2026-09-23T13:45:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
                 replacedFindingIds: ['f1'],
+                // The event, which the writer records and the consumer now reads (`rba-r18-f2`).
+                replacedBy: 'append',
                 findings: [{ id: 'f1' }],
             },
         ));
@@ -282,6 +285,38 @@ describe('the latest round is the live record, and the share pairs it with its p
         expect(report.rounds.at(-1)?.revisionId).toBe('revision-newer');
     });
 });
+
+    it('counts two snapshots of one appended round as one round, and the next fresh round as a second', async () => {
+        // **`rba-r18-f1`, the over-count that the previous repair introduced — and the shape the writer actually produces.** Round A is
+        // recorded fresh, a finding is appended to it (the history gains A1 and the slot holds A2, same `createdAt`), then round B is
+        // recorded fresh. Every snapshot belongs to a round, and the events say which: A1's write was an **append**, so it names a
+        // snapshot of its own round; B's write was a **round**, so the record it names is a different round and stays counted.
+        //
+        // The retired inference (`createdAt === replacedCreatedAt`) got this wrong in both directions, which is why both numbers were
+        // plausible: walking it from B — a fresh pass — stopped at step 0 and dropped nothing, so the change reported three rounds for
+        // two; and the same rule against a history whose newest write was an append left both snapshots in. `closure-gate` reported 7
+        // rounds against 10 records by the first of those, and this case is the second.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-a', createdAt: '2026-09-25T10:00:00.000Z', replacedBy: 'round', findings: [{ id: 'f1' }] },
+            {
+                revisionId: 'revision-a', createdAt: '2026-09-25T10:00:00.000Z',
+                replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1'], replacedBy: 'append',
+                findings: [{ id: 'f1' }, { id: 'f2' }],
+            },
+        ]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-b', createdAt: '2026-09-25T11:30:00.000Z',
+            replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1', 'f2'], replacedBy: 'round',
+            findings: [{ id: 'f3' }],
+        }));
+        const report = await reportRounds(root, 't');
+        expect(report.rounds, 'round A once, round B once').toHaveLength(2);
+    });
 
     it('counts a fresh round and the round it replaced as two rounds, and an append as one', async () => {
         // **`rba-r17-f1`, found by an independent pass and it is the sharpest finding this change has had.** The writer records the
@@ -305,6 +340,7 @@ describe('the latest round is the live record, and the share pairs it with its p
         await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
             revisionId: 'revision-a', createdAt: '2026-09-25T10:00:00.000Z',
             replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1'],
+            replacedBy: 'append',
             findings: [{ id: 'f1' }, { id: 'f2' }],
         }));
         expect((await reportRounds(root, 't')).rounds, 'an append is one round').toHaveLength(1);
@@ -316,6 +352,7 @@ describe('the latest round is the live record, and the share pairs it with its p
             // this case and it made the case insensitive to the very defect it names: the key `10:00|f1,f2` matched no history record, so
             // the walk stopped for the wrong reason and the assertion held with or without the shape check.
             replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1'],
+            replacedBy: 'round',
             findings: [{ id: 'f3' }],
         }));
         expect((await reportRounds(root, 't')).rounds, 'a fresh round is a second round').toHaveLength(2);

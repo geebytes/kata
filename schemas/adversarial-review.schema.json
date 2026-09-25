@@ -598,6 +598,14 @@
         "type": "string"
       },
       "description": "The ids the replaced record held \u2014 the other half of its identity, because createdAt is not unique and a count is not stable."
+    },
+    "replacedBy": {
+      "type": "string",
+      "enum": [
+        "append",
+        "round"
+      ],
+      "description": "Which event produced this write: 'append' when a finding was added to the record already in the slot, 'round' when a fresh pass replaced it. Recorded here because an append overwrites the live record's link to the round it replaced, so the consumer cannot infer the shape from the timestamps."
     }
   }
 }
