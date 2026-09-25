@@ -173,3 +173,22 @@ missing-record problem one layer down: **a required output whose producer has no
 
 Cost for the record, then, from the only source that measures it: **3.4 and 7.7 minutes for two rounds that produced the only accepted passes
 their changes have had**, against 8–50 minutes for the rounds that produced nothing.
+
+## Six for six, and the two defects the treatment exposed
+
+The deadline was then applied to every remaining change. **Six rounds, six records** — against 28 of 62 that produced none without it:
+
+| change | emitted at call | deadline | records |
+|---|---|---|---|
+| `review-record-integrity` | 36 | 25 | 1 (its first ever) |
+| `closure-gate` | 31, then 47 | 30 | 2 → gate accepted → **archived** |
+| `repair-by-another-author` | 31 | 30 | 1 → gate accepted |
+| `kata-gate-surface` | 75 | 30 | 1 → gate accepted → review approved |
+| `major-finding-closure` | 50 | 30 | 1 (and it said why: *"I'm past the 30-call deadline, so here is a complete record now; I will keep working and emit an improved one"*) |
+| `repair-obligation-deadlock` | 35, then 78 | 30 | 2 |
+
+**Two defects the treatment exposed, both worth keeping:**
+
+1. **`abandoned` refuses the round, and the brief instructs the pass to use it.** `major-finding-closure`'s pass hit its deadline with six test files unread and recorded the remainder honestly — `outcome: "abandoned"`, with the reason *"the 30-call deadline arrived before I read these six files, so I record the group as abandoned rather than claim an examination I did not make."* The brief says exactly that is allowed (*"Running out is a result, not a failure. A hypothesis stopped by a limit is recorded as `abandoned`"*), and `review-state.ts` refuses any round containing one: *"a hypothesis was abandoned to a limit, so this round did not conclude."* So the instruction and the judge disagree, and the pass that follows the instruction loses the whole round. **That is the ninth instance of this line's class**, produced by the mechanism written to fix the eighth.
+
+2. **A repair to one change supersedes a ready sibling.** `kata-gate-surface` reached `satisfied: true` (`no_defect_found`), review approved, no blocking finding — and then `judge` failed every criterion with `stale_evidence`, because repairing `repair-by-another-author`'s blocking finding edited `src/quality/adversarial.ts`, an owned path of both. Its seal is 11:50 and that file moved at 14:12 UTC. This is constraint #689 measured in the live workflow: with nine changes sharing six central files, **a change's readiness has a shelf life measured in minutes**, and nothing in the ladder says so.
