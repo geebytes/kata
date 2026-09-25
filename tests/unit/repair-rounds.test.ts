@@ -312,7 +312,10 @@ describe('the latest round is the live record, and the share pairs it with its p
         // The fresh pass: a new round, a new timestamp, and the round it replaced must stay counted.
         await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
             revisionId: 'revision-b', createdAt: '2026-09-25T11:30:00.000Z',
-            replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1', 'f2'],
+            // **The replaced record's own ids** — `h[0]` held `f1` alone. Writing the *live* record's ids here was the first version of
+            // this case and it made the case insensitive to the very defect it names: the key `10:00|f1,f2` matched no history record, so
+            // the walk stopped for the wrong reason and the assertion held with or without the shape check.
+            replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1'],
             findings: [{ id: 'f3' }],
         }));
         expect((await reportRounds(root, 't')).rounds, 'a fresh round is a second round').toHaveLength(2);
