@@ -837,6 +837,9 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                         // while the rule is `coveredByClass || hasFalsifierDisposition(reddenings, absences, …)` — so a finding closed
                         // by a *recorded absence* or by *class coverage* was reported as answered by evidence alone. It has been a
                         // second derivation for three rounds; it now asks the same function the verdict asks.
+                        // **The drift a proof observed is reported, not just stored** (`cg7-f2`): the design substitutes detection for
+                        // prevention, and detection needs a reader. `runFalsifyCommand` computes what differed, the ledger keeps it, and
+                        // this is where an operator sees that the proof was taken against content that had moved.
                         ? (hasFalsifierDisposition(reddenings, absences, obligation.findingId, {
                             revisionId: currentRevisionId ?? null,
                             pathDigests: currentRevisionForStatus?.pathDigests ?? null,
@@ -845,6 +848,15 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                             : 'evidence-only')
                         : 'evidence'
                     : null,
+                    // The drift the proof observed, surfaced where the answer is. A proof taken against content that had moved is a
+                    // weaker fact than one taken against the sealed tree, and the reader decides what it is worth (`cg7-f2`).
+                    ...(() => {
+                        const proof = (reddenings ?? []).find((entry) => entry.findingId === obligation.findingId
+                            && Array.isArray((entry as { observedDrift?: string[] }).observedDrift)
+                            && ((entry as { observedDrift?: string[] }).observedDrift ?? []).length > 0);
+                        const drift = proof ? (proof as { observedDrift?: string[] }).observedDrift : undefined;
+                        return drift ? { proofObservedDrift: drift } : {};
+                    })(),
             })),
             findings: trackedForStatus.map((finding) => ({
                 id: finding.id,
