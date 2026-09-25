@@ -310,9 +310,23 @@ describe('a class with no covering check is not covered', () => {
         // **Coverage is "a check catches a new instance", not "a class names a check"** (`cg8-f1`): an entry that records an uncovered
         // defining instance is reported uncovered however many checks it names, because the third route closes a finding on this flag
         // while promising that a new instance would fail in the declared check.
+        //
+        // **This asserts the consequence of that rule, not the expression that implements it** (`rba-r17-f3`, found by an independent
+        // pass): the case used to assert `entry.covered === (entry.coveredBy.length > 0 && !source?.uncoveredInstances)` — character for
+        // character what `coveredClasses()` computes over the same two fields — so a mutation that changed both in step stayed green, and
+        // the case pinned that the implementation equals itself. What each branch below reads is the table's own content, so dropping the
+        // `uncoveredInstances` conjunct reddens on the entry whose instance it drops.
         for (const entry of derived) {
             const source = CLASS_COVERAGE.find((candidate) => candidate.classId === entry.classId);
-            expect(entry.covered).toBe(entry.coveredBy.length > 0 && !source?.uncoveredInstances);
+            const namesACheck = entry.coveredBy.length > 0;
+            const recordsAnUncoveredInstance = (source?.uncoveredInstances?.length ?? 0) > 0;
+            if (!namesACheck) {
+                expect(entry.covered, `${entry.classId} names no check, so nothing can catch a new instance`).toBe(false);
+            } else if (recordsAnUncoveredInstance) {
+                expect(entry.covered, `${entry.classId} names a check and records an uncovered instance, so it is reported uncovered`).toBe(false);
+            } else {
+                expect(entry.covered, `${entry.classId} names a check and records no uncovered instance, so it is reported covered`).toBe(true);
+            }
         }
         // At least one entry records an uncovered instance today — that is the case this asserts, not a count of it.
         expect(derived.some((entry) => !entry.covered)).toBe(true);

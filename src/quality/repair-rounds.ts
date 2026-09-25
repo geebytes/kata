@@ -78,17 +78,23 @@ export function replacedCopyFilter(
     // What decides it: the live record names the `createdAt` of the record it replaced, the history is read by the caller and passed in,
     // and an entry that is itself a replacement names what *it* replaced. The walk follows that as far as the records carry it.
     if (!live) return () => true;
-    // **The identity is the content, and the relation is the chain.** Five versions of this test have been wrong, and the reason each was
-    // wrong is the reason the answer needs both halves:
+    // **`createdAt` is not an identity, but it is the shape** (`rba-r17-f1`, found by an independent pass and it is the sharpest finding
+    // this change has had). The writer records the relation on *every* write after the first — an in-round append and a fresh pass
+    // replacing the previous round's record alike — and the two are different events:
     //
-    //   * `createdAt` alone is not unique — two records written in the same second carry the same value, and that is constructible;
-    //   * the finding count is not stable — a round that confirms findings through the CLI the brief instructs reviewers to use grows the
-    //     count between the write of the relation and the read;
-    //   * the revision is neither — a re-stamp moves it for one round and leaves it for another;
-    //   * and `live.history` is a field no producer writes, so a walk that read it was a single step.
+    //   * an **append** adds findings to the same round, so it *inherits* the timestamp: `createdAt === replacedCreatedAt`;
+    //   * a **fresh pass** is a new round, so it gets a new timestamp: `createdAt !== replacedCreatedAt`.
     //
-    // So: **a record is identified by its content**, and **the relation says which content it replaced**. A finding's `id` is what the
-    // CLI appends and never rewrites, so the identity that survives both an append and a re-stamp is the set of ids the record held.
+    // The previous version walked the whole chain regardless and dropped every content it reached, so a fresh pass — the normal case, one
+    // round per dispatch — dropped its entire ancestry. Measured on `closure-gate`: **7 rounds reported against 10 records on disk**, and
+    // because `countAboutThePreviousRound` needs two rounds, `targetsAboutThePreviousRound` and `shareAboutThePreviousRound` went null for
+    // every change. The whole of AC-3's product was gone, and it looked like it was working because the number was a plausible 7.
+    //
+    // So the walk continues only while it is following *appends*: a record whose timestamp differs from its replacement's is a round of its
+    // own and is counted, and the chain stops there — its own ancestry is its own successor's business, not this walk's.
+    // **The identity is the content** (versions 1-5 of this, each wrong in a different direction, are kept above): `createdAt` plus the
+    // sorted ids the record held, because a finding's `id` is what the CLI appends and never rewrites and therefore survives both an
+    // append and a re-stamp.
     const contentOf = (record: Record<string, unknown>): string => {
         const ids = Array.isArray(record.findings)
             ? (record.findings as Array<{ id?: unknown }>).map((finding) => String(finding?.id ?? '')).sort()
@@ -102,7 +108,8 @@ export function replacedCopyFilter(
     for (let steps = 0; cursor && steps < 64; steps += 1) {
         const at: unknown = cursor.replacedCreatedAt;
         if (typeof at !== 'string') break;
-        // The replaced content: same write second, and the ids the replacement says it inherited.
+        // Only an append inherits the timestamp; anything else is a different round and stays counted.
+        if (at !== String(cursor.createdAt ?? '')) break;
         const inherited: string | null = Array.isArray(cursor.replacedFindingIds)
             ? (cursor.replacedFindingIds as unknown[]).map((id) => String(id)).sort().join(',')
             : null;

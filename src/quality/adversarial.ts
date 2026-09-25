@@ -1093,7 +1093,18 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
         // **The replacement relation, recorded rather than inferred** (`rba-r14-f1`, `rba-r14-f3`): whether two records are one round or
         // two is not derivable from their fields — a replacement inherits the revision *or* keeps it while findings accumulate, and this
         // line has measured both. The only fact that decides it is *which record replaced which*, and that fact exists exactly once, here.
-        const already = history.some((entry) => entry.createdAt === replacing.createdAt);
+        // **The dedup must use the identity the consumer uses** (`rba-r17-f2`): this compared `createdAt` alone — the value the comment
+        // three lines below declares *not unique* ("two records written in the same second … and that is constructible") — while the
+        // consuming walk keys on `createdAt` **plus the ids the record held**. So when two writes shared a second (an append always
+        // does: `addAdversarialFinding` inherits the timestamp; two passes in one second can), the intermediate record was never
+        // appended and the link the walk needs was missing — the walk then broke early, leaving a stale record counted or losing a round.
+        // One decision — which record replaced which — was recorded one way and consumed another.
+        const identityOf = (entry: { createdAt?: string; findings?: unknown[] }): string =>
+            `${entry.createdAt ?? ''}|${(Array.isArray(entry.findings) ? entry.findings : [])
+                .map((finding) => String((finding as { id?: unknown })?.id ?? ''))
+                .sort()
+                .join(',')}`;
+        const already = history.some((entry) => identityOf(entry) === identityOf(replacing));
         if (!already) {
             history.push(replacing as never);
             await writeFile(historyPath, `${JSON.stringify(history, null, 2)}\n`, 'utf8');

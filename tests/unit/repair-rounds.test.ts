@@ -248,10 +248,18 @@ describe('the latest round is the live record, and the share pairs it with its p
         expect(report.rounds).toHaveLength(1);
     });
 
-    it('counts a re-stamp as one round, because the record says what it replaced', async () => {
-        // **The shape `rba-r14-f1` was about, and the one two earlier versions of this test could not see.** A replacement takes the
-        // revision of the pass it replaced — so the history record and the live record carry *different* revision ids for one round, and
-        // every test that compared revisions counted two. The relation is recorded at write time, so it is what decides.
+    it('counts a re-stamp as one round, because the writer inherits the timestamp it re-stamps', async () => {
+        // **A replacement inherits the revision of the pass it replaced, so the history record and the live record carry *different*
+        // revision ids for one round** (`rba-r14-f1`) — every version of this test that compared revisions counted two. The relation is
+        // recorded at write time, and this test now reads it the way `rba-r17-f1` established it must be read: **`addAdversarialFinding`
+        // builds its draft from `existing ?? { createdAt: new Date() … }`, so an in-round write *inherits* the timestamp**
+        // (`src/quality/adversarial.ts`), which is what makes `createdAt === replacedCreatedAt` mean "one round" and a differing
+        // timestamp mean "a different write event, therefore a round of its own".
+        //
+        // An earlier version of this fixture re-stamped with a *new* timestamp and asserted one round. That shape does not exist in the
+        // writer, and the independent pass that found `rba-r17-f1` is what exposed the difference: the retired walk dropped whatever
+        // content it reached, so a fresh pass — the normal case — discarded its whole ancestry, and `closure-gate` reported **7 rounds
+        // against 10 records on disk** while every change's `targetsAboutThePreviousRound` and `shareAboutThePreviousRound` went null.
         const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
         roots.push(root);
         const { mkdir, writeFile } = await import('node:fs/promises');
@@ -263,7 +271,7 @@ describe('the latest round is the live record, and the share pairs it with its p
         await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
             {
                 revisionId: 'revision-newer',
-                createdAt: '2026-09-24T06:10:00.000Z',
+                createdAt: '2026-09-23T13:45:00.000Z',
                 replacedCreatedAt: '2026-09-23T13:45:00.000Z',
                 replacedFindingIds: ['f1'],
                 findings: [{ id: 'f1' }],
@@ -274,6 +282,41 @@ describe('the latest round is the live record, and the share pairs it with its p
         expect(report.rounds.at(-1)?.revisionId).toBe('revision-newer');
     });
 });
+
+    it('counts a fresh round and the round it replaced as two rounds, and an append as one', async () => {
+        // **`rba-r17-f1`, found by an independent pass and it is the sharpest finding this change has had.** The writer records the
+        // replacement relation on *every* write after the first, and the two events it covers are different:
+        //
+        //   * an **append** adds findings to the same round and inherits the timestamp, so `createdAt === replacedCreatedAt`;
+        //   * a **fresh pass** is a new round and gets a new timestamp, so `createdAt !== replacedCreatedAt`.
+        //
+        // The retired walk dropped every content it reached regardless, so a fresh pass dropped its entire ancestry. Measured on
+        // `closure-gate`: **7 rounds reported against 10 records on disk**, and because the count needs two rounds,
+        // `targetsAboutThePreviousRound` and `shareAboutThePreviousRound` were null for every change. The whole of AC-3's product was
+        // gone and it looked like it worked, because 7 is a plausible number.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        const previous = { revisionId: 'revision-a', createdAt: '2026-09-25T10:00:00.000Z', findings: [{ id: 'f1' }] };
+        // The append: same round, one more finding, the timestamp inherited.
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([previous]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-a', createdAt: '2026-09-25T10:00:00.000Z',
+            replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1'],
+            findings: [{ id: 'f1' }, { id: 'f2' }],
+        }));
+        expect((await reportRounds(root, 't')).rounds, 'an append is one round').toHaveLength(1);
+
+        // The fresh pass: a new round, a new timestamp, and the round it replaced must stay counted.
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify({
+            revisionId: 'revision-b', createdAt: '2026-09-25T11:30:00.000Z',
+            replacedCreatedAt: '2026-09-25T10:00:00.000Z', replacedFindingIds: ['f1', 'f2'],
+            findings: [{ id: 'f3' }],
+        }));
+        expect((await reportRounds(root, 't')).rounds, 'a fresh round is a second round').toHaveLength(2);
+    });
 
     it('counts two records written in the same second as two rounds, because the ids differ', async () => {
         // **The shape that killed the `createdAt`-only key** (`rba-r16-f1`, and constructed while repairing it): two writes in one second
