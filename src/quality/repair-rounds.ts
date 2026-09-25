@@ -61,37 +61,25 @@ async function readJson<T>(path: string): Promise<T | null> {
  * before by restating this (`kgsr8-f2`). A key over one record cannot express containment, so the test is a function of the pair.
  */
 export function replacedCopyFilter(live: Record<string, unknown> | null): (record: Record<string, unknown>) => boolean {
-    const findingsOf = (record: Record<string, unknown>): Set<string> => new Set(
-        Array.isArray(record.findings) ? (record.findings as Array<{ id?: string }>).map((f) => String(f?.id ?? '')) : [],
-    );
-    const liveFindings = live ? findingsOf(live) : null;
-    const liveRevision = live ? String(live.revisionId ?? '') : '';
-    return (record) => {
-        if (!liveFindings) return true;
-        if (String(record.revisionId ?? '') !== liveRevision) return true;
-        const mine = findingsOf(record);
-        return !(mine.size > 0 && [...mine].every((id) => liveFindings.has(id)));
-    };
+    // **The chain, not the fields** (`rba-r14-f1`, `rba-r14-f3`). Two earlier versions of this test asked the records' own fields and each
+    // was wrong in one direction, because a replacement can inherit the revision (a re-stamp) *or* keep it while findings accumulate —
+    // this line has measured both shapes and they are indistinguishable by any field pair. What decides it is which record replaced
+    // which, and `writeAdversarialRecord` records that as `replacedCreatedAt` on the record it writes.
+    //
+    // So a history record is the replaced copy of the live one when the live record's chain reaches it: walk `replacedCreatedAt` back,
+    // and every createdAt on that walk names the same round.
+    if (!live) return () => true;
+    const replaced = new Set<string>();
+    for (let cursor: Record<string, unknown> | null = live, steps = 0; cursor && steps < 64; steps += 1) {
+        const at = cursor.replacedCreatedAt;
+        if (typeof at !== 'string') break;
+        replaced.add(at);
+        cursor = null;
+    }
+    return (record) => !replaced.has(String(record.createdAt ?? ''));
 }
 
-export function recordIdentity(record: Record<string, unknown>): string {
-    // **What identifies a round is its revision and the findings it reports as new** — and neither field alone is enough, which is why
-    // this took three attempts and two rounds to see (`rba4-f1`, then `rba-r3-f1`):
-    //
-    //   * `rba4-f1`: one pass appears in the history under an **older** revision and in the live slot under a **newer** one, because a
-    //     record inherits the revision of the pass it replaces (a re-stamp). Identity must not depend on the revision for those.
-    //   * `becb49c9303042ca`: the history held the replaced copy of a revision while the live record was the **same** revision with an
-    //     appended finding. Identity must not depend on the finding count for those.
-    //
-    // Both are the same event seen from opposite sides: a record is replaced, and its replacement keeps the revision (or takes a new one)
-    // while the findings accumulate. So a round is identified by **the revision plus the findings it introduced**, and a record whose
-    // findings are a subset of the live record's is the replaced copy of that same round rather than a round of its own.
-    const revision = String(record.revisionId ?? '(none)');
-    const findings = Array.isArray(record.findings)
-        ? (record.findings as Array<{ id?: string }>).map((finding) => String(finding?.id ?? '')).sort().join(',')
-        : '';
-    return `${revision}#${findings}`;
-}
+
 
 export async function reportRounds(root: string, taskId: string, node = 'review'): Promise<RoundReport> {
     const history = await readJson<Array<Record<string, unknown>>>(join(kataDir(root), 'tasks', taskId, `adversarial-${node}-history.json`)) ?? [];
@@ -110,8 +98,8 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     // live record also holds is the copy that was replaced**, which is a containment test rather than a key (`rba-r3-f1`). Where the
     // revisions differ the record is a round of its own — that is the re-stamp `rba4-f1` measured.
     //
-    // `recordIdentity` stays exported for the consumers that need a stable key for one record (round-cost's dedup); it is not used for
-    // this decision, because this decision is containment.
+    // **There is no key for a round** — `recordIdentity` was deleted rather than kept "for a consumer that needs a stable key", because
+    // no such consumer exists (`rba-r14-f2`: it was matched only by its own definition and by the comment claiming a consumer).
     const historyRounds = history.filter(replacedCopyFilter(live as unknown as Record<string, unknown> | null)).map(toRound);
     // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass, so sorting by it put the live record
     // before a history record that was actually earlier — measured: `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`. The live record

@@ -587,6 +587,10 @@
       "items": {
         "type": "string"
       }
+    },
+    "replacedCreatedAt": {
+      "type": "string",
+      "description": "The createdAt of the record this one replaced in the node's slot. Recorded at write time because the replacement relation is not derivable from a record's fields \u2014 a replacement inherits the revision or keeps it while findings accumulate."
     }
   }
 }

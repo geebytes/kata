@@ -229,14 +229,46 @@ describe('the latest round is the live record, and the share pairs it with its p
         await mkdir(dir, { recursive: true });
         // Measured on this task: the history held the replaced copy of `becb49c9303042ca` while the live record was the same
         // revision with an appended finding, and comparing whole records counted four entries for three rounds.
+        // **The relation is recorded, not inferred** (`rba-r14-f1`): the live record says which createdAt it replaced, so a fixture must
+        // supply that field — the two records here are otherwise indistinguishable from two genuine rounds that shared a revision.
         await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
             { revisionId: 'revision-a', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f1' }] },
         ]));
         await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
-            { revisionId: 'revision-a', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f1' }, { id: 'f2' }] },
+            {
+                revisionId: 'revision-a',
+                createdAt: '2026-09-23T13:45:00.000Z',
+                replacedCreatedAt: '2026-09-23T13:45:00.000Z',
+                findings: [{ id: 'f1' }, { id: 'f2' }],
+            },
         ));
         const report = await reportRounds(root, 't');
         // One revision, one round — the appended finding does not make a second one.
         expect(report.rounds).toHaveLength(1);
+    });
+
+    it('counts a re-stamp as one round, because the record says what it replaced', async () => {
+        // **The shape `rba-r14-f1` was about, and the one two earlier versions of this test could not see.** A replacement takes the
+        // revision of the pass it replaced — so the history record and the live record carry *different* revision ids for one round, and
+        // every test that compared revisions counted two. The relation is recorded at write time, so it is what decides.
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        const { mkdir, writeFile } = await import('node:fs/promises');
+        const dir = join(root, '.kata/tasks/t');
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'adversarial-review-history.json'), JSON.stringify([
+            { revisionId: 'revision-older', createdAt: '2026-09-23T13:45:00.000Z', findings: [{ id: 'f1' }] },
+        ]));
+        await writeFile(join(dir, 'adversarial-review.json'), JSON.stringify(
+            {
+                revisionId: 'revision-newer',
+                createdAt: '2026-09-24T06:10:00.000Z',
+                replacedCreatedAt: '2026-09-23T13:45:00.000Z',
+                findings: [{ id: 'f1' }],
+            },
+        ));
+        const report = await reportRounds(root, 't');
+        expect(report.rounds).toHaveLength(1);
+        expect(report.rounds.at(-1)?.revisionId).toBe('revision-newer');
     });
 });

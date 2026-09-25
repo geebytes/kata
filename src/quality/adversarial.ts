@@ -118,6 +118,14 @@ export interface AdversarialRecord {
      */
     wroteTests?: string[];
     /**
+     * The `createdAt` of the record this one replaced in the node's slot, recorded at write time.
+     *
+     * It exists because **the replacement relation is not derivable from a record's fields** (`rba-r14-f1`, `rba-r14-f3`): a replacement
+     * inherits the revision *or* keeps it while findings accumulate, and this line has measured both shapes. Whether two records are one
+     * round or two is decided by which replaced which, and that fact exists exactly once — here.
+     */
+    replacedCreatedAt?: string;
+    /**
      * Test files this pass **read** and argued from, which it did not write. Declared for the same reason: a test a pass read is on
      * disk exactly as one it wrote is, so the record is the only place the distinction exists.
      */
@@ -1069,6 +1077,9 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
         const history = await readFile(historyPath, 'utf8')
             .then((text) => JSON.parse(text) as Array<{ createdAt?: string }>)
             .catch(() => [] as Array<{ createdAt?: string }>);
+        // **The replacement relation, recorded rather than inferred** (`rba-r14-f1`, `rba-r14-f3`): whether two records are one round or
+        // two is not derivable from their fields — a replacement inherits the revision *or* keeps it while findings accumulate, and this
+        // line has measured both. The only fact that decides it is *which record replaced which*, and that fact exists exactly once, here.
         const already = history.some((entry) => entry.createdAt === replacing.createdAt);
         if (!already) {
             history.push(replacing as never);
@@ -1076,6 +1087,15 @@ async function writeAdversarialRecordLocked(root: string, taskId: string, record
         }
     } catch {
         // Nothing to preserve yet: the first pass for this node.
+    }
+    // **The replacement relation, recorded on the record being written** (`rba-r14-f1`, `rba-r14-f3`): whether two records are one round
+    // or two is not derivable from their fields — a replacement inherits the revision *or* keeps it while findings accumulate, and this
+    // line has measured both. The fact that decides it is which record replaced which, and the only moment it exists is here.
+    try {
+        const replaced = JSON.parse(await readFile(path, 'utf8')) as { createdAt?: string };
+        if (replaced.createdAt && replaced.createdAt !== record.createdAt) record.replacedCreatedAt = replaced.createdAt;
+    } catch {
+        // The first pass for this node replaced nothing.
     }
     // The previous pass is snapshotted before it is replaced, so the comparison the design asked for (what did a delta
     // pass save against the full pass it narrowed?) has both sides. Without this the number is unrecoverable the moment
