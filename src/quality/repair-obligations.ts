@@ -1,3 +1,4 @@
+import { classCoverageOf } from './finding-lifecycle.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
@@ -179,8 +180,11 @@ export function obligationIsAnswered(input: {
     // finding names the class it is an instance of, and a declared check covers that class, so a new instance fails in the suite
     // rather than in a future round. `coveredClasses` is that table, read from `class-coverage.ts`, and it is deliberately the same
     // fact `roundMayClose` asks before a round may close — one derivation, consulted by both the closure rule and the sweep.
+    // **The same quantifier the termination condition uses** (`wcc7-f3`): `some` accepted a finding that named two classes when only one
+    // of them was covered, while `classesNeedingCoverage` requires every named class — so the closure rule and the round's termination
+    // condition disagreed about the same finding. Both ask `classCoverageOf` now.
     const coveredByClass = obligation.findingId
-        ? (input.classOf?.[obligation.findingId] ?? []).some((classId) => (input.coveredClasses ?? []).includes(classId))
+        ? classCoverageOf({ classInstances: input.classOf?.[obligation.findingId] ?? [] }, (input.coveredClasses ?? []).map((classId) => ({ classId, covered: true, coveredBy: [] }))).covered
         : false;
     const falsified = obligation.findingId
         ? coveredByClass || hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId,

@@ -58,18 +58,42 @@ export function findingsWithoutAClass(
         .map((finding) => ({ id: finding.id, severity: finding.severity }));
 }
 
+/**
+ * **The one decision every consumer asks** (`wcc7-f3`): *are the classes this finding names covered?*
+ *
+ * Three consumers answered it with three different quantifiers — the termination condition required **every** named class to be
+ * covered, the obligation resolver accepted **any**, and the briefing read the **first** class in table order. They agreed only
+ * because findings happen to name one class each today; the moment one names two, which the brief instructs reviewers to do, the
+ * three answers diverge and the loop's termination condition disagrees with the closure rule.
+ *
+ * The quantifier is **every**: a finding that is an instance of two classes is not discharged by covering one of them, because the
+ * point of naming the second is that a new instance could fail there too. A finding naming no class is not covered by anything.
+ */
+export function classCoverageOf(
+    finding: { classInstances?: readonly string[] },
+    coverage: ReadonlyArray<ClassCoverage>,
+): { covered: boolean; uncovered: ClassCoverage[]; coveredBy: string[] } {
+    const byId = new Map(coverage.map((entry) => [entry.classId, entry]));
+    const named = finding.classInstances ?? [];
+    const uncovered: ClassCoverage[] = [];
+    const coveredBy: string[] = [];
+    for (const classId of named) {
+        const entry = byId.get(classId);
+        if (entry?.covered) coveredBy.push(...entry.coveredBy);
+        else uncovered.push(entry ?? { classId, covered: false, coveredBy: [] });
+    }
+    return { covered: named.length > 0 && uncovered.length === 0, uncovered, coveredBy };
+}
+
 export function classesNeedingCoverage(
     findings: ReadonlyArray<{ id: string; severity: string; classInstances?: readonly string[] }>,
     coverage: ReadonlyArray<ClassCoverage>,
 ): ClassCoverage[] {
-    const byId = new Map(coverage.map((entry) => [entry.classId, entry]));
     const needed = new Map<string, ClassCoverage>();
     for (const finding of findings) {
         if (!isTerminalSeverity(finding.severity)) continue;
-        for (const classId of finding.classInstances ?? []) {
-            const entry = byId.get(classId);
-            if (!entry || !entry.covered) needed.set(classId, entry ?? { classId, covered: false, coveredBy: [] });
-        }
+        // Delegated, so the termination condition and the closure rule cannot grow different quantifiers again (`wcc7-f3`).
+        for (const entry of classCoverageOf(finding, coverage).uncovered) needed.set(entry.classId, entry);
     }
     return [...needed.values()];
 }

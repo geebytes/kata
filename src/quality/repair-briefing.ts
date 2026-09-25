@@ -1,3 +1,4 @@
+import { classCoverageOf } from './finding-lifecycle.js';
 import { readTask } from '../core/task.js';
 import { readTrackedFindings } from './finding-disposition.js';
 import { classesOfFindings, coveredClasses, CLASS_COVERAGE } from './class-coverage.js';
@@ -93,8 +94,10 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         // **`covered`, not the entry's existence** (`wcc6-f1`): `find` returns an entry for every class in the table, so `entry ? true :
         // false` reported coverage the predicate had not decided — the third derivation renamed rather than removed. The predicate's own
         // field is what the criterion reads.
-        const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
-        const classCovered = entry?.covered === true;
+        // **Every named class, not the first one in table order** (`wcc7-f3`): `find` returned the first class of the table the finding
+        // mentions, so a finding naming a covered and an uncovered class reported the covered one. The predicate decides it now.
+        const decision = classCoverageOf({ classInstances: classIds }, coveredClasses());
+        const classCovered = decision.covered;
         findings.push({
             id: finding.id,
             severity: finding.severity,
@@ -103,7 +106,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             ...(finding.impact ? { impact: finding.impact } : {}),
             ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
             ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
-            ...(classCovered ? { classCovered: true, coveredBy: entry?.coveredBy ?? [] } : { classCovered: false }),
+            ...(classCovered ? { classCovered: true, coveredBy: decision.coveredBy } : { classCovered: false }),
         });
     }
     // The review store carries the same fields for the findings the review flow recorded, and a briefing that reported only the
@@ -116,8 +119,10 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         const severity = typeof finding.severity === 'string' ? finding.severity : 'minor';
         if (severity !== 'blocking' && severity !== 'major') continue;
         const classIds = classOf[id] ?? [];
-        const entry = coveredClasses().find((candidate) => classIds.includes(candidate.classId));
-        const classCovered = entry?.covered === true;
+        // **Every named class, not the first one in table order** (`wcc7-f3`): `find` returned the first class of the table the finding
+        // mentions, so a finding naming a covered and an uncovered class reported the covered one. The predicate decides it now.
+        const decision = classCoverageOf({ classInstances: classIds }, coveredClasses());
+        const classCovered = decision.covered;
         findings.push({
             id,
             severity,
@@ -126,7 +131,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             ...(typeof finding.impact === 'string' ? { impact: finding.impact } : {}),
             ...(Array.isArray(finding.classInstances) ? { classInstances: finding.classInstances as string[] } : {}),
             ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
-            ...(classCovered ? { classCovered: true, coveredBy: entry?.coveredBy ?? [] } : { classCovered: false }),
+            ...(classCovered ? { classCovered: true, coveredBy: decision.coveredBy } : { classCovered: false }),
         });
     }
 
