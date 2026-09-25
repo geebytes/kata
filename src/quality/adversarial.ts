@@ -1201,6 +1201,15 @@ export interface AdversarialGateResult {
     verdict?: 'no_defect_found' | 'defects_found' | 'inconclusive' | 'budget_exhausted';
     /** Findings the node must resolve, when the pass confirmed defects. */
     findings: AdversarialFinding[];
+    /**
+     * Why the remit is what it is, when that is worth saying — two delta briefs for one revision means the surface came from the seal
+     * rather than from a brief.
+     *
+     * Exposed here because `remitNotes` was computed, passed into the admissibility input, and **read by nothing** (`kgsr12-f1`): the
+     * shape it was passed to had no member for it either, so the note had no reader at any layer. A fact that only an operator can act
+     * on has to reach one.
+     */
+    remitNotes?: string[];
     /** Why a delta pass was refused: what the pass claimed to cover and what actually changed. */
     detail?: string;
     /**
@@ -1499,13 +1508,11 @@ export function evaluateAdversarialGate(
          * The test-shaped paths that exist in the repository right now (kgs3-f7). A path a pass **wrote** is here; a path an
          * attempt merely mentioned in prose may not be, and the guard could not tell the two apart in free text.
          */
-        /**
-         * Every test-shaped file that exists, with its **modification time** — because the question this guard asks is *did the pass
-         * write this test?*, and the fact that answers it is when the file appeared relative to the brief.
-         */
-        existingTestPaths?: Array<{ readonly path: string; readonly mtime: string }>;
-        /** When the revision under review was sealed: a test that appeared after it is the shape of one this pass wrote. */
-        sealedAt?: string | null;
+        // **The retired form's inputs are gone with it** (`kgsr12-f6`). These two were the mtime predicate's whole evidence — every
+        // test-shaped file with its modification time, and the seal's timestamp — and `kgsr9-f5` removed their computation at the call
+        // site while leaving them declared here, with docstrings that stated the retired rule as *the* rule. A field nothing passes and
+        // whose documentation describes a mechanism that no longer exists is worse than an absent one: it tells the next reader the
+        // guard still works that way.
         /** Hashes kata issued for this node but for a *different* revision: an answer to another round's question. */
         otherRevisionBriefSha256s?: string[];
         /**
@@ -2972,7 +2979,9 @@ export async function adversarialGateFor(
             // to offer. Kept so such a task still gates at all.
             : (revision?.pathDigests ? Object.keys(revision.pathDigests) : []);
         // **The ambiguity is carried on the surface itself** (`kgsr8-f1`): `changeSurface` is what the caller measures against, so the
-        // note travels with it rather than being returned separately. `remitNotes` is read by the audit trail below.
+        // note travels with it rather than being returned separately **and is reported on the gate result**, which is the reader it
+        // lacked (`kgsr12-f1`): it was passed into an input whose shape had no member for it, under a comment claiming an audit trail
+        // that does not exist.
         const remitNotes = remitNote ? [remitNote] : [];
         // `coverage` is not a field a record carries: the declaration is derived from the revision (the criteria and the
         // changed paths the pass is answerable for) and merged with `hypotheses.targets`, which is what the pass spoke for.
@@ -3012,6 +3021,8 @@ export async function adversarialGateFor(
             return { satisfied: false, reason: 'incomplete', record: gate.record, findings: [], verdict: admission.verdict, detail: admission.reason };
         }
         gate.verdict = admission.verdict;
+        // The reader the note never had: a caller that reports the remit can say why it is what it is.
+        if (remitNotes.length > 0) gate.remitNotes = remitNotes;
     }
 
     // A satisfied pass still has to be honest about its scope: a delta that does not cover the change is refused here,

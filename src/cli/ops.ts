@@ -828,6 +828,16 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 open: batch ? { id: batch.id, openedAt: batch.openedAt, findings: batch.findings.map((finding) => finding.id), baseRevisionId: batch.baseRevisionId ?? null } : null,
                 ...saving,
             },
+            // **Why the remit is what it is, when that is worth saying** (`kgsr12-f1`). `remitNotes` was computed, passed into the
+            // admissibility input, and read by nothing — the note's own comment claimed "read by the audit trail below" and there is no
+            // audit trail below. Two delta briefs for one revision means the surface came from the seal rather than from a brief, and this
+            // is where an operator sees that instead of inferring it from a path count.
+            remit: (await (async () => {
+                // The same derivation the gate makes, asked here so the note has a reader. `null` when there is nothing to say.
+                const { adversarialGateFor } = await import('../quality/adversarial.js');
+                const gate = await adversarialGateFor(root, change, 'review').catch(() => null);
+                return gate?.remitNotes?.length ? { notes: gate.remitNotes } : null;
+            })()),
             // AC-4's "is visible in adversarial status", which was **untrue** when the criterion was certified: the command
             // reported nodes, progress and the open batch's finding ids, and never a finding's disposition — so a routed
             // finding's disposition and the change carrying it were invisible exactly where the criterion promised them.
