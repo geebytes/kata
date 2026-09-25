@@ -440,7 +440,7 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval|baseline> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|lane|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval|baseline> [change|--change change]',
         );
     }
     if (command === 'status') {
@@ -449,6 +449,15 @@ async function runMain(argv: string[]): Promise<void> {
         outputResult(await runLocalStatusCommand(change, resolved, workspaceRoot, {
             withContext: argv.includes('--with-context'),
         }));
+        return;
+    }
+
+    if (command === 'lane') {
+        // **The order of work, made checkable.** A change's readiness has a shelf life measured in minutes because 38 paths here are
+        // declared by more than one change, and a sibling's repair moves its revision — measured at eleven minutes once, at the cost of a
+        // round. `--require-current` is the guard form, so a lane step can refuse rather than trust the operator to look.
+        const { runLaneCommand } = await import('./cli/lane.js');
+        outputResult(await runLaneCommand(change, workspaceRoot, { requireCurrent: argv.includes('--require-current') }));
         return;
     }
 
