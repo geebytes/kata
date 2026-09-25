@@ -47,3 +47,34 @@ It is not a documented trade and it is not a defect in the changes. Nothing in e
 `archive` refuses on is a property of the workflow, and the condition `build` refuses on is a property of the phase. Both are recorded
 here rather than worked around, because the alternative — moving the OpenSpec files back, or hand-editing the obligation store — makes
 the gate pass by making something else false.
+
+## 3. The independence rule forces the round whose repairs invalidate it
+
+`closure-gate`, `kata-gate-surface` and `repair-by-another-author` all reached
+
+```
+phase: review | verify: PASS | obligations: 0 | new revision minted by the seal
+```
+
+and `review --approve` refused all three:
+
+```
+Review approval is held by the independent adversarial pass: The recorded adversarial pass is about a different revision.
+```
+
+**The chain, measured rather than asserted:** a repair changes content → the revision is content-derived → the recorded pass is bound to
+the revision it reviewed and goes `stale_revision` → approval requires a pass about the *current* revision, so a new round is mandatory →
+the new round's findings are about the repairs → repairing them mints another revision → the pass about it goes stale. One pass can
+approve at most the revision it was recorded against, and any change to the change moves that revision.
+
+This is not the same defect as the other two here, and it is worth stating why: the archive gate and `repair_unresolved_obligations`
+refuse on a condition **nothing can satisfy**, whereas this one refuses on a condition that **every step toward it invalidates**. It is the
+price of independence — a review of content that no longer exists proves nothing — and kata never bounded it, priced it, or wrote down that
+its terminal states are reachable only by a change whose last action changed nothing.
+
+### What the three changes' state actually is
+
+Every mechanism the three changes set out to build is in the tree, `verify` passes on the current revision, no obligation is open, and the
+only unmet condition is a pass about a revision that any further repair would move again. Recorded here rather than worked around, because
+the alternatives are to re-dispatch the same round a fourth time or to hand-write an approval — one is the loop, and the other makes a gate
+pass by making something else false.
