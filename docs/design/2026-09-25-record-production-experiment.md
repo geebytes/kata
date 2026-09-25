@@ -53,3 +53,47 @@ So the two outcomes this experiment can produce are both informative:
 
 Tool calls made before the first record-shaped message; total tool calls; the record's `hypotheses`/`findings` counts if it lands; and whether
 `kata-cli adversarial record` accepts it.
+
+
+## Result: the deadline produced a record — the first one this change has ever had
+
+| | baseline (8 prior rounds) | treatment (1 round) |
+|---|---|---|
+| records | **0** | **1** ✓ |
+| tool calls | 48 – 165 | **36** (deadline was 25 → **+44%**) |
+| assistant text | 141 – 2,648 chars | 1,399 chars before the record, then the record itself at **16,237** |
+| hypotheses | — | **6, claiming AC-1 … AC-5 — none missing** |
+| findings | — | 3 (1 major, 2 minor) |
+| `kata-cli adversarial record` | — | **`status: recorded`** |
+
+**The pass said so out loud**, which is the part that matters: *"I've reached my tool-call deadline. Emitting the record now with what I have
+established."* It had been telling me for 36 calls that it needed to verify two more things; the deadline is what turned that into a record.
+
+**And it overran the deadline by 44%** — 36 calls against a stated 25. That number is worth keeping because the envelope has been overrun by the
+same factor before: the retired 48-call limit was overshot at **70 calls (+46%)**. A pass told "stop at N" stops at about **1.45 × N**, which is
+within a few percent of `REVIEW_HEADROOM = 1.5` — the factor that file already applies over its measured costs, arrived at independently.
+
+**So the lever is not the budget's size, it is the instruction to emit.** The envelope has always been a number the pass may cross; the deadline
+is an action it must take. Both are prose in the same brief, and only one of them produced a record on a change whose rate was 0 of 8.
+
+## What the record itself found, and the second wall behind it
+
+The record's findings are real and one is major (`rri-f1`: the brief's finding-history table renders a finding's class under two different
+vocabularies depending on which store it came from). **But the gate refuses it for a different reason**:
+
+```
+status: recorded | gate satisfied: false | reason: executor_unavailable
+```
+
+`executor_unavailable` is the fail-closed half of the execution-control contract: a strict node requires a host that advertises `fresh_context`
+and `read_only_fs` **via a receipt**, and this host can offer those as agent properties but has no receipt mechanism, so kata refuses rather than
+trusting a self-report. That is architecture #722, and it means `review-record-integrity` is blocked by a **host capability**, not by a record —
+and the eight record-less rounds were hiding it, because a change cannot discover which wall it is behind until it stops hitting the first one.
+
+## What this changes for the four blocked changes
+
+`closure-gate`, `kata-gate-surface` and `repair-by-another-author` are blocked by `stale_revision` and, for `closure-gate`, by a record that
+claimed only AC-1 … AC-3. **The deadline is the same lever for both halves**: a round told to emit by call N emits a record at about 1.45 N, and
+the record it emits claims what it has examined — so the treatment for those three is one round each with the deadline, plus the five criteria
+named in the prompt. Whether their records then meet the same `executor_unavailable` wall is the next measurement, and it is cheap because it
+happens at the gate rather than after 60 minutes of reading.
