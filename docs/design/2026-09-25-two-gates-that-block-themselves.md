@@ -95,3 +95,27 @@ implemented, their evidence passes, their obligations are answered, and the fals
 mis-derived identities and a hand-typed coverage marker along the way. What is not reachable is the *certification step*, which requires an
 artefact from a pass that does not produce it. The honest terminal state is `hardVerify` with the reason recorded here, not an approval
 written by the author.
+
+## 4. The archive refusal named an exit that no command could reach — and fixing it archived the first change on this line
+
+`wiring-coverage-check` reached `distill` with `judge PASS` and `archive` refused:
+
+```
+Archive blocked; 5 unfixed blocking/major finding(s) remain: … Repair them, or record evidence that they do not hold.
+```
+
+The evidence **had** been recorded — five absences, each with its measurement — and the command that records it (`kata-cli falsify --none`) writes
+to the falsifier ledger, while the filter read `finding.disposition`. **No command writes a disposition for a blocking or major finding**
+(`findings accept` and `defer` refuse them by design), so the exit the refusal named was unreachable by the command it implied.
+
+That is the **seventh consumer of one question** to be repaired for reading a copy — after `cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, the review
+admission and `findings accept` — and its repair is the same one: ask the ledger and the obligations. It took two commits, because the first
+asked the ledger **without the binding**, and `revisionCounts` returns false for a missing binding by design; measured, then fixed.
+
+With that, the remaining refusal was the *documented* one — six below-the-bar findings not carried anywhere — and
+`archive --findings-carried-to <ticket>` closed it. **`wiring-coverage-check` is the first change on this line to reach `archive`**, which
+proves the path is reachable end to end: review approved → judge PASS → distill → archive. What the other four lack is not a gate but a
+record.
+
+That distinction is the arc's own summary: **every gate that refused could be repaired, and the last one to refuse was refusing on evidence
+it could not see.** The one thing no repair reached is a pass that emits a record.
