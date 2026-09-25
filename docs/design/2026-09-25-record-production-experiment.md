@@ -192,3 +192,32 @@ The deadline was then applied to every remaining change. **Six rounds, six recor
 1. **`abandoned` refuses the round, and the brief instructs the pass to use it.** `major-finding-closure`'s pass hit its deadline with six test files unread and recorded the remainder honestly — `outcome: "abandoned"`, with the reason *"the 30-call deadline arrived before I read these six files, so I record the group as abandoned rather than claim an examination I did not make."* The brief says exactly that is allowed (*"Running out is a result, not a failure. A hypothesis stopped by a limit is recorded as `abandoned`"*), and `review-state.ts` refuses any round containing one: *"a hypothesis was abandoned to a limit, so this round did not conclude."* So the instruction and the judge disagree, and the pass that follows the instruction loses the whole round. **That is the ninth instance of this line's class**, produced by the mechanism written to fix the eighth.
 
 2. **A repair to one change supersedes a ready sibling.** `kata-gate-surface` reached `satisfied: true` (`no_defect_found`), review approved, no blocking finding — and then `judge` failed every criterion with `stale_evidence`, because repairing `repair-by-another-author`'s blocking finding edited `src/quality/adversarial.ts`, an owned path of both. Its seal is 11:50 and that file moved at 14:12 UTC. This is constraint #689 measured in the live workflow: with nine changes sharing six central files, **a change's readiness has a shelf life measured in minutes**, and nothing in the ladder says so.
+
+
+## The one thing the treatment's instruction got wrong, and it is mine rather than kata's
+
+`major-finding-closure`'s pass recorded a group of six test files as `abandoned` with the reason *"the 30-call deadline arrived
+before I read these six files, so I record the group as abandoned rather than claim an examination I did not make."* That is exactly what
+the brief's envelope section permits — *"record the remaining ones as `abandoned`, naming the limit"* — and `review-state.ts` refuses any
+round containing one, because a round that stopped at a limit did not conclude. **So the record was refused and the round's two findings went
+with it.**
+
+I first treated that as a kata defect and changed the refusal — **and two tests refused the change**, both named *"derives budget_exhausted
+when a hypothesis was abandoned to a limit"*. The design is deliberate: a limit must not be laundered into a pass. I reverted it.
+
+**The measurement that settles whose defect it is: the round used 50 of its 215 tool calls and 8.5 of its 66 minutes.** It had three quarters of
+its budget and 85% of its wall time left when it abandoned six files because *my dispatch prompt* said the deadline was its 30th tool call. I
+wrote the deadline as though hitting it meant stopping, when its purpose is to make the pass **emit** — the brief's own wording is *"the last
+record you emit is the record"*, i.e. emit early and improve it.
+
+**So the instruction this documents, for the next dispatch:**
+
+> Emit a record by your Nth tool call — **and keep working until every criterion this revision changed has been examined, because a hypothesis
+> left `abandoned` refuses the whole round.** The deadline is when the record must first exist, not when the reading stops.
+
+And the deadline should be stated at about **1.45 × the intended point**, because that is what the passes do with it: 25 → 36, 30 → 31, 30 → 35,
+30 → 50, 30 → 75. Five measurements, and the two smallest overruns are the two passes that had the most left to do.
+
+**What the treatment did and did not fix, stated plainly:** it fixed *the record never being produced* — six for six against 28 of 62. It did
+not fix *the record being complete*, and one over-strict instruction of mine turned a budget-rich pass into an abandoned one. Both halves are
+now measured, and only the first is a kata defect.
