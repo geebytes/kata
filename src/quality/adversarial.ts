@@ -111,6 +111,17 @@ export interface AdversarialRecord {
     node: AdversarialNode;
     /** What this pass read, as facts rather than text. The hash is taken from the content when the record is written. */
     deliveredFacts?: Array<{ path: string; note: string }>;
+    /**
+     * The test files this pass created. Declaring none is the ordinary case; the field exists because the guard's question — *did the
+     * pass write the test it cites?* — cannot be answered from the filesystem, so the record answers it and the guard checks the record
+     * against itself.
+     */
+    wroteTests?: string[];
+    /**
+     * Test files this pass **read** and argued from, which it did not write. Declared for the same reason: a test a pass read is on
+     * disk exactly as one it wrote is, so the record is the only place the distinction exists.
+     */
+    readTests?: string[];
     /** What a previous round cost, so the round is told the price of the search it is about to run. */
     usage?: Record<string, number>;
     status: 'recorded' | 'waived';
@@ -1593,34 +1604,18 @@ export function evaluateAdversarialGate(
     // that is not there is not a citation of a run. Narrowing it cannot let an authored test through — that one exists by
     // definition — which is why this is precision rather than a loosening. **Fail closed**: with no list the guard cannot
     // tell a mention from a run, so it keeps refusing, which is today's behaviour rather than an opened hole.
-    // **The question is *did this pass write the test it cites?*, and it took three attempts to ask it without lying in one
-    // direction or the other.**
+    // **The question is *did this pass write the test it cites?*, and four attempts to answer it from the world each failed in a
+    // direction of its own** (`docs/design/2026-09-25-the-citation-guard-cannot-be-answered.md`): on disk admits everything a pass
+    // wrote; not-on-disk refuses everything it read (round 8); in the sealed content refuses another change's test (round 5 of
+    // `wiring-coverage-check`); mtime ≤ the seal refuses the same, because the author had edited those files since (round 10).
     //
-    //   1. `existing.includes(path)` — admit what is on disk. Refuses nothing a pass wrote, because a written test is on disk.
-    //   2. `!existing.includes(path)` — admit only what is *not* on disk. Refuses every test a pass legitimately **read**, because
-    //      reading a file does not remove it. (Measured: round 8 of `kata-gate-surface` was refused for citing a test it read.)
-    //   3. *in the sealed revision's content* — admit what the seal carried. Refuses a pass that cites a test belonging to
-    //      **another change**, which is ordinary and honest: round 5 of `wiring-coverage-check` argued from three tests it read and
-    //      wrote none of.
-    //
-    // All three answer a proxy. The fact that answers the question directly is **when the file appeared**: a test the pass wrote did
-    // not exist when the brief was issued, and one it read did. So `existingTestPaths` is a path → modification time map, and the
-    // test is `mtime <= issuedAt` — which a read-only pass cannot forge, because writing the file is what moves its mtime. Where no
-    // clock is available the guard cannot tell a mention from a run and keeps refusing: fail closed, as before.
-    // **The seal's own time is the baseline**: the brief is issued for a revision, the pass runs after it, and a test the pass wrote
-    // was therefore created after the revision was sealed. `record.createdAt` would be too late (the pass writes it at the end, so
-    // every test it wrote would look pre-existing) and a brief timestamp is not in the record.
-    const sealedAt = input.sealedAt ? Date.parse(input.sealedAt) : Number.NaN;
-    const preexisting = input.existingTestPaths;
+    // Every one infers an event from a state, and no state can show it: the honest pass and the authoring pass are identical in
+    // existence, content, mtime and digest. So the **record** answers it — `wroteTests` and `readTests`, either empty and both
+    // ordinary — and the guard refuses **self-contradiction**: a citation no declaration on this revision names. Decidable from the
+    // record alone, and honest about its ceiling: a pass could omit a file, exactly as it could misreport `executedInFreshContext`.
+    const declaredTests = new Set([...(record.wroteTests ?? []), ...(record.readTests ?? [])]);
     const undeclared = permittedTests.length > 0
-        ? undeclaredTestPaths(record, permittedTests).filter((path) => {
-            if (!preexisting || preexisting.length === 0 || !Number.isFinite(sealedAt)) return true;
-            const seen = preexisting.find((entry) => entry.path === path);
-            // Absent, or modified after the brief was issued: the shape of a test this pass wrote.
-            if (!seen) return true;
-            const at = Date.parse(seen.mtime);
-            return !Number.isFinite(at) || at > sealedAt;
-        })
+        ? undeclaredTestPaths(record, [...new Set([...permittedTests, ...declaredTests])])
         : [];
     if (undeclared.length > 0) {
         return {
