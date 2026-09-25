@@ -245,3 +245,14 @@ Measured at the end of the arc, with five archived:
 1. **Shared `ownedPaths` give readiness a shelf life measured in minutes.** `kata-gate-surface` was certifiable and was superseded by a sibling's repair. This is constraint #689 in the live workflow, and the only untried lever for it is the one recorded earlier and never executed: **run one change's whole cycle without letting any other change's edit land in between.**
 2. **A strict change needs a host capability receipt this host cannot produce** — `review-record-integrity`, blocked correctly by a fail-closed check rather than by evidence.
 3. **My own deadline instruction was over-strict once**, which cost `major-finding-closure` a round; the corrected form is written above and that change is re-running under it.
+
+
+## The fourth way an absence fails to bind: it was written under an id no finding has
+
+Recording `kata-gate-surface`'s four major findings as measured absences did nothing — the seal kept refusing them as *"awaiting a falsifier or a recorded absence"* — and the cause was in the data I had just written. **I passed the short ids** (`kgsr14-f1`, `kgsr14-f2`, …) **because that is how they are rendered in a listing, while the task's records hold the full ids** (`kgsr14-f1-the-seal-writes-its-record-before-the-closure-it-would-agree-with`, …). So the ledger held four entries keyed to findings that do not exist, and the preflight — which asks by the finding's own id — found none of them.
+
+**`falsify` accepted a `findingId` that matches nothing.** It validates the refusals it can measure (a check that did not pass, a defect that did not redden, a tree that did not return) and takes the *subject* on trust. That is the same class as everything else in this document — a writer that does not check its key against the reader's vocabulary — and it is the fourth distinct way an absence has failed to bind on this line, after the missing binding, the binding to the revision instead of the tree, and the binding to the whole `ownedPaths` instead of the files the finding is about.
+
+With the full ids, all four bound immediately and the seal went through on the first attempt. `kata-gate-surface` re-sealed as `revision-a118c21c7b83ebbf`, `verify PASS`, obligations zero.
+
+**The repair, for whoever picks this up: `falsify` should refuse a `findingId` the task's records do not contain** — the reader it has to satisfy is the preflight, and it asks by that exact string.
