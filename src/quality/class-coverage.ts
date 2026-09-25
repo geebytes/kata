@@ -30,6 +30,15 @@ export interface CoverageEntry {
     readonly means: string;
     /** The declared check that reddens when the class returns. */
     readonly coveredBy: readonly string[];
+    /**
+     * The instances of this class the named check does **not** catch, when it catches only some of them.
+     *
+     * It exists because `covered` was `coveredBy.length > 0` — *the class names a check*, not *a check that catches a new instance*
+     * — and AC-1's third route closes a finding on that flag while promising "a new instance of that class fails in the declared
+     * covering check rather than in a future round". For an entry whose own prose already recorded an uncovered defining instance,
+     * that promise was false (`cg8-f1`). So a class with uncovered instances is not coverage for the route's purpose.
+     */
+    readonly uncoveredInstances?: string;
 }
 
 export const CLASS_COVERAGE: readonly CoverageEntry[] = [
@@ -62,6 +71,7 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
             + 'covering check finds. **Its defining instance is not covered: an assertion that checks a value the defect also '
             + 'produces.** No check detects that today, so a repair may satisfy this class with a weaker property and the round would '
             + 'close on it.',
+        uncoveredInstances: 'an assertion that checks a value the defect also produces',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
     },
     {
@@ -124,7 +134,9 @@ export async function classesOfFindings(root: string, taskId: string): Promise<R
 export function coveredClasses(): Array<{ classId: string; covered: boolean; coveredBy: readonly string[] }> {
     return CLASS_COVERAGE.map((entry) => ({
         classId: entry.classId,
-        covered: entry.coveredBy.length > 0,
+        // **Coverage is "a check catches a new instance", not "a class names a check"** (`cg8-f1`). An entry that records an uncovered
+        // defining instance does not answer the third route's promise, so it is reported uncovered however many checks it names.
+        covered: entry.coveredBy.length > 0 && !entry.uncoveredInstances,
         coveredBy: entry.coveredBy,
     }));
 }

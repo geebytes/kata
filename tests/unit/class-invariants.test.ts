@@ -205,8 +205,14 @@ describe('the four classes, and the checks that cover them', () => {
         // **The predicate, not a literal** (`wcc6-f3`): this passed `covered: true` for every class it listed, so the case held whatever the
         // table said. It asks the function that decides it now.
         const verdict = roundMayClose(open, coveredClasses());
-        expect(verdict.mayClose).toBe(true);
-        expect(verdict.open).toEqual([]);
+        // **And one of these findings is no longer closable** (`cg8-f1`): `a-check-that-cannot-fail` records an uncovered defining
+        // instance, so for the third route's purpose — "a new instance of that class fails in the declared covering check" — it is not
+        // covered. A finding naming it therefore keeps the round open, which is the honest answer rather than the convenient one.
+        expect(verdict.mayClose).toBe(false);
+        expect(verdict.open.map((entry) => entry.classId)).toEqual(['a-check-that-cannot-fail']);
+        // And the same findings minus that one do close, so the rule is about that class and not about the list.
+        const withoutIt = open.filter((finding) => !finding.classInstances.includes('a-check-that-cannot-fail'));
+        expect(roundMayClose(withoutIt, coveredClasses()).mayClose).toBe(true);
     });
 });
 
@@ -289,11 +295,14 @@ describe('a class with no covering check is not covered', () => {
         const { coveredClasses, CLASS_COVERAGE } = await import('../../src/quality/class-coverage.js');
         const derived = coveredClasses();
         expect(derived.length).toBe(CLASS_COVERAGE.length);
-        // Every class in the table today names a check, so this asserts the relationship rather than the count — and a future
-        // entry with no check is exactly what this reddens on.
+        // **Coverage is "a check catches a new instance", not "a class names a check"** (`cg8-f1`): an entry that records an uncovered
+        // defining instance is reported uncovered however many checks it names, because the third route closes a finding on this flag
+        // while promising that a new instance would fail in the declared check.
         for (const entry of derived) {
-            expect(entry.covered).toBe(entry.coveredBy.length > 0);
+            const source = CLASS_COVERAGE.find((candidate) => candidate.classId === entry.classId);
+            expect(entry.covered).toBe(entry.coveredBy.length > 0 && !source?.uncoveredInstances);
         }
-        expect(derived.every((entry) => entry.covered)).toBe(true);
+        // At least one entry records an uncovered instance today — that is the case this asserts, not a count of it.
+        expect(derived.some((entry) => !entry.covered)).toBe(true);
     });
 });

@@ -76,6 +76,16 @@ export interface RevisionUnderReview {
     changedPaths: string[];
     /** The acceptance criteria the revision must answer for. */
     criterionIds: string[];
+    /**
+     * Why the remit is what it is, when that is worth saying — two delta briefs for one revision means the surface came from the
+     * seal rather than from a brief.
+     *
+     * It is declared here because `remitNotes` was computed and passed into this shape while **the shape had no member for it**
+     * (`cg8-f5`, the same defect the note itself reports one layer up): a field written into an object whose type does not declare it
+     * is a field no reader can rely on, and the comment claiming "read by the audit trail below" described a consumer that did not
+     * exist.
+     */
+    remitNotes?: string[];
     /** The test selectors the task declares, for the `test` observation kind. */
     declaredTestSelectors?: string[];
     /** Evidence envelope ids bound to this revision, for the `evidence` observation kind. */
