@@ -98,6 +98,7 @@ describe('a packet the reviewer can actually open', () => {
         const { initLayout } = await import('../../src/core/layout.js');
         const { createTask } = await import('../../src/core/task.js');
         const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+        const { readFileSync } = await import('node:fs');
         const { tmpdir } = await import('node:os');
         const { join } = await import('node:path');
         const root = await mkdtemp(join(tmpdir(), 'kata-packet-'));
@@ -107,14 +108,19 @@ describe('a packet the reviewer can actually open', () => {
             await mkdir(join(root, 'src'), { recursive: true });
             await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
             const brief = await buildAdversarialBrief(root, 'packet-task', 'review');
-            // The packet's own shape, asserted on the object rather than on a file: one line per brief line, none oversized.
-            const packet = { request: brief.runRequest, brief: { sha256: brief.sha256, lines: brief.text.split('\n') } };
-            const serialised = `${JSON.stringify(packet, null, 2)}\n`;
-            const longest = serialised.split('\n').reduce((max, line) => Math.max(max, line.length), 0);
-            // 2000, because a reader that refuses 50 KB makes any line over a couple of KB a hazard; the brief's own paragraphs are
-            // the longest content and they are written one per line.
+            // **The packet's shape as the command writes it.** The first version of this case assembled the object here and asserted
+            // `lines.join('\n') === text` — an identity true of every string, so it demonstrated nothing (`kgsr8-f5`): the tenth check
+            // on this line that could not fail, in the file that exists to fix the ninth. What decides the shape is the command, so
+            // the check reads the command's own source for the two halves that make a brief openable: the brief is emitted as
+            // `lines`, and it is not emitted as a single `text` string.
+            const ops = readFileSync(join(process.cwd(), 'src/cli/ops.ts'), 'utf8');
+            const emit = ops.slice(ops.indexOf('const packet = { request: brief.runRequest'), ops.indexOf('await writeFile(emitRequest'));
+            expect(emit).toContain('lines: brief.text.split');
+            expect(emit).not.toMatch(/text:\s*brief\.text/);
+            // And the brief really is long enough for the distinction to matter: one line of it would be a document, not a line.
+            expect(brief.text.split('\n').length).toBeGreaterThan(50);
+            const longest = brief.text.split('\n').reduce((max, line) => Math.max(max, line.length), 0);
             expect(longest).toBeLessThan(20_000);
-            expect(packet.brief.lines.join('\n')).toBe(brief.text);
         } finally {
             await rm(root, { recursive: true, force: true });
         }

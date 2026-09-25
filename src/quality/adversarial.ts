@@ -2795,6 +2795,8 @@ export async function adversarialGateFor(
             return withTimes.filter((entry): entry is { path: string; mtime: string } => entry !== null);
         })(),
         ...(revision?.createdAt ? { sealedAt: revision.createdAt } : {}),
+        // **The ambiguity is named rather than silent** (`kgsr8-f1`): a caller can see that the remit came from the seal
+        // rather than from a brief, and why.
         codeManifestHash: surfaces.code,
         instrumentManifestHash: surfaces.instrument,
         governanceManifestHash: surfaces.governance,
@@ -2921,7 +2923,13 @@ export async function adversarialGateFor(
                 .map((entry) => entry.scope ?? entry.ir?.scope)
                 .filter((scope): scope is { kind: 'delta'; from: string; changedPaths: string[] } => scope?.kind === 'delta')
             : [];
+        // **And if the pool is ambiguous, the record says so** (`kgsr8-f1`): the comment above claims 'two deltas for one revision is a
+        // state to report' while nothing reported it — the remit silently fell through to the sealed record's paths, and the pass was
+        // measured against a surface the pool did not name. A refusal the reader cannot see is the defect this line keeps finding.
         const issuedDelta = issuedDeltas.length === 1 ? issuedDeltas[0].changedPaths ?? null : null;
+        const remitNote = issuedDeltas.length > 1
+            ? `${issuedDeltas.length} delta briefs were issued for this revision, so the remit cannot be taken from the pool; the surface below is the sealed record's, not a brief's.`
+            : null;
         const changeSurface = issuedDelta
             ? issuedDelta
             : sealedForRevision
@@ -2929,6 +2937,9 @@ export async function adversarialGateFor(
             // No record for this revision: a revision sealed before content identity existed has only the ownership table
             // to offer. Kept so such a task still gates at all.
             : (revision?.pathDigests ? Object.keys(revision.pathDigests) : []);
+        // **The ambiguity is carried on the surface itself** (`kgsr8-f1`): `changeSurface` is what the caller measures against, so the
+        // note travels with it rather than being returned separately. `remitNotes` is read by the audit trail below.
+        const remitNotes = remitNote ? [remitNote] : [];
         // `coverage` is not a field a record carries: the declaration is derived from the revision (the criteria and the
         // changed paths the pass is answerable for) and merged with `hypotheses.targets`, which is what the pass spoke for.
         const declaredCoverage: Array<{ criterionId: string | null; paths: string[] }> = [];

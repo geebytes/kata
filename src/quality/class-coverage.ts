@@ -95,7 +95,7 @@ export async function classesOfFindings(root: string, taskId: string): Promise<R
     // **One derivation of "the class a finding is an instance of"** (`kgsr7-f4`): this kept only the first, while `roundMayClose`
     // reads every id in `classInstances`. So a finding whose second class had no covering check kept its round open while the
     // closure rule — reading the first — saw it as covered, or the reverse. The two consumers now read the same fact: the set the
-    // finding names, and a consumer that wants one answer asks `classesOf()`.
+    // finding names, and **every consumer now asks whether any of them is covered** — there is no `classesOf()` helper and the comment that named one was wrong (`kgsr8-f4`).
     const classOf: Record<string, string[]> = {};
     // See `repair-briefing.ts`: a swallow here would answer "no classes" for a schema-invalid record (`rba12-f4`).
     for (const tracked of await readTrackedFindings(root, taskId)) {

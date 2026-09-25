@@ -20,7 +20,13 @@ describe('every gate reason has a message', () => {
         const union = source.slice(source.indexOf('export type AdversarialGateReason'), source.indexOf(';', source.indexOf('export type AdversarialGateReason')));
         const members = [...union.matchAll(/\|\s*'([a-z_]+)'/g)].map((m) => m[1]);
         expect(members.length).toBeGreaterThan(8);
-        const reasonFn = source.slice(source.indexOf('export function adversarialReasonFor'));
+        // **The function's body, not everything after its declaration** (`kgsr8-f3`): this sliced to the end of the file, so a `case 'x':`
+        // label in any switch added later to `adversarial.ts` satisfied the check for member x even when `adversarialReasonFor` itself
+        // had lost that case. The body ends at the first line that closes it at column 0.
+        const from = source.indexOf('export function adversarialReasonFor');
+        const body = source.slice(from);
+        const end = body.indexOf('\n}');
+        const reasonFn = end > 0 ? body.slice(0, end) : body;
         const cases = new Set([...reasonFn.matchAll(/case '([a-z_]+)'/g)].map((m) => m[1]));
         const missing = members.filter((member) => !cases.has(member));
         expect(missing).toEqual([]);

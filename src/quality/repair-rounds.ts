@@ -45,6 +45,22 @@ async function readJson<T>(path: string): Promise<T | null> {
     }
 }
 
+/**
+ * **One definition of "a round", for every module that reports one** (`kgsr8-f2`).
+ *
+ * A revision that appears both in a node's history and in its live slot is **one round** — the history holds the copy that was
+ * replaced — and the two rounds that genuinely shared a revision differed in their hypotheses and attempts. So a round's identity is
+ * its revision **plus the content of those two fields**. `roundCost` restated this as a fingerprint over their *lengths*, which is a
+ * second derivation: it agrees today and would disagree the moment two rounds had equal counts and different content, which is
+ * ordinary. Exported so no consumer can restate it.
+ */
+export function recordIdentity(record: Record<string, unknown>): string {
+    const revision = String(record.revisionId ?? '(none)');
+    const hypotheses = Array.isArray(record.hypotheses) ? JSON.stringify(record.hypotheses) : '';
+    const attempts = Array.isArray(record.attempts) ? JSON.stringify(record.attempts) : '';
+    return `${revision}#${hypotheses}#${attempts}`;
+}
+
 export async function reportRounds(root: string, taskId: string, node = 'review'): Promise<RoundReport> {
     const history = await readJson<Array<Record<string, unknown>>>(join(kataDir(root), 'tasks', taskId, `adversarial-${node}-history.json`)) ?? [];
     const live = await readJson<Record<string, unknown>>(join(kataDir(root), 'tasks', taskId, `adversarial-${node}.json`));
@@ -65,14 +81,9 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     // the two rounds that really shared a revision differed in more than their revision id — which is what the record's own
     // `attempts` and `hypotheses` describe, and what a fingerprint over those two fields captures without depending on a
     // value the writer inherits.
-    const identity = (record: Record<string, unknown>) => {
-        const revision = String(record.revisionId ?? '(none)');
-        const hypotheses = Array.isArray(record.hypotheses) ? JSON.stringify(record.hypotheses) : '';
-        const attempts = Array.isArray(record.attempts) ? JSON.stringify(record.attempts) : '';
-        return `${revision}#${hypotheses}#${attempts}`;
-    };
-    const seen = new Set(history.map(identity));
-    if (live && !seen.has(identity(live))) rounds.push(toRound(live));
+    // see `recordIdentity` below — the single definition, exported so `round-cost.ts` cannot restate it (`kgsr8-f2`).
+    const seen = new Set(history.map(recordIdentity));
+    if (live && !seen.has(recordIdentity(live))) rounds.push(toRound(live));
     // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass (see `writeAdversarialRecord`),
     // so sorting by it put the live record **before** a history record that was actually earlier — measured:
     // `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`, where the live record is the middle one. The live record is the
@@ -80,7 +91,7 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
     // history keeps its own order. That removes the need to believe a timestamp the writer copies.
     const historyRounds = history.map(toRound);
     const liveRound = live ? toRound(live) : null;
-    const pushedLive = liveRound !== null && !seen.has(identity(live as Record<string, unknown>));
+    const pushedLive = liveRound !== null && !seen.has(recordIdentity(live as Record<string, unknown>));
     const ordered = pushedLive ? [...historyRounds, liveRound] : historyRounds;
     rounds.length = 0;
     rounds.push(...ordered);

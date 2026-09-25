@@ -13,7 +13,7 @@ answered it four times, each time wrongly in the other direction:
 | 3 | `sealedRevisionTestSelectors` — admit what the seal carried | **Refuses a pass that cites another change's test**, which is ordinary and honest | round 5 of `wiring-coverage-check`: refused for citing three tests it read and wrote none of |
 | 4 | `mtime <= sealedAt` — admit what existed when the revision was sealed | **Refuses the same three**, because the author had edited them since the seal | measured: `class-invariants.test.ts` mtime 01:32, `record-salvage.test.ts` 05:00, `repair-briefing.test.ts` 05:02, against a seal at 16:57 the previous day |
 
-The fourth was my own attempt at a *direct* fact rather than a proxy, and its failure is the interesting one: **the timestamps are
+The fourth was my own attempt at a *direct* fact rather than a proxy, and its failure is the interesting one — though the doc's summary sentence overstates the set: form #1 did not *refuse* honest records, it admitted everything, and the summary that says all four `refused honest records in a different direction` is corrected here (`kgsr8-f6`): **the timestamps are
 late because I edited those files today.** A test a pass read has a fresh mtime whenever its author has touched it since the seal, so
 "when did this file appear" is not a fact about the pass either.
 
