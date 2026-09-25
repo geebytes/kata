@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { salvageRecord } from '../../src/quality/record-salvage.js';
+import { salvageFromJsonl } from '../../src/quality/record-salvage.js';
 
 /**
  * The second channel for a required output.
@@ -144,5 +145,38 @@ describe('the brief template is not a record', () => {
         // With no expected revision it must still refuse; with the matching one it must refuse too — the id proves nothing.
         expect(salvageRecord(`Here is the record:\n${template}`)).toBeNull();
         expect(salvageRecord(`Here is the record:\n${template}`, { revisionId: 'revision-07880fc288c82d14' })).toBeNull();
+    });
+});
+
+/**
+ * **The last record in a transcript wins, not the longest** — `r7-f-salvage-jsonl`.
+ *
+ * The brief instructs a pass to emit an early record and then a more complete one, and says the last is the record. `salvageFromText`
+ * implements that; `salvageFromJsonl` — the channel the module calls the real input — sorted the extracted strings by length and
+ * returned the first hit, so a transcript holding two records returned whichever was longer. The falsifier is a transcript where the
+ * **later** record is **shorter**: with the rule implemented, the later one is returned; with length ordering, the earlier one is.
+ */
+describe('salvage takes the last record, not the longest', () => {
+    it('prefers the later, smaller record over an earlier, larger one', () => {
+        const early = JSON.stringify({
+            node: 'review', status: 'recorded', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+            hypotheses: [{ id: 'h1', claim: 'a'.repeat(400), targets: ['AC-1'], method: 'source-read', outcome: 'confirmed' }],
+            attempts: [{ hypothesis: 'x'.repeat(300), method: 'm', outcome: 'confirmed', evidence: 'e'.repeat(300) }],
+            findings: [{ id: 'early-finding', taskId: 't', severity: 'major', message: 'the first pass reported this', path: 'src/a.ts' }],
+        });
+        const late = JSON.stringify({
+            node: 'review', status: 'recorded', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+            hypotheses: [{ id: 'h1', claim: 'short', targets: ['AC-1'], method: 'source-read', outcome: 'confirmed' }],
+            attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed', evidence: 'the later pass re-ran the check' }],
+            findings: [{ id: 'late-finding', taskId: 't', severity: 'major', message: 'the later pass reported this', path: 'src/a.ts' }],
+        });
+        const transcript = [
+            JSON.stringify({ message: { role: 'assistant', content: [{ type: 'text', text: `Early record:\n${early}` }] } }),
+            JSON.stringify({ message: { role: 'assistant', content: [{ type: 'text', text: `Final record:\n${late}` }] } }),
+        ].join('\n');
+        const found = salvageFromJsonl(transcript, { revisionId: 'revision-aaaaaaaaaaaaaaaa' });
+        // The later message is smaller and must win: length is not the rule, position is.
+        expect(JSON.stringify(found)).toContain('late-finding');
+        expect(JSON.stringify(found)).not.toContain('early-finding');
     });
 });

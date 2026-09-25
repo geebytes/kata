@@ -117,7 +117,7 @@ function salvageFromText(transcript: string, expected?: { readonly revisionId?: 
 }
 
 /** The longest string value in a parsed transcript, scanned for a record — the text a pass actually wrote. */
-function salvageFromJsonl(transcript: string, expected?: { readonly revisionId?: string; readonly briefSha256?: string }): SalvagedRecord | null {
+export function salvageFromJsonl(transcript: string, expected?: { readonly revisionId?: string; readonly briefSha256?: string }): SalvagedRecord | null {
     const texts: string[] = [];
     let parsedAny = false;
     for (const line of transcript.split('\n')) {
@@ -131,14 +131,22 @@ function salvageFromJsonl(transcript: string, expected?: { readonly revisionId?:
         }
     }
     if (!parsedAny) return null;
-    // Longest first: a record is a large string, and scanning the longest few finds it without walking every token of a
-    // multi-megabyte transcript.
-    texts.sort((a, b) => b.length - a.length);
-    for (const text of texts.slice(0, 400)) {
+    // **Last, not longest** (`r7-f-salvage-jsonl`, and the docstring above states the rule the code did not follow). This sorted by
+    // length and returned the first hit, so a transcript holding two records — which is exactly the shape the brief asks for, an
+    // early one and a later, more complete one — returned whichever happened to be longer, and the brief's own instruction ("the
+    // last record you emit is the record") was contradicted by the channel the module calls the real input.
+    //
+    // The cost the old comment was avoiding is real: a multi-megabyte transcript should not be walked string by string. So the
+    // strings are still length-filtered for the expensive parse, but the **result is chosen by position**: every candidate is
+    // collected and the latest one wins, because that is the rule.
+    const byPosition = [...texts].map((text, index) => ({ text, index }));
+    const candidates: Array<{ found: NonNullable<ReturnType<typeof salvageFromText>>; index: number }> = [];
+    for (const { text, index } of byPosition.sort((a, b) => b.text.length - a.text.length).slice(0, 400)) {
         const found = salvageFromText(text, expected);
-        if (found) return found;
+        if (found) candidates.push({ found, index });
     }
-    return null;
+    if (candidates.length === 0) return null;
+    return candidates.sort((a, b) => b.index - a.index)[0].found;
 }
 
 function collectStrings(value: unknown, out: string[], depth = 0): void {

@@ -1790,7 +1790,14 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined, 
         // `undeclared_test_path` was a reason the gate could return and this switch had no case for it, so the operator read
         // "The independent adversarial pass is not satisfied." and had to open the JSON to learn which path was refused. The
         // gate's reason union and this function are one list; a member without a line here is a refusal with no remedy.
+        // Every member of `AdversarialGateReason` gets a case, and that is a rule rather than five accidents: a reason without a
+        // message is a refusal whose remedy the operator has to dig out of the JSON. Three more were missing (`r7-f-reason-members`
+        // found them; `undeclared_test_path` was the first), and the whole class is now closed by
+        // `tests/unit/every-gate-reason-has-a-message.test.ts`, which reads the union from the source and asserts a case for each.
         case 'undeclared_test_path': return 'The recorded adversarial pass cites a test path this change neither declares nor carried in its sealed revision, which is the shape of a test the pass wrote rather than ran. Cite a declared selector, or a test the sealed change record proves predates the pass.';
+        case 'executor_unavailable': return 'This host cannot run an independent pass under kata\'s capability contract — the executor the round would need is not available here. Run the round on a host that advertises it, or record the pass as an escalation with its reason.';
+        case 'receipt_unbound': return 'The pass carries an execution receipt that is not bound to this revision: the receipt names a different candidate freeze than the one in hand. Re-run the round against this revision so the receipt and the candidate are the same content.';
+        case 'capability_missing': return 'The pass attests capabilities the host did not demonstrate — a fresh context, read-only filesystem access, or a bounded tool set. Record what the host actually provides, or run the round where those are structural.';
         default: return 'The independent adversarial pass is not satisfied.';
     }
 }
