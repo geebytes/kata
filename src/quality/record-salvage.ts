@@ -98,11 +98,14 @@ function salvageFromText(transcript: string, expected?: { readonly revisionId?: 
                 parsed.revisionId.length > 0 &&
                 (parsed.status === 'recorded' || parsed.status === 'waived') &&
                 typeof parsed.node === 'string' &&
-                // **Not the brief's own template.** Every transcript holds the template the brief hands the pass, and its
-                // `revisionId` is the literal `${input.revisionId ?? ''}` — a non-empty string, so a shape test alone matched the
-                // template and reported a hit with one placeholder finding. The id shape is the platform's own, and a placeholder
-                // never has it.
-                /^revision-[0-9a-f]{8,}$/.test(String(parsed.revisionId));
+                /^revision-[0-9a-f]{8,}$/.test(String(parsed.revisionId)) &&
+                // **Not the brief's own template** (`rba11-f2`, and my earlier comment here was false). Every transcript holds
+                // the template the brief hands a pass — and `adversarial.ts` **interpolates the real revision id into it**, so
+                // the template's `node`, `status`, `revisionId` and its two arrays all satisfy a shape test, and `matches()`
+                // passes too. Measured in the issued packet: line 636 carries the real id inside the template block. The
+                // template's own signature is that its values are **placeholders in angle brackets**, and a real record never
+                // carries `<…>` in place of a hypothesis's method or a finding's id.
+                !/<[a-z][^>]*>/i.test(JSON.stringify(parsed).slice(0, 6000));
             if (looksLikeARecord) candidates.push({ record: parsed, at: start });
         } catch {
             // Not JSON from this brace; the next one may be.

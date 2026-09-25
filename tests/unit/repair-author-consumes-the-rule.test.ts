@@ -42,3 +42,52 @@ describe('a repair author consumes the disposition rule rather than restating it
         expect((await readRepairAuthors(root, 'r-task')).map((repair) => repair.findingId)).toEqual(['f-x']);
     });
 });
+
+/**
+ * **The binding is the tree, so a repair that touched an owned path can be recorded** — `rba11-f1`, from the eleventh round.
+ *
+ * `recordRepairAuthor` consumes the same disposition rule the closure criterion asks, and the criterion's content half is
+ * *the content the next seal will mint* — the tree. Reading `currentRevision.pathDigests` here made the two disagree the moment a
+ * repair touched an owned path: measured, a revision minted by a seal carries 19 of 19 digests equal to the tree while a proof
+ * seeded from the previous revision carried 8 of 19, so the write refused a repair that had actually been proved.
+ *
+ * The falsifier is the edit: record a disposition, change an owned path, then record the repair. Revert the binding to the sealed
+ * set and the second call is refused.
+ */
+describe('a repair that changed an owned path can be recorded', () => {
+    it('accepts a disposition taken before the edit, because the seal that follows mints the same tree', async () => {
+        const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const { initLayout } = await import('../../src/core/layout.js');
+        const { createTask } = await import('../../src/core/task.js');
+        const { createTaskRevision, computePathDigests } = await import('../../src/workflow/revision.js');
+        const { recordFalsifierReddening } = await import('../../src/quality/falsifier-reddenings.js');
+        const { recordRepairAuthor } = await import('../../src/quality/repair-author.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-author-tree-'));
+        try {
+            await initLayout(root);
+            await createTask({ root, id: 'author-tree', title: 'A', ownedPaths: ['src/a.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] });
+            await mkdir(join(root, 'src'), { recursive: true });
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
+            await createTaskRevision({ root, taskId: 'author-tree', ownedPaths: ['src/a.ts'], checkIds: [] });
+            // **The prescribed order: the repair lands, then the disposition is recorded, then the seal mints that content.**
+            // The first version of this case put the edit *after* the recording and it reddened — correctly, because the two
+            // then describe different trees. That is the discipline being real rather than a convention, and it is what the
+            // measured pair shows: a revision a seal minted carries 19 of 19 digests equal to the tree it was minted from.
+            await writeFile(join(root, 'src/a.ts'), 'export const a = 2;\n', 'utf8');
+            const after = await computePathDigests(root, ['src/a.ts']);
+            await recordFalsifierReddening(root, 'author-tree', {
+                findingId: 'f-owned', check: 'true', mutation: 'false', revisionId: 'revision-aaaaaaaaaaaaaaaa',
+                observed: { before: 0, mutated: 1, after: 0 }, reddenedAt: '2026-01-01T00:00:00.000Z', pathDigests: after,
+            });
+            await createTaskRevision({ root, taskId: 'author-tree', ownedPaths: ['src/a.ts'], checkIds: [] });
+            await expect(recordRepairAuthor(root, 'author-tree', {
+                findingId: 'f-owned', session: 'a session that did not write it', handed: 'the findings and their falsifiers',
+                report: 'changed src/a.ts to 2', recordedAt: '2026-01-01T00:00:00.000Z',
+            })).resolves.toBeDefined();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+});

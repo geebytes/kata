@@ -119,3 +119,30 @@ describe('a packet the reviewer can actually open', () => {
         }
     });
 });
+
+/**
+ * **The brief's own template must not be salvaged as a record** — `rba11-f2`, and my earlier fix for it was false.
+ *
+ * Every transcript contains the template the brief hands a pass, and `adversarial.ts` **interpolates the real revision id into
+ * it** — so its `node`, `status`, `revisionId` and its two arrays all satisfy a shape test, and an identity match against the
+ * expected revision passes too. Measured in an issued packet: the template block carries the real id. A round that wrote no record
+ * therefore had the template as its only candidate, and this function would have reported a "salvaged record" whose findings are
+ * placeholders — worse than reporting none, because the gate would then be handed something it must refuse.
+ *
+ * The template's own signature is that its values are placeholders in angle brackets.
+ */
+describe('the brief template is not a record', () => {
+    it('rejects a template that carries the round\'s real revision id', () => {
+        const template = JSON.stringify({
+            node: 'review', status: 'recorded', revisionId: 'revision-07880fc288c82d14',
+            executedInFreshContext: true, contextNote: '<how this pass ran in a context that did not author the change>',
+            briefSha256: '<the hash reported by the brief command>',
+            hypotheses: [{ id: 'h1', claim: '<what you asserted was false>', targets: ['<acceptance id or changed path>'], method: 'mutation | source-read' }],
+            attempts: [{ hypothesis: '<what you tried to show was false>', method: '<what you did>' }],
+            findings: [{ id: '<stable id>', taskId: 'x', severity: 'blocking | major | minor | nit', message: '<the defect and how you confirmed it>' }],
+        });
+        // With no expected revision it must still refuse; with the matching one it must refuse too — the id proves nothing.
+        expect(salvageRecord(`Here is the record:\n${template}`)).toBeNull();
+        expect(salvageRecord(`Here is the record:\n${template}`, { revisionId: 'revision-07880fc288c82d14' })).toBeNull();
+    });
+});
