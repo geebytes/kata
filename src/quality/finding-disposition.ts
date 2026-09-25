@@ -262,6 +262,40 @@ export async function applyDisposition(
         ? reviewPath(root, taskId)
         : adversarialReviewPath(root, taskId, source.replace('adversarial-', ''));
     let found = false;
+    // **A finding can live in the history, not the slot.** `writeAdversarialRecord` appends the record it replaces to
+    // `<node>-history.json`, so a finding raised by an earlier pass is readable (`readTrackedFindings` merges both) but
+    // unreachable to a disposition that only edits the slot — measured: `findings accept` reported "could not be written
+    // back to adversarial-review" for a finding that was plainly there. A decision belongs to the finding, so the write
+    // follows it to whichever file holds it.
+    const historyPath = path.replace(/\.json$/, '-history.json');
+    const slotHasIt = await readFile(path, 'utf8')
+        .then((text) => (JSON.parse(text) as { findings?: Array<{ id?: string }> }).findings?.some((f) => f.id === findingId) === true)
+        .catch(() => false);
+    if (!slotHasIt) {
+        const inHistory = await readFile(historyPath, 'utf8')
+            .then((text) => (JSON.parse(text) as Array<{ findings?: Array<{ id?: string }> }>).some((entry) => entry.findings?.some((f) => f.id === findingId)))
+            .catch(() => false);
+        if (inHistory) {
+            await mutateTaskArtefact(root, taskId, historyPath, async () => {
+                const entries = JSON.parse(await readFile(historyPath, 'utf8')) as Array<{ findings?: Array<Record<string, unknown>> }>;
+                let hit: boolean = false;
+                for (const entry of entries) {
+                    for (const finding of entry.findings ?? []) {
+                        if (finding.id !== findingId) continue;
+                        hit = true;
+                        finding.disposition = event.disposition;
+                        if (event.reason !== undefined) finding.dispositionReason = event.reason;
+                        if (event.by !== undefined) finding.dispositionBy = event.by;
+                        finding.dispositionAt = event.at;
+                    }
+                }
+                // The caller checked presence a moment ago, so a miss here is a race rather than a refusal: return the file unchanged.
+                return `${JSON.stringify(entries, null, 2)}\n`;
+            });
+            // The write followed the finding into the history, so this call is done.
+            return true;
+        }
+    }
     await mutateTaskArtefact(root, taskId, path, async () => {
         const raw = JSON.parse(await readFile(path, 'utf8')) as { findings?: Array<Record<string, unknown>> };
         const next = JSON.parse(JSON.stringify(raw)) as { findings?: Array<Record<string, unknown>> };
