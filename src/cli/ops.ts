@@ -711,9 +711,12 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // same ledger the criterion reads — and a change sealed before the criterion existed shows up here as evidence-only
         // rather than silently, which is the reason this criterion is not optional.
         const { readObligations } = await import('../quality/repair-obligations.js');
-        const { readFalsifierReddenings, hasReddening } = await import('../quality/falsifier-reddenings.js');
+        const { readFalsifierReddenings, readFalsifierAbsences, hasFalsifierDisposition } = await import('../quality/falsifier-reddenings.js');
         const obligations = await readObligations(root, change).catch(() => []);
         const reddenings = await readFalsifierReddenings(root, change).catch(() => []);
+        // The absences too: the rule accepts three shapes (a reddening, a recorded absence, class coverage) and a report that reads
+        // one of them answers a different question than the verdict does (`kgsr7-f3`).
+        const absences = await readFalsifierAbsences(root, change).catch(() => []);
         // The same predicate the criterion applies, narrowing included: a report computed with a weaker rule can disagree
         // with the rule it reports on (cg3-f4).
         const { readCurrentTaskRevision } = await import('../workflow/revision.js');
@@ -724,6 +727,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         // See `navigation.ts`: the callee throws on an invalid record and a `.catch` here would turn that back into an empty
         // list, which is the input `roundMayClose` reads as "nothing to cover" (`rba10-f1`).
         const trackedForStatus = await readTrackedFindings(root, change);
+        // **The class half, read the same way the criterion reads it** (`kgsr7-f3`): a finding is covered by class when its
+        // `classInstances` names a class the table covers. `classesOfFindings` keeps the first class, and the resolver reads the
+        // same table, so asking it here cannot give a different answer.
+        const { classesOfFindings: classesForStatus, coveredClasses: coveredForStatus } = await import('../quality/class-coverage.js');
+        const classOfForStatus = await classesForStatus(root, change).catch(() => ({} as Record<string, string[]>));
+        const coveredSetForStatus = new Set(coveredForStatus().filter((entry) => entry.covered).map((entry) => entry.classId));
+        const coveredByClassFor = (findingId: string): boolean =>
+            (classOfForStatus[findingId] ?? []).some((classId) => coveredSetForStatus.has(classId));
         // **The termination condition review lacked, reported where the ladder reads.** Measured: `closure-gate` ran five rounds and
         // `repair-by-another-author` seven, every round's findings about the previous round's repairs — because the loop had no state
         // meaning "this is enough". `roundMayClose` is that state: a round may close when every class an open terminal finding names
@@ -822,9 +833,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 // different facts and a default would erase it.
                 answeredBy: obligation.resolvedAt
                     ? obligation.findingId
-                        // **The same two halves the rule asks about** (rba5-f3): this passed a revision and no content, so it
-                        // answered a weaker question than the criterion and could report a stale-proof obligation as answered.
-                        ? (hasReddening(reddenings, obligation.findingId, { revisionId: currentRevisionId ?? null, pathDigests: currentRevisionForStatus?.pathDigests ?? null })
+                        // **The predicate the criterion asks, not one of its halves** (`kgsr7-f3`). This called `hasReddening` alone
+                        // while the rule is `coveredByClass || hasFalsifierDisposition(reddenings, absences, …)` — so a finding closed
+                        // by a *recorded absence* or by *class coverage* was reported as answered by evidence alone. It has been a
+                        // second derivation for three rounds; it now asks the same function the verdict asks.
+                        ? (hasFalsifierDisposition(reddenings, absences, obligation.findingId, {
+                            revisionId: currentRevisionId ?? null,
+                            pathDigests: currentRevisionForStatus?.pathDigests ?? null,
+                        }) || coveredByClassFor(obligation.findingId)
                             ? 'evidence-and-falsifier'
                             : 'evidence-only')
                         : 'evidence'

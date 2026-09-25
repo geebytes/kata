@@ -236,14 +236,14 @@ describe('§6 self-evidence: the record-integrity rules can be shown to fail', (
                 briefSha256: reviewBrief.sha256,
                 scope: { kind: 'full' },
                 attempts: [{ hypothesis: 'h', method: 'm', outcome: 'confirmed' }],
-                findings: [{ id: 'cross-node', taskId: 'history-cross', severity: 'major', message: 'found by the review node', path: 'src/a.ts', disposition: 'deferred', dispositionReason: 'next round' }],
+                findings: [{ id: 'cross-node', taskId: 'history-cross', severity: 'major', message: 'found by the review node', path: 'src/a.ts', disposition: 'deferred', dispositionReason: 'next round', classInstances: ['one-concept-several-derivations'] }],
             });
 
             const verifyBrief = await buildAdversarialBrief(root, 'history-cross', 'verify');
             expect(verifyBrief.text).toContain('cross-node');
-            // Classed by the field that describes it, with the decision attached — that is what lets a pass attack the
-            // repair instead of re-deriving the class.
-            expect(verifyBrief.text).toContain('path:src/a.ts');
+            // Classed by the vocabulary the termination condition reads (`kgsr7-f2`), with the decision attached — that is what
+            // lets a pass attack the repair instead of re-deriving the class, and what lets the round close.
+            expect(verifyBrief.text).toContain('one-concept-several-derivations');
             expect(verifyBrief.text).toMatch(/deferred/i);
         });
 

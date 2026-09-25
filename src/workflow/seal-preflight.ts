@@ -171,8 +171,12 @@ export async function collectSealPreflight(input: {
             // **The content about to be sealed**, so the dry run asks the same question the resolver asks — with the same
             // binding. Omitting it here would leave the preflight comparing revision and the resolver comparing content,
             // which is the two-derivations shape this line keeps removing.
-            const { CLASS_COVERAGE } = await import('../quality/class-coverage.js');
-            const coveredClasses = CLASS_COVERAGE.map((entry) => entry.classId);
+            // **The predicate that answers the question, not a listing of the table** (`kgsr7-f1`, and the same defect `wcc4-f1` found
+            // in the resolver — I fixed that one and left this one, which is the shape this line keeps producing). A class is covered
+            // when it names a check, so an entry with `coveredBy: []` must not count here either.
+            const coveredClasses = (await import('../quality/class-coverage.js')).coveredClasses()
+                .filter((entry) => entry.covered)
+                .map((entry) => entry.classId);
             const classOf = await (await import('../quality/class-coverage.js')).classesOfFindings(root, taskId);
             // **The content about to be sealed — the working tree — which is what the revision this run mints will carry.**
             // Measured both ways on `kata-gate-surface`: a revision a seal minted has 19 of 19 digests equal to the tree, while a

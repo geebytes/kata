@@ -2097,7 +2097,13 @@ export async function buildAdversarialBrief(
                     || !finding.path
                     || immutableScope.changedPaths.includes(finding.path))
                 .map((finding) => ({
-                    class: findingClassOf(finding),
+                    // **The class vocabulary the termination condition reads** (`kgsr7-f2`, and it is the reviewer's own instruction
+                    // channel). This grouped findings by `findingClassOf` — `acceptance:AC-1` / `path:src/a.ts` / `record:review` —
+                    // while `roundMayClose` reads the ids in `CLASS_COVERAGE` that a finding names in its `classInstances`. So the
+                    // brief taught one vocabulary and the gate scored another, and a reviewer following its brief would have kept
+                    // its round open forever (or, worse, believed it had closed it). The class a finding is an instance of is the
+                    // one the round recorded, so that is what the section shows.
+                    class: (finding.classInstances ?? []).join(', ') || '(no class recorded — name one, or the round cannot close)',
                     severity: finding.severity,
                     id: finding.id,
                     message: finding.message,
@@ -2850,11 +2856,17 @@ export async function adversarialGateFor(
         // fixture that reaches the coverage conjunct, stayed green when it was removed. It was therefore deleted rather
         // than kept: a guard whose removal leaves the suite green is decorative, which is this change's own rule. The
         // contract it stood for lives here instead — **bind by revision, because a delta belongs to one**.
-        const issuedDelta = revisionId
+        // **One delta brief for this revision, or the remit is not decidable** (`kgsr7-f5`). This took the *first* delta scope in
+        // the pool, so a revision with two issued delta briefs — two rounds dispatched before either recorded — was measured
+        // against one of them, silently, and which one depended on the pool's ordering. The decision this replaces argued that
+        // the pool binds by revision and therefore cannot return another round's remit; that is true and does not bound the
+        // count, which is the thing a remit cannot be derived from by choosing. Two deltas for one revision is a state to report.
+        const issuedDeltas = revisionId
             ? (await issuedBriefPool(root, taskId, node, { revisionIds: [revisionId] })).accepted
                 .map((entry) => entry.scope ?? entry.ir?.scope)
-                .find((scope) => scope?.kind === 'delta')?.changedPaths ?? null
-            : null;
+                .filter((scope): scope is { kind: 'delta'; from: string; changedPaths: string[] } => scope?.kind === 'delta')
+            : [];
+        const issuedDelta = issuedDeltas.length === 1 ? issuedDeltas[0].changedPaths ?? null : null;
         const changeSurface = issuedDelta
             ? issuedDelta
             : sealedForRevision

@@ -155,7 +155,11 @@ export function obligationIsAnswered(input: {
     /** The classes a declared check covers, so a finding whose repair is class-level closes rather than owing an instance proof. */
     coveredClasses?: readonly string[];
     /** Which class each finding is an instance of, as the round that recorded it named it. */
-    classOf?: Readonly<Record<string, string>>;
+    /**
+     * The classes each finding is an instance of — every one it names, not the first (`kgsr7-f4`), because `roundMayClose` reads
+     * them all and a consumer that reads one answers a different question than the verdict.
+     */
+    classOf?: Readonly<Record<string, readonly string[]>>;
 }): { answered: boolean; evidenceIds: string[] } {
     const { obligation, resolvedAcceptanceIds, evidence, matrix } = input;
     const row = obligation.acceptanceId ? getMatrixRowForAc(matrix, obligation.acceptanceId) : undefined;
@@ -176,7 +180,7 @@ export function obligationIsAnswered(input: {
     // rather than in a future round. `coveredClasses` is that table, read from `class-coverage.ts`, and it is deliberately the same
     // fact `roundMayClose` asks before a round may close — one derivation, consulted by both the closure rule and the sweep.
     const coveredByClass = obligation.findingId
-        ? (input.coveredClasses ?? []).includes(input.classOf?.[obligation.findingId] ?? '')
+        ? (input.classOf?.[obligation.findingId] ?? []).some((classId) => (input.coveredClasses ?? []).includes(classId))
         : false;
     const falsified = obligation.findingId
         ? coveredByClass || hasFalsifierDisposition(input.reddenings ?? [], input.absences ?? [], obligation.findingId,

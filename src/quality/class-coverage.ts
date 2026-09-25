@@ -74,20 +74,22 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
  * `readTrackedFindings` reads the adversarial store, so every one of them looked classless and the class table could not answer any.
  * Reading both is not a workaround; it is the second store's existence being acknowledged in the one place that has to consult it.
  */
-export async function classesOfFindings(root: string, taskId: string): Promise<Record<string, string>> {
+export async function classesOfFindings(root: string, taskId: string): Promise<Record<string, string[]>> {
     const { readTrackedFindings } = await import('./finding-disposition.js');
     const { readFile } = await import('node:fs/promises');
     const { taskPath } = await import('../core/layout.js');
-    const classOf: Record<string, string> = {};
+    // **One derivation of "the class a finding is an instance of"** (`kgsr7-f4`): this kept only the first, while `roundMayClose`
+    // reads every id in `classInstances`. So a finding whose second class had no covering check kept its round open while the
+    // closure rule — reading the first — saw it as covered, or the reverse. The two consumers now read the same fact: the set the
+    // finding names, and a consumer that wants one answer asks `classesOf()`.
+    const classOf: Record<string, string[]> = {};
     for (const tracked of await readTrackedFindings(root, taskId).catch(() => [])) {
-        const first = tracked.classInstances?.[0];
-        if (first) classOf[tracked.id] = first;
+        if (tracked.classInstances?.length) classOf[tracked.id] = [...tracked.classInstances];
     }
     const reviewPath = taskPath(root, taskId).replace(/task\.json$/, 'review.json');
     const review = await readFile(reviewPath, 'utf8').then((raw) => JSON.parse(raw) as { findings?: Array<{ id?: string; classInstances?: string[] }> }).catch(() => null);
     for (const finding of review?.findings ?? []) {
-        const first = finding.classInstances?.[0];
-        if (finding.id && first) classOf[finding.id] = first;
+        if (finding.id && finding.classInstances?.length) classOf[finding.id] = [...finding.classInstances];
     }
     return classOf;
 }

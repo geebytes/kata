@@ -79,8 +79,10 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
     for (const finding of tracked) {
         if (isDisposed(finding.id, finding.disposition)) continue;
         if (finding.severity !== 'blocking' && finding.severity !== 'major') continue;
-        const classId = classOf[finding.id];
-        const entry = CLASS_COVERAGE.find((candidate) => candidate.classId === classId);
+        // Every class the finding names, and this is covered when **any** of them is — the same union the criterion and
+        // `roundMayClose` ask (`kgsr7-f4`).
+        const classIds = classOf[finding.id] ?? [];
+        const entry = CLASS_COVERAGE.find((candidate) => classIds.includes(candidate.classId));
         findings.push({
             id: finding.id,
             severity: finding.severity,
@@ -88,7 +90,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             message: finding.message,
             ...(finding.impact ? { impact: finding.impact } : {}),
             ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
-            ...(classId ? { classId } : {}),
+            ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
             ...(entry ? { classCovered: true, coveredBy: entry.coveredBy } : { classCovered: false }),
         });
     }
@@ -101,8 +103,8 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
         if (isDisposed(id, disposition)) continue;
         const severity = typeof finding.severity === 'string' ? finding.severity : 'minor';
         if (severity !== 'blocking' && severity !== 'major') continue;
-        const classId = classOf[id];
-        const entry = CLASS_COVERAGE.find((candidate) => candidate.classId === classId);
+        const classIds = classOf[id] ?? [];
+        const entry = CLASS_COVERAGE.find((candidate) => classIds.includes(candidate.classId));
         findings.push({
             id,
             severity,
@@ -110,7 +112,7 @@ export async function repairBriefing(root: string, taskId: string): Promise<Repa
             message: typeof finding.message === 'string' ? finding.message : '',
             ...(typeof finding.impact === 'string' ? { impact: finding.impact } : {}),
             ...(Array.isArray(finding.classInstances) ? { classInstances: finding.classInstances as string[] } : {}),
-            ...(classId ? { classId } : {}),
+            ...(classIds.length > 0 ? { classId: classIds.join(', ') } : {}),
             ...(entry ? { classCovered: true, coveredBy: entry.coveredBy } : { classCovered: false }),
         });
     }
