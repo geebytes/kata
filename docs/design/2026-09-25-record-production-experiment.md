@@ -256,3 +256,26 @@ Recording `kata-gate-surface`'s four major findings as measured absences did not
 With the full ids, all four bound immediately and the seal went through on the first attempt. `kata-gate-surface` re-sealed as `revision-a118c21c7b83ebbf`, `verify PASS`, obligations zero.
 
 **The repair, for whoever picks this up: `falsify` should refuse a `findingId` the task's records do not contain** — the reader it has to satisfy is the preflight, and it asks by that exact string.
+
+## The chain is right on real data, for the first time: rounds == records
+
+`rba-r18-f2` found the root cause the six versions of `replacedCopyFilter` had all been approximating: **the writer set the replacement
+relation without recording which event produced the write**, so the consumer inferred the shape from `createdAt === replacedCreatedAt` — and an
+append *overwrites* the live record's link to the round it replaced with a link to itself, so the field the inference rests on stops describing
+the event. The writer now records `replacedBy: 'append' | 'round'`, and the filter drops exactly the records some other record names as its
+append predecessor.
+
+**Measured against the real artefacts, where every earlier version disagreed with the disk:**
+
+| change | rounds reported | records on disk |
+|---|---:|---:|
+| `closure-gate` | 10 | 10 |
+| `repair-by-another-author` | 8 | 8 |
+| `kata-gate-surface` | 9 | 9 |
+
+Before this, the same three reported **7, 6 and 8**. The first was the under-count and the second the over-count, and both were plausible
+numbers — which is why both survived a reading and only the recorded event fixes them.
+
+**One thing is disclosed rather than tested:** a mutation restoring the timestamp inference passes the suite, because the writer's inheritance
+contract currently makes the two agree on every shape constructible from it (an append inherits its timestamp by construction). What
+`replacedBy` buys is that the consumer no longer depends on that contract holding. That is a soundness argument, and it is recorded as one.
