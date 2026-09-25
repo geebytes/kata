@@ -1587,10 +1587,16 @@ export function evaluateAdversarialGate(
     // that is not there is not a citation of a run. Narrowing it cannot let an authored test through — that one exists by
     // definition — which is why this is precision rather than a loosening. **Fail closed**: with no list the guard cannot
     // tell a mention from a run, so it keeps refusing, which is today's behaviour rather than an opened hole.
+    // **The predicate was inverted, and it refused every honest record that cited a test it read** (`measured recording round 8
+    // of kata-gate-surface`): this kept a path when `existing.includes(path)` — that is, when the test **exists on disk** — while
+    // the rule is that a path existing on disk is what a pass may *cite* and a path that does **not** exist is the shape of one
+    // it **wrote**. So the filter preserved exactly the citations it was added to permit and dropped the ones it was added to
+    // catch, and the guard's own comment described the opposite of what it did. With no list the guard cannot tell a mention from
+    // a run and keeps refusing, which is fail-closed and stays.
     const existing = input.existingTestPaths;
     const undeclared = permittedTests.length > 0
         ? undeclaredTestPaths(record, permittedTests)
-            .filter((path) => !existing || existing.length === 0 || existing.includes(path))
+            .filter((path) => !existing || existing.length === 0 || !existing.includes(path))
         : [];
     if (undeclared.length > 0) {
         return {
@@ -1780,6 +1786,11 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined, 
         case 'delta_stale': return 'The pass is a delta, and the paths it declared do not cover everything that changed since its base revision — widen the range or run a full pass.';
         case 'delta_unavailable': return 'A delta pass was recorded against a revision that has no per-path digests, so the change surface cannot be verified; run a full pass.';
         case 'not_required': return 'This node carries no mandatory independent pass in the current review mode; run it as an escalation instead.';
+        // **A union member with no message loses its diagnosis** (`measured while recording round 8 of `kata-gate-surface`):
+        // `undeclared_test_path` was a reason the gate could return and this switch had no case for it, so the operator read
+        // "The independent adversarial pass is not satisfied." and had to open the JSON to learn which path was refused. The
+        // gate's reason union and this function are one list; a member without a line here is a refusal with no remedy.
+        case 'undeclared_test_path': return 'The recorded adversarial pass cites a test path this change neither declares nor carried in its sealed revision, which is the shape of a test the pass wrote rather than ran. Cite a declared selector, or a test the sealed change record proves predates the pass.';
         default: return 'The independent adversarial pass is not satisfied.';
     }
 }
