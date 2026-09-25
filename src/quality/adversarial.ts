@@ -776,6 +776,19 @@ into one; prefer one test invocation over several; prefer reading a file the too
 \`grep\`/\`find\` sweep with several patterns, not one per pattern. The cost is in process launches and output volume, not
 in case count — so the fix is fewer launches per observation, **never fewer observations**.
 
+## What will refuse this record — the conditions, before you meet them
+
+Each row is checked by the gate that reads your record, and each has refused a round on this repository. They are here because a
+condition a pass is judged by and never told about is a condition it cannot satisfy on purpose — and the refusal that follows reads as
+arbitrary. This table is rendered from the same data a test reads, so it cannot go stale.
+
+| Condition | What refuses the record |
+|---|---|
+${REVIEW_GATE_CONDITIONS.map((row) => `| ${row.condition} | ${row.what} |`).join('\n')}
+
+**Recording early costs nothing and losing the record costs everything.** Emit a first complete record as soon as you have findings, then
+keep working and emit an improved one — the last record you emit is the record. A round that investigated thoroughly and emitted nothing
+has produced nothing, however good the investigation was.
 ## Use the cheapest instrument that can answer
 
 There are two, and they answer different questions:
@@ -2060,6 +2073,87 @@ export const DEFAULT_REVIEW_BUDGET: ReviewBudget = {
     maxOutputBytes: Math.ceil(MEASURED_REVIEW_PASS_COST.largestPassPayloadBytes * REVIEW_HEADROOM),
     maxWallMs: Math.ceil(MEASURED_REVIEW_PASS_COST.slowestWallMs * REVIEW_HEADROOM),
 };
+
+/**
+ * **The conditions the gate judges a record by, which the brief therefore has to state.**
+ *
+ * Measured before this table existed: of the gate's 19 refusal reasons, 9 judge the pass, and **6 of those 9 were stated nowhere in
+ * the brief it handed out** — and each of the six refused a record on this repository. A pass cannot satisfy a condition on purpose that
+ * it was never told, and the refusals read as arbitrary because the pass had no way to know which rule it broke:
+ *
+ *   * an observation citing `src/x.ts:907-929` was refused for a format the brief did not require;
+ *   * an `analysis` citation was refused for not naming an instrument from a registry the brief never mentions;
+ *   * a hypothesis left `abandoned` refused the whole round, while the brief's own envelope section instructs the pass to record what
+ *     it did not reach that way;
+ *   * every criterion the revision changed had to be claimed — a condition seven rounds met only because a human was adding it to each
+ *     dispatch prompt by hand.
+ *
+ * So the table is **data**: rendered into the brief, and read by a test that fails when a pass-facing reason has no row. Same shape as
+ * the invariant that every field the brief prescribes is accepted by the writer.
+ */
+export const REVIEW_GATE_CONDITIONS: ReadonlyArray<{
+    /** The refusal this condition governs. Several rows may share one reason. */
+    reason: AdversarialGateReason;
+    /** What the pass is told, in the brief. */
+    condition: string;
+    /** What refuses the record when the condition does not hold. */
+    what: string;
+}> = [
+    {
+        reason: 'incomplete',
+        condition:
+            'Claim every acceptance criterion this revision changed: each must appear in some hypothesis\'s `targets` — the id itself, not only the files — and the same holds for every path this revision changed.',
+        what: '`incomplete`, naming the criteria and paths it did not find claimed',
+    },
+    {
+        reason: 'incomplete',
+        condition:
+            'Every hypothesis converges: `confirmed`, `refuted` or `ruled_out`. `inconclusive` refuses the **whole record**, and so does `abandoned` — a limit must not be laundered into a pass.',
+        what: '`incomplete`, naming the hypotheses that did not converge',
+    },
+    {
+        reason: 'incomplete',
+        condition:
+            'Every `observation.ref` is **exactly one path this revision declares** — no line number, no range, no parenthetical, no comma, no kata artefact. Put `path:907-929` and artefacts of that kind in `observed`, which is free text.',
+        what: '`incomplete`, naming the hypotheses whose observation did not resolve at the revision',
+    },
+    {
+        reason: 'incomplete',
+        condition:
+            'An `observation` of kind `analysis` resolves only when its `ref` names an instrument the task declared. A checker nobody declared is not a citation.',
+        what: 'the same refusal, naming the hypothesis',
+    },
+    {
+        reason: 'undeclared_test_path',
+        condition:
+            'Declare in `readTests` every test file you cite that this change does not own. A bare filename counts as declared only when every file of that name is declared.',
+        what: '`undeclared_test_path`',
+    },
+    {
+        reason: 'brief_mismatch',
+        condition:
+            'Carry this brief\'s exact `revisionId` and `briefSha256` in the record. A record answering a different brief is refused, and this is the one refusal that catches an expired answer rather than a bad one.',
+        what: '`brief_mismatch`',
+    },
+    {
+        reason: 'stale_revision',
+        condition:
+            'The record is about the revision this brief names. If the tree moves after a record lands, that record stays true and stops certifying — which is why nothing is edited between a seal and the archive it certifies.',
+        what: '`stale_revision`',
+    },
+    {
+        reason: 'not_fresh_context',
+        condition:
+            'Run in a fresh context and say so: `executedInFreshContext` is a claim the gate reads, and a pass that inherited the author\'s reasoning cannot be the independent one this node exists for.',
+        what: '`not_fresh_context`',
+    },
+    {
+        reason: 'executor_unavailable',
+        condition:
+            'On a task whose review mode is `strict` the host must advertise an execution receipt. That is the host\'s answer rather than yours — and if you meet it, say so in the record, because it names the wall the change is behind.',
+        what: '`executor_unavailable`, the host cannot run the node it was asked for',
+    },
+] as const;
 
 /** Constructs the repository-side half of a formal certification from facts already read to render the brief. */
 function candidateFreezeForBrief(task: TaskRecord, revision: TaskRevision | null, node: AdversarialNode, ir: ReviewIr): CandidateFreeze {
