@@ -1373,7 +1373,19 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     },
                 };
             }
-            const adversarialFindings = blockingAdversarialFindings(adversarial.record ?? null);
+            // **The tracked view, not the record's raw copy of the same fact** (`measured closing two changes`): `blockingAdversarialFindings`
+            // reads severity off the pass record, whose findings carry no disposition — so once a pass reported a major finding,
+            // `review --approve` refused for ever, however the finding was disposed and whatever the obligations said. Every other
+            // consumer asks the tracked view, which merges the history and derives `fixed` from a resolved obligation; this is the
+            // fifth call site to be repaired for reading the record instead (after `cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`).
+            const { readTrackedFindings } = await import('../quality/finding-disposition.js');
+            const trackedNow = await readTrackedFindings(root, taskId).catch(() => []);
+            const gateSeverities = (await readTask(root, taskId)).workflowProfile?.reviewMode === 'strict'
+                ? ['blocking', 'major']
+                : ['blocking'];
+            const adversarialFindings = trackedNow
+                .filter((finding) => (finding.disposition ?? 'open') === 'open' && gateSeverities.includes(finding.severity))
+                .map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, ...(finding.path ? { path: finding.path } : {}) }));
             if (adversarialFindings.length > 0) {
                 // C1: findings that gate a node belong to a repair batch, opened when they are recorded (not when they are
                 // repaired) — which is what lets C4 narrow the round after the batch closes.

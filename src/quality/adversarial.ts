@@ -1773,7 +1773,15 @@ function undeclaredTestPaths(record: AdversarialRecord, declared: string[]): str
 /** The findings an adversarial pass confirmed that must be resolved before the node passes. */
 export function blockingAdversarialFindings(record: AdversarialRecord | null): AdversarialFinding[] {
     if (!record || record.status !== 'recorded') return [];
-    return (record.findings ?? []).filter((finding) => finding.severity === 'blocking' || finding.severity === 'major');
+    // **Severity alone is not the question** (`measured closing two changes`): this read `severity` and nothing else, so a pass that
+    // reported three major findings made `review --approve` refuse **for ever**, however the findings were disposed — the repairs in
+    // the tree, the dispositions recorded, the obligations resolved. Every other consumer asks the tracked view; this asked the
+    // record's raw copy of the same fact, which is the defect this line has repaired at four call sites already.
+    //
+    // A finding that is disposed is not blocking: `fixed` by a repair or by its resolved obligation, `deferred`/`accepted` by a
+    // recorded decision, or `routed` to the change that owes it.
+    return (record.findings ?? []).filter((finding) => (finding.severity === 'blocking' || finding.severity === 'major')
+        && (finding.disposition ?? 'open') === 'open');
 }
 
 /**
