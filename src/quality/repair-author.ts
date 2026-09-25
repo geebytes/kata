@@ -46,9 +46,18 @@ export type RepairAuthorLedger = {
     updatedAt: string;
 };
 
+/**
+ * What a record of this kind can and cannot establish — and the first version overstated it (`rba-r3-f4`).
+ *
+ * It claimed the record establishes *which session made the repair*. It does not: the session is a free-text argument the tool passes
+ * through, so the record establishes **what the caller typed and what it was handed**, not that the caller was that session. The
+ * difference matters because the ceiling exists to be read next to the claim — a record whose own ceiling overstates what it
+ * establishes is the defect this line keeps finding, in the one place written specifically to avoid it.
+ */
 const CEILING = 'Provenance, not proof: two sessions on one machine are not cryptographically separated. What this record '
-    + 'establishes is which session made the repair and what it was handed, which is what a record that cannot say who made a '
-    + 'repair lacks.';
+    + 'establishes is the session string the caller supplied for this repair and what that repair was handed — not that the caller was '
+    + 'that session, which the tool cannot check. What it makes possible is that a repair which cannot say who made it is visible as '
+    + 'such, which is what a record that omits this lacks.';
 
 export function repairAuthorsPath(root: string, taskId: string): string {
     return join(kataDir(root), 'tasks', taskId, 'repair-authors.json');

@@ -47,14 +47,13 @@ export async function reportRoundCost(root: string, taskId: string, node = 'revi
     // **The identity `repair-rounds` owns, not a restatement of it** (`kgsr8-f2`). This counted hypotheses and attempts — a
     // fingerprint over their *lengths* — while the sibling module compares their content; the two agree today and would diverge the
     // moment two rounds had equal counts and different content, which is ordinary. One definition, imported.
-    const { recordIdentity } = await import('./repair-rounds.js');
-    const seen = new Set<string>();
-    const records = [...history, ...(live ? [live as unknown as Record<string, unknown>] : [])].filter((record) => {
-        const key = recordIdentity(record);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    // **The same containment test `reportRounds` uses**, exported from it rather than restated here (`kgsr8-f2`, `rba-r3-f1`): a history
+    // record whose revision matches the live record's and whose findings the live record also holds is the copy that was replaced, not a
+    // round of its own. A key over the record cannot express that, and the two modules reporting different round counts is the defect
+    // this line has produced four times.
+    const { replacedCopyFilter } = await import('./repair-rounds.js');
+    const keep = replacedCopyFilter(live as Record<string, unknown> | null);
+    const records = [...history.filter(keep), ...(live ? [live as unknown as Record<string, unknown>] : [])];
     const rounds: RoundCost[] = [];
     for (const record of records) {
         const usage = (record as { usage?: Record<string, number> }).usage ?? {};

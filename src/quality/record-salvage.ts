@@ -144,9 +144,13 @@ export function salvageFromJsonl(transcript: string, expected?: { readonly revis
     // The cost the old comment was avoiding is real: a multi-megabyte transcript should not be walked string by string. So the
     // strings are still length-filtered for the expensive parse, but the **result is chosen by position**: every candidate is
     // collected and the latest one wins, because that is the rule.
+    // **Length decides nothing about candidacy** (`rba-r3-f2`). This collected only strings over 200 characters and scanned the 400
+    // longest, so a record's candidacy depended on how much prose surrounded it — and on the transcript shape the module exists for (a
+    // pass that wrote a short record and a long analysis) a real record could be excluded while a longer non-record was examined. The
+    // filter is a *cost* one and stays, but the scan is over every string above the floor, and the winner is by position.
     const byPosition = [...texts].map((text, index) => ({ text, index }));
     const candidates: Array<{ found: NonNullable<ReturnType<typeof salvageFromText>>; index: number }> = [];
-    for (const { text, index } of byPosition.sort((a, b) => b.text.length - a.text.length).slice(0, 400)) {
+    for (const { text, index } of byPosition) {
         const found = salvageFromText(text, expected);
         if (found) candidates.push({ found, index });
     }

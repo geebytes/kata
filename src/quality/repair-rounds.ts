@@ -54,11 +54,43 @@ async function readJson<T>(path: string): Promise<T | null> {
  * second derivation: it agrees today and would disagree the moment two rounds had equal counts and different content, which is
  * ordinary. Exported so no consumer can restate it.
  */
+/**
+ * The test that decides whether a history record is the replaced copy of the live one rather than a round of its own.
+ *
+ * Exported because two modules report a change's rounds — `reportRounds` and `roundCost` — and they produced different counts once
+ * before by restating this (`kgsr8-f2`). A key over one record cannot express containment, so the test is a function of the pair.
+ */
+export function replacedCopyFilter(live: Record<string, unknown> | null): (record: Record<string, unknown>) => boolean {
+    const findingsOf = (record: Record<string, unknown>): Set<string> => new Set(
+        Array.isArray(record.findings) ? (record.findings as Array<{ id?: string }>).map((f) => String(f?.id ?? '')) : [],
+    );
+    const liveFindings = live ? findingsOf(live) : null;
+    const liveRevision = live ? String(live.revisionId ?? '') : '';
+    return (record) => {
+        if (!liveFindings) return true;
+        if (String(record.revisionId ?? '') !== liveRevision) return true;
+        const mine = findingsOf(record);
+        return !(mine.size > 0 && [...mine].every((id) => liveFindings.has(id)));
+    };
+}
+
 export function recordIdentity(record: Record<string, unknown>): string {
+    // **What identifies a round is its revision and the findings it reports as new** — and neither field alone is enough, which is why
+    // this took three attempts and two rounds to see (`rba4-f1`, then `rba-r3-f1`):
+    //
+    //   * `rba4-f1`: one pass appears in the history under an **older** revision and in the live slot under a **newer** one, because a
+    //     record inherits the revision of the pass it replaces (a re-stamp). Identity must not depend on the revision for those.
+    //   * `becb49c9303042ca`: the history held the replaced copy of a revision while the live record was the **same** revision with an
+    //     appended finding. Identity must not depend on the finding count for those.
+    //
+    // Both are the same event seen from opposite sides: a record is replaced, and its replacement keeps the revision (or takes a new one)
+    // while the findings accumulate. So a round is identified by **the revision plus the findings it introduced**, and a record whose
+    // findings are a subset of the live record's is the replaced copy of that same round rather than a round of its own.
     const revision = String(record.revisionId ?? '(none)');
-    const hypotheses = Array.isArray(record.hypotheses) ? JSON.stringify(record.hypotheses) : '';
-    const attempts = Array.isArray(record.attempts) ? JSON.stringify(record.attempts) : '';
-    return `${revision}#${hypotheses}#${attempts}`;
+    const findings = Array.isArray(record.findings)
+        ? (record.findings as Array<{ id?: string }>).map((finding) => String(finding?.id ?? '')).sort().join(',')
+        : '';
+    return `${revision}#${findings}`;
 }
 
 export async function reportRounds(root: string, taskId: string, node = 'review'): Promise<RoundReport> {
@@ -70,31 +102,21 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
         findings: Array.isArray(record.findings) ? record.findings.length : 0,
         recordedAt: String(record.createdAt ?? ''),
     });
-    const rounds = history.map(toRound);
-    // **Identity went through three versions, and each failed differently.** (1) `revisionId` alone collapsed two rounds that ran
-    // on one revision. (2) `revisionId@createdAt` is not unique either, because a record is written with the timestamp of the
-    // pass it *replaces*. (3) Comparing whole records then counted **the same round twice** once a finding was appended to the
-    // live copy — measured on this task: `becb49c9303042ca` appeared in the history and as the live record with different
-    // `findings`, so four entries for three rounds.
+    // **Identity went through four versions, and the fourth is the one the data supports.** (1) `revisionId` alone collapsed two rounds
+    // that ran on one revision. (2) `revisionId@createdAt` is not unique either, because a record is written with the timestamp of the
+    // pass it *replaces*. (3) Comparing whole records counted the same round twice once a finding was appended to the live copy —
+    // measured: `becb49c9303042ca` appeared in the history and as the live record with different findings, four entries for three
+    // rounds. (4) So the test is not equality at all: **a history record whose revision matches the live record's and whose findings the
+    // live record also holds is the copy that was replaced**, which is a containment test rather than a key (`rba-r3-f1`). Where the
+    // revisions differ the record is a round of its own — that is the re-stamp `rba4-f1` measured.
     //
-    // A revision that appears both in the history and live is **one round**: the history holds the copy that was replaced, and
-    // the two rounds that really shared a revision differed in more than their revision id — which is what the record's own
-    // `attempts` and `hypotheses` describe, and what a fingerprint over those two fields captures without depending on a
-    // value the writer inherits.
-    // see `recordIdentity` below — the single definition, exported so `round-cost.ts` cannot restate it (`kgsr8-f2`).
-    const seen = new Set(history.map(recordIdentity));
-    if (live && !seen.has(recordIdentity(live))) rounds.push(toRound(live));
-    // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass (see `writeAdversarialRecord`),
-    // so sorting by it put the live record **before** a history record that was actually earlier — measured:
-    // `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`, where the live record is the middle one. The live record is the
-    // latest by construction, because it is the one the previous pass was replaced with; so it is moved to the end and the
-    // history keeps its own order. That removes the need to believe a timestamp the writer copies.
-    const historyRounds = history.map(toRound);
-    const liveRound = live ? toRound(live) : null;
-    const pushedLive = liveRound !== null && !seen.has(recordIdentity(live as Record<string, unknown>));
-    const ordered = pushedLive ? [...historyRounds, liveRound] : historyRounds;
-    rounds.length = 0;
-    rounds.push(...ordered);
+    // `recordIdentity` stays exported for the consumers that need a stable key for one record (round-cost's dedup); it is not used for
+    // this decision, because this decision is containment.
+    const historyRounds = history.filter(replacedCopyFilter(live as unknown as Record<string, unknown> | null)).map(toRound);
+    // **And the order is not a clock reading.** `recordedAt` is inherited from the replaced pass, so sorting by it put the live record
+    // before a history record that was actually earlier — measured: `[daf33fef@13:45, becb49c9@13:45, 48f7fb8e@01:10]`. The live record
+    // is the latest by construction, because it is what the previous pass was replaced with.
+    const rounds = live ? [...historyRounds, toRound(live as unknown as Record<string, unknown>)] : historyRounds;
 
     // A round that left no record is invisible here, so the briefs are what say whether every attempt is accounted for.
     // **A round is a brief issued, and a record is a round that left something behind.** The first version asked whether the
@@ -118,7 +140,11 @@ export async function reportRounds(root: string, taskId: string, node = 'review'
         // Both null together, because a share needs a numerator: reporting a share over an unavailable count is the defect.
         shareAboutThePreviousRound: aboutThePreviousRound === null || !live
             ? null
-            : aboutThePreviousRound / Math.max(1, allTargets(live)),
+            // **No population, no share** (`rba-r3-f5`): `Math.max(1, …)` manufactured a denominator, so a latest round with no
+            // hypothesis targets reported a *measured* convergence over a population of one that does not exist. `null` is the honest
+            // value for a question the record cannot answer — the same distinction this line settled for `share` when a change surface
+            // could not be derived.
+            : (allTargets(live) > 0 ? aboutThePreviousRound / allTargets(live) : null),
         unrecorded,
     };
 }

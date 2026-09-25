@@ -713,6 +713,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         const { readObligations } = await import('../quality/repair-obligations.js');
         const { readFalsifierReddenings, readFalsifierAbsences, hasFalsifierDisposition } = await import('../quality/falsifier-reddenings.js');
         const obligations = await readObligations(root, change).catch(() => []);
+        // **The tree the writer recorded** (`rba-r3-f3`): computed once here, because the projection below is not an async scope and
+        // because a reader that recomputes per obligation would compute the same value N times.
+        const { readTask: readTaskForStatus } = await import('../core/task.js');
+        const { computePathDigests: computeDigestsForStatus } = await import('../workflow/revision.js');
+        const statusTreeDigests = await (async () => {
+            const task = await readTaskForStatus(root, change).catch(() => null);
+            return task?.ownedPaths?.length ? await computeDigestsForStatus(root, task.ownedPaths).catch(() => null) : null;
+        })();
         const reddenings = await readFalsifierReddenings(root, change).catch(() => []);
         // The absences too: the rule accepts three shapes (a reddening, a recorded absence, class coverage) and a report that reads
         // one of them answers a different question than the verdict does (`kgsr7-f3`).
@@ -840,9 +848,14 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                         // **The drift a proof observed is reported, not just stored** (`cg7-f2`): the design substitutes detection for
                         // prevention, and detection needs a reader. `runFalsifyCommand` computes what differed, the ledger keeps it, and
                         // this is where an operator sees that the proof was taken against content that had moved.
+                        // **The tree the writer recorded, not the previous seal** (`rba-r3-f3`): `kata-cli falsify` records the working
+                        // tree — the content the next seal mints — and this read the *current sealed* revision's digests, so it asked
+                        // about content the next seal had not yet minted and disagreed with the criterion it exists to report on during
+                        // exactly the repair window it is read in. It is the fifth reader of this binding and the fourth time I have
+                        // fixed one reader and left another.
                         ? (hasFalsifierDisposition(reddenings, absences, obligation.findingId, {
                             revisionId: currentRevisionId ?? null,
-                            pathDigests: currentRevisionForStatus?.pathDigests ?? null,
+                            pathDigests: statusTreeDigests ?? currentRevisionForStatus?.pathDigests ?? null,
                         }) || coveredByClassFor(obligation.findingId)
                             ? 'evidence-and-falsifier'
                             : 'evidence-only')
