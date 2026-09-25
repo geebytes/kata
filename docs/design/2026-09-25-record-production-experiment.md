@@ -320,3 +320,32 @@ of the 40 records on disk — 38 carry no replacedBy, 2 carry 'round', and not o
 **So the append-drop rule has never fired on any record this repository has produced.** The agreement I read as correctness is the rule being **inert** on legacy data, and for a record written before the field existed the round count **is not derivable** at all — the two shapes are indistinguishable.
 
 That is the honest form of the defect, and it is the *third* time this line has reached the same shape: **a quantity nobody can measure must be reported as unmeasurable, not as a number.** `share` got there (`Math.max(1, …)` manufactured a denominator), `roundCost` got there (a self-reported zero), and the round count needs it next — because the eighth repair of `replacedCopyFilter` would be an eighth version of one function, and the class-level answer is a *reporting* change, not another predicate.
+
+## The record can also be *malformed*, and three repairs recovered one that ran 90 minutes
+
+`major-finding-closure`'s round-2 pass ran **89.6 minutes** (harness: 461,630 tokens, 91 tool calls, transcript 14:21:56Z → 15:51:33Z) and its record was refused three times, each by a different defect **in the record itself**:
+
+| defect | what the parser said | the repair, and why it is safe |
+|---|---|---|
+| a **missing tail** — the record ended `...reason." }` where `] }` was required | `Expecting ',' delimiter … char 22819`, one character before its own end | append the structural closers; accepted only when the whole record then parses |
+| a **required field the pass omitted** — no `createdAt` | `$.createdAt is required` | filled from **the transcript's first event timestamp** (`2026-09-25T14:21:56.237Z`), which is the round's own start |
+| *earlier, on another round*: a **trailing comma** before a closing bracket | `Expecting property name enclosed in double quotes` | drop the comma; nothing else changes |
+
+All three are disclosed in the record's `contextNote`, and each is accepted **only if the whole record then parses** — so the repair is provably structural rather than editorial. With all three, the gate accepted the record (`satisfied: true`).
+
+**This is the fifth class again, and its sixth instance**: the record is a required output whose only channel is one message, so a pass can produce it and still lose it — by truncation, by a syntax slip, or by omitting a field the schema requires. `salvage` recovers a *complete* record from the transcript; `extract-record.py` now recovers the three malformations above. What neither can recover is what was never sent.
+
+## And that recovered record found the sharpest defect of the day
+
+**`ac-1-has-no-answering-check` (blocking)**: `major-finding-closure` carries
+
+```json
+"acceptance": [{ "id": "AC-1", "statement": "Implement the change successfully." }]
+"acceptanceMatrix": null
+```
+
+so the gate's own acceptance contract prints AC-1 with check row `(none)` and *"asserts: (no check answers this criterion)"* — while `judge.json` for the same change records **`AC-1: PASS`** with `npm test` as its evidence. **Two derivations of "does this criterion hold", and the one that certifies is the vacuous one.**
+
+That is why this change was reported as stuck at `judge` for four days: it was never stuck on freshness — it was **measured against a criterion that asserts nothing**, and a PASS over it certifies nothing. The declaration repair I made earlier today (repointing its three moved OpenSpec paths) let the seal and judge proceed; **this finding says the thing they proceeded over is empty**, which is a different and more serious statement, and the honest response is not to archive it.
+
+Its own repair is a `matrix set` — a declaration change, not a source change, and therefore *possibly* one that does not move the revision whose record found it. That is the next measurement, and it belongs in the next session rather than in a fabricated acceptance statement at the end of this one.
