@@ -49,5 +49,11 @@ describe('the policy is data with no dead fields', () => {
         expect(meetsAssuranceFloor(policy, 'standard', 'observed')).toBe(true);
         expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(false);
         expect(meetsAssuranceFloor(policy, 'security', 'signed')).toBe(true);
+
+        // The tier's risk contract is data too, and it is what makes the coverage check failable: a class the tier requires
+        // and no claim covers is a hole rather than something derived from the claims themselves.
+        expect(tierPolicy(policy, 'standard').requiredRiskClasses).toEqual(['consistency']);
+        expect(tierPolicy(policy, 'strict').requiredRiskClasses).toContain('failure_mode');
+        expect(tierPolicy(policy, 'security').requiredRiskClasses).toContain('privilege');
     });
 });

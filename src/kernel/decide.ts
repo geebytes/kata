@@ -58,6 +58,133 @@ function reason(code: Reason['code'], detail: string, claimId?: string): Reason 
     return { code, detail, ...(claimId === undefined ? {} : { claimId }) };
 }
 
+/** One value per claim, derived from what was measured — never from the claim's own `status` field, which is a declaration. */
+export type ClaimState =
+    | 'supported'
+    | 'waived'
+    | 'unsupported'
+    | 'refuted'
+    | 'missing'
+    | 'inconclusive'
+    | 'stale'
+    | 'below_strength'
+    | 'challenged';
+
+export type ClaimEvaluation = {
+    claimId: string;
+    state: ClaimState;
+    /** Every problem this claim has, in the order they were found. Empty means the claim holds. */
+    reasons: Reason[];
+    deficits: Deficit[];
+    strongestSupported: number;
+};
+
+/**
+ * Evaluate one claim.
+ *
+ * Extracted so that "is this claim supported" has exactly one implementation: the decision calls it, and the cost report
+ * calls it, which is what stops an operator reading six claims marked open next to a decision that says pass. The claim's
+ * own `status` field is a declaration and is not consulted here, except for `waived`, which is a decision someone made.
+ */
+export function evaluateClaim(
+    claim: Claim,
+    input: {
+        evidence: readonly Evidence[];
+        verdicts: readonly EvidenceVerdict[];
+        reusedEvidence: ReadonlySet<string>;
+        policy: Policy;
+        challenges: readonly Challenge[];
+        subjectRevision: string;
+    },
+): ClaimEvaluation {
+    const reasons: Reason[] = [];
+    const deficits: Deficit[] = [];
+
+    if (claim.status === 'waived') {
+        if (!claim.waiver?.reason?.trim()) {
+            reasons.push(reason('waived_without_reason', REASON_MESSAGES.waived_without_reason.message, claim.id));
+            return { claimId: claim.id, state: 'unsupported', reasons, deficits, strongestSupported: 0 };
+        }
+        return { claimId: claim.id, state: 'waived', reasons, deficits, strongestSupported: 0 };
+    }
+
+    const evidenceById = new Map(input.evidence.map((item) => [item.id, item]));
+    const items = claim.evidenceIds.map((id) => evidenceById.get(id)).filter((item): item is Evidence => item !== undefined);
+    if (items.length === 0) {
+        reasons.push(reason('claim_unsupported', REASON_MESSAGES.claim_unsupported.message, claim.id));
+        deficits.push({ claimId: claim.id, need: 'at least one evidence item' });
+        return { claimId: claim.id, state: 'unsupported', reasons, deficits, strongestSupported: 0 };
+    }
+
+    const supportedStrengths: number[] = [];
+    const problems = new Set<ClaimState>();
+    for (const item of items) {
+        const verdict = verdictFor(item.id, input.verdicts);
+        if (!verdict) {
+            reasons.push(reason('evidence_missing', `${item.id} has no verdict yet`, claim.id));
+            deficits.push({ claimId: claim.id, need: `a verdict for ${item.id}` });
+            problems.add('missing');
+            continue;
+        }
+        if (verdict.verdict === 'refuted') {
+            reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('refuted');
+            continue;
+        }
+        if (verdict.verdict === 'inconclusive') {
+            reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('inconclusive');
+            continue;
+        }
+        // A verdict about another revision carries over only when the delta says the claim's dependencies are identical.
+        if (verdict.subjectRevision !== input.subjectRevision && !input.reusedEvidence.has(item.id)) {
+            reasons.push(reason(
+                'evidence_stale_subject',
+                `${item.id} was decided against ${verdict.subjectRevision}, and the claim it supports changed with the subject`,
+                claim.id,
+            ));
+            problems.add('stale');
+            continue;
+        }
+        supportedStrengths.push(strengthOf(item.type));
+    }
+
+    const required = MIN_STRENGTH_BY_SEVERITY[claim.severity];
+    const policyTypes = input.policy.evidenceStrength[claim.severity];
+    const allowed = Array.isArray(policyTypes) ? new Set(policyTypes) : undefined;
+    const strongestSupported = supportedStrengths.length === 0 ? 0 : Math.max(...supportedStrengths);
+    const allowedSatisfied = allowed === undefined
+        || items.some((item) => allowed.has(item.type) && supportedStrengths.some((strength) => strength === strengthOf(item.type)));
+    if (strongestSupported < required || !allowedSatisfied) {
+        reasons.push(reason(
+            'evidence_below_strength',
+            `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
+            claim.id,
+        ));
+        deficits.push({
+            claimId: claim.id,
+            need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
+        });
+        problems.add('below_strength');
+    }
+
+    const openChallenges = input.challenges.filter((challenge) => challenge.claimId === claim.id && challenge.state === 'open');
+    if (openChallenges.length > 0) {
+        reasons.push(reason(
+            'challenge_open',
+            `${openChallenges.length} open counterexample(s): ${openChallenges.map((challenge) => challenge.id).join(', ')}`,
+            claim.id,
+        ));
+        problems.add('challenged');
+    }
+
+    // The single state an operator reads. `supported` only when nothing was found, and the problems are reported in a
+    // fixed precedence so the same ledger always reads the same way.
+    const order: ClaimState[] = ['refuted', 'stale', 'missing', 'inconclusive', 'below_strength', 'challenged'];
+    const state = order.find((candidate) => problems.has(candidate)) ?? 'supported';
+    return { claimId: claim.id, state, reasons, deficits, strongestSupported };
+}
+
 export function decide(input: DecideInput): Decision {
     const reasons: Reason[] = [];
     const deficits: Deficit[] = [];
@@ -81,82 +208,19 @@ export function decide(input: DecideInput): Decision {
         verdicts: input.verdicts,
     });
     const reused = new Set(delta.reusedEvidence);
-    const evidenceById = new Map(input.evidence.map((item) => [item.id, item]));
 
-    // 4. Every claim, for itself.
+    // 4. Every claim, for itself — through the one implementation of that question.
     for (const claim of input.claims) {
-        if (claim.status === 'waived') {
-            if (!claim.waiver?.reason?.trim()) {
-                reasons.push(reason('waived_without_reason', REASON_MESSAGES.waived_without_reason.message, claim.id));
-            }
-            continue;
-        }
-
-        const items = claim.evidenceIds
-            .map((id) => evidenceById.get(id))
-            .filter((item): item is Evidence => item !== undefined);
-        if (items.length === 0) {
-            reasons.push(reason('claim_unsupported', REASON_MESSAGES.claim_unsupported.message, claim.id));
-            deficits.push({ claimId: claim.id, need: 'at least one evidence item' });
-            continue;
-        }
-
-        const supportedStrengths: number[] = [];
-        for (const item of items) {
-            const verdict = verdictFor(item.id, input.verdicts);
-            if (!verdict) {
-                reasons.push(reason('evidence_missing', `${item.id} has no verdict yet`, claim.id));
-                deficits.push({ claimId: claim.id, need: `a verdict for ${item.id}` });
-                continue;
-            }
-            if (verdict.verdict === 'refuted') {
-                reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
-                continue;
-            }
-            if (verdict.verdict === 'inconclusive') {
-                reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
-                continue;
-            }
-            // A verdict about another revision carries over only when the delta says the claim's dependencies are identical.
-            if (verdict.subjectRevision !== input.subject.revision && !reused.has(item.id)) {
-                reasons.push(reason(
-                    'evidence_stale_subject',
-                    `${item.id} was decided against ${verdict.subjectRevision}, and the claim it supports changed with the subject`,
-                    claim.id,
-                ));
-                continue;
-            }
-            supportedStrengths.push(strengthOf(item.type));
-        }
-
-        const required = MIN_STRENGTH_BY_SEVERITY[claim.severity];
-        const policyTypes = input.policy.evidenceStrength[claim.severity];
-        const allowed = Array.isArray(policyTypes) ? new Set(policyTypes) : undefined;
-        const strongestSupported = supportedStrengths.length === 0 ? 0 : Math.max(...supportedStrengths);
-        const allowedSatisfied = allowed === undefined
-            || items.some((item) => allowed.has(item.type) && supportedStrengths.some((strength) => strength === strengthOf(item.type)));
-        if (strongestSupported < required || !allowedSatisfied) {
-            reasons.push(reason(
-                'evidence_below_strength',
-                `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
-                claim.id,
-            ));
-            deficits.push({
-                claimId: claim.id,
-                need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
-            });
-        }
-
-        const openChallenges = input.challenges.filter(
-            (challenge) => challenge.claimId === claim.id && challenge.state === 'open',
-        );
-        if (openChallenges.length > 0) {
-            reasons.push(reason(
-                'challenge_open',
-                `${openChallenges.length} open counterexample(s): ${openChallenges.map((challenge) => challenge.id).join(', ')}`,
-                claim.id,
-            ));
-        }
+        const evaluation = evaluateClaim(claim, {
+            evidence: input.evidence,
+            verdicts: input.verdicts,
+            reusedEvidence: reused,
+            policy: input.policy,
+            challenges: input.challenges,
+            subjectRevision: input.subject.revision,
+        });
+        reasons.push(...evaluation.reasons);
+        deficits.push(...evaluation.deficits);
     }
 
     // 5. Coverage is over the finite risk space, not over every path.

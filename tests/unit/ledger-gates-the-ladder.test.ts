@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendClaim, appendEvidence, readLedger, recordVerdicts, reviewDir, setAssurance, freezeSubject, writeSubject } from '../../src/store/ledger.js';
+import { appendClaim, appendEvidence, readLedger, recordVerdicts, reviewDir, ensureAssurance, freezeSubject, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -67,7 +67,7 @@ describe('the ledger gates the ladder', () => {
         const subject = await freezeSubject({ root, paths: ['src/a.ts'] });
         if (!subject.ok) return;
         await writeSubject(root, changeId, subject.subject);
-        await setAssurance(root, changeId, 'observed');
+        await ensureAssurance(root, changeId, 'observed');
         await appendClaim(root, changeId, makeClaim({ id: 'C1', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
         await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
         await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', subjectRevision: subject.subject.revision })]);
@@ -76,6 +76,34 @@ describe('the ledger gates the ladder', () => {
         expect(verdict.kind).toBe('decided');
         if (verdict.kind === 'decided') expect(verdict.decision.verdict).toBe('pass');
         expect(await ladderReason()).not.toBe('satisfy_ledger_deficits');
+    });
+
+    it('refuses a change whose claims do not cover the tier\'s risk space, which is what makes coverage failable', async () => {
+        // The defect this pins: when the required classes are derived from the claims themselves, coverage is true by
+        // construction and the check can never fail. Here the tier is strict (a `src/quality/**` path), the tier requires
+        // consistency, boundary and failure_mode, and the ledger holds one consistency claim.
+        await mkdir(join(root, 'src', 'quality'), { recursive: true });
+        await writeFile(join(root, 'src', 'quality', 'x.ts'), 'export const x = 1;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'task.json'),
+            `${JSON.stringify({ id: changeId, ownedPaths: ['src/quality/x.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+        );
+        const subject = await freezeSubject({ root, paths: ['src/quality/x.ts'] });
+        if (!subject.ok) return;
+        await writeSubject(root, changeId, subject.subject);
+        await ensureAssurance(root, changeId, 'observed');
+        await appendClaim(root, changeId, makeClaim({ id: 'C1', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/quality/x.ts'] }));
+        await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/quality/x.ts', assertion: 'contains:export' }));
+        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', subjectRevision: subject.subject.revision })]);
+
+        const verdict = await ledgerVerdict({ root, changeId });
+        expect(verdict.kind).toBe('decided');
+        if (verdict.kind !== 'decided') return;
+        expect(verdict.tier).toBe('strict');
+        expect(verdict.decision.verdict).toBe('insufficient');
+        const uncovered = verdict.decision.reasons.find((reason) => reason.code === 'uncovered_risk_class');
+        expect(uncovered?.detail).toContain('boundary');
+        expect(uncovered?.detail).toContain('failure_mode');
     });
 
     it('refuses an unreadable ledger instead of reading it as one that was never written', async () => {

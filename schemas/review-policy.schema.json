@@ -36,7 +36,8 @@
             "reviewers",
             "quorumOn",
             "assuranceFloor",
-            "humanBudgetMin"
+            "humanBudgetMin",
+            "requiredRiskClasses"
           ],
           "properties": {
             "autoEvidence": {
@@ -73,6 +74,24 @@
                 "sandboxed",
                 "signed"
               ]
+            },
+            "requiredRiskClasses": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "assumption",
+                  "boundary",
+                  "state_transition",
+                  "privilege",
+                  "failure_mode",
+                  "rollback",
+                  "concurrency",
+                  "provenance",
+                  "dependency",
+                  "consistency"
+                ]
+              }
             }
           }
         },
@@ -84,7 +103,8 @@
             "reviewers",
             "quorumOn",
             "assuranceFloor",
-            "humanBudgetMin"
+            "humanBudgetMin",
+            "requiredRiskClasses"
           ],
           "properties": {
             "autoEvidence": {
@@ -121,6 +141,24 @@
                 "sandboxed",
                 "signed"
               ]
+            },
+            "requiredRiskClasses": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "assumption",
+                  "boundary",
+                  "state_transition",
+                  "privilege",
+                  "failure_mode",
+                  "rollback",
+                  "concurrency",
+                  "provenance",
+                  "dependency",
+                  "consistency"
+                ]
+              }
             }
           }
         },
@@ -132,7 +170,8 @@
             "reviewers",
             "quorumOn",
             "assuranceFloor",
-            "humanBudgetMin"
+            "humanBudgetMin",
+            "requiredRiskClasses"
           ],
           "properties": {
             "autoEvidence": {
@@ -169,6 +208,24 @@
                 "sandboxed",
                 "signed"
               ]
+            },
+            "requiredRiskClasses": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "assumption",
+                  "boundary",
+                  "state_transition",
+                  "privilege",
+                  "failure_mode",
+                  "rollback",
+                  "concurrency",
+                  "provenance",
+                  "dependency",
+                  "consistency"
+                ]
+              }
             }
           }
         }

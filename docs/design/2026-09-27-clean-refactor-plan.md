@@ -380,7 +380,7 @@ node dist/cli.js ledger status --change round-protocol
 
 # 13. 第二轮：接线 + 度量（"一步到位修复发现的问题"）
 
-> 指令：**一步到位修复和优化发现的问题，不要中断。** 本轮把第一轮明确留给下一步的那件事（**阶梯接线**）做完，并把 §11 审计里"未落地"的三条（**S2 / S9 / S10+S11**）落成代码。**仍然没有做的是删除** —— 理由在 §13.4。
+> 指令：**一步到位修复和优化发现的问题，不要中断。**（本轮含真实工作区演练，13.5） 本轮把第一轮明确留给下一步的那件事（**阶梯接线**）做完，并把 §11 审计里"未落地"的三条（**S2 / S9 / S10+S11**）落成代码。**仍然没有做的是删除** —— 理由在 §13.4。
 
 ## 13.1 阶梯接线：账本成为决定者
 
@@ -425,8 +425,29 @@ store/verdict.ts  ledgerVerdict() → absent | unreadable | decided        ← �
 | ② | **损坏的账本与"没人写过"不可区分** —— `readJson` 吞掉解析失败 ⇒ `claims: []` ⇒ 读成 `absent` | 我写"损坏账本必须被拒"的用例时暴露 | 本仓库的老类：**吞掉读失败**。已加 `malformedFiles`，`ledgerVerdict` 直接判 `unreadable` |
 | ③ | **存下来的 policy 校验失败会被静默换成默认值** | 同上，顺带发现 | 同一个类。已加 `policyRejected`，非 null 即拒绝判定 |
 | ④ | **`setUsage` 没有消费者**（预算数字在真实 CLI 路径上永远写不进去） | **`npm run check:wiring`**（48 → 修回 47） | 第 6 类缺陷（有定义没有消费者）的活样本，由仓库自己的检查抓到 |
+| ⑤ | **`evidence verify` 只在带 `--assurance` 时才把 assurance 写进账本** —— 于是 kata 自己观测过的证据被判定为**没有 provenance** | **真实工作区演练**（`decide` 报 `assurance_below_tier`，而同一轮 verify 的输出写着 `assurance: "observed"`） | **同一个类的第二次**：事实被算出来、被打印、但没人写下来。修：`ensureAssurance` **总是**记录实测值，且**只升不降** |
+| ⑥ | **`challenge add --id` 撞号时静默 no-op**（store 按 id 去重 ⇒ CLI 报 `ok: true` 而什么都没写） | 演练中我试图用同样的 id 换命令时暴露 | 与"pi insert 报告成功却没落盘"同一形状：**命令报成功而事实没发生**。修：CLI 按名拒绝撞号，并给出替代（`amend`） |
+| ⑦ | **`byStatus` 与判定矛盾**：报告说"6 个 claim 全是 open"，同一条账本的判定却说 `pass` —— 因为 `Claim.status` 是**声明**，判定看的是证据 | 演练后的成本报告 | 一报告两半回答两个问题。修：抽出内核的 `evaluateClaim()`，报告用**同一个谓词**给出 `bySupport`，于是 6 个 `supported` 与 `pass` 一致（一个推导，两处呈现） |
 
-## 13.5 证据
+## 13.5 真实工作区上走通一次（在 `round-protocol` 上，它是已归档的，因此不会改任何人的路由）
+
+```
+ledger policy --init / freeze            → rev:38a84fea227aeef2（30 个真实 ownedPaths）
+ledger claim add × 6                     ← 用该 change 【真实】的 AC-1…AC-6 与风险类：
+                                            failure_mode ×2 · boundary ×2 · consistency ×2（覆盖 strict 要求的三类）
+ledger evidence add × 6                  ← 每条的 invariantId 就是它的 AC，command 就是它在 acceptance matrix 里【真实】的 selector
+ledger evidence verify                   → 6 条全部 supported，adapter=inline，assurance=observed（真跑，约 12 s）
+challenge add X1（反例：adapter 是否持有强制力）→ 第一次命令【测了注释】⇒ 仍 open ⇒ 判定 insufficient
+challenge amend X1 --command（去注释后再 grep）--reason …   → 状态重置为 open，旧命令留在 amendment
+challenge check                          → exit 0 ⇒ withdrawn（反例未复现 = 该性质成立）
+ledger decide                            → 【pass】| tier strict | reasons []
+ledger status --cost                     → 6 supported（median claim→supported 211 s）· refutation 0 · withdrawal 1
+status --change round-protocol           → upstream.ledger = {state:'decided', verdict:'pass', claims:6}
+```
+
+**这次真实运行抓到了 3 个只有跑起来才会暴露的缺陷（见 13.4 ⑤⑥⑦），而其中两个是"事实被算出来了但没被写下来"。**
+
+## 13.6 证据
 
 ```
 npx tsc --noEmit                exit 0
@@ -439,7 +460,7 @@ node dist/cli.js ledger status --cost --change round-protocol
                                 report 输出完整（比率 null + baseline 'none recorded yet'）
 ```
 
-## 13.6 仍未做的一件事，和它的次序（与第一轮结论相同，且理由收窄为一条）
+## 13.7 仍未做的一件事，和它的次序（与第一轮结论相同，且理由收窄为一条）
 
 **删除旧轮次机制仍未做。** 第一轮给了三条理由（在飞的 change 正在被它认证 / 计划把它排在 P2–P5 / 同轮既加又删会让 1406 条用例失去可验证性）。第二轮完成后，**理由收窄为一条，也是最硬的一条**：
 

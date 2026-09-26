@@ -13,6 +13,8 @@ import { taskDir, taskPath } from '../core/layout.js';
 import { withTaskLock } from '../core/state.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
+import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
+import { assuranceAtLeast } from '../kernel/types.js';
 import { subjectOf } from '../kernel/subject.js';
 import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
@@ -220,6 +222,43 @@ export async function appendChallenge(root: string, changeId: string, challenge:
     });
 }
 
+/**
+ * Replace a counterexample's command, keeping the one it replaces.
+ *
+ * The state resets to `open` on purpose: the previous outcome was measured with a command that has changed, so carrying a
+ * `withdrawn` verdict forward would let a correction inherit a result it never earned. The command being replaced and the
+ * reason for replacing it stay in `amendment`, because "the measurement was wrong" is a fact worth keeping.
+ */
+export async function amendChallenge(
+    root: string,
+    changeId: string,
+    challengeId: string,
+    amendment: { command: string; reason: string; at: string },
+): Promise<Challenge | null> {
+    return mutate(root, changeId, async () => {
+        const path = join(reviewDir(root, changeId), FILES.challenges);
+        const challenges = (await readJson<Challenge[]>(path)) ?? [];
+        const index = challenges.findIndex((entry) => entry.id === challengeId);
+        if (index < 0) return null;
+        const current = challenges[index] as Challenge;
+        const amended: Challenge = {
+            ...current,
+            command: amendment.command,
+            state: 'open',
+            amendment: { command: current.command, reason: amendment.reason, at: amendment.at },
+        };
+        delete amended.resolution;
+        challenges[index] = amended;
+        await writeJson(root, changeId, FILES.challenges, challenges);
+        return amended;
+    });
+}
+
+export async function challengeExists(root: string, changeId: string, challengeId: string): Promise<boolean> {
+    const challenges = (await readJson<Challenge[]>(join(reviewDir(root, changeId), FILES.challenges))) ?? [];
+    return challenges.some((challenge) => challenge.id === challengeId);
+}
+
 export async function resolveChallenge(
     root: string,
     changeId: string,
@@ -238,11 +277,23 @@ export async function resolveChallenge(
     });
 }
 
-export async function setAssurance(root: string, changeId: string, assurance: AssuranceLevel): Promise<void> {
+/**
+ * Record the assurance a round actually achieved, and only upwards.
+ *
+ * The adapter reports what its own isolation gave the round — `observed` when kata ran the checks itself, `relayed` when
+ * they arrive as a recorded result — and that is a measured fact about the round that just happened. Two rules make it
+ * trustworthy: it is written rather than merely reported (a value printed in a result and never stored decides nothing),
+ * and it never lowers what is recorded, so a later weaker adapter cannot quietly demote an observed ledger.
+ */
+export async function ensureAssurance(root: string, changeId: string, achieved: AssuranceLevel): Promise<AssuranceLevel> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
         const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(path)) ?? { usage: {}, assurance: 'none' as AssuranceLevel };
-        await writeJson(root, changeId, FILES.usage, { ...current, assurance });
+        const strongest = assuranceAtLeast(achieved, current.assurance) ? achieved : current.assurance;
+        if (strongest !== current.assurance) {
+            await writeJson(root, changeId, FILES.usage, { ...current, assurance: strongest });
+        }
+        return strongest;
     });
 }
 
@@ -292,6 +343,16 @@ export type LedgerReport = {
         withoutEvidence: number;
         /** Claims naming an evidence id no item carries: the same gap the kernel reports as `evidence_missing`. */
         namingUnrecordedEvidence: number;
+        /**
+         * The state of each claim, derived by the kernel's own predicate.
+         *
+         * `byStatus` above is what the claims *declare* (`open` and so on) and is not consulted by the decision; this is
+         * what the evidence shows. Two numbers side by side is the point: an operator reading six open claims next to a
+         * decision that says `pass` is reading a report whose two halves answer different questions. `null` when no
+         * subject is frozen, because then no state can be derived at all and a count would be an invention.
+         */
+        bySupport: Record<ClaimState, number> | null;
+        derived: Array<{ claimId: string; state: ClaimState }>;
     };
     evidence: {
         total: number;
@@ -336,6 +397,24 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
     for (const verdict of ledger.verdicts) byVerdict[verdict.verdict] = (byVerdict[verdict.verdict] ?? 0) + 1;
 
     const verdictByEvidence = new Map(ledger.verdicts.map((verdict) => [verdict.evidenceId, verdict]));
+    // The same predicate the gate uses, called rather than re-implemented: a report that derived support its own way would
+    // be the second answer to one question, which is the defect this subsystem exists to remove.
+    const evaluations = ledger.subject === null
+        ? null
+        : ledger.claims.map((claim) => evaluateClaim(claim, {
+            evidence: ledger.evidence,
+            verdicts: ledger.verdicts,
+            reusedEvidence: new Set<string>(),
+            policy: ledger.policy,
+            challenges: ledger.challenges,
+            subjectRevision: ledger.subject?.revision ?? '',
+        }));
+    const bySupport = evaluations === null
+        ? null
+        : evaluations.reduce((totals, evaluation) => {
+            totals[evaluation.state] += 1;
+            return totals;
+        }, { supported: 0, waived: 0, unsupported: 0, refuted: 0, missing: 0, inconclusive: 0, stale: 0, below_strength: 0, challenged: 0 } as Record<ClaimState, number>);
     const claimToSupportedMs = ledger.claims
         .map((claim) => {
             const declaredAt = Date.parse(claim.at);
@@ -366,6 +445,8 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             namingUnrecordedEvidence: ledger.claims
                 .filter((claim) => claim.evidenceIds.some((id) => !ledger.evidence.some((item) => item.id === id)))
                 .length,
+            bySupport,
+            derived: (evaluations ?? []).map((evaluation) => ({ claimId: evaluation.claimId, state: evaluation.state })),
         },
         evidence: {
             total: ledger.evidence.length,

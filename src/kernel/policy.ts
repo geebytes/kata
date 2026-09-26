@@ -6,10 +6,12 @@
  * reads each one: the kernel test asserts the two sets are equal, so a field with no consumer (a declaration that does
  * nothing) and a consumer with no field (a rule nobody can see) are both refused.
  */
+import type { RiskClass } from './types.js';
 import {
     ASSURANCE_LEVELS,
     assuranceAtLeast,
     EVIDENCE_TYPES,
+    RISK_CLASSES,
     SEVERITIES,
     TIER_NAMES,
     type AssuranceLevel,
@@ -35,6 +37,15 @@ export type TierPolicy = {
      * a test of my own making.
      */
     assuranceFloor: AssuranceLevel;
+    /**
+     * The risk classes every change at this tier must have a claim for.
+     *
+     * Without this the coverage check cannot fail. If the required set were derived from the claims themselves — the union
+     * of whatever they happen to be about — then every change would be covered by construction, which is the defect class
+     * where a check stays green whatever happens. The contract is over the tier's fixed risk space: a class with no claim
+     * is a hole somebody has to close, and the decision names it.
+     */
+    requiredRiskClasses: RiskClass[];
     /** Budget for human attention, in minutes. Zero means the tier expects none. */
     humanBudgetMin: number;
 };
@@ -64,6 +75,7 @@ export const POLICY_CONSUMERS: Record<string, string> = {
     'tiers.*.reviewers': 'producers/quorum',
     'tiers.*.quorumOn': 'producers/quorum',
     'tiers.*.assuranceFloor': 'kernel/decide',
+    'tiers.*.requiredRiskClasses': 'kernel/decide',
     'tiers.*.humanBudgetMin': 'producers/planner',
     'riskFloors': 'kernel/risk',
     'riskFloorAudit.changesRequireReview': 'kernel/risk',
@@ -86,6 +98,7 @@ export function defaultPolicy(): Policy {
                 reviewers: 0,
                 quorumOn: ['uncertainty', 'new_class', 'weak_evidence'],
                 assuranceFloor: 'none',
+                requiredRiskClasses: ['consistency'],
                 humanBudgetMin: 0,
             },
             strict: {
@@ -93,6 +106,7 @@ export function defaultPolicy(): Policy {
                 reviewers: 1,
                 quorumOn: ['disagreement', 'high_risk'],
                 assuranceFloor: 'relayed',
+                requiredRiskClasses: ['consistency', 'boundary', 'failure_mode'],
                 humanBudgetMin: 10,
             },
             security: {
@@ -100,6 +114,7 @@ export function defaultPolicy(): Policy {
                 reviewers: 2,
                 quorumOn: ['always'],
                 assuranceFloor: 'sandboxed',
+                requiredRiskClasses: ['consistency', 'boundary', 'failure_mode', 'privilege', 'provenance'],
                 humanBudgetMin: 30,
             },
         },
@@ -159,7 +174,7 @@ export function loadPolicy(value: unknown): PolicyLoad {
     for (const tier of TIER_NAMES) {
         const entry = value.tiers[tier];
         if (!isRecord(entry)) return { ok: false, error: `tiers.${tier} is required` };
-        const knownFields = ['autoEvidence', 'reviewers', 'quorumOn', 'assuranceFloor', 'humanBudgetMin'];
+        const knownFields = ['autoEvidence', 'reviewers', 'quorumOn', 'assuranceFloor', 'requiredRiskClasses', 'humanBudgetMin'];
         for (const field of knownFields) {
             if (entry[field] === undefined) return { ok: false, error: `tiers.${tier}.${field} is required` };
         }
@@ -174,6 +189,11 @@ export function loadPolicy(value: unknown): PolicyLoad {
         }
         if (!ASSURANCE_LEVELS.includes(entry.assuranceFloor as AssuranceLevel)) {
             return { ok: false, error: `tiers.${tier}.assuranceFloor must be one of ${ASSURANCE_LEVELS.join(', ')}` };
+        }
+        const requiredClasses = entry.requiredRiskClasses;
+        if (!Array.isArray(requiredClasses) || requiredClasses.length === 0
+            || requiredClasses.some((item) => !RISK_CLASSES.includes(item as RiskClass))) {
+            return { ok: false, error: `tiers.${tier}.requiredRiskClasses must be a non-empty list of known risk classes` };
         }
         if (typeof entry.reviewers !== 'number' || entry.reviewers < 0) {
             return { ok: false, error: `tiers.${tier}.reviewers must be a non-negative number` };

@@ -100,7 +100,9 @@ export async function ledgerVerdict(input: {
         challenges: ledger.challenges,
         policy: ledger.policy,
         tier,
-        declaredRiskClasses: [...new Set(ledger.claims.map((claim) => claim.riskClass))],
+        // The tier's contract, not the union of what the claims happen to say: a set derived from the claims makes the
+        // coverage check unfailable, which is the one thing a gate must never be.
+        declaredRiskClasses: ledger.policy.tiers[tier].requiredRiskClasses,
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,

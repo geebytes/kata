@@ -157,6 +157,14 @@ export type Challenge = {
     state: ChallengeState;
     at: string;
     resolution?: { at: string; observed: string };
+    /**
+     * The previous command, kept when a measurement turns out to have been wrong.
+     *
+     * A counterexample whose command measures the wrong thing — a comment rather than the code, say — must be correctable
+     * without hand-editing the ledger, and the correction must not erase what was measured before: that is the difference
+     * between amending a measurement and quietly rewriting a record.
+     */
+    amendment?: { command: string; reason: string; at: string };
 };
 
 export type ReasonCode =

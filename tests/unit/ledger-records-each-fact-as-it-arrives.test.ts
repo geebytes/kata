@@ -7,6 +7,8 @@ import {
     appendClaim,
     appendEvidence,
     appendRun,
+    amendChallenge,
+    resolveChallenge,
     declaredPaths,
     freezeSubject,
     readLedger,
@@ -102,6 +104,29 @@ describe('the ledger records each fact as it arrives', () => {
         expect(ledger.challenges).toHaveLength(1);
         expect(ledger.usage.tokens).toBe(1234);
         expect(ledger.runs).toHaveLength(1);
+    });
+
+    it('amends a counterexample by keeping the command it replaces, and drops the outcome it no longer earned', async () => {
+        await appendChallenge(root, changeId, {
+            id: 'X1',
+            claimId: 'C1',
+            command: 'grep -q marker notes/absent.txt',
+            failsOn: 'rev:aaaabbbbccccdddd',
+            state: 'open',
+            at: '2026-09-27T00:00:00.000Z',
+        });
+        await resolveChallenge(root, changeId, 'X1', { state: 'withdrawn', observed: 'exit 1', at: '2026-09-27T00:01:00.000Z' });
+        const amended = await amendChallenge(root, changeId, 'X1', {
+            command: 'exit 0',
+            reason: 'the first command measured a file that does not exist',
+            at: '2026-09-27T00:02:00.000Z',
+        });
+        expect(amended?.command).toBe('exit 0');
+        expect(amended?.state).toBe('open');
+        expect(amended?.resolution).toBeUndefined();
+        expect(amended?.amendment?.command).toContain('notes/absent.txt');
+        expect(amended?.amendment?.reason).toContain('does not exist');
+        expect(await amendChallenge(root, changeId, 'X9', { command: 'exit 0', reason: 'r', at: 'now' })).toBeNull();
     });
 
     it('does not duplicate an evidence item or a challenge that is added twice', async () => {

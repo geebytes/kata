@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, recordVerdicts, appendChallenge, resolveChallenge, setAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -362,14 +362,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             // walk itself lives in one place so an adapter cannot accidentally skip an item.
             const verdicts = await verifyAll(items, context, adapter.verify);
             await recordVerdicts(options.root, changeId, verdicts);
-            if (argv.includes('--assurance')) {
-                await setAssurance(options.root, changeId, adapter.assurance as AssuranceLevel);
-            }
+            // **Recorded, not merely reported.** The adapter's assurance is a measured fact about the round that just ran,
+            // and gating the write on a flag is how a change whose checks kata itself observed came to be judged as having
+            // no provenance at all: the value appeared in the result and nothing stored it.
+            const assurance = await ensureAssurance(options.root, changeId, adapter.assurance as AssuranceLevel);
             outputResult({
                 ok: true,
                 command: 'ledger evidence verify',
                 adapter: adapter.id,
-                assurance: adapter.assurance,
+                assurance,
                 verdicts: verdicts.map((verdict) => ({
                     id: verdict.evidenceId,
                     type: verdict.evidenceType,
@@ -401,6 +402,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 return;
             }
             const id = argValue(argv, '--id') ?? `X${ledger.challenges.length + 1}`;
+            if (await challengeExists(options.root, changeId, id)) {
+                // A silent no-op would report success while nothing was recorded — the same shape as an insert that claims
+                // to have persisted. Name the collision and say what to use instead.
+                fail({ command: 'ledger challenge add', error: `challenge ${id} already exists; amend it (--command with amend) or pick another id` });
+                return;
+            }
             const challenge: Challenge = {
                 id,
                 claimId,
@@ -441,6 +448,22 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 outcomes.push({ id: challenge.id, code: result.code, state });
             }
             outputResult({ ok: true, command: 'ledger challenge check', outcomes });
+            return;
+        }
+        if (action === 'amend') {
+            const id = argValue(argv, '--id');
+            const command = argValue(argv, '--command');
+            const reason = argValue(argv, '--reason');
+            if (id === undefined || command === undefined || reason === undefined) {
+                fail({ command: 'ledger challenge amend', error: '--id, --command and --reason are all required' });
+                return;
+            }
+            const amended = await amendChallenge(options.root, changeId, id, { command, reason, at: nowIso() });
+            if (amended === null) {
+                fail({ command: 'ledger challenge amend', error: `no challenge ${id} in this ledger` });
+                return;
+            }
+            outputResult({ ok: true, command: 'ledger challenge amend', challenge: amended, replaced: amended.amendment?.command });
             return;
         }
         fail({ command: 'ledger challenge', error: `unknown action "${action}"` });

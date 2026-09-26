@@ -222,6 +222,32 @@ describe('the ledger verbs', () => {
         expect(moved.verdictsCarriedOver).toBe(0);
     });
 
+    it('amends a counterexample whose command measured the wrong thing, and refuses a duplicate id', async () => {
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+
+        // A command that measures a file nobody wrote: it fails, so the challenge stays open, and the ledger blocks.
+        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/absent.txt', '--id', 'X1']);
+        await ledger(['challenge', 'check']);
+        expect((await ledger(['decide'])).verdict).toBe('insufficient');
+
+        // The measurement was wrong, so it is amended rather than hand-edited: the state resets, the old command is kept,
+        // and the duplicate add is refused by name instead of reporting a success it did not perform.
+        const amended = await ledger(['challenge', 'amend', '--id', 'X1', '--command', 'exit 0', '--reason', 'the first command measured a file that does not exist']);
+        expect((amended.challenge as { state: string }).state).toBe('open');
+        expect(String(amended.replaced)).toContain('notes/absent.txt');
+        const duplicate = await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 1', '--id', 'X1']);
+        expect(duplicate.ok).toBe(false);
+        expect(String(duplicate.error)).toContain('already exists');
+
+        const checked = await ledger(['challenge', 'check']);
+        expect((checked.outcomes as Array<{ state: string }>)[0]?.state).toBe('withdrawn');
+        expect((await ledger(['decide'])).verdict).toBe('pass');
+    });
+
     it('records a measured budget, and a spent one cannot be decided as a pass', async () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);
@@ -248,7 +274,7 @@ describe('the ledger verbs', () => {
         await ledger(['freeze']);
         await ledger(claimArgv());
         const empty = (await ledger(['status', '--cost'])).report as {
-            claims: { total: number; reopenings: number; namingUnrecordedEvidence: number };
+            claims: { total: number; reopenings: number; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null; derived: Array<{ state: string }> };
             evidence: { unverified: number };
             discovery: { refutationRate: number | null; baseline: string };
             authorSide: { medianClaimToSupportedMs: number | null };
@@ -256,8 +282,18 @@ describe('the ledger verbs', () => {
         expect(empty.claims.total).toBe(1);
         expect(empty.evidence.unverified).toBe(0);
         // The claim names E1 and no evidence item carries that id, which is the same gap the kernel reports as
-        // `evidence_missing` — the report and the decision name the same thing.
+        // `claim_unsupported` — the report and the decision name the same thing.
         expect(empty.claims.namingUnrecordedEvidence).toBe(1);
+        // The declared status is `open` while the measured one is derived from the evidence: the report says both, and the
+        // second comes from the same predicate the gate uses, so the two halves of a report cannot answer different
+        // questions.
+        expect(empty.claims.bySupport?.unsupported).toBe(1);
+        expect(empty.claims.derived[0]?.state).toBe('unsupported');
+
+        // The item exists and has no verdict: a different gap, with its own state.
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        const recordedUnverified = (await ledger(['status', '--cost'])).report as { claims: { bySupport: Record<string, number> | null } };
+        expect(recordedUnverified.claims.bySupport?.missing).toBe(1);
         expect(empty.discovery.refutationRate).toBeNull();
         expect(empty.discovery.baseline).toBe('none recorded yet');
         expect(empty.authorSide.medianClaimToSupportedMs).toBeNull();
@@ -266,7 +302,7 @@ describe('the ledger verbs', () => {
         await ledger(['evidence', 'verify']);
         await ledger(['claim', 'reopen', 'C1']);
         const measured = (await ledger(['status', '--cost'])).report as {
-            claims: { total: number; reopenings: number; byStatus: Record<string, number>; namingUnrecordedEvidence: number };
+            claims: { total: number; reopenings: number; byStatus: Record<string, number>; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null };
             evidence: { unverified: number; byType: Record<string, number> };
             discovery: { refutationRate: number | null };
             authorSide: { medianClaimToSupportedMs: number | null; firstClaimAt: string | null };
@@ -274,6 +310,7 @@ describe('the ledger verbs', () => {
         expect(measured.claims.reopenings).toBe(1);
         expect(measured.claims.namingUnrecordedEvidence).toBe(0);
         expect(measured.claims.byStatus.open).toBe(1);
+        expect(measured.claims.bySupport?.supported).toBe(1);
         expect(measured.evidence.unverified).toBe(0);
         expect(measured.evidence.byType.static_witness).toBe(1);
         expect(measured.discovery.refutationRate).toBe(0);
