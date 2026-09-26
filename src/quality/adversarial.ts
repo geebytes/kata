@@ -664,7 +664,10 @@ every turn. ${(input.delta.findingsWithheld ?? 0) > 0
 `
         : '';
 
-    return `# Independent adversarial review — ${input.node} node
+            // Both derived from the envelope's own source, so a promise in the brief cannot drift from the limit the round is held to.
+        const toolCallBudget = Math.ceil(MEASURED_REVIEW_PASS_COST.mostToolCalls * REVIEW_HEADROOM);
+        const recordDeadlineToolCalls = Math.max(10, Math.floor(toolCallBudget / 3));
+return `# Independent adversarial review — ${input.node} node
 
 You are an independent adversarial reviewer. **You have no prior context.** Everything you are allowed to assume is in
 this brief; do not continue anyone else's reasoning, and do not trust the claims in it — the point of this pass is that
@@ -894,6 +897,13 @@ by hand.
 So: send a complete record once your first hypothesis is concluded, and send a fuller one when you have more. The dispatcher reads
 the **last** record in your transcript, not only the final message, and a partially-investigated change with a real record beats a
 thorough one with nothing.
+
+**A deadline, because the instruction above was not enough and the difference is measured.** Write your first complete record **by tool call
+${recordDeadlineToolCalls} of this round's ${toolCallBudget}** — and then keep working. Rounds on this line told to
+emit "as soon as you have findings", with no number, produced **no record in four consecutive attempts on one revision**; rounds given the same
+instruction **with a number** produced one in **six of six**. The four failures wrote **zero characters of text** while their reasoning ran past
+half a million — a session that never writes anything cannot be salvaged, and its findings, coverage and costs are gone. The number is the whole
+of the difference: a session has no instrument for "soon", and it does have one for a count it can see.
 
 **This requirement was missing from this brief, and it is the measured cause of seven refused records on this line**: every
 review round on two changes was returned as incomplete for a condition the brief never stated, so the reviewers could not comply
