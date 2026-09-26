@@ -317,3 +317,88 @@ so a record is refused as `stale_revision` only when **all four** fail — which
 | `aad-r7-f5` | **blocking** | **AC-6's second clause was false as written** — it called a guard that refuses an honest inconclusive verdict a defect, while the discharge conjunct refuses such a record by design and AC-6's own selector asserts that refusal is correct, so the criterion was certified by a check testing the inverse of one of its clauses. The clause is replaced by what holds, via `matrix set --statement` — which does not move the revision, so the round that found it was not voided by the correction |
 
 **The pattern is the one this whole document describes, one turn further out**: the author writes a mechanism, a reviewer finds what the author could not see, and every finding is in the *previous* work. What is new is who paid for it — the round ran under kata's own `execute` contract, wrote a receipt bound to the request it answered, and cost nothing but the tokens, because the host capability that had blocked two changes was a missing adapter rather than a missing rule.
+
+## 15. The record-less round, measured a second time — and the lever turns out to be a number
+
+§1.6 named the largest loss on this line: a required output whose only channel is the round reaching its natural end. The decoupled
+protocol was built partly to answer it — the host streams, kata decides, and `salvage` reads a transcript — and then the same failure was
+measured again, on the new route, on one revision:
+
+| attempt | executed by | tool calls | transcript | record |
+|---|---|---|---|---|
+| 1 | `execute` → `pi` | 92 | 869 KB of events | **none** |
+| 2 | `execute` → `pi` | 108 | — | one, and the gate refused it for citing tests it had not declared |
+| 3 | `execute` → `pi` | — | **139 MB** | **none** |
+| 4 | `execute` → `pi` | — | 21.7 MB | **none** |
+
+**Four dispatches, zero accepted records** — and one measurement that names the mechanism precisely: the transcript of attempt 4 holds
+**zero characters of assistant text**. Not a truncated record, not a malformed one: a session that reasoned for twenty-five minutes and wrote
+nothing at all. `salvage` reported the same thing it reports for round 2 of this line's earlier failures — *"the transcript holds no complete
+record, so the round produced none"* — which is correct and useless, because there was nothing to salvage.
+
+**The lever is the line's own experiment, and it is one sentence.** `docs/design/2026-09-25-record-production-experiment.md` measured it:
+rounds told to emit "as soon as you have findings", with no number, produced **0 records in 4 attempts**; rounds given the same instruction
+**with a number** produced one in **6 of 6**, at 3.4–7.7 minutes and 134–216K tokens against 8–50 minutes and 400K–1.2M for the same change
+without it. The brief already carried the guidance. What it did not carry was the number — and a session has no instrument for "soon" and
+does have one for a count it can see.
+
+So the brief now states it, **derived rather than written down**: `ceil(MEASURED_REVIEW_PASS_COST.mostToolCalls × REVIEW_HEADROOM)`,
+divided by three, floored at ten — *"write your first complete record by tool call 71 of this round's 215"* — from the same constants the
+envelope is built from, so a promise in the brief cannot drift from the limit the round is held to. That is this change's own class table
+applied to its brief: one fact, one derivation.
+
+The next dispatch produced a record the gate **accepted** (`toolCalls 168`, 1.19 MB, `tokens: null` — unmeasured rather than a fabricated
+zero), and the change went to judge and archive. **One attempt with a number, one record; four without, none.**
+
+**Two honest limits.** Five data points are not a law, and the numbers come from two routes: the six-of-six figure was measured on subagent
+rounds whose prompt *I* wrote, while the four failures were process rounds whose prompt is kata's brief — so what is demonstrated is that the
+instruction matters and that a numbered one survived the route change, not that some particular number is optimal. And the transcript did not
+make `salvage` work here: a session that writes no text leaves nothing to salvage, which is why the recording channel was never the fix and the
+*stopping* behaviour is.
+
+## 16. Two more classes, both produced by this change rather than found in it
+
+The class table had five entries. The first independent pass on the decoupled protocol produced eleven findings — and five of them were one
+sentence nobody had written down:
+
+> **6. A declaration with no consumer** — a declaration is written and nothing reads it.
+
+The protocol's schema was bundled by nothing and registered with nothing, so the "bundled schema" a criterion promised did not ship;
+`elapsedMs` was computed, passed into the runner and consulted nowhere, so the wall clock stayed the host's word while the branch claimed kata
+measured it; `receipt_unwatched` was a refusal outside the union the brief renders from, so no brief could state the condition a pass was
+refused by. **In every case the guard beside the declaration passed**, because it asked whether the declaration was well formed rather than
+whether anything read it. The covering check asks the whole repository: every schema file ships and is reachable by name, and every field the
+round runner declares is read by the round runner.
+
+The second pass produced a sharper one, and it is the same sentence one level up:
+
+> **7. A part checked as the whole** — a guard inspects one field, member or direction of a concept and is read as a verdict on the concept.
+
+Its live instance was inside the fix for the sixth class: `runIsCertified` compared the artefact kata wrote, and **`adversarial execute` never
+registered that artefact** — so every production run was admitted on an identity while the code that compares content existed and could not be
+reached. Mutation-verified: with the receipt omitted, the tamper case and the source clause both redden. The other instances are the same shape
+— a criterion broader than its selector, one binding checked while the siblings beside it are trusted, a packet's brief hash verified while its
+budget and capability set are taken as given, and the bundled-schema guards walking registered-to-file and never file-to-registered.
+
+**Both classes are now checks, and both checks redden under a mutation that reintroduces them** — which is the only difference this line has
+found that matters: an instance repaired is a round bought, a class covered is a round saved.
+
+## 17. `round-protocol` archived: the loop closed on the decoupled protocol
+
+This change — the one that moved receipt authorship from the host to kata — went through its own gate and archived
+(`revision-9505acc36fbe0568`, judge PASS on AC-1…AC-6, evidence 8, obligations 0, failing evidence 0, 193 files / 1327 tests).
+
+What that demonstrates, stated no more strongly than the evidence supports:
+
+- **The host contract can be smaller than it was.** The adapter launches and maps a stream; kata counts, refutes capability claims, derives the
+  status, writes the receipt and registers the run. The host that once wrote its own certificate — and, in `aad-r7-f4`, wrote one for a round
+  that never started — now writes none.
+- **The wall that stopped two strict changes was a missing adapter, not a missing rule.** `adversarial-admissibility` was the first round this
+  repository executed through `execute`; `round-protocol` is the first change whose whole cycle ran on the protocol it defines.
+- **The two classes above were found by the mechanism being certified**, which is the property the whole line exists for: the reviewer is not
+  the author, and five of eleven findings were about work landed hours earlier.
+
+**What remains blocked, and it is not this:** `adversarial-admissibility` and `review-record-integrity` still hold obligations that need a
+capability receipt their host cannot issue, and the two-ledger fact recorded in §3 is unchanged — a finding can live in `review.json` or in the
+adversarial record, and a reader that consults one answers for half of them. Neither is a defect this change could have fixed from inside, and
+both are cheaper to state than to hide.
