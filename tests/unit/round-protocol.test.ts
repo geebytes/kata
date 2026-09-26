@@ -240,6 +240,16 @@ describe('the protocol has one definition, and the executable never reaches into
         expect([...schema.properties.kind.enum].sort()).toEqual([...ROUND_EVENT_KINDS].sort());
     });
 
+    it('keeps the enforcement in kata: the adapter writes no receipt and counts nothing', async () => {
+        // The plan's criterion 6, as a source assertion because the property *is* the absence of code: a host that computes the envelope, or
+        // constructs the artefact, has taken back the half the redesign moved. A test over the file is the only way to say "this stays absent".
+        const adapter = await readFile('host/pi-adapter.ts', 'utf8');
+        const code = adapter.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+        expect(code).not.toContain('requestSha256');
+        expect(code).not.toContain('maxToolCalls');
+        expect(code).not.toMatch(/kind: 'receipt'|receiptPath/);
+    });
+
     it('is not part of the kata executable: src/ never imports host/', async () => {
         // The boundary is a checked fact, not a promise. `host/` produces the events that become a receipt for rounds reviewing kata's own
         // changes; if kata could call it, the authorised party would be producing its own independence evidence.
