@@ -1230,6 +1230,14 @@ export type AdversarialGateReason =
     | 'brief_mismatch'
     /** The record's hash belongs to no brief kata issued for this node and revision. */
     | 'brief_not_issued'
+    /**
+     * The receipt handed over is not the one kata wrote for a run it watched.
+     *
+     * Added when the receipt's author moved from the host to kata: the register beside `adversarial execute` is what makes "kata wrote it"
+     * checkable, and this is the name of its refusal. It is in this union on purpose — `tests/unit/every-gate-condition-is-stated-in-the-brief.test.ts`
+     * walks the union and requires a brief row for every pass-facing member, so a refusal outside it would be a condition no brief can state.
+     */
+    | 'receipt_unwatched'
     /** A recorded pass with no attempt: a conclusion that demonstrates nothing. */
     | 'incomplete'
     | 'waived'
@@ -1927,6 +1935,10 @@ export function adversarialReasonFor(reason: AdversarialGateReason | undefined, 
         case 'not_fresh_context': return 'The recorded adversarial pass does not attest a fresh context.';
         case 'brief_mismatch': return 'The recorded adversarial pass answered a brief kata issued for a different revision.';
         case 'brief_not_issued': return 'The recorded adversarial pass carries a brief hash kata never issued for this node and revision — run `kata-cli adversarial brief --change <task-id> --node <verify|review>`, hand that brief to the clean-context reviewer, and record the hash it reports.';
+        case 'receipt_unwatched':
+            return 'A receipt is evidence that a run was watched, and this one is not the artefact kata wrote for the run it names.'
+                + (detail ? ` ${detail}` : '')
+                + ` Re-run the round with \`kata-cli adversarial execute --executor "<command>"\`, which records the run and writes the receipt.`;
         case 'incomplete': {
             // The failing conjunct, named — not a cause invented for the occasion.
             const basis = 'The recorded adversarial pass does not demonstrate what it claims: its judgement basis is incomplete — a criterion this revision changed is not covered by a discharged hypothesis, an observation does not resolve against something openable, or the record contradicts itself.';
@@ -2105,6 +2117,12 @@ export const REVIEW_GATE_CONDITIONS: ReadonlyArray<{
     /** What refuses the record when the condition does not hold. */
     what: string;
 }> = [
+    {
+        reason: 'receipt_unwatched',
+        condition:
+            'Hand over the receipt `kata-cli adversarial execute` wrote for this run, **unaltered**, and no other: a receipt for a run kata did not watch, or one whose fields differ from the record of that run, is refused rather than weighed.',
+        what: '`receipt_unwatched`, naming the run and what differs',
+    },
     {
         reason: 'incomplete',
         condition:
@@ -2470,6 +2488,38 @@ export interface IssuedBriefPool {
  * content — the thing the pass is actually about — stayed identical, and the record's own content binding covers that
  * case. Classification is by revision first (the explicit match) and by manifest hash second.
  */
+/**
+ * The request kata issued for a run, if it issued one.
+ *
+ * `adversarial execute` reads its request out of an operator-supplied packet, so this is how that claim is compared with the one kata
+ * made: a packet whose `runId` no issued brief carries answers a request nobody asked, and refusing it at the read boundary is the
+ * difference between the register admitting evidence about a round and admitting evidence about a file.
+ */
+export async function issuedRunRequest(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    runId: string,
+): Promise<ReviewRunRequest | null> {
+    const directory = adversarialBriefsDir(root, taskId);
+    const files = await readdir(directory).catch(() => [] as string[]);
+    for (const file of files.filter((name) => name.startsWith(`${node}-`) && name.endsWith('.json'))) {
+        const raw = await readFile(join(directory, file), 'utf8').catch(() => null);
+        if (raw === null) continue;
+        try {
+            // The brief file is a container: `{ version, node, revisionId, briefs: [...] }`, and the run request belongs to an **entry**.
+            // Reading it off the top level is how this function first reported every issued run as unissued.
+            const parsed = JSON.parse(raw) as { briefs?: Array<{ runRequest?: ReviewRunRequest }> };
+            for (const entry of parsed.briefs ?? []) {
+                if (entry.runRequest?.runId === runId) return entry.runRequest;
+            }
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
+
 export async function issuedBriefPool(
     root: string,
     taskId: string,

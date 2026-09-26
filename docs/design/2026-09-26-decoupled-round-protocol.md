@@ -78,14 +78,15 @@ and the receipt move into `src/`, where they are one implementation, versioned, 
 
 ```jsonc
 // one JSON object per line on the executor's stdout, in order
-{"kind":"launched","sessionId":"…","capabilities":["fresh_context","read_only_fs","bounded_tools","budget_enforced"]}
+{"kind":"launched","protocol":1,"capabilities":["fresh_context","read_only_fs","bounded_tools","budget_enforced"],"platform":"pi"}
 {"kind":"tool_call","tool":"read","target":"src/quality/adversarial.ts"}
 {"kind":"output","bytes":4096}
+{"kind":"telemetry","tokens":null,"truncations":null}     // what only the host can observe; absent means unmeasured
 {"kind":"result","text":"{…the record…}"}
-{"kind":"ended","status":"completed","telemetry":{"tokens":null,"truncations":null}}
+{"kind":"ended","status":"completed"}
 ```
 
-That is the entire host-facing surface: five event kinds, no TypeScript, no import, no copy of a runner. `.ts`, `.mjs`, `.sh`, or a
+That is the entire host-facing surface: six event kinds, no TypeScript, no import, no copy of a runner. `.ts`, `.mjs`, `.sh`, or a
 platform extension can emit it.
 
 ---
@@ -124,7 +125,7 @@ carried the missing requirement by hand. A skill gives it one home, per platform
 ### 4.2 `kata-host-adapter` — the operator's half (procedure)
 
 How to implement an executor for *any* platform: launch an isolated session with this platform's own flags; map that platform's stream onto
-the five event kinds; declare capabilities **truthfully and only the ones actually provided**; write no receipt; and never let a session that
+the six event kinds; declare capabilities **truthfully and only the ones actually provided**; write no receipt; and never let a session that
 produced no result look completed. Its reference is the protocol in §2, not a file to copy.
 
 ### 4.3 What does *not* become a skill

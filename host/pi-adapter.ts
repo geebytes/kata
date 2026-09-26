@@ -20,11 +20,15 @@ import type { Readable } from 'node:stream';
  *   * `fresh_context` — `pi -p --no-session` is a new process: no inherited transcript, no resume, no memory of the authoring session.
  *   * `read_only_fs` / `bounded_tools` — `--tools read,grep,find,ls` is applied by the child's own argument parsing. Kata refutes this from the
  *     stream: a `tool_call` outside the allowlist refuses the round, so the claim is a proposition rather than a promise.
- *   * `budget_enforced` — kata enforces it. This file arms a wall-clock kill so a hung child dies, but the counts are kata's.
+ *   * `budget_enforced` — kata enforces it, including the wall clock: `runProcess` arms the kill, so this file holds no timer and reads no
+ *     budget. An earlier version did both, which is why the boundary case in `tests/unit/round-boundary.test.ts` now names the whole family of
+ *     strings it must not contain rather than the three it happened to have thought of.
  */
 
 interface Packet {
-    request: { runId: string; briefSha256: string; budget?: { maxWallMs?: number } };
+    // `runId` and `briefSha256` are read for one purpose: asserting that the packet's two halves agree. Everything else the request carries
+    // — the budget above all — belongs to kata, and a host that reads it is a host that enforces it.
+    request: { runId: string; briefSha256: string };
     brief?: { sha256?: string; text?: string; lines?: string[] };
 }
 
@@ -51,7 +55,9 @@ async function main(): Promise<number> {
     }
 
     const model = process.env.KATA_REVIEW_MODEL ?? 'litellm/deepseek-v4.1-flash-goat';
-    const timeoutMs = (packet.request.budget?.maxWallMs ?? 3_900_000) + 30_000;
+    // **No budget arithmetic here.** An earlier version read `budget.maxWallMs`, added 30 000 ms and armed its own kill — which is the
+    // envelope's wall-clock term, computed from the packet and enforced by the host. Kata already arms that kill through `runProcess`, so the
+    // adapter's timer was a second enforcement of a limit it does not own, and criterion AC-5 says it holds none.
 
     // **`launched` is emitted before the session starts, and it is a claim kata will check.** If the child cannot be spawned at all, this file
     // emits no `result` — and a stream without a result is refused, which is the honest outcome for a round that never ran.
@@ -74,7 +80,6 @@ async function main(): Promise<number> {
     let buffer = '';
     let result: string | null = null;
     let stderrTail = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer) => {
         buffer += chunk.toString('utf8');
@@ -134,7 +139,6 @@ async function main(): Promise<number> {
             resolve(-1);
         });
     });
-    clearTimeout(timer);
     if (result === null) {
         // The host's own account of how it ended. Kata derives the round's status itself and keeps this verbatim, so a disagreement is visible
         // rather than authoritative.

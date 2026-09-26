@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode, type ExecutorCapability, type ReviewRunRequest } from '../quality/review-execution.js';
 import { ROUND_ALLOWLIST } from '../quality/round-runner.js';
+import type { ReviewExecutionReceipt } from '../quality/review-execution.js';
 import { join } from 'node:path';
 import { CLASS_COVERAGE, coveredClasses } from '../quality/class-coverage.js';
 import { roundMayClose } from '../quality/finding-lifecycle.js';
@@ -22,7 +23,7 @@ import {
     type AdversarialRecord,
     type AdversarialBriefScope,
     adversarialNodes,
-} from '../quality/adversarial.js';
+    issuedRunRequest,} from '../quality/adversarial.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
 import { deriveVerdict, type ReviewState } from '../quality/review-state.js';
 import { isTerminalSeverity } from '../quality/finding-lifecycle.js';
@@ -484,6 +485,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             };
         }
 
+        // **The packet must be the request kata issued.** `--packet` is operator-supplied, so without this a hand-written packet with
+        // `requiredCapabilities: []`, a widened budget and a fresh `runId` would run a round and register a completed run for a request
+        // nobody issued — the register would then admit a receipt for it. The gate above still refuses such a record (it binds the issued
+        // request), which makes this a hole in the admission layer rather than a way to certify an unexecuted round; a hole worth closing
+        // where the packet is read, because that is where the claim enters.
         const packetRaw = await readFile(packetPath, 'utf8').catch(() => null);
         if (packetRaw === null) {
             return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: `--packet could not be read: ${packetPath}. Nothing was run.` };
@@ -504,6 +510,21 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             return {
                 command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'packet_unbound',
                 error: `The packet's brief does not bind to its request: brief.sha256 is ${packet.brief?.sha256}, request.briefSha256 is ${request.briefSha256}. Nothing was run.`,
+            };
+        }
+
+        const issued = await issuedRunRequest(root, change, node, String(request.runId));
+        if (!issued) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'packet_not_issued',
+                error: `No brief issued for ${change}/${node} carries run ${request.runId}, so this packet answers a request kata never made. `
+                    + `Issue one with \`kata-cli adversarial brief --change ${change} --node ${node} --emit-request <path>\`. Nothing was run.`,
+            };
+        }
+        if (issued.requestSha256 !== request.requestSha256) {
+            return {
+                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'packet_not_issued',
+                error: `The issued run ${request.runId} is bound to request ${issued.requestSha256.slice(0, 12)}… while this packet claims ${request.requestSha256.slice(0, 12)}…. Nothing was run.`,
             };
         }
 
@@ -670,7 +691,7 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 };
             }
             const { readRoundRuns, runIsCertified } = await import('../quality/round-registry.js');
-            const certified = runIsCertified(await readRoundRuns(root, change), { runId: claimed.runId, requestSha256: claimed.requestSha256 });
+            const certified = runIsCertified(await readRoundRuns(root, change), fileReceipt as ReviewExecutionReceipt);
             if (!certified.certified) {
                 return {
                     command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',

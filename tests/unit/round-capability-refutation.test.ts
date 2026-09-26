@@ -18,7 +18,7 @@ const REQUEST = {
     runId: 'run-1',
     requestSha256: 'a'.repeat(64),
     requiredCapabilities: ['fresh_context', 'read_only_fs'] as const,
-    budget: { maxHypotheses: 6, maxToolCalls: 10, maxOutputBytes: 1000, maxWallMs: 1000 },
+    budget: { maxHypotheses: 6, maxToolCalls: 10, maxOutputBytes: 1000, maxWallMs: 60_000 },
 };
 
 function run(events: RoundEvent[], overrides: Partial<RoundRunnerInput> = {}) {
@@ -53,6 +53,19 @@ describe('a declared capability the stream contradicts refutes the round', () =>
         expect(outcome.reason).toContain('bounded_tools');
         expect(outcome.reason).toContain('deploy');
     });
+    it('checks the allowlist even when the host declares only the capabilities this node requires', () => {
+        // **The finding that made the allow-list unconditional.** The predicate used to be gated on the host *volunteering* `bounded_tools`,
+        // and the review node requires only `fresh_context` and `read_only_fs` — so a host that declared exactly what it had to was never
+        // checked against the allow-list at all. `powershell` is a built-in of the platform this repository ships an adapter for, and it was
+        // not in the mutating-tool enumeration either; naming what is permitted cannot miss a writer nobody thought of.
+        const minimal = run([launch(['fresh_context', 'read_only_fs']), { kind: 'tool_call', tool: 'powershell' }, { kind: 'result', text: '{}' }]);
+        expect(minimal.status).toBe('executor_unavailable');
+        if (minimal.status === 'completed') throw new Error('unreachable');
+        expect(minimal.reason).toContain('powershell');
+        expect(minimal.reason).toContain("outside this node's allowlist");
+        expect(minimal.reason).toContain('read, grep, find, ls');
+    });
+
     it('names a required capability the host did not provide', () => {
         const outcome = run([launch(['fresh_context']), { kind: 'result', text: '{}' }]);
         expect(outcome.status).toBe('executor_unavailable');

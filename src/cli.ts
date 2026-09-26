@@ -380,6 +380,11 @@ async function runMain(argv: string[]): Promise<void> {
     if (command === 'adversarial') {
         const result = await runAdversarialCommand(argv.slice(1));
         outputResult(result);
+        // **A refusal has to be a refusal at the process boundary too.** The same defect was fixed twice in this file for its neighbours
+        // (`falsify`, `lane --require-current`), whose comments state the rule: a guard whose exit status is 0 refuses nothing. A lane or a
+        // CI step that runs a round and checks the status would otherwise proceed on a round kata refused — `executor_unavailable`,
+        // `budget_exhausted`, `timeout`, a refused packet, or a record it would not take.
+        if (adversarialResultFailed(result)) process.exitCode = 1;
         return;
     }
 
@@ -549,6 +554,25 @@ function isCliEntrypoint(): boolean {
     }
 }
 
+
+/**
+ * Whether an `adversarial` result is a refusal, by the words its own commands answer with.
+ *
+ * Read rather than inferred from one field: `execute` answers with a `status` in the refusal vocabulary, `record` with `recorded: false`,
+ * `brief` with `emittedRequest: false`, `status` with `satisfied`/`gate`. A flag a command happens to set must not decide whether the process
+ * failed.
+ */
+function adversarialResultFailed(result: Record<string, unknown>): boolean {
+    const status = result.status;
+    if (status === 'executor_unavailable' || status === 'budget_exhausted' || status === 'timeout' || status === 'refused' || status === 'cancelled') {
+        return true;
+    }
+    if (result.recorded === false) return true;
+    if (result.emittedRequest === false) return true;
+    const gate = result.gate as { satisfied?: boolean } | undefined;
+    if (gate && gate.satisfied === false) return true;
+    return false;
+}
 
 if (isCliEntrypoint()) {
     main().catch((error: unknown) => {

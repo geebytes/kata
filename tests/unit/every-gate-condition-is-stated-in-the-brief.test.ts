@@ -44,6 +44,9 @@ describe('every condition the gate judges by is stated in the brief', () => {
      * could have satisfied had it been told, which is why a row is required for each.
      */
     const PASS_FACING: AdversarialGateReason[] = [
+        // A pass can act on this one: hand over the receipt kata wrote for its run, unaltered. Added with the refusal itself, which the
+        // invariant refused to accept until it was classified — the behaviour `mfc-r7-f2` asked for.
+        'receipt_unwatched',
         'incomplete',
         'undeclared_test_path',
         'brief_mismatch',

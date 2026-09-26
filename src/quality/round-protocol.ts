@@ -1,3 +1,4 @@
+import { validate } from '../core/schema.js';
 import type { ExecutorCapability } from './review-execution.js';
 
 /**
@@ -78,7 +79,24 @@ export function createRoundParser(input: { protocol?: number; maxLineBytes?: num
             refuse(lineNumber, `line ${lineNumber} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
             return;
         }
-        const event = asRoundEvent(parsed);
+        // The version first, and by name: the schema's own refusal for a mismatched version reads `const`, which tells a host author
+        // nothing about which side has to move. This is the one condition worth spelling out before the definition is applied.
+        const claimed = (parsed as { kind?: unknown; protocol?: unknown });
+        if (claimed.kind === 'launched' && typeof claimed.protocol === 'number' && claimed.protocol !== protocol) {
+            refuse(lineNumber, `this host speaks protocol ${claimed.protocol}, kata speaks ${protocol} — the host must be updated, or the command must be run by a kata that speaks its version`);
+            return;
+        }
+
+        // **The schema decides everything else.** `validate` is the same compiler every other artefact goes through, so a host is refused
+        // here, by the definition it is told to follow, rather than one command later by a schema nobody showed it.
+        let event: RoundEvent | null;
+        try {
+            validate<RoundEvent>('round-events', parsed);
+            event = asRoundEvent(parsed);
+        } catch (error) {
+            refuse(lineNumber, `line ${lineNumber} does not match the protocol: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+        }
         if (!event) {
             refuse(lineNumber, `line ${lineNumber} is not a protocol event: ${line.slice(0, 60)}`);
             return;
@@ -139,29 +157,42 @@ export function createRoundParser(input: { protocol?: number; maxLineBytes?: num
     };
 }
 
-/** A shape guard rather than a schema lookup per line: the schema is the documented definition, and a case asserts the two agree. */
+/**
+ * **The schema is the definition, and this is where it is applied.**
+ *
+ * The first version hand-wrote a shape guard here and a comment claiming "a case asserts the two agree" — and the two agreed on `kind`
+ * alone: the guard took any array of strings as `capabilities` where the schema names four values, any number as `bytes` where the schema
+ * bounds it at zero, any string as `ended.status` where the schema enumerates four, and honoured no `additionalProperties: false`. The
+ * divergence was not cosmetic: `decideRound` copies the declared capabilities into the receipt and `adversarial execute` writes that receipt
+ * unvalidated, so a stream the guard accepted could produce an artefact `adversarial record` refused **one command later**, naming neither
+ * the stream nor the host.
+ *
+ * Validating against the registered schema removes the second definition instead of keeping the two in step by hand.
+ */
 function asRoundEvent(value: unknown): RoundEvent | null {
     if (typeof value !== 'object' || value === null) return null;
-    const record = value as Record<string, unknown>;
-    const kind = record.kind;
+    const kind = (value as { kind?: unknown }).kind;
     if (typeof kind !== 'string' || !(ROUND_EVENT_KINDS as readonly string[]).includes(kind)) return null;
+    return narrow(value as Record<string, unknown>);
+}
+
+/** The schema has already decided shape and membership; this only narrows for the type system. */
+function narrow(record: Record<string, unknown>): RoundEvent {
+    const kind = record.kind as string;
     switch (kind) {
         case 'launched': {
-            if (typeof record.protocol !== 'number' || !Array.isArray(record.capabilities)) return null;
             return {
                 kind: 'launched',
-                protocol: record.protocol,
-                capabilities: record.capabilities.filter((entry): entry is ExecutorCapability => typeof entry === 'string'),
+                protocol: Number(record.protocol),
+                capabilities: (record.capabilities as unknown[]).filter((entry): entry is ExecutorCapability => typeof entry === 'string'),
                 ...(typeof record.platform === 'string' ? { platform: record.platform } : {}),
                 ...(typeof record.sessionId === 'string' ? { sessionId: record.sessionId } : {}),
             };
         }
         case 'tool_call':
-            return typeof record.tool === 'string'
-                ? { kind: 'tool_call', tool: record.tool, ...(typeof record.target === 'string' ? { target: record.target } : {}) }
-                : null;
+            return { kind: 'tool_call', tool: String(record.tool), ...(typeof record.target === 'string' ? { target: record.target } : {}) };
         case 'output':
-            return typeof record.bytes === 'number' ? { kind: 'output', bytes: record.bytes } : null;
+            return { kind: 'output', bytes: Number(record.bytes) };
         case 'telemetry':
             return {
                 kind: 'telemetry',
@@ -170,13 +201,16 @@ function asRoundEvent(value: unknown): RoundEvent | null {
                 firstTurnTokens: numberOrNull(record.firstTurnTokens),
             };
         case 'result':
-            return typeof record.text === 'string' ? { kind: 'result', text: record.text } : null;
+            return { kind: 'result', text: String(record.text) };
         case 'ended':
-            return typeof record.status === 'string'
-                ? { kind: 'ended', status: record.status as 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled', ...(typeof record.reason === 'string' ? { reason: record.reason } : {}) }
-                : null;
+            return {
+                kind: 'ended',
+                status: record.status as 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled',
+                ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+            };
         default:
-            return null;
+            // Unreachable: `asRoundEvent` checked membership against the same list the schema enumerates.
+            throw new Error(`unhandled protocol event kind: ${kind}`);
     }
 }
 

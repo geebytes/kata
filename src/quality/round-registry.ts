@@ -36,6 +36,14 @@ export interface RoundRunRecord {
     /** The host's own account of how it ended, kept beside kata's derivation. */
     hostReported: { status: string; reason?: string } | null;
     refusals: string[];
+    /**
+     * **The receipt kata wrote for this run**, kept so the admitted artefact can be compared with it.
+     *
+     * Without this the register certified an *identity*: a receipt whose capability list had been widened or whose telemetry had been edited
+     * was admitted, because the only things compared were the run id, the request hash and the status. Storing the artefact makes the
+     * admission rule the strong one — **the receipt you hand over must be the one kata wrote** — which is what "written by kata" has to mean.
+     */
+    receipt?: unknown;
 }
 
 interface RoundRunLedger {
@@ -73,7 +81,7 @@ export async function readRoundRuns(root: string, taskId: string): Promise<Round
  */
 export function runIsCertified(
     runs: RoundRunRecord[],
-    receipt: Pick<ReviewExecutionReceipt, 'runId' | 'requestSha256'>,
+    receipt: ReviewExecutionReceipt,
 ): { certified: true; run: RoundRunRecord } | { certified: false; reason: string } {
     const run = runs.find((entry) => entry.runId === receipt.runId);
     if (!run) {
@@ -88,6 +96,12 @@ export function runIsCertified(
             reason: `the run ${receipt.runId} answered request ${run.requestSha256.slice(0, 12)}… while this receipt claims ${receipt.requestSha256.slice(0, 12)}… — a receipt may only report the request it answered.`,
         };
     }
+    if (run.receipt && !sameReceipt(run.receipt, receipt)) {
+        return {
+            certified: false,
+            reason: `the receipt for run ${receipt.runId} is not the one kata wrote: its fields differ from the record of that run. A receipt is evidence of what was observed, so it may be handed over unaltered and not otherwise.`,
+        };
+    }
     if (run.status !== 'completed') {
         return {
             certified: false,
@@ -95,6 +109,25 @@ export function runIsCertified(
         };
     }
     return { certified: true, run };
+}
+
+/**
+ * Field-by-field equality over the receipt kata wrote. Compared as JSON with sorted keys so a reformatted artefact is still the same
+ * artefact — the rule is about content, not about bytes.
+ */
+function sameReceipt(recorded: unknown, admitted: ReviewExecutionReceipt): boolean {
+    return canonical(recorded) === canonical(admitted);
+}
+
+function canonical(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+    if (value && typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .filter(([, entry]) => entry !== undefined)
+            .sort(([left], [right]) => left.localeCompare(right));
+        return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
 }
 
 /** Tolerant on read, strict on write: a register that fails to parse must not be read as "no runs", because that would refuse valid work. */

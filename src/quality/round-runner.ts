@@ -15,15 +15,22 @@ import type { ProtocolRefusal, RoundEvent } from './round-protocol.js';
  * Nothing in this module spawns a process, reads a clock or touches the filesystem, so every rule below is testable without a host.
  */
 
-/** Tools that write. A stream carrying one of these refutes a declared `read_only_fs`. */
-export const MUTATING_TOOLS = ['write', 'edit', 'bash', 'shell', 'patch', 'apply_patch', 'notebook'] as const;
+/**
+ * Tools that only read. **The positive list, not a list of writers.**
+ *
+ * The first version enumerated mutating tools (`write`, `edit`, `bash`, …) and was refuted by measurement: `powershell` is a first-class
+ * built-in of the very platform this repository ships an adapter for, it was not in the list, and a stream declaring the two capabilities the
+ * review node requires was therefore never checked against the allow-list at all — the predicate was gated on the host *volunteering*
+ * `bounded_tools`, which the review node does not require. Naming what is permitted cannot miss a writer nobody thought of.
+ */
+export const READ_ONLY_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
 
 /**
  * The tools a review round may call. **Kata's list, not the host's** — which is what makes `bounded_tools` a proposition the stream can refute
  * rather than a claim about a prompt. A node that needed a wider set would widen this constant, and the widening would be a kata change with a
  * test, rather than a sentence in a host's documentation.
  */
-export const ROUND_ALLOWLIST = ['read', 'grep', 'find', 'ls'] as const;
+export const ROUND_ALLOWLIST = READ_ONLY_TOOLS;
 
 export interface RoundRequestFacts {
     runId: string;
@@ -94,22 +101,22 @@ export function decideRound(input: RoundRunnerInput): RoundOutcome {
 
     // 3. The same claims, refuted by the stream rather than taken on faith. This is the half a receipt could never check: a capability is only a
     //    fact if something observable would have looked different had it been false.
+    //
+    //    **The allow-list applies unconditionally.** It is kata's list, not the host's declaration, and gating the check on the host
+    //    volunteering `bounded_tools` left the review node — which requires only `fresh_context` and `read_only_fs` — with no tool check at all.
+    const declared = launched.capabilities;
     const calls = input.events.filter((event): event is Extract<RoundEvent, { kind: 'tool_call' }> => event.kind === 'tool_call');
-    if (launched.capabilities.includes('read_only_fs')) {
-        const mutating = calls.filter((call) => (MUTATING_TOOLS as readonly string[]).includes(call.tool));
-        if (mutating.length > 0) {
-            const first = mutating[0]!;
-            refusals.push(`\`${first.tool}\` was called${first.target ? ` on ${first.target}` : ''} while read_only_fs was declared`);
-            return refuse('executor_unavailable', `the host declared read_only_fs and the stream shows a call to \`${first.tool}\` — a capability the stream contradicts is not a capability`);
-        }
-    }
-    if (launched.capabilities.includes('bounded_tools')) {
-        const outside = calls.filter((call) => !input.allowlist.includes(call.tool));
-        if (outside.length > 0) {
-            const first = outside[0]!;
-            refusals.push(`\`${first.tool}\` is outside the allowlist ${input.allowlist.join(', ')} while bounded_tools was declared`);
-            return refuse('executor_unavailable', `the host declared bounded_tools and the stream shows \`${first.tool}\`, outside this node's allowlist (${input.allowlist.join(', ')})`);
-        }
+    const outside = calls.filter((call) => !input.allowlist.includes(call.tool));
+    if (outside.length > 0) {
+        const first = outside[0]!;
+        refusals.push(`\`${first.tool}\` was called${first.target ? ` on ${first.target}` : ''}, outside the allowlist ${input.allowlist.join(', ')}`);
+        return refuse(
+            'executor_unavailable',
+            `the stream shows a call to \`${first.tool}\`, which is outside this node's allowlist (${input.allowlist.join(', ')})`
+                + `${declared.filter((capability) => capability === 'read_only_fs' || capability === 'bounded_tools').length > 0
+                    ? ` — ${declared.filter((capability) => capability === 'read_only_fs' || capability === 'bounded_tools').join(' and ')} ${declared.length > 1 ? 'were' : 'was'} declared, and a capability the stream contradicts is not a capability`
+                    : ''}`,
+        );
     }
 
     // 4. The envelope, counted here rather than reported by the party it bounds.
@@ -128,9 +135,16 @@ export function decideRound(input: RoundRunnerInput): RoundOutcome {
         refusals.push(`the round raised ${hypotheses} hypotheses against a limit of ${input.request.budget.maxHypotheses}`);
         return refuse('budget_exhausted', `the round raised ${hypotheses} hypotheses against a limit of ${input.request.budget.maxHypotheses}`);
     }
+    // **Measured here, not taken from the child's exit code.** `timedOut` is the caller's reading of `exitCode === 124`, which a child can
+    //    reach for its own reasons; `elapsedMs` is kata's own clock, and it was computed, passed and never read — so a round that ran sixty
+    //    times past `maxWallMs` was certified while this branch claimed the wall clock was enforced.
+    if (input.elapsedMs > input.request.budget.maxWallMs) {
+        refusals.push(`the round ran ${input.elapsedMs} ms against a limit of ${input.request.budget.maxWallMs} ms`);
+        return refuse('timeout', `the round ran ${input.elapsedMs} ms against a limit of ${input.request.budget.maxWallMs} ms`);
+    }
     if (input.timedOut) {
-        refusals.push(`the round exceeded ${input.request.budget.maxWallMs} ms`);
-        return refuse('timeout', `the round exceeded ${input.request.budget.maxWallMs} ms`);
+        refusals.push(`the process was killed at the wall-clock bound (${input.request.budget.maxWallMs} ms)`);
+        return refuse('timeout', `the process was killed at the wall-clock bound (${input.request.budget.maxWallMs} ms)`);
     }
 
     // 5. The result. A session can only produce one by running, so its absence is a refusal rather than an empty conclusion — and kata's

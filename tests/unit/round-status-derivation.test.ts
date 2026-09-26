@@ -15,7 +15,7 @@ const REQUEST = {
     runId: 'run-1',
     requestSha256: 'a'.repeat(64),
     requiredCapabilities: ['fresh_context', 'read_only_fs'] as const,
-    budget: { maxHypotheses: 6, maxToolCalls: 10, maxOutputBytes: 1000, maxWallMs: 1000 },
+    budget: { maxHypotheses: 6, maxToolCalls: 10, maxOutputBytes: 1000, maxWallMs: 60_000 },
 };
 
 function run(events: RoundEvent[], overrides: Partial<RoundRunnerInput> = {}) {

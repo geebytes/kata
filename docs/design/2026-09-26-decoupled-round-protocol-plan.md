@@ -231,7 +231,12 @@ Steps 2 and 4 land in one commit so the window never exists outside it.
 
 ## 10. Landed, measured
 
-**Steps 1, 2 and 4 are in** (`src/quality/round-protocol.ts`, `src/quality/round-runner.ts`, `src/quality/round-registry.ts`, a reworked
+**Steps 1–5 are in, and the change is under governance as `round-protocol`** (step 6; profile `current_worktree` / `tdd` / `strict`, six
+criteria). **This table is history, not status** — the sequence is recorded because the order mattered, not because it is still pending.
+Earlier revisions of it said step 5 and step 6 were "not started", which stopped being true the moment they landed; a status line inside a plan
+document is a declaration nothing checks, which is why the numbers below are dated rather than present-tense.
+
+**Steps 1, 2 and 4 landed first** (`src/quality/round-protocol.ts`, `src/quality/round-runner.ts`, `src/quality/round-registry.ts`, a reworked
 `adversarial execute`, `schemas/round-events.schema.json`, and `host/pi-adapter.ts` rewritten as a streamer with `host/executor.ts` and
 `host/run-round.ts` deleted). Step 3 (the capability refutations) landed with step 1 because it is the runner's own rule. Step 5 (the two
 skills) and step 6 (the governed change) are not started.

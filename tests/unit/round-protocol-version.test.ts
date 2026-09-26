@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { createRoundParser, ROUND_EVENT_KINDS, ROUND_PROTOCOL_VERSION } from '../../src/quality/round-protocol.js';
+import { validate } from '../../src/core/schema.js';
 
 /**
  * **The protocol has one versioned definition** — criterion AC-4.
@@ -59,6 +60,15 @@ describe('the protocol is one versioned definition', () => {
         expect(parsed.refusal).not.toBeNull();
         expect(parsed.refusal?.detail).toContain('the 40-byte bound');
     });
+    it('is registered, so the definition ships and is applied where it is claimed', () => {
+        // **Registered, not merely well-formed.** The first version of this case checked `$id` truthiness and the `kind` enum, and
+        // `round-events` was in no bundle list and no registration table — so the "bundled schema" this criterion promises did not ship, and
+        // two guards (`every-bundled-schema-has-an-id`) passed because neither walks file → registered. `validate` is that walk.
+        expect(() => validate('round-events', { kind: 'ended', status: 'completed' })).not.toThrow();
+        expect(() => validate('round-events', { kind: 'ended' })).toThrow();
+        expect(() => validate('round-events', { kind: 'launched', protocol: 1, capabilities: ['telepathy'] })).toThrow();
+    });
+
     it('declares every event kind the schema names, and no kind the schema does not', async () => {
         const schema = JSON.parse(await readFile('schemas/round-events.schema.json', 'utf8')) as {
             $id?: string;

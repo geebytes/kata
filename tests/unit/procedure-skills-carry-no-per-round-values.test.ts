@@ -13,7 +13,7 @@ import { renderSkill, skillCommands, type Platform } from '../../src/adapters/ma
 const PROCEDURE_SKILLS = ['kata-review-round', 'kata-host-adapter'] as const;
 
 /** The JSON keys the brief prescribes for a record. A body that names them is restating the brief. */
-const BRIEF_PRESCRIBED_KEYS = ['readTests', 'wroteTests', 'classInstances', 'targets', 'hypotheses', 'briefSha256', 'revisionId'];
+const BRIEF_PRESCRIBED_KEYS = ['readTests', 'wroteTests', 'classInstances', 'targets', 'hypotheses', 'briefSha256', 'revisionId', 'falsifier', 'impact', 'severity', 'observations'];
 
 describe('a procedure skill carries an instruction, not a per-round value', () => {
     it('exists for each half of a round, and renders for every platform', () => {

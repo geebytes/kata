@@ -21,6 +21,7 @@ import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
 import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
 import adversarialReviewSchema from 'kata-asset:schemas/adversarial-review.schema.json';
 import changeRecordSchema from 'kata-asset:schemas/change-record.schema.json';
+import roundEventsSchema from 'kata-asset:schemas/round-events.schema.json';
 import { readFile } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import type { ErrorObject, ValidateFunction } from 'ajv';
@@ -49,6 +50,7 @@ const schemaText: Record<string, string> = {
   'kata-relations': kataRelationsSchema,
   'adversarial-review': adversarialReviewSchema,
   'change-record': changeRecordSchema,
+  'round-events': roundEventsSchema,
 };
 
 /**

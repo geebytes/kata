@@ -300,9 +300,9 @@ own rounds: **28 of 62 produced no record at all**, and the rounds that ran long
 
 ## What a round is not
 
-- **It is not a repair.** A finding is a message, a location, a falsifier, the impact a repair will reach, and the class's other
-  instances. No fix recipe is expected: designing the fix would make this round the change's second author, and duplicate the blind
-  spot it exists to escape.
+- **It is not a repair.** A finding is a claim about a place in the code, with what would show it wrong and how far a fix would reach. No
+  fix recipe is expected: designing the fix would make this round the change's second author, and duplicate the blind spot it exists to
+  escape. (The brief names the fields; this skill does not, because a rule kept in two places drifts from the one that is enforced.)
 - **It is not a survey.** The brief names the paths under review. Reading past them spends the round's budget on material nobody
   asked about — measured, a session given a pointer to a two-sentence brief instead of the text explored an entire repository and
   produced nothing.
