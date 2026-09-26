@@ -72,7 +72,10 @@ describe('platform adapter golden output', () => {
   it('renders every /kata-* skill with CLI invocation, orient checklist, and guard enforcement', () => {
     for (const platform of platforms) {
       const renderSkill = renderers[platform] ?? renderGenericSkill;
-      for (const command of skillCommands) {
+      // **Two classes, named.** A workflow-entrypoint skill resolves a task and reads its packet, so it carries the task-work boilerplate; a
+      // procedure skill (`kata-host-adapter`, `kata-review-round`) is about how a round is run or described, and demanding that boilerplate from
+      // it would be demanding text its subject has no use for. What both classes owe is the next case.
+      for (const command of skillCommands.filter((entry) => 'phase' in entry && entry.phase)) {
         const rendered = renderSkill(command, platform);
 
         expect(rendered).toContain(command.slashCommand);
@@ -206,6 +209,22 @@ describe('platform adapter golden output', () => {
     expect(rendered).toContain('所有面向用户的自然语言响应必须使用中文');
   });
 });
+
+  it('renders every skill, whatever its class, with its invocation, platform and manifest', () => {
+    for (const platform of platforms) {
+      const renderSkill = renderers[platform] ?? renderGenericSkill;
+      for (const command of skillCommands) {
+        const rendered = renderSkill(command, platform);
+        expect(rendered).toContain(`name: ${command.id}`);
+        expect(rendered).toContain(command.slashCommand);
+        expect(rendered).toContain(`\`${command.cli}\``);
+        expect(rendered).toContain(`platform: ${platform}`);
+        expect(extractManifest(rendered), `${command.id} on ${platform}`).toEqual(
+          commandManifest.find((entry) => entry.id === command.id),
+        );
+      }
+    }
+  });
 
 function extractManifest(rendered: string): unknown {
   const match = rendered.match(/```json kata-command-manifest\n(?<json>[\s\S]*?)\n```/);

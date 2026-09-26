@@ -35,11 +35,24 @@ export type SkillCommand = {
     id: string;
     slashCommand: `/kata${string}`;
     cli: string;
-    phase: string;
+    /** The workflow entrypoint this skill inspects. Absent for a skill that carries a standing procedure rather than a phase. */
+    phase?: string;
     summary: string;
     triggerScenarios: string[];
     inputSignals: string[];
     outputGoals: string[];
+    /**
+     * A body to render **instead of** the generic workflow-entrypoint text.
+     *
+     * Added for the two skills whose subject is a procedure rather than kata's own lifecycle (`kata-review-round`, `kata-host-adapter`): the
+     * generic body describes resolving a task and reading its packet, which is not what either of them is for, and there is no per-phase
+     * guidance that fits them either.
+     *
+     * **What a body must not do is restate a per-round value.** A skill that repeats the record's fields or the gate's conditions becomes a
+     * second channel for a rule the brief already renders, and the measured cost of exactly that is 28 of 62 rounds producing no record
+     * while a dispatch prompt carried a missing requirement by hand.
+     */
+    body?: string;
 };
 
 export type InstallMode = 'copy' | 'symlink';
@@ -247,13 +260,109 @@ export const skillCommands = [
         inputSignals: ['collect', 'return', 'done in opencode', '回收', '做完了', '交回', '审计另一个平台', 'OpenCode 完成'],
         outputGoals: ['Discover the returned task and evidence state.', 'Ask the user to confirm the task/platform when ambiguous.', 'Run reviewer/judge/archive or produce scoped repair instructions.'],
     },
+    {
+        id: 'kata-review-round',
+        slashCommand: '/kata-review-round',
+        cli: 'kata-cli adversarial execute --change <change-id> --node review --packet <packet.json> --executor "<command>"',
+        summary: 'The standing procedure for one independent review round. Use when a round is dispatched by hand rather than through a declared executor, or when a reviewer session needs to know what kind of work a round is.',
+        triggerScenarios: [
+            'A review node needs an independent pass and no executor command is declared for the platform.',
+            'An operator is dispatching a reviewer session and would otherwise write the prompt from memory.',
+            'A round is being written and the author is unsure what it is expected to produce.',
+        ],
+        inputSignals: ['review round', 'independent pass', 'dispatch reviewer', '派发审查', '独立审查'],
+        outputGoals: [
+            'Read the issued brief in full and treat it as the whole instruction set.',
+            'Emit a first complete record early, then improve it.',
+            'Produce findings that name a location, a falsifier and the class, and no fix recipe.',
+        ],
+        body: `# /kata-review-round
+
+The standing procedure for one review round. It carries only what a brief cannot, because the brief is rendered per round and
+owns every value in it.
+
+## The brief is the whole instruction set
+
+Read it in full before anything else, and read what it tells you to read and nothing more. It states the record's shape, the
+conditions the gate applies and the remit under review; this skill deliberately restates none of them, because a rule kept in two
+places drifts from the one that is enforced.
+
+**Prefer a declared executor over a hand-written dispatch.** \`kata-cli adversarial execute --executor "<command>"\` hands the
+brief to the session as its prompt, reads the events the round emits, and writes the receipt itself — one channel, no prompt to
+reconstruct. The hand-dispatched route exists for platforms without an executor, and it is the route that has produced the failures
+this skill is written against.
+
+## Emit early, then improve
+
+Put a first complete record down as soon as you have findings, then keep working. The last record you emit is the record, an
+earlier one costs nothing, and a thorough investigation that emitted nothing has produced nothing. Measured on this repository's
+own rounds: **28 of 62 produced no record at all**, and the rounds that ran longest wrote the least.
+
+## What a round is not
+
+- **It is not a repair.** A finding is a message, a location, a falsifier, the impact a repair will reach, and the class's other
+  instances. No fix recipe is expected: designing the fix would make this round the change's second author, and duplicate the blind
+  spot it exists to escape.
+- **It is not a survey.** The brief names the paths under review. Reading past them spends the round's budget on material nobody
+  asked about — measured, a session given a pointer to a two-sentence brief instead of the text explored an entire repository and
+  produced nothing.
+- **A negative result is a result.** "The mechanism holds under these conditions" is worth recording, and it is not the same claim
+  as "I found nothing".`,
+    },
+    {
+        id: 'kata-host-adapter',
+        slashCommand: '/kata-host-adapter',
+        cli: 'kata-cli adversarial execute --change <change-id> --node review --packet <packet.json> --executor "<command>"',
+        summary: 'How to declare an executor for a platform, so an independent review round can be certified on it. Use when a strict or security change reports executor_unavailable, or when writing a host command for a new platform.',
+        triggerScenarios: [
+            'A strict or security review node refuses with executor_unavailable on this platform.',
+            'An operator wants to implement a host command for a platform kata does not ship an adapter for.',
+            'A round ran but the gate says no execution receipt was recorded.',
+        ],
+        inputSignals: ['executor_unavailable', 'host adapter', 'execution receipt', 'strict review blocked', '宿主适配器', '凭据'],
+        outputGoals: [
+            'Launch an isolated session with the platform own flags and a read-only tool set.',
+            'Emit protocol events on stdout, in order, and write no receipt.',
+            'Declare only the capabilities the platform actually provides.',
+        ],
+        body: `# /kata-host-adapter
+
+How to declare an executor for \`kata-cli adversarial execute\` on your platform. This is the operator's half of the round protocol;
+the protocol's own definition is \`schemas/round-events.schema.json\`, and the reviewer's half is the brief.
+
+## The split
+
+**Kata runs the command, reads the events it emits, counts the round, refutes any capability the stream contradicts, decides the
+status, and writes the receipt.** The host launches and describes — nothing else. In particular it does not write a receipt: a
+receipt kata did not write has no watched run behind it, and \`adversarial record\` refuses it.
+
+## What a host must do
+
+1. **Read \`$KATA_REVIEW_PACKET\`** — a request and the brief the session must be given. Hand the session the **text** of the
+   brief, not a path to it: measured, a session given a pointer to a two-sentence brief spent 46 tool calls and 961,381 tokens
+   exploring a repository the brief never mentioned.
+2. **Launch an isolated session** with your platform's own flags, and make the isolation true rather than asserted — a new process
+   or context, and a tool allow-list the platform itself enforces. A prompt that asks the session not to write is not a capability.
+3. **Emit one JSON object per line on stdout, in order, and nothing else:** \`launched\` first, carrying \`protocol\` and the
+   capabilities you actually provide; then \`tool_call\`, \`output\` and \`telemetry\` as they happen; then \`result\` with the
+   reviewer's record verbatim; then \`ended\`.
+4. **Exit.** Kata reads the stream; any other artefact you write is not read.
+
+## Declare only what you provide
+
+\`read_only_fs\` is refuted by a single mutating tool call in the stream, and \`bounded_tools\` by a tool outside the node's
+allow-list. A claim the stream contradicts refuses the round, and a session that produced no result is refused whatever you report —
+so the honest declaration is also the one that passes. That is the point: a capability you can only assert is the self-report the
+contract was written to replace.`,
+    },
 ] as const satisfies readonly SkillCommand[];
 
 export const commandManifest = skillCommands.map((command) => ({
     id: command.id,
     slashCommand: command.slashCommand,
     cli: command.cli,
-    phase: command.phase,
+    // A procedure skill has no workflow phase, and inventing one would put a value in the manifest that nothing means.
+    ...('phase' in command && command.phase ? { phase: command.phase } : {}),
     summary: command.summary,
 }));
 
@@ -272,11 +381,40 @@ export const platformCapabilities: Record<Platform, PlatformCapabilities> = {
 };
 
 export function renderSkill(command: SkillCommand, platform: Platform, options: { language?: ResponseLanguage } = {}): string {
+    if (command.body) {
+        // A skill that owns its text answers to the same contract as the generated ones — frontmatter, the platform it was rendered for, and the
+        // response-language rule — and skips everything that is about kata's lifecycle, because its subject is not that lifecycle.
+        const declaredLanguage = renderResponseLanguageContract(options.language);
+        // A rendered skill is a contract, not just prose: every platform's copy carries the platform line, the response-language rule, the
+        // invocation it stands for, and the machine-readable manifest the golden test reads. A body skill answers to the same four and skips
+        // only what is about kata's own lifecycle.
+        return `---
+name: ${command.id}
+description: ${command.summary}
+---
+
+# ${command.slashCommand}
+
+platform: ${platform}
+
+${declaredLanguage ? `${declaredLanguage}\n\n` : ''}${command.body.trim()}
+
+## Invocation
+
+\`${command.cli}\`
+
+\`\`\`json kata-command-manifest
+${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null, 2)}
+\`\`\`
+`;
+    }
     const capabilities = platformCapabilities[platform];
     const guardMode = capabilities.hooks ? 'skills plus platform hooks' : 'CLI/CI-only';
     const responseLanguageContent = renderResponseLanguageContract(options.language);
 
-    const phaseContent = phaseGuidanceFor(command);
+    // Only reached without a body, which is every workflow-entrypoint skill: those all declare a phase, and the fallback keeps the type honest
+    // for a skill that someday carries neither.
+    const phaseContent = phaseGuidanceFor({ id: command.id, slashCommand: command.slashCommand, cli: command.cli, phase: command.phase ?? '' });
 
     // Verify and review are exactly the nodes where the context that produced the change is the worst available
     // judge of it, so both carry the independent adversarial step.

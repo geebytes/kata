@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { baselineReadPaths, measureRequiredReads, runBaselineCommand, summarizePayload } from '../../src/cli/baseline.js';
+import { skillCommands } from '../../src/adapters/manifest.js';
 
 /**
  * L0-03: compaction must be justified by a number, so the number has to be produced the same way twice.
@@ -45,7 +46,9 @@ describe('payload baseline', () => {
 
         const report = await runBaselineCommand(['--platform', 'pi', '--language', 'en', '--root', root]);
 
-        expect(report.skills).toHaveLength(12);
+        // Derived rather than written: a hard-coded count of a generated set is the drift this repository keeps finding — it was 12 when the
+        // two procedure skills were added, and the failure said "a number changed" rather than "a skill went unmeasured".
+        expect(report.skills, 'one measured entry per generated skill').toHaveLength(skillCommands.length);
         expect(report.skillsTotalBytes).toBeGreaterThan(0);
         expect(report.skillsTotalEstimatedTokens).toBeGreaterThan(0);
         // Every measured skill reports a byte count that is not an estimate.
