@@ -285,16 +285,19 @@ describe('the four classes, and the checks that cover them', () => {
         // **The predicate, not a literal** (`wcc6-f3`): this passed `covered: true` for every class it listed, so the case held whatever the
         // table said. It asks the function that decides it now.
         const verdict = roundMayClose(open, coveredClasses());
-        // **And the findings naming an uncovered class are no longer closable** (`cg8-f1`, `cg9-f1`): two entries record an uncovered
-        // defining instance — `a-check-that-cannot-fail`, whose check finds only constant assertions, and `one-concept-several-derivations`,
-        // whose check greps one predicate's identifiers and is green for a re-derivation under other names. For the third route's
-        // purpose — "a new instance of that class fails in the declared covering check" — neither is covered, so findings naming them keep
-        // the round open. That is the honest answer rather than the convenient one.
+        // **And the finding naming an uncovered class is not closable** (`cg8-f1`, `cg9-f1`): one entry records an uncovered defining
+        // instance — `a-check-that-cannot-fail`, whose covering check finds constant assertions while its defining instance is *an assertion
+        // that checks a value the defect also produces*, which no reading of the source can find. For the third route's purpose — "a new
+        // instance of that class fails in the declared covering check" — that class is not coverage, so a finding naming it keeps the round
+        // open. That is the honest answer rather than the convenient one.
+        //
+        // It was two entries until check A gained the clause its own `uncoveredInstances` named: the same question under other identifiers,
+        // which a re-derivation named `entry.findingId === id` now reddens. A class stops being partially covered when the check it names
+        // starts asking the behaviour rather than one spelling of it.
         expect(verdict.mayClose).toBe(false);
-        expect(verdict.open.map((entry) => entry.classId).sort()).toEqual(['a-check-that-cannot-fail', 'one-concept-several-derivations']);
-        // And the findings that name neither do close, so the rule is about those classes and not about the list.
-        const withoutThem = open.filter((finding) => !finding.classInstances.includes('a-check-that-cannot-fail')
-            && !finding.classInstances.includes('one-concept-several-derivations'));
+        expect(verdict.open.map((entry) => entry.classId)).toEqual(['a-check-that-cannot-fail']);
+        // And the findings that do not name it close, so the rule is about that class and not about the list.
+        const withoutThem = open.filter((finding) => !finding.classInstances.includes('a-check-that-cannot-fail'));
         expect(roundMayClose(withoutThem, coveredClasses()).mayClose).toBe(true);
     });
 });
