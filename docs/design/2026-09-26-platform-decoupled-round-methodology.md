@@ -57,7 +57,14 @@ consequences, all measured on this line:
 paths, `pathDigests`), the brief is a text artefact, the gate reads a schema, the falsifier ledger stores observed exit codes. **The
 only platform-shaped fact in the judgment is "a process we launched watched this round".**
 
-## 3. What the standards already provide (do not invent these)
+## 3. What the standards provide — **and what of it we are not adopting**
+
+**The verdict first, because the earlier framing of this section over-claimed.** These standards are *not* dependencies. What this
+repository actually needs is three things — a judgment that reads the artifact, *some* attribution field, and a way to label weaker
+evidence — and **none of the three requires adopting a draft standard**. The sources below are cited for two reasons only: to show the
+design is conventional rather than invented (a reviewer can check the reasoning against practice), and to mark the one place where a
+standard already names a concept we would otherwise name ourselves. Adopting their *vocabularies* is a separate decision, and §3.5
+declines most of it with reasons.
 
 ### 3.1 Attribution — OpenTelemetry GenAI semantic conventions
 
@@ -116,6 +123,21 @@ not a proof checker but **the commands kata can run**: a falsifier (`kata-cli fa
 This is the load-bearing idea of the whole proposal, and it is a **measured** property of this line rather than a hope: the falsifier
 mechanism has caught seven decorative checks, three mis-derived identities and one hand-written coverage marker, at **zero token
 cost**, because re-introducing a defect and watching a check move colour is deterministic.
+
+### 3.5 What we are deliberately not adopting
+
+| offered | decision | reason |
+|---|---|---|
+| OTel's **`gen_ai.agent.id`** attribute | **declined; take the shape, not the attribute** | Its semantics are the *opposite* of this design's need. The convention says: *"For hosted agents, this SHOULD be the provider-assigned stable identifier of the agent resource … **It's NOT RECOMMENDED to record in-memory agent instance ids on this attribute**."* What kata needs is exactly an in-memory instance id — *which session made this call*. Adopting the name while implementing the opposite meaning is a declaration claiming more than it does, the class this line has caught eight times. What is worth taking is structural: **a tool call is nested under the agent that made it.** |
+| Sigstore keyless signing + in-toto envelope | **deferred, trigger named** | A signature answers *who attested*, and §4.3 concludes that *who* can be dropped — independence comes from launch parameters, not identity. Inside one repository the gate reads its own store, and the registry plus git history already give tamper-evidence. It becomes necessary exactly when the attestation must **travel** — another machine, another organisation, an external auditor. |
+| The hash-linked audit chain | **deferred, same trigger** | Its value is that a **third party** can re-walk it offline. There is no third party yet. |
+| `bwrap`/Landlock isolation | **a host-side note, not a kata change** | Its value is highest where there is no stream to refute from, i.e. the relay route. Documented in §3.2 as an option for hosts, not required of them. |
+| occasio's weaker-evidence grade | **taken, deliberately** | `policy.source: inferred` shows that **labelling weaker evidence and surfacing it is normal practice**, which is the `provenance` distinction in §4.3. This is the one item where the standard changes what we do. |
+
+**The cost of adopting a vocabulary we do not implement** is the decisive argument, and it is this repository's own most-repeated
+defect: a name that implies a meaning the code does not have. Adopting OTel's identifier for a thing it explicitly recommends against
+recording would create a second derivation of one concept inside the schema — the exact shape `cg-f1`, `wba-f1` and five others were.
+Two local event names that mean what they say are cheaper than a standard name that does not.
 
 ## 4. The proposed methodology
 
@@ -188,8 +210,10 @@ form and kept as either a stream refutation or a kernel guarantee.
 
 1. **Reproducibility covers part of the findings.** This line's best findings were prose-level, and step 2 forces them into the class
    table — which is a real constraint on what a round may report, not a free win.
-2. **The standards are drafts.** occasio's predicate is Draft 1, OTel's GenAI conventions are *Development*; adopting them means
-   accepting they will move. That is still cheaper than six local event kinds, but it is not free.
+2. **The conventions cited are drafts, and nothing here depends on their text.** What this design takes from them is a *shape* (a tool
+   call nested under the agent that made it) and a *practice* (label weaker evidence and surface it), both of which this repository
+   would need regardless — so a draft moving costs a rename, not a redesign. What it declines is their vocabularies, and §3.5 gives
+   the reason: a standard name whose meaning is the opposite of what we record is worse than no standard name at all.
 3. **`relayed` is weaker and stays weaker.** Labelling it does not make the telemetry true; it makes the weakness auditable.
 4. **Quorum is not free.** The two most expensive rounds on this line (874K and 658K tokens) produced zero accepted records, so
    comparing methods must use **cost per accepted finding**, never cost per round.
