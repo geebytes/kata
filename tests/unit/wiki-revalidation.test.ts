@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
 import { readWikiRecords, writeWikiRecord } from '../../src/wiki/store.js';
+import { runWikiCommand } from '../../src/cli/wiki.js';
 
 /**
  * `stale` has to be a state, not a sentence.
@@ -47,6 +48,25 @@ describe('revalidating a stale Wiki record', () => {
 
         expect(result).toMatchObject({ id: 'rule-page', status: 'candidate', refreshed: ['docs/rule.md'] });
         await expect(verifySources(root)).resolves.toMatchObject({ stale: [], intact: ['rule-page'] });
+    });
+
+    it('is reachable from the CLI, which is where it was not', async () => {
+        // **The layer the other cases bypass.** They call `revalidateWikiRecord` directly, so the CLI's option parser was never exercised —
+        // and it had no case for `--record` (or the bare `--all`), so both documented usages threw `Unknown wiki option` before the
+        // subcommand ran. The only transition out of `stale` was unreachable from the command line, and the closure gate reads records.
+        const root = await seeded();
+        await writeFile(join(root, 'docs/rule.md'), '# Rule\n\nSecond version.\n', 'utf8');
+        await verifySources(root);
+
+        const byRecord = await runWikiCommand(['revalidate', '--record', 'rule-page', '--root', root]);
+        expect(byRecord).toMatchObject({ command: 'wiki revalidate', id: 'rule-page', status: 'candidate' });
+
+        // The bare flag too: it is a different branch of the same parser and was refused the same way.
+        await writeFile(join(root, 'docs/rule.md'), '# Rule\n\nThird version.\n', 'utf8');
+        await verifySources(root);
+        const byAll = await runWikiCommand(['revalidate', '--all', '--root', root]);
+        expect(byAll).toMatchObject({ command: 'wiki revalidate' });
+        expect(byAll.revalidated as unknown[]).toHaveLength(1);
     });
 
     it('revalidates every stale record at once', async () => {

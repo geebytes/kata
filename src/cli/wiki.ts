@@ -231,8 +231,33 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
     throw new Error(`Unknown wiki command: ${subcommand ?? ''}`);
 }
 
-export function parseWikiArgs(argv: string[]): { from?: string; root?: string; wikiPath?: string; query?: string; file?: boolean; by?: string; role?: string; reason?: string; kind?: string; task?: string; decision?: string; candidates?: string[]; force?: boolean } {
-    const args: { from?: string; root?: string; wikiPath?: string; query?: string; file?: boolean; by?: string; role?: string; reason?: string; kind?: string; task?: string; decision?: string; candidates?: string[]; force?: boolean } = {};
+/**
+ * The `wiki` command's options.
+ *
+ * **Named once.** It was declared twice — a signature and an inline restatement on the local — and the two drifted: adding `--record` and
+ * `--all` to the signature left the local's type without them, so the parser compiled against the old shape and the flags stayed unparseable.
+ * The same defect this repository has now removed eight times, found here while adding the two cases below.
+ */
+export type WikiArgs = {
+    from?: string;
+    root?: string;
+    wikiPath?: string;
+    query?: string;
+    file?: boolean;
+    by?: string;
+    role?: string;
+    reason?: string;
+    kind?: string;
+    task?: string;
+    decision?: string;
+    candidates?: string[];
+    force?: boolean;
+    record?: string;
+    all?: boolean;
+};
+
+export function parseWikiArgs(argv: string[]): WikiArgs {
+    const args: WikiArgs = {};
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
         const value = argv[index + 1];
@@ -273,6 +298,14 @@ export function parseWikiArgs(argv: string[]): { from?: string; root?: string; w
             index += 1;
         } else if (arg === '--force') {
             args.force = true;
+        } else if (arg === '--record' && value !== undefined) {
+            // **Documented and unreachable until now.** `revalidate` reads this flag, and the parser refused it before the subcommand ran, so
+            // the only transition out of `stale` could not be invoked from the CLI at all — and the unit cases exercising `revalidateWikiRecord`
+            // never touched the layer that refused it. Same for the bare `--all` below.
+            args.record = value;
+            index += 1;
+        } else if (arg === '--all') {
+            args.all = true;
         } else {
             throw new Error(`Unknown wiki option: ${arg}`);
         }
