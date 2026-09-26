@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import type { Readable } from 'node:stream';
 
 /**
@@ -77,11 +78,19 @@ async function main(): Promise<number> {
     ];
     const child = spawn('pi', args, { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }) as ChildProcessByStdio<null, Readable, Readable>;
 
+    // **The transcript, so a round that never emits a record is still readable.** Measured on this repository: a session can read ninety
+    // times and end without writing the record, and the process route had no second channel at all — kata saw only the events the adapter
+    // forwarded, so the work was unrecoverable. `kata-cli adversarial salvage` reads a transcript; this is the file it reads, written
+    // beside the packet unless `KATA_REVIEW_TRANSCRIPT` names another place.
+    const transcriptPath = process.env.KATA_REVIEW_TRANSCRIPT ?? `${packetPath}.transcript.jsonl`;
+    const transcript = createWriteStream(transcriptPath, { flags: 'a' });
+
     let buffer = '';
     let result: string | null = null;
     let stderrTail = '';
 
     child.stdout.on('data', (chunk: Buffer) => {
+        transcript.write(chunk);
         buffer += chunk.toString('utf8');
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
@@ -139,11 +148,13 @@ async function main(): Promise<number> {
             resolve(-1);
         });
     });
+    transcript.end();
     if (result === null) {
         // The host's own account of how it ended. Kata derives the round's status itself and keeps this verbatim, so a disagreement is visible
         // rather than authoritative.
         emit({ kind: 'ended', status: exitCode === 0 ? 'completed' : 'cancelled', reason: stderrTail.trim().slice(-400) || `exit ${exitCode}` });
-        process.stderr.write(`no record-shaped result was produced; exit ${exitCode}${stderrTail.trim() ? `: ${stderrTail.trim().slice(-400)}` : ''}\n`);
+        process.stderr.write(`no record-shaped result was produced; exit ${exitCode}${stderrTail.trim() ? `: ${stderrTail.trim().slice(-400)}` : ''}`
+            + ` The raw transcript is at ${transcriptPath}, which \`kata-cli adversarial salvage\` can read.\n`);
         return 1;
     }
     emit({ kind: 'ended', status: 'completed' });
