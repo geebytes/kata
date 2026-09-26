@@ -28,9 +28,10 @@ change would carry.
 ```bash
 KATA_REVIEW_PACKET=<path>       # the packet: { request, brief }
 KATA_REVIEW_PROTOCOL=1          # the version kata speaks; a host that does not know it must fail rather than guess
-KATA_REVIEW_RECEIPT=<path>      # DEPRECATED: retained only so an old host can be refused with a message that names the change
-kata-cli adversarial execute --change <id> --node review --packet <p> --executor "<cmd>"
+kata-cli adversarial execute --change <id> --node review --packet <p> --executor "<cmd>" [--receipt-out <p>]
 ```
+
+**Corrected after the audit** (`2026-09-26-decoupled-round-protocol-conflicts.md` G1): the variable the host is **no longer handed** is `KATA_REVIEW_RECEIPT` — it used to be where the host wrote the artefact. `--receipt-out` stays and now names where **kata** writes the receipt it derived. The `--receipt-file` flag belongs to `adversarial record` (the operator hands kata the receipt) and is **unchanged**; an earlier draft of this plan declared it deprecated, which was a factual error: it is how a receipt reaches a record at all.
 
 The host's entire job: **write one JSON object per line on stdout, in order, and exit.** Nothing else it writes is read.
 
@@ -63,11 +64,28 @@ appear one layer down.
 
 ### 2.3 What the host must not do
 
-* **Write a receipt.** `--receipt-file` is accepted and ignored *appended to the refusal list*: a run that supplies one is refused with
-  `receipt_file_deprecated` naming the protocol, because silently ignoring a stale host's artefact is how a version skew becomes a mystery.
+* **Write a receipt.** The host is not handed `KATA_REVIEW_RECEIPT` at all. A host that still writes to the path it used to be given produces a
+  file nothing reads, and one that reports a status by writing it there has reported nothing — which is the honest failure mode: the artefact is
+  no longer a channel, so a stale host cannot be mistaken for a current one.
 * **Claim a capability it cannot demonstrate.** See §3.
 * **Report a status kata has not derived.** `ended.status` is recorded as the host's own report; kata's derivation wins, and a disagreement
   is preserved in the receipt as `hostReported`.
+
+### 2.4 The execution registry — what makes *"kata wrote it"* checkable at admission
+
+Found by the audit (`…-conflicts.md` G2), and without it the redesign buys nothing at admission: a hand-written receipt would pass the same
+binding and capability checks a kata-written one does.
+
+* **`execute` records the run** in the task store — `runId`, `requestSha256`, the derived status, the counts, the refusals — before it exits.
+  This is the same store-of-record shape the falsifier ledger already uses for dispositions, and it is written by the command that observed the
+  run rather than by the party being certified.
+* **`record` requires the receipt's `runId` to appear in that registry as a completed run.** A receipt with no executed run behind it is refused
+  by name, whatever else validates about it.
+* **The registry is append-only and never rewritten**, so a later re-run cannot retroactively legitimise an earlier artefact.
+
+This does not make forgery impossible — the schema's own sentence stands: *"authorship separation is process and tool policy, not
+cryptography"*. It makes an unexecuted receipt **refused rather than plausible**, which is the strongest claim available here and one kata can
+actually check.
 
 ---
 
@@ -103,6 +121,14 @@ Evaluated in order; the first that applies is the round's status, and the receip
 
 **Every path but 7 writes no receipt**, which is today's rule (`aad-r7-f4`) raised from *"the session produced no result"* to *"kata watched the
 whole round and this is what it saw"*.
+
+**And this relocates a decision, which the audit flagged as the strongest objection to the whole design** (§4 of the audit document). The prior
+design put enforcement outside kata deliberately: *"Kata does not decide how a session is isolated — the command does — and that is what keeps a
+change to kata from loosening the envelope it certifies."* Under this plan a kata change *can* loosen it. Three things answer that, and the third
+decides it: kata already owns the envelope's numbers (the packet's budget is derived from `MEASURED_REVIEW_PASS_COST` × `REVIEW_HEADROOM`; the
+executor only obeyed them); the reason enforcement lived outside was that kata could not *observe*, which is precisely what a stream changes; and
+**the control against loosening already exists** — `tests/unit/review-budget-envelope.test.ts` asserts every limit sits above the cost the recorded
+passes actually incurred, so widening the envelope requires lowering a limit below its measurement, which that test refuses.
 
 ```ts
 // what kata writes, and all it writes
@@ -161,9 +187,9 @@ the schema, not a file to copy.
 | step | change | what it breaks, and for how long |
 |---|---|---|
 | 1 | `round-protocol.ts` + `round-runner.ts` + the schema, with tests | nothing |
-| 2 | `execute` switches to the stream; `--receipt-file` becomes a refusal | `host/run-round.ts` stops working — the window between steps 2 and 4 |
+| 2 | `execute` switches to the stream, records the run in the registry, and writes the receipt; the four landed statements the audit lists (`schema:254`, `review-execution.ts:13` and `:119`, `ops.ts:467`) are corrected in the same step, and `review-execution-receipt.test.ts`'s two premises move (audit T2, T3) | `host/run-round.ts` stops working — the window between steps 2 and 4 |
 | 3 | the capability-refutation checks | nothing |
-| 4 | `host/pi-adapter.ts` rewritten as a streamer; `host/run-round.ts` deleted; `host/executor.ts` reduced to prose | nothing |
+| 4 | `host/pi-adapter.ts` rewritten as a streamer; `host/run-round.ts` deleted; `host/executor.ts` reduced to prose; `host-executor.test.ts`'s twelve cases move into `src/` (audit T1) | nothing |
 | 5 | the two skills generated | nothing |
 | 6 | `/kata-open` with §8 as acceptance criteria | — |
 
@@ -183,7 +209,9 @@ Steps 2 and 4 land in one commit so the window never exists outside it.
    with kata's count, and its own status is preserved as `hostReported`.
 5. **The protocol is one versioned definition.** `schemas/round-events.schema.json` has a unique `$id`, every event kind in
    `round-protocol.ts` appears in it, and a host declaring another protocol version is refused by name.
-6. **The adapter holds no enforcement.** `host/pi-adapter.ts` contains no receipt construction and no budget arithmetic, asserted by a test
+6. **A receipt with no executed run behind it is refused.** `execute` records the run; `record` refuses a receipt whose `runId` is not in that
+   registry as a completed run, and the refusal names the registry. Mutation: dropping the lookup reddens the case.
+7. **The adapter holds no enforcement.** `host/pi-adapter.ts` contains no receipt construction and no budget arithmetic, asserted by a test
    over its source; the only capability text in it is the declaration it makes about what it launched.
 
 ---
