@@ -42,6 +42,18 @@ describe('the classes this change exists to remove, asked of the whole repositor
             .filter((file) => file !== definition)
             .filter((file) => /reddening\.findingId\s*===\s*\w+[\s\S]{0,80}observedReddening/.test(read(file)));
         expect(restatements, `files re-deriving the disposition predicate: ${restatements.join(', ')}`).toEqual([]);
+
+        // **And the same question under other names**, which is this entry's recorded `uncoveredInstances` and the reason a round could not
+        // close on it: matching one identifier misses a re-derivation that spells the concept differently. So the check asks the behaviour —
+        // *who compares a finding id against a ledger entry* — and requires that only the module that owns the ledger does it. A file that
+        // reads a reddening or an absence to decide something must ask the predicate; comparing the id itself is the derivation.
+        const derivers = sources
+            .filter((file) => file !== definition)
+            // The receiver's name is not the question — naming the receiver was the first version of this clause, and a file comparing
+            // `entry.findingId` slipped through it. *Any* comparison against a finding id outside the predicate's owner is the derivation.
+            .filter((file) => /\.findingId\s*===|===\s*\w+\.findingId\b/.test(read(file)))
+            .filter((file) => !read(file).includes('hasFalsifierDisposition') && !read(file).includes('hasReddening'));
+        expect(derivers, `files comparing a finding id to a ledger entry without asking the predicate: ${derivers.join(', ')}`).toEqual([]);
     });
 
     /**
@@ -184,6 +196,65 @@ describe('E — a round may close when its classes are covered, not when its fin
  * This is the answer to "when does this end" — not "when are the findings gone", which each repair postpones, but "when is every
  * class covered by a check". The table names the checks, `roundMayClose` reads it, and a class with no entry keeps the round open.
  */
+describe('G — a definition with no consumer', () => {
+    /**
+     * **The class the first independent pass on the round protocol found, and the first one this line did not already have.**
+     *
+     * Five of that pass's eleven findings were one sentence: *a declaration is written and nothing reads it.* The protocol's schema was
+     * bundled by nothing and registered with nothing, so the "bundled schema" a criterion promised did not ship; `elapsedMs` was computed,
+     * passed into the runner and never read, so the wall clock stayed the host's word; `receipt_unwatched` was a refusal outside the union
+     * the brief renders from, so no brief could state it. In each case the mechanism existed on paper while the behaviour it promised did
+     * not — and in each case the guard beside it passed, because the guard asked whether the declaration was well formed.
+     *
+     * The two clauses below are the class's two halves: **a definition that does not ship**, and **a field nothing consults**.
+     */
+    it('G1 — every schema in the repository ships and is registered, asked file by file', () => {
+        // The direction no guard walked: `every-bundled-schema-has-an-id` asserts registered-name → file and file → `$id`, so a schema
+        // that is in neither list passes both. This walks the directory and requires each file to be imported as an asset **and** named in
+        // the registration table — the two halves that make it a definition something can read.
+        const dir = join(ROOT, 'schemas');
+        const registry = read(join(ROOT, 'src/core/schema.ts'));
+        const unshipped: string[] = [];
+        for (const file of readdirSync(dir).filter((name) => name.endsWith('.schema.json'))) {
+            if (!registry.includes(`kata-asset:schemas/${file}`)) unshipped.push(`${file}: not imported as an asset, so it does not ship`);
+        }
+        expect(unshipped, 'a schema nothing bundles is a definition no consumer can reach').toEqual([]);
+
+        // And it is reachable by name, which is what `validate('<name>')` looks up. The check follows the binding rather than a spelling:
+        // each import binds a variable to a file, and each registry entry binds a lookup name to that variable. Comparing `$id` to the
+        // registry key instead — the first version of this clause — reported 21 schemas because the two are different vocabularies
+        // (URLs, `kata/x.schema.json`, bare names), which is a check measuring the wrong pair rather than a repository defect.
+        const unregistered: string[] = [];
+        for (const file of readdirSync(dir).filter((name) => name.endsWith('.schema.json'))) {
+            const bound = registry.match(new RegExp(`import\\s+(\\w+)\\s+from\\s+'kata-asset:schemas/${file.replace('.', '\\.')}'`));
+            if (!bound) {
+                unregistered.push(`${file}: no import binds a variable to it`);
+                continue;
+            }
+            const variable = bound[1]!;
+            // Both spellings the table uses: `'name': schema` and `name: schema`. Requiring the quoted form — the second version of this
+            // clause — reported five registered schemas as unregistered, which is a check that measures the punctuation rather than the fact.
+            if (!new RegExp(`(?:['"][^'"]+['"]|\\w+)\\s*:\\s*${variable}\\b`).test(registry)) {
+                unregistered.push(`${file}: imported as \`${variable}\` but no registration entry names it, so \`validate\` cannot reach it`);
+            }
+        }
+        expect(unregistered, 'a schema no entry registers is a definition `validate` cannot reach').toEqual([]);
+    });
+
+    it('G2 — every field the round runner declares is read by the round runner', () => {
+        // `elapsedMs` was the instance: declared on the input, computed by the caller, passed in, and consulted nowhere — so the timeout
+        // branch asked the child's exit code instead and AC-3's "derived from the stream, not from the host" was false for that branch.
+        // A declared field nothing reads is the same sentence one level down, and it is mechanically findable.
+        const runner = read(join(ROOT, 'src/quality/round-runner.ts'));
+        const declaration = runner.slice(runner.indexOf('export interface RoundRunnerInput'), runner.indexOf('export interface RoundExecuted'));
+        const body = runner.slice(runner.indexOf('export function decideRound'));
+        const fields = [...declaration.matchAll(/^\s{4}(\w+)\??:/gm)].map((match) => match[1]!);
+        expect(fields.length, 'the interface is read, not silently empty').toBeGreaterThan(3);
+        const unread = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(body));
+        expect(unread, 'a field the runner declares and never reads is a knob nothing turns').toEqual([]);
+    });
+});
+
 describe('the four classes, and the checks that cover them', () => {
     it('covers every class with a declared check that exists', async () => {
         const { CLASS_COVERAGE } = await import('../../src/quality/class-coverage.js');

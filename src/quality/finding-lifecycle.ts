@@ -32,6 +32,8 @@ export type ClassCoverage = {
     readonly covered: boolean;
     /** The checks that claim to cover it, when any. */
     readonly coveredBy: readonly string[];
+    /** The sentences a round has used for this class, so a reviewer's own wording resolves to the table's entry. */
+    readonly alsoKnownAs?: readonly string[];
 };
 
 /**
@@ -73,16 +75,40 @@ export function classCoverageOf(
     finding: { classInstances?: readonly string[] },
     coverage: ReadonlyArray<ClassCoverage>,
 ): { covered: boolean; uncovered: ClassCoverage[]; coveredBy: string[] } {
-    const byId = new Map(coverage.map((entry) => [entry.classId, entry]));
+    // Every spelling the table carries for each entry — its id and the sentences rounds have used — normalised once, longest first so a
+    // specific sentence wins over the class it glosses.
+    const candidates: Array<{ spelling: string; entry: ClassCoverage }> = coverage
+        .flatMap((entry) => [entry.classId, ...(entry.alsoKnownAs ?? [])].map((spelling) => ({ spelling: normalizeClassId(spelling), entry })))
+        .sort((left, right) => right.spelling.length - left.spelling.length);
     const named = finding.classInstances ?? [];
     const uncovered: ClassCoverage[] = [];
     const coveredBy: string[] = [];
     for (const classId of named) {
-        const entry = byId.get(classId);
+        const wanted = normalizeClassId(classId);
+        // **A reviewer writes the class and then its instance**, and the first pass on the round protocol wrote twenty-four such sentences
+        // for seven classes. Exact matching made every one of them a class of its own, so the round could not close; matching only the ids
+        // ignored the sentences the table records. This asks both, by prefix, longest first.
+        const entry = candidates.find((candidate) => candidate.spelling === wanted)?.entry
+            ?? candidates.find((candidate) => wanted.startsWith(candidate.spelling))?.entry;
         if (entry?.covered) coveredBy.push(...entry.coveredBy);
         else uncovered.push(entry ?? { classId, covered: false, coveredBy: [] });
     }
     return { covered: named.length > 0 && uncovered.length === 0, uncovered, coveredBy };
+}
+
+/**
+ * A class name as the table would spell it: lowercase, `-`/`_` as spaces, and any gloss after a dash, colon, comma or parenthesis dropped.
+ *
+ * The gloss is the reason it is needed — a reviewer names the class and then says which instance it is, and one dash made the whole name a
+ * different string to an exact-match lookup.
+ */
+export function normalizeClassId(value: string): string {
+    return value
+        .split(/[—–:,(]|\s-\s/)[0]!
+        .trim()
+        .toLowerCase()
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ');
 }
 
 export function classesNeedingCoverage(

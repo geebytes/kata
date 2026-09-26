@@ -23,6 +23,8 @@
  * Each entry names the check, so the claim is auditable rather than asserted. `tests/unit/class-invariants.test.ts` holds all four,
  * and each was verified to redden under a mutation that reintroduces its class.
  */
+import type { ClassCoverage } from './finding-lifecycle.js';
+
 export interface CoverageEntry {
     /** The sentence all its instances are: the class, not an instance. */
     readonly classId: string;
@@ -30,6 +32,16 @@ export interface CoverageEntry {
     readonly means: string;
     /** The declared check that reddens when the class returns. */
     readonly coveredBy: readonly string[];
+    /**
+     * The names a round has given this class.
+     *
+     * **Why the table carries them rather than the matcher guessing.** A reviewer names the class and then says which instance it is —
+     * "a definition with no consumer — the same class as a store-of-record whose figures nothing reads" — and the first pass on the round
+     * protocol produced eleven findings with eleven different sentences for the six classes in this table. Guessing by word overlap would
+     * decide membership by accident; recording the sentence here decides it by decision, and a reader can audit which sentence was ruled an
+     * instance of which class. Every entry below was added by an author reading the sentence and choosing its class.
+     */
+    readonly alsoKnownAs?: readonly string[];
     /**
      * The instances of this class the named check does **not** catch, when it catches only some of them.
      *
@@ -47,13 +59,26 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         means: 'a concept is re-derived at each call site, so one site is updated and the others keep the old answer',
         // **The second entry `cg8-f1` named and its repair left** (`cg9-f1`): the check greps for one predicate's identifiers, so a
         // re-derivation of the same concept under other names is green — and that re-derivation is this class's own `means`.
-        uncoveredInstances: 'a re-derivation of the same predicate under other identifiers',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
+        alsoKnownAs: [
+            'one vocabulary written twice',
+            'a hand-written enumeration guarding against unstated conditions',
+            'a hand-written guard duplicating a bundled schema with a single field pinned by a test',
+            'the `minimum`/`enum`/`additionalProperties` rules that Ajv enforces and the guard never consults',
+            'a rule kept in two places with one copy checked',
+            'an invariant whose enumeration cannot see a sibling channel',
+        ],
     },
     {
         classId: 'declaration-claiming-reality',
         means: 'a check reads a declaration (an owned-path set, a manifest, a task field) while its message claims to have read reality',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
+        alsoKnownAs: [
+            'a store-of-record written from caller-supplied identity',
+            'the doc-versus-code class',
+            'a status derived from the caller rather than from the artefact',
+            '`fresh_context` remains the self-report the contract was written to replace',
+        ],
 
         // **And the citation guard was its live instance, and was the one that got away from it** (`docs/design/2026-09-25-the-citation-guard-cannot-be-answered.md`):
         // it inferred whether a pass wrote a test from the state of the world — file existence, content, mtime, revision digest — and every
@@ -76,11 +101,56 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
             + 'close on it.',
         uncoveredInstances: 'an assertion that checks a value the defect also produces',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
+        alsoKnownAs: [
+            "an enumeration of one platform's tool names used as a general predicate",
+            'a refutation predicate gated on a capability the node does not require',
+            'a guard whose exit status is 0 refuses nothing',
+            'a refusal reported in a result object that no caller is obliged to read',
+        ],
     },
     {
         classId: 'one-decision-several-entrances',
         means: 'one decision has two entrances and only one records it, so the decision happens and the trace does not',
         coveredBy: ['tests/unit/class-invariants.test.ts'],
+    },
+    {
+        classId: 'a-part-checked-as-the-whole',
+        // **The seventh, and the one this round's own sentences named without a table entry.** Five of the eleven findings are one shape: a
+        // guard inspects one member of a concept and is read as having inspected the concept. `identity checked, content not` (the register
+        // compared a receipt's id and not its figures), `a criterion wider than its check` (a criterion promising a rule the selector never
+        // asserts), `an absence assertion that names one field` (a guard behind a concept), `one binding checked` (the packet's brief hash,
+        // while the budget and the capability set beside it were trusted), and the bundled-schema guards walking registered-to-file but never
+        // file-to-registered. The covering check asks the whole: B requires a refusal not to claim what the code did not read, and G1 walks
+        // every schema file in both directions.
+        means: 'a guard inspects one field, member or direction of a concept and is read as a verdict on the concept',
+        coveredBy: ['tests/unit/class-invariants.test.ts'],
+        alsoKnownAs: [
+            'an absence assertion that names one field of a concept',
+            'a criterion wider than its check',
+            'identity checked, content not',
+            'one binding checked',
+            'the bundled-schema invariant asserted only as',
+        ],
+
+    },
+    {
+        classId: 'a-definition-with-no-consumer',
+        // **The sixth, and the first this line did not already have.** The first independent pass on the round protocol reported eleven
+        // findings; five of them are this one sentence. The protocol's schema was bundled by nothing and registered with nothing, so the
+        // "bundled schema" a criterion promised did not ship. `elapsedMs` was computed, passed into the runner and read nowhere, so the
+        // wall clock stayed the host's word while the branch claimed kata measured it. `receipt_unwatched` was a refusal outside the union
+        // the brief renders from, so no brief could state the condition a pass was refused by. And in every one of those cases the guard
+        // beside the declaration passed, because it asked whether the declaration was **well formed** rather than whether anything read it.
+        means: 'a declaration is written and nothing reads it — a schema nothing bundles or registers, a field nothing consults, a refusal '
+            + 'outside the vocabulary that renders it — so the mechanism exists on paper while the behaviour it promises does not',
+        coveredBy: ['tests/unit/class-invariants.test.ts'],
+        alsoKnownAs: [
+            'a definition with no consumer',
+            'a declared rule with a dead parameter',
+            'a store-of-record whose figures nothing reads',
+            'a refusal reason outside the vocabulary the brief renders from',
+            'a count in prose that nothing derives',
+        ],
     },
     {
         classId: 'output-with-one-unguaranteed-channel',
@@ -134,7 +204,7 @@ export async function classesOfFindings(root: string, taskId: string): Promise<R
  *
  * A class is covered when it names a check; that is what this returns, so no caller can invent the answer.
  */
-export function coveredClasses(): Array<{ classId: string; covered: boolean; coveredBy: readonly string[] }> {
+export function coveredClasses(): ClassCoverage[] {
     return CLASS_COVERAGE.map((entry) => ({
         classId: entry.classId,
         // **Coverage is "a check catches a new instance", not "a class names a check"** (`cg8-f1`). An entry that records an uncovered
@@ -147,5 +217,11 @@ export function coveredClasses(): Array<{ classId: string; covered: boolean; cov
         // fail there is a claim about a measured check, not about the word in this table.
         covered: entry.coveredBy.length > 0 && !entry.uncoveredInstances,
         coveredBy: entry.coveredBy,
+        // **Every declared field survives this mapping.** Adding `alsoKnownAs` to the table while this projection stayed field-by-field is
+        // the fourth time on this line that a transfer dropped a declared field — `impact`, `attemptsWithheld`, `reproduction`, and now a
+        // class's synonyms — and the first three each cost a round. The type above is the guard: it is `ClassCoverage`, so a field this
+        // mapping forgets is a compile error rather than a silent absence. The `coveredClasses` case in `class-invariants` asserts the same
+        // thing at runtime, because a type can be widened back.
+        ...(entry.alsoKnownAs ? { alsoKnownAs: entry.alsoKnownAs } : {}),
     }));
 }
