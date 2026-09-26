@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
+import { readRoundRuns, recordRoundRun, roundRunsPath, runIsCertified } from '../../src/quality/round-registry.js';
 import { runAdversarialCommand } from '../../src/cli/ops.js';
 import { ROUND_PROTOCOL_VERSION } from '../../src/quality/round-protocol.js';
 
@@ -120,5 +121,68 @@ describe('adversarial execute reads a stream and writes the receipt itself', () 
         expect(result.recorded).toBe(false);
         expect(result.reason).toBe('receipt_unwatched');
         expect(String(result.error)).toContain('no run with id run-streams-1');
+    });
+});
+
+describe('the execution registry is what makes "kata wrote it" checkable', () => {
+    const roots: string[] = [];
+    afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+
+    async function workspace(): Promise<string> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-rounds-'));
+        roots.push(root);
+        await initLayout(root);
+        await createTask({ root, id: 'rounds', title: 'R', ownedPaths: ['src/a.ts'], acceptance: [{ id: 'AC-1', statement: 'x' }] } as never);
+        return root;
+    }
+
+    const record = {
+        runId: 'run-1', requestSha256: 'a'.repeat(64), node: 'review', status: 'completed' as const,
+        startedAt: '2026-09-26T00:00:00.000Z', endedAt: '2026-09-26T00:01:00.000Z',
+        toolCalls: 3, outputBytes: 120, tokens: null, truncations: null, firstTurnTokens: 10_000, hostReported: null, refusals: [],
+    };
+
+    it('certifies a receipt whose run it watched complete', async () => {
+        const root = await workspace();
+        await recordRoundRun(root, 'rounds', record);
+        const runs = await readRoundRuns(root, 'rounds');
+        expect(runs).toHaveLength(1);
+        expect(runIsCertified(runs, { runId: 'run-1', requestSha256: 'a'.repeat(64) }).certified).toBe(true);
+    });
+
+    it('refuses a receipt no run stands behind, and names the remedy', async () => {
+        const root = await workspace();
+        const verdict = runIsCertified([], { runId: 'run-1', requestSha256: 'a'.repeat(64) });
+        expect(verdict.certified).toBe(false);
+        if (verdict.certified) throw new Error('unreachable');
+        expect(verdict.reason).toContain('no run with id run-1');
+        expect(verdict.reason).toContain('adversarial execute');
+    });
+
+    it('refuses a receipt that names a different request than its run answered', async () => {
+        const root = await workspace();
+        await recordRoundRun(root, 'rounds', record);
+        const verdict = runIsCertified(await readRoundRuns(root, 'rounds'), { runId: 'run-1', requestSha256: 'b'.repeat(64) });
+        expect(verdict.certified).toBe(false);
+        if (verdict.certified) throw new Error('unreachable');
+        expect(verdict.reason).toContain('may only report the request it answered');
+    });
+
+    it('refuses an artefact whose run did not complete, quoting why', async () => {
+        const root = await workspace();
+        await recordRoundRun(root, 'rounds', { ...record, status: 'budget_exhausted', refusals: ['the round used 12 tool calls against a limit of 10'] });
+        const verdict = runIsCertified(await readRoundRuns(root, 'rounds'), { runId: 'run-1', requestSha256: 'a'.repeat(64) });
+        expect(verdict.certified).toBe(false);
+        if (verdict.certified) throw new Error('unreachable');
+        expect(verdict.reason).toContain('budget_exhausted');
+        expect(verdict.reason).toContain('12 tool calls');
+    });
+
+    it('writes one register per task, and appends rather than replaces', async () => {
+        const root = await workspace();
+        await recordRoundRun(root, 'rounds', record);
+        await recordRoundRun(root, 'rounds', { ...record, runId: 'run-2' });
+        expect((await readRoundRuns(root, 'rounds')).map((entry) => entry.runId)).toEqual(['run-1', 'run-2']);
+        expect(JSON.parse(await readFile(roundRunsPath(root, 'rounds'), 'utf8')).version).toBe(1);
     });
 });
