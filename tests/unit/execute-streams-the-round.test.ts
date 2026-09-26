@@ -113,6 +113,30 @@ describe('adversarial execute reads a stream and writes the receipt itself', () 
         expect(String(result.error)).toContain(`against a limit of ${issuedLimit}`);
     });
 
+    it('refuses a receipt that was edited after kata wrote it, which is what wires the comparison', async () => {
+        // **The case that makes `rpr7-f1` visible.** The content comparison existed and every production run registered an identity, so a
+        // tampered artefact was admitted — the register's `receipt` field was written by no caller. This drives the real path: run a round,
+        // edit the receipt it wrote, and the admission must refuse. Measured before the repair: the edited receipt was accepted, because
+        // `run.receipt` was `undefined` and the comparison was skipped.
+        const { root, packet } = await workspace();
+        const record = JSON.stringify({ node: 'review', status: 'recorded', hypotheses: [{ id: 'h1' }], findings: [] });
+        const executor = await executorFor(root, [launched, JSON.stringify({ kind: 'result', text: record }), JSON.stringify({ kind: 'ended', status: 'completed' })]);
+        const executed = await runAdversarialCommand(['execute', '--change', 'streams', '--node', 'review', '--packet', packet, '--executor', executor]);
+        expect(executed.status, JSON.stringify(executed)).toBe('executed');
+
+        const receiptPath = String(executed.receiptPath);
+        const written = JSON.parse(await readFile(receiptPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(receiptPath, JSON.stringify({ ...written, capabilities: [...(written.capabilities as string[]), 'budget_enforced'] }), 'utf8');
+
+        const recorded = await runAdversarialCommand([
+            'record', '--change', 'streams', '--node', 'review',
+            '--from-file', String(executed.resultPath), '--receipt-file', receiptPath,
+        ]);
+        expect(recorded.recorded).toBe(false);
+        expect(recorded.reason).toBe('receipt_unwatched');
+        expect(String(recorded.error)).toContain('not the one kata wrote');
+    });
+
     it('refuses a receipt no run stands behind, which is what a host-authored file is now', async () => {
         const { root } = await workspace();
         // Exactly what the previous shape produced: an artefact written by the host, with no round kata ever watched.

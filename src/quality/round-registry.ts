@@ -56,7 +56,15 @@ export function roundRunsPath(root: string, taskId: string): string {
     return join(kataDir(root), 'tasks', taskId, 'round-runs.json');
 }
 
-/** Append-only on purpose: a later re-run must not retroactively legitimise an earlier artefact. */
+/**
+ * One entry per run id, replaced if the same run is executed again.
+ *
+ * The docstring here said "append-only on purpose: a later re-run must not retroactively legitimise an earlier artefact", and the body did the
+ * opposite for a repeated run — `filter((entry) => entry.runId !== run.runId)` then push, which is the honest behaviour and not what the
+ * sentence described (`rpr7-f8`). Append-only would mean a second attempt at the same run leaves the first attempt's refusal standing beside
+ * its accepted receipt, and a reader could not tell which described the round. What the rule protects is that **no other run's artefact is
+ * touched**, and that is what the code does.
+ */
 export async function recordRoundRun(root: string, taskId: string, run: RoundRunRecord): Promise<void> {
     const { mutateTaskArtefact } = await import('../core/state.js');
     await mutateTaskArtefact(root, taskId, roundRunsPath(root, taskId), async (current) => {

@@ -78,24 +78,6 @@ describe('every condition the gate judges by is stated in the brief', () => {
         'delta_unavailable',
     ];
 
-    /** Every member of the union, so a new refusal cannot enter without a decision recorded in this file. */
-    const EVERY_REASON: AdversarialGateReason[] = [
-        'missing',
-        'no_revision',
-        'stale_revision',
-        'not_fresh_context',
-        'brief_mismatch',
-        'brief_not_issued',
-        'incomplete',
-        'waived',
-        'delta_stale',
-        'delta_unavailable',
-        'undeclared_test_path',
-        'not_required',
-        'executor_unavailable',
-        'receipt_unbound',
-        'capability_missing',
-    ];
 
     it('classifies every member of the union the gate declares, read from the source, so a new refusal cannot enter unclassified', async () => {
         // **The union is read from the code, not remembered here** (`aad-r7-f6`, a major finding from a round this repository executed).

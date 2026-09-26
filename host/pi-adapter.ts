@@ -49,6 +49,12 @@ async function main(): Promise<number> {
     }
     const packet = JSON.parse(await readFile(packetPath, 'utf8')) as Packet;
     // The packet delivers the brief as `lines` (so a reviewer's own tools can open it) or as `text`; the session is handed the text either way.
+    // **The cross-check the type beside it claims** (`rpr7-f3`): the packet's two halves must agree, and a host that spawns a session anyway
+    // is a host that would feed a session material its own request hash does not name.
+    if (packet.brief?.sha256 && packet.brief.sha256 !== packet.request.briefSha256) {
+        process.stderr.write(`the packet's brief does not bind to its request: brief.sha256 is ${packet.brief.sha256}, request.briefSha256 is ${packet.request.briefSha256}.\n`);
+        return 2;
+    }
     const brief = packet.brief?.text ?? (packet.brief?.lines ?? []).join('\n');
     if (!brief.trim()) {
         process.stderr.write('the packet carries no brief text, so the session would be given no instruction set.\n');
@@ -111,7 +117,14 @@ async function main(): Promise<number> {
         if (event.type === 'turn_end') {
             const message = event.message;
             for (const part of message?.content ?? []) {
-                if (part.type === 'toolCall' || part.type === 'tool_use') emit({ kind: 'tool_call', tool: part.toolName ?? part.name ?? '(unnamed)' });
+                // **A part the adapter cannot name is not a tool call.** `'(unnamed)'` was emitted here, and since it is in no allow-list it
+                // reported a parsing gap as a capability refutation (`rpr7-f5`) — the stream saying "this host does not know what it saw" while
+                // the refusal said "this host called something forbidden". Reporting the bytes and saying nothing else is the honest form.
+                if (part.type === 'toolCall' || part.type === 'tool_use') {
+                    const tool = part.toolName ?? part.name;
+                    if (tool) emit({ kind: 'tool_call', tool });
+                    else emit({ kind: 'output', bytes: Buffer.byteLength(JSON.stringify(part), 'utf8') });
+                }
                 else if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) emit({ kind: 'output', bytes: Buffer.byteLength(part.text, 'utf8') });
             }
             const usage = message?.usage;

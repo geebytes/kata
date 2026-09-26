@@ -13,6 +13,7 @@ import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
 import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
+import roundEventsSchema from 'kata-asset:schemas/round-events.schema.json';
 import { hashContent } from './hash.js';
 
 const schemaContents: Record<string, string> = {
@@ -25,6 +26,9 @@ const schemaContents: Record<string, string> = {
   'wiki-record.schema.json': wikiRecordSchema,
   'handoff-packet.schema.json': handoffPacketSchema,
   'handoff-receipt.schema.json': handoffReceiptSchema,
+  // The protocol's definition, which `rpr-f1` shipped into the bundle and `rpr7-f7` found still reached no workspace — this map is what
+  // `kata update` copies into `.kata/schemas`, and a host adapter installed in a workspace reads it from there.
+  'round-events.schema.json': roundEventsSchema,
 };
 
 export type LayoutResult = {
@@ -43,17 +47,15 @@ const layoutDirectories = [
   '.kata/runtime',
 ] as const;
 
-const schemaFiles = [
-  'task.schema.json',
-  'workflow-state-record.schema.json',
-  'workflow-state-event.schema.json',
-  'evidence.schema.json',
-  'review-finding.schema.json',
-  'judge-result.schema.json',
-  'wiki-record.schema.json',
-  'handoff-packet.schema.json',
-  'handoff-receipt.schema.json',
-] as const;
+/**
+ * **Derived from `schemaContents`, not restated beside it.**
+ *
+ * These were two hand-written lists of one fact — which schemas exist — and adding the protocol's schema to the install list alone produced a
+ * `hashContent(undefined)` in `installSchemaCopies`: `schemaFiles` named a file the contents map did not carry (`rpr7-f7`'s other half, found
+ * by the case that builds a workspace). A list derived from its source cannot disagree with it, which is the same rule this change's class
+ * table applies to every other duplicated vocabulary.
+ */
+const schemaFiles: readonly string[] = Object.keys(schemaContents);
 
 const schemaManifestFile = '.generated-schemas.json';
 

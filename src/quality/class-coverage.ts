@@ -123,7 +123,10 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         // file-to-registered. The covering check asks the whole: B requires a refusal not to claim what the code did not read, and G1 walks
         // every schema file in both directions.
         means: 'a guard inspects one field, member or direction of a concept and is read as a verdict on the concept',
-        coveredBy: ['tests/unit/class-invariants.test.ts'],
+        // **G3 is the clause that asks this entry's live instance** (`rpr7-f2`): the second pass found the class covered on paper while
+        // `adversarial execute` registered every run without the receipt the admission rule compares — `identity checked, content not`, in the
+        // change whose fix for it was inert. G3 asserts both halves in the source, so the instance reddens the check rather than the round.
+        coveredBy: ['tests/unit/class-invariants.test.ts', 'tests/unit/execute-streams-the-round.test.ts'],
         alsoKnownAs: [
             'an absence assertion that names one field of a concept',
             'a criterion wider than its check',

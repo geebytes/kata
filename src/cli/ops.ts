@@ -585,6 +585,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             firstTurnTokens: firstTurnTokens(parsed.events),
             hostReported: outcome.hostReported,
             refusals: outcome.refusals,
+            // **The artefact, or the comparison is inert.** `runIsCertified` compares content only when the register holds a receipt, and this
+            // call passed thirteen fields and not that one — so admission compared an identity while the code that compares content existed
+            // and never ran (`rpr7-f1`). A store of record whose figures nothing reads is the class this change exists to remove; here it was
+            // the repair for that class that reproduced it.
+            ...(outcome.status === 'completed' ? { receipt: outcome.receipt } : {}),
         });
 
         if (outcome.status !== 'completed') {

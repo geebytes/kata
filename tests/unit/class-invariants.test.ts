@@ -241,6 +241,19 @@ describe('G — a definition with no consumer', () => {
         expect(unregistered, 'a schema no entry registers is a definition `validate` cannot reach').toEqual([]);
     });
 
+    it("G3 — the register's content comparison is wired in production, not only in fixtures", () => {
+        // **`a-part-checked-as-the-whole`'s live instance, and why the entry could not simply claim coverage** (`rpr7-f2`): the comparison
+        // existed in `runIsCertified` and the CLI never passed the artefact it compares, so every production run registered an identity and
+        // the content check was unreachable. Two source questions, both of which that defect answers wrongly: the admission function reads the
+        // artefact, and the call that registers a run passes one.
+        const registry = read(join(ROOT, 'src/quality/round-registry.ts'));
+        expect(registry, 'the admission rule does not read the recorded receipt, so it cannot compare content')
+            .toMatch(/run\.receipt\s*&&\s*!sameReceipt/);
+        const ops = read(join(ROOT, 'src/cli/ops.ts'));
+        expect(ops, 'the CLI registers a run without the receipt it wrote, so the comparison above is dead code')
+            .toMatch(/recordRoundRun\(root, change, \{[\s\S]{0,1200}?receipt: outcome\.receipt/);
+    });
+
     it('G2 — every field the round runner declares is read by the round runner', () => {
         // `elapsedMs` was the instance: declared on the input, computed by the caller, passed in, and consulted nowhere — so the timeout
         // branch asked the child's exit code instead and AC-3's "derived from the stream, not from the host" was false for that branch.
