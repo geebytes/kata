@@ -127,6 +127,7 @@ import {
     runGateCommand,
     runWorkflowCommand,
 } from './cli/workflow.js';
+import { runLedgerCommand } from './cli/ledger.js';
 import {
     createPacketHash,
     discoverSingleTaskForCurrentBranch,
@@ -304,6 +305,13 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
+    if (command === 'ledger') {
+        // The new review subsystem: subjects, claims, evidence, verdicts and one pure decision. It runs alongside the
+        // round-shaped family rather than replacing it in this step, so the change being reviewed is not the change that
+        // rewrites its own gate.
+        await runLedgerCommand(argv.slice(1), { root: workspaceRoot, changeId: requestedChange ?? 'current' });
+        return;
+    }
     if (command === 'findings') {
         const result = await runFindingsCommand(argv.slice(1));
         outputResult(result);

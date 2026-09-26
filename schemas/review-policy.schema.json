@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-policy.json",
+  "title": "Review policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "tiers",
+    "riskFloors",
+    "riskFloorAudit",
+    "diversity",
+    "sampling",
+    "budgets",
+    "evidenceStrength",
+    "deadline"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "standard",
+        "strict",
+        "security"
+      ],
+      "properties": {
+        "standard": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "autoEvidence",
+            "reviewers",
+            "quorumOn",
+            "assurance",
+            "humanBudgetMin"
+          ],
+          "properties": {
+            "autoEvidence": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "executable_falsifier",
+                  "static_witness",
+                  "invariant_proof",
+                  "cross_artifact_contradiction",
+                  "expert_concurrence"
+                ]
+              }
+            },
+            "reviewers": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quorumOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "assurance": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "none",
+                  "relayed",
+                  "observed",
+                  "sandboxed",
+                  "signed"
+                ]
+              }
+            },
+            "humanBudgetMin": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "strict": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "autoEvidence",
+            "reviewers",
+            "quorumOn",
+            "assurance",
+            "humanBudgetMin"
+          ],
+          "properties": {
+            "autoEvidence": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "executable_falsifier",
+                  "static_witness",
+                  "invariant_proof",
+                  "cross_artifact_contradiction",
+                  "expert_concurrence"
+                ]
+              }
+            },
+            "reviewers": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quorumOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "assurance": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "none",
+                  "relayed",
+                  "observed",
+                  "sandboxed",
+                  "signed"
+                ]
+              }
+            },
+            "humanBudgetMin": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "autoEvidence",
+            "reviewers",
+            "quorumOn",
+            "assurance",
+            "humanBudgetMin"
+          ],
+          "properties": {
+            "autoEvidence": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "executable_falsifier",
+                  "static_witness",
+                  "invariant_proof",
+                  "cross_artifact_contradiction",
+                  "expert_concurrence"
+                ]
+              }
+            },
+            "reviewers": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quorumOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "assurance": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": [
+                  "none",
+                  "relayed",
+                  "observed",
+                  "sandboxed",
+                  "signed"
+                ]
+              }
+            },
+            "humanBudgetMin": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "riskFloors": {
+      "type": "object",
+      "additionalProperties": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    },
+    "riskFloorAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changesRequireReview"
+      ],
+      "properties": {
+        "changesRequireReview": {
+          "type": "boolean"
+        }
+      }
+    },
+    "diversity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredOn",
+        "kinds"
+      ],
+      "properties": {
+        "requiredOn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxTokensPerChange",
+        "maxWallMs",
+        "deadlineToolCalls"
+      ],
+      "properties": {
+        "maxTokensPerChange": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "maxWallMs": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "deadlineToolCalls": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "evidenceStrength": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "const": "any"
+          },
+          {
+            "type": "array",
+            "items": {
+              "enum": [
+                "executable_falsifier",
+                "static_witness",
+                "invariant_proof",
+                "cross_artifact_contradiction",
+                "expert_concurrence"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "deadline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "emitFirstRecordByToolCall"
+      ],
+      "properties": {
+        "emitFirstRecordByToolCall": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rate"
+      ],
+      "properties": {
+        "rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

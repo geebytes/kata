@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-evidence-verdict.json",
+  "title": "Evidence verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evidenceId",
+    "evidenceType",
+    "verdict",
+    "observed",
+    "at",
+    "verifier",
+    "subjectRevision"
+  ],
+  "properties": {
+    "evidenceId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidenceType": {
+      "enum": [
+        "executable_falsifier",
+        "static_witness",
+        "invariant_proof",
+        "cross_artifact_contradiction",
+        "expert_concurrence"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "supported",
+        "refuted",
+        "inconclusive"
+      ]
+    },
+    "observed": {
+      "type": "string"
+    },
+    "at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verifier": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subjectRevision": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

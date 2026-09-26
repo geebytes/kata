@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-decision.json",
+  "title": "Review decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdict",
+    "riskTier",
+    "reasons",
+    "reusedEvidence",
+    "revalidateClaims",
+    "deficits",
+    "undiversified"
+  ],
+  "properties": {
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "insufficient"
+      ]
+    },
+    "riskTier": {
+      "enum": [
+        "standard",
+        "strict",
+        "security"
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "enum": [
+              "budget_exhausted",
+              "assurance_below_tier",
+              "evidence_refuted",
+              "evidence_below_strength",
+              "evidence_inconclusive",
+              "evidence_stale_subject",
+              "evidence_missing",
+              "challenge_open",
+              "uncovered_risk_class",
+              "discovery_floor",
+              "quorum_disputed",
+              "quorum_undiversified",
+              "waived_without_reason",
+              "claim_unsupported"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "claimId": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reusedEvidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "revalidateClaims": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "deficits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claimId",
+          "need"
+        ],
+        "properties": {
+          "claimId": {
+            "type": "string"
+          },
+          "need": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "undiversified": {
+      "type": "boolean"
+    }
+  }
+}

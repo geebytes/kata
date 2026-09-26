@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-subject.json",
+  "title": "Review subject",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "revision",
+    "pathDigests"
+  ],
+  "properties": {
+    "revision": {
+      "type": "string",
+      "pattern": "^rev:[0-9a-f]{16}$"
+    },
+    "pathDigests": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 8
+      }
+    }
+  }
+}

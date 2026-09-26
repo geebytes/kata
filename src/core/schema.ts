@@ -22,6 +22,12 @@ import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
 import adversarialReviewSchema from 'kata-asset:schemas/adversarial-review.schema.json';
 import changeRecordSchema from 'kata-asset:schemas/change-record.schema.json';
 import roundEventsSchema from 'kata-asset:schemas/round-events.schema.json';
+import reviewSubjectSchema from 'kata-asset:schemas/review-subject.schema.json';
+import reviewClaimSchema from 'kata-asset:schemas/review-claim.schema.json';
+import reviewEvidenceSchema from 'kata-asset:schemas/review-evidence.schema.json';
+import reviewEvidenceVerdictSchema from 'kata-asset:schemas/review-evidence-verdict.schema.json';
+import reviewDecisionSchema from 'kata-asset:schemas/review-decision.schema.json';
+import reviewPolicySchema from 'kata-asset:schemas/review-policy.schema.json';
 import { readFile } from 'node:fs/promises';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import type { ErrorObject, ValidateFunction } from 'ajv';
@@ -51,6 +57,12 @@ const schemaText: Record<string, string> = {
   'adversarial-review': adversarialReviewSchema,
   'change-record': changeRecordSchema,
   'round-events': roundEventsSchema,
+  'review-subject': reviewSubjectSchema,
+  'review-claim': reviewClaimSchema,
+  'review-evidence': reviewEvidenceSchema,
+  'review-evidence-verdict': reviewEvidenceVerdictSchema,
+  'review-decision': reviewDecisionSchema,
+  'review-policy': reviewPolicySchema,
 };
 
 /**

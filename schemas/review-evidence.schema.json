@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-evidence.json",
+  "title": "Review evidence",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "command",
+        "subjectRevision",
+        "mutation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "executable_falsifier"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subjectRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mutation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "find",
+            "replace"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "find": {
+              "type": "string",
+              "minLength": 1
+            },
+            "replace": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "ref",
+        "assertion"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "static_witness"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "assertion": {
+          "type": "string",
+          "pattern": "^(contains|not-contains):"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "invariantId",
+        "command"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "invariant_proof"
+        },
+        "invariantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "a",
+        "b",
+        "literal",
+        "comparator"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "cross_artifact_contradiction"
+        },
+        "a": {
+          "type": "string",
+          "minLength": 1
+        },
+        "b": {
+          "type": "string",
+          "minLength": 1
+        },
+        "literal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comparator": {
+          "enum": [
+            "literal-in-a-not-b",
+            "literal-in-b-not-a"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "reviewers",
+        "humanAck"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "const": "expert_concurrence"
+        },
+        "reviewers": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "humanAck": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  ]
+}

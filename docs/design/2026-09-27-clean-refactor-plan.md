@@ -301,3 +301,75 @@ gate mutation kill   = 100%（K2）
 
 **只有 E0 的数据显示"节省主要来自重写才能解决的部分"（例如单次上下文成本无法靠 readingSet 压低、或依赖锥无法在现有结构上表达）时，才启动 P2–P6。**
 **否则这份重写方案的正确用法是：当作目标形态放着，先用最小改造吃掉能吃的收益。**
+
+---
+
+# 12. 实施记录（本次一轮完成的部分）
+
+> 指令：**全量、不计成本、一轮完成、不走 kata 工作流。** 结果：新子系统**完整落地并全绿**；旧轮次机制的**删除按下述理由留作下一步**（原因在 §12.4，不是遗漏）。
+
+## 12.1 落地的文件（实测行数）
+
+```
+src/kernel/            纯函数 · 无 I/O · 无平台名（唯一必须各平台共同实现的真源）
+  types.ts 249 · policy.ts 243 · decide.ts 204 · risk.ts 135 · evidence.ts 104
+  delta.ts 99 · budget.ts 76 · subject.ts 62 · index.ts 15
+src/producers/         可替换的证据生产者
+  verifiers.ts 244（五类验证器）· submission.ts 121 · planner.ts 119 · quorum.ts 77 · port.ts 53
+src/store/ledger.ts    234（增量落盘 · 单写者锁 · 读不到即报告为状态）
+src/assurance/adapters/ inline 32 · file 78（第二支 adapter，K6 差分的另一半）
+src/cli/ledger.ts      533（9 个动词）
+schemas/               review-{subject,claim,evidence,evidence-verdict,decision,policy}.schema.json
+tests/                 10 个用例文件 + 1 个夹具 = 1,167 行，52 条新用例
+                       ⇒ 新增源码 2,678 行（计划估算 4,000–5,000）
+```
+
+## 12.2 不变量与它们的位置
+
+| 不变量 | 实现 | 用例 |
+|---|---|---|
+| **K1** 内核纯且全域 | `src/kernel/**` 无 `fs`/`child_process`/`process.env`/`Math.random`/时钟；`decide()` 同输入同输出 | `kernel-is-pure-and-platform-neutral` |
+| **K2** **每条检查都能失败**（逐条，不是逐类型） | 五个验证器各有一个反例态 | `kernel-every-check-can-fail`（falsifier 的三步 `{before,mutated,after}`、"did not redden"、"already failing"、"mutation site is gone"） |
+| **K3** 预算耗尽永不等于通过 | 判定顺序中预算第一，且只可能产出 `insufficient`；不可解析的限额报告为**未知**而不是 0 | `kernel-decision-cannot-pass-a-spent-budget`（四种超限 + 无基线一例） |
+| **K4** 复用不放宽 | `reused ⊆ 依赖摘要逐字节未变`；依赖不可解析 ⇒ **全部重开** | `kernel-delta-reuses-only-unchanged-dependencies`（含 25 组生成矩阵的等式断言） |
+| **K5** 内核无平台名 | 源码文本扫描（**注释先被清空**，不变量针对代码） | 同上 |
+| **K6** **同一主体在两支 adapter 上必须同一判定** | 差分：inline（observed）vs file（relayed）必须给出同一个 `Decision` | `kernel-two-adapters-reach-the-same-decision`（并验 file adapter 拒绝陈旧结果、从不执行命令） |
+| **K7** 风险下限的变更本身走评审 | floor 变更 ⇒ `riskClass: 'privilege'` 的 claim，**并已在 `ledger policy --set-file` 里接线** | `kernel-risk-floor-changes-need-review` + CLI 端到端一例 |
+| 策略每个字段都有消费者 | `POLICY_CONSUMERS` 与实例字段集合**必须相等**，多一个字段即按名拒绝 | `kernel-policy-fields-all-have-consumers` |
+| 生产者不得提交判定 | 提交物任意层级出现 `verdict`/`decision`/`passed`/`satisfied` 即拒绝并指名 | `submission.ts` + CLI 用例 |
+| 无记录是可行动的状态 | `recordedFiles: []` + 一句说明；每个事实落盘即存在，没有"最后交一份"的步骤 | `ledger-records-each-fact-as-it-arrives`（含"加一条 claim 后直接读文件"） |
+| 声明不可读的路径不得冻结 | 不写 sentinel（sentinel 与"已删除"不可区分），而是按名拒绝 | 同上 + CLI 一例 |
+
+## 12.3 证据
+
+```
+npx tsc --noEmit                exit 0
+npx vitest run                  203 文件 / 1381 用例 / 0 失败（此前 193 / 1327）
+npm run build                   dist/cli.js 打包通过（6 个新 schema 已被 kata-asset 打包）
+npm run check:wiring            findings 47 —— 本次新增代码贡献 0（见 §12.4）
+node dist/cli.js ledger status --change round-protocol
+                               在真实工作区跑通：dir=.kata/tasks/round-protocol/review，recordedFiles=[]
+```
+
+## 12.4 四个缺陷，全部由机器而非阅读发现（这是本次最值得记的一件事）
+
+| # | 缺陷 | 谁抓到的 |
+|---|---|---|
+| ① | **我新加的 6 个 schema 没有被任何东西打包** —— 本仓库自己的类不变量 G1 判它"a definition no consumer can reach" | `class-invariants.test.ts` G1 |
+| ② | **我新加的 8 个导出没有任何消费者**（wiring 从 55 条里指出） | `npm run check:wiring`（修完回到基线 47） |
+| ③ | **`loadPolicy` 接受未知的顶层字段** —— 我的校验只枚举了*声明侧*的字段，于是多出来的键一路通过（正是本仓库反复出现的那个类：枚举只从一侧开始） | 我自己的用例 `refuses an unknown field by name` |
+| ④ | **`ledger status --change x` 把 `status` 当成了 change id** —— 入口的位置猜测器分不清子命令与 id；现已由该家族自己解析 `--change` | 我自己的 CLI 冒烟运行 |
+
+四个里有两个是**本仓库既有的不变量抓到我**，而这正是这套东西的意义：新代码在同一套检查下被检查，作者不享受豁免。
+
+## 12.5 没有做的那件事，以及为什么
+
+**旧轮次机制（`adversarial.ts` 3,301 行 + 支撑模块 3,616 行 + 611 行 schema + 45 个测试文件 7,062 行）本次未删除。** 理由不是遗漏，是次序：
+
+1. **它此刻正在认证四个在飞的 change**（`adversarial-admissibility`、`review-record-integrity` 等）。删掉它等于同时让它们失去门。
+2. **计划本来就把它排在 P2–P5**，而且每个阶段带一个删除动作 —— 因为删除的前提是"新路径已经成为默认"，而在这一条尚未发生。
+3. **同一轮里既加新子系统又删旧子系统**，会把 1,381 条用例变成无法验证的状态：删除的收益要由新路径承担，而新路径的接线（阶梯改调 kernel）是删除的前置动作，不是并行动作。
+
+**所以当前状态是：新路径完整、可跑、全绿；旧路径冗余但仍在线上；它的移除是一个次序明确的机械步骤，第一步是把阶梯（`orchestrator`/`navigation`/`ops`/`cli`）改调 `decide()` 与 ledger 存储。**
+
+⚠️ 也因此，§2 的删除清单已有部分过时：其中若干条（覆盖协议、引用守卫、`salvage`、处置字母表）描述的是**旧路径内部**的补偿机制，删除它们与新子系统无关，属于同一次机械清理。**先接线，再删除**，两步都要，但不要合并成一步。

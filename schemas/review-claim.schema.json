@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review-claim.json",
+  "title": "Review claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "statement",
+    "riskClass",
+    "severity",
+    "dependsOn",
+    "evidenceIds",
+    "challengeIds",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "riskClass": {
+      "enum": [
+        "assumption",
+        "boundary",
+        "state_transition",
+        "privilege",
+        "failure_mode",
+        "rollback",
+        "concurrency",
+        "provenance",
+        "dependency",
+        "consistency"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "blocking",
+        "major",
+        "minor",
+        "nit"
+      ]
+    },
+    "dependsOn": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(path|claim):"
+      }
+    },
+    "evidenceIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "challengeIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "enum": [
+        "open",
+        "supported",
+        "refuted",
+        "insufficient",
+        "waived"
+      ]
+    },
+    "waiver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
