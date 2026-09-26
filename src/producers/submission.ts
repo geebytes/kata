@@ -92,6 +92,9 @@ export function readSubmission(value: unknown): SubmissionRead {
             evidenceIds: Array.isArray(entry.evidenceIds) ? (entry.evidenceIds as string[]) : [],
             challengeIds: Array.isArray(entry.challengeIds) ? (entry.challengeIds as string[]) : [],
             status: 'open',
+            // A producer declares claims, not times: the store stamps `at`, so every path gets the same one.
+            at: '',
+            reopens: 0,
         });
     }
 

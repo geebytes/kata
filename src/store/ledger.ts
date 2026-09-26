@@ -14,7 +14,7 @@ import { withTaskLock } from '../core/state.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { subjectOf } from '../kernel/subject.js';
-import type { AssuranceLevel, Challenge, Claim, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
 const FILES = {
     subject: 'subject.json',
@@ -43,6 +43,16 @@ export type Ledger = {
     runs: LedgerRun[];
     /** The files that exist. An empty list is the honest report of a review that recorded nothing. */
     recordedFiles: string[];
+    /**
+     * Files that exist and cannot be parsed.
+     *
+     * Kept apart from `recordedFiles` because a corrupted ledger and an absent one are different facts: a read that
+     * swallows a parse failure makes "nobody wrote anything" and "what was written is unreadable" the same answer, which
+     * is how a broken record comes to look like a clean one.
+     */
+    malformedFiles: string[];
+    /** Why a stored policy was refused, when one exists and does not load. `null` when none was stored or it loaded. */
+    policyRejected: string | null;
 };
 
 export function reviewDir(root: string, changeId: string): string {
@@ -69,12 +79,27 @@ async function exists(path: string): Promise<boolean> {
 export async function readLedger(root: string, changeId: string): Promise<Ledger> {
     const dir = reviewDir(root, changeId);
     const recordedFiles: string[] = [];
+    const malformedFiles: string[] = [];
     for (const name of Object.values(FILES)) {
-        if (await exists(join(dir, name))) recordedFiles.push(name);
+        if (!(await exists(join(dir, name)))) continue;
+        recordedFiles.push(name);
+        try {
+            JSON.parse(await readFile(join(dir, name), 'utf8'));
+        } catch {
+            malformedFiles.push(name);
+        }
     }
     const rawPolicy = await readJson<unknown>(join(dir, FILES.policy));
     const loaded = rawPolicy === null ? null : loadPolicy(rawPolicy);
-    const policy = loaded !== null && loaded.ok ? loaded.policy : defaultPolicy();
+    let policy = defaultPolicy();
+    // **A rejected policy is reported, not substituted silently.** Falling back to the default would let a stored policy
+    // that the build no longer accepts decide as though it had been read — the record would look clean while the rule that
+    // was actually applied came from somewhere else.
+    let policyRejected: string | null = null;
+    if (loaded !== null) {
+        if (loaded.ok) policy = loaded.policy;
+        else policyRejected = loaded.error;
+    }
     const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
     return {
         changeId,
@@ -89,6 +114,8 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         assurance: usage?.assurance ?? 'none',
         runs: (await readJson<LedgerRun[]>(join(dir, FILES.runs))) ?? [],
         recordedFiles,
+        malformedFiles,
+        policyRejected,
     };
 }
 
@@ -136,15 +163,25 @@ export async function writePolicy(root: string, changeId: string, policy: Policy
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.policy, policy));
 }
 
+function nowIso(): string {
+    return new Date().toISOString();
+}
+
+/**
+ * The store is the only writer that knows the time, so `at` is stamped here rather than by every caller. A claim that
+ * already carries one keeps it: rewriting a claim (a waiver, a reopen) must not restamp its origin, or the author-side
+ * measurement would reset every time someone acted on it.
+ */
 export async function appendClaim(root: string, changeId: string, claim: Claim): Promise<Claim> {
+    const stamped: Claim = { ...claim, at: claim.at || nowIso(), reopens: claim.reopens ?? 0 };
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.claims);
         const claims = (await readJson<Claim[]>(path)) ?? [];
-        const existing = claims.findIndex((entry) => entry.id === claim.id);
-        if (existing >= 0) claims[existing] = claim;
-        else claims.push(claim);
+        const existing = claims.findIndex((entry) => entry.id === stamped.id);
+        if (existing >= 0) claims[existing] = stamped;
+        else claims.push(stamped);
         await writeJson(root, changeId, FILES.claims, claims);
-        return claim;
+        return stamped;
     });
 }
 
@@ -231,4 +268,129 @@ export async function declaredPaths(root: string, changeId: string): Promise<str
     const raw = await readJson<{ ownedPaths?: string[]; owned_paths?: string[] }>(taskPath(root, changeId));
     if (raw === null) return [];
     return raw.ownedPaths ?? raw.owned_paths ?? [];
+}
+
+/**
+ * **The measurement the round-shaped loop never had.**
+ *
+ * Two costs were invisible and one question unanswerable. Invisible: how long a claim waited between being declared and
+ * being supported, and how many times a claim had to be reopened — the author-side loop, which was 1–2 hours per round and
+ * was never counted, while the largest single saving on this line came from *not* repairing twenty-three minor findings.
+ * Unanswerable: whether the evidence ever caught anything, since nothing compared refuted verdicts against the total.
+ *
+ * A rate that cannot be computed is reported as `null`, never as zero: with no recorded baseline, the honest statement is
+ * that the baseline does not exist yet, and the field says so rather than inviting a reader to read 0 as "found nothing".
+ */
+export type LedgerReport = {
+    changeId: string;
+    recorded: boolean;
+    claims: {
+        total: number;
+        byStatus: Record<ClaimStatus, number>;
+        reopenings: number;
+        /** Claims that name no evidence at all. */
+        withoutEvidence: number;
+        /** Claims naming an evidence id no item carries: the same gap the kernel reports as `evidence_missing`. */
+        namingUnrecordedEvidence: number;
+    };
+    evidence: {
+        total: number;
+        byType: Record<string, number>;
+        byVerdict: Record<string, number>;
+        unverified: number;
+    };
+    challenges: { open: number; withdrawn: number; resolved: number };
+    authorSide: {
+        firstClaimAt: string | null;
+        lastVerifiedAt: string | null;
+        claimToSupportedMs: Array<{ claimId: string; ms: number | null }>;
+        medianClaimToSupportedMs: number | null;
+    };
+    budget: BudgetUsage;
+    discovery: {
+        /** Refuted verdicts over all verdicts: how often the evidence caught something, not how long anyone looked. */
+        refutationRate: number | null;
+        /** Withdrawn counterexamples over all counterexamples: how often the author's fix actually removed the defect. */
+        challengeWithdrawalRate: number | null;
+        baseline: 'none recorded yet';
+    };
+};
+
+function median(values: number[]): number | null {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1
+        ? (sorted[middle] as number)
+        : Math.round(((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2);
+}
+
+export async function ledgerReport(root: string, changeId: string): Promise<LedgerReport> {
+    const ledger = await readLedger(root, changeId);
+    const byStatus = { open: 0, supported: 0, refuted: 0, insufficient: 0, waived: 0 } as Record<ClaimStatus, number>;
+    for (const claim of ledger.claims) byStatus[claim.status] += 1;
+
+    const byType: Record<string, number> = {};
+    for (const item of ledger.evidence) byType[item.type] = (byType[item.type] ?? 0) + 1;
+    const byVerdict: Record<string, number> = {};
+    for (const verdict of ledger.verdicts) byVerdict[verdict.verdict] = (byVerdict[verdict.verdict] ?? 0) + 1;
+
+    const verdictByEvidence = new Map(ledger.verdicts.map((verdict) => [verdict.evidenceId, verdict]));
+    const claimToSupportedMs = ledger.claims
+        .map((claim) => {
+            const declaredAt = Date.parse(claim.at);
+            if (!Number.isFinite(declaredAt)) return { claimId: claim.id, ms: null };
+            const firstSupport = claim.evidenceIds
+                .map((id) => verdictByEvidence.get(id))
+                .filter((verdict): verdict is EvidenceVerdict => verdict !== undefined && verdict.verdict === 'supported')
+                .map((verdict) => Date.parse(verdict.at))
+                .filter((time) => Number.isFinite(time))
+                .sort((left, right) => left - right)[0];
+            return { claimId: claim.id, ms: firstSupport === undefined ? null : firstSupport - declaredAt };
+        });
+    const measured = claimToSupportedMs.map((entry) => entry.ms).filter((ms): ms is number => ms !== null);
+
+    const times = [...ledger.claims.map((claim) => claim.at), ...ledger.verdicts.map((verdict) => verdict.at)]
+        .filter((value) => Number.isFinite(Date.parse(value)))
+        .sort();
+    const verdictTimes = ledger.verdicts.map((verdict) => verdict.at).filter((value) => Number.isFinite(Date.parse(value))).sort();
+
+    return {
+        changeId,
+        recorded: ledger.recordedFiles.length > 0,
+        claims: {
+            total: ledger.claims.length,
+            byStatus,
+            reopenings: ledger.claims.reduce((total, claim) => total + (claim.reopens ?? 0), 0),
+            withoutEvidence: ledger.claims.filter((claim) => claim.evidenceIds.length === 0).length,
+            namingUnrecordedEvidence: ledger.claims
+                .filter((claim) => claim.evidenceIds.some((id) => !ledger.evidence.some((item) => item.id === id)))
+                .length,
+        },
+        evidence: {
+            total: ledger.evidence.length,
+            byType,
+            byVerdict,
+            unverified: ledger.evidence.filter((item) => !verdictByEvidence.has(item.id)).length,
+        },
+        challenges: {
+            open: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
+            withdrawn: ledger.challenges.filter((challenge) => challenge.state === 'withdrawn').length,
+            resolved: ledger.challenges.filter((challenge) => challenge.state === 'resolved').length,
+        },
+        authorSide: {
+            firstClaimAt: times[0] ?? null,
+            lastVerifiedAt: verdictTimes[verdictTimes.length - 1] ?? null,
+            claimToSupportedMs,
+            medianClaimToSupportedMs: median(measured),
+        },
+        budget: ledger.usage,
+        discovery: {
+            refutationRate: ledger.verdicts.length === 0 ? null : (byVerdict.refuted ?? 0) / ledger.verdicts.length,
+            challengeWithdrawalRate: ledger.challenges.length === 0
+                ? null
+                : ledger.challenges.filter((challenge) => challenge.state === 'withdrawn').length / ledger.challenges.length,
+            baseline: 'none recorded yet',
+        },
+    };
 }

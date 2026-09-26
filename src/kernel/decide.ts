@@ -12,7 +12,7 @@
 import { budgetDetail, budgetStatus, type BudgetUsage } from './budget.js';
 import { computeDelta } from './delta.js';
 import { MIN_STRENGTH_BY_SEVERITY, strengthOf, verdictFor } from './evidence.js';
-import { acceptsAssurance, tierPolicy, type Policy } from './policy.js';
+import { meetsAssuranceFloor, tierPolicy, type Policy } from './policy.js';
 import {
     REASON_MESSAGES,
     type AssuranceLevel,
@@ -67,10 +67,10 @@ export function decide(input: DecideInput): Decision {
     if (budget.exhausted) reasons.push(reason('budget_exhausted', budgetDetail(budget)));
 
     // 2. Process assurance is a separate axis, judged against the tier's threat model.
-    if (!acceptsAssurance(input.policy, input.tier, input.assurance)) {
+    if (!meetsAssuranceFloor(input.policy, input.tier, input.assurance)) {
         reasons.push(reason(
             'assurance_below_tier',
-            `assurance ${input.assurance} is not accepted by ${input.tier} (accepts ${tierPolicy(input.policy, input.tier).assurance.join(', ')})`,
+            `assurance ${input.assurance} is below the ${input.tier} floor of ${tierPolicy(input.policy, input.tier).assuranceFloor}`,
         ));
     }
 

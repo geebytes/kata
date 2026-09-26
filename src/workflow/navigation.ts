@@ -15,6 +15,7 @@ import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvide
 import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
+import { ledgerVerdict } from '../store/verdict.js';
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -40,6 +41,22 @@ export type UpstreamSummary = {
   unresolvedObligationAcIds: string[];
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
+  /**
+   * What the evidence ledger decides, when the change has one.
+   *
+   * `absent` is a fact the ladder acts on rather than a silent fallback: a change with no ledger is still decided by the
+   * round-shaped record, and saying so is what keeps that route visible while it is retired. `unreadable` is kept apart
+   * from `absent`, because something written and unreadable decides nothing while a ledger nobody wrote never claimed to.
+   */
+  ledger?: {
+    state: 'absent' | 'unreadable' | 'decided';
+    verdict: 'pass' | 'fail' | 'insufficient' | null;
+    claims: number;
+    /** The reason codes, or the detail of why nothing was decided. */
+    reason: string;
+    /** The kernel's own list of what is missing, which is what a repair is supposed to satisfy. */
+    deficits: string[];
+  };
 };
 
 /**
@@ -71,6 +88,7 @@ export const nextActionReasons = [
   'repair_mixed_revision_evidence',
   'repair_strict_major_findings',
   'repair_unresolved_obligations',
+  'satisfy_ledger_deficits',
   'resolve_repair_obligations',
   'resolve_wiki_closure',
   'review_fresh_implementation',
@@ -170,6 +188,25 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
   const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
   const reviewMode = task?.workflowProfile?.reviewMode;
+  // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
+  // ladder and the operator cannot see two different answers to the same question — the defect this repository keeps
+  // finding, and the reason this is a call rather than a second assembly.
+  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId });
+  const ledger = ledgerDecision.kind === 'decided'
+    ? {
+        state: 'decided' as const,
+        verdict: ledgerDecision.decision.verdict,
+        claims: ledgerDecision.claims,
+        reason: ledgerDecision.decision.reasons.map((entry) => entry.code).join(', ') || 'no reason given',
+        deficits: ledgerDecision.decision.deficits.map((deficit) => `${deficit.claimId}: ${deficit.need}`),
+      }
+    : {
+        state: ledgerDecision.kind,
+        verdict: null,
+        claims: 0,
+        reason: ledgerDecision.detail,
+        deficits: [] as string[],
+      };
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
     reviewFindings: findings.length,
@@ -186,6 +223,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     wikiClosureValid: wikiClosure.valid,
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
+    ledger,
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
     unresolvedObligations: unresolvedObligations.length,
@@ -343,6 +381,28 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
   // over blocking or major review findings so --seal is attached to the build
   // command and stale evidence is refreshed alongside any finding repairs.
+  // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
+  // verdicts, open counterexamples and the discovery floor in one place, where the branches below count findings — and
+  // counting findings is the part this replaces. It sits below the two state gates above it (mixed-revision evidence,
+  // unresolved obligations), because those make every piece of evidence meaningless rather than merely insufficient.
+  if (upstream.ledger && upstream.ledger.state === 'decided' && upstream.ledger.verdict !== 'pass') {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'satisfy_ledger_deficits',
+      priority: 1990 + upstream.ledger.deficits.length,
+    };
+  }
+  if (upstream.ledger && upstream.ledger.state === 'unreadable') {
+    // A ledger that exists and cannot be read decides nothing, and that is not the same fact as one that was never
+    // written — so it refuses here rather than falling through to the round-shaped branches as if nothing were wrong.
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'satisfy_ledger_deficits',
+      priority: 1995,
+    };
+  }
   if (phase === 'review' && upstream.verifyResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -513,6 +573,7 @@ export function statusActionPrompts(
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
   cover_uncovered_classes: null,
+  satisfy_ledger_deficits: null,
   review_fresh_implementation: 'review_gate',
   judge_reviewed_change: 'judge_gate',
   archive_judged_change: 'archive_gate',

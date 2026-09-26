@@ -35,7 +35,7 @@
             "autoEvidence",
             "reviewers",
             "quorumOn",
-            "assurance",
+            "assuranceFloor",
             "humanBudgetMin"
           ],
           "properties": {
@@ -61,22 +61,18 @@
                 "type": "string"
               }
             },
-            "assurance": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "enum": [
-                  "none",
-                  "relayed",
-                  "observed",
-                  "sandboxed",
-                  "signed"
-                ]
-              }
-            },
             "humanBudgetMin": {
               "type": "number",
               "minimum": 0
+            },
+            "assuranceFloor": {
+              "enum": [
+                "none",
+                "relayed",
+                "observed",
+                "sandboxed",
+                "signed"
+              ]
             }
           }
         },
@@ -87,7 +83,7 @@
             "autoEvidence",
             "reviewers",
             "quorumOn",
-            "assurance",
+            "assuranceFloor",
             "humanBudgetMin"
           ],
           "properties": {
@@ -113,22 +109,18 @@
                 "type": "string"
               }
             },
-            "assurance": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "enum": [
-                  "none",
-                  "relayed",
-                  "observed",
-                  "sandboxed",
-                  "signed"
-                ]
-              }
-            },
             "humanBudgetMin": {
               "type": "number",
               "minimum": 0
+            },
+            "assuranceFloor": {
+              "enum": [
+                "none",
+                "relayed",
+                "observed",
+                "sandboxed",
+                "signed"
+              ]
             }
           }
         },
@@ -139,7 +131,7 @@
             "autoEvidence",
             "reviewers",
             "quorumOn",
-            "assurance",
+            "assuranceFloor",
             "humanBudgetMin"
           ],
           "properties": {
@@ -165,22 +157,18 @@
                 "type": "string"
               }
             },
-            "assurance": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "enum": [
-                  "none",
-                  "relayed",
-                  "observed",
-                  "sandboxed",
-                  "signed"
-                ]
-              }
-            },
             "humanBudgetMin": {
               "type": "number",
               "minimum": 0
+            },
+            "assuranceFloor": {
+              "enum": [
+                "none",
+                "relayed",
+                "observed",
+                "sandboxed",
+                "signed"
+              ]
             }
           }
         }

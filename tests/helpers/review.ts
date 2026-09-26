@@ -51,6 +51,8 @@ export function makeClaim(overrides: Partial<Claim> = {}): Claim {
         evidenceIds: ['E1'],
         challengeIds: [],
         status: 'open',
+        at: '2026-09-27T00:00:00.000Z',
+        reopens: 0,
         ...overrides,
     };
 }

@@ -8,6 +8,7 @@
  */
 import {
     ASSURANCE_LEVELS,
+    assuranceAtLeast,
     EVIDENCE_TYPES,
     SEVERITIES,
     TIER_NAMES,
@@ -26,8 +27,14 @@ export type TierPolicy = {
     reviewers: number;
     /** Conditions under which the mesh escalates to a further reviewer. */
     quorumOn: string[];
-    /** Process assurance levels this tier accepts. */
-    assurance: AssuranceLevel[];
+    /**
+     * The weakest process assurance this tier accepts.
+     *
+     * A floor rather than an allowed set, and that distinction is load-bearing: with a set, a round that is *better*
+     * observed than the tier asked for fails the check, which is how `observed` came to be refused by the standard tier in
+     * a test of my own making.
+     */
+    assuranceFloor: AssuranceLevel;
     /** Budget for human attention, in minutes. Zero means the tier expects none. */
     humanBudgetMin: number;
 };
@@ -56,7 +63,7 @@ export const POLICY_CONSUMERS: Record<string, string> = {
     'tiers.*.autoEvidence': 'producers/planner',
     'tiers.*.reviewers': 'producers/quorum',
     'tiers.*.quorumOn': 'producers/quorum',
-    'tiers.*.assurance': 'kernel/decide',
+    'tiers.*.assuranceFloor': 'kernel/decide',
     'tiers.*.humanBudgetMin': 'producers/planner',
     'riskFloors': 'kernel/risk',
     'riskFloorAudit.changesRequireReview': 'kernel/risk',
@@ -78,21 +85,21 @@ export function defaultPolicy(): Policy {
                 autoEvidence: ['static_witness', 'invariant_proof'],
                 reviewers: 0,
                 quorumOn: ['uncertainty', 'new_class', 'weak_evidence'],
-                assurance: ['none', 'relayed'],
+                assuranceFloor: 'none',
                 humanBudgetMin: 0,
             },
             strict: {
                 autoEvidence: ['static_witness', 'invariant_proof', 'executable_falsifier'],
                 reviewers: 1,
                 quorumOn: ['disagreement', 'high_risk'],
-                assurance: ['relayed', 'observed'],
+                assuranceFloor: 'relayed',
                 humanBudgetMin: 10,
             },
             security: {
                 autoEvidence: ['static_witness', 'invariant_proof', 'executable_falsifier', 'cross_artifact_contradiction'],
                 reviewers: 2,
                 quorumOn: ['always'],
-                assurance: ['sandboxed', 'signed'],
+                assuranceFloor: 'sandboxed',
                 humanBudgetMin: 30,
             },
         },
@@ -152,7 +159,7 @@ export function loadPolicy(value: unknown): PolicyLoad {
     for (const tier of TIER_NAMES) {
         const entry = value.tiers[tier];
         if (!isRecord(entry)) return { ok: false, error: `tiers.${tier} is required` };
-        const knownFields = ['autoEvidence', 'reviewers', 'quorumOn', 'assurance', 'humanBudgetMin'];
+        const knownFields = ['autoEvidence', 'reviewers', 'quorumOn', 'assuranceFloor', 'humanBudgetMin'];
         for (const field of knownFields) {
             if (entry[field] === undefined) return { ok: false, error: `tiers.${tier}.${field} is required` };
         }
@@ -165,10 +172,8 @@ export function loadPolicy(value: unknown): PolicyLoad {
         if (!Array.isArray(autoEvidence) || autoEvidence.some((item) => !EVIDENCE_TYPES.includes(item as EvidenceType))) {
             return { ok: false, error: `tiers.${tier}.autoEvidence must be a list of known evidence types` };
         }
-        const assurance = entry.assurance;
-        if (!Array.isArray(assurance) || assurance.length === 0
-            || assurance.some((item) => !ASSURANCE_LEVELS.includes(item as AssuranceLevel))) {
-            return { ok: false, error: `tiers.${tier}.assurance must be a non-empty list of known assurance levels` };
+        if (!ASSURANCE_LEVELS.includes(entry.assuranceFloor as AssuranceLevel)) {
+            return { ok: false, error: `tiers.${tier}.assuranceFloor must be one of ${ASSURANCE_LEVELS.join(', ')}` };
         }
         if (typeof entry.reviewers !== 'number' || entry.reviewers < 0) {
             return { ok: false, error: `tiers.${tier}.reviewers must be a non-negative number` };
@@ -238,6 +243,7 @@ export function tierPolicy(policy: Policy, tier: TierName): TierPolicy {
     return policy.tiers[tier];
 }
 
-export function acceptsAssurance(policy: Policy, tier: TierName, assurance: AssuranceLevel): boolean {
-    return tierPolicy(policy, tier).assurance.includes(assurance);
+/** A recorded assurance satisfies a tier when it is at least as strong as the tier's floor. */
+export function meetsAssuranceFloor(policy: Policy, tier: TierName, assurance: AssuranceLevel): boolean {
+    return assuranceAtLeast(assurance, tierPolicy(policy, tier).assuranceFloor);
 }

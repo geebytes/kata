@@ -222,6 +222,65 @@ describe('the ledger verbs', () => {
         expect(moved.verdictsCarriedOver).toBe(0);
     });
 
+    it('records a measured budget, and a spent one cannot be decided as a pass', async () => {
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        expect((await ledger(['decide'])).verdict).toBe('pass');
+
+        // The measured numbers enter here: without a writer the budget rule would be a mechanism nothing feeds.
+        await ledger(['usage', 'set', '--tokens', '900000', '--tool-calls', '12']);
+        const spent = await ledger(['decide', '--c0', '1000000']);
+        expect(spent.verdict).toBe('insufficient');
+        expect((spent.reasons as Array<{ code: string }>).map((reason) => reason.code)).toContain('budget_exhausted');
+
+        // With no baseline the same usage cannot be judged, and it must not read as a satisfied limit either.
+        const unknown = await ledger(['decide']);
+        expect(unknown.verdict).toBe('pass');
+    });
+
+    it('measures what the round-shaped loop never did: author-side latency, reopenings and discovery rates', async () => {
+        // Before anything is verified the rates are not computable, and the honest answer is null rather than 0: a zero
+        // would read as "the evidence caught nothing", which is a claim nobody has the data to make.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        const empty = (await ledger(['status', '--cost'])).report as {
+            claims: { total: number; reopenings: number; namingUnrecordedEvidence: number };
+            evidence: { unverified: number };
+            discovery: { refutationRate: number | null; baseline: string };
+            authorSide: { medianClaimToSupportedMs: number | null };
+        };
+        expect(empty.claims.total).toBe(1);
+        expect(empty.evidence.unverified).toBe(0);
+        // The claim names E1 and no evidence item carries that id, which is the same gap the kernel reports as
+        // `evidence_missing` — the report and the decision name the same thing.
+        expect(empty.claims.namingUnrecordedEvidence).toBe(1);
+        expect(empty.discovery.refutationRate).toBeNull();
+        expect(empty.discovery.baseline).toBe('none recorded yet');
+        expect(empty.authorSide.medianClaimToSupportedMs).toBeNull();
+
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        await ledger(['claim', 'reopen', 'C1']);
+        const measured = (await ledger(['status', '--cost'])).report as {
+            claims: { total: number; reopenings: number; byStatus: Record<string, number>; namingUnrecordedEvidence: number };
+            evidence: { unverified: number; byType: Record<string, number> };
+            discovery: { refutationRate: number | null };
+            authorSide: { medianClaimToSupportedMs: number | null; firstClaimAt: string | null };
+        };
+        expect(measured.claims.reopenings).toBe(1);
+        expect(measured.claims.namingUnrecordedEvidence).toBe(0);
+        expect(measured.claims.byStatus.open).toBe(1);
+        expect(measured.evidence.unverified).toBe(0);
+        expect(measured.evidence.byType.static_witness).toBe(1);
+        expect(measured.discovery.refutationRate).toBe(0);
+        expect(measured.authorSide.firstClaimAt).toBeTruthy();
+        expect(measured.authorSide.medianClaimToSupportedMs).not.toBeNull();
+    });
+
     it('plans from the risk of the touched paths and derives a deadline from a recorded baseline', async () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);

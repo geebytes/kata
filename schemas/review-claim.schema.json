@@ -12,7 +12,9 @@
     "dependsOn",
     "evidenceIds",
     "challengeIds",
-    "status"
+    "status",
+    "at",
+    "reopens"
   ],
   "properties": {
     "id": {
@@ -90,6 +92,13 @@
           "minLength": 1
         }
       }
+    },
+    "at": {
+      "type": "string"
+    },
+    "reopens": {
+      "type": "integer",
+      "minimum": 0
     }
   }
 }

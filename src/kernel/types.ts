@@ -35,6 +35,13 @@ export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
 export const ASSURANCE_LEVELS = ['none', 'relayed', 'observed', 'sandboxed', 'signed'] as const;
 export type AssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
 
+/** Assurance is an ordered ladder, not a set of allowed values: a round that is *better* observed than required passes. */
+export const ASSURANCE_RANK: Record<AssuranceLevel, number> = { none: 0, relayed: 1, observed: 2, sandboxed: 3, signed: 4 };
+
+export function assuranceAtLeast(recorded: AssuranceLevel, floor: AssuranceLevel): boolean {
+    return ASSURANCE_RANK[recorded] >= ASSURANCE_RANK[floor];
+}
+
 export const SEVERITIES = ['blocking', 'major', 'minor', 'nit'] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
@@ -63,6 +70,16 @@ export type Claim = {
     evidenceIds: string[];
     challengeIds: string[];
     status: ClaimStatus;
+    /**
+     * When the claim was declared, stamped by the store rather than by a caller: the store is the only writer that
+     * knows the time, and an empty value means "not yet stamped".
+     */
+    at: string;
+    /**
+     * How many times the claim was forced back open. This is the author-side cost the round-shaped loop never
+     * measured — repairs were per finding, each minting a revision, and nothing counted the reopens they caused.
+     */
+    reopens: number;
     waiver?: { reason: string; at: string };
 };
 

@@ -102,6 +102,9 @@ export function policyFloorChangeClaims(input: {
             evidenceIds: [],
             challengeIds: [],
             status: 'open',
+            // Stamped by the store: a claim constructed here has no clock, and the store is the only writer that knows one.
+            at: '',
+            reopens: 0,
         });
     }
     return claims;

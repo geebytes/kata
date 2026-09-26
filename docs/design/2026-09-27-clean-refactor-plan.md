@@ -269,16 +269,16 @@ gate mutation kill   = 100%（K2）
 | # | 不足 | 打的是哪个目标 | 为什么是问题 | 处置 |
 |---|---|---|---|---|
 | **S1** | **重写本身的成本没有与节省对账** | 成本 | 删 6,917 + 写 4–5k + 重写 7,062 行测试 ≈ **8–12 周 × 2–3 人**；期间旧成本照付。**若变更量不高，重写是最贵的那个选项** | **加 ROI 判据与止损线**（见文末结论）；不做则等于用 10 周赌一个未测的节省 |
-| **S2** | **作者侧成本（轮次【之间】）没有指标，而它可能占大头** | 成本 | 实测：每轮之后的读/验/修/处置/重封约 **1–2 h**；单日最大节省是"一次性接受 23 条 minor/nit"，**而不是省轮次** | 新增两个一等指标：`finding→supported` 时长 · **每 change 的 claim 重开次数** |
+| **S2** | **作者侧成本（轮次【之间】）没有指标，而它可能占大头** | 成本 | 实测：每轮之后的读/验/修/处置/重封约 **1–2 h**；单日最大节省是"一次性接受 23 条 minor/nit"，**而不是省轮次** | **✅ 已落地**：`Claim.at` / `Claim.reopens` 由 store 盖章，`kata-cli ledger status --cost` 输出 `claimToSupportedMs`（含中位数）· `reopenings` · `authorSide.firstClaimAt/lastVerifiedAt` |
 | **S3** | **单次评审的上下文成本没有被攻击** | 成本 | 350–660K/轮里 **brief 只占 3–6%**，绝大部分是**上下文重建**。只减少"评审次数"不改变单次成本 | **`Claim.readingSet[]`** + planner 必须产出**阅读计划**（文件 + 摘要 + 行范围）⇒ 评审上下文由 **claim** 决定，而不是由整个 change 决定 |
 | **S4** | **K6 在只有一个 adapter 时是空条款** | 解耦 | 差分测试需要两个 adapter；今天只有一个 ⇒ 不变量**恒真** | P6 必须交付**最小第二 adapter**（文件/人工 adapter 也算），否则**删掉这条不变量**而不是假装满足 |
 | **S5** | **provider 多样性可能把平台知识带回内核** | 解耦 | "2 个 reviewer"若由 policy 指向具体 provider ⇒ 内核知道平台 | 已改：抽象为 `diversity: model_family \| prompt_strategy \| tool_profile`，由 adapter 声明能否满足；**未满足必须如实上报** `undiversified` |
 | **S6** | **证据验证把 I/O 带进内核 ⇒ K1 原本不成立** | 解耦 + 质量 | `invariant_proof.command` 要跑命令；"纯内核"与"自己验证据"自相矛盾 | 已改：引入 **`EvidenceVerdict`** —— **内核从不执行任何东西**，只消费判决 |
 | **S7** | **没有对"独立发现"的下限** | **质量** | v2 允许 `standard` 只靠自动证据认证（作者自证）；**今天至少有一轮** | 加**发现下限**：风险档 ≥ medium 必须至少一次**独立挑战**（带阅读集与期限），并记录其**新颖性**（不在账本里的挑战） |
 | **S8** | **K2 原来写弱了**：按【证据类型】要求变异，而有效的纪律是按【每条检查】 | 质量 | 11 处"能恒真的检查"**全部是逐条抓到的**；按类型要求会漏掉它们 | 已改：K2 = **每条注册的检查/不变量都必须带一个能让它变红的变异；没有变异的检查不可受理** |
-| **S9** | **语料只用历史缺陷 ⇒ 对新机制自身的失效模式没有召回度量** | 质量 | 新系统有**全新的**失效模式：依赖边错 · floor 过低 · adapter 语义发散 · quorum 相关性 | 已改：P1 语料分两半（遗留缺陷 + **新机制对抗种子**） |
-| **S10** | **没有先量当下的分布就开始重写** | 三个目标 | `≤0.6 C0` 与 `↓70%` 都是**未测值**；不知道成本到底在哪就重写 = 优化一个**猜出来的**分布 | 已加 **E0**：把现状仪表化一周（每 change 的轮次/tokens/**作者侧时间**/重封/发现数）⇒ 得到真实 `C0` 与成本归属 |
-| **S11** | **"质量不丢"没有量化基线** | 质量 | 没有 baseline（每 change 采纳的、经复现的缺陷数），无法证明"没丢" | E0 同时记录当前**发现率**作为 baseline |
+| **S9** | **语料只用历史缺陷 ⇒ 对新机制自身的失效模式没有召回度量** | 质量 | 新系统有**全新的**失效模式：依赖边错 · floor 过低 · adapter 语义发散 · quorum 相关性 | **✅ 已落地第一半**：`tests/fixtures/review-scenarios.ts` = **17 个种子**（delta 三态 · 强度 · 反例 · 预算 · 发现下限 · assurance · quorum 三态 · 覆盖 · 豁免），并由测试断言**每个 reason code 都有种子**（语料自证覆盖） |
+| **S10** | **没有先量当下的分布就开始重写** | 三个目标 | `≤0.6 C0` 与 `↓70%` 都是**未测值**；不知道成本到底在哪就重写 = 优化一个**猜出来的**分布 | **✅ 仪表已落地**（`--cost` 报告 + `ledger usage set` 让**实测数字有写入者**）；**E0 的数据仍需跑一周** —— 仪表本身不产生数据 |
+| **S11** | **"质量不丢"没有量化基线** | 质量 | 没有 baseline（每 change 采纳的、经复现的缺陷数），无法证明"没丢" | **✅ 已定义并计算**：`refutationRate`（被反驳判决/全部判决）· `challengeWithdrawalRate`（撤回反例/全部反例）；**baseline 字段如实写 `none recorded yet`** —— 报告为**未测**而不是 0 |
 | **S12** | **省掉的恰恰是最难定义的东西：探索** | 成本 ↔ 质量 | 可复核的证据（反例/不变量）**天然覆盖已知类**；"看一眼觉得不对"的价值无法进入任何 schema | 承认这是取舍：**发现下限（S7）+ 独立挑战的新颖性度量**是唯一防线；不得声称"质量不丢"，只能声称"**可复核的那部分不丢，探索部分由人工下限兜底**" |
 
 ## 11.1 结构性的三条（加检查消不掉）
@@ -372,4 +372,77 @@ node dist/cli.js ledger status --change round-protocol
 
 **所以当前状态是：新路径完整、可跑、全绿；旧路径冗余但仍在线上；它的移除是一个次序明确的机械步骤，第一步是把阶梯（`orchestrator`/`navigation`/`ops`/`cli`）改调 `decide()` 与 ledger 存储。**
 
+> **更新（第二轮，见 §12.6）：这句话里的"第一步"已经做完了。** 阶梯现在**读账本**并据此路由（`satisfy_ledger_deficits`），而"没有账本"是一个**显式状态**而不是静默回退。**剩下的只有删除本身。**
+
 ⚠️ 也因此，§2 的删除清单已有部分过时：其中若干条（覆盖协议、引用守卫、`salvage`、处置字母表）描述的是**旧路径内部**的补偿机制，删除它们与新子系统无关，属于同一次机械清理。**先接线，再删除**，两步都要，但不要合并成一步。
+
+---
+
+# 13. 第二轮：接线 + 度量（"一步到位修复发现的问题"）
+
+> 指令：**一步到位修复和优化发现的问题，不要中断。** 本轮把第一轮明确留给下一步的那件事（**阶梯接线**）做完，并把 §11 审计里"未落地"的三条（**S2 / S9 / S10+S11**）落成代码。**仍然没有做的是删除** —— 理由在 §13.4。
+
+## 13.1 阶梯接线：账本成为决定者
+
+```
+navigation.ts   readUpstreamSummary() 调 ledgerVerdict()     ← 与 CLI 的 decide 动词【同一处推导】
+                UpstreamSummary.ledger = { state, verdict, claims, reason, deficits }
+                suggestCandidateAction() 在【未解决义务】之下、【findings 计数】之上返回
+                reason = satisfy_ledger_deficits（新词汇，已补 zh/en 提示）
+store/verdict.ts  ledgerVerdict() → absent | unreadable | decided        ← 单一推导点
+```
+
+三种状态**含义不同、必须分开**：
+
+| state | 含义 | 阶梯行为 |
+|---|---|---|
+| `absent` | 没有账本（或账本里没有 claim） | **保留旧路径**，并把这句话报告出来 —— 这就是让旧路径可以**逐个 change 退休**而不是一次全关的东西 |
+| `decided` 且非 pass | 账本判不通过 | 送往 `/kata-build`，**带内核自己的 deficits**（不是再数一遍 findings） |
+| `unreadable` | 账本存在但读不了 | **拒绝**，不许读成"没人写过" |
+
+实测（真实仓库）：`kata-cli status --change round-protocol` 现在输出
+`"ledger":{"state":"absent","verdict":null,"claims":0,"reason":"no ledger has been recorded for this change, so nothing here decides it","deficits":[]}` ✓
+
+## 13.2 度量：把"没有指标"变成指标（S2 / S10 / S11）
+
+`kata-cli ledger status --cost` 输出：`claimToSupportedMs`（每个 claim 从中报到达成支持的**中位数**）· `reopenings`（**作者侧成本**：一个 claim 被反复重开的次数）· `authorSide.firstClaimAt/lastVerifiedAt` · `evidence.byType/byVerdict/unverified` · `challenges.open/withdrawn` · **`discovery.refutationRate`**（被反驳判决/全部判决）· `discovery.challengeWithdrawalRate`。
+
+两条规则写进实现而不仅是文档：
+1. **算不出来的比率写 `null`，绝不写 0**，`baseline` 字段如实写 `none recorded yet` —— 0 会被读成"什么都没抓到"，那是一个没人有数据支持的断言；
+2. **实测数字必须有写入者**：`kata-cli ledger usage set --tokens/--wall-ms/--tool-calls`。没有它，预算规则就是**一个没有 writer 的机制**（这正是本仓库第 6 类缺陷），wiring 检查当场指出了这一点。
+
+## 13.3 语料：新机制自己的失效模式（S9）
+
+`tests/fixtures/review-scenarios.ts` = **17 个种子**，覆盖 delta 三态（依赖变动/未变动/不可解析）· 证据强度 · 反例开放 · 预算耗尽 · 发现下限 · assurance 低于档位 · quorum 三态（分歧/**未满足多样性**/**不能投票抹掉一个已复现的 finding**）· 覆盖缺口 · 无理由豁免。
+
+**语料自证覆盖**：测试遍历 `REASON_MESSAGES`，断言**每个 reason code 至少出现在一个种子**里 —— 词汇表想悄悄长大就会失败。这正是"用历史缺陷做语料对新机制无效"那条审计意见的直接回答。
+
+## 13.4 本轮又抓到 4 个缺陷，全部由机器抓到（同一个规律在重复）
+
+| # | 缺陷 | 谁抓到的 | 性质 |
+|---|---|---|---|
+| ① | **`assurance` 写成"允许集合"而不是"下限"** ⇒ 比档位要求的**更好**的 assurance 反而被拒（`observed` 被 `standard` 拒） | **我自己新写的接线用例**（"账本通过后不再拦"实测失败） | 真实设计错误：档位描述的是**威胁模型下限**，不是白名单。已改为 `assuranceFloor` + `assuranceAtLeast()`，语义是"至少这么强" |
+| ② | **损坏的账本与"没人写过"不可区分** —— `readJson` 吞掉解析失败 ⇒ `claims: []` ⇒ 读成 `absent` | 我写"损坏账本必须被拒"的用例时暴露 | 本仓库的老类：**吞掉读失败**。已加 `malformedFiles`，`ledgerVerdict` 直接判 `unreadable` |
+| ③ | **存下来的 policy 校验失败会被静默换成默认值** | 同上，顺带发现 | 同一个类。已加 `policyRejected`，非 null 即拒绝判定 |
+| ④ | **`setUsage` 没有消费者**（预算数字在真实 CLI 路径上永远写不进去） | **`npm run check:wiring`**（48 → 修回 47） | 第 6 类缺陷（有定义没有消费者）的活样本，由仓库自己的检查抓到 |
+
+## 13.5 证据
+
+```
+npx tsc --noEmit                exit 0
+npx vitest run                  205 文件 / 1406 用例 / 0 失败   （本轮前 203 / 1381）
+npm run build                   dist/cli.js 打包通过
+npm run check:wiring            findings 47 —— 本次新增代码贡献 0（本轮曾到 48，见 13.4 ④）
+node dist/cli.js status --change round-protocol
+                                upstream.ledger = {state: 'absent', …}  ← 接线在真实仓库上活着
+node dist/cli.js ledger status --cost --change round-protocol
+                                report 输出完整（比率 null + baseline 'none recorded yet'）
+```
+
+## 13.6 仍未做的一件事，和它的次序（与第一轮结论相同，且理由收窄为一条）
+
+**删除旧轮次机制仍未做。** 第一轮给了三条理由（在飞的 change 正在被它认证 / 计划把它排在 P2–P5 / 同轮既加又删会让 1406 条用例失去可验证性）。第二轮完成后，**理由收窄为一条，也是最硬的一条**：
+
+> **接线已经完成，但"新路径成为默认"还没有发生** —— 因为**今天没有任何一个 change 有账本**（`state: 'absent'` 是实测状态）。删除旧路径的前提是每一条流程都走新路径，而这一步需要**先给在飞的 change 建账本**（`ledger freeze` → `claim add` → `evidence add` → `verify`），这是一次**逐个 change 的迁移**，不是一次删除。
+
+所以正确的下一步次序是：**① 挑一个在飞 change，用新命令把它的验收项变成 claim 并录证据 → ② 让阶梯按账本路由它 → ③ 它归档之后，删除与它有关的那部分旧机制 → ④ 重复。** 每一步都可验证，且任何一步停下都不会让仓库失去一个能跑的评审路径。

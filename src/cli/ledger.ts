@@ -11,19 +11,19 @@ import { join } from 'node:path';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, recordVerdicts, appendChallenge, resolveChallenge, setAssurance, setUsage, appendRun } from '../store/ledger.js';
-import { aggregateQuorum } from '../producers/quorum.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, recordVerdicts, appendChallenge, resolveChallenge, setAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
+import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
 import { verifyAll } from '../producers/verifiers.js';
 import type { EvidenceAdapter, VerifyContext } from '../producers/port.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
-import { decide, reasonMessage } from '../kernel/decide.js';
+import { reasonMessage } from '../kernel/decide.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
-import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type EvidenceVerdict, type RiskClass, type Severity } from '../kernel/types.js';
+import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -90,9 +90,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     const ledger = await readLedger(options.root, changeId);
 
     if (sub === 'status') {
+        if (argv.includes('--cost')) {
+            // The author-side measurement the round-shaped loop never had, plus the discovery rates it never compared. A
+            // rate that cannot be computed is reported as null rather than 0, and the baseline field says so in words.
+            outputResult({ ok: true, command: 'ledger status --cost', report: await ledgerReport(options.root, changeId) });
+            return;
+        }
         outputResult({
             ok: true,
-            changeId: changeId,
+            changeId,
             dir: reviewDir(options.root, changeId),
             recordedFiles: ledger.recordedFiles,
             subject: ledger.subject?.revision ?? null,
@@ -210,8 +216,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 return;
             }
             const { waiver: _dropped, ...rest } = claim;
-            await appendClaim(options.root, changeId, { ...rest, status: 'open' });
-            outputResult({ ok: true, command: 'ledger claim reopen', claim: claim.id });
+            // The reopen count is the author-side cost the round-shaped loop never measured: repairs were per finding and
+            // each one minted a revision, while nothing counted how often a claim had to be reopened afterwards.
+            const reopened = { ...rest, status: 'open' as const, reopens: (claim.reopens ?? 0) + 1 };
+            await appendClaim(options.root, changeId, reopened);
+            outputResult({ ok: true, command: 'ledger claim reopen', claim: claim.id, reopens: reopened.reopens });
             return;
         }
         if (action === 'add') {
@@ -246,12 +255,50 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 evidenceIds: evidenceRaw.split(',').map((entry) => entry.trim()).filter((entry) => entry !== ''),
                 challengeIds: [],
                 status: 'open',
+                // Left empty on purpose: the store stamps `at`, because the store is the only writer that knows the time.
+                at: '',
+                reopens: 0,
             };
             await appendClaim(options.root, changeId, claim);
             outputResult({ ok: true, command: 'ledger claim add', claim });
             return;
         }
         fail({ command: 'ledger claim', error: `unknown action "${action}"` });
+        return;
+    }
+
+    if (sub === 'usage') {
+        // **Where the measured numbers enter.** The kernel refuses to invent a reading — an unmeasurable limit is reported
+        // as unknown rather than satisfied — so the host or the operator has to be able to state one, and this is that
+        // command. Without it the budget rule would be a mechanism with no writer, which is a defect class of its own.
+        if (argv[1] !== 'set') {
+            fail({ command: 'ledger usage', error: 'usage takes one action: set' });
+            return;
+        }
+        const numeric = (flag: string): number | undefined => {
+            const raw = argValue(argv, flag);
+            if (raw === undefined) return undefined;
+            const value = Number(raw);
+            if (!Number.isFinite(value) || value < 0) {
+                fail({ command: 'ledger usage set', error: `${flag} must be a non-negative number` });
+                return undefined;
+            }
+            return value;
+        };
+        const tokens = numeric('--tokens');
+        const wallMs = numeric('--wall-ms');
+        const toolCalls = numeric('--tool-calls');
+        const usage = {
+            ...(tokens === undefined ? {} : { tokens }),
+            ...(wallMs === undefined ? {} : { wallMs }),
+            ...(toolCalls === undefined ? {} : { toolCalls }),
+        };
+        if (Object.keys(usage).length === 0) {
+            fail({ command: 'ledger usage set', error: 'nothing to record: pass --tokens, --wall-ms or --tool-calls' });
+            return;
+        }
+        const stored = await setUsage(options.root, changeId, usage);
+        outputResult({ ok: true, command: 'ledger usage set', budget: stored });
         return;
     }
 
@@ -427,55 +474,29 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     }
 
     if (sub === 'decide') {
-        if (!ledger.subject) {
-            fail({ command: 'ledger decide', error: 'the subject is not frozen: run `ledger freeze` first' });
+        const c0Raw = argValue(argv, '--c0');
+        const tierFlag = argValue(argv, '--tier');
+        const assuranceFlag = argValue(argv, '--assurance');
+        const verdict = await ledgerVerdict({
+            root: options.root,
+            changeId,
+            c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
+            ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
+            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as AssuranceLevel }),
+        });
+        if (verdict.kind !== 'decided') {
+            // Neither state may look like a pass: a ledger nobody wrote and a ledger that cannot be read are both refusals,
+            // and the second is named separately because "unreadable" and "absent" are different facts.
+            fail({ command: 'ledger decide', state: verdict.kind, error: verdict.detail });
             return;
         }
-        const current = await currentSubject({ root: options.root, changeId });
-        const c0Raw = argValue(argv, '--c0');
-        const quorumRecords = (() => {
-            const groups = new Map<string, { diversity: string; verdicts: EvidenceVerdict[] }>();
-            for (const run of ledger.runs) {
-                const group = groups.get(run.producer) ?? { diversity: run.diversity, verdicts: [] };
-                groups.set(run.producer, group);
-            }
-            return [...groups.entries()].map(([id, group]) => ({ id, diversity: group.diversity, verdicts: ledger.verdicts }));
-        })();
-        const evidenceToClaim: Record<string, string> = {};
-        for (const claim of ledger.claims) for (const evidenceId of claim.evidenceIds) evidenceToClaim[evidenceId] = claim.id;
-        const quorum = quorumRecords.length > 1
-            ? aggregateQuorum({
-                records: quorumRecords,
-                evidenceToClaim,
-                requiredReviewers: ledger.policy.tiers[argValue(argv, '--tier') === 'security' ? 'security' : 'strict'].reviewers,
-                demandDiversity: ledger.policy.diversity.requiredOn.includes('quorum'),
-            })
-            : undefined;
-        const risk = classifyRisk({
-            paths: current === null ? Object.keys(ledger.subject.pathDigests) : Object.keys(current.pathDigests),
-            policy: ledger.policy,
-        });
-        const tier = (argValue(argv, '--tier') as 'standard' | 'strict' | 'security' | undefined) ?? risk.tier;
-        const decision = decide({
-            subject: ledger.subject,
-            claims: ledger.claims,
-            evidence: ledger.evidence,
-            verdicts: ledger.verdicts,
-            challenges: ledger.challenges,
-            policy: ledger.policy,
-            tier,
-            declaredRiskClasses: [...new Set(ledger.claims.map((claim) => claim.riskClass))],
-            assurance: (argValue(argv, '--assurance') as AssuranceLevel | undefined) ?? ledger.assurance,
-            usage: ledger.usage,
-            c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
-            discovery: { independentChallenges: ledger.challenges.filter((challenge) => challenge.state !== 'open').length },
-            ...(quorum === undefined ? {} : { quorum: { disputedClaimIds: quorum.disputedClaimIds, undiversified: quorum.undiversified, reviewers: quorum.reviewers } }),
-        });
+        const { decision } = verdict;
         outputResult({
             ok: decision.verdict === 'pass',
             command: 'ledger decide',
             verdict: decision.verdict,
             tier: decision.riskTier,
+            claims: verdict.claims,
             reasons: decision.reasons.map((entry) => ({
                 code: entry.code,
                 claim: entry.claimId ?? null,

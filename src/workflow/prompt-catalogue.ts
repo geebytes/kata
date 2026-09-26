@@ -68,6 +68,10 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: '检测到未解决的修复义务（repair obligations）；仅创建新 revision 不会关闭，必须用矩阵关联的新鲜通过证据解析。',
         en: 'Unresolved repair obligations. A new revision alone does not close them: they are resolved by fresh passing evidence matched through the acceptance matrix.',
     },
+    satisfy_ledger_deficits: {
+        zh: '证据账本（ledger）判定不通过：原因与缺口已列出（reasons / deficits）。请针对缺口修复，然后重新冻结主体并重验受影响的 claim —— 修一个实例只会换来同一类的下一轮。',
+        en: 'The evidence ledger does not pass. Its reasons and deficits are listed: repair the named gaps, then re-freeze the subject and re-verify the claims the change reopened. Repairing one instance buys the next round of the same kind.',
+    },
     repair_mixed_revision_evidence: {
         zh: '检测到混合 revision 证据；请执行 /kata-build <task> --seal 重新封存，清除旧 revision 残留证据。',
         en: 'Evidence from more than one revision. Run /kata-build <task> --seal to re-seal and clear what the older revision left behind.',

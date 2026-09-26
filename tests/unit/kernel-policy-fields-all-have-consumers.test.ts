@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultPolicy, loadPolicy, policyKeyPaths, POLICY_CONSUMERS, tierPolicy } from '../../src/kernel/policy.js';
+import { defaultPolicy, loadPolicy, meetsAssuranceFloor, policyKeyPaths, POLICY_CONSUMERS, tierPolicy } from '../../src/kernel/policy.js';
 
 /**
  * **Every declared field must have a consumer, and every consumer must name a real field.**
@@ -28,10 +28,10 @@ describe('the policy is data with no dead fields', () => {
     it('refuses a tier that is missing a field, naming the tier and the field', () => {
         const base = defaultPolicy();
         const tiers = { ...base.tiers, strict: { ...base.tiers.strict } } as Record<string, unknown>;
-        delete (tiers.strict as Record<string, unknown>).assurance;
+        delete (tiers.strict as Record<string, unknown>).assuranceFloor;
         const loaded = loadPolicy({ ...base, tiers });
         expect(loaded.ok).toBe(false);
-        if (!loaded.ok) expect(loaded.error).toContain('tiers.strict.assurance');
+        if (!loaded.ok) expect(loaded.error).toContain('tiers.strict.assuranceFloor');
     });
 
     it('refuses an unknown version instead of guessing', () => {
@@ -42,8 +42,12 @@ describe('the policy is data with no dead fields', () => {
 
     it('puts the assurance decision in the policy, not in the code', () => {
         const policy = defaultPolicy();
-        expect(tierPolicy(policy, 'standard').assurance).toEqual(['none', 'relayed']);
-        expect(tierPolicy(policy, 'strict').assurance).toEqual(['relayed', 'observed']);
-        expect(tierPolicy(policy, 'security').assurance).toContain('sandboxed');
+        // A floor, not a set: the tier says how weak an assurance it will accept, and anything stronger passes.
+        expect(tierPolicy(policy, 'standard').assuranceFloor).toBe('none');
+        expect(tierPolicy(policy, 'strict').assuranceFloor).toBe('relayed');
+        expect(tierPolicy(policy, 'security').assuranceFloor).toBe('sandboxed');
+        expect(meetsAssuranceFloor(policy, 'standard', 'observed')).toBe(true);
+        expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(false);
+        expect(meetsAssuranceFloor(policy, 'security', 'signed')).toBe(true);
     });
 });

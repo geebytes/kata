@@ -54,6 +54,8 @@ const claim: Claim = {
     evidenceIds: ['E1'],
     challengeIds: [],
     status: 'open',
+    at: '2026-09-27T00:00:00.000Z',
+    reopens: 0,
 };
 
 const evidence: Evidence = {
@@ -125,9 +127,9 @@ describe('the review schemas constrain their documents', () => {
         expect(decisionSchema.properties.riskTier.enum.sort()).toEqual([...TIER_NAMES].sort());
 
         const policySchema = load('review-policy.schema.json') as {
-            properties: { tiers: { properties: Record<string, { properties: { assurance: { items: { enum: string[] } } } }> } };
+            properties: { tiers: { properties: Record<string, { properties: { assuranceFloor: { enum: string[] } } }> } };
         };
-        expect(policySchema.properties.tiers.properties.standard?.properties.assurance.items.enum.sort())
+        expect(policySchema.properties.tiers.properties.standard?.properties.assuranceFloor.enum.sort())
             .toEqual([...ASSURANCE_LEVELS].sort());
     });
 });
