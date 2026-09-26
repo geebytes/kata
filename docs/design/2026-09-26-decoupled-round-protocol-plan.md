@@ -226,3 +226,33 @@ Steps 2 and 4 land in one commit so the window never exists outside it.
 | `fresh_context` remaining ungated | stated in §3 as a recorded measurement rather than a rule; a calibrated threshold would need a second host's data first |
 | **open:** does `capabilities` still mean anything once kata has refuted it? | proposal: keep the field, and have the receipt carry the *declared* set only when nothing was refuted (which is the only case a receipt exists), so the field stays a fact rather than a claim |
 | **open:** should the receipt record the host's `ended.reason`? | proposal: yes, under `executor.reason`, because a host's own account of a `budget_exhausted` is evidence about the host, and it costs one field |
+
+---
+
+## 10. Landed, measured
+
+**Steps 1, 2 and 4 are in** (`src/quality/round-protocol.ts`, `src/quality/round-runner.ts`, `src/quality/round-registry.ts`, a reworked
+`adversarial execute`, `schemas/round-events.schema.json`, and `host/pi-adapter.ts` rewritten as a streamer with `host/executor.ts` and
+`host/run-round.ts` deleted). Step 3 (the capability refutations) landed with step 1 because it is the runner's own rule. Step 5 (the two
+skills) and step 6 (the governed change) are not started.
+
+**Measured, not asserted:**
+
+| fact | measurement |
+|---|---|
+| the adapter speaks the protocol | `node host/pi-adapter.ts` on a smoke packet emitted `launched` → `output` → `telemetry` → `result` → `ended` in 22 s, exit 0 |
+| `execute` writes the receipt and records the run | the CLI-level case asserts the receipt's `runId`/`capabilities`/`telemetry`, the result file, and the register entry in one pass |
+| a capability the stream contradicts is refused | mutation: removing the `read_only_fs` predicate reddens **2** cases |
+| a stream with no result is refused | mutation: treating `ended` as the conclusion reddens **2** cases |
+| kata's count wins over the host's report | mutation: believing the host's `budget_exhausted` instead of counting reddens **2** cases |
+| a receipt with no run behind it is refused | mutation: ignoring the register's verdict reddens the admission case |
+| one definition, and no host in the executable | the schema's `kind` enum equals `ROUND_EVENT_KINDS`; `src/` never imports `host/` (both asserted) |
+
+**What the migration cost, as predicted**: two old-shape test files had to change rather than be repaired — `adversarial-execute.test.ts` kept
+its two entry-point refusals and handed the rest to the new stream cases, and `review-execution-receipt.test.ts` now records a run in its
+fixture because a receipt is evidence of a watched round. One of its cases moved *earlier*: a receipt bound to the wrong request is now refused at
+the write boundary with `receipt_unwatched` instead of reaching the gate as `receipt_unbound`, which is the redesign doing what it was for.
+
+**And one deviation from this plan, recorded rather than glossed**: `firstTurnTokens` is written to the **register**, not onto the receipt. The
+receipt's schema is `additionalProperties: false`, and the value is *recorded, never gated* — so it belongs in kata's own store of record rather
+than in an artefact whose shape the gate validates. The plan said "stored on the receipt"; the register is where it went, for that reason.

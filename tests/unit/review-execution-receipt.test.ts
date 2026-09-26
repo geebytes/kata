@@ -19,14 +19,17 @@ import { RETIRED_TELEMETRY_FIELDS, runAdversarialCommand } from '../../src/cli/o
  *
  * The contract this file pins:
  *
- *   - a receipt is **written by the executor**, and binds to the issued request by nonce and hash;
+ *   - a receipt is **written by kata**, from the stream the round emitted, and binds to the issued request by nonce and hash;
  *   - the gate refuses a record whose receipt does not match, or whose `capabilities` omit what the node requires;
  *   - a host without the capability yields **`executor_unavailable` and blocks** — never a silent downgrade to "the
  *     agent said it was fresh", because that is the unsound state this replaces.
  *
- * What this file deliberately does not claim: that Kata can *produce* such a receipt. It cannot — Pi/Codex implement the
- * executor side outside this repository. Kata's half is to define the shape, require it where the node requires it, and
- * refuse to certify a pass that lacks it.
+ * **What moved, and why** (`docs/design/2026-09-26-decoupled-round-protocol.md`): the receipt used to be written by the host, which
+ * made the party whose independence is in question the author of the artefact that certifies it, and left a capability claim
+ * unrefutable — a constant list was returned for a process that never started and the round came back `completed` (`aad-r7-f4`).
+ * `adversarial execute` now reads the events an executor emits, counts the round, refutes what the stream contradicts and writes the
+ * receipt; the register it keeps is what `record` consults, so a hand-written artefact is refused rather than merely implausible.
+ * That is why `issued()` below records a run: a receipt is evidence of a watched round, and the fixture has to be one.
  */
 describe('fresh context is a capability with a receipt, not a self-report', () => {
     const roots: string[] = [];
@@ -278,7 +281,7 @@ describe('the self-reported telemetry arguments are retired', () => {
 /**
  * K1/K2 of `docs/design/2026-09-22-execution-layer-implementation-plan.md`.
  *
- * The receipt schema says it is *"Written by the host, never by the reviewer"*, and the write path did not enforce it:
+ * The receipt schema says it is written by kata from the watched round and never by the reviewer, and the write path did not enforce it:
  * `record` spread the reviewer's own result JSON into the record, so a `receipt` inside that body was accepted. The claim
  * was about **who wrote it**, and the only thing enforced was **which round it binds to**. Unforgeability comes from not
  * being able to write it in, not from not being able to guess the nonce.
@@ -290,12 +293,27 @@ async function issued(issueBrief = true): Promise<{ root: string; brief: Awaited
     const root = await mkdtemp(join(tmpdir(), 'kata-receipt-channel-'));
     cleanup.push(root);
     await initLayout(root);
-    await createTask({ root, id: 'receipt-channel', title: 'Receipt channel', acceptance: [{ id: 'AC-1', statement: 'The receipt is host-authored.' }] } as never);
+    await createTask({ root, id: 'receipt-channel', title: 'Receipt channel', acceptance: [{ id: 'AC-1', statement: 'The receipt is written by kata from a watched round.' }] } as never);
     await mkdir(join(root, 'src'), { recursive: true });
     await writeFile(join(root, 'src/x.ts'), 'export const x = 1;\n', 'utf8');
     await createTaskRevision({ root, taskId: 'receipt-channel', ownedPaths: ['src/x.ts'], checkIds: [] });
 
     const brief = issueBrief ? await issueAdversarialBrief(root, 'receipt-channel', 'review') : ({} as Awaited<ReturnType<typeof issueAdversarialBrief>>);
+    if (issueBrief) {
+        // **The precondition a receipt now has**, written here rather than left implicit the way a disposition is written by
+        // `tests/helpers/disposition.ts`: a receipt is evidence of a run kata watched, so a fixture that wants one certified has to have
+        // executed it. `adversarial execute` does this for real; a unit fixture states it.
+        const { recordRoundRun } = await import('../../src/quality/round-registry.js');
+        await recordRoundRun(root, 'receipt-channel', {
+            runId: brief.runRequest!.runId,
+            requestSha256: brief.runRequest!.requestSha256,
+            node: 'review',
+            status: 'completed',
+            startedAt: '2026-09-22T00:00:00.000Z',
+            endedAt: '2026-09-22T00:01:00.000Z',
+            toolCalls: 3, outputBytes: 1024, tokens: 100, truncations: 0, firstTurnTokens: null, hostReported: null, refusals: [],
+        });
+    }
     const resultPath = join(root, 'result.json');
     await writeFile(resultPath, JSON.stringify({
         node: 'review', status: 'recorded', revisionId: brief.revisionId ?? '', executedInFreshContext: true,
@@ -384,10 +402,14 @@ describe('the receipt arrives on its own channel, and the request is handed over
             const result = await runAdversarialCommand([
                 'record', '--change', 'receipt-channel', '--node', 'review', '--from-file', resultPath, '--receipt-file', receiptPath,
             ]);
-            // Measured: the record is filed and the gate refuses it, with `receipt_unbound`. The refusal is the point —
-            // a receipt that does not bind must not certify a pass, whatever else the record carries.
-            expect((result.gate as { satisfied?: boolean } | undefined)?.satisfied).toBe(false);
-            expect((result.gate as { reason?: string } | undefined)?.reason).toBe('receipt_unbound');
+            // **The refusal moved earlier, and that is the redesign working.** Under the old shape the record was filed and the *gate*
+            // refused it with `receipt_unbound`; now the artefact never reaches the record, because the register knows which request the run
+            // answered and this receipt claims another. Measured before the change: `gate.satisfied === false`. Now:
+            expect(result.recorded).toBe(false);
+            expect(result.reason).toBe('receipt_unwatched');
+            expect(String(result.error)).toContain('may only report the request it answered');
+            // The gate-side binding is still exercised — by `verifyExecutionReceipt`'s own cases above, which are what the gate calls.
+            expect(result.gate).toBeUndefined();
         } finally {
             process.chdir(before);
         }

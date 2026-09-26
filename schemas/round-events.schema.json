@@ -1,0 +1,58 @@
+{
+  "$id": "round-events",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Round protocol events",
+  "description": "One JSON object per line on an executor's stdout, in order. This is the whole host-facing interface of `kata-cli adversarial execute`: a host launches an isolated session and describes it, and kata counts the round, refutes any capability the stream contradicts, and writes the receipt itself (docs/design/2026-09-26-decoupled-round-protocol.md).",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": { "enum": ["launched", "tool_call", "output", "telemetry", "result", "ended"] }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "launched" },
+        "protocol": { "type": "integer", "const": 1 },
+        "capabilities": { "type": "array", "items": { "type": "string", "enum": ["fresh_context", "read_only_fs", "bounded_tools", "budget_enforced"] } },
+        "platform": { "type": "string" },
+        "sessionId": { "type": "string" }
+      },
+      "required": ["kind", "protocol", "capabilities"],
+      "additionalProperties": false
+    },
+    {
+      "properties": { "kind": { "const": "tool_call" }, "tool": { "type": "string", "minLength": 1 }, "target": { "type": "string" } },
+      "required": ["kind", "tool"],
+      "additionalProperties": false
+    },
+    {
+      "properties": { "kind": { "const": "output" }, "bytes": { "type": "integer", "minimum": 0 } },
+      "required": ["kind", "bytes"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "kind": { "const": "telemetry" },
+        "tokens": { "type": ["integer", "null"] },
+        "truncations": { "type": ["integer", "null"] },
+        "firstTurnTokens": { "type": ["integer", "null"] }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    {
+      "properties": { "kind": { "const": "result" }, "text": { "type": "string" } },
+      "required": ["kind", "text"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "kind": { "const": "ended" },
+        "status": { "type": "string", "enum": ["completed", "budget_exhausted", "timeout", "cancelled"] },
+        "reason": { "type": "string" }
+      },
+      "required": ["kind", "status"],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode } from '../quality/review-execution.js';
+import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode, type ExecutorCapability, type ReviewRunRequest } from '../quality/review-execution.js';
+import { ROUND_ALLOWLIST } from '../quality/round-runner.js';
 import { join } from 'node:path';
 import { CLASS_COVERAGE, coveredClasses } from '../quality/class-coverage.js';
 import { roundMayClose } from '../quality/finding-lifecycle.js';
@@ -464,10 +465,11 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
     }
 
     if (subcommand === 'execute') {
-        // Option A: kata runs a **declared** command and validates the receipt it writes. Kata does not decide how a
-        // session is isolated — the command does — and that is what keeps a change to kata from loosening the envelope it
-        // certifies. This entry point is therefore shaped like the one that runs a declared check: an opaque command, a
-        // result read back, nothing decided here about flags, tools or models.
+        // **The declared command streams; kata decides and writes.** Under the previous shape this command "runs a declared command and
+        // validates the receipt it writes" — which made the host the author of the artefact that certifies it, and made a capability claim
+        // unrefutable: a constant list was returned for a process that never started and the round came back `completed` (`aad-r7-f4`).
+        // Kata still does not decide *how* a session is isolated. It decides what the session may not do, counts the round from the events it
+        // watched, and writes the receipt itself. `docs/design/2026-09-26-decoupled-round-protocol.md`.
         const packetPath = argValue(rest, '--packet');
         const executor = argValue(rest, '--executor');
         const receiptOut = argValue(rest, '--receipt-out');
@@ -477,8 +479,8 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         if (!executor?.trim()) {
             return {
                 command: 'adversarial execute', taskId: change, node, status: 'refused',
-                error: 'No executor command was declared. Pass --executor "<command>": kata runs a declared command and '
-                    + 'reads the receipt it writes, and it does not decide how a session is isolated.',
+                error: 'No executor command was declared. Pass --executor "<command>": kata runs a declared command, reads the events it '
+                    + 'emits, and does not decide how a session is isolated.',
             };
         }
 
@@ -486,18 +488,18 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
         if (packetRaw === null) {
             return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: `--packet could not be read: ${packetPath}. Nothing was run.` };
         }
-        let packet: { request?: { runId?: string; requestSha256?: string; briefSha256?: string; requiredCapabilities?: string[]; budget?: { maxWallMs?: number } }; brief?: { sha256?: string; text?: string } };
+        let packet: { request?: Partial<ReviewRunRequest>; brief?: { sha256?: string; text?: string; lines?: string[] } };
         try {
             packet = JSON.parse(packetRaw) as typeof packet;
         } catch (error) {
             return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: `--packet is not JSON: ${error instanceof Error ? error.message : String(error)}. Nothing was run.` };
         }
         const request = packet.request;
-        if (!request?.runId || !request.requestSha256) {
-            return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: 'The packet carries no request, so there is nothing to bind a receipt to. Nothing was run.' };
+        if (!request?.runId || !request.requestSha256 || !request.budget) {
+            return { command: 'adversarial execute', taskId: change, node, status: 'refused', error: 'The packet carries no request, so there is nothing for a round to answer. Nothing was run.' };
         }
-        // The same binding the executor refuses on, checked here too: a packet whose halves disagree cannot be run by
-        // anyone, and saying so before launching a session is cheaper than saying it after.
+        // The same binding the executor refuses on, checked here too: a packet whose halves disagree cannot be run by anyone, and saying so
+        // before launching a session is cheaper than saying it after.
         if (packet.brief?.sha256 !== request.briefSha256) {
             return {
                 command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'packet_unbound',
@@ -505,45 +507,87 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
             };
         }
 
-        const out = receiptOut ?? `${packetPath.replace(/\.json$/, '')}.receipt.json`;
+        const { createRoundParser, ROUND_PROTOCOL_VERSION } = await import('../quality/round-protocol.js');
+        const { countTelemetry, decideRound, firstTurnTokens } = await import('../quality/round-runner.js');
+        const { recordRoundRun } = await import('../quality/round-registry.js');
+        const parser = createRoundParser({ protocol: ROUND_PROTOCOL_VERSION });
+        const startedAt = new Date().toISOString();
+        const startedMs = Date.now();
         const run = await runProcess('sh', ['-c', executor], {
             cwd: root,
-            env: { ...process.env, KATA_REVIEW_PACKET: packetPath, KATA_REVIEW_RECEIPT: out },
-            ...(request.budget?.maxWallMs ? { timeoutMs: request.budget.maxWallMs + 30_000 } : {}),
+            // The host is handed the packet and the protocol version, and **not** a receipt path: the artefact is no longer a channel it
+            // writes to. A stale host that still writes one produces a file nothing reads, which is the honest failure mode.
+            env: { ...process.env, KATA_REVIEW_PACKET: packetPath, KATA_REVIEW_PROTOCOL: String(ROUND_PROTOCOL_VERSION) },
+            ...(request.budget.maxWallMs ? { timeoutMs: request.budget.maxWallMs + 30_000 } : {}),
+            onOutput: ({ stream, text }) => { if (stream === 'stdout') parser.feed(text); },
+        }).catch((error: unknown) => ({
+            ok: false, exitCode: -1, signal: null, stdout: '', stderr: error instanceof Error ? error.message : String(error),
+            environment: '', capturedBytes: 0, captureTruncated: false,
+        }));
+        const endedAt = new Date().toISOString();
+        const parsed = parser.parse();
+        const outcome = decideRound({
+            request: {
+                runId: request.runId,
+                requestSha256: request.requestSha256,
+                requiredCapabilities: (request.requiredCapabilities ?? []) as ExecutorCapability[],
+                budget: request.budget,
+            },
+            events: parsed.events,
+            refusal: parsed.refusal,
+            // The tools this node permits. It is kata's list, not the host's, which is what makes `bounded_tools` a proposition the stream can
+            // refute rather than a claim about a prompt.
+            allowlist: ROUND_ALLOWLIST,
+            startedAt,
+            endedAt,
+            elapsedMs: Date.now() - startedMs,
+            timedOut: run.exitCode === 124,
         });
 
-        const receiptRaw = await readFile(out, 'utf8').catch(() => null);
-        if (receiptRaw === null) {
+        // **Recorded either way.** A refused round is evidence about the host, and the register is where `record` looks to tell a receipt
+        // kata wrote from a file somebody typed (`…-conflicts.md` G2).
+        // Counted from the stream rather than read off the outcome, so a refused round is recorded with the same measurements a completed one
+        // is: "how far did it get" is the first question a refusal raises.
+        const counts = countTelemetry(parsed.events);
+        await recordRoundRun(root, change, {
+            runId: request.runId,
+            requestSha256: request.requestSha256,
+            node,
+            status: outcome.status,
+            ...(outcome.status === 'completed' ? {} : { reason: outcome.reason }),
+            startedAt,
+            endedAt,
+            toolCalls: counts.toolCalls,
+            outputBytes: counts.outputBytes,
+            tokens: counts.tokens,
+            truncations: counts.truncations,
+            firstTurnTokens: firstTurnTokens(parsed.events),
+            hostReported: outcome.hostReported,
+            refusals: outcome.refusals,
+        });
+
+        if (outcome.status !== 'completed') {
             return {
-                command: 'adversarial execute', taskId: change, node, status: 'executor_unavailable', receiptPath: out,
-                error: `The declared executor wrote no receipt at ${out} (exit ${run.exitCode}). A round that produced no receipt is not a round: kata does not write one on the executor's behalf. ${run.stderr.trim()}`,
-            };
-        }
-        let receipt: { runId?: string; requestSha256?: string; capabilities?: string[]; status?: string };
-        try {
-            receipt = JSON.parse(receiptRaw) as typeof receipt;
-        } catch (error) {
-            return { command: 'adversarial execute', taskId: change, node, status: 'executor_unavailable', receiptPath: out, error: `The receipt at ${out} is not JSON: ${error instanceof Error ? error.message : String(error)}.` };
-        }
-        if (receipt.runId !== request.runId || receipt.requestSha256 !== request.requestSha256) {
-            return {
-                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'receipt_unbound', receiptPath: out,
-                error: 'The receipt does not bind to the issued request: its runId or requestSha256 names a different round.',
-            };
-        }
-        const missing = (request.requiredCapabilities ?? []).filter((capability) => !(receipt.capabilities ?? []).includes(capability));
-        if (missing.length > 0) {
-            return {
-                command: 'adversarial execute', taskId: change, node, status: 'refused', reason: 'capability_missing', receiptPath: out,
-                error: `The receipt does not advertise ${missing.join(', ')}, which this node requires. Recorded telemetry does not stand in for a capability the host did not provide.`,
+                command: 'adversarial execute', taskId: change, node, status: outcome.status,
+                reason: outcome.reason,
+                refusals: outcome.refusals,
+                hostReported: outcome.hostReported,
+                error: `${outcome.reason}. No receipt was written: a receipt states that a capable session ran under an enforced envelope, so `
+                    + 'one for a round that did not is the defect this boundary exists to prevent.',
             };
         }
 
+        const out = receiptOut ?? `${packetPath.replace(/\.json$/, '')}.receipt.json`;
+        await writeFile(out, `${JSON.stringify(outcome.receipt, null, 2)}\n`, 'utf8');
+        const resultPath = out.replace(/\.json$/, '') + '.result.json';
+        await writeFile(resultPath, `${outcome.record}\n`, 'utf8');
         return {
-            command: 'adversarial execute', taskId: change, node, status: 'executed', receiptPath: out,
-            receiptStatus: receipt.status ?? null,
-            capabilities: receipt.capabilities ?? [],
-            note: `Record it with: kata-cli adversarial record --change ${change} --node ${node} --from-file <result.json> --receipt-file ${out}`,
+            command: 'adversarial execute', taskId: change, node, status: 'executed', receiptPath: out, resultPath,
+            receiptStatus: outcome.receipt.status,
+            capabilities: outcome.receipt.capabilities,
+            telemetry: outcome.receipt.telemetry,
+            hostReported: outcome.hostReported,
+            note: `Record it with: kata-cli adversarial record --change ${change} --node ${node} --from-file ${resultPath} --receipt-file ${out}`,
         };
     }
 
@@ -611,6 +655,27 @@ export async function runAdversarialCommand(argv: string[]): Promise<Record<stri
                 return {
                     command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
                     error: `--receipt-file is not JSON: ${error instanceof Error ? error.message : String(error)}. Nothing was recorded.`,
+                };
+            }
+            // **A receipt is evidence only if kata watched the round** (`…-conflicts.md` G2). The receipt is written by `adversarial execute`
+            // from the stream it observed, and `execute` records every run it watched — so an admission needs the run behind the artefact. Without
+            // this, moving authorship from the host to kata would have bought nothing at admission: a hand-written receipt would pass the same
+            // binding and capability checks a watched round does.
+            const claimed = fileReceipt as { runId?: unknown; requestSha256?: unknown };
+            if (typeof claimed?.runId !== 'string' || typeof claimed.requestSha256 !== 'string') {
+                return {
+                    command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
+                    error: '`--receipt-file` carries no `runId`/`requestSha256`, so it names no round and can be bound to none. '
+                        + 'A receipt is written by `kata-cli adversarial execute`, which records the run it watched. Nothing was recorded.',
+                };
+            }
+            const { readRoundRuns, runIsCertified } = await import('../quality/round-registry.js');
+            const certified = runIsCertified(await readRoundRuns(root, change), { runId: claimed.runId, requestSha256: claimed.requestSha256 });
+            if (!certified.certified) {
+                return {
+                    command: 'adversarial record', taskId: change, node, recorded: false, status: 'refused',
+                    reason: 'receipt_unwatched',
+                    error: `${certified.reason} Nothing was recorded.`,
                 };
             }
         }

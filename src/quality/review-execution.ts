@@ -10,7 +10,7 @@
  *
  *   - **`ReviewRunRequest`** — issued by Kata, content-addressed, carrying the revision identity, the brief hash, the
  *     budget, and the result-schema version. The `runId` is a one-time nonce.
- *   - **`ReviewExecutionReceipt`** — host-authored, measured and bound: it binds to the request by
+ *   - **`ReviewExecutionReceipt`** — written by kata from the stream it observed, measured and bound: it binds to the request by
  *     nonce and hash, advertises the capabilities it actually provides, and reports telemetry the CLI could never
  *     observe: tool calls, output bytes, tokens, truncations, wall time.
  *
@@ -116,7 +116,14 @@ export interface ReviewExecutionProvenance {
     completionReport?: string;
 }
 
-/** The executor's report. Authored by the host, never by the reviewer. */
+/**
+ * The report on a round.
+ *
+ * **Written by kata, from the events it watched** — never by the reviewer, and no longer by the host. The host launches a session and describes
+ * what it did as a stream; kata counts the round, refutes any capability the stream contradicts, and writes this. The change is measured:
+ * `docs/design/2026-09-26-decoupled-round-protocol.md`, and the finding that forced it (`aad-r7-f4` — a constant capability list was returned for
+ * a process that never started, and that round came back `completed`).
+ */
 export interface ReviewExecutionReceipt {
     /** Must equal the issued request's nonce. */
     runId: string;
@@ -135,6 +142,15 @@ export interface ReviewExecutionReceipt {
     executor?: ReviewExecutionProvenance;
     status: 'completed' | 'budget_exhausted' | 'timeout' | 'cancelled' | 'executor_unavailable';
 }
+
+/**
+ * The five states a round can end in.
+ *
+ * Named here because two modules now derive it and a third records it: the runner decides it from the stream, the registry stores it, and the
+ * receipt reports it. An inline union repeated in three places is the "one concept, several derivations" shape this repository has removed a
+ * dozen times.
+ */
+export type ExecutionStatus = ReviewExecutionReceipt['status'];
 
 /** Why a receipt was not accepted as proof the node's capabilities were actually available. */
 export interface ReceiptRefusal {

@@ -251,7 +251,7 @@
       }
     },
     "receipt": {
-      "description": "The executor's report that fresh context was a *capability* rather than an assertion. Host-authored, measured and bound: it arrives on its own channel (`--receipt-file`) rather than in the reviewer's result body, and the gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires. Authorship separation is process and tool policy, not cryptography \u2014 a receipt a single-user machine could forge is out of scope here.",
+      "description": "The report that fresh context was a *capability* rather than an assertion. **Written by kata from the stream it observed, never by the reviewer and no longer by the host**: `adversarial execute` reads the events an executor emits, counts the round itself, refutes any capability the stream contradicts, and writes this artefact \u2014 and it records the run, so `adversarial record` refuses a receipt with no watched run behind it. The gate refuses a record whose receipt does not bind to the issued request by nonce and hash, or whose capabilities omit what the node requires. Authorship separation is process and tool policy, not cryptography \u2014 a receipt a single-user machine could forge is out of scope here.",
       "type": "object",
       "required": [
         "runId",
