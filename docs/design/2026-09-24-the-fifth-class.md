@@ -52,6 +52,28 @@ The termination condition is *"every class an open terminal finding names is cov
 closed" was **no**, which is precisely why the question was worth asking even though I could answer the classification myself. A
 closed-set claim is only as good as the attempt to falsify it, and the attempt found a fifth.
 
-**So the honest state**: five classes, five covering checks, one termination condition reading them. This change's own verdict is
+**So the honest state**, as of that round: five classes, five covering checks, one termination condition reading them — seven, as of the
+addendum below. This change's own verdict is
 `roundClosure` absent — it may close — but the round that produced the fifth class has no record, so **the round it belongs to is not
 the round whose record the gate will accept.** That distinction is the whole reason the salvage channel exists.
+
+---
+
+## Addendum: the set grew to seven, and both additions came from the same source
+
+That closing line — "five classes, five covering checks" — was written when it was true and is now a stale count, which makes it an instance
+of the class this document is about: a number written in prose that nothing derives. The set is seven, and the two that followed the fifth were
+not found by reading code either; they were **produced by a change**, which is a different route again from the one the fifth took.
+
+- **The sixth, `a-definition-with-no-consumer`**: a declaration is written and nothing reads it. Five of the eleven findings of the first
+  independent pass on the decoupled round protocol are that sentence — a schema bundled by nothing and registered with nothing, a field computed
+  and never consulted, a refusal outside the vocabulary that renders it — and in each case the guard beside the declaration passed, because it
+  asked whether the declaration was well formed rather than whether anything read it.
+- **The seventh, `a-part-checked-as-the-whole`**: a guard inspects one field, member or direction of a concept and is read as a verdict on the
+  concept. Its live instance was inside the fix for the sixth: the admission rule compared the artefact kata wrote, and the command never
+  registered that artefact, so the comparison existed and could not be reached.
+
+The route matters. The fifth came out of **a failed round** (three record-less rounds whose last sentence was always the same); the sixth came
+out of **a pass's findings**; the seventh came out of **a finding about my repair of the sixth**. Three ways to find a class, and only the
+second was a reviewer doing what a reviewer is dispatched to do — which is the honest reason `roundClosure` asks whether a class is covered
+rather than whether a round found anything.
