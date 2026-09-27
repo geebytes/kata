@@ -1131,3 +1131,38 @@ judge FAIL→ 由 claim 的证据判定承载（judge 无账本不可达 ⇒ 旧
 · 七个缺陷类目作为散文的保留（见 20.4 ②）
 · wiring check 55 条（起点 47）：增量全部是"删除后只剩测试引用"或"新模块导出尚未接线"，后者待接线
 ```
+
+## 21. 收尾：schema 与两个 procedure skill（本轮 2 个 commit）
+
+### 21.1 六份已退役的 schema
+```
+adversarial-review（611 行）· repair-obligations · repair-batch · repair-authors · falsifier-reddenings · round-events
+每份的唯一引用是它自己的 registry 条目。
+schema 注册是一条【有人会写这种形状的文档】的声明 —— 留在注册表里就是在为一个无人持有的契约做广告。
+测试改为【按名断言它们已退役】，而不是从清单里删掉："这六份不得被注册"才是值得钉住的事实。
+同时 src/core/layout.ts 不再把 round-events.schema.json 复制进工作区。
+```
+
+### 21.2 两个 procedure skill 删除（这一类最清楚的例子）
+```
+kata-review-round（评审者那一半）· kata-host-adapter（操作者那一半）
+它们 cli 字段的每一行都写着 `kata-cli adversarial execute` —— 该命令现在以 "unknown command" 退出 1
+skill 会被安装进平台自己的目录 ⇒ 过期的命令行不是注释，而是【操作者会去执行的东西】
+它们编码的纪律留在被强制的地方：记录早写并改进（ledger evidence add 增量）· finding 带证据而非修复配方 ·
+capability 被证伪而非被声明
+```
+
+### 21.3 两个不变量失去主体 ⇒ **改指而非删除**
+```
+① "skill 只带指示、不带每轮取值"：改为遍历 manifest 声明的【每一个】skill
+② 新增："每条声明的命令行都必须是 dispatcher 真的会响应的命令"
+   ⇒ 该用例自己抓到自己两个 bug：只读了 CLI 词汇表的一半（`command === 'x'`），
+     以及按三个词比较（把子命令当成命令）
+   ⇒ 结论：这份清单必须【从 dispatcher 派生】，手写会像那两个 skill 一样过期
+```
+
+### 21.4 数据
+```
+wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既有欠账；没有一条可归因于被删的路由
+测试：143 文件 / 1,011 用例 / 0 失败       tsc exit 0
+```
