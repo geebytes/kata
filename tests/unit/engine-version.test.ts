@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
-import { createTask, readTask, stampEngineVersion } from '../../src/core/task.js';
+import { createTask, readTask } from '../../src/core/task.js';
 import { engineChangeNote, engineVersion, engineVersionChanged } from '../../src/core/engine-version.js';
 
 /**
@@ -38,8 +38,8 @@ describe('the engine version travels with the task', () => {
         await initLayout(root);
         await createTask({ root, id: 'e-task', title: 'E', acceptance: [{ id: 'AC-1', statement: 'x' }] });
 
-        // Same version: nothing changed, nothing to say.
-        await stampEngineVersion(root, 'e-task');
+        // Same version: nothing changed, nothing to say. (The read itself answers this — the stamp was written when the
+        // task was created, and a version that has not moved produces no note.)
         expect(engineChangeNote((await readTask(root, 'e-task')).engine)).toBeNull();
 
         // A task last run under another version: the note names both sides and says what it explains.
@@ -54,7 +54,7 @@ describe('the engine version travels with the task', () => {
         expect(engineChangeNote(null)).toBeNull();
     });
 
-    it('restamps under the lock and reports what it replaced', async () => {
+    it('restamps through the live path, and what it replaced stays derivable from the stamp', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-engine-3-'));
         roots.push(root);
         await initLayout(root);
@@ -66,9 +66,14 @@ describe('the engine version travels with the task', () => {
         task.engine = { version: '0.0.9', stampedAt: '2026-09-18T00:00:00.000Z' };
         await writeFile(path, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 
-        const stamped = await stampEngineVersion(root, 'e-task');
-        expect(stamped).toMatchObject({ changed: true, previous: '0.0.9', running: engineVersion() });
+        // **The restamp is the state transition's, not a function of its own.** A `stampEngineVersion` in `core/task.ts`
+        // was deleted: it did the same write without the lock, and its richer return (`previous`) was read by nothing —
+        // the note is derived from the stamp and the running version, which is what these two assertions show.
+        const { transition } = await import('../../src/core/state.js');
+        await transition('e-task', 'plan', { id: 'agent', role: 'designer', platform: 'pi' }, { root });
         expect((await readTask(root, 'e-task')).engine?.version).toBe(engineVersion());
+        expect(engineVersionChanged({ version: '0.0.9', stampedAt: '' })).toBe(true);
+        expect(engineChangeNote({ version: '0.0.9', stampedAt: '' })).toContain('0.0.9');
     });
 });
 

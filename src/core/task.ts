@@ -247,24 +247,7 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 export async function readTask(root: string, taskId: string): Promise<TaskRecord> {
   return readValidated<TaskRecord>('task', taskPath(root, taskId));
 }
-
-/**
- * Restamps a task with the running engine version (C7).
- *
- * Called as a task advances rather than on every read: the field answers "did the engine change since I last ran this?",
- * so it has to move with the runs. A no-op when the version is already current, so it costs nothing on the common path.
- */
-export async function stampEngineVersion(root: string, taskId: string): Promise<{ changed: boolean; previous?: string; running: string }> {
-  const running = engineVersion();
-  let changed = false;
-  let previous: string | undefined;
-  await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (current) => {
-    const task = JSON.parse(current) as TaskRecord;
-    previous = task.engine?.version;
-    changed = Boolean(previous) && previous !== running;
-    if (task.engine?.version === running) return current;
-    task.engine = { version: running, stampedAt: new Date().toISOString() };
-    return `${JSON.stringify(task, null, 2)}\n`;
-  });
-  return { changed, ...(previous ? { previous } : {}), running };
-}
+// **`stampEngineVersion` was deleted: it was a second implementation of one write.** `core/state.ts` stamps the version
+// inside `withTaskLock` (`stampEngineUnlocked`, called as a task advances), and this copy stamped `task.engine` without the
+// lock — one fact, two derivations, and the unused one could have raced the used one. The wiring check reported it as having
+// no consumer but the test written for it, which is the same finding in its own vocabulary.

@@ -67,19 +67,19 @@ describe('the mutation check against the material it was built from', () => {
     it('reports every dead export measured on 2026-09-22, by name', async () => {
         const { findUnreferencedExports, filesUnder } = await import('../../src/quality/wiring-check.js');
         // The 24 measured by hand on 2026-09-22, each spot-checked then to occur exactly once, in its own declaration.
+        // The names measured by hand on 2026-09-22 and still unreferenced today. **A name leaves this list one of two ways,
+        // and both are the check working**: it gains a consumer (a second spelling of its path folded into it, or a verdict
+        // that was missing), or it is deleted with the mechanism it belonged to. Nine have left since it was written —
+        // `evidenceArchiveDir`, `llmwikiDir`, the six layout paths whose artefacts nothing creates any more, and
+        // `stampEngineVersion`, which was a second implementation of a write `core/state.ts` already does under the lock.
         const measured = [
-            'commandsForPlatform', 'cometCompatibilitySnapshot', 'subagentProgressPath', 'migrationsPath', 'recoveryPath',
-            'taskProfilePath', 'evidenceFilePath', 'wikiCandidatesDir',
-            'handoffBaselinePath', 'writeAcceptanceMatrixMigration', 'isLegacyTask', 'changeRecordHash',
-            'resolvedCheckId', 'validationRevisionId',
-            // `evidenceArchiveDir` and `llmwikiDir` left this list the moment production stopped spelling the same path
-            // segments itself — which is the check working: a name that is no longer reported is a name that is no longer
-            // unreferenced, and the remaining names here are the ones still waiting for the same treatment.
-            'readWikiRecordsStrict', 'deleteWikiRecord', 'computePathDigest',
-            // `readBriefFile`, `reopenObligation`, `describeFinding` and `validateBatchRecord` are gone with the modules
-            // that declared them — the brief is compiled by `review-ir`, and obligations and repair batches are no longer
-            // stores. Removing them from this list is the check working rather than a relaxation: a name that is no longer
-            // reported is a symbol that no longer exists, so a citation left behind would have failed.
+            'commandsForPlatform', 'cometCompatibilitySnapshot', 'evidenceFilePath',
+            'writeAcceptanceMatrixMigration', 'isLegacyTask', 'changeRecordHash',
+            'resolvedCheckId', 'validationRevisionId', 'readWikiRecordsStrict', 'deleteWikiRecord', 'computePathDigest',
+            'revisionChangeSurface', 'deltaCoversChange', 'splitOwnedPaths', 'textOnlyChange',
+            'planReCertification', 'targetedReviewPlan', 'claimsHash', 'readChangeRecord',
+            'isBreakingChangeApplicable', 'checkConflicts', 'markRecordStale',
+            'renderPlatformCommand', 'changeRecordHash',
         ];
         const findings = await findUnreferencedExports({ root: process.cwd(), surface: await filesUnder(process.cwd(), ['src']) });
         const reported = new Set(findings.map((finding) => finding.subject));

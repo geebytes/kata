@@ -391,29 +391,13 @@ export function userChoiceGatePath(root: string, taskId: string, boundary: strin
     return join(taskDir(root, taskId), `user-choice-${boundary}.json`);
 }
 
-export function subagentProgressPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'subagent-progress.md');
-}
-
 export function waiversPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'waivers.json');
-}
-
-export function migrationsPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'migrations.json');
-}
-
-export function recoveryPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'recovery.json');
 }
 
 /** The seal's own progress log: what a monitoring agent needs instead of guessing from process tables. */
 export function sealProgressPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'seal-progress.jsonl');
-}
-
-export function taskProfilePath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'workflow-profile.json');
 }
 
 // ---------------------------------------------------------------------------
@@ -461,10 +445,6 @@ export function wikiDir(root: string): string {
     return join(kataDir(root), 'wiki');
 }
 
-export function wikiCandidatesDir(root: string): string {
-    return join(wikiDir(root), 'candidates');
-}
-
 export function wikiRecordPath(root: string, id: string): string {
     return join(wikiDir(root), `${id}.json`);
 }
@@ -499,10 +479,6 @@ export function handoffPacketPath(root: string, taskId: string, id: string): str
 
 export function handoffReceiptPath(root: string, taskId: string, id: string): string {
     return join(handoffDir(root, taskId), `${id}.receipt.json`);
-}
-
-export function handoffBaselinePath(root: string, taskId: string): string {
-    return join(handoffDir(root, taskId), 'baseline.json');
 }
 
 // ---------------------------------------------------------------------------
