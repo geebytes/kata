@@ -102,8 +102,6 @@ import { argValue, parseChangeArg, parseRootArg } from './cli/invocation.js';
 import { parseWikiArgs, runWikiCommand } from './cli/wiki.js';
 import {
     parseCometArgs,
-    runAdversarialCommand,
-    runFalsifyCommand,
     runCodegraphCommand,
     runCollectCommand,
     runCometCommand,
@@ -111,12 +109,8 @@ import {
     runWorktreeCommand,
 } from './cli/ops.js';
 import { parseDelegationArgs, runDelegateCommand, runHandoffCommand, type DelegationArgs } from './cli/handoff.js';
-import { runFindingsCommand } from './cli/findings.js';
 import { runBaselineCommand } from './cli/baseline.js';
 import { runScopeCommand } from './cli/scope.js';
-import { runMatrixCommand } from './cli/matrix.js';
-import { runRoundsCommand } from './cli/rounds.js';
-import { runRepairAuthorCommand } from './cli/repair-author.js';
 import { runRevisionCommand } from './cli/ops.js';
 import {
     isResumableWorkflowCommand,
@@ -312,36 +306,9 @@ async function runMain(argv: string[]): Promise<void> {
         await runLedgerCommand(argv.slice(1), { root: workspaceRoot, changeId: requestedChange ?? 'current' });
         return;
     }
-    if (command === 'findings') {
-        const result = await runFindingsCommand(argv.slice(1));
-        outputResult(result);
-        return;
-    }
 
-    if (command === 'repair-briefing') {
-        // **The consumer `impact` and `classInstances` never had.** Both were added to the finding contract and read by nothing, so a
-        // repair author decided how large its repair must be without them — and eight repairs on this line fixed one instance of a
-        // class with several. This renders the three questions before the repair rather than leaving them to be rediscovered.
-        const change = parseChangeArg(argv.slice(1)) ?? '';
-        if (!change) throw new Error('Usage: kata-cli repair-briefing --change <task-id> [--json]');
-        const { repairBriefing, renderRepairBriefing } = await import('./quality/repair-briefing.js');
-        const { readUpstreamSummary, resolveWorkspaceRoot } = await import('./workflow/navigation.js').then(async (mod) => ({
-            readUpstreamSummary: mod.readUpstreamSummary,
-            resolveWorkspaceRoot: (await import('./core/layout.js')).resolveWorkspaceRoot,
-        }));
-        void readUpstreamSummary;
-        const root = resolveWorkspaceRoot();
-        const briefing = await repairBriefing(root, change);
-        // `outputResult` honours the global `--json`, so the prose is only for a human read: printing both made the JSON
-        // unparseable, which is a defect in the tool rather than in the test that found it (this line's class again).
-        // `outputResult` renders the object it is given, so the briefing *is* the payload: wrapping it in prose made the human
-        // rendering the only one, which is why the JSON path returned a string instead of the fields.
-        outputResult(
-            { ...briefing, rendered: renderRepairBriefing(briefing) } as unknown as Record<string, unknown>,
-            { human: (result) => String(result.rendered ?? '') },
-        );
-        return;
-    }
+
+
 
     if (command === 'scope') {
         const result = await runScopeCommand(argv.slice(1));
@@ -349,52 +316,15 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
-    if (command === 'matrix') {
-        // A sealed task's matrix could only be declared at `open`, so a declaration defect found later had no supported
-        // correction. The command validates the corrected declaration before writing it.
-        const result = await runMatrixCommand(argv.slice(1));
-        outputResult(result);
-        return;
-    }
 
-    if (command === 'repair-author') {
-        // AC-1's record had no producer and no consumer in the tool; this is both, so a dispatched repair author has somewhere
-        // to report and a reader has something to read.
-        const result = await runRepairAuthorCommand(argv.slice(1));
-        outputResult(result);
-        return;
-    }
 
-    if (command === 'rounds') {
-        // AC-3: the loop's cost is reported, because it was invisible — closure-gate's five rounds were reconstructed by hand
-        // from a directory listing to reach the conclusion that the change could not be finished by its author.
-        const result = await runRoundsCommand(argv.slice(1));
-        outputResult(result);
-        return;
-    }
 
-    if (command === 'falsify') {
-        // A repair proves its falsifier reddens before the obligation it answers can close (closure-gate AC-2).
-        const result = await runFalsifyCommand(argv.slice(1));
-        outputResult(result);
-        // **A refusal has to be one** (`aad-r7-f2`, found by a round this repository executed). This returned `{success: false}` and the
-        // process exited **0**, so a script or CI step that checks the exit status — the only mechanism by which a command refuses
-        // anything — proceeded on a falsify that recorded nothing. Measured against the rest of the repository: `scripts/wiring-check.mjs`
-        // sets `process.exitCode` from its run and `src/policy/guard-script.ts` exits 2 on a denial.
-        if (result.success === false) process.exitCode = 1;
-        return;
-    }
 
-    if (command === 'adversarial') {
-        const result = await runAdversarialCommand(argv.slice(1));
-        outputResult(result);
-        // **A refusal has to be a refusal at the process boundary too.** The same defect was fixed twice in this file for its neighbours
-        // (`falsify`, `lane --require-current`), whose comments state the rule: a guard whose exit status is 0 refuses nothing. A lane or a
-        // CI step that runs a round and checks the status would otherwise proceed on a round kata refused — `executor_unavailable`,
-        // `budget_exhausted`, `timeout`, a refused packet, or a record it would not take.
-        if (adversarialResultFailed(result)) process.exitCode = 1;
-        return;
-    }
+
+
+
+
+
 
     if (command === 'relations') {
         const result = await runRelationsCommand(argv.slice(1));
@@ -470,17 +400,7 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
-    if (command === 'lane') {
-        // **The order of work, made checkable.** A change's readiness has a shelf life measured in minutes because 38 paths here are
-        // declared by more than one change, and a sibling's repair moves its revision — measured at eleven minutes once, at the cost of a
-        // round. `--require-current` is the guard form, so a lane step can refuse rather than trust the operator to look.
-        const { runLaneCommand } = await import('./cli/lane.js');
-        const lane = await runLaneCommand(change, workspaceRoot, { requireCurrent: argv.includes('--require-current') });
-        outputResult(lane);
-        // The whole point of `--require-current` is that a lane step can refuse; a guard whose exit status is 0 refuses nothing.
-        if (argv.includes('--require-current') && lane.success === false) process.exitCode = 1;
-        return;
-    }
+
 
     const client = new CometClient({ compatibility: getRuntimeCompatibility() });
     if (command === 'init') {

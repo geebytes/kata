@@ -942,3 +942,10 @@ src 侧消费者：
 `wiring check` 从 **47 → 48**：新增的那条是 `src/quality/adversarial.ts:51 requiredAdversarialNodes —— no reference in src, scripts, host, evals; kept alive only by tests (5 occurrences)`。
 **这正是删除清单开始工作的信号**：verify 不再上报对抗节点 ⇒ 这个导出失去了它的**最后一个生产消费者**，只剩测试还引用它。也就是说，剩下的每一条"只有测试在引用"都是**旧机制还没删掉的那一块**，而不是误报。
 **判据因此可机械化**：把 wiring check 里"仅由测试引用"的旧机制导出逐个删掉，每删一个跑全量测试 —— 直到那条清单空掉，旧机制就没有剩下的读者了。
+
+## 19.4 决定：A —— 旧记录宣布为只读历史
+
+用户选 A。后果已写清并被接受：
+· 8 个已归档 change 的旧记录（`.kata/tasks/*/adversarial-review.json` · `review.json` · `repair-obligations.json` 等）**不再有 kata 命令可读**，git 是它们的备份
+· 换来 src 减 6,471 行 + schema 减 611 行 + 测试减约 7,000 行，以及**删除清单的完成**
+· 判据上的差别（我此前的犹豫）已经不在于风险，而在于取舍：断门改"判定"（影响零），删读命令把历史变成只读 —— 后者是选择，不是推论，所以由用户做

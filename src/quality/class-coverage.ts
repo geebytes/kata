@@ -126,7 +126,10 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         // **G3 is the clause that asks this entry's live instance** (`rpr7-f2`): the second pass found the class covered on paper while
         // `adversarial execute` registered every run without the receipt the admission rule compares — `identity checked, content not`, in the
         // change whose fix for it was inert. G3 asserts both halves in the source, so the instance reddens the check rather than the round.
-        coveredBy: ['tests/unit/class-invariants.test.ts', 'tests/unit/execute-streams-the-round.test.ts'],
+        // The second citation was `tests/unit/execute-streams-the-round.test.ts`, deleted with the round-shaped route it
+        // tested. The class is covered by the invariants file, which is where its instances are enumerated — and a check
+        // that names a file nobody can open is the "criterion wider than its check" class this entry describes.
+        coveredBy: ['tests/unit/class-invariants.test.ts'],
         alsoKnownAs: [
             'an absence assertion that names one field of a concept',
             'a criterion wider than its check',
