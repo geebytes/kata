@@ -378,14 +378,26 @@ npm run check:wiring   # clean: 137 declared paths
 | P2-3 | roundClosure 死分支 | 删除 `roundClosure`、`cover_uncovered_classes` 与零引用的 `finding-lifecycle.ts` |
 | P2-4 | delta reuse 空数据流 | 新增 `decision.deltaEvaluated` 区分"未复用"与"未评估" |
 
-### 11.3 仍未交付（D 类，非缺陷）
+### 11.3 D 类：两项已关闭，两项保留（附原因）
 
-以下**不是**本轮能修的问题，已在第 10 节列为 D 类，此处不重复声称已完成：
+D 类原本是我判为"需要外部条件"的四项。实测后**两项其实是可达的，并且已关闭**；另外两项保留，各带着不可绕过的原因。
 
-1. **shadow pilot** —— 需要跨时间的真实变更样本；当前三点数据只是第一批。
-2. **机器主动 proposal producer** —— 需要一次模型调用，不在确定性 CLI 范围内。
-3. **全证据类型的双 adapter differential** —— file adapter 对命令型证据返回 inconclusive 是设计（它不执行任何东西）。
-4. **CriticalRecall / FalsePass 的同语料基线** —— 要比对的旧机制已删除；这两个指标的分母不可获得，应改写或移除，而不是继续挂在待办。
+**已关闭 ③ 全证据类型的双 adapter differential。** 原来的守卫用例把 `executable_falsifier` 与 `expert_concurrence` declared 为 file adapter 的"永久盲区"，并用**没有 recorded result** 的夹具证明它 —— 于是它证明的是关于**输入**的事实，却描述成关于**证据类**的事实，而且描述错了两次：file adapter 会原样返回任何 recorded verdict（所以四类都能做差分），而 `expert_concurrence` 的 verifier 只读 `humanAck`，**从来不需要执行**。现在四类逐一比对，并新增一条用例说出真正的限制（file adapter 在任何类上都无法**产出** verdict，这是输入问题而不是类问题），以及一张"第五种证据类型出现就必须有人决定它属于哪一边"的表。**一个不存在的 declared limitation 比缺测试更糟：它免除了未被测试的路径** —— 这正是之前发生的事，三类里有两类从未做过差分。
+
+**已关闭 ④ CriticalRecall / FalsePass 的同语料基线。** 处置不是继续等基线，而是**换掉指标**：`verifier-critical-recall` 的两侧都是**manifest 声明**的观测（runner 没有 verifier 可执行），而它本该比对的是旧机制在同一语料上的召回 —— 那个机制已被删除。一个"输入由作者写、分母不可获得"的门，其通过条件 `current.recall >= baseline.recall` 只要把 baseline 声明得更差就能满足。因此它改为**信息性**（details 以 `DECLARED, NOT RUN` 开头并写明为何不是必需门），而**必需**的质量门换成 **`mechanism-seeds`** —— 它是**算出来**的：内核在机制自带的每一条种子上做判定，路径上没有任何手写答案；不匹配即失败，**某个 refusal reason 没有任何种子行使也失败**。实测：真实 manifest 上 `releaseReady: true`（六个计分门全过、两个 skip 门被具名为信息性），此前是 `releaseReady: false` —— 而那时的 false 是**诚实的**，因为必需门确实没有产出任何度量。
+
+**保留 ① shadow pilot。** 需要跨时间的真实变更样本；当前三点数据是它的第一批，把 3 个样本当试点结论就是编数字。
+
+**保留 ② 机器主动 proposal producer。** 需要一次模型调用，不在确定性 CLI 的范围内 —— 这是架构边界，不是未完成的工作。
+
+### 11.5 实机冒烟测试又抓到的四个缺陷（第十一节的两轮修复之外）
+
+第 11.1–11.4 的修复完成后，我在**真实工作区**上跑了各条动词，又抓到四个缺陷 —— 全部由机器而非阅读发现：
+
+1. **语料用例的 subject 已被删除，而计分器还在替它作答。** `ledger detectability` 的探针每次都以 `ENOENT` 报 inconclusive，`ledger verifier` 却把同一个用例报成 `matched: true`：`kernel-case-builders.ts` 里为它手写了一个 builder，返回一条 refuted falsifier，于是内核答 `fail`、计分器记它已处理。**那不是关于内核的错误，而是回答了一个用例已不再提出的问题。** 处置：退出状态改为语料的属性（`CorpusCase.subjectRetired`），两个计分器都**读**它而不是各自记着它；数字随之诚实移动（verifier 19/12/0.417，此前 20/13/0.462；detectability 3 measured / 3 detected / 0 inconclusive，此前 4/3/1）。
+2. **我自己的 quorum 修复引入了它本想防止的失败。** 无 `producer` 的 verdict 被按 `unattributed:<evidenceId>:<index>` 分组，于是每个都成了"独立审查者"：一条 run 的六条 reading 报成六位 reviewer，而 `security` 门要的两位会被"字段存在之前记录的同一轮"满足。现在全部归一组（未知来源 = 一次 reading，不是 quorum），并把该数量报出来，使"只有一位 reviewer"与"没人记录是谁"两种缺口可区分，只有后者能靠重跑修复。实测：三个归档账本由 `undiversified: true` 变为 `false`，`reviewers` 为 1。
+3. **两条命令对同一事实说得比第三条少。** `ledger plan` / `ledger focus` 的共用 helper 对"没有声明"和"声明了读不到的路径"都返回 `null`，于是回答"fix the paths"而**一条都不点名** —— 实测一个声明了 30 条路径、其中 15 条已被本轮删除的 change，消息里 0 条被点名，操作者只能自己去 diff 声明与文件系统。
+4. **空的 verdict 历史与从未写过历史是同一个列表、两个事实。** `ledger claim show` 对没有历史文件的账本报 `readings: []`，读起来像"这些 verdict 从未被反转"—— 一句关于内容的话 —— 而事实是反转当时根本没被记录。该字段现在只在有历史可读时出现，其缺席被解释。
 
 ### 11.4 修复本身的三个产物
 
