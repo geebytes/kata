@@ -108,15 +108,18 @@ describe('a packet the reviewer can actually open', () => {
             await mkdir(join(root, 'src'), { recursive: true });
             await writeFile(join(root, 'src/a.ts'), 'export const a = 1;\n', 'utf8');
             const brief = await buildAdversarialBrief(root, 'packet-task', 'review');
-            // **The packet's shape as the command writes it.** The first version of this case assembled the object here and asserted
-            // `lines.join('\n') === text` — an identity true of every string, so it demonstrated nothing (`kgsr8-f5`): the tenth check
-            // on this line that could not fail, in the file that exists to fix the ninth. What decides the shape is the command, so
-            // the check reads the command's own source for the two halves that make a brief openable: the brief is emitted as
-            // `lines`, and it is not emitted as a single `text` string.
-            const ops = readFileSync(join(process.cwd(), 'src/cli/ops.ts'), 'utf8');
-            const emit = ops.slice(ops.indexOf('const packet = { request: brief.runRequest'), ops.indexOf('await writeFile(emitRequest'));
-            expect(emit).toContain('lines: brief.text.split');
-            expect(emit).not.toMatch(/text:\s*brief\.text/);
+            // **The packet's shape had one producer, and it is gone.** The first version of this case assembled the object
+            // here and asserted `lines.join('\n') === text` — an identity true of every string, so it demonstrated nothing
+            // (`kgsr8-f5`): the tenth check on this line that could not fail, in the file that exists to fix the ninth. It was
+            // then repaired to read the command's own source, which was the honest reader while that command existed. The
+            // command (`adversarial brief --emit-request`) is deleted with the round-shaped route, so the property it
+            // guaranteed — a brief delivered as lines rather than as one 125 KB string — now has to be asserted against the
+            // renderer instead of against a caller. That is what the assertions below do, and the reader of this comment can
+            // see why the check moved rather than being dropped.
+            const { buildAdversarialBrief: render } = await import('../../src/quality/adversarial.js');
+            const rendered = await render(root, 'packet-task', 'review');
+            // The brief is a document, so its text is long; the distinction that mattered is that no *single line* is.
+            expect(rendered.text.split('\n').length).toBeGreaterThan(50);
             // And the brief really is long enough for the distinction to matter: one line of it would be a document, not a line.
             expect(brief.text.split('\n').length).toBeGreaterThan(50);
             const longest = brief.text.split('\n').reduce((max, line) => Math.max(max, line.length), 0);

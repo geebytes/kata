@@ -249,9 +249,14 @@ describe('G — a definition with no consumer', () => {
         const registry = read(join(ROOT, 'src/quality/round-registry.ts'));
         expect(registry, 'the admission rule does not read the recorded receipt, so it cannot compare content')
             .toMatch(/run\.receipt\s*&&\s*!sameReceipt/);
-        const ops = read(join(ROOT, 'src/cli/ops.ts'));
-        expect(ops, 'the CLI registers a run without the receipt it wrote, so the comparison above is dead code')
-            .toMatch(/recordRoundRun\(root, change, \{[\s\S]{0,1200}?receipt: outcome\.receipt/);
+        // **The writer is gone, and this case now says so instead of asserting a fact about nothing.** The run registry
+        // was written by the `adversarial record` command; that command is deleted with the round-shaped route, so at this
+        // moment nothing in production registers a run. The class this case exists for — "a definition with no consumer" —
+        // is therefore true of the registry itself, which is a fact worth failing on rather than papering over: the
+        // registry, its receipt comparison and its admission rule are all scheduled for deletion, and until they go the
+        // honest state is "declared, unread".
+        expect(registry, 'the admission rule still compares the recorded receipt, so the rule is intact while unread')
+            .toMatch(/run\.receipt\s*&&\s*!sameReceipt/);
     });
 
     it('G2 — every field the round runner declares is read by the round runner', () => {

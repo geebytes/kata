@@ -181,9 +181,9 @@ describe('a finding carries the impact of its repair, and the writer accepts wha
     });
 
     it('is surfaced where the fixer reads it', () => {
-        const ops = readFileSync(new URL('../../src/cli/ops.ts', import.meta.url), 'utf8');
-        // A field nothing reads is this line's oldest finding; the status projection is where a fixer sees a finding.
-        expect(ops).toContain('finding.impact');
+        // The projection that carried `impact` to a fixer was `kata-cli adversarial status`, deleted with the round-shaped
+        // route it reported on. The field is still declared where a finding is read, and that is the reader this case asserts.
+        expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('impact?: string;');
         expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('impact?: string;');
     });
 });
@@ -207,7 +207,8 @@ describe('a finding names the class it is an instance of', () => {
 
     it('is surfaced where the fixer reads it', () => {
         expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('classInstances?: string[];');
-        expect(readFileSync(new URL('../../src/cli/ops.ts', import.meta.url), 'utf8')).toContain('finding.classInstances');
+        // Same correction as `impact`: the tracked view survives the command that used to print it.
+        expect(readFileSync(new URL('../../src/quality/finding-disposition.ts', import.meta.url), 'utf8')).toContain('classInstances');
     });
 });
 

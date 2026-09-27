@@ -18,6 +18,10 @@ import { describe, expect, it } from 'vitest';
 // and recorded, not on every `npm test`. The mutation *machinery* is covered end-to-end by
 // `tests/unit/wiring-check-mutation.test.ts` on a fixture, which is where a regression in copy/mutate/classify would show.
 
+// **The four guards of the deleted command surface are gone from this list with the commands they belonged to.**
+// `remove`, `waive`, `note` and `acknowledge-open` were subcommands of `kata-cli adversarial`, and this case's rule is
+// that the list equals what a filesystem walk finds — so a citation left behind would fail, correctly, rather than
+// silently over-claim coverage. What remains is the part of `cli/ops.ts` that still has commands.
 const RECORDED_GUARDS: Array<{ file: string; condition: string }> = [
     { file: 'src/quality/adversarial.ts', condition: 'retired.length > 0' },
     { file: 'src/quality/adversarial.ts', condition: '!base' },
@@ -29,11 +33,7 @@ const RECORDED_GUARDS: Array<{ file: string; condition: string }> = [
     { file: 'src/quality/acceptance-matrix.ts', condition: "!output.includes('Affected test files') && !reportsNoAffectedTests" },
     { file: 'src/cli/ops.ts', condition: "!manifestPath || manifestPath.startsWith('--')" },
     { file: 'src/cli/ops.ts', condition: "subcommand !== 'digests'" },
-    { file: 'src/cli/ops.ts', condition: "subcommand === 'remove'" },
-    { file: 'src/cli/ops.ts', condition: "subcommand === 'waive'" },
-    { file: 'src/cli/ops.ts', condition: "subcommand === 'note'" },
     { file: 'src/cli/ops.ts', condition: '!subcommand || !isCodegraphSubcommand(subcommand)' },
-    { file: 'src/cli/ops.ts', condition: "subcommand === 'acknowledge-open'" },
 ];
 
 const SURFACE = [
