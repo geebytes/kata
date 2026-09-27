@@ -1,4 +1,3 @@
-import { readTrackedFindings } from '../quality/finding-disposition.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Phase } from '../core/state.js';
@@ -8,9 +7,10 @@ import {
   statusPromptFor,
   type PromptLanguage,
 } from './prompt-catalogue.js';
-import { evaluateWikiClosure } from '../wiki/closure.js';
+import { readTrackedFindings } from '../quality/finding-disposition.js';
 import { readObligations } from '../quality/repair-obligations.js';
 import type { RepairScope } from '../quality/judge.js';
+import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
