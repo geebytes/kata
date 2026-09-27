@@ -98,7 +98,9 @@ describe('distill gates', () => {
         const report = await evaluateDistillGates(root, taskId);
 
         expect(report.freshEvidence).toBeNull();
-        await expect(assertDistillGates(root, taskId)).rejects.toThrow(/fresh evidence, reviewer clearance, and judge PASS/);
+        // **The refusal names the condition that failed.** It used to name all three always, so a change that failed on
+        // one was told to go and look at three — and the one it had to fix was not identified.
+        await expect(assertDistillGates(root, taskId)).rejects.toThrow(/no fresh passing test evidence/);
     });
 
     it('blocks an approval that carries no review evidence', async () => {
@@ -110,7 +112,7 @@ describe('distill gates', () => {
         const report = await evaluateDistillGates(root, taskId);
 
         expect(report.review).toMatchObject({ cleared: false, reason: 'no_review_evidence' });
-        await expect(assertDistillGates(root, taskId)).rejects.toThrow(/fresh evidence, reviewer clearance, and judge PASS/);
+        await expect(assertDistillGates(root, taskId)).rejects.toThrow(/reviewer clearance is missing \(no_review_evidence\)/);
     });
 
     it('blocks a review with blocking findings, and one bound to another revision', async () => {

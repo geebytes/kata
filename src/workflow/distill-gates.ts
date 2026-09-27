@@ -124,22 +124,97 @@ export interface DistillGateReport {
     freshEvidence: FreshPassingEvidence | null;
     review: ReviewClearance;
     judge: JudgePass;
+    /**
+     * What the evidence ledger decides *now*, when the change has one.
+     *
+     * **Why archive asks again.** Approval was granted against a ledger that passed at the moment of approval, but
+     * `evaluateReviewClearance` reads `review.json` — the record that approval wrote — and nothing re-ran the kernel
+     * between approval and archive. Everything a ledger is made of is mutable between those two commands: evidence can
+     * be replaced (with the verdicts dropped), a verdict can be re-recorded, a new claim can be added. So the same
+     * question was being answered from two places, and only the earlier one was asked of the content.
+     *
+     * `null` means the change has no ledger and is decided by the round-shaped route, which is not an error — but a
+     * ledger that exists and cannot be read, or that no longer passes, is a refusal.
+     */
+    ledger: { state: 'absent' | 'unreadable' | 'pass' | 'not-pass'; detail: string; reasons: string[] };
 }
 
 export async function evaluateDistillGates(root: string, taskId: string): Promise<DistillGateReport> {
     const currentDiffHash = await computeDiffHash(root);
     const freshEvidence = await freshPassingTestEvidence(root, taskId, currentDiffHash);
-    const [review, judge] = await Promise.all([
+    const [review, judge, ledger] = await Promise.all([
         evaluateReviewClearance(root, taskId, freshEvidence?.revisionId),
         evaluateJudgePass({ root, taskId, currentDiffHash, freshEvidence }),
+        evaluateLedgerAtArchive(root, taskId),
     ]);
 
-    return { freshEvidence, review, judge };
+    return { freshEvidence, review, judge, ledger };
 }
 
-/** The gate itself: fails closed with one message, whatever the reason. */
+/**
+ * The ledger, re-decided for the archive gate — including the drift check the approval also performs.
+ *
+ * The drift half is not optional here: a verdict must not outlive the content it was about, and between approval and
+ * archive a sibling change can edit a shared path. Asking for the verdict without asking whether it is still about this
+ * content would certify a decision about a revision that has moved.
+ */
+async function evaluateLedgerAtArchive(root: string, taskId: string): Promise<DistillGateReport['ledger']> {
+    const { ledgerVerdict } = await import('../store/verdict.js');
+    const { ledgerDrift } = await import('../store/ledger.js');
+    const verdict = await ledgerVerdict({ root, changeId: taskId });
+    if (verdict.kind === 'absent') return { state: 'absent', detail: verdict.detail, reasons: [] };
+    if (verdict.kind === 'unreadable') return { state: 'unreadable', detail: verdict.detail, reasons: [] };
+
+    const drift = await ledgerDrift(root, taskId);
+    if (drift && drift.unreadable.length > 0) {
+        return {
+            state: 'unreadable',
+            detail: `the ledger names paths that cannot be read, so no comparison against the frozen subject is possible: ${drift.unreadable.join(', ')}`,
+            reasons: [],
+        };
+    }
+    const moved = drift ? [...drift.changed, ...drift.added, ...drift.removed] : [];
+    if (moved.length > 0) {
+        return {
+            state: 'not-pass',
+            detail: `the ledger describes content that has moved since it was frozen: ${moved.join(', ')}`
+                + ' — the approval was about the frozen content, so re-freeze, re-verify the reopened claims, and re-decide',
+            reasons: ['subject_drift'],
+        };
+    }
+    if (verdict.decision.verdict !== 'pass') {
+        return {
+            state: 'not-pass',
+            detail: `the ledger decides ${verdict.decision.verdict}, not a pass`
+                + (verdict.decision.reasons.length > 0
+                    ? `: ${verdict.decision.reasons.map((entry) => `${entry.code}${entry.claimId ? ` (${entry.claimId})` : ''}: ${entry.detail}`).join(' | ')}`
+                    : '')
+                // The remedy travels with the refusal. A gate that says only "this does not pass" sends the reader back
+                // to the commands to find out which door reopens it, and the two doors are not interchangeable: making
+                // the claim hold is the default, and waiving it is a decision someone signs.
+                + ' — make each unsupported claim hold (`kata-cli ledger evidence add`, `ledger evidence verify`),'
+                + ' or record the decision to live with it (`kata-cli ledger claim waive <id> --reason <why>`)',
+            reasons: verdict.decision.reasons.map((entry) => entry.code),
+        };
+    }
+    return { state: 'pass', detail: `the ledger decides a pass at the ${verdict.tier} tier`, reasons: [] };
+}
+
+/**
+ * The gate itself: fails closed with one message, whatever the reason.
+ *
+ * The message names *which* condition failed rather than listing all three. It used to name all three always, so a
+ * change that failed only on the ledger (or only on the judge) was told to go and look at three things — and the one
+ * it had to fix was not identified. The refusal still fails closed; it just says what to fix.
+ */
 export async function assertDistillGates(root: string, taskId: string): Promise<void> {
     const report = await evaluateDistillGates(root, taskId);
-    if (report.freshEvidence && report.review.cleared && report.judge.passed) return;
-    throw new Error('Cannot enter distill until fresh evidence, reviewer clearance, and judge PASS are present');
+    const failures: string[] = [];
+    if (!report.freshEvidence) failures.push('no fresh passing test evidence is recorded for the current revision');
+    if (!report.review.cleared) failures.push(`reviewer clearance is missing (${report.review.reason ?? 'unknown'})`);
+    if (!report.judge.passed) failures.push(`the Judge has not passed this change (${report.judge.reason ?? 'unknown'})`);
+    if (report.ledger.state === 'unreadable') failures.push(`the ledger cannot be read: ${report.ledger.detail}`);
+    if (report.ledger.state === 'not-pass') failures.push(`the ledger does not pass: ${report.ledger.detail}`);
+    if (failures.length === 0) return;
+    throw new Error(`Cannot enter distill: ${failures.join('; ')}`);
 }

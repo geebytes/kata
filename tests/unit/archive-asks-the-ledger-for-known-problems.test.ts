@@ -27,7 +27,11 @@ describe('the archive gate asks the ledger which problems are known', () => {
         });
         const blocked = await runCommand('archive', 'archive-ledger-blocked', root, { confirmHostModel: true });
         expect(blocked.success).toBe(false);
-        expect(String(blocked.error)).toContain('1 claim(s) are not supported: C-open');
+        // **The refusal now comes from the distill gate, which asks the ledger itself.** It used to come from a check
+        // further down that re-read the ledger to list the open claims; the gate asks the same question earlier, so
+        // the archive is stopped before the transition rather than after it. What the assertion has to pin is what the
+        // test is about — the claim is named, and both exits are named — not which of the two readers said it.
+        expect(String(blocked.error)).toContain('C-open');
         // Both exits are named, because either is a legitimate decision.
         expect(String(blocked.error)).toContain('ledger evidence add');
         expect(String(blocked.error)).toContain('ledger claim waive');
