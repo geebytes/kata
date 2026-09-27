@@ -49,20 +49,40 @@ type Claim = {
   id: string;                      // "C17"
   statement: string;               // 人可读；必须可被证据支持或推翻
   riskClass: RiskClass;            // 见 1.3
-  dependsOn: string[];             // claim id 或其它的路径摘要 → 依赖锥
-  evidence: EvidenceRef[];         // 见 1.4
-  challenges: Challenge[];         // 针对它的反例/挑战（可执行，失败即未解决）
-  status: 'open' | 'supported' | 'refuted' | 'insufficient' | 'waived';
-  waivedReason?: string;
+  severity: Severity;              // 【落地新增】证据强度下限由严重度决定
+  dependsOn: DependencyRef[];      // claim id 或其它的路径摘要 → 依赖锥
+  evidenceIds: string[];           // 【落地为 id + 顶层追加式列表，不是内联】
+  challengeIds: string[];
+  status: ClaimStatus;             // 'open'|'supported'|'refuted'|'insufficient'|'waived'
+                                   // ← 这是**声明**；判定不读它（见下）
+  at: string;                      // 【落地新增】由 store 盖章（作者侧度量的基准）
+  reopens: number;                 // 【落地新增】作者侧成本：被反复重开的次数
+  waiver?: { reason: string; at: string };
 };
+
+// **落地与本文档的两处不同，各有理由**
+// ① 证据与反例是**顶层追加式列表**（`evidenceIds` / `challengeIds` 指过去），不是内联对象：
+//    证据是"落盘即存在"的（D10），内联会让每加一条证据就重写 claim，`at`/`reopens` 随之漂移。
+// ② `status` 是**声明**，判定从不读它（只有 `waived` 是"某人做过的决定"会被读）。
+//    实际状态由 `evaluateClaim()` 从证据推导，`ClaimState` 有 **9** 个值：
+//    supported / waived / unsupported / refuted / missing / inconclusive / stale / below_strength / challenged。
+//    实测理由：成本报告曾显示"6 个 open"而同一账本判定 `pass`（§13.4 ⑦）—— 一个报告两半回答两个问题。
 
 // ③ 证据：五类，每类有确定性的 verify()
 type Evidence =
-  | { type: 'executable_falsifier';      command: string; subjectRevision: string; expect: 'red' }
-  | { type: 'static_witness';            ref: string; assertion: string }
-  | { type: 'invariant_proof';           invariantId: string; command: string }
-  | { type: 'cross_artifact_contradiction'; a: string; b: string; comparator: string }
-  | { type: 'expert_concurrence';         reviewers: string[]; humanAck: string };  // ← 限制见 §6
+  | { type: 'executable_falsifier';        command: string; mutation: { file; find; replace } }
+  | { type: 'static_witness';              ref: string; assertion: string }   // "contains:" | "not-contains:"
+  | { type: 'cross_artifact_contradiction'; a: string; b: string; literal: string; comparator: 'literal-in-a-not-b'|'literal-in-b-not-a' }
+  | { type: 'expert_concurrence';           reviewers: string[]; humanAck: string };  // ← 限制见 §6
+
+// **四类，不是五类**（`the K2 gap`，见 §14）：原第五类 `invariant_proof`（"命令 exit 0 即不变量成立"）
+// 已删除。它是旁边那类的一个**弱拼法** —— 唯一的差别是作者有没有声明让它变红的变异 ——
+// 而弱拼法没有变异字段，于是**一个永远不会失败的检查可以获得 `supported` 并支撑一个 claim 通过**
+// （实测：`bash -c "exit 0"` → supported → pass）。
+// 既然检查的全部意义就是"它能失败"，那个说不出这件事的类型被删掉，而不是给它再加一条规则。
+// 属性测试/类型级不变量现在写成"变异违反该不变量"的 falsifier。
+// 另外：证据项**不再自带 `subjectRevision`** —— 判定陈旧的是**判决**记录的 subject，内核在那里比较；
+// 项上的那一份是"有声明无消费者"（实测于类型合并）。
 ```
 
 ### 1.3 `RiskClass`（有限、可枚举 —— 替代"覆盖每一条路径"这个开集）
@@ -101,18 +121,31 @@ type Decision = {
 {
   "version": 1,
   "tiers": {
-    "standard": { "autoEvidence": ["static_witness","invariant_proof"],
-                  "reviewers": 1, "quorumOn": ["uncertainty","new_class","weak_evidence"],
-                  "assurance": ["none","relayed"], "humanBudgetMin": 0 },
-    "strict":   { "autoEvidence": "+executable_falsifier", "reviewers": 1,
-                  "quorumOn": ["disagreement","high_risk"], "assurance": ["relayed","observed"],
-                  "humanBudgetMin": 10 },
-    "security": { "autoEvidence": "+security_checks", "reviewers": 2,
-                  "quorumOn": ["always"], "assurance": ["sandboxed","signed"],
+    // 【落地形态】`assurance` 是**下限**不是允许集合 —— 集合会让"比档位要求更好的 assurance"反而被拒
+    // （实测：strict 用集合时，observed 通过、而 standard 用集合会拒绝 observed）。strict 的下限已升到 observed：
+    // 账本路线的通过依据是证据，而没人看着产生的证据不足以支撑它。
+    "standard": { "autoEvidence": ["static_witness"],
+                  "reviewers": 0, "quorumOn": ["uncertainty","new_class","weak_evidence"],
+                  "assuranceFloor": "none",
+                  "requiredRiskClasses": ["consistency"], "humanBudgetMin": 0 },
+    "strict":   { "autoEvidence": ["static_witness","executable_falsifier"], "reviewers": 1,
+                  "quorumOn": ["disagreement","high_risk"], "assuranceFloor": "observed",
+                  "requiredRiskClasses": ["consistency","boundary","failure_mode"], "humanBudgetMin": 10 },
+    "security": { "autoEvidence": ["static_witness","executable_falsifier","cross_artifact_contradiction"],
+                  "reviewers": 2, "quorumOn": ["always"], "assuranceFloor": "sandboxed",
+                  "requiredRiskClasses": ["consistency","boundary","failure_mode","privilege","provenance"],
                   "humanBudgetMin": 30 }
   },
-  "riskFloors": { "src/workflow/seal-preflight.ts": "high", "src/quality/**": "medium" },
+  // 【落地修正】必须有 **high** 行，否则 security 档【不可达】（档位取所有触及路径的最大 floor）⇒
+  // quorum / sandboxed / privilege 风险类全部形同虚设。落在"门自己所在的地方"：
+  "riskFloors": { "src/kernel/policy.ts": "high", "src/kernel/decide.ts": "high",
+                  "src/quality/**": "medium", "src/workflow/**": "medium" },
   "riskFloorAudit": { "changesRequireReview": true },   // ← floor 变更走同一套评审
+  // 【落地新增，且是必需的】档位的风险空间契约：**覆盖检查若由 claims 自身推出就不可能失败**
+  // （实测：所需集合 = claims 的风险类并集 ⇒ 永远"覆盖"）。所以它必须是档位的固定契约。
+  // （上面 tiers 的 requiredRiskClasses 即是）
+  "sampling": { "rate": 0.2 },          // 【落地新增】低风险工作事后升格的比例，用来度量分类器
+  // 【落地形态】"evidenceStrength.blocking" 收窄为**仅** executable_falsifier（比本文档更严）
   "diversity":   { "requiredOn": ["quorum"], "kinds": ["model_family","prompt_strategy","tool_profile"] },   // 抽象属性，不写 provider 名
   "budgets":     { "maxTokensPerChange": "0.6*C0", "maxWallMs": 1800000, "deadlineToolCalls": null },
   "evidenceStrength": { "blocking": ["executable_falsifier","static_witness"],
@@ -157,6 +190,7 @@ type Decision = {
 | `lane` 的漂移计算 | 它已经能独立回答"内容有没有动" |
 | `falsify` 的账本形状 `{before, mutated, after}` | 它是最接近"确定性裁判"的东西 ⇒ 升为 `executable_falsifier` |
 | **"每条检查都必须能失败"的纪律** | 一天内靠它抓到 **11 处**能恒真的检查，**零 token** |
+| **7 类缺陷（作为词汇）** | ✗ **未搬**：新路径用 `RiskClass`（风险类），"缺陷类"表仍在旧路径。**两者是两件事**，本文档早期把这一行混在一起写了 —— 见 §14 的更正 |
 | brief 内**数字期限** | 无记录轮次从 **0/4 → 6/6** 的唯一有效杠杆 |
 | 严重度门槛（`std` 拦 blocking，`strict` 加 major） | 已存在，只是**从未真正启用** |
 | 7 类缺陷（作为词汇） | 它们是好词汇，坏的是"用它当终止条件" |
@@ -168,16 +202,23 @@ type Decision = {
 | # | 不变量 | 怎么测 |
 |---|---|---|
 | **K1** | `decide()` 纯且全域：同输入同输出，无 I/O | 属性测试 + 类型层面禁止 `fs`/`child_process` 导入 |
-| **K2** | **每条注册的检查/不变量都必须带一个能让它变红的变异；没有变异的检查不可受理**（按**逐条检查**要求，不是按证据类型 —— 本线 11 处"能恒真的检查"全部是**逐条**抓到的，按类型要求会漏掉它们） | 每条检查一个变异用例；`falsify` 账本记录 `{before, mutated, after}` |
+| **K2** | **每条命令型检查都必须声明让它变红的变异；没有变异的检查不可受理**（按**逐条**要求，不是按证据类型 —— 本线 11 处"能恒真的检查"全部是逐条抓到的，按类型要求会漏掉它们） | **落地方式是结构性的**：命令型证据只剩一种（`executable_falsifier`），它的**形状**要求一个变异；缺变异在 `evidence add` 就被点名拒绝。实测（本条曾是本方案最大的缺口，见 §14）：`invariant_proof` + `bash -c "exit 0"` 曾获得 `supported` 并让一个 major claim 通过；今天同一份提交被拒（未知类型 / `mutation.file is required`） |
 | **K3** | `budget_exhausted ⇒ verdict !== 'pass'` | 遍历整个决策矩阵 |
 | **K4** | delta 复用不放宽：`reused ⊆ 未变 ∩ 依赖未受影响`；依赖不可推导 ⇒ **全开** | 生成"改动 + 图"组合，断言集合包含关系 |
 | **K5** | `src/kernel/**` 里**不出现任何平台标识**（`pi`/`session`/`adapter`/`receipt`…） | 文本 + 类型双查（同时是 Platform Coupling Index 的实现） |
-| **K6** | **同一主体在两个 adapter 上必须得到同一个 decision** | cross-adapter differential test。**前置：P6 必须交付一个最小第二 adapter（含"文件/人工"adapter），否则这条不变量恒真、必须删除而不是假装满足** |
-| **K7** | `riskFloors` 的变更**自身走同一套评审** | floor 改动产生一个 claim，且该 claim 属于 `privilege` 类 |
+| **K6** | **同一主体在两个 adapter 上必须得到同一个 decision** | cross-adapter differential test；第二支 adapter（file）已交付。**实测的限制**：差分目前只对 `static_witness` 成立 —— file adapter 对命令型证据返回 `inconclusive`（它不执行任何东西），所以"两支 adapter 同判"在最弱的一类上被检验，命令型证据只有一支 adapter 能验 |
+| **K7** | `riskFloors` 的变更**自身走同一套评审** | floor 改动产生一个 claim（`policy-floor:<pattern>`），且该 claim 属于 `privilege` 类；`decide` 随即报 `insufficient`，因为它是 open 且无证据 —— 加宽不是免检入场券 |
 
 ---
 
 ## 5. CLI（7 个动词，替代今天的 `adversarial`/`matrix`/`lane`/`findings` 等一大族）
+
+**实况**：动词挂在 `kata-cli ledger <动词>` 下，共 **9 个动词 / 15 个子命令**：
+`status`（`--cost` 给出作者侧与发现率指标）· `freeze` · `policy`（`--init` / `--set-file`）·
+`claim`（`list|show|add|waive|reopen`）· `usage`（`set`，**实测数字的写入者**）·
+`evidence`（`list|add|verify` + `replace --reason`，唯一的改写门）· `challenge`（`list|add|check|amend`）·
+`plan`（落盘为 `plan.json`）· `decide` · `focus`（**消费 `plan.json` 的阅读集**，按漂移收窄）。
+**未落地**：`challenge ask|answer`（随机出题与应答率）—— 落地的是反例账本那一半。
 
 ```
 kata-cli subject freeze                     # 冻结 → pathDigests
@@ -222,6 +263,7 @@ kata-cli focus                               # 影响锥与漂移（吸收 lane�
 | **P6 收敛与验证** | 1 周 | K6 cross-adapter 差分 · Platform Coupling Index · Adapter Change Radius · shadow 试点 | 旧测试夹具（45 文件） |
 
 **关键路径是 P1**：没有语料，P2–P6 的每一步都只能用印象验收。
+**实况（第二轮之后）**：P2 的内核、P3 的主要生产者、P4 的 CLI 与 schema、P5 的 assurance 层已落地（见 §12/§13）；**P0 的三件已做两件**（严重度门 + 数字期限，E0 的仪表已就位但数据要跑一周）；**P1 只落了"新机制对抗种子"那一半**；**§2 的删除一行未做**（理由与次序见 §13.7）；P6 只落了 K6 与 K5。
 **P0 与 P1 可以并行**（不同人）。
 
 ---
@@ -562,3 +604,52 @@ node dist/cli.js ledger status --cost --change round-protocol
    要么从方案里删掉这一项 —— 不能留着当装饰。
 ```
 **一次文档同步**：§1.2（三种对象的实际形态）· §1.5（assurance 下限 / requiredRiskClasses / sampling / reviewers / riskFloors / evidenceStrength）· §3（"逐条检查都能失败"是弱式、7 类缺陷未搬）· §5（实际动词表）· §9（把弱式那句改成强式，或反过来把 §4 改成弱式并说明为什么）。
+
+---
+
+# 15. 差异补齐（第三轮：逐条修，不留返工）
+
+> 指令：**直接补齐差异，中间不要中断，避免返工。** 本轮把 §14 的 17 条按"该改代码就改代码、该改文档就改文档、该记未做就如实记"逐条处置。**四条 commit。**
+
+## 15.1 改了代码的四条（E 类与 C 类中被判定为真缺陷的）
+
+| # | §14 的差异 | 处置 | 实测 |
+|---|---|---|---|
+| 1 | **K2 只落到按类型的弱形态**（E 类最要紧） | **删掉 `invariant_proof` 这一类**。它是 `executable_falsifier` 的弱拼法（唯一差别：作者有没有声明变异），而弱拼法没有变异字段 ⇒ 一条永远不失败的检查可获得 `supported`。属性测试/类型级不变量现在写成"变异违反该不变量"的 falsifier。于是**命令型证据只剩一种，且形状上必须带变异** —— 这是结构性约束，不是"要记住的规则" | 改前：`{"type":"invariant_proof","command":"bash -c \"exit 0\""}` → `supported` → **`decide: pass`**。改后同一份提交：`evidence[0].type must be one of executable_falsifier, static_witness, cross_artifact_contradiction, expert_concurrence`；把类型改成 falsifier 后：`mutation.file is required: a check that cannot be reddened is not evidence`（+ find/replace 两条） |
+| 2 | 证据项自带一个**没人读的 `subjectRevision`**（合并时实测发现） | 删除该字段：判定陈旧的是**判决**记录的 subject，内核在那里比较；项上那份是"有声明无消费者" | 类型、schema、三个用例同步；测试里 5 处 `subjectRevision` 从项上移除 |
+| 3 | **`readingSet` 有生产者无消费者**（E 类） | `plan` 落盘为 `plan.json`，`focus` **消费**它：按漂移收窄每个 claim 的阅读集（= 计划的集合 ∩ 实际移动的路径），并列出"无需重读"的 claim。没有计划时**按名拒绝**（不静默重推影响锥） | 实测：改 `src/a.ts` 后 `focus` → `reopened[{claimId:"C1",read:["src/a.ts"],why:"src/a.ts"}]`，`untouched: []`，note `read 1 path(s) across 1 claim(s)`；未改时 `reopened: []`，`untouched: ["C1"]` |
+| 4 | **`riskFloors` 无 `high` 行 ⇒ security 档不可达** | 给 `src/kernel/policy.ts` 与 `src/kernel/decide.ts` 加 `high`（门自己所在的地方）。用例断言**可达性**而不是表：表缺行也"看起来完整" | 实测：触及 `src/kernel/decide.ts` ⇒ `tier: security` · `reviewers: 2` · `floor high from 1 matched path(s)`；触及 `src/quality/change-record.ts` ⇒ 仍是 `strict` |
+
+## 15.2 顺手抓出的第五个缺陷（本轮自己长的）
+
+`appendEvidence` **按 id 静默去重** ⇒ 重加一条内容不同的证据会报 `ok: true` 而什么都没写 —— 与早先修过的"challenge id 撞号静默 no-op"同一形状（命令说成功，事实没发生）。已改为一律拒绝并给出改正门：**`ledger evidence replace --file <set> --reason <why>`** —— 唯一的改写入口，校验整份集合、**丢弃被替换项的判决**（判决是对内容的读数，内容变了就没有读数）、把原因写进 run ledger。
+
+它存在的理由是一个实测案例：**5 条已被本 build 删除的类型的证据**在持有一次 review approval，它们既不能重验、也不能改正、也没有任何命令能碰到它们 —— 没有这个门，那个账本就永久卡死。**这个门落地一小时内就被用了两次**（两个真实 change 各一条命令）：
+
+```
+review-record-integrity: replaced 5, droppedVerdicts [E1..E5] → verify 5/5 supported
+round-protocol:          replaced 6, droppedVerdicts [E1..E6] → verify 6/6 supported
+```
+**11 条 claim 现在是"每条都有自己的变异、且 `{before:0, mutated:1, after:0}` 被实测到"**，两个 change 的账本判定都是 `pass | tier strict`。
+
+## 15.3 改了文档的（B/D 类：形态不同、有理由 ⇒ 改文档不改代码）
+
+§1.2 改为落地的三种对象（`evidenceIds`/`challengeIds` 为顶层追加式列表；`status` 是声明、状态由 `evaluateClaim()` 推导为 **9** 值；新增 `severity`/`at`/`reopens`）· §1.2 的证据联合改为**四类**并写明删掉第五类的理由 · §1.5 的 `assurance` 改为**下限**、补 `requiredRiskClasses`/`sampling`、`reviewers` 与 `evidenceStrength` 按落地值、`riskFloors` 补 `high` · §3 更正"7 类缺陷未搬"（且指出**"缺陷类"与"风险类"是两件事**，早期把两者混在一行）· §4 的 K2/K6/K7 按实况重写（K2 的**结构性**落地方式、K6 只覆盖最弱一类、K7 的 `policy-floor:` claim 会让判定立刻 `insufficient`）· §5 的 CLI 改为**实况动词表**并点明 `challenge ask|answer` 未落地 · §7 补"实况"一行（P0 两件已做、P1 只落一半、§2 一行未删、P6 只落 K6/K5）。
+
+## 15.4 如实记为"未做"的（C 类）
+
+```
+① §14 与 §9 的冲突：唯一的 `examples/greeting.ts` 与任何规则无关 ⇒ 删掉该突变规格，并把"没有共享规则"
+   作为协议层的一个**已声明空集**（`ROUND_RULES_SHARED_WITH_THE_REPOSITORY = []`）。
+   更好-known 的两个实例在同一周内都已被撤回（change record 的 surface 推导、brief 的 class 词汇），
+   所以协议声明"不共享任何规则"，而不是列几条并邀请下一条。
+② §5 的 `challenge ask|answer`：未落地（落地的是反例账本那一半）。
+③ §8 的 6 条验收仍不可测 —— P1 的语料（change 级 baseline）仍未开始，而它是"关键路径"。
+④ 语料第二半（遗留缺陷 + baseline）仍未开始；本轮只补了三个**新机制**的失效模式种子。
+⑤ §2 删除清单仍一行未删（次序理由见 §13.7；本轮把"新路径成为默认"的最后一块拼图补上了）。
+```
+
+## 15.5 两条"超出计划"但方向相反的记录
+
+- **`review --approve` 学会了账本路线**（§13.8 之前的工作）：`absent` 走旧路、`decided+pass` 走账本、`unreadable`/漂移/非 pass 各自按名拒绝，记录里写 `reviewRoute` 与 `ledgerReview.limits`。**这使 §14 #20 的"同一事实两处派生"从"巧合安全"变成"设计安全"**：账本通过而旧 findings 表仍有 open major 时，门取更严的那个，且拒绝信息同时也是账本缺口的清单。
+- **`host/pi-adapter.ts` 仍是真实的第二支平台代码**。它现在只做"启动 + 映射事件流"，语言里没有任何平台概念（kata 侧平台词汇量 = 0）—— 这是"平台解耦"在**代码**层面成立的证据，而不是声称。
