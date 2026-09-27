@@ -12,6 +12,7 @@
  * expectation names specific findings is scored on its **verdict** — does the mechanism refuse to certify this state —
  * and the output says which cases those are.
  */
+import { admissibilityCorpus } from './admissibility-corpus.js';
 import type { DecideInput } from '../kernel/decide.js';
 import { defaultPolicy, tierPolicy } from '../kernel/policy.js';
 import { revisionOf, subjectOf } from '../kernel/subject.js';
@@ -162,11 +163,6 @@ export const KERNEL_CASE_BUILDERS: ReadonlyMap<string, (entry: unknown) => Decid
         evidence: [falsifier('E1')],
         verdicts: [verdict('E1', 'refuted')],
     })],
-    ['obligation-resolution-mutation', () => base({
-        claims: [claim('C1', { evidenceIds: ['E1'] })],
-        evidence: [falsifier('E1')],
-        verdicts: [verdict('E1', 'refuted')],
-    })],
     ['scope-guard-central-mutation', () => base({
         claims: [claim('C1', { evidenceIds: ['E1'] })],
         evidence: [falsifier('E1')],
@@ -249,9 +245,31 @@ export const NOT_EXPRESSIBLE: ReadonlyArray<{ caseId: string; why: string }> = [
     { caseId: 'foreign-worktree-drift-enters-the-delta', why: 'depends on a second writer in a shared worktree' },
 ];
 
-/** The builder set and its complement, checked against the corpus: neither direction may be missing an entry. */
-export function kernelCaseBuilders(): { builders: ReadonlyMap<string, (entry: unknown) => DecideInput | null>; notExpressible: typeof NOT_EXPRESSIBLE } {
-    return { builders: KERNEL_CASE_BUILDERS, notExpressible: NOT_EXPRESSIBLE };
+/**
+ * The builder set and its complement, with retired subjects removed from both.
+ *
+ * **Found by a live run, and it was a fabricated answer.** `obligation-resolution-mutation` had a hand-written builder
+ * returning a claim with a *refuted* falsifier, so the kernel answered `fail` and the scorer reported the case `matched:
+ * true` — for a defect whose module and suite were deleted with the round-shaped mechanism. The builder was not wrong about
+ * the kernel; it was answering a question the case no longer asks, and the `matched: true` it produced was about the
+ * fixture rather than about the case.
+ *
+ * So retirement is read from the corpus (`CorpusCase.subjectRetired`) rather than remembered here: a case whose subject is
+ * gone leaves both lists, and says so in `retired`, whichever scorer is asking. Keeping it as a *builder* is now impossible
+ * without deleting the corpus entry, which is the intended friction.
+ */
+export function kernelCaseBuilders(): {
+    builders: ReadonlyMap<string, (entry: unknown) => DecideInput | null>;
+    notExpressible: ReadonlyArray<{ caseId: string; why: string }>;
+    retired: ReadonlyArray<{ caseId: string; why: string }>;
+} {
+    const corpus = admissibilityCorpus();
+    const retired = corpus
+        .filter((entry) => entry.subjectRetired !== undefined)
+        .map((entry) => ({ caseId: entry.id, why: entry.subjectRetired as string }));
+    const retiredIds = new Set(retired.map((entry) => entry.caseId));
+    const builders = new Map([...KERNEL_CASE_BUILDERS].filter(([id]) => !retiredIds.has(id)));
+    return { builders, notExpressible: NOT_EXPRESSIBLE, retired };
 }
 
 // `tierPolicy` is imported for the tests that assert the strict contract the builders satisfy; keeping the import used

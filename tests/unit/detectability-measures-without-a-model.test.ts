@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DETECTABILITY_PROBES, NOT_PROBED, measureDetectability, type DetectabilityProbe } from '../../src/store/detectability.js';
+import { admissibilityCorpus } from '../../src/eval/admissibility-corpus.js';
 
 /**
  * **The cheap half of the recall gap, and the honesty that makes it usable.**
@@ -30,15 +31,24 @@ async function scratch(): Promise<string> {
 
 describe('detectability is measured by restoring the defect, not by asking a model', () => {
     it('covers the corpus cases that can be probed, and names the ones that cannot', () => {
+        // **Every probe is one whose subject exists.** `obligation-resolution-mutation` used to be here and reported
+        // `inconclusive` with `ENOENT` on every run: the obligation route was deleted with the round-shaped mechanism, so
+        // the probe could not run and its permanent inconclusive read as an unmeasured case. It moved to `NOT_PROBED` with
+        // that reason rather than staying as a probe that can never detect anything.
         expect(DETECTABILITY_PROBES.map((probe) => probe.caseId).sort()).toEqual([
             'adequacy-checker-central-mutation',
             'claims-checker-central-mutation',
-            'obligation-resolution-mutation',
             'scope-guard-central-mutation',
         ]);
-        // A partial measurement must say so: a reader seeing "4 of 4 detected" needs to know it is not "4 of 27".
+        // A partial measurement must say so: a reader seeing "3 of 3 detected" needs to know it is not "3 of 27".
         expect(NOT_PROBED.length).toBeGreaterThan(10);
         for (const entry of NOT_PROBED) expect(entry.why).not.toHaveLength(0);
+        // And a case that is neither probed nor named would be a silent hole, so the two lists must be exhaustive over the
+        // corpus's mutation cases. Read from the corpus rather than hard-coded: a new case fails this until someone says
+        // which list it belongs in.
+        const mutationCases = admissibilityCorpus().filter((entry) => entry.kinds.includes('mutation-case')).map((entry) => entry.id);
+        const accounted = new Set([...DETECTABILITY_PROBES.map((probe) => probe.caseId), ...NOT_PROBED.map((entry) => entry.caseId)]);
+        expect(mutationCases.filter((id) => !accounted.has(id)), 'a mutation case in neither list is a hole nobody stated').toEqual([]);
     });
 
     it('reports a probe whose anchor has moved as inconclusive, rather than as a failed detection', async () => {

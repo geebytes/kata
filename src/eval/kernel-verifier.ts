@@ -47,6 +47,14 @@ export type KernelVerifierScore = {
     falsePassRate: number;
     /** The cases this scorer does not reach, each with the reason. */
     notExpressible: Array<{ caseId: string; why: string }>;
+    /**
+     * Cases whose subject no longer exists, each with the reason.
+     *
+     * Separate from `notExpressible` because the reasons differ and so does the remedy: `notExpressible` means "a pure
+     * function cannot be handed this state", and this means "the state no longer exists to be handed". Reported so a
+     * population that shrank is a stated fact rather than a smaller denominator nobody can see.
+     */
+    retired: Array<{ caseId: string; why: string }>;
     answers: KernelCaseAnswer[];
     measures: string;
 };
@@ -71,6 +79,7 @@ const VERDICT_TO_KERNEL: Record<string, 'pass' | 'fail' | 'insufficient'> = {
 export function scoreWithKernel(input: {
     builders: ReadonlyMap<string, CaseBuilder>;
     notExpressible: Array<{ caseId: string; why: string }>;
+    retired?: Array<{ caseId: string; why: string }>;
     corpus?: CorpusCase[];
 }): KernelVerifierScore {
     const corpus = input.corpus ?? admissibilityCorpus();
@@ -111,10 +120,14 @@ export function scoreWithKernel(input: {
         });
     }
 
-    // The population both rates are over: critical cases whose expectation is `defects_found`.
+    // The population both rates are over: critical cases whose expectation is `defects_found`, **excluding retired ones**.
+    // A retired case has no builder and would be dropped from `answers` anyway, but naming the exclusion here keeps the
+    // denominator and the report saying the same thing — a smaller population must be visible, not inferred from a count.
+    const retired = input.retired ?? [];
+    const retiredIds = new Set(retired.map((entry) => entry.caseId));
     const criticalIds = new Set(
         corpus
-            .filter((entry) => entry.critical === true && entry.expectedVerdict === 'defects_found')
+            .filter((entry) => entry.critical === true && entry.expectedVerdict === 'defects_found' && !retiredIds.has(entry.id))
             .map((entry) => entry.id),
     );
     const scoredCritical = answers.filter((answer) => criticalIds.has(answer.caseId));
@@ -131,6 +144,7 @@ export function scoreWithKernel(input: {
         falsePasses: falsePasses.map((answer) => answer.caseId),
         falsePassRate: scoredCritical.length === 0 ? 0 : falsePasses.length / scoredCritical.length,
         notExpressible: input.notExpressible,
+        retired,
         answers,
         measures: 'the kernel\'s judgement on the cases whose state is expressible as a kernel input — not whether a pass would have found the defect, and not finding ids',
     };

@@ -45,6 +45,17 @@ export interface CorpusCase {
      * a reproduction can be re-run and re-falsified.
      */
     reproduction: string;
+    /**
+     * Set when the subject this case reproduces no longer exists, with the reason.
+     *
+     * **A case whose defect cannot even be planted is not a case, and must not sit in a denominator.** The corpus is
+     * historical and is deliberately kept, but a reproduction naming a deleted module can no longer be run: the mutation
+     * is not applied, so whatever verdict comes back is about the case's *shape* rather than about the defect it names.
+     * Counting it is a score about nothing, and the measure of how much that matters is that the only signal such a case
+     * can produce is a false one — it looks answered. So a retired subject is excluded from every rate and **named**, in
+     * `retired` on the score, so the exclusion is a reported fact rather than a silent subtraction.
+     */
+    subjectRetired?: string;
     expectedVerdict: ExpectedVerdict;
     /**
      * The finding ids a correct verifier reports, or `[]` when the revision is clean.
@@ -87,7 +98,16 @@ export interface CorpusScore {
      * perfect verifier — AC-6's class was inert.
      */
     guardHarmRate: number;
+    /** The live cases every rate above is computed over. Retired subjects are excluded, not silently dropped. */
     cases: number;
+    /**
+     * Cases whose subject no longer exists, with the reason.
+     *
+     * Present only when there are any, so a reader of a report never has to ask whether the list is empty because nothing
+     * retired or because the field was forgotten. See `CorpusCase.subjectRetired` for why such a case is excluded rather
+     * than scored.
+     */
+    retired?: Array<{ caseId: string; why: string }>;
 }
 
 /**
@@ -314,6 +334,13 @@ export function admissibilityCorpus(): CorpusCase[] {
             expectedVerdict: 'defects_found',
             expectedFindings: ['obligation-resolution-is-unconditional'],
             critical: true,
+            // Found by a live run rather than by reading: `ledger detectability` reported this probe `inconclusive` with
+            // `src/quality/repair-obligations.ts cannot be read: ENOENT`, and `ledger verifier` reported the case
+            // `matched: true` — because the mutation was never applied, the verdict was about the case's shape. The
+            // obligation route was deleted with the rest of the round-shaped mechanism, so the defect it names can no
+            // longer be planted. The case is kept (the corpus is the historical comparison point, and the *why* is still
+            // the reason the ledger enforces evidence strength), and it no longer contributes to a rate.
+            subjectRetired: 'the obligation route was deleted with the round-shaped mechanism, so `repair-obligations.ts` and its suite no longer exist and this mutation cannot be planted',
         },
         {
             id: 'scope-guard-central-mutation',
@@ -536,16 +563,21 @@ export function shadowCorpusReport(corpus: CorpusCase[], observations: CorpusObs
 }
 
 export function scoreCorpus(corpus: CorpusCase[], observations: CorpusObservation[]): CorpusScore {
+    // **A case whose subject was deleted is named, not scored.** It cannot be planted, so any verdict it produces is about
+    // the case's shape: including it inflates or deflates a rate by an amount nobody can interpret, and the one thing it
+    // reliably does is *look* answered. `retired` carries the exclusion where a reader sees the score.
+    const retired = corpus.filter((entry) => entry.subjectRetired !== undefined);
+    const live = corpus.filter((entry) => entry.subjectRetired === undefined);
     const byId = new Map(observations.map((observation) => [observation.caseId, observation]));
-    const criticalCases = corpus.filter((entry) => entry.critical === true);
-    const cleanCases = corpus.filter((entry) => entry.kinds.includes('clean-revision'));
+    const criticalCases = live.filter((entry) => entry.critical === true);
+    const cleanCases = live.filter((entry) => entry.kinds.includes('clean-revision'));
     const reported = (observation: CorpusObservation | undefined, expected: string[]): boolean =>
         Boolean(observation) && expected.every((id) => observation!.findingIds.includes(id));
 
     // R5: the guard-false-negative class is scored too. A guard that refuses an honest report is a *false positive* of
     // the guard itself — the verifier answered correctly and was refused — and leaving it out of every rate made AC-6's
     // class measurable by nothing. (Measured: answering all three as the harm moved no rate at all.)
-    const guardCases = corpus.filter((entry) => entry.kinds.includes('guard-false-negative'));
+    const guardCases = live.filter((entry) => entry.kinds.includes('guard-false-negative'));
 
     const caught = criticalCases.filter((entry) => reported(byId.get(entry.id), entry.expectedFindings)).length;
     // A false pass is a *critical* defect answered with "nothing wrong" — strictly narrower than "not caught", because
@@ -561,6 +593,7 @@ export function scoreCorpus(corpus: CorpusCase[], observations: CorpusObservatio
         falsePositiveRate: cleanCases.length === 0 ? 0 : falsePositives / cleanCases.length,
         guardHarmRate: guardCases.length === 0 ? 0 : guardHarms / guardCases.length,
         inconclusiveRate: observations.length === 0 ? 0 : inconclusive / observations.length,
-        cases: corpus.length,
+        cases: live.length,
+        ...(retired.length === 0 ? {} : { retired: retired.map((entry) => ({ caseId: entry.id, why: entry.subjectRetired as string })) }),
     };
 }

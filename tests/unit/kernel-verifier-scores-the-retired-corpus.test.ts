@@ -16,19 +16,40 @@ import { admissibilityCorpus } from '../../src/eval/admissibility-corpus.js';
  * has no concept of text offered as authority), and it stays on the record rather than being explained away.
  */
 describe('the kernel scored against the retired corpus', () => {
-    const { builders, notExpressible } = kernelCaseBuilders();
-    const score = scoreWithKernel({ builders, notExpressible: [...notExpressible] });
+    const { builders, notExpressible, retired } = kernelCaseBuilders();
+    const score = scoreWithKernel({ builders, notExpressible: [...notExpressible], retired: [...retired] });
 
     it('scores only the cases whose state a pure function can be handed, and names the rest', () => {
         const corpusIds = new Set(admissibilityCorpus().map((entry) => entry.id));
         // Both directions: a builder for a case that does not exist, and a case with neither a builder nor a reason.
         for (const id of builders.keys()) expect(corpusIds.has(id), `${id} is not a corpus case`).toBe(true);
-        for (const entry of notExpressible) expect(corpusIds.has(entry.caseId), `${entry.caseId} is not a corpus case`).toBe(true);
-        const covered = new Set([...builders.keys(), ...notExpressible.map((entry) => entry.caseId)]);
+        for (const entry of [...notExpressible, ...retired]) expect(corpusIds.has(entry.caseId), `${entry.caseId} is not a corpus case`).toBe(true);
+        // **Three lists, not two.** A case is built, not expressible, or retired — and a case in none of them is a silent
+        // hole. The retired list exists because a case whose subject was deleted cannot be built *or* described as an
+        // inexpressible state: it had a builder, and that builder was answering a question the case no longer asks.
+        const covered = new Set([...builders.keys(), ...notExpressible.map((entry) => entry.caseId), ...retired.map((entry) => entry.caseId)]);
         const unaccounted = [...corpusIds].filter((id) => !covered.has(id));
-        expect(unaccounted, 'every case is either built or given a reason').toEqual([]);
-        for (const entry of notExpressible) expect(entry.why).not.toHaveLength(0);
+        expect(unaccounted, 'every case is built, given a reason, or marked retired').toEqual([]);
+        for (const entry of [...notExpressible, ...retired]) expect(entry.why).not.toHaveLength(0);
         expect(score.cases).toBe(builders.size);
+        expect(score.retired).toEqual([...retired]);
+    });
+
+    it('does not let a retired subject keep a builder that would answer for it', () => {
+        // The defect a live run found: `obligation-resolution-mutation` had a builder returning a refuted falsifier, so the
+        // kernel answered `fail` and the scorer reported `matched: true` — for a defect whose module and suite had been
+        // deleted. A case with no subject must produce no answer, and the exclusion must be visible in the report.
+        expect(retired.map((entry) => entry.caseId)).toContain('obligation-resolution-mutation');
+        expect(builders.has('obligation-resolution-mutation')).toBe(false);
+        expect(score.answers.some((answer) => answer.caseId === 'obligation-resolution-mutation')).toBe(false);
+        // The population recall is measured over is the *scored* critical set — the cases that are critical, expect
+        // `defects_found`, and have a builder. Spelled out rather than compared to the corpus total, because the gap
+        // between them is exactly the thing this case is about.
+        const scoredPopulation = admissibilityCorpus()
+            .filter((entry) => entry.critical === true && entry.expectedVerdict === 'defects_found' && builders.has(entry.id))
+            .length;
+        expect(score.criticalCases).toBe(scoredPopulation);
+        expect(score.criticalCases).toBeLessThan(admissibilityCorpus().filter((entry) => entry.critical === true).length);
     });
 
     it('reports the population each rate is over, so a subset cannot read as the whole corpus', () => {

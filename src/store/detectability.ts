@@ -83,14 +83,6 @@ export const DETECTABILITY_PROBES: readonly DetectabilityProbe[] = [
         why: 'Renaming the shared evaluator is the cheapest form of "make it return PASS without reading the evidence": the ladder cannot call it any more, so the adequacy suite must redden.',
     },
     {
-        caseId: 'obligation-resolution-mutation',
-        file: 'src/quality/repair-obligations.ts',
-        find: 'export async function resolveObligationsForRevision(',
-        replace: 'export async function resolveObligationsForRevisionUnused(',
-        check: ['npx', 'vitest', 'run', 'tests/unit/obligation-answerability.test.ts', '--reporter=basic'],
-        why: 'An obligation is what makes a repair confirmable; without the resolver the obligation suite must notice.',
-    },
-    {
         caseId: 'scope-guard-central-mutation',
         file: 'src/quality/scope-change.ts',
         find: 'export async function applyScopeChange(',
@@ -102,6 +94,11 @@ export const DETECTABILITY_PROBES: readonly DetectabilityProbe[] = [
 
 /** The critical cases no probe reaches, each with the reason, so the coverage of this measurement is stated not implied. */
 export const NOT_PROBED: ReadonlyArray<{ caseId: string; why: string }> = [
+    // **A probe whose subject was deleted is a probe that cannot run.** This one was here and reported `inconclusive` with
+    // `ENOENT` on every run — a permanent inconclusive that read as an unmeasured case rather than as a case with nothing
+    // left to measure. The obligation route went with the round-shaped mechanism, so its probe moves here with the reason
+    // beside it, which is where the rest of this list lives.
+    { caseId: 'obligation-resolution-mutation', why: 'the obligation route was deleted with the round-shaped mechanism, so its module and suite no longer exist and this defect cannot be planted' },
     { caseId: 'seal-refusal-mutates-the-task-it-refuses', why: 'the reproduction is a CLI session against a task, not an implementation change' },
     { caseId: 'change-record-empties-when-the-round-commits', why: 'needs a commit and a seal, which is a workspace operation rather than a mutation' },
     { caseId: 'change-surface-anchored-on-the-declaration', why: 'needs a commit touching paths outside the declaration' },

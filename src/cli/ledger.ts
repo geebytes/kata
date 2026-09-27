@@ -706,8 +706,8 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // findings is scored on its verdict.
         const { scoreWithKernel } = await import('../eval/kernel-verifier.js');
         const { kernelCaseBuilders } = await import('../eval/kernel-case-builders.js');
-        const { builders, notExpressible } = kernelCaseBuilders();
-        const score = scoreWithKernel({ builders: builders as never, notExpressible: [...notExpressible] });
+        const { builders, notExpressible, retired } = kernelCaseBuilders();
+        const score = scoreWithKernel({ builders: builders as never, notExpressible: [...notExpressible], retired: [...retired] });
         outputResult({ ok: score.falsePasses.length === 0, command: 'ledger verifier', ...score });
         if (score.falsePasses.length > 0) process.exitCode = 1;
         return;
