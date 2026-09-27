@@ -1455,38 +1455,17 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // **The ledger route reads the ledger, and only the ledger.** This branch used to consult the round-shaped
             // findings table and the obligation store beside the decision, so a change approved on its evidence could
             // still be blocked by a finding recorded against a *round* — the last place where one fact had two derivations
-            // and the answer depended on which one was read first. An approval that rests on claims and evidence is
-            // answered by `decide`, which already reports every refusal as a reason with a message; a table about a pass
-            // that no longer gates anything has nothing to add to it.
+            // and the answer depended on which source was read first. An approval that rests on claims and evidence is
+            // answered by `decide`, which reports every refusal as a reason with a message; a table about a pass that no
+            // longer gates anything has nothing to add to it.
             //
-            // The old consumer list is kept in the record rather than in the code: this was the sixth call site repaired
-            // for reading a copy of "is this finding disposed" (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, `navigation`,
-            // and this one), and the repair that ends the class is the removal of the second copy, not a seventh patch.
-            const adversarialFindings: Array<{ id: string; severity: string; message: string; path?: string }> = [];
-            if (adversarialFindings.length > 0) {
-                // C1: findings that gate a node belong to a repair batch, opened when they are recorded (not when they are
-                // repaired) — which is what lets C4 narrow the round after the batch closes.
-                const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
-                await recordFindingsForBatching(
-                    root,
-                    taskId,
-                    adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message })),
-                    'adversarial-review',
-                ).catch(() => null);
-                return {
-                    command: 'review', taskId, phase: 'review', success: false,
-                    error: `The independent adversarial pass confirmed ${adversarialFindings.length} defect(s) at blocking or major severity; resolve them before approving.`,
-                    diagnostics: {
-                        adversarial: {
-                            node: 'review',
-                            required: true,
-                            satisfied: true,
-                            findings: adversarialFindings.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, path: finding.path })),
-                        },
-                        nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
-                    },
-                };
-            }
+            // The dead branch is deleted rather than left empty. An ordered list with nothing in it, checked for being
+            // non-empty, is a guard that cannot fire — the class this repository has removed more times than any other,
+            // and the code that reads it would be a reader wondering whether it ever did anything.
+            //
+            // Kept in the record rather than the code: this was the sixth call site repaired for reading a copy of "is
+            // this finding disposed" (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, navigation, and this one), and the
+            // repair that ends the class is the removal of the second copy, not a seventh patch.
             const { suggestedReviewedPaths } = await import('../quality/review-scope.js');
             const approvalTask = await readTask(root, taskId);
             const reviewPath = layoutReviewPath(root, taskId);
