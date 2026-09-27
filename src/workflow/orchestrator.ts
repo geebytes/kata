@@ -1452,30 +1452,17 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     },
                 };
             }
-            // **The tracked view, not the record's raw copy of the same fact** (`measured closing two changes`): `blockingAdversarialFindings`
-            // reads severity off the pass record, whose findings carry no disposition — so once a pass reported a major finding,
-            // `review --approve` refused for ever, however the finding was disposed and whatever the obligations said. Every other
-            // consumer asks the tracked view, which merges the history and derives `fixed` from a resolved obligation; this is the
-            // fifth call site to be repaired for reading the record instead (after `cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`).
-            // **A finding is cleared by an answered obligation or a recorded decision, and by nothing else.** The first version asked
-            // the tracked view's `disposition`, which had been made to derive `fixed` from a resolved obligation — too wide: a ladder
-            // that counts open majors must still see a finding whose evidence answered the obligation, because the obligation answers
-            // "has this repair been shown to work", not "is this defect gone" (`kgsr13-f1`, measured on the routing fixtures).
-            const { readTrackedFindings } = await import('../quality/finding-disposition.js');
-            const { readObligations } = await import('../quality/repair-obligations.js');
-            const trackedNow = await readTrackedFindings(root, taskId).catch(() => []);
-            const answeredObligations = new Set((await readObligations(root, taskId).catch(() => []))
-                .filter((obligation) => obligation.resolvedAt)
-                .map((obligation) => obligation.findingId)
-                .filter((id): id is string => Boolean(id)));
-            const gateSeverities = (await readTask(root, taskId)).workflowProfile?.reviewMode === 'strict'
-                ? ['blocking', 'major']
-                : ['blocking'];
-            const adversarialFindings = trackedNow
-                .filter((finding) => (finding.disposition ?? 'open') === 'open'
-                    && !answeredObligations.has(finding.id)
-                    && gateSeverities.includes(finding.severity))
-                .map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, ...(finding.path ? { path: finding.path } : {}) }));
+            // **The ledger route reads the ledger, and only the ledger.** This branch used to consult the round-shaped
+            // findings table and the obligation store beside the decision, so a change approved on its evidence could
+            // still be blocked by a finding recorded against a *round* — the last place where one fact had two derivations
+            // and the answer depended on which one was read first. An approval that rests on claims and evidence is
+            // answered by `decide`, which already reports every refusal as a reason with a message; a table about a pass
+            // that no longer gates anything has nothing to add to it.
+            //
+            // The old consumer list is kept in the record rather than in the code: this was the sixth call site repaired
+            // for reading a copy of "is this finding disposed" (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, `navigation`,
+            // and this one), and the repair that ends the class is the removal of the second copy, not a seventh patch.
+            const adversarialFindings: Array<{ id: string; severity: string; message: string; path?: string }> = [];
             if (adversarialFindings.length > 0) {
                 // C1: findings that gate a node belong to a repair batch, opened when they are recorded (not when they are
                 // repaired) — which is what lets C4 narrow the round after the batch closes.
