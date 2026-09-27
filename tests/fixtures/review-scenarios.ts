@@ -234,6 +234,39 @@ export const reviewScenarios: ReviewScenario[] = [
         note: 'Pinned as a policy property (classification reaches `high`), which is where reachability belongs.',
     },
     {
+        id: 'a-counterexample-that-reproduces',
+        mode: 'challenge',
+        why: 'The branch the discovery rate has never exercised: every counterexample raised on the three changes that went through this route was measured and did NOT reproduce, so `refutationRate` has only ever been zero. This is the other side — a challenge that reproduces and therefore blocks.',
+        build: () => base({
+            challenges: [{
+                id: 'X1',
+                claimId: 'C1',
+                command: 'npm test',
+                failsOn: fileSubject.revision,
+                state: 'open',
+                at: '2026-09-27T00:00:00.000Z',
+            }],
+        }),
+        expect: { verdict: 'insufficient', reasons: ['challenge_open'] },
+    },
+    {
+        id: 'a-refuted-verdict-survives-the-counterexample',
+        mode: 'challenge',
+        why: 'A reproducing counterexample against a refuted claim must not be softened by the refutation being present: `fail` outranks `insufficient`, and the counterexample is what a reader acts on.',
+        build: () => base({
+            verdicts: [makeVerdict({ verdict: 'refuted', subjectRevision: fileSubject.revision })],
+            challenges: [{
+                id: 'X1',
+                claimId: 'C1',
+                command: 'npm test',
+                failsOn: fileSubject.revision,
+                state: 'open',
+                at: '2026-09-27T00:00:00.000Z',
+            }],
+        }),
+        expect: { verdict: 'fail', reasons: ['evidence_refuted', 'challenge_open'] },
+    },
+    {
         id: 'waived-without-reason',
         mode: 'record',
         why: 'A waiver is a decision, and a decision without a reason is what the gate has to refuse.',
