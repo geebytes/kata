@@ -28,7 +28,6 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { adversarialGateFor, adversarialNodes, adversarialReasonFor, blockingAdversarialFindings, requiredAdversarialNodes } from '../quality/adversarial.js';
 import { readReview } from './review-read.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
@@ -1274,11 +1273,11 @@ async function cmdVerify(
     const repairReason = suggestion.reason;
     const nextAction = nextActionForTask(taskId, suggestion.nextSkill, suggestion.role, suggestion.reason);
 
-    // Verify concludes on the evidence, not on an author's reading of it — but it no longer hosts its own adversarial
-    // pass. The one formal certification belongs to the Review node (see #5461 / `requiredAdversarialNodes`), so this
-    // node reports readiness and its deterministic refusals, and never blocks on a pass it does not own.
+    // Verify concludes on the evidence, not on an author's reading of it. It used to report which adversarial nodes the
+    // profile would require — a statement about a mechanism that no longer certifies anything, and one that named the
+    // *first* node of a list whose meaning changed with the mode. The mode is still read below, because the strict
+    // matrix rule does depend on it; nothing else here does.
     const reviewMode = task.workflowProfile?.reviewMode;
-    const requiredNodes = requiredAdversarialNodes({ ...(reviewMode ? { reviewMode } : {}) });
     // A strict matrix declaration gap is reported, not blocked: a task sealed before strict rows required declared check
     // ids must keep verifying, or the rule would retroactively invalidate every binding it holds.
     const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewMode === 'strict');
@@ -1313,10 +1312,6 @@ async function cmdVerify(
             blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
             implementationReady,
             governanceReady: wikiClosure.valid,
-            adversarialNodesRequired: requiredNodes,
-            adversarialNodesNotRequired: adversarialNodes
-                .filter((node) => !requiredNodes.includes(node))
-                .map((node) => ({ node, reason: 'not_required' })),
             ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
             ...(task.upstreamCoverage ? {
                 outOfScopeRequirements: task.upstreamCoverage.sources.flatMap((s) =>
