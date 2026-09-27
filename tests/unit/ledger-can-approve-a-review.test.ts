@@ -12,10 +12,14 @@ import {
     appendEvidence,
     ensureAssurance,
     freezeSubject,
+    readLedger,
     recordVerdicts,
     reviewDir,
+    writePlan,
     writeSubject,
 } from '../../src/store/ledger.js';
+import { planReview } from '../../src/producers/planner.js';
+import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
 /**
@@ -86,7 +90,15 @@ describe('the evidence ledger can hold a review approval', () => {
                 evidenceIds: [evidenceId],
                 dependsOn: [`path:${path}`],
             }));
-            await appendEvidence(root, id, makeEvidence({ id: evidenceId, ref: path, assertion: 'contains:export' }));
+            // **The strict tier's own contract, which the plan asks for and the request check enforces.** `strict.autoEvidence`
+            // is `[static_witness, executable_falsifier]`, so a claim carried by a witness alone is refused at approval —
+            // the fixture records the falsifier the tier requires, with the mutation that reddens it.
+            await appendEvidence(root, id, {
+                id: evidenceId,
+                type: 'executable_falsifier',
+                command: `grep -q export ${path}`,
+                mutation: { file: path, find: 'export', replace: 'broken' },
+            });
             verdicts.push(makeVerdict({ evidenceId, subjectRevision: subject.subject.revision }));
         }
         await recordVerdicts(root, id, verdicts);
@@ -103,6 +115,18 @@ describe('the evidence ledger can hold a review approval', () => {
             // the discovery floor was satisfiable by `challenge add --command 'exit 0'`.
             reproduced: true,
         });
+        // **The plan travels with the approval.** `ledger run` hands a reviewer a request derived from the stored plan —
+        // the claim's own reading set, the evidence types its tier requires — and `review --approve` now compares what
+        // arrived against what was asked. A fixture that recorded claims but never planned would be approved on a request
+        // that was never issued, which is exactly what the check refuses.
+        await writePlan(root, id, planReview({
+            subject: subject.subject,
+            claims: (await readLedger(root, id)).claims,
+            policy: defaultPolicy(),
+            tier: 'strict',
+            changedPaths: [path],
+            c0Tokens: null,
+        }));
     }
 
     const approve = (root: string, id: string) => runCommand('review', id, root, {

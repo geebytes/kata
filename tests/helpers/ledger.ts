@@ -1,4 +1,5 @@
-import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, recordVerdicts, writePolicy, writeSubject } from '../../src/store/ledger.js';
+import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, readLedger, recordVerdicts, writePlan, writePolicy, writeSubject } from '../../src/store/ledger.js';
+import { planReview } from '../../src/producers/planner.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { readTask } from '../../src/core/task.js';
 
@@ -97,4 +98,16 @@ export async function seedLedger(
         observed: 'exit 0: the file the claim rests on exists at this revision',
         answeredAt: new Date().toISOString(),
     });
+    // **The plan is now part of what an approval needs.** `verifyAgainstRequest` compares what the reviewer was handed
+    // with what arrived, and a request is derived from the stored plan — so a change that never planned has no reading
+    // sets for the check to compare, and the approval is refused with that reason. Recording the plan is the fixture's
+    // job for the same reason recording the claims is: an approval rests on the flow having been walked.
+    await writePlan(root, taskId, planReview({
+        subject: frozenAgain.subject,
+        claims: (await readLedger(root, taskId)).claims,
+        policy: defaultPolicy(),
+        tier: 'strict',
+        changedPaths: Object.keys(frozenAgain.subject.pathDigests),
+        c0Tokens: null,
+    }));
 }
