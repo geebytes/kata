@@ -6,7 +6,16 @@ import { evaluateAcceptanceAdequacy } from './evidence-adequacy.js';
 import { judgePath as layoutJudgePath, taskDir } from '../core/layout.js';
 
 export interface JudgeInput {
-  root?: string;
+  /**
+   * **Required, and it used to be optional with `process.cwd()` as the fallback.**
+   *
+   * `judge()` writes `judge.json` into the task directory it is given, so a caller that omitted the root wrote the verdict
+   * of a governed change into whatever directory the process happened to be in. Measured: a unit test calling
+   * `judge({ taskId: 'adequacy-task', … })` created `.kata/tasks/adequacy-task/judge.json` in this repository — a stray
+   * task directory that `status` then reads as a task. A test that writes into the workspace it is testing is the same
+   * class as the worktree litter beside it, and the fix is the type: a call site cannot forget what it must decide.
+   */
+  root: string;
   taskId: string;
   acceptance: AcceptanceCriterion[];
   evidence: EvidenceEnvelope[];
@@ -122,7 +131,7 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
     evidenceIds: adequacy.evidenceIds,
   };
 
-  const root = input.root ?? process.cwd();
+  const root = input.root;
   // Stamped like every other verdict: the id names the revision, the manifest hash names the content it judged, so a
   // re-seal that changed nothing does not expire the judgement (see `workflow/verdict-binding.ts`).
   const { currentRevisionIdentity, revisionBindingFields } = await import('../workflow/verdict-binding.js');

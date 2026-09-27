@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mkdir, rm } from 'node:fs/promises';
 import { evaluateAcceptanceAdequacy } from '../../src/quality/evidence-adequacy.js';
 import { judge, type JudgeAcceptanceResult } from '../../src/quality/judge.js';
 import type { EvidenceEnvelope } from '../../src/quality/evidence.js';
@@ -11,6 +13,14 @@ import type { ReviewFinding } from '../../src/quality/reviewer.js';
  */
 describe('evidence adequacy', () => {
     const diffHash = 'a'.repeat(64);
+    /** A root under `tmp/`, so a case that exercises `judge` writes its verdict here rather than into the workspace. */
+    const scratchRoot = join(process.cwd(), 'tmp', 'evidence-adequacy');
+    beforeAll(async () => {
+        await mkdir(scratchRoot, { recursive: true });
+    });
+    afterAll(async () => {
+        await rm(scratchRoot, { recursive: true, force: true });
+    });
 
     function evidence(overrides: Partial<EvidenceEnvelope> & { id: string }): EvidenceEnvelope {
         return {
@@ -137,6 +147,11 @@ describe('evidence adequacy', () => {
         for (const testCase of cases) {
             const shared = evaluate({ ...testCase, rejectCrossRevision: true });
             const judged = await judge({
+                // **A root, because `judge` writes.** This call used to omit it, and the default was `process.cwd()` — so
+                // running the suite left `.kata/tasks/adequacy-task/judge.json` in the repository, a stray task directory
+                // that `status` reads as a task. The comparison below is about the two derivations, not about the file, so
+                // the temp root is enough.
+                root: scratchRoot,
                 taskId: 'adequacy-task',
                 acceptance: acceptance as Array<{ id: string; statement: string }>,
                 evidence: testCase.evidence ?? [evidence({ id: 'evidence-1' })],
