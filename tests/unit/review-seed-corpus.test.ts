@@ -36,6 +36,20 @@ describe('the seed corpus for the new mechanism', () => {
         expect(missing, 'a reason with no seed is a failure mode nobody wrote down').toEqual([]);
     });
 
+    it('names the seeds whose property another layer owns, so a passing expectation is never read as a claim', () => {
+        // A seed that cannot fail in this layer must say which layer owns its property, or a green expectation would look
+        // like the mechanism working when it is a rule that was never exercised here.
+        const structural = reviewScenarios.filter((scenario) => scenario.note !== undefined);
+        expect(structural.map((scenario) => scenario.id).sort()).toEqual([
+            'a-check-that-cannot-fail',
+            'a-check-with-no-mutation-is-not-evidence',
+            'a-floor-that-classifies-nothing',
+        ]);
+        for (const scenario of structural) {
+            expect(scenario.note ?? '').not.toHaveLength(0);
+        }
+    });
+
     it('names a distinct failure mode for every seed', () => {
         const ids = reviewScenarios.map((scenario) => scenario.id);
         expect(new Set(ids).size).toBe(ids.length);

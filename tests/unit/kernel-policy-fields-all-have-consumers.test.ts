@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultPolicy, loadPolicy, meetsAssuranceFloor, policyKeyPaths, POLICY_CONSUMERS, tierPolicy } from '../../src/kernel/policy.js';
+import { classifyRisk } from '../../src/kernel/risk.js';
 
 /**
  * **Every declared field must have a consumer, and every consumer must name a real field.**
@@ -57,5 +58,15 @@ describe('the policy is data with no dead fields', () => {
         expect(tierPolicy(policy, 'standard').requiredRiskClasses).toEqual(['consistency']);
         expect(tierPolicy(policy, 'strict').requiredRiskClasses).toContain('failure_mode');
         expect(tierPolicy(policy, 'security').requiredRiskClasses).toContain('privilege');
+
+        // **The high floor has to exist or the security tier is unreachable by classification.** The tier is the maximum
+        // floor over the touched paths, so a policy with no `high` rule makes the stricter evidence, the higher assurance
+        // floor, the quorum and the privilege risk class all inert — a mechanism nobody can reach is a mechanism nobody
+        // has. This asserts the reachability rather than the table, because the table would look complete either way.
+        const reached = classifyRisk({ paths: ['src/kernel/decide.ts'], policy });
+        expect(reached.floor).toBe('high');
+        expect(reached.tier).toBe('security');
+        const ordinary = classifyRisk({ paths: ['src/quality/change-record.ts'], policy });
+        expect(ordinary.tier).toBe('strict');
     });
 });

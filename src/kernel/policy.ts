@@ -123,6 +123,13 @@ export function defaultPolicy(): Policy {
         riskFloors: {
             'src/quality/**': 'medium',
             'src/workflow/**': 'medium',
+            // **`high` has to exist or the security tier is unreachable.** The classification is the maximum floor over the
+            // paths a change touches, so with no `high` rule no change could ever be routed to the tier whose whole point is
+            // the stricter evidence and the higher assurance floor — `quorum`, `sandboxed` and the privilege risk class were
+            // all inert. These two are where the gate itself lives: a change to the policy or to the decision is a change to
+            // the thing that judges everything else.
+            'src/kernel/policy.ts': 'high',
+            'src/kernel/decide.ts': 'high',
         },
         riskFloorAudit: { changesRequireReview: true },
         diversity: { requiredOn: ['quorum'], kinds: ['model_family', 'prompt_strategy', 'tool_profile'] },

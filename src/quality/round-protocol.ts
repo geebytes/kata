@@ -19,6 +19,16 @@ import type { ExecutorCapability } from './review-execution.js';
 /** The version kata speaks. A host that does not know it must fail rather than guess. */
 export const ROUND_PROTOCOL_VERSION = 1;
 
+/**
+ * The rules this protocol and this repository share, as opposed to the ones only the wire cares about.
+ *
+ * Two better-known examples of the same rule being stated twice were removed again in the same week they landed: the
+ * change record's "the changed paths come from content, not from git status", and the brief's "the class table speaks the
+ * ids the termination condition reads". A fact derived in two places is the defect class this repository keeps finding —
+ * the wire's own version needs no help, and a list that names a rule is a second channel for it.
+ */
+export const ROUND_RULES_SHARED_WITH_THE_REPOSITORY: readonly string[] = [];
+
 /** A bound so a host cannot buffer kata out of memory with one line. The largest record measured here is 45 KB. */
 export const MAX_EVENT_LINE_BYTES = 32 * 1024 * 1024;
 

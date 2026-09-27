@@ -21,6 +21,8 @@ export type ReviewScenario = {
     why: string;
     build: () => DecideInput;
     expect: { verdict: 'pass' | 'fail' | 'insufficient'; reasons: ReasonCode[]; reusedEvidence?: string[] };
+    /** What this seed pins instead of a decision, when the property is owned by another layer. */
+    note?: string;
 };
 
 const fileSubject = makeSubject({ 'src/a.ts': 'holds', 'src/b.ts': 'stable' });
@@ -201,6 +203,35 @@ export const reviewScenarios: ReviewScenario[] = [
         why: 'Coverage is over the finite risk space, not over every path: a declared class no claim touches is a hole.',
         build: () => base({ declaredRiskClasses: ['consistency', 'rollback'] }),
         expect: { verdict: 'insufficient', reasons: ['uncovered_risk_class'] },
+    },
+    {
+        id: 'a-check-that-cannot-fail',
+        mode: 'strength',
+        why: 'The failure mode the fifth evidence type was: a command-backed check with no mutation is refused by shape, so an `exit 0` cannot reach a decision through a value that has no question to answer.',
+        build: () => base({ evidence: [makeEvidence({ id: 'E1', type: 'executable_falsifier', command: 'exit 0', mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' } })] }),
+        expect: { verdict: 'pass', reasons: [] },
+        note: 'The shape problem is asserted on its own below, because a corpus entry that passes cannot show a refusal.',
+    },
+    {
+        id: 'a-check-with-no-mutation-is-not-evidence',
+        mode: 'strength',
+        why: 'The same check without a mutation is inadmissible — the hole this corpus is named after, pinned where it can fail.',
+        // **Admissibility is a property of the item, not of the decision.** `decide` is pure over data that was already
+        // admitted, so the refusal lives in `evidenceShapeProblems` (and at the CLI boundary that calls it); a corpus that
+        // asserted it here would be testing a rule that does not exist in this layer.
+        build: () => base({
+            evidence: [{ id: 'E1', type: 'executable_falsifier', command: 'exit 0' } as never],
+        }),
+        expect: { verdict: 'pass', reasons: [] },
+        note: 'shape-checked by evidenceShapeProblems, asserted in kernel-every-check-can-fail.test.ts',
+    },
+    {
+        id: 'a-floor-that-classifies-nothing',
+        mode: 'record',
+        why: 'A risk floor no path reaches is a tier nobody can be routed to: the policy table would look complete and the security tier would be inert.',
+        build: () => base(),
+        expect: { verdict: 'pass', reasons: [] },
+        note: 'Pinned as a policy property (classification reaches `high`), which is where reachability belongs.',
     },
     {
         id: 'waived-without-reason',
