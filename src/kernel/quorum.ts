@@ -41,6 +41,13 @@ export type QuorumOutcome = {
     merged: EvidenceVerdict[];
     /** Plain-language statement of the rule actually applied, so a reader can see it was applied. */
     rule: string;
+    /**
+     * How many verdicts carried no producer, and were therefore counted as one reading.
+     *
+     * Reported rather than absorbed: a quorum that fell short because the provenance was never recorded is a different
+     * fact from one that fell short because only one reviewer ran, and only one of them is fixed by re-running.
+     */
+    unattributed: number;
 };
 
 /**
@@ -58,6 +65,8 @@ export function aggregateQuorum(input: {
     requiredReviewers: number;
     /** Whether the tier demands diversity among them. */
     demandDiversity: boolean;
+    /** How many verdicts carried no producer. Counted as one reading; passed through so the report can say so. */
+    unattributed?: number;
 }): QuorumOutcome {
     const merged: EvidenceVerdict[] = [];
     const byEvidence = new Map<string, Set<EvidenceVerdict['verdict']>>();
@@ -87,6 +96,9 @@ export function aggregateQuorum(input: {
         undiversified ? 'reviewers were not diverse, so the count adds no independent signal' : 'reviewers were diverse',
         'a refuted verdict is preserved: a reproducible finding is not voted away',
     ];
+    if ((input.unattributed ?? 0) > 0) {
+        parts.push(`${input.unattributed} verdict(s) named no producer and were counted as one reading`);
+    }
 
     return {
         reviewers: input.records.length,
@@ -95,27 +107,48 @@ export function aggregateQuorum(input: {
         undiversified,
         merged,
         rule: parts.join('; '),
+        unattributed: input.unattributed ?? 0,
     };
 }
 
 /**
+ * The run id a verdict with no producer is grouped under.
+ *
+ * One group, not one per verdict. The first version of this used `unattributed:<evidenceId>:<index>`, which made every
+ * verdict of a pre-`producer` ledger into its own *reviewer* — so a single run's six readings counted as six independent
+ * ones, and a `security`-tier change whose contract asks for two reviewers would have been satisfied by one run that had
+ * simply been recorded before the field existed. That is exactly the failure this module exists to prevent, reintroduced
+ * by the fallback written to tolerate old data.
+ */
+export const UNATTRIBUTED_RUN = 'unattributed';
+
+/**
  * Group a verdict list into independent readings.
  *
- * The grouping key is the run, because that is what makes two verdicts two observations. A verdict with no run — every
- * verdict recorded before the field existed — forms its own single-verdict group rather than being merged into one
- * anonymous bucket, so old ledgers are read as one reviewer each instead of as an implicit quorum.
+ * The grouping key is the run, because that is what makes two verdicts two observations. Verdicts with no run — every
+ * verdict recorded before the field existed — form **one** group, because their provenance is unknown and the
+ * conservative reading of unknown provenance is a single reading, not a quorum. `unattributed` on the outcome reports how
+ * many verdicts that was, so the limitation is visible rather than silently costing every old ledger its quorum.
  */
-export function groupByProducer(verdicts: readonly EvidenceVerdict[]): QuorumRecord[] {
+export function groupByProducer(verdicts: readonly EvidenceVerdict[]): { records: QuorumRecord[]; unattributed: number } {
     const byRun = new Map<string, EvidenceVerdict[]>();
-    for (const [index, verdict] of verdicts.entries()) {
-        const runId = verdict.producer?.runId || `unattributed:${verdict.evidenceId}:${index}`;
+    let unattributed = 0;
+    for (const verdict of verdicts) {
+        const runId = verdict.producer?.runId;
+        if (runId === undefined || runId.trim() === '') {
+            unattributed += 1;
+            byRun.set(UNATTRIBUTED_RUN, [...(byRun.get(UNATTRIBUTED_RUN) ?? []), verdict]);
+            continue;
+        }
         byRun.set(runId, [...(byRun.get(runId) ?? []), verdict]);
     }
-    return [...byRun.entries()].map(([runId, items]) => ({
+    const records = [...byRun.entries()].map(([runId, items]) => ({
         id: runId,
         // The actor is the diversity signal a ledger actually holds: two runs by one actor are not independent, and two
-        // actors are the minimum evidence of independence this record can carry.
+        // actors are the minimum evidence of independence this record can carry. A group with no actor is `none`, which
+        // is what stops two anonymous readings from counting as diverse.
         diversity: items[0]?.producer?.actor ?? 'none',
         verdicts: items,
     }));
+    return { records, unattributed };
 }

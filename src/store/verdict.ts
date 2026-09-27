@@ -73,10 +73,10 @@ export type ClaimDecision = ClaimEvaluation & { severity: Severity; statement: s
  */
 function chainQuorum(input: {
     records: QuorumRecord[];
+    unattributed: number;
     evidenceToClaim: Record<string, string>;
     requiredReviewers: number;
     demandDiversity: boolean;
-    tier: TierName;
 }): QuorumReport | undefined {
     if (input.records.length === 0 && input.requiredReviewers <= 1) return undefined;
     const outcome = aggregateQuorum({
@@ -84,12 +84,14 @@ function chainQuorum(input: {
         evidenceToClaim: input.evidenceToClaim,
         requiredReviewers: input.requiredReviewers,
         demandDiversity: input.demandDiversity,
+        unattributed: input.unattributed,
     });
     return {
         disputedClaimIds: outcome.disputedClaimIds,
         undiversified: outcome.undiversified,
         reviewers: outcome.reviewers,
         requiredReviewers: input.requiredReviewers,
+        unattributed: outcome.unattributed,
     };
 }
 
@@ -190,13 +192,16 @@ export async function ledgerVerdict(input: {
     // every producer the ledger's whole verdict list, which made `disputed` unreachable (one verdict per item) and made
     // `reviewers` a count of names rather than of readings — so `security.reviewers: 2` was unenforceable.
     const requiredReviewers = ledger.policy.tiers[tier].reviewers;
-    const records = groupByProducer(ledger.verdicts);
+    // **Old verdicts are one reading, not one each.** A ledger written before `producer` existed groups every verdict under
+    // one unattributed run: counting them individually would make a single run's readings look like a quorum, and the
+    // count is reported so a shortfall caused by missing provenance is distinguishable from one caused by one reviewer.
+    const { records, unattributed } = groupByProducer(ledger.verdicts);
     const quorum: QuorumReport | undefined = chainQuorum({
         records,
+        unattributed,
         evidenceToClaim,
         requiredReviewers,
         demandDiversity: ledger.policy.diversity.requiredOn.includes('quorum'),
-        tier,
     });
 
     const decision = decide({

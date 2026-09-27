@@ -167,8 +167,14 @@ export type EvidenceVerdict = {
     subjectRevision: string;
     /**
      * Who produced this reading, as an immutable pair.
+     *
+     * **Optional because the reader must describe what is on disk.** Every writer supplies it — the adapters stamp it from
+     * the run they hosted — but a ledger recorded before the field existed has verdicts without one, and the store really
+     * does read them. A required field here would make the type disagree with the reader that tolerates the absence, which
+     * is how a type comes to be trusted about a document nobody can produce. `groupByProducer` is where the absence is
+     * handled, and it counts those verdicts as one reading rather than one each.
      */
-    producer: VerdictProducer;
+    producer?: VerdictProducer;
 };
 
 export type ChallengeState = 'open' | 'resolved' | 'withdrawn';

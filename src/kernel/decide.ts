@@ -36,6 +36,8 @@ export type QuorumReport = {
     reviewers: number;
     /** How many independent reviewers the tier asked for. Absent means the tier asked for none. */
     requiredReviewers?: number;
+    /** Verdicts that named no producer, counted as one reading. Reported so a provenance gap is not read as a shortfall. */
+    unattributed?: number;
 };
 
 export type DecideInput = {
