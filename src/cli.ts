@@ -6,17 +6,6 @@ import { join } from 'node:path';
 import { codeGraphInvocation } from './codegraph/runtime.js';
 import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from './workflow/worktree.js';
 import { ensureWorkspaceHygiene } from './core/layout.js';
-import {
-    adversarialGateFor,
-    adversarialNodes,
-    adversarialReasonFor,
-    blockingAdversarialFindings,
-    buildAdversarialBrief,
-    readAdversarialRecord,
-    writeAdversarialRecord,
-    type AdversarialNode,
-    type AdversarialRecord,
-} from './quality/adversarial.js';
 import { runProcess, runProcessSync } from './process/run.js';
 import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
@@ -388,7 +377,7 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|lane|open|design|build|verify|archive|hotfix|tweak|collect|next|findings|scope|adversarial|worktree|eval|baseline> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|ledger|worktree|eval|baseline|wiki|handoff|gate|recover|doctor|revision|relations|orient|hooks|tasks> [change|--change change]',
         );
     }
     if (command === 'status') {
@@ -483,24 +472,6 @@ function isCliEntrypoint(): boolean {
 }
 
 
-/**
- * Whether an `adversarial` result is a refusal, by the words its own commands answer with.
- *
- * Read rather than inferred from one field: `execute` answers with a `status` in the refusal vocabulary, `record` with `recorded: false`,
- * `brief` with `emittedRequest: false`, `status` with `satisfied`/`gate`. A flag a command happens to set must not decide whether the process
- * failed.
- */
-function adversarialResultFailed(result: Record<string, unknown>): boolean {
-    const status = result.status;
-    if (status === 'executor_unavailable' || status === 'budget_exhausted' || status === 'timeout' || status === 'refused' || status === 'cancelled') {
-        return true;
-    }
-    if (result.recorded === false) return true;
-    if (result.emittedRequest === false) return true;
-    const gate = result.gate as { satisfied?: boolean } | undefined;
-    if (gate && gate.satisfied === false) return true;
-    return false;
-}
 
 if (isCliEntrypoint()) {
     main().catch((error: unknown) => {
