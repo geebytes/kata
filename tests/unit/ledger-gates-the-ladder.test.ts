@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendClaim, appendEvidence, readLedger, recordVerdicts, reviewDir, ensureAssurance, freezeSubject, writeSubject } from '../../src/store/ledger.js';
+import { appendChallenge, appendClaim, appendEvidence, readLedger, recordVerdicts, reviewDir, ensureAssurance, freezeSubject, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -68,13 +68,31 @@ describe('the ledger gates the ladder', () => {
         if (!subject.ok) return;
         await writeSubject(root, changeId, subject.subject);
         await ensureAssurance(root, changeId, 'observed');
-        await appendClaim(root, changeId, makeClaim({ id: 'C1', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
-        await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
-        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', subjectRevision: subject.subject.revision })]);
+        // **Every ledger is at least `strict`**, because the policy ceilings the route there and a floor is only as good as
+        // its patterns. So this fixture has to satisfy the strict contract: one claim per required risk class, evidence for
+        // each, and the discovery floor's one independent challenge on record.
+        const classes = ['consistency', 'boundary', 'failure_mode'] as const;
+        const verdicts = [];
+        for (const [index, riskClass] of classes.entries()) {
+            const evidenceId = `E${index + 1}`;
+            await appendClaim(root, changeId, makeClaim({ id: `C${index + 1}`, severity: 'major', riskClass, evidenceIds: [evidenceId], dependsOn: ['path:src/a.ts'] }));
+            await appendEvidence(root, changeId, makeEvidence({ id: evidenceId, ref: 'src/a.ts', assertion: 'contains:holds' }));
+            verdicts.push(makeVerdict({ evidenceId, subjectRevision: subject.subject.revision }));
+        }
+        await recordVerdicts(root, changeId, verdicts);
+        await appendChallenge(root, changeId, {
+            id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: subject.subject.revision, state: 'withdrawn',
+            at: '2026-09-27T00:00:00.000Z', resolution: { at: '2026-09-27T00:01:00.000Z', observed: 'exit 0 when checked' },
+        });
 
         const verdict = await ledgerVerdict({ root, changeId });
         expect(verdict.kind).toBe('decided');
-        if (verdict.kind === 'decided') expect(verdict.decision.verdict).toBe('pass');
+        if (verdict.kind === 'decided') {
+            expect(verdict.decision.verdict).toBe('pass');
+            // The ceiling is visible in the decision, not only in the policy: this fixture's paths match no `high` rule,
+            // and the tier is still `strict`.
+            expect(verdict.tier).toBe('strict');
+        }
         expect(await ladderReason()).not.toBe('satisfy_ledger_deficits');
     });
 

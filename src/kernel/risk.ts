@@ -11,6 +11,9 @@ import type { Floor, Policy } from './policy.js';
 export const FLOOR_TIER: Record<Floor, TierName> = { low: 'standard', medium: 'strict', high: 'security' };
 export const TIER_FLOOR: Record<TierName, Floor> = { standard: 'low', strict: 'medium', security: 'high' };
 
+/** Tier order, so "at least" can be expressed once. */
+export const TIER_RANK: Record<TierName, number> = { standard: 0, strict: 1, security: 2 };
+
 export function floorRank(floor: Floor): number {
     return floor === 'high' ? 2 : floor === 'medium' ? 1 : 0;
 }

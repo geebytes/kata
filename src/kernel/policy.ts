@@ -55,6 +55,15 @@ export type Policy = {
     tiers: Record<TierName, TierPolicy>;
     riskFloors: Record<string, Floor>;
     riskFloorAudit: { changesRequireReview: boolean };
+    /**
+     * The weakest tier the ledger route accepts, whatever the classification says.
+     *
+     * The classification is a floor derived from paths, and a floor is only as good as its patterns: a change to the
+     * admission rule itself sits under `src/**`, which the standard patterns do not look inside, so a change that alters
+     * what evidence is accepted could be approved on auto-evidence alone. Raising a floor is cheap and lowering one needs
+     * a review, so the bound is a **ceiling on the tier** and it is data like every other rule here.
+     */
+    ledgerTierCeiling: TierName;
     diversity: { requiredOn: string[]; kinds: string[] };
     /** How much of the low-risk work is promoted to the deep tier afterwards, so the classifier can be measured. */
     sampling: { rate: number };
@@ -79,6 +88,7 @@ export const POLICY_CONSUMERS: Record<string, string> = {
     'tiers.*.humanBudgetMin': 'producers/planner',
     'riskFloors': 'kernel/risk',
     'riskFloorAudit.changesRequireReview': 'kernel/risk',
+    'ledgerTierCeiling': 'store/verdict',
     'diversity.requiredOn': 'producers/quorum',
     'diversity.kinds': 'producers/quorum',
     'sampling.rate': 'producers/planner',
@@ -132,6 +142,7 @@ export function defaultPolicy(): Policy {
             'src/kernel/decide.ts': 'high',
         },
         riskFloorAudit: { changesRequireReview: true },
+        ledgerTierCeiling: 'strict',
         diversity: { requiredOn: ['quorum'], kinds: ['model_family', 'prompt_strategy', 'tool_profile'] },
         sampling: { rate: 0.2 },
         budgets: { maxTokensPerChange: '0.6*C0', maxWallMs: 1_800_000, deadlineToolCalls: null },
@@ -157,6 +168,9 @@ export function policyKeyPaths(policy: Policy): string[] {
     for (const field of Object.keys(policy.sampling)) keys.add(`sampling.${field}`);
     for (const field of Object.keys(policy.budgets)) keys.add(`budgets.${field}`);
     if (Object.keys(policy.evidenceStrength).length > 0) keys.add('evidenceStrength');
+    // A scalar section is named by itself: the enumerator walks the object's fields, and a tier name would otherwise look
+    // like a missing consumer — which is exactly how the ceiling was refused the first time it was added.
+    keys.add('ledgerTierCeiling');
     for (const field of Object.keys(policy.deadline)) keys.add(`deadline.${field}`);
     return [...keys].sort();
 }
@@ -173,7 +187,7 @@ export function loadPolicy(value: unknown): PolicyLoad {
     if (typeof value.version !== 'number') return { ok: false, error: 'version must be a number' };
     // The top level is enumerated too, and against the same list the consumers name: a section this build does not read
     // is a field nothing reads, which is how a policy key becomes a rule nobody can see.
-    const knownSections = ['version', 'tiers', 'riskFloors', 'riskFloorAudit', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline'];
+    const knownSections = ['version', 'tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline'];
     for (const key of Object.keys(value)) {
         if (!knownSections.includes(key)) return { ok: false, error: `policy carries an unknown field "${key}"; nothing reads it` };
     }
@@ -224,6 +238,9 @@ export function loadPolicy(value: unknown): PolicyLoad {
     }
     if (!isRecord(value.diversity) || !Array.isArray(value.diversity.requiredOn) || !Array.isArray(value.diversity.kinds)) {
         return { ok: false, error: 'diversity.requiredOn and diversity.kinds must be lists' };
+    }
+    if (!TIER_NAMES.includes(value.ledgerTierCeiling as TierName)) {
+        return { ok: false, error: `ledgerTierCeiling must be one of ${TIER_NAMES.join(', ')}` };
     }
     if (!isRecord(value.sampling) || typeof value.sampling.rate !== 'number' || value.sampling.rate < 0 || value.sampling.rate > 1) {
         return { ok: false, error: 'sampling.rate must be a number between 0 and 1' };

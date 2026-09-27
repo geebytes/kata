@@ -13,7 +13,7 @@
 import { readLedger, declaredPaths } from './ledger.js';
 import { decide, type QuorumReport } from '../kernel/decide.js';
 import { aggregateQuorum } from '../producers/quorum.js';
-import { classifyRisk } from '../kernel/risk.js';
+import { classifyRisk, TIER_RANK } from '../kernel/risk.js';
 import type { AssuranceLevel, Decision, EvidenceVerdict, TierName } from '../kernel/types.js';
 
 export type LedgerVerdict =
@@ -68,10 +68,17 @@ export async function ledgerVerdict(input: {
     const producers = [...new Set(ledger.runs.map((run) => run.producer))];
     const evidenceToClaim: Record<string, string> = {};
     for (const claim of ledger.claims) for (const evidenceId of claim.evidenceIds) evidenceToClaim[evidenceId] = claim.id;
-    const tier = input.tier ?? classifyRisk({
+    // **The ceiling, applied at the boundary rather than left to the classification.** A floor is only as good as its
+    // patterns, and the classification reads paths; a change to what evidence is accepted can sit under a pattern no rule
+    // names. So the ledger route never decides below the policy's declared floor — an explicit `--tier` still wins,
+    // because an operator who names a tier is making the decision this bound exists to keep honest.
+    const classification = classifyRisk({
         paths: await declaredPaths(input.root, input.changeId),
         policy: ledger.policy,
-    }).tier;
+    });
+    const ceiling = ledger.policy.ledgerTierCeiling;
+    const tier: TierName = input.tier
+        ?? (TIER_RANK[classification.tier] >= TIER_RANK[ceiling] ? classification.tier : ceiling);
     const quorum: QuorumReport | undefined = producers.length > 1
         ? (() => {
             const outcome = aggregateQuorum({

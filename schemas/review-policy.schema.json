@@ -13,7 +13,8 @@
     "sampling",
     "budgets",
     "evidenceStrength",
-    "deadline"
+    "deadline",
+    "ledgerTierCeiling"
   ],
   "properties": {
     "version": {
@@ -352,6 +353,13 @@
           "maximum": 1
         }
       }
+    },
+    "ledgerTierCeiling": {
+      "enum": [
+        "standard",
+        "strict",
+        "security"
+      ]
     }
   }
 }

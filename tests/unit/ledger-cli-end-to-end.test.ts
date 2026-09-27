@@ -80,6 +80,34 @@ async function submission(): Promise<string> {
     return path;
 }
 
+
+/**
+ * The strict contract every ledger is held to, because the policy ceilings the route at `strict`.
+ *
+ * Stated once here rather than repeated per case: one claim per required risk class, evidence for each, and the discovery
+ * floor's one independent challenge on record. A fixture that skipped it would be testing a weaker route than the one
+ * shipped — and would fail for a reason unrelated to its subject.
+ */
+async function satisfyStrictTier(): Promise<void> {
+    const classes = ['boundary', 'failure_mode'] as const;
+    for (const [index, riskClass] of classes.entries()) {
+        const evidenceId = `E${index + 2}`;
+        const claimId = `C${index + 2}`;
+        await ledger(['claim', 'add', '--statement', `the ${riskClass} case holds`, '--risk-class', riskClass,
+            '--severity', 'major', '--evidence', evidenceId, '--depends-on', 'path:src/a.ts', '--id', claimId]);
+        const path = join(root, `${claimId}.json`);
+        await writeFile(path, `${JSON.stringify({ claims: [], evidence: [
+            { id: evidenceId, type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' },
+        ] }, null, 2)}\n`);
+        await ledger(['evidence', 'add', '--file', path]);
+    }
+    await ledger(['evidence', 'verify']);
+    // A challenge that **does not reproduce** is the discovery the floor asks for: it is raised, measured, and found not to
+    // hold. One left open would be a defect, which is a different state and not what this helper is for.
+    await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 0', '--id', 'X1']);
+    await ledger(['challenge', 'check']);
+}
+
 describe('the ledger verbs', () => {
     it('reports an untouched ledger as a state, not as an empty review', async () => {
         const result = await ledger(['status']);
@@ -106,6 +134,19 @@ describe('the ledger verbs', () => {
         expect(process.exitCode).toBe(1);
     });
 
+    it('never decides below the declared ceiling, so a change under no high-floor pattern is still strict', async () => {
+        // The ceiling exists because a floor is only as good as its patterns: a change to what evidence is accepted can sit
+        // under a path no rule names (`src/**` has no `high` rule). The classification would say `standard` here — and the
+        // route refuses to certify on auto-evidence alone, which is a decision rather than a derivation.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        expect((await ledger(['decide'])).tier).toBe('strict');
+
+        // And an operator who names a tier still wins: the bound is on the automatic path, not on a person.
+        expect((await ledger(['decide', '--tier', 'standard'])).tier).toBe('standard');
+    });
+
     it('carries a change from freeze to a pass, and reports what refused it along the way', async () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);
@@ -121,7 +162,16 @@ describe('the ledger verbs', () => {
         expect(verified.verdicts).toHaveLength(1);
         expect((verified.verdicts as Array<{ verdict: string }>)[0]?.verdict).toBe('supported');
 
+        // One claim is not a review at the strict tier, which is where the ceiling puts every ledger: the tier's whole risk
+        // space has to be claimed, and the discovery floor asks for an independent challenge.
+        const oneClaim = await ledger(['decide']);
+        expect(oneClaim.verdict).toBe('insufficient');
+        expect((oneClaim.reasons as Array<{ code: string }>).map((reason) => reason.code))
+            .toEqual(expect.arrayContaining(['uncovered_risk_class', 'discovery_floor']));
+        await satisfyStrictTier();
+
         const decision = await ledger(['decide']);
+        expect(decision.tier).toBe('strict');
         expect(decision.verdict).toBe('pass');
         // The refusal above set the exit code; a pass leaves it as it is, because a passing command must not clear an
         // earlier failure in the same process.
@@ -134,13 +184,14 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
         await ledger(['evidence', 'add', '--file', await submission()]);
         await ledger(['evidence', 'verify']);
+        await satisfyStrictTier();
         expect((await ledger(['decide'])).verdict).toBe('pass');
 
         // A counterexample against a path the claim does not rest on, so resolving it does not also move the claim's
         // dependency digests and turn the verdict stale — that is a different rule, tested in its own case.
         await mkdir(join(root, 'notes'), { recursive: true });
         await writeFile(join(root, 'notes', 'fix.txt'), 'not yet\n');
-        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/fix.txt', '--id', 'X1']);
+        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/fix.txt', '--id', 'X2']);
         const blocked = await ledger(['decide']);
         expect(blocked.verdict).toBe('insufficient');
         expect((blocked.reasons as Array<{ code: string }>).map((reason) => reason.code)).toContain('challenge_open');
@@ -227,18 +278,19 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
         await ledger(['evidence', 'add', '--file', await submission()]);
         await ledger(['evidence', 'verify']);
+        await satisfyStrictTier();
 
         // A command that measures a file nobody wrote: it fails, so the challenge stays open, and the ledger blocks.
-        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/absent.txt', '--id', 'X1']);
+        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/absent.txt', '--id', 'X3']);
         await ledger(['challenge', 'check']);
         expect((await ledger(['decide'])).verdict).toBe('insufficient');
 
         // The measurement was wrong, so it is amended rather than hand-edited: the state resets, the old command is kept,
         // and the duplicate add is refused by name instead of reporting a success it did not perform.
-        const amended = await ledger(['challenge', 'amend', '--id', 'X1', '--command', 'exit 0', '--reason', 'the first command measured a file that does not exist']);
+        const amended = await ledger(['challenge', 'amend', '--id', 'X3', '--command', 'exit 0', '--reason', 'the first command measured a file that does not exist']);
         expect((amended.challenge as { state: string }).state).toBe('open');
         expect(String(amended.replaced)).toContain('notes/absent.txt');
-        const duplicate = await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 1', '--id', 'X1']);
+        const duplicate = await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 1', '--id', 'X3']);
         expect(duplicate.ok).toBe(false);
         expect(String(duplicate.error)).toContain('already exists');
 
@@ -253,6 +305,7 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
         await ledger(['evidence', 'add', '--file', await submission()]);
         await ledger(['evidence', 'verify']);
+        await satisfyStrictTier();
         expect((await ledger(['decide'])).verdict).toBe('pass');
 
         // The measured numbers enter here: without a writer the budget rule would be a mechanism nothing feeds.
