@@ -65,6 +65,13 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
             importedSources: result.importedSources,
             pagesWritten: result.pagesWritten,
             governedRecords: result.governedRecords,
+            // **Reported, because a refusal the operator cannot see is a silence.** `importedCount` still counts the raw
+            // copy that was refreshed, so without this the output of a refused ingest is indistinguishable from a
+            // successful one — and a destructive write that reports success is the shape this repository removes most.
+            refused: result.refused,
+            ...(result.refused.length > 0
+                ? { note: `${result.refused.length} source(s) were not imported: their page already exists, and ingest renders a stub rather than the page's content.` }
+                : {}),
         };
     }
     if (subcommand === 'query') {

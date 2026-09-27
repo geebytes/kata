@@ -56,6 +56,16 @@ export interface LlmWikiIngestResult {
   importedSources: string[];
   pagesWritten: string[];
   governedRecords: string[];
+  /**
+   * Sources whose page already existed, so nothing was written over it.
+   *
+   * **This is a refusal, not a skip.** `ingest` renders a *stub*: frontmatter, the title, a one-line summary and a source
+   * link. Writing that over a page that already exists replaces its content with a summary of it — measured, the page
+   * `concepts/a-check-that-can-only-pass.md` went from 3,535 bytes to 355 and the original survived only in the copy under
+   * `raw/docs/`. A destructive write that looks like an import is the worst shape for it, because bringing a document into
+   * the wiki sounds additive.
+   */
+  refused: Array<{ source: string; page: string; reason: string }>;
 }
 
 export interface QueryLlmWikiInput extends LlmWikiInput {
@@ -184,6 +194,7 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
   const importedSources: string[] = [];
   const pagesWritten: string[] = [];
   const governedRecords: string[] = [];
+  const refused: Array<{ source: string; page: string; reason: string }> = [];
 
   for (const sourceFile of sourceFiles) {
     const slug = slugify(sourceFile.replace(/\.[^.]+$/, '').split(/[\\/]/).pop() ?? 'source');
@@ -195,6 +206,19 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
 
     const pagePath = `concepts/${slug}.md`;
     const recordId = `llmwiki-${slug}`;
+    // **Never over an existing page.** `renderSummaryPage` produces a stub, so writing it here destroys whatever the page
+    // held and leaves a summary in its place. The operator's routes to change a page that exists are `wiki revalidate
+    // --record <id>` (refresh it from its raw source) and editing it — both of which say what they do. The raw copy under
+    // `raw/docs/` is refreshed, because that copy is exactly the external source and refreshing it is what ingest is for;
+    // only the *page* is protected.
+    if (await pathExists(join(wikiRoot, pagePath))) {
+      refused.push({
+        source: normalizeSourcePath(root, sourceFile),
+        page: pagePath,
+        reason: 'the page already exists, and ingest renders a stub rather than the page\'s content — writing it would replace the page with a summary of itself. Use `kata-cli wiki revalidate --record <id>` to refresh it from its raw source, or edit it.',
+      });
+      continue;
+    }
     const page = renderSummaryPage({
       title: titleFromMarkdown(body) ?? titleFromSlug(slug),
       slug,
@@ -237,7 +261,7 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
     governedRecords.push(recordId);
   }
 
-  return { wikiPath, importedSources, pagesWritten, governedRecords };
+  return { wikiPath, importedSources, pagesWritten, governedRecords, refused };
 }
 
 export async function queryLlmWiki(input: QueryLlmWikiInput): Promise<LlmWikiQueryResult> {
@@ -799,6 +823,16 @@ function resolveWikiLink(link: string, existingPages: Set<string>): string | nul
     if (page === basename || page.endsWith(`/${basename}`) || page.endsWith(`/${basename}.md`)) return page;
   }
   return null;
+}
+
+/** Whether a path exists, without following it into whether it is readable — existence is the whole question here. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function slugify(value: string): string {
