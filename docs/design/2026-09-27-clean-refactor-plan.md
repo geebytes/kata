@@ -949,3 +949,35 @@ src 侧消费者：
 · 8 个已归档 change 的旧记录（`.kata/tasks/*/adversarial-review.json` · `review.json` · `repair-obligations.json` 等）**不再有 kata 命令可读**，git 是它们的备份
 · 换来 src 减 6,471 行 + schema 减 611 行 + 测试减约 7,000 行，以及**删除清单的完成**
 · 判据上的差别（我此前的犹豫）已经不在于风险，而在于取舍：断门改"判定"（影响零），删读命令把历史变成只读 —— 后者是选择，不是推论，所以由用户做
+
+## 19.5 A 的执行进度（本轮 7 个 commit）
+
+```
+已删：
+  · cli.ts 的 8 个旧命令分派块（82 行）
+  · src/cli/{matrix,rounds,findings,repair-author,lane}.ts（816 行）+ 其测试（835 行）
+  · 9 个只驱动 runAdversarialCommand 的夹具文件（2,281 行）
+  · src/cli/ops.ts 的 runAdversarialCommand（759 行）→ ops.ts 1,385 → 637 行
+  · 三个孤儿辅助函数（scopeForIssuedBrief / derivedVerdictFor / currentRevisionManifest，60 行）
+  · 6 个只喂已删命令的 import
+
+已迁（不是删）：
+  · navigation.ts 的 roundClosure：从【读已跟踪 findings + 反例账 + 类表】改为【问账本：多少条 claim 未支持】
+    —— 这是"阶梯的下一个动作"所在的那个面，也是旧机制在其中的最后一处读取
+  · 四道门（审批唯一路径 · 账本路线只读账本 · 删空分支 · verify 不再上报对抗节点）
+
+删掉旧代码时，有 5 个检查失败，且**每一个都在断言一个已不存在的生产消费者** —— 这正是它们存在的意义。
+逐条修成"断言那天仍存在的生产者"：
+  · closure-gate-producers 的两条改断 finding-disposition（新的读取面）
+  · record-salvage 的"packet 可打开"改断渲染器本身（属性是渲染器的，读调用者一直更弱）
+  · class-invariants 的 G3 改成【说出事实】：登记册的写入者随命令消失 ⇒ 此刻生产侧无人登记，
+    而"定义无消费者"这一类现在**为登记册本身成立** —— 值得让它红，而不是粉饰
+  · wiring-check-self-validation 的四个 guard 随子命令一起删（该用例的规则是"清单 = 文件系统走查所见"）
+
+下一步（剩余可删量仍约 6,000 行 src）：
+  ① navigation / orchestrator / seal-preflight 里对 finding-disposition · repair-batch · repair-obligations ·
+     falsifier-reddenings · class-coverage · finding-lifecycle 的读取，逐处迁到账本口径
+  ② 上述 14 个模块（其中 7 个已无 src 消费者：record-salvage · review-state · review-execution ·
+     round-runner · round-protocol · round-registry · review-state）
+  ③ 611 行 schema + 剩余的 ~36 个夹具
+```
