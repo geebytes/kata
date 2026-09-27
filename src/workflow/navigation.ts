@@ -227,50 +227,41 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
     unresolvedObligations: unresolvedObligations.length,
-    // **May this round close?** Reported where the ladder reads, because the loop's missing termination condition is what made seven
-    // rounds: `closure-gate` ran five and this change seven, and every round's findings were about the previous round's repairs —
-    // a repair is new code and the round exists to find defects in new code. The condition that can fail is not "no findings" (each
-    // repair produces material) but "every class an open terminal finding names is covered by a check that reddens when the class
-    // returns". `roundClosure` carries that verdict and names the uncovered classes, so the next action is to cover a class rather
-    // than to repair one more instance.
+    // **May this round close?** — asked of the ledger rather than of a findings table.
+    //
+    // This used to compute a closure verdict from `readTrackedFindings`, the falsifier ledger and the class table: three
+    // readers of the round-shaped route's records, on the one surface that decides what happens next. With the ledger as
+    // the route, the same question has a simpler answer — how many claims are not supported — and the risk classes the
+    // tier requires but no claim covers are the class-level half of it, which is what the termination condition is about:
+    // "every class an open finding names has a check" became "every class the tier requires has a claim".
     ...(await (async () => {
-        // **One derivation, five call sites.** Computed here rather than passed in, because five callers passing their own answer is how
-        // this line produced six instances of "one concept derived in several places". The findings and the coverage table are read
-        // from the sources the disposition commands already write through.
-        const { coveredClasses } = await import('../quality/class-coverage.js');
-        const { roundMayClose } = await import('../quality/finding-lifecycle.js');
-        // **Not swallowed** (`rba10-f1`): `readTrackedFindings` was changed to throw on an invalid record rather than read it as
-        // an absent one, and then both production callers wrapped the call in `.catch(() => [])` — so a schema-invalid record still
-        // arrived as an empty list and `roundMayClose([])` still returned `mayClose: true`. A swallow at the call site defeats a
-        // throw at the callee, and the verdict is what the caller computes.
-        const tracked = await (await import('../quality/finding-disposition.js')).readTrackedFindings(root, taskId);
-        // **A disposition in either store closes the finding**, which is the same rule `repairBriefing` applies: a finding carries
-        // an absence in the falsifier ledger while one store still reads `open`, so a closure verdict computed from one store says
-        // "may close" about work a briefing would still hand out. One rule, asked in both places.
-        const { readFalsifierReddenings, readFalsifierAbsences } = await import('../quality/falsifier-reddenings.js');
-        const disposed = new Set([
-            ...(await readFalsifierReddenings(root, taskId).catch(() => [])).map((entry) => entry.findingId),
-            ...(await readFalsifierAbsences(root, taskId).catch(() => [])).map((entry) => entry.findingId),
-        ]);
-        const open = tracked
-            .filter((finding) => finding.disposition === 'open' && !disposed.has(finding.id))
-            .map((finding) => ({ id: finding.id, severity: finding.severity, ...(finding.classInstances ? { classInstances: finding.classInstances } : {}) }));
-        // **Derived from the table, not written here** (`rba8-f2`): the literal `covered: true` made the predicate's uncovered
-        // branch unreachable, so the verdict could not fail.
-        const verdict = roundMayClose(open, coveredClasses());
-        // **The loop's price, beside its termination condition.** Seven recorded rounds cost 351,864 / 658,523 / 347,000 / 400,000 /
-        // 875,572 / 510,836 / 1,073,271 tokens and produced 7 / 0 / 5 / 5 / 0 / 7 findings — the two most expensive produced zero
-        // because they never wrote a record, and the cheapest produced seven. Cost and yield are not correlated, which is why this
-        // is a fact to report rather than a number to drive down; and it is here because this change has three criteria and none
-        // mentions cost, so "the cost has not fallen" was not a fact anything could fail on.
-        const { reportRoundCost } = await import('../quality/round-cost.js');
-        const cost = await reportRoundCost(root, taskId, 'review').catch(() => null);
-        const costField = cost && cost.totalTokens > 0
-            ? { roundCost: { totalTokens: cost.totalTokens, rounds: cost.rounds.length, ...(cost.latest ? { latest: cost.latest } : {}), ...(cost.range ? { range: cost.range } : {}) } }
-            : {};
-        // The closure verdict is reported only when it has something to say: a round that may close needs no explanation, and a field
-        // that is always present reads as a fact worth watching when it is not.
-        return verdict.mayClose ? costField : { roundClosure: verdict, ...costField };
+        const { readLedger } = await import('../store/ledger.js');
+        const { evaluateClaim } = await import('../kernel/decide.js');
+        const ledgerState = await readLedger(root, taskId);
+        if (ledgerState.claims.length === 0) {
+            // No ledger is a state, not an empty verdict: a change on this route may legitimately have none yet, and saying
+            // "cannot close" about nothing recorded would be a refusal of work that has not started.
+            return {};
+        }
+        const unsupported = ledgerState.claims.filter((claim) => {
+            const evaluation = evaluateClaim(claim, {
+                evidence: ledgerState.evidence,
+                verdicts: ledgerState.verdicts,
+                reusedEvidence: new Set(),
+                policy: ledgerState.policy,
+                challenges: ledgerState.challenges,
+                subjectRevision: ledgerState.subject?.revision ?? '',
+            });
+            return evaluation.state !== 'supported';
+        });
+        if (unsupported.length === 0) return {};
+        return {
+            ledgerClosure: {
+                mayClose: false,
+                unsupportedClaims: unsupported.map((claim) => claim.id),
+                reason: `${unsupported.length} claim(s) are not supported, so the ledger does not yet decide a pass`,
+            },
+        };
     })()),
     unresolvedObligationAcIds: [...new Set(unresolvedObligations.map((o) => o.acceptanceId).filter((id): id is string => Boolean(id)))],
     ...(task && !task.acceptanceMatrix ? { missingAcceptanceMatrix: true } : {}),
