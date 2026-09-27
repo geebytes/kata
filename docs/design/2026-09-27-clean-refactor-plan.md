@@ -467,3 +467,98 @@ node dist/cli.js ledger status --cost --change round-protocol
 > **接线已经完成，但"新路径成为默认"还没有发生** —— 因为**今天没有任何一个 change 有账本**（`state: 'absent'` 是实测状态）。删除旧路径的前提是每一条流程都走新路径，而这一步需要**先给在飞的 change 建账本**（`ledger freeze` → `claim add` → `evidence add` → `verify`），这是一次**逐个 change 的迁移**，不是一次删除。
 
 所以正确的下一步次序是：**① 挑一个在飞 change，用新命令把它的验收项变成 claim 并录证据 → ② 让阶梯按账本路由它 → ③ 它归档之后，删除与它有关的那部分旧机制 → ④ 重复。** 每一步都可验证，且任何一步停下都不会让仓库失去一个能跑的评审路径。
+
+---
+
+# 14. 回溯：落地实现与本文档的差异（逐条实测）
+
+> 方法：把本文档 §1–§9 里**可核对的断言**逐条拿出来，用命令核对代码，而不是重读自己的叙述。分四类：**A 一致** · **B 落地但形态不同**（有理由，需写进文档）· **C 未落地** · **D 文档陈旧/自相矛盾** · **E 落地本身引入了方案要消除的缺陷**（最要紧的一类）。
+> 结论：**17 条差异，其中 3 条是 E 类。**
+
+## 14.1 三种对象与决策（§1.2 / §1.4）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 1 | `Claim.il` 内联 `evidence: EvidenceRef[]` 与 `challenges: Challenge[]` | 落地为 `evidenceIds` / `challengeIds` + 两个**独立的顶层追加式列表**。理由：证据是**落盘即存在**的（D10），内联会让每加一条证据就重写 claim，`at`/`reopens` 随之漂移 | **B** |
+| 2 | `Claim.status` 就是状态（5 值） | `status` 是**声明**，判定不读它；状态由 `evaluateClaim()` 从证据**推导**（`ClaimState` 9 值：supported/waived/unsupported/refuted/missing/inconclusive/stale/below_strength/challenged）。理由实测：成本报告曾显示"6 个 open"而同一账本判定 `pass`（§13.4 ⑦） | **B**（§1.2 需改） |
+| 3 | `Claim` 没有 `severity` | 落地有 `severity`：证据强度下限按严重度定（`MIN_STRENGTH_BY_SEVERITY`） | **B** |
+| 4 | 决策三分、预算耗尽永不 pass | ✅ `decide()` + `kernel-decision-cannot-pass-a-spent-budget.test.ts`（3 例） | **A** |
+
+## 14.2 内核不变量（§4 K1–K7）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 5 | **K2：每条注册的检查都必须带一个能让它变红的变异；没有变异的检查不可受理**（§4） | **只落到"按证据类型"的弱形态**：`kernel-every-check-can-fail.test.ts` 断言的是**每类验证器会失败**，而 `invariant_proof` 的**形状校验不要求变异**、验证器只跑命令。**实测（端到端）**：一条 `command: bash -c "exit 0"` 的 `invariant_proof` → `verdict: supported` → `decide: pass`。**一个永远不会失败的检查可以支撑一个 claim 并让它通过** | **E** |
+| 6 | §9 的反制写的是"每条证据**类型**必须有一个变异用例" | 代码实现的是**§9 的弱式**，而 §4 的强式没实现 ⇒ **文档自相矛盾，且落地选了弱的那一侧**。而 §3 保留清单把"每条检查都必须能失败"列为本方案**必须原样搬走**的纪律（旧机制靠它抓到 11 处恒真检查） | **D + E** |
+| 7 | K6：同一主体在两支 adapter 上必须得到同一个 decision（前置：一个最小第二 adapter） | ✅ 第二支 adapter（file）已交付，差分用例存在 —— 但**差分只对 `static_witness` 成立**；对 `executable_falsifier`，file adapter 返回 `inconclusive`（"no recorded result"）⇒ **K6 名义覆盖 5 类，实测覆盖 1 类** | **B** |
+| 8 | K1 / K3 / K4 / K5 / K7 | ✅ 各有会失败的用例（`kernel-is-pure-and-platform-neutral` · `kernel-decision-cannot-pass-a-spent-budget` · `kernel-delta-reuses-only-unchanged-dependencies` · 同 K1（注释先清空）· `kernel-risk-floor-changes-need-review`） | **A** |
+
+## 14.3 度量与成本（§11 的 S2/S3/S10/S11）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 9 | S2/S10/S11：把现状仪表化 | ✅ `ledger status --cost`（`claimToSupportedMs` 中位数 · `reopenings` · `bySupport` · `refutationRate` · `challengeWithdrawalRate`）+ `ledger usage set`（**实测数字必须有写入者**，否则预算规则就是一个没有 writer 的机制） | **A** |
+| 10 | **S3：`Claim.readingSet[]` + planner 必须产出阅读计划 ⇒ 评审上下文由 claim 决定，而不是由整个 change 决定**（§11.2 把它列为"可直接落地的收益"之一） | **算出来了，没有任何消费者**：`plan` 报告 `readingSets`，而 `readingSet` 在整个 `src/` 里**唯一**的消费者是**旧路径**的 brief 渲染器（`src/quality/adversarial.ts`）。新路径没有任何生产者拿到阅读集 ⇒ **单次评审的上下文成本一分未降**，而这一项本身就是它要消除的类：`a-definition-with-no-consumer` | **E** |
+| 11 | 语料只用历史缺陷对新机制无效 ⇒ 语料分两半 | ✅ 第一半（新机制对抗种子）落地：`tests/fixtures/review-scenarios.ts` 17 个种子，且**语料自证覆盖**（每个 reason code 至少一个种子）。**第二半（遗留缺陷 + change 级 baseline）未开始** | **B / C** |
+
+## 14.4 Policy（§1.5）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 12 | `standard.reviewers: 1` | 落地 `0` | **B** |
+| 13 | `assurance` 是**允许集合**（`["none","relayed"]` 等） | 落地为 `assuranceFloor`（**下限**，且 strict 已升到 `observed`）。理由：集合会让"比档位要求更好的 assurance"反而被拒（§13.4 ①） | **B**（§1.5 需改） |
+| 14 | `riskFloors` 含 `"src/workflow/seal-preflight.ts": "high"` | 落地**没有任何 `high` 行**（只有两条 `medium`）⇒ **默认 policy 下 `security` 档不可达** ⇒ `quorum_undiversified` / `sandboxed` 下限在实践中永不生效 | **C** |
+| 15 | `evidenceStrength.blocking: ["executable_falsifier","static_witness"]` | 落地收窄为**仅** `executable_falsifier`（更严，方向正确，但文档需改） | **B** |
+| 16 | §1.5 未含 `requiredRiskClasses` / `sampling` | 落地都有。`requiredRiskClasses` 是必需的：覆盖检查原本由 claims 自身推出 ⇒ **不可能失败**（§13.4 ⑧） | **B**（文档需补） |
+
+## 14.5 CLI 与 schema（§5）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 17 | 7 个动词：`subject freeze` / `claim` / `evidence` / `challenge ask\|answer\|list` / `review plan\|run` / `decide` / `focus` | 落地 `ledger` 下 **9 个动词 / 15 个子命令**：`status` `freeze` `policy` `claim(list,show,waive,reopen,add)` `usage` `evidence(list,add,verify)` `challenge(list,add,check,amend)` `plan` `decide` `focus`。**`challenge ask\|answer`（随机出题 + 应答率）未落地** —— 落地的是"反例账本"（add/check/amend），即 clean-sheet 稿里 E 协议的随机挑战那一半缺席 | **B + C** |
+| 18 | 5 个小 schema（claim/evidence/decision/policy/subject） | 落地 **6** 个：多了 `review-evidence-verdict`（内核消费判决，必须有定义） | **B** |
+
+## 14.6 删除清单与阶段（§2 / §7 / §9）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 19 | §2 删除 **6,917 行 src + 611 行 schema + 7,062 行测试** | **一行未删**：`adversarial.ts` 3,300 · schema 611 · 13 个支撑模块 3,166 · 旧测试 45 文件。理由见 §13.7（新路径尚未成为默认，且删除需要先按 change 迁移） | **C**（有理由） |
+| 20 | §9 风险表："重写期间新旧并存 ⇒ 同一事实两处派生" 的反制是"**每个阶段都带删除动作，不允许先并存后清理**" | **正处在被禁止的那个状态**，且后果已实测到：`review-record-integrity` 的**账本判定 pass，而旧 findings 表里 `rri-f1` 仍是 open major** —— 同一件事两个答案（由审批门取更严的那个，所以今天没有造成错误结论，但这是巧合而不是设计） | **E**（受迁移次序约束） |
+| 21 | §7 P6：K6 差分 · Platform Coupling Index · Adapter Change Radius · shadow 试点 | K5 的文本+类型检查是 Platform Coupling Index 的实现片段 ✅；**另三项未落地** | **C** |
+
+## 14.7 验收（§8）
+
+| # | 文档说 | 实测 | 类 |
+|---|---|---|---|
+| 22 | 9 条验收 | **3 条已成立且可测**：`no-record rate = 0`（增量落盘，结构上成立）· 内核平台耦合 = 0（K5 用例）· 预算耗尽永不 pass（K3 用例）。**6 条不可测**（CriticalRecall ≥ baseline · FalsePass ≤ baseline · Cost ≤ 0.6 C0 · full re-review ↓≥70% · blocking/major 证据 ≥95% 可重放 · gate mutation kill = 100%）—— 因为 **P1 语料（change 级 baseline）尚未开始**，而方案自己写着"关键路径是 P1" | **C** |
+
+## 14.8 保留清单（§3）
+
+| # | 文档说原样搬走 | 实测 | 类 |
+|---|---|---|---|
+| 23 | `pathDigests` 冻结 · `lane` 漂移计算 · `falsify` 的三步账本形状 · 数字期限 · 严重度门槛 | ✅ 全部搬走（`subject.ts` · `ledgerDrift` · `executable_falsifier` 的三步 `{before,mutated,after}` · `planner` 的期限派生 · `evidenceStrength`） | **A** |
+| 24 | **"每条检查都必须能失败"的纪律** | ✗ 只搬了弱式（见 #5/#6）—— 这是 §3 七项里唯一**名义搬走、实际失效**的一项 | **E** |
+| 25 | 7 类缺陷（作为词汇） | ✗ 新路径对 `CLASS_COVERAGE` **零引用**；旧表仍在旧路径（`class-coverage.ts` 230 行）。新路径用的是 `RiskClass`（风险类）——**"缺陷类"与"风险类"是两件事**，文档把两者混在了一行里 | **C + D** |
+
+## 14.9 结论
+
+**一致（A）：8 项** —— 决策三分与预算规则、K1/K3/K4/K5/K7、度量仪表、语料第一半的自证覆盖、保留清单里 5 项、D10 的"无记录在结构上不可能"、D1 的档位重定义（今天落地）、阶梯接线（在真实 change 上验过）。
+
+**差异（B）：9 项** —— 都是"落地形态与文档描述不同、且有真实理由"。**处置：改文档，不改代码**（§1.2 / §1.5 / §3 / §5 需要一次同步）。
+
+**未落地（C）：6 项** —— 删除清单、`challenge ask|answer`、`high` floor、P6 的三项、§8 的 6 条验收、语料第二半。**处置：如实保留为"未做"，不要写成"已完成"。**
+
+**E 类（3 项，最要紧）**：
+
+1. **K2 落在弱形态**（#5）—— 方案的中心断言"把'能失败'变成内核自己的不变量"目前**只对 `executable_falsifier` 成立**，而我在两个真实 change 上用的**全部是 `invariant_proof`**（11 条 claim）。**实测：一条 `exit 0` 的检查可以让一个 major claim 通过。** 这正是旧机制抓到 11 次的类，**在新路径上重新打开了**。
+2. **`readingSet` 有生产者无消费者**（#10）—— 它要消除的类，出现在它自己的实现里；S3 声称的成本收益**为零**。
+3. **同一事实两处派生**（#20）—— §9 明确禁止的状态，受迁移次序约束而存在；后果已实测（账本 pass 与 findings 表 open 并存）。
+
+**两件该修的（都不需要架构决策）**：
+```
+① K2 落到逐条：命令型证据（invariant_proof / executable_falsifier）**必须**带一个变异，
+   或在 evidence add 时要求一个"它能变红"的证明；否则该证据不可受理。
+② readingSet 要么有消费者（planner 把阅读集交给生产者，评审上下文按 claim 收窄），
+   要么从方案里删掉这一项 —— 不能留着当装饰。
+```
+**一次文档同步**：§1.2（三种对象的实际形态）· §1.5（assurance 下限 / requiredRiskClasses / sampling / reviewers / riskFloors / evidenceStrength）· §3（"逐条检查都能失败"是弱式、7 类缺陷未搬）· §5（实际动词表）· §9（把弱式那句改成强式，或反过来把 §4 改成弱式并说明为什么）。
