@@ -1166,3 +1166,16 @@ capability 被证伪而非被声明
 wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既有欠账；没有一条可归因于被删的路由
 测试：143 文件 / 1,011 用例 / 0 失败       tsc exit 0
 ```
+
+## 22. ④ 完成：wiring check 47 → 0
+
+**判据（一遍通则，逐条套用）**：一个没有生产消费者的声明，只有两个去处 ——
+(a) **接线**到那个内联计算同一份值的站点；(b) **删除**，并写下理由。没有第三种状态。
+
+**接线（9 条）**：`evidenceArchiveDir`（orchestrator 自己拼了同样三段路径）· `llmwikiDir`（`.llmwiki` 在另两个文件里是字面量，改为共享 `llmwikiDirName`）· `resolvedCheckId`（同一表达式在 `check-reuse.ts` 里以 `reusableCheckId` 活着，两者都自称"revision id 所用的那个身份"）· `markRecordStale`（drift 走查自己在两个分支里写了同一句 `updateWikiRecord(…{status:'stale'})`，同一写法的三份拷贝）· `isLegacyTask`（`!matrix`，阶梯里内联成 `!task.acceptanceMatrix`）· `readChangeRecord`（seal 写变更记录并拒绝与之矛盾的散文，而**没有任何东西读回过一份** —— 有写者无读者的受审产物；现在 verify 报告它）。
+
+**删除（其余）**：被取代的 delta 面（`revisionChangeSurface`、`deltaCoversChange`）· text-only pass 的两个助手 · 重新认证规划器 · 两个没人读的哈希 · 验收矩阵迁移写入器 · 平台命令渲染器 · 两个 comet 兼容助手（活等价物是断言）· 三个 wiki 读写器 · 六个产物无人创建的 layout 路径 · `stampEngineVersion`（同一写入的第二个、无锁实现）· `computePathDigest`（第三个树走查，而两个调用者都需要整集）· 退役遥测名列表（唯一消费者是已删的命令）。
+
+每条删除的理由都写在代码里。**判据本身**：`npm run check:wiring` → `clean: 136 declared path(s), nothing unreferenced and nothing unconsumed`；自校验用例的"手工测量的死导出清单"清零，且断言仍在跑 —— 下一个无消费者的声明会在这里点名失败。
+
+**测试**：145 文件 / 969 用例 / 0 失败（从 1017 下降：删掉的用例测的都是被删的声明）。
