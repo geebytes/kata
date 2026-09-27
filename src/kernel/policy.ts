@@ -182,16 +182,53 @@ export function policyKeyPaths(policy: Policy): string[] {
     return [...keys].sort();
 }
 
-export type PolicyLoad = { ok: true; policy: Policy } | { ok: false; error: string };
+export type PolicyLoad =
+    | { ok: true; policy: Policy; /** Top-level sections this reader filled because the stored document predates them. */ filled: string[] }
+    | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Validate a parsed document. Refusals name the offending key, because "policy is invalid" is not actionable. */
+/**
+ * A stored policy read the way it was written, for the sections it predates.
+ *
+ * **Measured before this existed**: `ledgerTierCeiling` was added as a required top-level section, and the three ledgers
+ * written before it became `unreadable` — `ledger decide` refused with "the stored policy was refused … so nothing here
+ * decides". A required field that silently invalidates every document written before it is the same defect one layer down
+ * from the one this repository keeps removing: a declaration that outlives what it declares. And on a store of record it
+ * is worse than elsewhere, because the ledger is the only place the evidence lives — a reader that cannot read it has
+ * destroyed the record rather than reported a gap.
+ *
+ * The rule is the one the evidence reader already follows (`passed ?? exitCode === 0`): a **missing** section takes the
+ * value its absence implied, and which sections were filled is **reported** (`filled`), so a substituted rule is visible
+ * rather than silent. An **unknown** section still refuses — that is a field nothing reads, which is a different fact and
+ * still a defect. The distinction is deliberate: absence is history, an extra key is a declaration with no consumer.
+ */
 export function loadPolicy(value: unknown): PolicyLoad {
     if (!isRecord(value)) return { ok: false, error: 'policy must be a JSON object' };
     if (typeof value.version !== 'number') return { ok: false, error: 'version must be a number' };
+    // Only for version 1, and only for known sections: an unknown key is still refused by the enumeration below.
+    if (value.version === 1) {
+        const stored: Record<string, unknown> = value;
+        const defaults = defaultPolicy() as unknown as Record<string, unknown>;
+        const filled: string[] = [];
+        for (const section of ['tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline']) {
+            if (stored[section] === undefined) filled.push(section);
+        }
+        if (filled.length > 0) {
+            const patched: Record<string, unknown> = { ...stored };
+            for (const section of filled) patched[section] = defaults[section];
+            const result = loadFilled(patched);
+            return result.ok ? { ...result, filled } : result;
+        }
+    }
+    return loadFilled(value);
+}
+
+/** The validation proper, for a document that carries every section. */
+function loadFilled(value: Record<string, unknown>): PolicyLoad {
     // The top level is enumerated too, and against the same list the consumers name: a section this build does not read
     // is a field nothing reads, which is how a policy key becomes a rule nobody can see.
     const knownSections = ['version', 'tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline'];
@@ -289,7 +326,7 @@ export function loadPolicy(value: unknown): PolicyLoad {
     for (const key of known) {
         if (!declared.has(key)) return { ok: false, error: `POLICY_CONSUMERS names "${key}" but the policy does not carry it` };
     }
-    return { ok: true, policy };
+    return { ok: true, policy, filled: [] };
 }
 
 export function tierPolicy(policy: Policy, tier: TierName): TierPolicy {

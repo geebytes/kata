@@ -105,6 +105,8 @@ export type Ledger = {
     malformedFiles: string[];
     /** Why a stored policy was refused, when one exists and does not load. `null` when none was stored or it loaded. */
     policyRejected: string | null;
+    /** Sections of the stored policy this reader filled because the document predates them. */
+    policyFilled: string[];
 };
 
 export function reviewDir(root: string, changeId: string): string {
@@ -164,9 +166,16 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     // that the build no longer accepts decide as though it had been read — the record would look clean while the rule that
     // was actually applied came from somewhere else.
     let policyRejected: string | null = null;
+    // **Sections a stored policy predates are filled and named.** Measured: `ledgerTierCeiling` was added as required and
+    // the three ledgers written before it became unreadable — `decide` refused to decide rather than read them. A reader
+    // that cannot read a store of record has destroyed the record, so the fill happens here and `policyFilled` reports it:
+    // a substituted rule is visible rather than silent, which is the same distinction the evidence reader keeps.
+    let policyFilled: string[] = [];
     if (loaded !== null) {
-        if (loaded.ok) policy = loaded.policy;
-        else policyRejected = loaded.error;
+        if (loaded.ok) {
+            policy = loaded.policy;
+            policyFilled = loaded.filled;
+        } else policyRejected = loaded.error;
     }
     const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
     return {
@@ -184,6 +193,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         recordedFiles,
         malformedFiles,
         policyRejected,
+        policyFilled,
     };
 }
 
