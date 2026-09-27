@@ -109,11 +109,11 @@ describe('a repair with no falsifier says so, and only with a reason', () => {
         expect(obligationIsAnswered({ obligation, resolvedAcceptanceIds: ['AC-1'], evidence, absences: [absence], revisionId: 'revision-two' } as never).answered).toBe(false);
     });
 
-    it('refuses to record an absence without a reason', async () => {
-        const { runFalsifyCommand } = await import('../../src/cli/ops.js');
-        const refused = await runFalsifyCommand(['--change', 'c', '--finding', 'f', '--none']);
-        expect(refused.success).toBe(false);
-        expect(String(refused.error)).toContain('--reason');
+    it('refuses to record an absence without a reason', () => {
+        // The command that recorded an absence was `kata-cli falsify --none`, deleted with the round-shaped route. The rule
+        // it enforced is asserted here over the predicate instead, because the rule is the property and the command was
+        // one caller of it: an absence with an empty reason is not an answer.
+        expect(obligationIsAnswered({ obligation, revisionId: 'revision-one', resolvedAcceptanceIds: ['AC-1'], evidence, absences: [{ ...absence, reason: '' }] } as never).answered).toBe(false);
     });
 });
 
