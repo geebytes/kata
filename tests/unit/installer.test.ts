@@ -15,6 +15,32 @@ import { transition } from '../../src/core/state.js';
 import { planDetectedInit, promptInitPlan, renderInitBanner, synthesizePlatformCandidates } from '../../src/init-wizard.js';
 import { acknowledgeContextPacket, createContextPacket } from '../../src/workflow/context-fabric.js';
 
+
+/**
+ * **A blocking problem, in the ledger's vocabulary.** These fixtures used to write `review.json` with a blocking finding,
+ * and the ladder read that table; the ladder now asks the ledger, so the fixture records what the ladder asks about: a
+ * claim at blocking severity with no evidence supporting it. The fixture is written through the same store the route uses
+ * rather than through a second shape of the same fact.
+ */
+async function seedBlockingLedger(root: string, taskId: string): Promise<void> {
+    const { seedLedger } = await import('../helpers/ledger.js');
+    const { appendClaim } = await import('../../src/store/ledger.js');
+    // The task's own record is the one path these fixtures certainly have: they create a task and nothing else.
+    await seedLedger(root, taskId, { paths: [`.kata/tasks/${taskId}/task.json`] });
+    await appendClaim(root, taskId, {
+        id: 'C-blocking',
+        statement: 'the boundary is still violated',
+        riskClass: 'boundary',
+        severity: 'blocking',
+        dependsOn: [`path:.kata/tasks/${taskId}/task.json`],
+        evidenceIds: [],
+        challengeIds: [],
+        status: 'open',
+        at: new Date().toISOString(),
+        reopens: 0,
+    });
+}
+
 describe('Kata platform installer', () => {
     const roots: string[] = [];
     let previousRuntimeRefreshTimeout: string | undefined;
@@ -1354,10 +1380,7 @@ describe('Kata platform installer', () => {
             join(root, '.kata/tasks/review-me/current-state.json'),
             `${JSON.stringify({ taskId: 'review-me', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
         );
-        await writeFile(
-            join(root, '.kata/tasks/repair-me/review.json'),
-            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-59515', taskId: 'installer-fixture', severity: 'blocking', message: 'Must fix.' }] }, null, 2)}\n`,
-        );
+        await seedBlockingLedger(root, 'repair-me');
 
         const previousCwd = process.cwd();
         process.chdir(root);
@@ -1372,7 +1395,7 @@ describe('Kata platform installer', () => {
                     taskId: 'repair-me',
                     nextSkill: '/kata-build',
                     role: 'implementer',
-                    reason: 'repair_blocking_review_findings',
+                    reason: 'satisfy_ledger_deficits',
                     slashCommand: '/kata-build repair-me',
                     cliCommand: 'kata-cli build --change repair-me',
                 },
@@ -1384,7 +1407,7 @@ describe('Kata platform installer', () => {
                 candidates: [
                     expect.objectContaining({
                         taskId: 'repair-me',
-                        upstream: expect.objectContaining({ blockingFindings: 1 }),
+                        upstream: expect.objectContaining({ ledger: expect.objectContaining({ verdict: 'insufficient' }) }),
                     }),
                     expect.objectContaining({
                         taskId: 'review-me',
@@ -1411,10 +1434,7 @@ describe('Kata platform installer', () => {
             join(root, '.kata/tasks/selected-repair/current-state.json'),
             `${JSON.stringify({ taskId: 'selected-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
         );
-        await writeFile(
-            join(root, '.kata/tasks/selected-repair/review.json'),
-            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-85467', taskId: 'installer-fixture', severity: 'blocking', message: 'Boundary still violated.' }] }, null, 2)}\n`,
-        );
+        await seedBlockingLedger(root, 'selected-repair');
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'selected-repair']));
 
@@ -1428,7 +1448,7 @@ describe('Kata platform installer', () => {
                 taskId: 'selected-repair',
                 nextSkill: '/kata-build',
                 role: 'implementer',
-                reason: 'repair_blocking_review_findings',
+                reason: 'satisfy_ledger_deficits',
                 slashCommand: '/kata-build selected-repair',
                 cliCommand: 'kata-cli build --change selected-repair',
             },
@@ -1438,10 +1458,10 @@ describe('Kata platform installer', () => {
                 cliCommand: 'kata-cli build --change selected-repair',
             },
             upstream: expect.objectContaining({
-                blockingFindings: 1,
+                ledger: expect.objectContaining({ verdict: 'insufficient', deficits: ['C-blocking: at least one evidence item'] }),
             }),
             askUser: expect.arrayContaining([
-                '检测到 blocking review findings；建议先执行 /kata-build 修复，而不是继续 Judge PASS。',
+                '证据账本（ledger）判定不通过：原因与缺口已列出（reasons / deficits）。请针对缺口修复，然后重新冻结主体并重验受影响的 claim —— 修一个实例只会换来同一类的下一轮。',
             ]),
         });
     });
@@ -1460,10 +1480,7 @@ describe('Kata platform installer', () => {
             join(root, '.kata/tasks/orient-repair/current-state.json'),
             `${JSON.stringify({ taskId: 'orient-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
         );
-        await writeFile(
-            join(root, '.kata/tasks/orient-repair/review.json'),
-            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-73054', taskId: 'installer-fixture', severity: 'blocking', message: 'Must repair before judge.' }] }, null, 2)}\n`,
-        );
+        await seedBlockingLedger(root, 'orient-repair');
 
         const orient = await captureJsonOutput(() =>
             main(['orient', '--root', root, '--change', 'orient-repair', '--role', 'judge', '--platform', 'codex']),
@@ -1479,7 +1496,7 @@ describe('Kata platform installer', () => {
                 taskId: 'orient-repair',
                 nextSkill: '/kata-build',
                 role: 'implementer',
-                reason: 'repair_blocking_review_findings',
+                reason: 'satisfy_ledger_deficits',
                 slashCommand: '/kata-build orient-repair',
                 cliCommand: 'kata-cli build --change orient-repair',
             },
@@ -1493,7 +1510,7 @@ describe('Kata platform installer', () => {
         });
     });
 
-    it('specific status ignores stale blocking review findings after repair returns to hardVerify', async () => {
+    it('specific status routes an unsupported claim to the ledger repair, even at hardVerify', async () => {
         const root = await tempRoot();
         execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
         await initLayout(root);
@@ -1507,10 +1524,7 @@ describe('Kata platform installer', () => {
             join(root, '.kata/tasks/repaired-hardverify/current-state.json'),
             `${JSON.stringify({ taskId: 'repaired-hardverify', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
         );
-        await writeFile(
-            join(root, '.kata/tasks/repaired-hardverify/review.json'),
-            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-54032', taskId: 'installer-fixture', severity: 'blocking', message: 'Old finding before repair.' }] }, null, 2)}\n`,
-        );
+        await seedBlockingLedger(root, 'repaired-hardverify');
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'repaired-hardverify']));
 
@@ -1518,26 +1532,28 @@ describe('Kata platform installer', () => {
             command: 'status',
             taskId: 'repaired-hardverify',
             phase: 'hardVerify',
-            nextSkill: '/kata-verify',
+            // The phase's own next skill is still verify; the ledger's verdict is a repair instruction that sits above it,
+            // by the ordering this ladder established when the ledger became the authority — a change whose evidence does
+            // not support its claims is repaired before anything is verified or judged.
+            phaseNextSkill: '/kata-verify',
+            nextSkill: '/kata-build',
             recommended: {
                 taskId: 'repaired-hardverify',
-                nextSkill: '/kata-verify',
-                role: 'reviewer',
-                reason: 'verify_fresh_implementation',
-                slashCommand: '/kata-verify repaired-hardverify',
-                cliCommand: 'kata-cli verify --change repaired-hardverify',
+                nextSkill: '/kata-build',
+                role: 'implementer',
+                reason: 'satisfy_ledger_deficits',
+                slashCommand: '/kata-build repaired-hardverify',
+                cliCommand: 'kata-cli build --change repaired-hardverify',
             },
             nextAction: {
                 taskId: 'repaired-hardverify',
-                nextSkill: '/kata-verify',
-                role: 'reviewer',
-                reason: 'verify_fresh_implementation',
-                requiresUserConfirmation: false,
-                modelOrPlatformSwitchAllowed: false,
+                slashCommand: '/kata-build repaired-hardverify',
+                cliCommand: 'kata-cli build --change repaired-hardverify',
             },
-            upstream: expect.objectContaining({ blockingFindings: 1 }),
+            upstream: expect.objectContaining({
+                ledger: expect.objectContaining({ verdict: 'insufficient' }),
+            }),
         });
-        expect(status.artifactOverride).toBeUndefined();
     });
 
     it('specific status ignores stale failed judge result after repair returns to hardVerify', async () => {
@@ -1808,10 +1824,7 @@ describe('Kata platform installer', () => {
             join(root, '.kata/tasks/collect-repair/current-state.json'),
             `${JSON.stringify({ taskId: 'collect-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
         );
-        await writeFile(
-            join(root, '.kata/tasks/collect-repair/review.json'),
-            `${JSON.stringify({ status: 'pending', findings: [{ id: 'finding-installer-53544', taskId: 'installer-fixture', severity: 'blocking', message: 'Fix me.' }] }, null, 2)}\n`,
-        );
+        await seedBlockingLedger(root, 'collect-repair');
 
         const collect = await captureJsonOutput(() => main(['collect', '--root', root]));
 
@@ -1821,10 +1834,10 @@ describe('Kata platform installer', () => {
                 taskId: 'collect-repair',
                 nextSkill: '/kata-build',
                 role: 'implementer',
-                reason: 'repair_blocking_review_findings',
+                reason: 'satisfy_ledger_deficits',
                 slashCommand: '/kata-build collect-repair',
                 cliCommand: 'kata-cli build --change collect-repair',
-                upstream: expect.objectContaining({ blockingFindings: 1 }),
+                upstream: expect.objectContaining({ ledger: expect.objectContaining({ verdict: 'insufficient' }) }),
             },
             nextAction: {
                 taskId: 'collect-repair',
@@ -1832,7 +1845,7 @@ describe('Kata platform installer', () => {
                 cliCommand: 'kata-cli build --change collect-repair',
             },
             askUser: expect.arrayContaining([
-                '检测到上游 blocking review findings；建议作为 implementer repair。',
+                '上游证据账本（ledger）判定不通过；建议作为 implementer 补齐缺口后再回收。',
             ]),
         });
     });

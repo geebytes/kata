@@ -226,8 +226,11 @@ export async function runCollectCommand(argv: string[]): Promise<Record<string, 
         askUser: [
             selected ? `确认回收任务：${selected.taskId}` : recommended ? `建议回收任务：${recommended.taskId}` : '请选择要回收的 Kata task，或输入 task id。',
             `确认下一步：${action?.slashCommand ?? next}`,
-            recommended?.upstream?.blockingFindings
-                ? '检测到上游 blocking review findings；建议作为 implementer repair。'
+            // **Asked of the ledger, not of a findings count.** The leader's own decision names the gaps it found, so the
+            // handoff sentence states what the receiving platform has to do rather than naming a record shape that no
+            // longer exists — and when there is no ledger the sentence is the platform-handoff reminder it always was.
+            recommended?.upstream?.ledger && recommended.upstream.ledger.verdict !== 'pass'
+                ? '上游证据账本（ledger）判定不通过；建议作为 implementer 补齐缺口后再回收。'
                 : '如果来自其他平台，请确认该平台已经完成 handoff acknowledge 并写入 evidence。',
         ],
     };

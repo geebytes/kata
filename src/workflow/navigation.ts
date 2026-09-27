@@ -7,7 +7,6 @@ import {
   statusPromptFor,
   type PromptLanguage,
 } from './prompt-catalogue.js';
-import { readTrackedFindings } from '../quality/finding-disposition.js';
 import type { RepairScope } from '../quality/judge.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
@@ -15,6 +14,32 @@ import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
+
+/**
+ * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
+ *
+ * Exported because the ladder and the archive gate must not disagree about which problems are open — the defect this file's
+ * history is largely made of — and because a second derivation is exactly what a shared reader prevents.
+ */
+export async function openLedgerProblems(
+    root: string,
+    taskId: string,
+): Promise<Array<{ id: string; severity: string; statement: string }>> {
+    const { readLedger } = await import('../store/ledger.js');
+    const { evaluateClaim } = await import('../kernel/decide.js');
+    const ledger = await readLedger(root, taskId);
+    return ledger.claims
+        .filter((claim) => claim.status !== 'waived')
+        .filter((claim) => evaluateClaim(claim, {
+            evidence: ledger.evidence,
+            verdicts: ledger.verdicts,
+            reusedEvidence: new Set(),
+            policy: ledger.policy,
+            challenges: ledger.challenges,
+            subjectRevision: ledger.subject?.revision ?? '',
+        }).state !== 'supported')
+        .map((claim) => ({ id: claim.id, severity: claim.severity, statement: claim.statement }));
+}
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -154,23 +179,14 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const review = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), binding)
     : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
-  // **The sixth consumer of one question, and the one that decides the ladder's next action** (`kgsr13-f1`). It read `review.json`
-  // raw — findings carry no disposition there — so `blockingFindings`/`majorFindings` counted findings that had already been fixed,
-  // accepted below the bar or routed, and a routed finding gated the ladder for ever. Every other consumer was repaired for this
-  // same shape within one day (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, the review admission, `findings accept`); this one was
-  // missed because it reads the file directly rather than through the tracked view.
-  // **Counted by its own disposition, not by whether an obligation answered it** (`kgsr13-f1`, measured on the routing fixtures):
-  // an answered obligation says "this repair has been shown to work", which is not the same as "this defect is gone", and a ladder
-  // that cannot see a severity after its obligation is answered cannot route it. A finding is out of the count when a *decision*
-  // was recorded on it — `fixed`, `accepted`, `deferred` or `routed` — and the tracked view is what carries those.
-  const trackedFindings = await readTrackedFindings(root, taskId).catch(() => []);
-  const findings = trackedFindings
-    .filter((finding) => (finding.disposition ?? 'open') === 'open')
-    // **Still bound to the current evidence revision**, which is what the record read did before: a finding raised against a
-    // revision that is no longer current is stale, exactly as a stale review record is, and `readTrackedFindings` carries no such
-    // filter because its other consumers ask about a task's findings rather than about one revision's.
-    .filter((finding) => !currentRevisionId || !finding.revisionId || finding.revisionId === currentRevisionId)
-    .map((finding) => ({ severity: finding.severity }));
+  // **The severity the ladder routes on comes from the ledger, not from a findings table.**
+  //
+  // This is the sixth consumer of one question — "which problems are open and severe enough to block" — and it read
+  // `review.json`'s raw findings, then the tracked view, and each repair taught another copy the same lesson. The ledger
+  // holds the answer in its own vocabulary: an unsupported claim is a problem, its `severity` is the field the tier
+  // contract already requires, and a waiver is the author's decision not to fix it.
+  const openProblems: Array<{ id: string; severity: string; statement: string }> = await openLedgerProblems(root, taskId);
+  const findings = openProblems.map((problem) => ({ severity: problem.severity }));
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)

@@ -1,104 +1,104 @@
-import { reddenAllTasks } from '../helpers/reddening.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
-import { createTask, type AcceptanceMatrix } from '../../src/core/task.js';
-import { recordFinding } from '../../src/quality/reviewer.js';
-import { resolveObligationsForRevision } from '../../src/quality/repair-obligations.js';
-import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
-import { runCommand } from '../../src/workflow/orchestrator.js';
-import { writeCurrentState } from '../../src/core/state.js';
-import type { EvidenceEnvelope } from '../../src/quality/evidence.js';
+import { createTask } from '../../src/core/task.js';
+import { openLedgerProblems, readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
+import { appendClaim, readLedger } from '../../src/store/ledger.js';
+import { seedLedger } from '../helpers/ledger.js';
+import { decide } from '../../src/kernel/decide.js';
 
 /**
- * The severity gate is "blocking, and major in strict" — one rule, stated in the design
- * (`2026-09-18-what-an-adversarial-pass-costs.md`), the navigation ladder and the approval guard.
+ * **The severity gate, where it now lives — and what changed with the route.**
  *
- * They disagreed. The ladder gated the major-to-repair branch on `reviewMode === 'strict'`; the approval guard refused a
- * major finding **unconditionally**. In std — the default — a task with one major finding could be neither approved nor
- * routed to the repair that would clear it, and the error it got named resolving the finding while the only action it was
- * offered was to re-review. This file pins both sides to the documented rule so they cannot drift apart again.
+ * This file was created because one rule ("blocking, and major in strict") was stated in three places and the three
+ * disagreed: the ladder gated the major-to-repair branch on `reviewMode === 'strict'`, and the approval guard refused a
+ * major finding unconditionally, so in `std` a task with one major finding could be neither approved nor routed to the
+ * repair that would clear it.
+ *
+ * The disagreements are gone, and not because the three were synchronised: there is one rule now, in the tier policy,
+ * applied by `decide` — a claim's severity decides the evidence **strength** it requires (`MIN_STRENGTH_BY_SEVERITY`,
+ * `policy.evidenceStrength`, and reproducibility for `blocking`), and every claim the tier requires must be supported.
+ *
+ * **That is a change in the gate's definition, and it is recorded here rather than left to be discovered.** The old bar let
+ * a `minor` finding pass review unrepaired by severity alone. On this route a claim that nothing supports is a deficit
+ * whatever its severity — so the way to live with one is a recorded decision, `kata-cli ledger claim waive <id> --reason`,
+ * which the archive gate then requires be carried somewhere. The capability is preserved and made explicit: a decision with
+ * a reason, in the store the gate reads, instead of a threshold that let a problem through unnamed.
  */
-describe('a major review finding follows the severity gate, in both the ladder and the approval guard', () => {
+describe('the severity gate is one rule, applied by the kernel', () => {
     const roots: string[] = [];
     afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-    const matrix: AcceptanceMatrix = {
-        version: 1,
-        rows: [{
-            acceptanceId: 'AC-1',
-            implementationPaths: ['src/x.ts'],
-            testPaths: ['tests/unit/major-finding-routing.test.ts'],
-            evidence: [],
-            verificationLevel: 'unit',
-        }],
-    };
-
-    function passing(id: string): EvidenceEnvelope {
-        return {
-            id, taskId: 'x', kind: 'test', command: 'npm test', exitCode: 0,
-            startedAt: '', finishedAt: '', diffHash: 'a'.repeat(64),
-        };
-    }
-
-    async function taskWith(severity: 'blocking' | 'major' | 'minor', reviewMode?: 'strict' | 'std' | 'security'): Promise<string> {
+    async function taskWith(severity: 'blocking' | 'major' | 'minor'): Promise<{ root: string; taskId: string }> {
         const root = await mkdtemp(join(tmpdir(), 'kata-routing-'));
         roots.push(root);
         await initLayout(root);
-        const taskId = 'routing-task';
         await createTask({
-            root, id: taskId, title: 'Routing',
-            acceptance: [{ id: 'AC-1', statement: 'A major finding is repaired.' }],
-            acceptanceMatrix: matrix,
-            // `std` is the default the ladder must handle; `strict` is the case that already worked.
-            ...(reviewMode ? { workflowProfile: { version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode, comet: { projectInit: 'not_requested', openStatus: 'acknowledged' } } } : {}),
+            root,
+            id: 'routing-task',
+            title: 'Routing',
+            acceptance: [{ id: 'AC-1', statement: 'A claim at this severity is answered or waived.' }],
         });
-        await recordFinding({ root, taskId, severity, message: `a ${severity} finding`, acceptanceId: 'AC-1' });
-        // Clear the obligation the recording raised, so the earlier `repair_unresolved_obligations` branch does not
-        // pre-empt the finding branch under test — the discharge of the obligation is a separate mechanism.
-        //
-        // **And that separation is load-bearing** (`kgsr13-f1`): answering an obligation says "this repair has been shown to work",
-        // which is not the same as "this defect is gone". So the discharge must NOT remove the finding from the severity count —
-        // which is why the resolver does not write a finding disposition, and why this fixture keeps its finding visible.
-        await reddenAllTasks(root, 'revision-1');
-        await resolveObligationsForRevision(root, taskId, 'revision-1', ['AC-1'], ['e1'], undefined, [passing('e1')]);
-        return root;
+        await writeFile(join(root, '.kata/tasks/routing-task/current-state.json'), `${JSON.stringify({ taskId: 'routing-task', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`);
+        await seedLedger(root, 'routing-task', { paths: ['.kata/tasks/routing-task/task.json'] });
+        await appendClaim(root, 'routing-task', {
+            id: `C-${severity}`,
+            statement: `a ${severity} claim that nothing supports`,
+            riskClass: 'boundary',
+            severity,
+            dependsOn: ['path:.kata/tasks/routing-task/task.json'],
+            evidenceIds: [],
+            challengeIds: [],
+            status: 'open',
+            at: new Date().toISOString(),
+            reopens: 0,
+        });
+        return { root, taskId: 'routing-task' };
     }
 
-    it('does not send a std major finding to repair, and does not refuse approval for it either', async () => {
-        const root = await taskWith('major');
-        const upstream = await readUpstreamSummary(root, 'routing-task');
+    it('reports an unsupported claim at every severity, and routes it to the ledger repair', async () => {
+        for (const severity of ['blocking', 'major', 'minor'] as const) {
+            const { root, taskId } = await taskWith(severity);
+            const problems = await openLedgerProblems(root, taskId);
+            expect(problems.map((problem) => problem.id), `${severity} is a problem whatever its severity`).toEqual([`C-${severity}`]);
 
-        expect(upstream).toMatchObject({ majorFindings: 1, blockingFindings: 0 });
-        // The ladder is unchanged: in std a major finding is reported, and the review concludes.
-        expect(suggestCandidateAction('review', upstream).reason).not.toBe('repair_strict_major_findings');
-
-        // And the approval guard must agree — refusing here left the task with no way forward at all.
-        await writeCurrentState(root, { taskId: 'routing-task', phase: 'review', actor: { id: 'kata-agent', role: 'reviewer' }, updatedAt: new Date().toISOString() });
-        const approval = await runCommand('review', 'routing-task', root, { approve: true, reviewEvidence: 'read the diff; one major finding accepted for std mode', confirmHostModel: true });
-        expect(String(approval.error ?? '')).not.toContain('Cannot approve review with');
+            const upstream = await readUpstreamSummary(root, taskId);
+            const action = suggestCandidateAction('review', upstream);
+            expect(action.nextSkill, `${severity}`).toBe('/kata-build');
+            expect(action.reason, `${severity}`).toBe('satisfy_ledger_deficits');
+        }
     });
 
-    it('sends a strict major finding to repair', async () => {
-        const root = await taskWith('major', 'strict');
-        const action = suggestCandidateAction('review', await readUpstreamSummary(root, 'routing-task'));
-        expect(action.nextSkill).toBe('/kata-build');
-        expect(action.reason).toBe('repair_strict_major_findings');
-    });
+    it('lets the author live with one, as a decision with a reason, and stops reporting it', async () => {
+        const { root, taskId } = await taskWith('minor');
+        const before = await openLedgerProblems(root, taskId);
+        expect(before).toHaveLength(1);
 
-    it('still routes a blocking finding to repair', async () => {
-        const root = await taskWith('blocking');
-        const action = suggestCandidateAction('review', await readUpstreamSummary(root, 'routing-task'));
-        expect(action.nextSkill).toBe('/kata-build');
-        expect(action.reason).toBe('repair_blocking_review_findings');
-    });
+        const claim = (await readLedger(root, taskId)).claims.find((item) => item.id === 'C-minor')!;
+        await appendClaim(root, taskId, {
+            ...claim,
+            status: 'waived',
+            waiver: { reason: 'below the bar for this change; tracked outside it', at: new Date().toISOString() },
+        });
 
-    it('leaves a minor finding to be concluded by the review', async () => {
-        const root = await taskWith('minor');
-        const action = suggestCandidateAction('review', await readUpstreamSummary(root, 'routing-task'));
-        // A minor finding does not gate approval, so the review is the right next step — the fix must not swallow it.
-        expect(action.nextSkill).toBe('/kata-review');
+        expect(await openLedgerProblems(root, taskId), 'a waiver is a decision, so the problem is no longer open').toEqual([]);
+        // And the kernel agrees: the waiver is what decides, not a severity threshold.
+        const ledger = await readLedger(root, taskId);
+        const decision = decide({
+            subject: ledger.subject!,
+            claims: ledger.claims,
+            evidence: ledger.evidence,
+            verdicts: ledger.verdicts,
+            challenges: ledger.challenges,
+            policy: ledger.policy,
+            tier: 'strict',
+            declaredRiskClasses: [],
+            assurance: 'observed',
+            usage: { toolCalls: 0, wallMs: 0, tokens: 0 },
+            discovery: { independentChallenges: 0 },
+        });
+        expect(decision.verdict, 'the waived claim no longer decides against the change').not.toBe('fail');
     });
 });
