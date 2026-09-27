@@ -1810,57 +1810,55 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         return { command: 'archive', taskId, phase: current.phase, success: false, error: `Archive cannot run from ${current.phase}` };
     }
 
-    // F1.4: archiving with known problems is allowed, but it is a signed act — the findings are listed, and a deferral
-    // that has not been carried anywhere is refused until it is (I2: a silent disappearance is worse than a deferral).
-    const { readTrackedFindings: readFindings, unfixed: unfixedFindings } = await import('../quality/finding-disposition.js');
-    const tracked = await readFindings(root, taskId);
-    const stillUnfixed = unfixedFindings(tracked);
-    // **An answered obligation is a decision, and this check has to see the same one everything else sees** (measured on
-    // `wiring-coverage-check`): the refusal's own words are "Repair them, **or record evidence that they do not hold**", and the command
-    // that records that evidence is `kata-cli falsify --none`, which writes to the falsifier ledger — while this filter read
-    // `finding.disposition`, which no command writes for a blocking or major finding. So the exit the refusal names was unreachable by
-    // the command it implies, and a change whose evidence was recorded could not be archived. This is the seventh consumer of one
-    // question to be repaired for reading a copy (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, the review admission, `findings
-    // accept`, `navigation`), and the fix is the same: ask the ledger and the obligations, not the stored field.
-    const { readFalsifierReddenings, readFalsifierAbsences, hasFalsifierDisposition } =
-        await import('../quality/falsifier-reddenings.js');
-    const reddenings = await readFalsifierReddenings(root, taskId).catch(() => []);
-    const absences = await readFalsifierAbsences(root, taskId).catch(() => []);
-    // The content about to be judged, computed once — a filter callback cannot await, which the first version of this tried to.
-    const archivePathDigests = await (await import('../workflow/revision.js'))
-        .computePathDigests(root, (await (await import('../core/task.js')).readTask(root, taskId).catch(() => null))?.ownedPaths ?? [])
-        .catch(() => null);
-    const answeredIds = new Set((await (await import('../quality/repair-obligations.js')).readObligations(root, taskId).catch(() => []))
-        .filter((obligation) => obligation.resolvedAt)
-        .map((obligation) => obligation.findingId)
-        .filter((id): id is string => Boolean(id)));
-    const openBlocking = stillUnfixed.filter((finding) => finding.disposition === 'open'
-        && (finding.severity === 'blocking' || finding.severity === 'major')
-        && !answeredIds.has(finding.id)
-        // **With the binding**, because an absence without one never counts (`revisionCounts` returns false for a missing binding — which
-        // is the fail-closed behaviour that keeps a disposition from counting against content it was not recorded about). The content is
-        // the working tree, which is what the next seal would mint, exactly as the seal preflight computes it.
-        && !hasFalsifierDisposition(reddenings, absences, finding.id, { revisionId: null, pathDigests: archivePathDigests }));
-    if (openBlocking.length > 0) {
+    // F1.4: archiving with known problems is allowed, but it is a signed act — the problems are listed, and one that has
+    // not been carried anywhere is refused until it is (I2: a silent disappearance is worse than a deferral).
+    //
+    // **Asked of the ledger, because the ledger is where a problem is recorded now.** These two checks used to read the
+    // round-shaped findings table, the falsifier ledger and the obligation store — four readers of "which problems are
+    // known and unanswered", on the gate that decides whether a change may be closed. The ledger answers the same question
+    // in its own vocabulary: a claim that is not supported is a problem, and a claim the author has decided to live with is
+    // a **waiver**, which requires a reason by the kernel's own rule (`waived_without_reason`).
+    //
+    // The two capabilities are preserved rather than dropped with the old readers: a problem nobody has decided about
+    // blocks the archive (the repair is to make the claim hold, or to waive it with a reason), and a waiver that has not
+    // been carried anywhere needs `--findings-carried-to`, because living with a known problem is a decision someone signs.
+    const { readLedger: readArchiveLedger } = await import('../store/ledger.js');
+    const { evaluateClaim: evaluateArchiveClaim } = await import('../kernel/decide.js');
+    const archiveLedger = await readArchiveLedger(root, taskId);
+    const unsupportedClaims = archiveLedger.claims.filter((claim) => {
+        if (claim.status === 'waived') return false;
+        const evaluation = evaluateArchiveClaim(claim, {
+            evidence: archiveLedger.evidence,
+            verdicts: archiveLedger.verdicts,
+            reusedEvidence: new Set(),
+            policy: archiveLedger.policy,
+            challenges: archiveLedger.challenges,
+            subjectRevision: archiveLedger.subject?.revision ?? '',
+        });
+        return evaluation.state !== 'supported';
+    });
+    if (unsupportedClaims.length > 0) {
         return {
             command: 'archive',
             taskId,
             phase: current.phase,
             success: false,
-            error: `Archive blocked; ${openBlocking.length} unfixed blocking/major finding(s) remain: ${openBlocking.map((finding) => finding.id).join(', ')}. Repair them, or record evidence that they do not hold.`,
-            diagnostics: { openFindings: openBlocking.map((finding) => ({ id: finding.id, severity: finding.severity, message: finding.message, source: finding.source })) },
+            error: `Archive blocked; ${unsupportedClaims.length} claim(s) are not supported: ${unsupportedClaims.map((claim) => claim.id).join(', ')}. `
+                + 'Make each one hold (`kata-cli ledger evidence add`, `ledger evidence verify`), or record the decision to live with it (`kata-cli ledger claim waive <id> --reason <why>`).',
+            diagnostics: { unsupportedClaims: unsupportedClaims.map((claim) => ({ id: claim.id, statement: claim.statement, severity: claim.severity })) },
         };
     }
+    const waivedClaims = archiveLedger.claims.filter((claim) => claim.status === 'waived');
     const carriedTo = options.findingsCarriedTo;
-    const deferredUncarried = stillUnfixed.filter((finding) => finding.disposition === 'deferred' || finding.disposition === 'accepted');
-    if (deferredUncarried.length > 0 && !carriedTo) {
+    if (waivedClaims.length > 0 && !carriedTo) {
         return {
             command: 'archive',
             taskId,
             phase: current.phase,
             success: false,
-            error: `Archive blocked; ${deferredUncarried.length} known finding(s) were not carried anywhere: ${deferredUncarried.map((finding) => finding.id).join(', ')}. Close the task with \`kata-cli findings carry --change ${taskId} --to <task-or-ticket>\` (or with --findings-carried-to) so that living with a known problem is a recorded decision.`,
-            diagnostics: { deferredFindings: deferredUncarried.map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition, message: finding.message, source: finding.source })) },
+            error: `Archive blocked; ${waivedClaims.length} waived claim(s) were not carried anywhere: ${waivedClaims.map((claim) => claim.id).join(', ')}. `
+                + `Close the task with \`kata-cli archive --change ${taskId} --findings-carried-to <task-or-ticket>\` so that living with a known problem is a recorded decision.`,
+            diagnostics: { waivedClaims: waivedClaims.map((claim) => ({ id: claim.id, severity: claim.severity, reason: claim.waiver?.reason ?? null })) },
         };
     }
 
