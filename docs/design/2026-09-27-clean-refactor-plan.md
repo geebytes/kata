@@ -1044,3 +1044,40 @@ B. 义务系统保留，等 judge/verify/验收矩阵这一整条链也迁到账
 `finding-disposition`（读 record）、`verdict-binding`（读 freeze 哈希）和 `adversarial-progress`，
 而这三处都能改问账本；义务系统留到 judge 迁移时一起处理，因为**在 judge 还产义务的时候删掉义务，
 等于把"跨 seal 携带失败"这一能力一起删掉** —— 那是能力的损失，不是清理。
+
+## 19.8 B 的执行结果：安全子集已做完，**`adversarial.ts` 本体卡在同一处依赖上**
+
+### 已做（本批 3 个 commit）
+```
+① cli/ops.ts 的死读者：16 行 import + deltaSaving + isAdversarialNode     （1,385 → 379 行）
+② 抽取 src/quality/review-ir.ts（327 行）：IR 与类型 · compileReviewIr · candidate freeze 推导
+   + 预算常量（freeze 要哈希执行器边界，而边界由预算派生 ⇒ 常量必须同搬，否则新模块回头 import 旧模块
+     —— 第一次尝试正是这样，循环 import 让 MEASURED_REVIEW_PASS_COST 在求值时是 undefined，
+        而 typescript 【不报错】（循环对类型检查器合法，加载时致命），实测表现为夹具里的 TypeError）
+③ adversarial.ts  3,304 → 3,002 行
+```
+
+### **为什么 `adversarial.ts` 还不能删**（这是 B 的真实边界，实测）
+
+抽取之后它剩下的读者只有两处，而**两处都不属于旧评审路由**：
+```
+src/quality/finding-disposition.ts   ← 类型 + 读 adversarial store
+src/quality/adversarial-progress.ts  ← 仅类型
+```
+而 `finding-disposition` 被**新路由也在用的门**读取：
+```
+navigation.ts:166    trackedFindings → findings 计数 → 阶梯的两支：
+                     `repair_blocking_review_findings`（blocking）/ `repair_strict_major_findings`（strict major）
+orchestrator.ts:1219 verify 的诊断（deferred findings）
+orchestrator.ts:1811 【archive 门】：`unfixedFindings` + 第 7 个消费者的修复
+                     （"修好它们，或记录证据表明它们不成立"）
+repair-batch.ts / class-coverage.ts  义务系统的类覆盖
+```
+⇒ **`adversarial.ts` → `finding-disposition` → 阶梯与 archive 门** 是一条链，而链的末端是
+**"带已知问题归档"这个能力**（一个被记录的决定，不是隐式忽略）。删掉它需要把这些判定迁到账本口径，
+那正是 A/B 岔路里 A 的那部分工作 —— 与义务系统同源。
+
+### 结论（修正我自己的判断）
+我在 §19.7 说 B 能删 `adversarial.ts` 一行族约 4,600 行。**实测显示不成立**：`finding-disposition`
+不是旧评审路由的私产，它承担"哪些问题已知且未处理"这个判定，而**archive 门依赖它**。
+所以 B 的安全子集就是本批这三件，**再往下就与 A 重合了** —— 我如实记为"B 已到边界"，不假装还有可删的余地。
