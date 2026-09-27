@@ -11,7 +11,7 @@ import type { PlatformInfo } from '../../src/adapters/manifest.js';
 import { main, roleForPhase } from '../../src/cli.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
-import { transition } from '../../src/core/state.js';
+import { transition, writeCurrentState } from '../../src/core/state.js';
 import { planDetectedInit, promptInitPlan, renderInitBanner, synthesizePlatformCandidates } from '../../src/init-wizard.js';
 import { acknowledgeContextPacket, createContextPacket } from '../../src/workflow/context-fabric.js';
 
@@ -1372,14 +1372,26 @@ describe('Kata platform installer', () => {
             title: 'Review me',
             acceptance: [{ id: 'AC-1', statement: 'Review fresh evidence.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/repair-me/current-state.json'),
-            `${JSON.stringify({ taskId: 'repair-me', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
-        await writeFile(
-            join(root, '.kata/tasks/review-me/current-state.json'),
-            `${JSON.stringify({ taskId: 'review-me', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'repair-me',
+            phase: 'review',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
+        await writeCurrentState(root, {
+            taskId: 'review-me',
+            phase: 'hardVerify',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await seedBlockingLedger(root, 'repair-me');
 
         const previousCwd = process.cwd();
@@ -1430,10 +1442,16 @@ describe('Kata platform installer', () => {
             title: 'Selected repair',
             acceptance: [{ id: 'AC-1', statement: 'Selected status should not hide blocking findings.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/selected-repair/current-state.json'),
-            `${JSON.stringify({ taskId: 'selected-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'selected-repair',
+            phase: 'review',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await seedBlockingLedger(root, 'selected-repair');
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'selected-repair']));
@@ -1476,10 +1494,16 @@ describe('Kata platform installer', () => {
             title: 'Orient repair',
             acceptance: [{ id: 'AC-1', statement: 'Orientation should surface blocking review findings.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/orient-repair/current-state.json'),
-            `${JSON.stringify({ taskId: 'orient-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'orient-repair',
+            phase: 'review',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await seedBlockingLedger(root, 'orient-repair');
 
         const orient = await captureJsonOutput(() =>
@@ -1520,10 +1544,16 @@ describe('Kata platform installer', () => {
             title: 'Repaired hard verify',
             acceptance: [{ id: 'AC-1', statement: 'Old review findings should not override hardVerify.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/repaired-hardverify/current-state.json'),
-            `${JSON.stringify({ taskId: 'repaired-hardverify', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'repaired-hardverify',
+            phase: 'hardVerify',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await seedBlockingLedger(root, 'repaired-hardverify');
 
         const status = await captureJsonOutput(() => main(['status', '--root', root, '--change', 'repaired-hardverify']));
@@ -1566,10 +1596,16 @@ describe('Kata platform installer', () => {
             title: 'Judge repaired hard verify',
             acceptance: [{ id: 'AC-1', statement: 'Old judge FAIL should not override hardVerify.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/judge-repaired-hardverify/current-state.json'),
-            `${JSON.stringify({ taskId: 'judge-repaired-hardverify', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'judge-repaired-hardverify',
+            phase: 'hardVerify',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await writeFile(
             join(root, '.kata/tasks/judge-repaired-hardverify/judge.json'),
             `${JSON.stringify({ result: 'FAIL', acceptance: [{ id: 'AC-1', result: 'FAIL', repairScope: 'stale_evidence' }] }, null, 2)}\n`,
@@ -1613,10 +1649,16 @@ describe('Kata platform installer', () => {
             acceptance: [{ id: 'AC-1', statement: 'Archived tasks stay archived unless reopened.' }],
         });
         await mkdir(join(root, '.kata/evidence'), { recursive: true });
-        await writeFile(
-            join(root, '.kata/tasks/archived-with-old-failure/current-state.json'),
-            `${JSON.stringify({ taskId: 'archived-with-old-failure', phase: 'archive', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'archived-with-old-failure',
+            phase: 'archive',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await writeFile(
             join(root, '.kata/evidence/archived-with-old-failure-test.json'),
             `${JSON.stringify({ kind: 'test', exitCode: 1 }, null, 2)}\n`,
@@ -1655,10 +1697,16 @@ describe('Kata platform installer', () => {
             title: 'Repair code standards and architecture boundary violations from full-chain audit',
             acceptance: [{ id: 'AC-1', statement: 'Repair code standards.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/repair-code-standards-boundaries/current-state.json'),
-            `${JSON.stringify({ taskId: 'repair-code-standards-boundaries', phase: 'hardVerify', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'repair-code-standards-boundaries',
+            phase: 'hardVerify',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
 
         const relation = await captureJsonOutput(() =>
             main([
@@ -1820,10 +1868,16 @@ describe('Kata platform installer', () => {
             title: 'Collect repair',
             acceptance: [{ id: 'AC-1', statement: 'Collect should discover repair.' }],
         });
-        await writeFile(
-            join(root, '.kata/tasks/collect-repair/current-state.json'),
-            `${JSON.stringify({ taskId: 'collect-repair', phase: 'review', updatedAt: new Date().toISOString() }, null, 2)}\n`,
-        );
+        await writeCurrentState(root, {
+            taskId: 'collect-repair',
+            phase: 'review',
+            // **Written by the state writer, because the hand-rolled document was invalid.** These fixtures wrote
+            // `{taskId, phase, updatedAt}` and omitted `actor`, which the schema requires — a bare `JSON.parse`
+            // reader accepted it while `readCurrentState` refuses it. Writing through the writer is the fix that
+            // keeps the reader strict.
+            actor: { id: 'fixture', role: 'reviewer' },
+            updatedAt: new Date().toISOString(),
+        });
         await seedBlockingLedger(root, 'collect-repair');
 
         const collect = await captureJsonOutput(() => main(['collect', '--root', root]));

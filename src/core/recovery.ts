@@ -1,6 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isReplayableTransition, readStateEvents, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
+import { isReplayableTransition, readStateEventLog, writeCurrentState, type StateEvent, type StateRecord } from './state.js';
 import { runtimeDir } from './layout.js';
 
 export interface RecoveryOptions {
@@ -16,7 +16,8 @@ export interface RecoveryDiagnostic {
 
 export async function recover(taskId: string, options: RecoveryOptions = {}): Promise<RecoveryDiagnostic> {
   const root = options.root ?? process.cwd();
-  const events = await readStateEvents(root, taskId);
+  const log = await readStateEventLog(root, taskId);
+  const events = log.events;
   if (events.length === 0) throw new Error(`No state events found for task ${taskId}`);
 
   const validEvents = replayValidEvents(events);
@@ -32,6 +33,10 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
   };
   const actions: string[] = [];
   if (validEvents.length !== events.length) actions.push(`ignored-${events.length - validEvents.length}-invalid-state-events`);
+  // **The log's own damage is reported, not inferred from a shorter replay.** A crash truncates the tail, and the reader
+  // tolerates it; anything else means the chain broke mid-file, and a reader that is handed the surviving prefix has to be
+  // told what it is missing — a shorter history that looks complete is the failure this reports.
+  if (log.malformed > 0) actions.push(`${log.truncatedTail ? 'truncated' : 'damaged'}-state-event-log:${log.malformed}-line(s)`);
 
   let pointerMatches = false;
   if (latestSession) {
@@ -65,8 +70,12 @@ export async function recover(taskId: string, options: RecoveryOptions = {}): Pr
 
 export async function requiresRecovery(taskId: string, options: RecoveryOptions = {}): Promise<boolean> {
   const root = options.root ?? process.cwd();
-  const events = await readStateEvents(root, taskId);
-  return replayValidEvents(events).length !== events.length;
+  const log = await readStateEventLog(root, taskId);
+  // **A damaged log needs recovery even when every surviving event replays.** The old test compared the replayed length
+  // against the parsed length, so a truncated tail — tolerated by the reader, and invisible in the shorter list — read as
+  // "nothing to recover", which is precisely the state it exists to detect.
+  if (log.malformed > 0) return true;
+  return replayValidEvents(log.events).length !== log.events.length;
 }
 
 function replayValidEvents(events: StateEvent[]): StateEvent[] {

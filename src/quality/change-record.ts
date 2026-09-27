@@ -4,6 +4,7 @@ import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { taskDir } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
+import { mutateTaskArtefact } from '../core/state.js';
 import { diffPathDigests } from './revision-delta.js';
 
 /**
@@ -311,8 +312,13 @@ export async function writeChangeRecord(root: string, taskId: string, record: Ch
         };
     }
     const bound = changeRecordPath(root, taskId, record.revisionId);
-    await writeFile(bound, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-    await writeFile(changeRecordPath(root, taskId), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    // **Atomic, and under the task lock.** These were two bare `writeFile` calls, so a crash between them left a half
+    // written JSON, and two concurrent commands could interleave the bound and current copies — the two files whose
+    // whole reason for existing is to agree. `mutateTaskArtefact` is the discipline every other task artefact already
+    // follows (read inside the lock, land through an atomic replace); this file was the exception.
+    const bytes = `${JSON.stringify(record, null, 2)}\n`;
+    await mutateTaskArtefact(root, taskId, bound, async () => bytes);
+    await mutateTaskArtefact(root, taskId, changeRecordPath(root, taskId), async () => bytes);
     return bound;
 }
 

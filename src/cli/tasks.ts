@@ -198,12 +198,9 @@ export async function runLocalStatusCommand(
     // Status is the cross-platform resume entrypoint. Rebuild the mutable
     // projection from the append-only legal event chain before reporting it.
     if (await requiresRecovery(change, { root }).catch(() => false)) await recover(change, { root });
-    const state = JSON.parse(await readFile(currentStatePath(root, change), 'utf8')) as {
-        phase: Phase;
-        updatedAt?: string;
-        actor?: unknown;
-        activeSession?: string;
-    };
+    // **The schema-validated reader.** `status` is the cross-platform resume entry point, so a state this command accepts
+    // and a transition refuses is the worst place for the two to disagree; they now ask the same reader.
+    const state = await readCurrentState(root, change);
     const autoActive = resolved?.source === 'discovered'
         ? await activateHookTask({
             root,
@@ -436,8 +433,10 @@ export async function readTaskCandidate(root: string, taskId: string): Promise<T
     if (terminal.taskId !== taskId) {
         throw new Error(`Task ${taskId} is redirected to ${terminal.taskId}`);
     }
-    const state = JSON.parse(await readFile(currentStatePath(root, taskId), 'utf8')) as { phase?: Phase };
-    const phase = state.phase ?? 'intake';
+    // Validated like every other reader of this file. A corrupt state is surfaced here rather than falling back to
+    // `intake`, which would present a task mid-review as one that has not started.
+    const state = await readCurrentState(root, taskId).catch(() => null);
+    const phase = state?.phase ?? 'intake';
     const upstream = await readUpstreamSummary(root, taskId);
     const suggestion = suggestCandidateAction(phase, upstream);
     return {
@@ -472,8 +471,8 @@ export async function runOrientCommand(argv: string[]): Promise<Record<string, u
     const handoff = await createHandoff(root, change, role);
     const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...(args.platform ? { platform: args.platform } : {}) });
     const taskContext = await readTaskContext(root, change);
-    const state = JSON.parse(await readFile(currentStatePath(root, change), 'utf8')) as Record<string, unknown>;
-    const phase = (typeof state.phase === 'string' ? state.phase : handoff.fromPhase) as Phase;
+    const state = await readCurrentState(root, change).catch(() => null) as Record<string, unknown> | null;
+    const phase = (typeof state?.phase === 'string' ? state.phase : handoff.fromPhase) as Phase;
     const upstream = await readUpstreamSummary(root, change);
     const suggestion = suggestCandidateAction(phase, upstream);
     const phaseNextSkill = nextSkillForPhase(phase);

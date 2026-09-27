@@ -257,9 +257,14 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
 
 export async function readWorkflowPhase(root: string, taskId: string): Promise<string | null> {
     try {
-        const state = JSON.parse(await readFile(currentStatePath(root, taskId), 'utf8')) as { phase?: unknown };
+        // **The schema-validated reader, not a bare `JSON.parse`.** Four call sites parsed `current-state.json` by hand
+        // while `readCurrentState` validated it against the same schema, so one malformed state was refused in one entry
+        // point and accepted in another — the same state, two answers, depending on which command a reader happened to run.
+        const state = await readCurrentState(root, taskId);
         return typeof state.phase === 'string' ? state.phase : null;
     } catch {
+        // A task with no state record yet is a state, not an error: this reader reports "no phase" rather than throwing,
+        // which is what every caller wants from it.
         return null;
     }
 }

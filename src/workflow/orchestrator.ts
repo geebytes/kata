@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
-import { readCurrentState, appendStateEvent, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
@@ -704,7 +704,10 @@ async function cmdBuild(
         },
     });
     await progress.finish();
-    await writeEvidence(root, taskId, evidence);
+    // **Collected, not swallowed.** A failure to move a superseded revision's set aside used to be silently ignored, and
+    // the consequence is invisible: the outgoing set stays under the active names and the next seal writes over it. The
+    // problems are carried into the result rather than printed, because a caller that persists the seal needs to see them.
+    const evidenceArchiveProblems = await writeEvidence(root, taskId, evidence);
     // A2: the factual half of the round's record is written from what the machine holds — the working tree's changed
     // paths, the envelopes just collected, the claim outcomes, the tracked findings — rather than asked of the author.
     // The measurement behind it: of thirty de-duplicated findings across thirteen passes of one change, twenty (seven of
@@ -1002,9 +1005,19 @@ async function persistTaskOwnedPaths(
  * The previous set is **archived**, not deleted: a superseded revision's evidence stays auditable, filed under the
  * revision it belonged to. The active set stays at the top level, so readers see exactly what the current seal proved.
  */
-async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnvelope[]): Promise<void> {
+/**
+ * Record the sealed evidence set, and report what the archive of the previous set could not do.
+ *
+ * **The empty `catch` this used to have.** A failure to move a superseded revision's envelopes and transcripts aside was
+ * swallowed twice over — once around the whole block and once on each `rename` — so the caller could not tell "archived
+ * cleanly" from "the outgoing set is still under the active names", which is the state that makes the next seal read a
+ * superseded revision's transcript as its own. The failures are collected and named instead; the seal still proceeds,
+ * because losing the archive must not lose the evidence that was just collected.
+ */
+async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnvelope[]): Promise<string[]> {
     const evidenceDirectory = evidenceDir(root);
     await mkdir(evidenceDirectory, { recursive: true });
+    const problems: string[] = [];
 
     const { readdir, rename } = await import('node:fs/promises');
     try {
@@ -1023,10 +1036,13 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
             const archiveDir = evidenceArchiveDir(root, previous.revisionId ?? 'unsealed');
             await mkdir(archiveDir, { recursive: true });
             for (const file of files) {
-                await rename(join(evidenceDirectory, file), join(archiveDir, file)).catch(() => { });
+                await rename(join(evidenceDirectory, file), join(archiveDir, file))
+                    .catch((error: Error) => problems.push(`could not archive ${file}: ${error.message}`));
             }
         }
-    } catch { }
+    } catch (error) {
+        problems.push(`could not archive the previous evidence set: ${(error as Error).message}`);
+    }
 
     for (const envelope of evidence) {
         await writeFile(
@@ -1035,6 +1051,7 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
             'utf8',
         );
     }
+    return problems;
 }
 
 function evidenceFileSuffix(envelope: EvidenceEnvelope): string {
@@ -1521,7 +1538,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     approvalTask.acceptanceMatrix,
                     existing.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
                 );
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+            // **The approval lands atomically and under the task lock.** It was a bare `writeFile`, so a crash could
+            // leave a half-written `review.json` — the artefact the archive gate reads to decide whether a change was
+            // reviewed — and two concurrent commands could interleave with the review transition beside it.
+            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
+            await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes);
             return {
                 command: 'review',
                 taskId,
@@ -1577,12 +1598,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     }) + '\n';
                     await appendFile(historyPath, historyEntry, 'utf8');
                 }
-                await writeFile(reviewRecordPath, `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`);
             } else if ((previous.findings ?? []).length === 0) {
-                await writeFile(reviewRecordPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
             }
         } catch {
-            await writeFile(reviewRecordPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`, 'utf8');
+            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
@@ -1791,6 +1812,7 @@ async function currentScopeHashes(root: string, evidence: EvidenceEnvelope[]): P
 
 async function cmdArchive(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     let archivePhase: Phase = 'distill';
+    let archiveError: string | undefined;
     const current = await readCurrentState(root, taskId);
 
     if (!options.confirmHostModel) {
@@ -1912,8 +1934,12 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         await transition(taskId, 'archive', actorFor(defaultActor, options.platform), { root });
         await guardTransition(options.guard, 'apply', taskId, 'archive');
         archivePhase = 'archive';
-    } catch {
+    } catch (error) {
         archivePhase = 'distill';
+        // **The reason travels with the outcome.** This was an empty `catch` that set the phase and dropped the error, so a
+        // caller received a structurally valid result at `distill` with no way to learn that the archive transition had
+        // been refused: "the transition was refused" and "the task was already at distill" were the same answer.
+        archiveError = (error as Error).message;
     }
 
     let codegraphRefresh: { ok: boolean; output?: string } | undefined;
@@ -1965,6 +1991,10 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         taskId,
         phase: archivePhase,
         success: archivePhase === 'archive',
+        // **The refusal reason travels with the outcome.** This was an empty `catch` that set the phase and dropped the
+        // error, so a caller received a structurally valid result at `distill` and no way to learn that the archive
+        // transition had been refused — "the transition was refused" and "the task was already at distill" were one answer.
+        ...(archiveError === undefined ? {} : { error: archiveError }),
         diagnostics: {
             taskTitle: task.title,
             acceptanceCount: task.acceptance.length,

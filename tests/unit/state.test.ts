@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,7 +6,8 @@ import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { mutateTaskArtefact } from '../../src/core/state.js';
 import { taskPath } from '../../src/core/layout.js';
-import { transition, type Actor, type Phase } from '../../src/core/state.js';
+import { readStateEventLog, transition, type Actor, type Phase } from '../../src/core/state.js';
+import { recover, requiresRecovery } from '../../src/core/recovery.js';
 import { computeDiffHash } from '../../src/quality/evidence.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
 
@@ -87,6 +88,62 @@ describe('Kata task state transitions', () => {
         await transition(task.id, 'implement', actor, { root });
 
         await expect(transition(task.id, 'archive', actor, { root })).rejects.toThrow(/illegal transition/i);
+    });
+
+    it('recovers from a state log whose last line a crash truncated', async () => {
+        // **The one situation the log exists for was the one it could not be read in.** Every line was parsed with
+        // `JSON.parse`, and `requiresRecovery` reads the log *before* it can decide anything — so a truncating crash threw
+        // a `SyntaxError` instead of recovering, and the tail damage a crash leaves is exactly what a tolerant reader has
+        // to expect.
+        const root = await tempRoot();
+        const taskId = 'truncated-log';
+        await initLayout(root);
+        await createTask({ root, id: taskId, title: 'Truncated log', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        await transition(taskId, 'plan', actor, { root });
+        await transition(taskId, 'implement', actor, { root });
+        const eventsPath = join(root, `.kata/tasks/${taskId}/state-events.jsonl`);
+        const complete = await readFile(eventsPath, 'utf8');
+        // A crash mid-append: the *last* line is cut one character short of its closing brace, which is the shape a
+        // truncating crash leaves. The events before it are intact and must still replay.
+        const lines = complete.split('\n').filter((line) => line !== '');
+        expect(lines.length).toBeGreaterThanOrEqual(2);
+        await writeFile(eventsPath, `${[...lines.slice(0, -1), lines[lines.length - 1]!.slice(0, -2)].join('\n')}\n`);
+
+        const log = await readStateEventLog(root, taskId);
+        expect(log.truncatedTail).toBe(true);
+        expect(log.malformed).toBeGreaterThan(0);
+        expect(log.events.length).toBeGreaterThan(0);
+        expect(await requiresRecovery(taskId, { root })).toBe(true);
+        // Recovery lands on the last *intact* event: the truncated tail is dropped and everything before it replays, which
+        // is the strongest thing that can be said when a line was lost mid-write.
+        const recovered = await recover(taskId, { root });
+        expect(recovered.phase).toBe('plan');
+        expect(recovered.actions.some((action) => action.startsWith('truncated-state-event-log'))).toBe(true);
+    });
+
+    it('steals a lock whose holder is older than the liveness bound, and keeps refusing a live one', async () => {
+        // The lock was `mkdir`, and a process killed before its `finally` left the directory behind forever: every later
+        // transition and every ledger mutation for that task failed with a message describing a transition that was not in
+        // progress, and recovery never touched the lock. A lock now carries its holder and its start time.
+        const root = await tempRoot();
+        const taskId = 'stale-lock';
+        await initLayout(root);
+        await createTask({ root, id: taskId, title: 'Stale lock', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        const lockPath = join(root, `.kata/tasks/${taskId}/.transition.lock`);
+
+        // A fresh lock refuses, and says who holds it.
+        await mkdir(lockPath);
+        await writeFile(join(lockPath, 'holder.json'), `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
+        await expect(transition(taskId, 'plan', actor, { root })).rejects.toThrow(/already has a state transition in progress/);
+
+        // One older than the bound is abandoned: the process that took it is gone, and obeying it would leave the task
+        // permanently unusable.
+        const longAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        await writeFile(join(lockPath, 'holder.json'), `${JSON.stringify({ pid: 999_999, at: longAgo })}\n`);
+        const state = await transition(taskId, 'plan', actor, { root });
+        expect(state.phase).toBe('plan');
+        // And the lock is gone afterwards, so the next transition is not blocked by the steal.
+        await expect(transition(taskId, 'implement', actor, { root })).resolves.toMatchObject({ phase: 'implement' });
     });
 
     it('serializes concurrent transitions for the same task', async () => {

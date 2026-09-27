@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { readValidated, readValidatedOptional, validate } from './schema.js';
@@ -241,16 +241,57 @@ async function stampEngineUnlocked(root: string, taskId: string): Promise<boolea
     }
 }
 
+/**
+ * A lock directory older than this is treated as abandoned rather than held.
+ *
+ * The number is a *liveness* bound, not a correctness one: every path that takes this lock is a local CLI command, and the
+ * longest legitimate hold is a seal or an archive — minutes, not hours. An hour is far above any of them and far below the
+ * point where an operator would consider a change permanently stuck.
+ */
+const STALE_LOCK_MS = 60 * 60 * 1000;
+
+/**
+ * The task lock, with the one fact the old version could not express: who holds it, and since when.
+ *
+ * **The defect this closes.** The lock was `mkdir`, and the refusal on `EEXIST` was `Task <id> already has a state
+ * transition in progress` — with the removal in a `finally`. A process killed between them (Ctrl-C, an OOM kill, a
+ * machine restart) left the directory behind, and *nothing* ever removed it: every later `transition` and every ledger
+ * mutation for that task failed forever, with a message describing a transition that was not in progress. Recovery did not
+ * help either — it rewrites `current-state.json` and never touches the lock.
+ *
+ * So the lock now carries its holder and its start time, and a lock older than the liveness bound is stolen rather than
+ * obeyed, with a warning saying so. Stealing is the right call because the alternative is unrecoverable: the honest
+ * holder of a lock this old does not exist on this machine.
+ */
+async function readLockHolder(lockPath: string): Promise<{ pid?: number; at?: string } | null> {
+    try {
+        return JSON.parse(await readFile(join(lockPath, 'holder.json'), 'utf8')) as { pid?: number; at?: string };
+    } catch {
+        // A lock with no readable holder is treated as unstamped rather than as invalid: the directory's own mtime is then
+        // the only evidence of age, and refusing on it would re-create the permanent refusal this exists to remove.
+        return null;
+    }
+}
+
 export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {
     assertValidTaskId(taskId);
     const lockPath = transitionLockPath(root, taskId);
     try {
         await mkdir(lockPath);
+        await writeFile(join(lockPath, 'holder.json'), `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`, 'utf8').catch(() => undefined);
     } catch (error) {
-        if (isNodeError(error) && error.code === 'EEXIST') {
-            throw new Error(`Task ${taskId} already has a state transition in progress`);
+        if (!isNodeError(error) || error.code !== 'EEXIST') throw error;
+        // Held — but by whom, and since when? A lock whose holder is older than the liveness bound is abandoned: the
+        // process that took it is gone, and obeying it would leave the task permanently unusable.
+        const holder = await readLockHolder(lockPath);
+        const startedAt = holder?.at === undefined ? await stat(lockPath).then((info) => info.mtime.toISOString()).catch(() => null) : holder.at;
+        const age = startedAt === null ? 0 : Date.now() - Date.parse(startedAt);
+        if (!Number.isFinite(age) || age < STALE_LOCK_MS) {
+            throw new Error(`Task ${taskId} already has a state transition in progress`
+                + (holder?.pid === undefined ? '' : ` (held by pid ${holder.pid} since ${holder.at ?? 'an unrecorded time'})`)
+                + '. If the process that took it is gone, remove the lock directory and retry.');
         }
-        throw error;
+        await rm(lockPath, { recursive: true, force: true });
     }
     try {
         return await action();
@@ -280,13 +321,44 @@ export async function writeCurrentState(root: string, state: StateRecord): Promi
     await writeFileAtomic(layoutCurrentStatePath(root, state.taskId), `${JSON.stringify(state, null, 2)}\n`);
 }
 
+export type StateEventLog = { events: StateEvent[]; malformed: number; truncatedTail: boolean };
+
+/**
+ * The state event log, parsed tolerantly — because the code that recovers from a crash is what reads it.
+ *
+ * **The defect this closes.** Every line was parsed with `JSON.parse` directly, so a log whose last line had been
+ * truncated by the crash it exists to recover from threw a `SyntaxError` — and `requiresRecovery` calls this reader
+ * *before* it can decide anything, so the one situation the log is for was the one where it could not be read. A log
+ * that cannot be replayed is not a log.
+ *
+ * A damaged **tail** is therefore tolerated — that is the shape a crash leaves, and it is reported through
+ * `truncatedTail`. Damage in the middle is a different fact: it means the chain is broken and nothing after it can be
+ * trusted, so the events after the bad line are dropped and `malformed` says how many. Reported either way, never
+ * silently skipped, because a shorter history that looks complete is worse than a refusal.
+ */
+export async function readStateEventLog(root: string, taskId: string): Promise<StateEventLog> {
+    let raw: string;
+    try {
+        raw = await readFile(layoutStateEventsPath(root, taskId), 'utf8');
+    } catch {
+        // No log at all is a state, not an error: a task that never transitioned has nothing to replay.
+        return { events: [], malformed: 0, truncatedTail: false };
+    }
+    const lines = raw.split('\n').filter((line) => line.trim() !== '');
+    const events: StateEvent[] = [];
+    for (const [index, line] of lines.entries()) {
+        try {
+            events.push(validate<StateEvent>('workflow-state-event', JSON.parse(line)));
+        } catch {
+            return { events, malformed: lines.length - index, truncatedTail: index === lines.length - 1 };
+        }
+    }
+    return { events, malformed: 0, truncatedTail: false };
+}
+
+/** The parsed events, for callers that only want the history. Nothing here throws on a damaged log any more. */
 export async function readStateEvents(root: string, taskId: string): Promise<StateEvent[]> {
-    const raw = await readFile(layoutStateEventsPath(root, taskId), 'utf8');
-    return raw
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => validate<StateEvent>('workflow-state-event', JSON.parse(line)));
+    return (await readStateEventLog(root, taskId)).events;
 }
 
 /** The projection every reader should use instead of parsing current-state.json by hand: it is schema-validated. */
