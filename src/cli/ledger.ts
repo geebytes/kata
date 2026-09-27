@@ -250,7 +250,21 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 fail({ command: 'ledger claim show', error: `no claim ${String(id)} in this ledger` });
                 return;
             }
-            outputResult({ ok: true, claim, verdicts: ledger.verdicts.filter((verdict) => claim.evidenceIds.includes(verdict.evidenceId)) });
+            // **What readings this claim's evidence has had, not only the current one.** `recordVerdicts` keeps every
+            // verdict in an append-only history, because a reversal — a `refuted` superseded by a `supported` — is the most
+            // interesting fact about a verdict and used to be unobservable: the projection was overwritten in place. This
+            // is where an auditor asks the question, so the history is what is shown beside the current readings.
+            const { readVerdictHistory } = await import('../store/ledger.js');
+            const history = await readVerdictHistory(options.root, changeId);
+            const evidenceIds = new Set(claim.evidenceIds);
+            const readings = history.entries.filter((entry) => evidenceIds.has(String(entry.evidenceId)));
+            outputResult({
+                ok: true,
+                claim,
+                verdicts: ledger.verdicts.filter((verdict) => claim.evidenceIds.includes(verdict.evidenceId)),
+                readings,
+                ...(history.malformed > 0 ? { historyMalformed: `${history.malformed} line(s) of the verdict history cannot be parsed` } : {}),
+            });
             return;
         }
         if (action === 'waive') {
@@ -754,6 +768,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             deficits: decision.deficits,
             reusedEvidence: decision.reusedEvidence,
             revalidateClaims: decision.revalidateClaims,
+            // **Whether reuse was evaluated at all.** The two answers are otherwise identical in shape, and on this route
+            // the ledger supplies no previous subject — so the honest report is that the lists are the conservative
+            // default, not a comparison result.
+            deltaEvaluated: decision.deltaEvaluated,
             undiversified: decision.undiversified,
         });
         if (decision.verdict !== 'pass') process.exitCode = 1;

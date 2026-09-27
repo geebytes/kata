@@ -40,8 +40,6 @@ export type UpstreamSummary = {
   blockingFindings: number;
   majorFindings: number;
   reviewMode?: string;
-  /** Present when the round may NOT close, naming the classes that no check covers (fix item 4). */
-  roundClosure?: { mayClose: boolean; reason: string; open?: Array<{ classId: string; covered: boolean }>; classless?: Array<{ id: string }> };
   reviewReady?: boolean;
   invalidReviewApproval?: boolean;
   judgeResult?: string;
@@ -94,7 +92,6 @@ export const nextActionReasons = [
   'archived_task',
   'choose_execution_mode',
   'complete_review_conclusion',
-  'cover_uncovered_classes',
   'continue_implementation',
   'design_intake_task',
   'git_flow_confirmation_required',
@@ -436,22 +433,11 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 975,
     };
   }
-  // **The round's conclusion criterion, in the ladder's vocabulary** (fix item 4). The loop's measured shape is that findings per
-  // round *rise* rather than fall — `closure-gate` [7, 5, 5, 2, 5, 9, 10, 12, 14, 14] — because every repair is new code and the round
-  // exists to find defects in new code. So "no findings" is unreachable and was never the right bound; the bound that can fail is
-  // "every class an open finding names is covered by a check that reddens when the class returns", which `roundClosure` computes.
-  //
-  // Until this branch existed that verdict was only a field on `status`: the operator read it, and the ladder above still said "repair"
-  // for an open instance of an already-covered class. Naming it as the next action is the difference between a bound that is reported
-  // and a bound that is used.
-  if (phase === 'review' && upstream.roundClosure) {
-    return {
-      nextSkill: '/kata-review',
-      role: 'reviewer',
-      reason: 'cover_uncovered_classes',
-      priority: 972,
-    };
-  }
+  // **The round-closure branch is gone with the class table.** It fired on `upstream.roundClosure`, which nothing has
+  // produced since the class table was deleted with the old route — so the branch was unreachable, and `chainQuorum`-style
+  // dead code on the surface that decides what happens next is worse than absent code: a reader cannot tell a bound that
+  // was never reached from a bound that no longer exists. The question it asked ("is every class covered") is now the
+  // tier's `requiredRiskClasses` contract, enforced by `decide` and reported as `uncovered_risk_class`.
   if (phase === 'review' && !upstream.reviewReady) {
     return {
       nextSkill: '/kata-review',
@@ -571,7 +557,6 @@ export function statusActionPrompts(
  */
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
-  cover_uncovered_classes: null,
   satisfy_ledger_deficits: null,
   review_fresh_implementation: 'review_gate',
   judge_reviewed_change: 'judge_gate',

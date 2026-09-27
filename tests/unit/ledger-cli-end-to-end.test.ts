@@ -356,7 +356,11 @@ describe('the ledger verbs', () => {
         const recordedUnverified = (await ledger(['status', '--cost'])).report as { claims: { bySupport: Record<string, number> | null } };
         expect(recordedUnverified.claims.bySupport?.missing).toBe(1);
         expect(empty.discovery.refutationRate).toBeNull();
-        expect(empty.discovery.baseline).toBe('none recorded yet');
+        // **The baseline is read, not asserted.** It was the literal `'none recorded yet'`, written by no code path, so
+        // it stayed that string however much data accumulated. It now comes from `buildBaseline`: zero changes is a
+        // measured zero with a null mean, which is the honest shape of "no data yet" — a denominator nobody can compute is
+        // not zero, and a constant that never changes is not a measurement.
+        expect(empty.discovery.baseline).toEqual({ changes: 0, meanReportedTokens: null });
         expect(empty.authorSide.medianClaimToSupportedMs).toBeNull();
 
         await ledger(['evidence', 'add', '--file', await submission()]);

@@ -32,8 +32,12 @@ export function revisionOf(pathDigests: Record<string, string>): string {
     return `rev:${createHash('sha256').update(canonical).digest('hex').slice(0, 16)}`;
 }
 
-export function subjectOf(pathDigests: Record<string, string>): Subject {
-    return { revision: revisionOf(pathDigests), pathDigests };
+export function subjectOf(pathDigests: Record<string, string>, declaredPaths?: readonly string[]): Subject {
+    return {
+        revision: revisionOf(pathDigests),
+        pathDigests,
+        ...(declaredPaths === undefined ? {} : { declaredPaths: [...declaredPaths].sort() }),
+    };
 }
 
 export type SubjectDiff = { changed: string[]; added: string[]; removed: string[]; unchanged: string[] };

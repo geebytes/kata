@@ -260,7 +260,10 @@ export async function freezeSubject(input: { root: string; paths: readonly strin
             unreadable,
         };
     }
-    return { ok: true, subject: subjectOf(digests) };
+    // **The declaration travels with the freeze.** `digests` is the expansion of `paths`, so it cannot be inverted; a
+    // file added inside a declared directory afterwards is not one of its keys, and re-freezing those keys could not
+    // notice it. Keeping the declaration is what lets drift be measured against the surface that was declared.
+    return { ok: true, subject: subjectOf(digests, input.paths) };
 }
 
 /**
@@ -637,9 +640,28 @@ export type LedgerReport = {
         probeResponseRate: number | null;
         probesAsked: number;
         probesAnswered: number;
-        baseline: 'none recorded yet';
+        /**
+         * The change-level baseline the acceptance items compare against, or why it is absent.
+         *
+         * **This field used to be the constant `'none recorded yet'`** — a literal, written by no code path, so it stayed
+         * that string however much data accumulated. A report field that can never take another value reads as a
+         * measurement that has not started; it is now read from `buildBaseline`, the reader the retired records and the
+         * run registry already had, so the number appears as soon as the data does.
+         */
+        baseline: { changes: number; meanReportedTokens: number | null } | { unreported: string };
     };
 };
+
+/** The baseline, or a named reason it could not be read — never a placeholder that reads as a measurement. */
+async function baselineOrReason(root: string): Promise<LedgerReport['discovery']['baseline']> {
+    try {
+        const { buildBaseline } = await import('./baseline.js');
+        const report = await buildBaseline(root);
+        return { changes: report.c0.changes, meanReportedTokens: report.c0.meanReportedTokens };
+    } catch (error) {
+        return { unreported: `the baseline could not be read: ${(error as Error).message}` };
+    }
+}
 
 function median(values: number[]): number | null {
     if (values.length === 0) return null;
@@ -667,7 +689,12 @@ export async function ledgerDrift(root: string, changeId: string): Promise<{
 } | null> {
     const ledger = await readLedger(root, changeId);
     if (!ledger.subject) return null;
-    const frozen = await freezeSubject({ root, paths: Object.keys(ledger.subject.pathDigests) });
+    // **Re-walk the declaration, not its expansion.** `Object.keys(ledger.subject.pathDigests)` is the set of files that
+    // existed at the freeze; a file added inside a declared directory since then is not among them, so the comparison could
+    // report "unchanged" about a directory that grew. A subject frozen before `declaredPaths` existed falls back to its
+    // digest keys — the best surface that revision recorded — and that fallback is named rather than silent.
+    const declared = ledger.subject.declaredPaths ?? Object.keys(ledger.subject.pathDigests);
+    const frozen = await freezeSubject({ root, paths: declared });
     if (!frozen.ok) {
         return { changed: [], added: [], removed: [], unreadable: frozen.unreadable, subjectRevision: ledger.subject.revision };
     }
@@ -768,7 +795,9 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             }),
             probesAsked: (await readProbes(root, changeId)).length,
             probesAnswered: (await readProbeAnswers(root, changeId)).length,
-            baseline: 'none recorded yet',
+            // Read rather than asserted. `buildBaseline` is the only reader of the retired records and the run registry,
+            // and a failure to read them is reported as the reason rather than as the constant it replaces.
+            baseline: await baselineOrReason(root),
         },
     };
 }

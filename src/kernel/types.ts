@@ -56,10 +56,20 @@ export type Severity = (typeof SEVERITIES)[number];
 export type TierName = 'standard' | 'strict' | 'security';
 export const TIER_NAMES: readonly TierName[] = ['standard', 'strict', 'security'];
 
-/** A content-addressed freeze. Any change to any declared path yields a different revision. */
+/**
+ * A content-addressed freeze. Any change to any declared path yields a different revision.
+ *
+ * **`declaredPaths` is what makes drift re-checkable.** Freezing expands a declared directory into the files it holds, so
+ * the digest map is a *result* of the declaration and cannot be inverted: a file added inside a declared directory after
+ * the freeze is not a key in `pathDigests`, and re-freezing those keys therefore cannot notice it. Keeping the declaration
+ * means drift is measured against the surface that was declared rather than against the surface that happened to exist,
+ * which is the difference between "nothing in this directory changed" and "nothing I could see changed".
+ */
 export type Subject = {
     revision: string;
     pathDigests: Record<string, string>;
+    /** The paths as declared, before directory expansion. Absent on subjects frozen before the field existed. */
+    declaredPaths?: string[];
 };
 
 /** A dependency entry is either a path this claim rests on, or another claim it builds on. Prefixes keep them apart. */
@@ -237,6 +247,17 @@ export type Decision = {
     reusedEvidence: string[];
     /** Claims the change forces back open. */
     revalidateClaims: string[];
+    /**
+     * Whether reuse was actually decided, or could not be because no previous subject was supplied.
+     *
+     * **Two facts were being reported with one shape.** With no `previous` subject the delta returns an empty
+     * `reusedEvidence` and every claim in `revalidateClaims`, which is the conservative answer — and it is byte-identical
+     * to the answer a real comparison gives when nothing happened to be reusable. A reader could not tell "this change
+     * reused nothing" from "reuse was never evaluated", on the field whose entire purpose is to say how much work a repair
+     * saved. `deltaEvaluated` is that distinction, and it is why the ledger route can report honestly that it does not
+     * yet supply the input.
+     */
+    deltaEvaluated: boolean;
     deficits: Deficit[];
     /** Reported, never silently dropped: a quorum that could not be formed from diverse reviewers. */
     undiversified: boolean;

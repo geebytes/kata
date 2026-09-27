@@ -417,6 +417,13 @@ export function evidenceMatchesRow(
       if (decl.id === checkId && kindMatch) return true;
       continue;
     }
+    // **The text comparison is legacy-only, and only when there is no id to match on.** It used to run whenever a
+    // declaration carried no `id` *even when the caller supplied a `checkId`*, so a declaration whose command text was a
+    // substring of the envelope's command was credited with proving it — text containment standing in for identity, in the
+    // function whose whole point is a structural match. A caller that knows the check id now gets a structural answer or
+    // nothing; the textual route survives only for the call paths that genuinely have no id (evidence recorded before ids
+    // existed), which is the case it was written for.
+    if (checkId !== undefined) continue;
     const commandMatch = evidenceCommand.includes(decl.command)
       || (decl.command.startsWith('vitest ') && /(?:^|\/)vitest(?:\.mjs)?\s+run\b/.test(evidenceCommand))
       || (decl.command.startsWith('tsc ') && /(?:^|\/)tsc\s+/.test(evidenceCommand));

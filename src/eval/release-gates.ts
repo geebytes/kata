@@ -20,6 +20,17 @@ export interface ReleaseGate {
 export interface ReleaseGateResult {
   gates: ReleaseGate[];
   allPass: boolean;
+  /**
+   * Whether a release may proceed — **the field a release decision should read.**
+   *
+   * `allPass` answers "of the gates that were scored, did they all pass", which is a different question: a required gate
+   * that never received its input is reported `skipped` and excluded from `allPass`, so a release could read `allPass:
+   * true` while the critical-recall comparison had never been made. `releaseReady` is false whenever a **required** gate
+   * is skipped, and names them, so "nobody measured this" cannot be mistaken for "this was measured and passed".
+   */
+  releaseReady: boolean;
+  /** The required gates that were skipped, with the reason each gave. Empty when nothing required was skipped. */
+  unmeasuredRequiredGates: Array<{ name: string; details: string }>;
   summary: string;
 }
 
@@ -188,12 +199,27 @@ export async function checkReleaseGates(
   const allPass = scored.every((gate) => gate.pass);
   const passed = scored.filter((gate) => gate.pass).length;
   const skipped = gates.length - scored.length;
+  // **A required gate that was never measured is not a passing release.** `allPass` excludes skipped gates by design, so
+  // on its own it can read `true` while the quality comparison that matters most was never made. The quality gates are
+  // required; cost and escalation-rate gates are informational because their inputs are not always available (a run with
+  // no fixtures has no escalation rate to report).
+  const qualityGates = new Set(['verifier-critical-recall', 'acceptance-pass-rate', 'wiki-rejection-rate']);
+  const unmeasuredRequiredGates = gates
+    .filter((gate) => gate.skipped === true && qualityGates.has(gate.name))
+    .map((gate) => ({ name: gate.name, details: gate.details }));
+  const releaseReady = allPass && unmeasuredRequiredGates.length === 0;
 
+  const skippedNote = skipped > 0 ? `; ${skipped} skipped as unmeasured` : '';
+  const requiredNote = unmeasuredRequiredGates.length > 0
+    ? ` Not release-ready: ${unmeasuredRequiredGates.map((gate) => gate.name).join(', ')} produced no measurement.`
+    : '';
   return {
     gates,
     allPass,
-    summary: allPass
-      ? `All ${scored.length} scored release gates passed${skipped > 0 ? `; ${skipped} skipped as unmeasured` : ''}.`
-      : `${passed}/${scored.length} scored release gates passed. Review failed gates before release${skipped > 0 ? ` (${skipped} skipped as unmeasured)` : ''}.`,
+    releaseReady,
+    unmeasuredRequiredGates,
+    summary: `${allPass
+      ? `All ${scored.length} scored release gates passed${skippedNote}.`
+      : `${passed}/${scored.length} scored release gates passed. Review failed gates before release${skippedNote}.`}${requiredNote}`,
   };
 }

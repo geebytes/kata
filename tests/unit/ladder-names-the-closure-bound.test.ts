@@ -1,50 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { suggestCandidateAction } from '../../src/workflow/navigation.js';
+import { nextActionReasons, suggestCandidateAction } from '../../src/workflow/navigation.js';
 
 /**
- * **The round's conclusion criterion, in the ladder's vocabulary.**
+ * **The round's conclusion criterion, after the class table was deleted with the old route.**
  *
- * The loop's measured shape is that findings per round *rise* rather than fall — `closure-gate` ran `[7, 5, 5, 2, 5, 9, 10, 12, 14, 14]`,
- * `kata-gate-surface` `[1, 8, 6, 6, 6, 7, 7, 10, 12, 13]` — because every repair is new code and a round exists to find defects in new code.
- * So "no findings" is unreachable and was never the right bound. The bound that can actually fail is *"every class an open finding names is
- * covered by a check that reddens when the class returns"*, which `roundClosure` computes.
+ * The loop's measured shape is that findings per round *rise* rather than fall — `closure-gate` ran
+ * `[7, 5, 5, 2, 5, 9, 10, 12, 14, 14]`, `kata-gate-surface` `[1, 8, 6, 6, 6, 7, 7, 10, 12, 13]` — because every repair is new
+ * code and a round exists to find defects in new code. So "no findings" is unreachable and was never the right bound.
  *
- * Until this branch existed that verdict was only a field on `status`: the operator read it, and the ladder still sent the change back to
- * repair an instance of an already-covered class, one round at a time. Naming it as the next action is the difference between a bound that
- * is reported and a bound that is used.
+ * The bound that could fail was *"every class an open finding names is covered by a check that reddens when the class
+ * returns"*, computed by `roundClosure` and answered by `roundMayClose` over a hand-maintained class table. Both are gone:
+ * the class table was deleted with the rest of the round-shaped route, `finding-lifecycle.ts` had no importer left, and the
+ * ladder branch that consumed `roundClosure` could therefore never fire — nothing has written that field since.
+ *
+ * **A branch that cannot fire is worse than no branch**: a reader cannot tell a bound that was never reached from a bound
+ * that no longer exists. What replaces it is the question the kernel can actually fail on — every risk class the tier's
+ * contract requires must have a claim, and every claim must be supported — which `decide` enforces and the ladder routes
+ * on through `satisfy_ledger_deficits`.
  */
-describe('the ladder names the closure bound when a round may not close', () => {
+describe('the closure bound the ladder names, after the class table was retired', () => {
     const base = {
         verifyResult: 'PASS',
         judgeResult: null,
         blockingFindings: 0,
         majorFindings: 0,
         minorFindings: 0,
-        unresolvedObligations: 0,
         failingEvidence: 0,
         failedAcceptance: 0,
         reviewReady: true,
         reviewMode: 'std',
     } as never;
 
-    it('sends the reviewer to cover the class rather than repair one more instance', () => {
-        const action = suggestCandidateAction('review', {
-            ...(base as Record<string, unknown>),
-            roundClosure: {
-                mayClose: false,
-                reason: 'classes with no covering check: one-concept-several-derivations',
-                open: [{ classId: 'one-concept-several-derivations', covered: false }],
-            },
-        } as never);
-        expect(action.reason).toBe('cover_uncovered_classes');
-        expect(action.nextSkill).toBe('/kata-review');
+    it('does not route on a class table nobody maintains any more', () => {
+        // The reason was in the vocabulary and was reachable only through a field with no producer. It is gone from both, so
+        // an earlier-version caller cannot ask for a route the ladder no longer implements.
+        expect(nextActionReasons as readonly string[]).not.toContain('cover_uncovered_classes');
     });
 
-    it('does not fire when the round may close, so the ladder moves on', () => {
-        // `reviewReady: true` and no closure verdict means the round is closed and the change advances — the branch is a bound, not a
-        // detour: it exists to name what blocks the close, and it must not appear when nothing does.
+    it('moves on when the ledger has passed and the review has a conclusion', () => {
         const action = suggestCandidateAction('review', base);
-        expect(action.reason).not.toBe('cover_uncovered_classes');
         expect(action.reason).toBe('judge_reviewed_change');
     });
 
@@ -57,20 +51,18 @@ describe('the ladder names the closure bound when a round may not close', () => 
         const action = suggestCandidateAction('review', {
             ...(base as Record<string, unknown>),
             blockingFindings: 1,
-            roundClosure: { mayClose: false, reason: 'classes with no covering check: x' },
         } as never);
         expect(action.reason).toBe('repair_blocking_review_findings');
     });
 
-    it('does not overrule a ledger that has not passed', () => {
-        // The gate this case named was an unresolved obligation; nothing creates one for a governed change any more, so the
-        // record that outranks the closure bound is the ledger's own verdict — a change whose evidence does not support its
-        // claims is repaired before anyone covers a class.
+    it('routes a ledger that has not passed to its own deficits, which is the bound now', () => {
+        // The question the class table used to ask is answered here: a change whose evidence does not support its claims, or
+        // whose claims do not cover the tier's risk space, is repaired before anything else is considered.
         const action = suggestCandidateAction('review', {
             ...(base as Record<string, unknown>),
             ledger: { state: 'decided', verdict: 'insufficient', claims: 3, reason: 'claims are not supported', deficits: ['C1'] },
             ledgerClosure: { mayClose: false, unsupportedClaims: ['C1'], reason: '1 claim(s) are not supported' },
         } as never);
-        expect(action.reason).not.toBe('cover_uncovered_classes');
+        expect(action.reason).toBe('satisfy_ledger_deficits');
     });
 });

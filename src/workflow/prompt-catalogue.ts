@@ -40,10 +40,6 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: '检测到 strict 模式的 major review finding；strict 任务必须修复方可进入 Judge，请执行 /kata-build。',
         en: 'A major review finding in strict mode. Strict tasks must repair before Judge: run /kata-build.',
     },
-    cover_uncovered_classes: {
-        zh: '本轮【不可收尾】：存在未覆盖的类 —— 某个开放的终态 finding 命名的类【没有任何会在该类回归时变红的检查】。修复一个实例只承诺下一轮同一个类；请为该类补一个覆盖检查（或把该 finding 归入一个已覆盖的类），而不是再修一个实例。',
-        en: 'The round may not close: a class named by an open terminal finding has no check that reddens when that class returns. Repairing one instance promises the next round the same class — cover the class (or place the finding under a class that is covered) rather than repairing one more instance.',
-    },
     complete_review_conclusion: {
         zh: 'Review 尚未形成绑定当前 revision 的显式结论和审查证据；请完成实际代码审查后，以 /kata-review --approve --review-evidence <summary> 记录结论，或写入 findings。',
         en: 'Review has no explicit conclusion bound to the current revision. Do the review, then record it with /kata-review --approve --review-evidence <summary>, or write findings.',

@@ -326,6 +326,10 @@ export function decide(input: DecideInput): Decision {
         reasons,
         reusedEvidence: delta.reusedEvidence,
         revalidateClaims: delta.revalidate,
+        // **Said rather than implied.** With no previous subject the delta's answer is an empty reuse list, which is the
+        // conservative result and indistinguishable from a comparison that found nothing reusable. The flag is what lets a
+        // reader tell the two apart — the rule this subsystem applies to every other unmeasurable quantity.
+        deltaEvaluated: input.previous !== undefined,
         deficits,
         undiversified: quorum?.undiversified ?? false,
     };

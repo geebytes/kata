@@ -43,7 +43,10 @@ describe('Dogfood evaluation', () => {
       `  Acceptance pass rate: ${(report.metrics.acceptancePassRate * 100).toFixed(1)}%`,
       `  Repair rate: ${report.metrics.repairRate.toFixed(2)}`,
       `  Escalation rate: ${report.metrics.escalationRate === null ? 'not measured' : report.metrics.escalationRate.toFixed(2)}`,
-      `  Release gates: ${report.releaseGates.allPass ? 'PASS' : 'FAIL'}`,
+      // **`releaseReady`, not `allPass`.** A required gate that was never given its input is reported `skipped` and
+      // excluded from `allPass`, so the scored-gates answer can be `true` while the quality comparison was never made. The
+      // line a release decision reads has to be the one that says so.
+      `  Release gates: ${report.releaseGates.releaseReady ? 'READY' : report.releaseGates.allPass ? 'PASS (unmeasured required gate)' : 'FAIL'}`,
       `  ${report.releaseGates.summary}`,
       ];
       process.stdout.write(summary.join('\n') + '\n');

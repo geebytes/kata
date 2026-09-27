@@ -39,12 +39,19 @@ describe('evidence eligibility', () => {
         expect(evidenceMatchesRow(entrypoint, 'anything at all', 'entrypoint', 'check-b')).toBe(true);
     });
 
-    it('falls back to the textual comparison for declarations that carry no id', () => {
+    it('falls back to the textual comparison only when the caller has no check id', () => {
         const declared = row([{ kind: 'test', command: 'make test' }]);
 
+        // With no `checkId` there is nothing structural to match on, so the legacy comparison is the only answer available.
         expect(evidenceMatchesRow(declared, 'make test', 'test')).toBe(true);
         expect(evidenceMatchesRow(declared, 'make test --verbose', 'test')).toBe(true);
         expect(evidenceMatchesRow(declared, 'make lint', 'test')).toBe(false);
+
+        // **With a `checkId` it is not.** The fallback used to run here too, so a declaration whose command text was a
+        // substring of the envelope's command was credited with proving a row it had nothing to do with — text
+        // containment standing in for identity. A caller that knows which check this is gets a structural answer or none.
+        expect(evidenceMatchesRow(declared, 'make test --verbose', 'test', 'some-other-check')).toBe(false);
+        expect(evidenceMatchesRow(declared, 'make test', 'test', 'some-other-check')).toBe(false);
     });
 
     it('falls back for evidence recorded before ids existed', () => {

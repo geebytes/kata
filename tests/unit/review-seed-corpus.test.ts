@@ -30,6 +30,18 @@ describe('the seed corpus for the new mechanism', () => {
         });
     }
 
+    it('says whether reuse was evaluated, instead of reporting an empty reuse list either way', () => {
+        // **Two facts, one shape.** With no previous subject the delta answers conservatively — nothing reused, everything
+        // reopened — and that is byte-identical to what a real comparison produces when nothing happened to be reusable. A
+        // reader could not tell "this change reused nothing" from "reuse was never evaluated", on the field whose whole
+        // purpose is to say how much work a repair saved. `deltaEvaluated` is the distinction.
+        const first = reviewScenarios[0]!.build();
+        expect(decide(first).deltaEvaluated).toBe(false);
+        const withPrevious = decide({ ...first, previous: { subject: first.subject, claims: first.claims } });
+        expect(withPrevious.deltaEvaluated).toBe(true);
+        expect(withPrevious.reusedEvidence.length).toBeGreaterThan(0);
+    });
+
     it('covers every reason the kernel can produce, so the vocabulary cannot grow silently', () => {
         const covered = new Set(reviewScenarios.flatMap((scenario) => scenario.expect.reasons));
         const missing = (Object.keys(REASON_MESSAGES) as ReasonCode[]).filter((code) => !covered.has(code));
