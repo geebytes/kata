@@ -457,6 +457,22 @@ export function activeTaskPath(root: string): string {
 /** The directory's name, exported so a consumer that only needs the name does not spell the string itself. */
 export const llmwikiDirName = '.llmwiki';
 
+/**
+ * Where the wiki enrichment packet lives — **not in the governed task store.**
+ *
+ * The packet is a work order addressed to a person or an agent, not to the runtime: nothing reads it back, and it is
+ * regenerated whenever the packet is wanted. It used to be written to `.kata/tasks/wiki-enrich/task-packet.json`, which
+ * spent a directory in the store on something that is not a task — `kata-cli status --change wiki-enrich` answered "No
+ * Kata workspace owns task wiki-enrich" while the directory sat in the store, and every tool that enumerates the store as
+ * tasks had to special-case it.
+ *
+ * `runtimeDir` is the right home: it already holds the regenerable artefacts (the active-task pointer) that are neither
+ * governed state nor evidence, and it is outside the store, so an enumeration of the store is an enumeration of tasks.
+ */
+export function wikiEnrichPacketPath(root: string): string {
+    return join(runtimeDir(root), 'wiki-enrich-task-packet.json');
+}
+
 // ---------------------------------------------------------------------------
 // Handoffs
 // ---------------------------------------------------------------------------

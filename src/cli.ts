@@ -78,6 +78,7 @@ import {
 import { hashContent } from './core/hash.js';
 import { currentStatePath, handoffDir, taskPath, tasksDir } from './core/layout.js';
 import { createOutputContext, currentOutput, isDefaultSilentInstallerCommand, isJsonOutput, isQuietOutput, outputResult, setOutput, writeProgress, type OutputContext, type OutputOverrides } from './cli/output.js';
+import { SELF_HANDLED_HELP, usageFor } from './cli/usage.js';
 import {
     parseInstallerArgs,
     refreshPolicyFromArgs,
@@ -169,12 +170,15 @@ async function runMain(argv: string[]): Promise<void> {
         ?? (requestedChange && command !== 'open' && (isWorkflowCommand(command) || command === 'status')
             ? resolveWorkspaceRootForTask(requestedChange)
             : resolveWorkspaceRoot());
-    if (isWorkflowCommand(command) && (argv.includes('--help') || argv.includes('-h'))) {
-        outputResult({
-            command,
-            usage: 'kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next> [change|--change change]',
-            readOnly: true,
-        });
+    // **`--help` must never reach a command that writes, for any command.** The guard used to fire only for
+    // `isWorkflowCommand(command)` — nine of the thirty families — so `ledger freeze --help` fell through and *froze the
+    // subject*: a request to read the manual performed a mutation. Measured, because the flag was simply ignored by the
+    // argument parser and the command ran with the flags it did understand.
+    //
+    // The list is every family the dispatcher below answers, so a new command has to add itself here to be reachable —
+    // and a command absent from this map is exactly the case a `--help` would silently mutate.
+    if ((argv.includes('--help') || argv.includes('-h')) && SELF_HANDLED_HELP[command] === undefined) {
+        outputResult({ command, usage: usageFor(command), readOnly: true });
         return;
     }
 

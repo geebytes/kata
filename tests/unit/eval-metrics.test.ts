@@ -487,26 +487,60 @@ describe('Evaluation runner', () => {
  * so "the corpus gates every optimization" was the one claim no case tested.
  */
 describe('the corpus covers the criterion that makes it a gate', () => {
-    it('has no two criteria sharing one selector, so no criterion is left un-evidenced by dedup', async () => {
-        const { readTask } = await import('../../src/core/task.js');
-        // **Read from this workspace, not from a path that happened to exist.** The first version pointed at
-        // `.kata/worktrees/adversarial-admissibility` — an absolute path inside a *leftover linked worktree* — so the case
-        // passed only while that stale checkout was on disk, and it broke the moment the leftover was removed. A test whose
-        // fixture is junk elsewhere in the tree is measuring the junk.
-        const task = await readTask(process.cwd(), 'adversarial-admissibility');
-        expect(task, 'the change whose matrix states this corpus\'s criteria must be present in this workspace').not.toBeNull();
+    /** The rule the seal applies: one selector, one criterion, because the seal emits one evidence file per selector. */
+    function criteriaSharingASelector(rows: Array<{ acceptanceId: string; evidence?: Array<{ id?: string; kind?: string; testSelector?: string }> }>): string[] {
         const bySelector = new Map<string, string[]>();
-        for (const row of task?.acceptanceMatrix?.rows ?? []) {
+        for (const row of rows) {
             for (const item of row.evidence ?? []) {
                 const selector = item.testSelector ?? `${row.acceptanceId}:${item.id ?? item.kind}`;
                 bySelector.set(selector, [...(bySelector.get(selector) ?? []), row.acceptanceId]);
             }
         }
-        const shared = [...bySelector.entries()].filter(([, ids]) => new Set(ids).size > 1);
-        expect(
-            shared.map(([selector, ids]) => `${selector} declared by ${[...new Set(ids)].join(', ')}`),
-            'a selector declared by two criteria cannot evidence both — the seal emits one file per selector',
-        ).toEqual([]);
+        return [...bySelector.entries()]
+            .filter(([, ids]) => new Set(ids).size > 1)
+            .map(([selector, ids]) => `${selector} declared by ${[...new Set(ids)].join(', ')}`);
+    }
+
+    it('refuses two criteria sharing one selector, and accepts a matrix where each has its own', () => {
+        // **The fixture is constructed, because a fixture borrowed from the repository measures the repository.**
+        //
+        // This case has now had both of its shapes fail for the same reason. The first version read an absolute path
+        // inside a leftover linked worktree, so it passed only while that stale checkout existed. The second read the real
+        // task record from `process.cwd()` — which is this workspace when the suite runs on its own, and the seal's
+        // *isolated snapshot* when it runs inside a seal. `.kata/` is gitignored, so the snapshot does not carry it, and
+        // the case failed only where it mattered: measured, `npm test` exit 1 inside the seal while the same suite was
+        // green outside it.
+        //
+        // What the criterion is about is the rule, so the rule is what is tested — and testing it this way makes the case
+        // able to fail, which the previous two versions could not: they could only notice that a record was missing.
+        const shared = criteriaSharingASelector([
+            { acceptanceId: 'AC-1', evidence: [{ id: 'e-1', kind: 'test', testSelector: 'tests/unit/a.test.ts' }] },
+            { acceptanceId: 'AC-2', evidence: [{ id: 'e-2', kind: 'test', testSelector: 'tests/unit/a.test.ts' }] },
+        ]);
+        expect(shared, 'two criteria naming one selector cannot both be evidenced by it').toEqual(['tests/unit/a.test.ts declared by AC-1, AC-2']);
+
+        const distinct = criteriaSharingASelector([
+            { acceptanceId: 'AC-1', evidence: [{ id: 'e-1', kind: 'test', testSelector: 'tests/unit/a.test.ts' }] },
+            { acceptanceId: 'AC-2', evidence: [{ id: 'e-2', kind: 'test', testSelector: 'tests/unit/b.test.ts' }] },
+        ]);
+        expect(distinct).toEqual([]);
+
+        // And a declaration with no selector is keyed by its own identity, so two criteria using the same *command* shape
+        // are still distinguished — the failure mode the `?? fallback` exists for.
+        const unselector = criteriaSharingASelector([
+            { acceptanceId: 'AC-1', evidence: [{ id: 'e-1', kind: 'entrypoint' }] },
+            { acceptanceId: 'AC-2', evidence: [{ id: 'e-1', kind: 'entrypoint' }] },
+        ]);
+        expect(unselector).toEqual([]);
+    });
+
+    it('scores the retired corpus through the surface that has no repository dependency', async () => {
+        // The corpus's own coverage, asserted where it can be asserted: `ledger corpus` builds every seed in memory and
+        // needs no workspace, which is why it is the instrument that works inside a seal.
+        const { scoreSeeds } = await import('../../src/store/corpus.js');
+        const score = await scoreSeeds();
+        expect(score.mismatched, 'every seed must decide as its own expectation declares').toEqual([]);
+        expect(score.reasonsUnexercised, 'a refusal reason no seed exercises is a rule with no example').toEqual([]);
     });
 });
 

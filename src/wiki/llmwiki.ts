@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { writeWikiRecord } from './store.js';
+import { writeWikiEnrichPacket } from './enrich-packet.js';
 import { computeFileHash } from './record.js';
 import { hashContent } from '../core/hash.js';
 import {
@@ -400,11 +401,11 @@ export async function rebuildLlmWiki(input: LlmWikiInput = {}): Promise<LlmWikiR
     }
   } catch {}
 
-  const taskPacketPath = join(taskDir(root, 'wiki-enrich'), 'task-packet.json');
-  const wrapDir = taskDir(root, 'wiki-enrich');
-  await mkdir(wrapDir, { recursive: true });
-  const enrichTask = await buildLlmWikiTask({ root, kind: 'enrich' });
-  await writeFile(taskPacketPath, `${JSON.stringify(enrichTask, null, 2)}\n`);
+  // The same writer the install path calls: one construction, one write.
+  const { path: taskPacketPath } = await writeWikiEnrichPacket({
+    root,
+    packet: await buildLlmWikiTask({ root, kind: 'enrich' }),
+  });
 
   await appendLog(wikiRoot, 'rebuild | wiki cleaned and task-packet regenerated', [
     `- Pages removed: ${cleanedPages}`,

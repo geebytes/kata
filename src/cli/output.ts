@@ -91,6 +91,11 @@ export function isJsonOutput(argv: string[]): boolean {
 
 export function isDefaultSilentInstallerCommand(argv: string[]): boolean {
     const command = argv[0];
-    return (command === 'init' || command === 'uninstall') && !isJsonOutput(argv);
+    // **A help request is not an installer run.** `init` and `uninstall` are silent by default because they narrate
+    // progress rather than return a document — but `--help` asked for the document, and the silence rule swallowed it:
+    // `kata-cli init --help` printed nothing at all. The guard in the dispatcher fired and its answer went nowhere, which
+    // is why this defect had two independent causes and the second one hid behind the first.
+    const askedForHelp = argv.includes('--help') || argv.includes('-h');
+    return (command === 'init' || command === 'uninstall') && !isJsonOutput(argv) && !askedForHelp;
 }
 

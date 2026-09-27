@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { loadConfig, writeConfigPatch } from '../core/config.js';
 import { initLlmWiki, buildLlmWikiTask } from '../wiki/llmwiki.js';
+import { writeWikiEnrichPacket } from '../wiki/enrich-packet.js';
 import { renderSkillFor } from './facade.js';
 import {
   commandManifest,
@@ -382,10 +383,10 @@ async function manageProjectWiki(options: InstallOptions, root: string, report: 
     };
   }
 
-  const enrichTask = await buildLlmWikiTask({ root, kind: 'enrich' });
-  const taskDir = layoutTaskDir(root, 'wiki-enrich');
-  await mkdir(taskDir, { recursive: true });
-  await writeFile(join(taskDir, 'task-packet.json'), `${JSON.stringify(enrichTask, null, 2)}\n`);
+  // **The packet's one writer, called rather than reimplemented.** This site used to build the path itself and write into
+  // a directory in the governed task store named after a task that does not exist; the wiki rebuild did the same thing
+  // with its own construction, so the two could produce different packets for one wiki.
+  await writeWikiEnrichPacket({ root, packet: await buildLlmWikiTask({ root, kind: 'enrich' }) });
 }
 
 async function writeProjectContractFiles(
