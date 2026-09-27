@@ -547,7 +547,11 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
     ...(reason === 'review_fresh_implementation'
         ? {
             followUpCommand: `kata-cli review --change ${taskId} --approve --review-evidence "<what the ledger decided and why it suffices>"`,
-            pauseInstruction: '先进 review 相位，再审批：`kata-cli review --change <id>` 会把相位推进 review，`kata-cli review --change <id> --approve` 在相位推进前会被拒绝。两者都要跑。',
+            // **Composed with the boundary prompt, not instead of it.** The first version of this replaced
+            // `pauseInstruction` and dropped the trust-boundary text that carries the mandatory "kata does not route host
+            // models" notice and the `--confirm-host-model` step — trading two required facts for one convenience, which is
+            // the shape this repository removes most often. The boundary text goes first because the pause happens first.
+            pauseInstruction: `${gate ? boundaryPromptFor(gate, promptLanguage()) : ''} 进入 review 后要跑两条命令：\`kata-cli review --change ${taskId}\` 先把相位推进 review，\`kata-cli review --change ${taskId} --approve\` 在相位推进前会被拒绝。`,
         }
         : {}),
     ...(wikiClosure ? { pauseInstruction: '实现验证已通过；请决定本任务的知识闭环是 captured 还是 not_applicable，再重新执行 /kata-verify。' } : {}),

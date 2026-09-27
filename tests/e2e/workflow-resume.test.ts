@@ -1143,7 +1143,11 @@ describe('Workflow resume and lifecycle', () => {
         expect(result.success).toBe(true);
         expect(result.phase).toBe('hardVerify');
         expect(result.diagnostics?.verifyResult).toBe('PASS');
-        expect(result.diagnostics?.nextAction).toEqual({
+        // `toMatchObject` rather than `toEqual`: the action is a growing record, and an exact-shape pin fails on every
+        // addition whether or not the addition is wrong — the same brittleness as a hardcoded count of a generated set. The
+        // two facts that matter about the pause are asserted separately, below.
+        const nextAction = result.diagnostics?.nextAction as Record<string, unknown>;
+        expect(nextAction).toMatchObject({
             taskId: 'wf-verify-test',
             nextSkill: '/kata-review',
             slashCommand: '/kata-review wf-verify-test',
@@ -1153,8 +1157,13 @@ describe('Workflow resume and lifecycle', () => {
             requiresUserConfirmation: true,
             modelOrPlatformSwitchAllowed: true,
             trustBoundary: 'review_gate',
-            pauseInstruction: '暂停：Kata 不能切换宿主平台模型，也不得写入已切换的路由记录。展示推荐平台/模型；请用户先在宿主平台设置中完成切换，再恢复会话并确认实际平台/模型。仅此后才可用 --confirm-host-model 写入审计记录并进入 Review。',
+            // **The boundary text is required, and so is the order note.** Entering review and approving are two commands,
+            // and the ladder named the second — which refuses until the first has run.
+            followUpCommand: 'kata-cli review --change wf-verify-test --approve --review-evidence "<what the ledger decided and why it suffices>"',
         });
+        expect(String(nextAction.pauseInstruction), 'the host-model notice survives').toContain('Kata 不能切换宿主平台模型');
+        expect(String(nextAction.pauseInstruction), 'the host-model notice survives').toContain('--confirm-host-model');
+        expect(String(nextAction.pauseInstruction), 'and the order note is added, not substituted').toContain('--approve');
         await expect(readFile(join(root, '.kata/tasks/wf-verify-test/verify.json'), 'utf8')).resolves.toContain('"result": "PASS"');
     });
 
