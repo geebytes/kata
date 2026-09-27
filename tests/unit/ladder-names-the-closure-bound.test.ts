@@ -62,11 +62,14 @@ describe('the ladder names the closure bound when a round may not close', () => 
         expect(action.reason).toBe('repair_blocking_review_findings');
     });
 
-    it('does not overrule an unresolved obligation either', () => {
+    it('does not overrule a ledger that has not passed', () => {
+        // The gate this case named was an unresolved obligation; nothing creates one for a governed change any more, so the
+        // record that outranks the closure bound is the ledger's own verdict — a change whose evidence does not support its
+        // claims is repaired before anyone covers a class.
         const action = suggestCandidateAction('review', {
             ...(base as Record<string, unknown>),
-            unresolvedObligations: 2,
-            roundClosure: { mayClose: false, reason: 'classes with no covering check: x' },
+            ledger: { state: 'decided', verdict: 'insufficient', claims: 3, reason: 'claims are not supported', deficits: ['C1'] },
+            ledgerClosure: { mayClose: false, unsupportedClaims: ['C1'], reason: '1 claim(s) are not supported' },
         } as never);
         expect(action.reason).not.toBe('cover_uncovered_classes');
     });

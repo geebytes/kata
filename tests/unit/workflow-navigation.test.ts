@@ -17,8 +17,6 @@ const emptyUpstream: UpstreamSummary = {
   verifyRepairScopes: [],
   evidenceFiles: [],
   failingEvidence: 0,
-  unresolvedObligations: 0,
-  unresolvedObligationAcIds: [],
 };
 
 describe('workflow guidance', () => {
@@ -291,90 +289,10 @@ describe('workflow guidance', () => {
     expect(action.pauseInstruction).toContain('--confirm-host-model');
   });
 
-  it('prioritizes unresolved obligations over blocking review findings in navigation', () => {
-    const upstream: UpstreamSummary = {
-      ...emptyUpstream,
-      blockingFindings: 5,
-      unresolvedObligations: 1,
-      unresolvedObligationAcIds: ['AC-1'],
-    };
-    const suggestion = suggestCandidateAction('review', upstream);
 
-    expect(suggestion).toMatchObject({
-      nextSkill: '/kata-build',
-      reason: 'repair_unresolved_obligations',
-    });
-    expect(suggestion.priority).toBeGreaterThan(1000);
-  });
 
-  it('navigation prompt for unresolved obligations explains matrix-linked evidence', () => {
-    const prompts = statusActionPrompts({
-      nextSkill: '/kata-build',
-      reason: 'repair_unresolved_obligations',
-      role: 'implementer',
-    });
 
-    expect(prompts.length).toBeGreaterThan(0);
-    expect(prompts[0]).toContain('修复义务');
-    expect(prompts[0]).toContain('矩阵关联');
-  });
 
-  it('routes a legacy obligation without an acceptance matrix to design migration', () => {
-    const suggestion = suggestCandidateAction('hardVerify', {
-      ...emptyUpstream,
-      unresolvedObligations: 1,
-      unresolvedObligationAcIds: ['AC-5'],
-      missingAcceptanceMatrix: true,
-    });
-
-    expect(suggestion).toMatchObject({
-      nextSkill: '/kata-design',
-      role: 'designer',
-      reason: 'migrate_legacy_acceptance_matrix',
-    });
-    expect(statusActionPrompts(suggestion).join('\n')).toContain('AC-5');
-    expect(statusActionPrompts(suggestion).join('\n')).toContain('不是完成');
-  });
-
-  it('keeps matrix-backed obligations on the Build repair route', () => {
-    const suggestion = suggestCandidateAction('hardVerify', {
-      ...emptyUpstream,
-      unresolvedObligations: 1,
-      unresolvedObligationAcIds: ['AC-5'],
-      missingAcceptanceMatrix: false,
-    });
-
-    expect(suggestion).toMatchObject({
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_unresolved_obligations',
-    });
-  });
-
-  it('status summary includes unresolved obligation count and AC ids', async () => {
-    const root = await tempRoot();
-    await mkdir(join(root, '.kata/tasks', 'obligation-task'), { recursive: true });
-    await writeFile(join(root, '.kata/tasks', 'obligation-task', 'task.json'), JSON.stringify({
-      id: 'obligation-task', title: 'Test', phase: 'implement',
-      acceptance: [{ id: 'AC-1', statement: 'Test.' }],
-      createdAt: '2026-07-16T00:00:00.000Z', updatedAt: '2026-07-16T00:00:00.000Z',
-    }, null, 2) + '\n', 'utf8');
-    await writeFile(join(root, '.kata/tasks', 'obligation-task', 'repair-obligations.json'), JSON.stringify({
-      obligations: [{
-        id: 'obligation-1', taskId: 'obligation-task', source: 'review',
-        acceptanceId: 'AC-1', severity: 'blocking',
-        message: 'Test obligation.', createdAt: '2026-07-16T00:00:00.000Z',
-      }],
-      updatedAt: '2026-07-16T00:00:00.000Z',
-    }, null, 2) + '\n', 'utf8');
-
-    const summary = await readUpstreamSummary(root, 'obligation-task');
-
-    expect(summary.unresolvedObligations).toBe(1);
-    expect(summary.unresolvedObligationAcIds).toEqual(['AC-1']);
-    expect(summary.blockingFindings).toBe(0);
-    expect(summary.missingAcceptanceMatrix).toBe(true);
-  });
 
   it('routes mixed revision evidence to /kata-build reseal', () => {
     const upstream: UpstreamSummary = {

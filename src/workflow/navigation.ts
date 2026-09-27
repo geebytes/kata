@@ -8,7 +8,6 @@ import {
   type PromptLanguage,
 } from './prompt-catalogue.js';
 import { readTrackedFindings } from '../quality/finding-disposition.js';
-import { readObligations } from '../quality/repair-obligations.js';
 import type { RepairScope } from '../quality/judge.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
@@ -37,8 +36,6 @@ export type UpstreamSummary = {
   wikiClosureReason?: string;
   evidenceFiles: string[];
   failingEvidence: number;
-  unresolvedObligations: number;
-  unresolvedObligationAcIds: string[];
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
   /**
@@ -184,8 +181,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)) : null;
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
-  const obligations = await readObligations(root, taskId);
-  const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
   const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
   const reviewMode = task?.workflowProfile?.reviewMode;
   // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
@@ -226,7 +221,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ledger,
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
-    unresolvedObligations: unresolvedObligations.length,
     // **May this round close?** — asked of the ledger rather than of a findings table.
     //
     // This used to compute a closure verdict from `readTrackedFindings`, the falsifier ledger and the class table: three
@@ -263,7 +257,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
             },
         };
     })()),
-    unresolvedObligationAcIds: [...new Set(unresolvedObligations.map((o) => o.acceptanceId).filter((id): id is string => Boolean(id)))],
     ...(task && !task.acceptanceMatrix ? { missingAcceptanceMatrix: true } : {}),
     ...(mixedRevision ? { mixedRevisionEvidence: true } : {}),
   };
@@ -351,23 +344,14 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2100,
     };
   }
-  if (upstream.unresolvedObligations > 0) {
-    if (upstream.missingAcceptanceMatrix) {
-      return {
-        nextSkill: '/kata-design',
-        role: 'designer',
-        reason: 'migrate_legacy_acceptance_matrix',
-        priority: 2050 + upstream.unresolvedObligations,
-        acceptanceIds: upstream.unresolvedObligationAcIds,
-      };
-    }
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_unresolved_obligations',
-      priority: 2000 + upstream.unresolvedObligations,
-    };
-  }
+  // **The obligation gate is gone, and the ledger answers the question it asked.** It read "is there a recorded failure
+  // that has not been answered yet", which a judge FAIL used to satisfy by writing an obligation —
+  // and judge can no longer be reached without a ledger, so nothing creates one for a governed change any more
+  // (measured: the only writer of an approved review refuses ledger-less changes, and judge refuses unapproved reviews).
+  //
+  // The failure is not lost: it lives where the failing criterion lives. That criterion is a claim, its evaluation is a
+  // verdict, and an unsupported claim is what `satisfy_ledger_deficits` below routes on. Legacy acceptance matrices keep
+  // their own branch, because "the matrix was never declared" is a property of the task rather than of an obligation.
   // When the latest verify failed in review phase, the verify repair reason
   // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
   // over blocking or major review findings so --seal is attached to the build
@@ -392,6 +376,19 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: 'implementer',
       reason: 'satisfy_ledger_deficits',
       priority: 1995,
+    };
+  }
+  // **A legacy matrix is migrated only when something is asking for it.** The old gate fired when an *obligation* existed
+  // on a matrix-less task — the obligation being the record that something needed repairing. Nothing creates obligations
+  // for a governed change any more, so the record is the ledger: a matrix-less change whose ledger does not pass is one
+  // whose criteria cannot be evidenced structurally, and the repair is to declare the rows. A matrix-less change with no
+  // ledger has no recorded failure, and is routed by the verify and judge branches below exactly as it was before.
+  if (upstream.missingAcceptanceMatrix && upstream.ledger && upstream.ledger.state === 'decided' && upstream.ledger.verdict !== 'pass') {
+    return {
+      nextSkill: '/kata-design',
+      role: 'designer',
+      reason: 'migrate_legacy_acceptance_matrix',
+      priority: 1985,
     };
   }
   if (phase === 'review' && upstream.verifyResult === 'FAIL') {
