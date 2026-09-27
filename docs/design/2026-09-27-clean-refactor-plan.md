@@ -981,3 +981,66 @@ src 侧消费者：
      round-runner · round-protocol · round-registry · review-state）
   ③ 611 行 schema + 剩余的 ~36 个夹具
 ```
+
+## 19.6 A 的执行进度（第二批：6 个 commit，累计 15 个）
+
+```
+已删（本批）：
+  · src/quality/{record-salvage, repair-rounds, repair-briefing, review-state, round-runner, round-registry, round-cost}.ts
+    = 1,300 行 + 6 个夹具
+  · src/quality/round-protocol.ts（229 行）+ round-protocol-version 夹具
+  · runFalsifyCommand（ops.ts 尾部约 140 行）+ 2 个夹具
+  · cli.ts 对 adversarial.js 的 9 个 import + adversarialResultFailed（18 行）+ usage 串更新
+  · src/cli/ops.ts：1,385 → 437 行；src/cli.ts 也缩减
+
+行数实测：
+  src/quality/*.ts   11,071 行（含新内核）—— 旧模块剩余 5,637 行
+  测试               189 文件 / 1,311 用例（起点 213 / 1,454）
+  wiring             66（起点 47；增量全部是"旧模块的导出只剩测试引用"）
+
+**一个方法论教训（记下来，因为它差点让我删错文件）**：我用 `from './X.js'` 模式搜消费者，
+漏掉了**动态 import** —— `adversarial.ts` 用 `await import('./review-state.js')` 读它。
+**能抓到这类的判据是编译器，不是搜索** —— 所以每个模块逐个删、每步跑 `tsc`，而不是按目录批量删。
+```
+
+### 19.7 剩下的 5,637 行：**一个真实的设计岔路**（需要决定）
+
+剩余旧模块与它们的 src 消费者（实测）：
+```
+adversarial        3,304 · finding-disposition(350) · adversarial-progress · verdict-binding · cli/ops
+finding-disposition  350 · navigation · orchestrator
+repair-batch         345 · orchestrator
+repair-obligations   318 · navigation · orchestrator · seal-preflight
+falsifier-reddenings 247 · repair-obligations · falsifier-run · repair-author · orchestrator · seal-preflight
+class-coverage       236 · seal-preflight
+review-execution     226 · adversarial（仅此）
+finding-lifecycle    158 · adversarial · repair-batch · repair-obligations · class-coverage · reviewer · finding-disposition
+review-state         224 · adversarial（仅此）
+```
+
+**其中 `repair-obligations` 不是纯粹的旧评审路由。** 我此前把它归到"随旧路由一起删"，实测显示它有三个生产者，
+而其中一个是**路由无关**的：
+```
+① adversarial.ts:1046  persistBlockingFindings   —— 旧评审路由（随它删）
+② reviewer.ts:96       persistBlockingFindings   —— 旧评审路由（随它删）
+③ orchestrator.ts:1633 persistBlockingJudgeResult —— 【judge FAIL 时按验收标准建义务】
+```
+③ 的用途是**把失败带过一次阶段迁移**：`judgeResult === 'FAIL'` 这一支要求 `phase === 'judge'`，
+而修复 + 重新 seal 之后 phase 变成 `hardVerify`/`implement`，判据本身就不再触发 —— 义务是那个"跨 seal 携带意图"的记录。
+阶梯因此有**两条**把 judge FAIL 指向修复的路（`repair_failed_judge` 优先级 900 / `repair_unresolved_obligations` 优先级 2000）。
+
+**岔路**（两条都成立，代价不同）：
+```
+A. 验收标准的 judge 结果也迁进账本：judge FAIL ⇒ 对应 claim 变为 not-supported。
+   ⇒ 义务系统（repair-obligations / repair-batch / repair-rounds / finding-lifecycle 的一半）可以干净删掉，
+     阶梯只剩一个口径（`satisfy_ledger_deficits`）。
+   ⇒ 代价：judge 的判定要写成 claim 证据，而这会改变 judge 的产出形状 —— 是设计工作，不是删除。
+B. 义务系统保留，等 judge/verify/验收矩阵这一整条链也迁到账本时再删。
+   ⇒ 保留 5,637 行里的约 1,900 行，其余（adversarial 3,304 + finding-disposition 350 +
+     falsifier-reddenings 247 + class-coverage 236 + review-execution 226 + review-state 224）仍可删。
+```
+
+**我的建议是 B 的删除部分 + A 的设计**：先把 `adversarial.ts`（3,304 行）删掉 —— 它的消费者只剩
+`finding-disposition`（读 record）、`verdict-binding`（读 freeze 哈希）和 `adversarial-progress`，
+而这三处都能改问账本；义务系统留到 judge 迁移时一起处理，因为**在 judge 还产义务的时候删掉义务，
+等于把"跨 seal 携带失败"这一能力一起删掉** —— 那是能力的损失，不是清理。
