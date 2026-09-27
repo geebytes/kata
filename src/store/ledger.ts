@@ -28,6 +28,8 @@ const FILES = {
     challenges: 'challenges.json',
     usage: 'usage.json',
     runs: 'runs.json',
+    /** The plan the operator was handed, kept so `focus` narrows a *record* rather than re-deriving one. */
+    plan: 'plan.json',
 } as const;
 
 export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
@@ -77,6 +79,22 @@ async function exists(path: string): Promise<boolean> {
     } catch {
         return false;
     }
+}
+
+/**
+ * Store the plan, so the reading sets it computed have a reader.
+ *
+ * The planner derived per-claim reading sets from the first day and **nothing consumed them** — measured in the plan
+ * audit, the only `readingSet` reader in the repository was the old path's brief renderer, so the item that exists to make
+ * a review cheaper per review (the context decided by the claim rather than by the whole change) bought nothing. A plan
+ * nobody can read afterwards is a printout, so the plan is written down and `focus` narrows it by drift.
+ */
+export async function writePlan(root: string, changeId: string, plan: unknown): Promise<void> {
+    await mutate(root, changeId, async () => writeJson(root, changeId, FILES.plan, plan));
+}
+
+export async function readPlan(root: string, changeId: string): Promise<unknown | null> {
+    return readJson<unknown>(join(reviewDir(root, changeId), FILES.plan));
 }
 
 export async function readLedger(root: string, changeId: string): Promise<Ledger> {

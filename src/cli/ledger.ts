@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan } from '../store/ledger.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -515,7 +515,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             changedPaths: changed.length > 0 ? changed : Object.keys(current.pathDigests),
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
         });
-        outputResult({ ok: true, command: 'ledger plan', plan });
+        // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read
+        // afterwards is a printout rather than a record.
+        await writePlan(options.root, changeId, plan);
+        outputResult({ ok: true, command: 'ledger plan', plan, stored: 'plan.json' });
         return;
     }
 
@@ -568,30 +571,56 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger focus', error: 'the declared paths could not be frozen' });
             return;
         }
+        // **A focus narrows a plan; it does not invent one.** Without a stored plan there are no reading sets to narrow, and
+        // producing an impact cone by re-deriving the dependencies here would be the second answer to a question the planner
+        // already answered — so it is a named state rather than a silent fallback.
+        const storedPlan = await readPlan(options.root, changeId);
+        if (storedPlan === null) {
+            fail({ command: 'ledger focus', state: 'no-plan', error: 'no plan has been stored for this change: run `ledger plan` first, because a focus narrows the reading sets a plan produced.' });
+            return;
+        }
+        const plan = storedPlan as { readingSets?: Array<{ claimId: string; paths: string[]; truncated: boolean }>; tier?: string };
+        const sets = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set]));
         const diff = diffSubjects(ledger.subject, subjectOf(current.pathDigests));
-        const impact = ledger.claims
-            .filter((claim) => claim.dependsOn.some((dep) => {
-                const path = dep.startsWith('path:') ? dep.slice('path:'.length) : null;
-                return path !== null && (diff.changed.includes(path) || diff.added.includes(path) || diff.removed.includes(path));
-            }))
-            .map((claim) => claim.id);
+        const drifted = new Set([...diff.changed, ...diff.added, ...diff.removed]);
+        const reopened = ledger.claims
+            .map((claim) => {
+                const set = sets.get(claim.id);
+                const own = claim.dependsOn
+                    .filter((dep) => dep.startsWith('path:'))
+                    .map((dep) => dep.slice('path:'.length))
+                    .filter((path) => drifted.has(path));
+                if (own.length === 0) return null;
+                // The reading set comes from the plan, intersected with what actually moved: the point of the set is that the
+                // reader's context is decided by the claim, and the point of the intersection is that a claim whose other
+                // paths did not move is not re-read in full.
+                const read = set === undefined ? own : set.paths.filter((path) => drifted.has(path));
+                return {
+                    claimId: claim.id,
+                    read: read.length > 0 ? read : own,
+                    why: own.join(', '),
+                    ...(set === undefined ? { note: 'the stored plan carries no reading set for this claim' } : {}),
+                    ...(set?.truncated ? { truncated: true } : {}),
+                };
+            })
+            .filter((entry): entry is { claimId: string; read: string[]; why: string; note?: string; truncated?: boolean } => entry !== null);
+        const reopenedIds = new Set(reopened.map((entry) => entry.claimId));
         outputResult({
             ok: true,
             command: 'ledger focus',
             frozen: ledger.subject.revision,
             current: subjectOf(current.pathDigests).revision,
+            tier: plan.tier ?? null,
             changed: diff.changed,
             added: diff.added,
             removed: diff.removed,
-            unchanged: diff.unchanged.length,
-            revalidateClaims: impact,
-            verdictsCarriedOver: ledger.claims.filter((claim) => !impact.includes(claim.id))
-                .flatMap((claim) => claim.evidenceIds)
-                .filter((evidenceId) => ledger.verdicts.some((verdict) => verdict.evidenceId === evidenceId && verdict.verdict === 'supported'))
-                .length,
-            note: impact.length === 0
-                ? 'no claim rests on a path that moved, so every supported verdict carries over'
-                : 'only the claims above reopen; the rest keep their verdicts because the digests they rest on are identical',
+            reopened,
+            // What a dispatcher may skip: the saving is stated rather than implied, so a reader can see the context this
+            // narrows away instead of having to believe it.
+            untouched: ledger.claims.map((claim) => claim.id).filter((id) => !reopenedIds.has(id)),
+            note: reopened.length === 0
+                ? 'nothing the plan covers has moved, so no claim needs re-reading'
+                : `read ${reopened.reduce((total, entry) => total + entry.read.length, 0)} path(s) across ${reopened.length} claim(s)`,
         });
         return;
     }

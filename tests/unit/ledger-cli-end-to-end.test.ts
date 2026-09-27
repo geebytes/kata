@@ -204,22 +204,21 @@ describe('the ledger verbs', () => {
     });
 
     it('reports which claims a change forces back open, and how many verdicts survive', async () => {
+        // The older half of the same command: `revalidateClaims` is the kernel's own delta answer, and it is checked here
+        // because `focus` reports what the decision already computed rather than an impact cone of its own.
         await ledger(['policy', '--init']);
         await ledger(['freeze']);
         await ledger(claimArgv());
         await ledger(['evidence', 'add', '--file', await submission()]);
         await ledger(['evidence', 'verify']);
 
-        const untouched = await ledger(['focus']);
-        expect(untouched.changed).toEqual([]);
-        expect(untouched.revalidateClaims).toEqual([]);
-        expect(untouched.verdictsCarriedOver).toBe(1);
+        // No previous revision has ever been recorded, so every claim is revalidated — the conservative direction the
+        // delta rule takes when it cannot name the content it is comparing against.
+        expect((await ledger(['decide'])).revalidateClaims).toEqual(['C1']);
 
-        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
-        const moved = await ledger(['focus']);
-        expect(moved.changed).toEqual(['src/a.ts']);
-        expect(moved.revalidateClaims).toEqual(['C1']);
-        expect(moved.verdictsCarriedOver).toBe(0);
+        // And the same command's older half is still the kernel's answer about reuse rather than an impact cone of its own.
+        const carried = await ledger(['decide']);
+        expect(carried.reusedEvidence).toEqual([]);
     });
 
     it('amends a counterexample whose command measured the wrong thing, and refuses a duplicate id', async () => {
@@ -316,6 +315,37 @@ describe('the ledger verbs', () => {
         expect(measured.discovery.refutationRate).toBe(0);
         expect(measured.authorSide.firstClaimAt).toBeTruthy();
         expect(measured.authorSide.medianClaimToSupportedMs).not.toBeNull();
+    });
+
+    it('stores the plan, then narrows its reading sets by what actually moved', async () => {
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+
+        // **Without a plan there is nothing to narrow**, and that is a named state rather than a silently re-derived impact
+        // cone: the reading set is the planner's answer, and a second derivation of it here would be the defect this line
+        // keeps removing.
+        const beforePlan = await ledger(['focus']);
+        expect(beforePlan.ok).toBe(false);
+        expect(String(beforePlan.error)).toContain('no plan has been stored');
+
+        await ledger(['plan', '--c0', '600000']);
+        const unchanged = await ledger(['focus']);
+        expect((unchanged.reopened as unknown[]).length).toBe(0);
+        expect((unchanged.untouched as string[])).toEqual(['C1']);
+        expect(String(unchanged.note)).toContain('nothing the plan covers has moved');
+
+        // A path the claim depends on that has moved is the claim's reading set, so the plan the operator was handed now
+        // says what to read rather than what to read everything for.
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        const drifted = await ledger(['focus']);
+        const reopened = drifted.reopened as Array<{ claimId: string; read: string[]; why: string }>;
+        expect(reopened.map((entry) => entry.claimId)).toEqual(['C1']);
+        expect(reopened[0]?.read).toEqual(['src/a.ts']);
+        expect(String(drifted.note)).toContain('read 1 path(s) across 1 claim(s)');
+        expect(drifted.changed).toEqual(['src/a.ts']);
     });
 
     it('plans from the risk of the touched paths and derives a deadline from a recorded baseline', async () => {
