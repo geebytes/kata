@@ -4,7 +4,10 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path
 import { writeWikiRecord } from './store.js';
 import { computeFileHash } from './record.js';
 import { hashContent } from '../core/hash.js';
-import { wikiDir as layoutWikiDir, taskDir } from '../core/layout.js';
+import {
+    wikiDir as layoutWikiDir, taskDir,
+    llmwikiDirName,
+} from '../core/layout.js';
 
 export interface LlmWikiInput {
   root?: string;
@@ -97,7 +100,7 @@ export interface LlmWikiRebuildResult {
   taskPacketPath: string;
 }
 
-const defaultWikiPath = '.llmwiki';
+const defaultWikiPath = llmwikiDirName;
 const sourceExtensions = new Set(['.md', '.mdx', '.txt']);
 const requiredDirectories = [
   'raw/docs',

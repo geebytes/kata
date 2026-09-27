@@ -1,3 +1,4 @@
+import { llmwikiDirName } from './layout.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -16,7 +17,7 @@ import { createContentHasher } from './hash.js';
 export const ignoredDirectoryNames: readonly string[] = [
     '.git',
     '.kata',
-    '.llmwiki',
+    llmwikiDirName,
     '.pytest_cache',
     '.mypy_cache',
     '.ruff_cache',

@@ -478,8 +478,11 @@ export function activeTaskPath(root: string): string {
     return join(runtimeDir(root), 'active-task.json');
 }
 
+/** The directory's name, exported so a consumer that only needs the name does not spell the string itself. */
+export const llmwikiDirName = '.llmwiki';
+
 export function llmwikiDir(root: string): string {
-    return join(root, '.llmwiki');
+    return join(root, llmwikiDirName);
 }
 
 // ---------------------------------------------------------------------------

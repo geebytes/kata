@@ -69,9 +69,12 @@ describe('the mutation check against the material it was built from', () => {
         // The 24 measured by hand on 2026-09-22, each spot-checked then to occur exactly once, in its own declaration.
         const measured = [
             'commandsForPlatform', 'cometCompatibilitySnapshot', 'subagentProgressPath', 'migrationsPath', 'recoveryPath',
-            'taskProfilePath', 'evidenceArchiveDir', 'evidenceFilePath', 'wikiCandidatesDir', 'llmwikiDir',
+            'taskProfilePath', 'evidenceFilePath', 'wikiCandidatesDir',
             'handoffBaselinePath', 'writeAcceptanceMatrixMigration', 'isLegacyTask', 'changeRecordHash',
             'resolvedCheckId', 'validationRevisionId',
+            // `evidenceArchiveDir` and `llmwikiDir` left this list the moment production stopped spelling the same path
+            // segments itself — which is the check working: a name that is no longer reported is a name that is no longer
+            // unreferenced, and the remaining names here are the ones still waiting for the same treatment.
             'readWikiRecordsStrict', 'deleteWikiRecord', 'computePathDigest',
             // `readBriefFile`, `reopenObligation`, `describeFinding` and `validateBatchRecord` are gone with the modules
             // that declared them — the brief is compiled by `review-ir`, and obligations and repair batches are no longer

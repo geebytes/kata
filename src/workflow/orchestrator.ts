@@ -1016,7 +1016,10 @@ async function writeEvidence(root: string, taskId: string, evidence: EvidenceEnv
         if (files.length > 0) {
             // The revision the outgoing set was collected for, read from the envelope rather than guessed.
             const previous = JSON.parse(await readFile(join(evidenceDirectory, files[0]!), 'utf8')) as { revisionId?: string };
-            const archiveDir = join(evidenceDirectory, 'superseded', previous.revisionId ?? 'unsealed');
+            // `evidenceArchiveDir` rather than the same three segments spelled here: the layout module owns where an
+            // artefact lives, and a second spelling is how the two drift apart.
+            const { evidenceArchiveDir } = await import('../core/layout.js');
+            const archiveDir = evidenceArchiveDir(root, previous.revisionId ?? 'unsealed');
             await mkdir(archiveDir, { recursive: true });
             for (const file of files) {
                 await rename(join(evidenceDirectory, file), join(archiveDir, file)).catch(() => { });
