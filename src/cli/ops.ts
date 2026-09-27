@@ -1,10 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { requiredCapabilitiesForNode, unmeasuredTelemetry, type ExecutionNode, type ExecutorCapability, type ReviewRunRequest } from '../quality/review-execution.js';
-import { ROUND_ALLOWLIST } from '../quality/round-runner.js';
-import type { ReviewExecutionReceipt } from '../quality/review-execution.js';
 import { join } from 'node:path';
-import { CLASS_COVERAGE, coveredClasses } from '../quality/class-coverage.js';
-import { roundMayClose } from '../quality/finding-lifecycle.js';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
@@ -25,8 +20,6 @@ import {
     adversarialNodes,
     issuedRunRequest,} from '../quality/adversarial.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
-import { deriveVerdict, type ReviewState } from '../quality/review-state.js';
-import { isTerminalSeverity } from '../quality/finding-lifecycle.js';
 import { runProcess, runProcessSync } from '../process/run.js';
 
 /** The CodeGraph subcommands this CLI dispatches to the installed binary. */
@@ -431,66 +424,6 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
  * gate refuses the pass as `delta_unavailable` rather than accepting a delta nobody can check.
  */
 
-/** The sealed revision's id and content hash, for binding a recorded pass to the revision it reviewed. */
-/** The scope a pass is judged against: whatever the brief it answered was issued with. */
-async function scopeForIssuedBrief(
-    issued: { scope?: AdversarialBriefScope; since?: string },
-): Promise<AdversarialBriefScope> {
-    if (issued.scope) return issued.scope;
-    // A legacy delta brief did not persist its measured paths. Refuse unsafe reuse by preserving its delta claim with no
-    // coverage, so the existing delta gate fails closed instead of silently widening it to a full pass.
-    return issued.since
-        ? { kind: 'delta', from: issued.since, changedPaths: [] }
-        : { kind: 'full' };
-}
-
-
-function derivedVerdictFor(record: { hypotheses?: unknown } | null | undefined): string | null {
-    const hypotheses = record?.hypotheses;
-    if (!Array.isArray(hypotheses) || hypotheses.length === 0) return null;
-    // The verdict implied by the hypotheses alone, from the **same exported derivation** the gate starts from. Coverage
-    // and grounding are predicates against a revision the CLI does not hold here, so the gate applies those on top; what
-    // this must not do is apply its own weaker rule, which is how `outcome: confirmed` came to be reported as
-    // `no_defect_found` (R7).
-    return deriveVerdict({
-        coverage: [],
-        hypotheses: hypotheses as ReviewState['hypotheses'],
-        findings: ((record as { findings?: ReviewState['findings'] }).findings ?? []),
-    });
-}
-async function currentRevisionManifest(
-    root: string,
-    taskId: string,
-    node?: AdversarialNode,
-): Promise<{ revisionId?: string; manifestHash?: string; codeManifestHash?: string; candidateFreezeSha256?: string }> {
-    const { readCurrentTaskRevision } = await import('../workflow/revision.js');
-    const { codeManifestHash } = await import('../quality/code-surface.js');
-    const revision = await readCurrentTaskRevision(root, taskId);
-    const codeHash = revision ? codeManifestHash(revision) : null;
-    // §7.4: the freeze travels with the record, so a later certification is compared against the candidate it answered
-    // rather than against a revision id that moves on every re-seal.
-    const { candidateFreezeHashFor } = await import('../quality/adversarial.js');
-    const freeze = node ? await candidateFreezeHashFor(root, taskId, node).catch(() => undefined) : undefined;
-    return {
-        ...(revision ? { revisionId: revision.id } : {}),
-        ...(revision?.manifestHash ? { manifestHash: revision.manifestHash } : {}),
-        // C2: the code-only identity, stamped beside the full manifest so a text-only re-seal can be recognised later.
-        ...(codeHash ? { codeManifestHash: codeHash } : {}),
-        ...(freeze ? { candidateFreezeSha256: freeze } : {}),
-    };
-}
-
-/**
- * `kata-cli falsify` — the CLI entry for closure-gate's producer.
- *
- * It exists so the chain is closed: a repair runs the check, re-introduces the defect, watches it redden, restores, and the
- * fact is recorded — which is what the closure criterion now requires before a finding-shaped obligation can be answered.
- * Without this entry the producer was reachable only from a test, which is the "mechanism with no consumer" class this line
- * keeps finding.
- *
- * Every refusal is a reason rather than a silent failure, and nothing is recorded unless all three steps behaved: a check that
- * does not pass first, does not redden under the mutation, or does not come back after the restore leaves the ledger empty.
- */
 function valueAfter(argv: string[], flag: string): string | undefined {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
