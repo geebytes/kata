@@ -93,6 +93,18 @@ export async function declareTaskField(input: {
         return { ok: false, refused: `no task '${input.taskId}' exists in this workspace` };
     }
 
+    // **The schema first, then the rule.** Validated against the task schema rather than against a second shape, so the file
+    // that lands is one every reader accepts. It runs *before* the rule below, and that order was learned by running the
+    // command on a real payload: handed a file whose top level held the whole bootstrap contract rather than a coverage
+    // object, the rule read `coverage.sources` off it and threw `coverage.sources is not iterable` at the operator. A crash
+    // where a refusal belongs is the same shape as a refusal no reader can act on — the input reached a function that
+    // assumes a shape nothing had checked.
+    try {
+        validate('task', { ...task, [input.field]: input.value });
+    } catch (error) {
+        return { ok: false, refused: `the declaration would not produce a valid task record: ${(error as Error).message}` };
+    }
+
     // **The rule the reader enforces, enforced at the write.** `design` refuses a task whose criterion has no upstream
     // requirement, so accepting one here would hand the next command a task it must reject — the write trusting its input
     // while every read path validates it, which is the shape both halves of `scope` were fixed for.
@@ -105,15 +117,6 @@ export async function declareTaskField(input: {
                 refused: `${orphanAcs.length} acceptance criterion(s) would have no upstream requirement (${orphanAcs.map((orphan) => orphan.acId).join(', ')}), which \`kata-cli design\` refuses. Map each criterion to a requirement, or record why it is out of scope on the requirement.`,
             };
         }
-    }
-
-    // Validated against the task schema rather than a second shape, so the file that lands is one every reader accepts.
-    // `validate` throws with the first error rendered; a second shape here would be the two-derivations defect this whole
-    // module exists to remove.
-    try {
-        validate('task', { ...task, [input.field]: input.value });
-    } catch (error) {
-        return { ok: false, refused: `the declaration would not produce a valid task record: ${(error as Error).message}` };
     }
 
     const change: DeclarationChange = {

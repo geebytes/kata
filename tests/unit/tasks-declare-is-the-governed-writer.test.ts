@@ -101,6 +101,25 @@ describe('tasks declare is the governed writer for a task declaration', () => {
         expect(result.ok === false && result.refused).toContain('--reason');
     });
 
+    it('refuses a wrongly-shaped payload instead of crashing on it', async () => {
+        // **Measured by running the command:** handed the whole bootstrap contract rather than a coverage object, the
+        // reader's rule read `sources` off it and threw `coverage.sources is not iterable` at the operator. The schema runs
+        // first now, so the answer is a refusal naming the shape.
+        const workspaceRoot = await workspace();
+        const result = await declareTaskField({
+            root: workspaceRoot,
+            taskId: 'declare-task',
+            field: 'upstreamCoverage',
+            value: { acceptance: [], upstreamCoverage: coverage('AC-1', 'AC-2') },
+            reason: 'the wrong level of the document',
+            by: 'pi',
+        });
+        expect(result.ok).toBe(false);
+        expect(result.ok === false && result.refused).toContain('valid task record');
+        // Not a TypeError escaping the command.
+        expect(result.ok === false && result.refused).not.toContain('is not iterable');
+    });
+
     it('refuses a payload that would not be a valid task record', async () => {
         const workspaceRoot = await workspace();
         const result = await declareTaskField({
