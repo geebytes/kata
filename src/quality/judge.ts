@@ -2,7 +2,6 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AcceptanceCriterion, AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
-import type { ReviewFinding } from './reviewer.js';
 import { evaluateAcceptanceAdequacy } from './evidence-adequacy.js';
 import { judgePath as layoutJudgePath, taskDir } from '../core/layout.js';
 
@@ -11,7 +10,6 @@ export interface JudgeInput {
   taskId: string;
   acceptance: AcceptanceCriterion[];
   evidence: EvidenceEnvelope[];
-  findings: ReviewFinding[];
   currentDiffHash: string;
   currentScopeHashes?: Map<string, string>;
   proposedOutput?: unknown;
@@ -103,7 +101,6 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
   const adequacy = evaluateAcceptanceAdequacy({
     acceptance: input.acceptance,
     evidence: input.evidence,
-    findings: input.findings,
     currentDiffHash: input.currentDiffHash,
     ...(input.currentScopeHashes ? { currentScopeHashes: input.currentScopeHashes } : {}),
     ...(input.matrix ? { matrix: input.matrix } : {}),

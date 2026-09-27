@@ -322,7 +322,7 @@ describe('Workflow resume and lifecycle', () => {
         expect(verify.diagnostics).toMatchObject({ workspaceDrift: ['unrelated-task.txt'] });
     });
 
-    it('/kata-verify ignores blocking review findings from an older revision', async () => {
+    it('/kata-verify is unaffected by a stale review record carrying a blocking finding', async () => {
         const root = await tempRoot();
         await writeFile(join(root, 'task-owned.txt'), 'sealed implementation\n', 'utf8');
         await runCommand('open', 'wf-old-review-ignored', root, {
@@ -357,12 +357,12 @@ describe('Workflow resume and lifecycle', () => {
         expect(verify.diagnostics?.acceptanceResults).toEqual([
             expect.objectContaining({ id: 'AC-1', result: 'PASS' }),
         ]);
-        expect(verify.diagnostics).toMatchObject({
-            findingCount: 0,
-            blockingFindings: 0,
-            ignoredReviewFindings: 1,
-            ignoredReviewRevisionId: 'revision-old',
-        });
+        // **The diagnostics that reported this are gone with the table they counted.** `findingCount`,
+        // `blockingFindings`, `ignoredReviewFindings` and `ignoredReviewRevisionId` described the round-shaped findings
+        // table and how a stale record's entries were dropped from it. The table no longer reaches the verdict at all —
+        // a claim's evidence does — so the property this case protects is now structural rather than a filter, and the
+        // problem count it reports comes from the ledger (`openProblems`), which is empty for this fixture.
+        expect(verify.diagnostics).toMatchObject({ openProblems: 0 });
     });
 
     it('marks a sealed revision superseded after an owned-path mutation instead of failing ACs as stale evidence', async () => {

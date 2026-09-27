@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOpenFixture, advanceTo, runImplementFixture, runVerifyFixture } from '../../src/eval/fixtures.js';
+import { createOpenFixture, advanceTo, runImplementFixture, runVerifyFixture } from '../helpers/eval-fixtures.js';
 
 describe('Workflow regression', () => {
   it('runs open -> plan -> implement -> hardVerify -> review -> judge on a single task', async () => {

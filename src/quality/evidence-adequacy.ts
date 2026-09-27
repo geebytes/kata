@@ -1,7 +1,6 @@
 import { checkFreshness, type EvidenceEnvelope } from './evidence.js';
 import { evidenceCoversAcceptance, evidenceMatchesRow, getMatrixRowForAc, isEntrypointEvidenceKind } from './acceptance-matrix.js';
 import type { AcceptanceMatrix } from '../core/task.js';
-import type { ReviewFinding } from './reviewer.js';
 import type { JudgeAcceptanceResult, RepairScope } from './judge.js';
 
 /**
@@ -28,7 +27,6 @@ function isPassingEvidence(envelope: EvidenceEnvelope): boolean {
 export interface AcceptanceAdequacyInput {
     acceptance: Array<{ id?: string; statement?: string }>;
     evidence: EvidenceEnvelope[];
-    findings: ReviewFinding[];
     currentDiffHash: string;
     currentScopeHashes?: Map<string, string>;
     matrix?: AcceptanceMatrix;
@@ -75,12 +73,13 @@ export function evaluateAcceptanceAdequacy(input: AcceptanceAdequacyInput): Acce
     const isPassingTest = (evidence: EvidenceEnvelope): boolean => evidence.kind === 'test' && isPassingEvidence(evidence);
     const freshPassingTestEvidence = freshEvidence.filter(isPassingTest);
     const failingTestEvidence = freshEvidence.find((evidence) => evidence.kind === 'test' && !isPassingEvidence(evidence));
-    const blockingFindings = input.findings.filter((finding) => finding.severity === 'blocking'
-        || (input.reviewMode === 'strict' && finding.severity === 'major'));
+    // **No `blockingFindings`.** This evaluator is shared by verify and the judge, and both were fed the round-shaped
+    // findings table, which has no producer on this route: a claim's severity decides the evidence strength it requires
+    // and `decide` applies it, so a finding-shaped input was a second route to one judgement. The scope it produced
+    // (`blocking_review_finding`) is retired with it — see `repairScopes` for what replaced it.
 
     const acceptance = input.acceptance.map((criterion): JudgeAcceptanceResult => {
         const acceptanceId = criterion.id ?? '';
-        const blockingFinding = blockingFindings.find((finding) => !finding.acceptanceId || finding.acceptanceId === acceptanceId);
 
         if (failingTestEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'failing_evidence' };
         if (freshPassingTestEvidence.length === 0 && input.evidence.some((evidence) => evidence.kind === 'test')) {
@@ -98,10 +97,8 @@ export function evaluateAcceptanceAdequacy(input: AcceptanceAdequacyInput): Acce
             // direction. The comment on the repair scope below names what the row asked for.
             const rowEvidence = freshEvidence.filter((item) => isPassingEvidence(item) && evidenceCoversAcceptance(row, acceptanceId, item));
             if (rowEvidence.length === 0) return { id: acceptanceId, result: 'FAIL', repairScope: 'insufficient_evidence_level' };
-            if (blockingFinding) return { id: acceptanceId, result: 'FAIL', repairScope: 'blocking_review_finding' };
             return { id: acceptanceId, result: 'PASS', evidenceIds: rowEvidence.map((item) => item.id) };
         }
-        if (blockingFinding) return { id: acceptanceId, result: 'FAIL', repairScope: 'blocking_review_finding' };
         // No row is a declaration gap, not a pass: the criterion cannot be evidenced structurally.
         return input.matrix
             ? { id: acceptanceId, result: 'FAIL', repairScope: 'no_acceptance_matrix_row' }

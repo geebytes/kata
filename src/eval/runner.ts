@@ -280,8 +280,7 @@ async function runFixture(
       taskId: fixture.id,
       acceptance,
       evidence,
-      findings: [],
-      currentDiffHash: evidence[0]?.diffHash ?? '',
+        currentDiffHash: evidence[0]?.diffHash ?? '',
       currentScopeHashes: scopeHashes,
     });
     steps.push('judge');

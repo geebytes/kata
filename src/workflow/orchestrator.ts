@@ -20,7 +20,7 @@ import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, 
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
-import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
+import { openLedgerProblems, nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
@@ -1202,8 +1202,6 @@ async function cmdVerify(
     const scopeHashes = await currentScopeHashes(root, evidence);
     const revisionId = revisionIdForEvidence(evidence);
     const review = await readReview(root, taskId);
-    const ignoredReviewFindings = revisionId && !bindsToRevision(review, await currentRevisionIdentity(root, taskId)) ? review.findings.length : 0;
-    const findings = ignoredReviewFindings > 0 ? [] : review.findings;
     const revision = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
     // With the task id, so a revision whose declaration the task has since outgrown reads as `declaration-moved` rather than
     // `current` — the status payload is where an operator learns which of the two happened.
@@ -1232,7 +1230,7 @@ async function cmdVerify(
     // consumers now ask `revisionIsCurrent`, so there is one answer, and the diagnostics report which of the two it was.
     const verifyResult = status && !revisionIsCurrent(status)
         ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id)
-        : evaluateReadiness(taskId, task.acceptance, evidence, findings, currentDiffHash, scopeHashes, matrix, task.workflowProfile?.reviewMode);
+        : evaluateReadiness(taskId, task.acceptance, evidence, currentDiffHash, scopeHashes, matrix, task.workflowProfile?.reviewMode);
     if (revisionId) verifyResult.revisionId = revisionId;
     const implementationReady = verifyResult.result === 'PASS';
     const wikiClosure = await evaluateWikiClosure(root, taskId);
@@ -1300,8 +1298,9 @@ async function cmdVerify(
                 repairScope: a.repairScope,
             })),
             evidenceCount: evidence.length,
-            findingCount: findings.length,
-            blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
+            // **Counted from the ledger, which is where a problem is recorded on this route.** These two fields reported the
+            // round-shaped findings table; `openLedgerProblems` is the same question in the vocabulary the gates read.
+            openProblems: (await openLedgerProblems(root, taskId)).length,
             implementationReady,
             governanceReady: wikiClosure.valid,
             ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
@@ -1319,10 +1318,6 @@ async function cmdVerify(
             ...(revisionId ? { revisionId } : {}),
             ...(status ? { revisionStatus: status.status } : {}),
             ...(revision ? { workspaceDrift: drift } : {}),
-            ...(ignoredReviewFindings > 0 ? {
-                ignoredReviewFindings,
-                ignoredReviewRevisionId: review.revisionId ?? null,
-            } : {}),
             nextAction,
         },
     };
@@ -1464,19 +1459,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence. Re-run /kata-review before approving.',
                 };
             }
-            // Severity decides by the mode, not by a single unconditional pair: the gate is "blocking, and major in
-            // strict" (design `2026-09-18-what-an-adversarial-pass-costs.md`). Refusing a major finding in std made this
-            // guard disagree with the navigation ladder, which does not send a std major finding to repair — so a task
-            // with one could be neither approved nor routed to the repair that clears it.
-            const blockingSeverities = approvalTask.workflowProfile?.reviewMode === 'strict'
-                ? ['blocking', 'major']
-                : ['blocking'];
-            if (existing.findings.some((finding) => blockingSeverities.includes(finding.severity))) {
-                return {
-                    command: 'review', taskId, phase: 'review', success: false,
-                    error: `Cannot approve review with ${blockingSeverities.join(' or ')} findings; resolve findings first.`,
-                };
-            }
+            // **The severity refusal over `review.json`'s findings is deleted, and this is the class-closing repair its own
+            // comment asked for.** It read the round-shaped findings table, whose only remaining producer is the eval
+            // harness — for a governed change the table is empty, so the branch could not fire on the route it guards,
+            // while eval-fixture data could make it fire on a finding the ledger route never sees.
+            //
+            // Severity has one home now, and it is not here: a claim's severity decides the evidence strength it requires
+            // (`MIN_STRENGTH_BY_SEVERITY`, `policy.evidenceStrength`, reproducibility for `blocking`), `decide` applies it,
+            // and `ledger claim waive --reason` is how the author decides to live with one. The comment this replaces said
+            // the repair that ends the class is the removal of the second copy rather than a seventh patch; this is that
+            // removal, and the second copy is gone.
             // F5: the reviewer may state which paths they read; absent, the review is read as covering the whole revision
             // (the conservative direction). When none was stated, the matrix's suggestion is *offered* in the result
             // rather than written behind the reviewer's back — the design's F5 rests on their honesty, not on kata's.
@@ -1595,14 +1587,16 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     }
     const currentDiffHash = await computeDiffHash(root);
     const evidence = await readTaskEvidence(root, taskId, options);
-    const findings = review.findings;
+    // **No `findings` input.** The judge used to take the round-shaped findings table and fail a criterion whose id a
+    // blocking finding named. That table has no producer on this route — a claim's severity and evidence decide the same
+    // question in `decide` — so the input is gone rather than left accepting a list nothing fills.
     let reportFailedCriteria: string[] = [];
     const evidenceRevisionId = revisionIdForEvidence(evidence);
     const reviewRevisionId = await readReviewRevisionId(root, taskId);
     if (evidenceRevisionId && reviewRevisionId !== evidenceRevisionId) {
         return {
             command: 'judge', taskId, phase: 'review', success: false,
-            error: 'Judge requires review findings bound to the same sealed revision as evidence. Re-run /kata-review for the current revision.',
+            error: 'Judge requires the review conclusion bound to the same sealed revision as evidence. Re-run /kata-review for the current revision.',
             diagnostics: { revisionId: evidenceRevisionId, reviewRevisionId: reviewRevisionId ?? null, repairScope: 'cross_revision_review' },
         };
     }
@@ -1612,7 +1606,6 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         taskId,
         acceptance: task.acceptance,
         evidence,
-        findings,
         currentDiffHash,
         currentScopeHashes: scopeHashes,
         matrix: task.acceptanceMatrix,
@@ -1665,8 +1658,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             // they live (`ledger claim show <id>`, `ledger decide`).
             ...(reportFailedCriteria.length > 0 ? { failedCriteria: reportFailedCriteria } : {}),
             evidenceCount: evidence.length,
-            findingCount: findings.length,
-            blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
+            openProblems: (await openLedgerProblems(root, taskId)).length,
         },
     };
 }
@@ -1680,9 +1672,6 @@ async function readTaskEvidence(root: string, taskId: string, options: CommandOp
     }
 }
 
-async function readReviewFindings(root: string, taskId: string): Promise<ReviewFinding[]> {
-    return (await readReview(root, taskId)).findings;
-}
 
 
 async function readReviewRevisionId(root: string, taskId: string): Promise<string | undefined> {
@@ -1703,7 +1692,6 @@ function evaluateReadiness(
     taskId: string,
     acceptance: Array<{ id?: string; statement: string }>,
     evidence: EvidenceEnvelope[],
-    findings: ReviewFinding[],
     currentDiffHash: string,
     scopeHashes: Map<string, string>,
     matrix?: import('../core/task.js').AcceptanceMatrix,
@@ -1712,7 +1700,6 @@ function evaluateReadiness(
     const adequacy = evaluateAcceptanceAdequacy({
         acceptance,
         evidence,
-        findings,
         currentDiffHash,
         currentScopeHashes: scopeHashes,
         ...(matrix ? { matrix } : {}),

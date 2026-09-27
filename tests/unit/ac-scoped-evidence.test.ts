@@ -35,7 +35,6 @@ describe('AC-scoped evidence', () => {
         const result = evaluateAcceptanceAdequacy({
             acceptance: [{ id: 'AC-1' }, { id: 'AC-2' }],
             evidence: [envelope({ checkId: 'check-a', coveredAcceptanceIds: ['AC-1'] })],
-            findings: [],
             currentDiffHash: 'a'.repeat(64),
             matrix,
         });
@@ -48,7 +47,6 @@ describe('AC-scoped evidence', () => {
         const result = evaluateAcceptanceAdequacy({
             acceptance: [{ id: 'AC-3' }],
             evidence: [envelope({ checkId: 'check-a', coveredAcceptanceIds: ['AC-1'] })],
-            findings: [],
             currentDiffHash: 'a'.repeat(64),
             matrix,
         });
@@ -60,7 +58,6 @@ describe('AC-scoped evidence', () => {
         const result = evaluateAcceptanceAdequacy({
             acceptance: [{ id: 'AC-1' }],
             evidence: [envelope({ checkId: 'check-a' })],
-            findings: [],
             currentDiffHash: 'a'.repeat(64),
         });
 

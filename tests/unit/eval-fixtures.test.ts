@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOpenFixture, advanceTo, runImplementFixture, runRepairFixture } from '../../src/eval/fixtures.js';
+import { createOpenFixture, advanceTo, runImplementFixture, runRepairFixture } from '../helpers/eval-fixtures.js';
 
 describe('Evaluation fixtures', () => {
   it('creates open fixture with task in intake', async () => {
@@ -24,14 +24,14 @@ describe('Evaluation fixtures', () => {
     }
   });
 
-  it('creates repair fixture with blocking finding', async () => {
+  it('creates a repair fixture whose evidence does not pass, which is what a repair is about now', async () => {
+    // The fixture used to inject a blocking finding through the round-shaped route's producer. That table reaches no
+    // verdict any more — a claim's evidence does — so the scenario is the one the route actually produces: a recorded
+    // failing check, which is what sends a change to repair.
     const fixture = await runRepairFixture('eval-repair-test');
     try {
-      const { readFile } = await import('node:fs/promises');
-      const { join } = await import('node:path');
-      const review = JSON.parse(await readFile(join(fixture.root, '.kata/tasks/eval-repair-test/review.json'), 'utf8'));
-      expect(review.findings).toHaveLength(1);
-      expect(review.findings[0].severity).toBe('blocking');
+      expect(fixture.evidence.length).toBeGreaterThan(0);
+      expect(fixture.evidence.some((envelope) => envelope.exitCode !== 0)).toBe(true);
     } finally {
       await fixture.cleanup();
     }

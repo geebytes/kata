@@ -1,12 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { initLayout } from '../core/layout.js';
-import { createTask, type AcceptanceCriterion } from '../core/task.js';
-import { transition, type Actor, type Phase } from '../core/state.js';
-import { collectEvidence, computeDiffHash, type CheckCommand } from '../quality/evidence.js';
-import { recordFinding } from '../quality/reviewer.js';
-import { judge } from '../quality/judge.js';
+import { initLayout } from '../../src/core/layout.js';
+import { createTask, type AcceptanceCriterion } from '../../src/core/task.js';
+import { transition, type Actor, type Phase } from '../../src/core/state.js';
+import { collectEvidence, computeDiffHash, type CheckCommand } from '../../src/quality/evidence.js';
+import { judge } from '../../src/quality/judge.js';
 
 const actor: Actor = { id: 'eval-agent', role: 'implementer' };
 
@@ -98,14 +97,13 @@ export async function runVerifyFixture(taskId: string): Promise<WorkflowFixture 
     taskId,
     acceptance: task.acceptance,
     evidence,
-    findings: [],
     currentDiffHash: evidence[0].diffHash,
   });
 
   return { root, taskId, judgeResult, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
 
-export async function runRepairFixture(taskId: string): Promise<WorkflowFixture> {
+export async function runRepairFixture(taskId: string): Promise<WorkflowFixture & { evidence: Awaited<ReturnType<typeof collectEvidence>> }> {
   const root = await mkdtemp(join(tmpdir(), `kata-eval-repair-${taskId}-`));
   await initLayout(root);
   await createTask({
@@ -116,20 +114,17 @@ export async function runRepairFixture(taskId: string): Promise<WorkflowFixture>
   });
 
   await advanceTo(root, taskId, 'hardVerify');
+  // **The scenario is a failing check, not a recorded finding.** It used to inject a blocking finding through
+  // `recordFinding`, which was the round-shaped route's producer; that table no longer reaches any verdict, so the repair
+  // the fixture exists to set up is now the one the route produces — evidence that does not pass.
   const evidence = await collectEvidence(taskId, [
     { kind: 'test', command: process.execPath, args: ['-e', 'process.exit(1)'], cwd: root },
   ]);
-  const finding = await recordFinding({
-    root,
-    taskId,
-    acceptanceId: 'AC-1',
-    severity: 'blocking',
-    message: 'Intentionally failing for eval.',
-  });
 
   return {
     root,
     taskId,
+    evidence,
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }

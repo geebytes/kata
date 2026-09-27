@@ -31,7 +31,6 @@ describe('evidence adequacy', () => {
         return evaluateAcceptanceAdequacy({
             acceptance,
             evidence: [evidence({ id: 'evidence-1' })],
-            findings: [],
             currentDiffHash: diffHash,
             ...overrides,
         });
@@ -52,7 +51,6 @@ describe('evidence adequacy', () => {
         const finding: ReviewFinding = { id: 'F-1', taskId: 'adequacy-task', severity: 'blocking', message: 'Blocked.' };
         const result = evaluate({
             evidence: [evidence({ id: 'evidence-1', exitCode: 1 })],
-            findings: [finding],
         });
 
         expect(scopesOf(result)).toEqual(['failing_evidence']);
@@ -90,11 +88,15 @@ describe('evidence adequacy', () => {
         expect(scopesOf(withEntrypoint)).toEqual([undefined]);
     });
 
-    it('fails on a blocking finding, and on a major finding in strict mode only', () => {
-        const major: ReviewFinding = { id: 'F-1', taskId: 'adequacy-task', severity: 'major', message: 'Major.' };
-
-        expect(scopesOf(evaluate({ findings: [major] }))).toEqual([undefined]);
-        expect(scopesOf(evaluate({ findings: [major], reviewMode: 'strict' }))).toEqual(['blocking_review_finding']);
+    it('has no findings input at all, because severity is decided by the ledger', () => {
+        // This case asserted the old gate — "blocking always, major in strict" — over a findings list the evaluator was
+        // handed. The list has no producer on this route: a claim's severity decides the evidence strength it requires
+        // (`policy.evidenceStrength`, reproducibility for `blocking`) and `decide` applies it, so the input is gone and
+        // the scope it produced (`blocking_review_finding`) is retired with it. Recorded here rather than deleted, so the
+        // next reader can see where the rule went.
+        const scopes = scopesOf(evaluate());
+        expect(scopes).not.toContain('blocking_review_finding');
+        expect(scopes).toEqual([undefined]);
     });
 
     it('has no obligation input, because nothing produces one for a governed change any more', () => {
@@ -130,7 +132,6 @@ describe('evidence adequacy', () => {
             { evidence: [evidence({ id: 'evidence-1', exitCode: 1 })] },
             { evidence: [evidence({ id: 'evidence-1', diffHash: 'b'.repeat(64) })] },
             { evidence: [evidence({ id: 'evidence-1', kind: 'lint' })] },
-            { findings: [{ id: 'F-1', taskId: 'adequacy-task', severity: 'blocking', message: 'Blocked.' }] },
         ];
 
         for (const testCase of cases) {
@@ -139,7 +140,6 @@ describe('evidence adequacy', () => {
                 taskId: 'adequacy-task',
                 acceptance: acceptance as Array<{ id: string; statement: string }>,
                 evidence: testCase.evidence ?? [evidence({ id: 'evidence-1' })],
-                findings: testCase.findings ?? [],
                 currentDiffHash: diffHash,
             });
 
