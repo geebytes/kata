@@ -843,3 +843,51 @@ measures（明确写出它【不】度量什么：不度量"没人埋的缺陷�
    与 27 例语料之间【没有任何连接】。要么给新内核一个 `ledger corpus` 入口（把种子当语料、把
    `decide()` 当 verifier、输出 recall/false-pass），要么如实记录「新内核的语料把旧 eval 的语料孤立了」。
 ```
+
+---
+
+# 18. 业务流程收口：**方案 §5 的三个业务动作全部落地**
+
+> 用户指出：我不该先去算 `CriticalRecall`，而应把**业务流程与逻辑实施完毕** —— 度量是对**已完成的流程**打分，而流程当时还缺两个动作。核对结果：这条意见是对的。§5 的动词表里，`challenge ask|answer` 与 `review run` 是**业务动作**（不是度量），两者当时都缺；而我这一轮长出来的 `corpus` / `verifier` / `detectability` 是**度量工具**，在方案里根本没有动词位置。
+
+## 18.1 §5 的动词表，逐项对照（现在）
+
+| 方案 §5 | 落地 | 说明 |
+|---|---|---|
+| `subject freeze` | ✅ `freeze` | 冻结 → `pathDigests` |
+| `claim add\|list\|show\|reopen` | ✅ `claim add\|list\|show\|waive\|reopen` | 增量落盘 |
+| `evidence add\|verify` | ✅ `evidence list\|add\|verify\|replace` | 四类证据；verify 由内核执行并由 kata 观测 |
+| **`challenge ask\|answer\|list`** | **✅ 本轮补齐** | **事后出题 + 应答率**：`ask` 从 claim 自己的依赖面**自动生成**问题（按记录的 seed 抽取，可复现），`answer` **写一次**（重复回答按名拒绝）；`probeResponseRate` 进 `status --cost` 的 discovery |
+| **`review plan\|run`** | **✅ 本轮补齐** | `plan` 决定阅读集/所需证据/期限；**`run` 把它组成一份评审请求交出去**；`request-check` 把请求与账本现状对照、**按 claim 逐条具名**报缺口 |
+| `decide` | ✅ | 纯函数决策 + reused/revalidate 清单 |
+| `focus` | ✅ | 消费 `plan.json` 的阅读集，按漂移收窄 |
+
+**超出方案的部分**（我这一轮长出来的度量工具，且已如实记在 §17）：`corpus`（种子语料的自证评分 + 两批语料对账）· `verifier`（拿旧语料评内核）· `detectability`（缺陷是否仍可探测）。它们**不是方案要的业务**，而是 P1 的验收工具；方案 §5 没有它们的位置，这一点已写进文档。
+
+## 18.2 为什么这两个动作才是"业务流程"
+
+**① `ask` / `answer` 替代的是凭据。** 方法论里它的位置很具体：评审者**无法证明自己的内部过程**（这正是宿主机凭据墙卡住三个 change 的原因 —— 那面墙要的是一份只有宿主能写的文档）。可检验的形式不是"证明你的上下文是新的"，而是"**回答一个只有读过这个 revision 的人才能回答的问题**"：
+- **生成是派生的，不是手写的**：问题从 claim 的依赖面按记录的 seed 抽取 ⇒ 同一份账本问同一组问题，**不能被针对当轮软化**；
+- **问题问的是内容**（某个路径的存在、或它记录摘要的前 8 位），**从不问 claim 自己的文字** ⇒ 猜和读可区分；
+- **答案写一次** ⇒ 答错的人不能反复试到通过为止。这三条被用例固定（`probes-ask-something-only-a-reader-can-answer`）。
+
+**② `run` / `request-check` 替代的是"凭记忆写提示词"。** 实测代价就在本线上：28/62 轮零记录，因为一个要求只能靠人手写进 dispatch prompt。现在是：请求里带 **claim 自己的阅读集**（上下文由 claim 决定，而不是由整个 change）· **该 claim 所需证据类型与强度** · **数字期限** · **待答 probe**；回来的东西与请求对照，缺口**按 claim 具名**（缺哪类证据 / 无 supported verdict / probe 未答）。
+**请求刻意不含** platform / session / model / receipt / provenance —— 那是 assurance 轴，写进请求就又把流程塞回判据里；用例断言的正是**字段集合**而不是散文（这也是本线第三次被迫区分"文档说 X"与"文档是 X"）。
+
+## 18.3 一次完整往返（实测，scratch 工作区）
+
+```
+ledger run            → tier standard · deadline 200 · readingSet ['src/a.ts']
+                        requiredEvidence ['executable_falsifier'] · probes 2
+ledger request-check  → ok: false · 3 个缺口，逐条具名
+                         · no evidence of executable_falsifier or stronger
+                         · no supported verdict for this claim
+                         · the probe P2-C1 was asked and not answered
+「补齐」（把证据换成会变红的 falsifier → verify → 答第二条 probe）
+ledger request-check  → ok: true · gaps: []
+ledger status --cost  → discovery: { refutationRate, challengeWithdrawalRate, probeResponseRate: 0.5, probesAsked: 2, probesAnswered: 1 }
+```
+
+## 18.4 现在的状态
+
+**方案 §5 的 7 个动词全部落地**（4 个是本轮及前几轮补齐的：`ask`/`answer`/`run`/`request-check`）。**度量工具 3 个**（超出方案，已记明）。剩下的真实缺口回到 §2 的**删除清单**（旧机制一行未删）与 §8 的验收（需要一次真实评审跑在语料上）—— 而这两件的性质不同：删除是**迁移次序**，验收是**度量**，而**业务流程现在没有缺口了**。
