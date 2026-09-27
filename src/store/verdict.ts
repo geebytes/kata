@@ -10,11 +10,44 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths, readProbeAnswers } from './ledger.js';
-import { decide, type QuorumReport } from '../kernel/decide.js';
+import { readLedger, declaredPaths, readProbeAnswers, type Ledger } from './ledger.js';
+import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { aggregateQuorum } from '../producers/quorum.js';
 import { classifyRisk, TIER_RANK } from '../kernel/risk.js';
-import type { AssuranceLevel, Decision, EvidenceVerdict, TierName } from '../kernel/types.js';
+import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } from '../kernel/types.js';
+
+/**
+ * **One place that assembles a claim's decision, and the reason this module owns it.**
+ *
+ * `evaluateClaim` needs six inputs, and five consumers — the ladder's open-problem list, its closure verdict, the change
+ * record, the archive gate and the review request — each built that input themselves. They agreed only because they copied
+ * the same six lines; a sixth consumer that got one of them wrong would have produced a second answer to "is this claim
+ * supported", which is the defect class (`one-concept-several-derivations`) this line has spent the most rounds on. Found
+ * by looking for the class rather than for an instance: the count of `evaluateClaim(` call sites outside the kernel was
+ * five.
+ */
+export type ClaimDecision = ClaimEvaluation & { severity: Severity; statement: string };
+
+/** Every claim's decision, from the ledger, with the input assembled once. */
+export function claimDecisions(ledger: Ledger): ClaimDecision[] {
+    return ledger.claims.map((claim) => ({
+        ...evaluateClaim(claim, {
+            evidence: ledger.evidence,
+            verdicts: ledger.verdicts,
+            reusedEvidence: new Set(),
+            policy: ledger.policy,
+            challenges: ledger.challenges,
+            subjectRevision: ledger.subject?.revision ?? '',
+        }),
+        severity: claim.severity,
+        statement: claim.statement,
+    }));
+}
+
+/** The claims nothing supports and nobody waived: the one answer every consumer of "what is still open" needs. */
+export function unsupportedClaims(ledger: Ledger): ClaimDecision[] {
+    return claimDecisions(ledger).filter((decision) => decision.state !== 'supported' && decision.state !== 'waived');
+}
 
 export type LedgerVerdict =
     | { kind: 'absent'; detail: string }

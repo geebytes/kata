@@ -608,16 +608,12 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
     const verdictByEvidence = new Map(ledger.verdicts.map((verdict) => [verdict.evidenceId, verdict]));
     // The same predicate the gate uses, called rather than re-implemented: a report that derived support its own way would
     // be the second answer to one question, which is the defect this subsystem exists to remove.
+    // **The same reader the gates ask, imported lazily because this module owns the store the reader reads.** The comment
+    // already said "called rather than re-implemented"; it was called with this module's *own* copy of the six inputs,
+    // which is the derivation the class is about — one of five, until they were folded into `claimDecisions`.
     const evaluations = ledger.subject === null
         ? null
-        : ledger.claims.map((claim) => evaluateClaim(claim, {
-            evidence: ledger.evidence,
-            verdicts: ledger.verdicts,
-            reusedEvidence: new Set<string>(),
-            policy: ledger.policy,
-            challenges: ledger.challenges,
-            subjectRevision: ledger.subject?.revision ?? '',
-        }));
+        : (await import('./verdict.js')).claimDecisions(ledger);
     const bySupport = evaluations === null
         ? null
         : evaluations.reduce((totals, evaluation) => {

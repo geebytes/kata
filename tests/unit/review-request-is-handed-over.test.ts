@@ -44,7 +44,7 @@ const claim = (): Claim => ({
     reopens: 0,
 });
 
-async function planned(): Promise<void> {
+async function planned(): Promise<{ subjectRevision: string }> {
     const dir = await scratch();
     await writePolicy(dir, changeId, defaultPolicy());
     const frozen = await freezeSubject({ root: dir, paths: ['src/a.ts'] });
@@ -52,6 +52,8 @@ async function planned(): Promise<void> {
     await writeSubject(dir, changeId, frozen.subject);
     await ensureAssurance(dir, changeId, 'observed');
     await appendClaim(dir, changeId, claim());
+    const { readLedger } = await import('../../src/store/ledger.js');
+    const subjectRevision = (await readLedger(dir, changeId)).subject?.revision ?? '';
     await appendEvidence(dir, changeId, makeEvidence({
         id: 'E1',
         type: 'executable_falsifier',
@@ -64,11 +66,12 @@ async function planned(): Promise<void> {
         requiredEvidence: [{ claimId: 'C1', types: ['executable_falsifier'], minimumStrength: 3 }],
         discovery: { deadlineToolCalls: 200 },
     });
+    return { subjectRevision };
 }
 
 describe('a review request is handed over and checked, rather than hoped for', () => {
     it('carries the plan, the deadline and the probes — and none of the assurance axis', async () => {
-        await planned();
+        const { subjectRevision } = await planned();
         const built = await buildReviewRequest({ root, changeId });
         expect(built.ok).toBe(true);
         if (!built.ok) return;
@@ -103,24 +106,36 @@ describe('a review request is handed over and checked, rather than hoped for', (
     });
 
     it('names each gap on the way back, by claim, instead of scoring them', async () => {
-        await planned();
+        const { subjectRevision } = await planned();
         // Nothing verified, no probe answered: both are gaps and both are named.
         await appendProbe(root, changeId, {
             id: 'P1-C1', claimId: 'C1', kind: 'file-exists', path: 'src/a.ts', command: 'test -f src/a.ts', askedAt: 't',
         });
         const before = await verifyAgainstRequest({ root, changeId });
         expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('the probe P1-C1 was asked and not answered');
-        expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('no supported verdict');
+        // The gap now names the kernel's own state and reason rather than "no supported verdict", so a reader can tell
+        // "nothing was checked" from "checked and not enough" — the two instructions these used to conflate.
+        expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('the claim is');
 
         // Answer it and verify the evidence: no gaps, which is the only reading of "the request was satisfied".
         await answerProbe(root, changeId, { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 't' });
-        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', verifier: 'test' })]);
+        // **A verdict the kernel accepts, not one that merely exists.** The fixture used to record a `static_witness`
+        // verdict for a claim whose severity requires an executable falsifier, bound to `rev:unknown` rather than to the
+        // frozen subject — and the check it was written against asked only whether a supported verdict existed, so the
+        // claim read as satisfied while the kernel judged it `stale`. Both fields are what the real flow writes.
+        await recordVerdicts(root, changeId, [makeVerdict({
+            evidenceId: 'E1',
+            evidenceType: 'executable_falsifier',
+            subjectRevision,
+            verdict: 'supported',
+            verifier: 'test',
+        })]);
         const after = await verifyAgainstRequest({ root, changeId });
         expect(after.gaps).toEqual([]);
     });
 
     it('refuses a lower strength where the plan asked for a higher one', async () => {
-        await planned();
+        const { subjectRevision } = await planned();
         // The claim holds only a static witness while the plan requires a falsifier: a gap, named with both sides.
         await appendEvidence(root, changeId, makeEvidence({ id: 'E2', type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' }));
         const dir = root;

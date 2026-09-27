@@ -26,19 +26,10 @@ export async function openLedgerProblems(
     taskId: string,
 ): Promise<Array<{ id: string; severity: string; statement: string }>> {
     const { readLedger } = await import('../store/ledger.js');
-    const { evaluateClaim } = await import('../kernel/decide.js');
+    const { unsupportedClaims } = await import('../store/verdict.js');
     const ledger = await readLedger(root, taskId);
-    return ledger.claims
-        .filter((claim) => claim.status !== 'waived')
-        .filter((claim) => evaluateClaim(claim, {
-            evidence: ledger.evidence,
-            verdicts: ledger.verdicts,
-            reusedEvidence: new Set(),
-            policy: ledger.policy,
-            challenges: ledger.challenges,
-            subjectRevision: ledger.subject?.revision ?? '',
-        }).state !== 'supported')
-        .map((claim) => ({ id: claim.id, severity: claim.severity, statement: claim.statement }));
+    // The decision, not a second derivation of it: `unsupportedClaims` assembles the input once for every consumer.
+    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement }));
 }
 
 export type UpstreamSummary = {
@@ -79,6 +70,14 @@ export type UpstreamSummary = {
     /** The kernel's own list of what is missing, which is what a repair is supposed to satisfy. */
     deficits: string[];
   };
+  /**
+   * **May this change close, and which claims stop it.**
+   *
+   * Written by this function and, until a test read it, declared by nobody: the object literal carried it and the type did
+   * not, so a typed reader could not see it and only a JSON dump showed it. A producer whose output is not declared is one
+   * half of the same defect as a declaration nothing reads — the field exists, and no reader can ask for it.
+   */
+  ledgerClosure?: { mayClose: boolean; unsupportedClaims: string[]; reason: string };
 };
 
 /**
@@ -246,24 +245,16 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // "every class an open finding names has a check" became "every class the tier requires has a claim".
     ...(await (async () => {
         const { readLedger } = await import('../store/ledger.js');
-        const { evaluateClaim } = await import('../kernel/decide.js');
+        const { unsupportedClaims } = await import('../store/verdict.js');
         const ledgerState = await readLedger(root, taskId);
+        const unsupportedIds = new Set(unsupportedClaims(ledgerState).map((decision) => decision.claimId));
         if (ledgerState.claims.length === 0) {
             // No ledger is a state, not an empty verdict: a change on this route may legitimately have none yet, and saying
             // "cannot close" about nothing recorded would be a refusal of work that has not started.
             return {};
         }
-        const unsupported = ledgerState.claims.filter((claim) => {
-            const evaluation = evaluateClaim(claim, {
-                evidence: ledgerState.evidence,
-                verdicts: ledgerState.verdicts,
-                reusedEvidence: new Set(),
-                policy: ledgerState.policy,
-                challenges: ledgerState.challenges,
-                subjectRevision: ledgerState.subject?.revision ?? '',
-            });
-            return evaluation.state !== 'supported';
-        });
+        // The kernel's answer, asked once for the whole ledger rather than re-derived per claim.
+        const unsupported = ledgerState.claims.filter((claim) => unsupportedIds.has(claim.id));
         if (unsupported.length === 0) return {};
         return {
             ledgerClosure: {

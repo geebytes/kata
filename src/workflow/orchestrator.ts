@@ -418,19 +418,10 @@ export async function sealProgressWriter(
  */
 async function ledgerClaimsForRecord(root: string, taskId: string): Promise<Array<{ id: string; severity: string; status: string }>> {
     const { readLedger } = await import('../store/ledger.js');
-    const { evaluateClaim } = await import('../kernel/decide.js');
+    const { unsupportedClaims } = await import('../store/verdict.js');
     const ledger = await readLedger(root, taskId);
-    return ledger.claims
-        .filter((claim) => claim.status !== 'waived')
-        .filter((claim) => evaluateClaim(claim, {
-            evidence: ledger.evidence,
-            verdicts: ledger.verdicts,
-            reusedEvidence: new Set(),
-            policy: ledger.policy,
-            challenges: ledger.challenges,
-            subjectRevision: ledger.subject?.revision ?? '',
-        }).state !== 'supported')
-        .map((claim) => ({ id: claim.id, severity: claim.severity, status: claim.status }));
+    // One derivation: `unsupportedClaims` assembles the kernel's input, exactly as the ladder and the archive gate do.
+    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, status: 'open' }));
 }
 
 async function cmdBuild(
@@ -1798,29 +1789,20 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     // blocks the archive (the repair is to make the claim hold, or to waive it with a reason), and a waiver that has not
     // been carried anywhere needs `--findings-carried-to`, because living with a known problem is a decision someone signs.
     const { readLedger: readArchiveLedger } = await import('../store/ledger.js');
-    const { evaluateClaim: evaluateArchiveClaim } = await import('../kernel/decide.js');
+    const { unsupportedClaims: unsupportedClaimsOf } = await import('../store/verdict.js');
     const archiveLedger = await readArchiveLedger(root, taskId);
-    const unsupportedClaims = archiveLedger.claims.filter((claim) => {
-        if (claim.status === 'waived') return false;
-        const evaluation = evaluateArchiveClaim(claim, {
-            evidence: archiveLedger.evidence,
-            verdicts: archiveLedger.verdicts,
-            reusedEvidence: new Set(),
-            policy: archiveLedger.policy,
-            challenges: archiveLedger.challenges,
-            subjectRevision: archiveLedger.subject?.revision ?? '',
-        });
-        return evaluation.state !== 'supported';
-    });
+    // The same reader the ladder and the change record ask, so the gate and the diagnostics cannot disagree about which
+    // claims are open — the fifth consumer of this question, and the last one assembling its own copy of the input.
+    const unsupportedClaims = unsupportedClaimsOf(archiveLedger);
     if (unsupportedClaims.length > 0) {
         return {
             command: 'archive',
             taskId,
             phase: current.phase,
             success: false,
-            error: `Archive blocked; ${unsupportedClaims.length} claim(s) are not supported: ${unsupportedClaims.map((claim) => claim.id).join(', ')}. `
+            error: `Archive blocked; ${unsupportedClaims.length} claim(s) are not supported: ${unsupportedClaims.map((claim) => claim.claimId).join(', ')}. `
                 + 'Make each one hold (`kata-cli ledger evidence add`, `ledger evidence verify`), or record the decision to live with it (`kata-cli ledger claim waive <id> --reason <why>`).',
-            diagnostics: { unsupportedClaims: unsupportedClaims.map((claim) => ({ id: claim.id, statement: claim.statement, severity: claim.severity })) },
+            diagnostics: { unsupportedClaims: unsupportedClaims.map((claim) => ({ id: claim.claimId, statement: claim.statement, severity: claim.severity })) },
         };
     }
     const waivedClaims = archiveLedger.claims.filter((claim) => claim.status === 'waived');

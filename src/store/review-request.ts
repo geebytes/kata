@@ -97,6 +97,8 @@ export async function verifyAgainstRequest(input: { root: string; changeId: stri
     const ledger = await readLedger(input.root, input.changeId);
     const built = await buildReviewRequest(input);
     if (!built.ok) return { gaps: [{ claimId: null, what: built.why }] };
+    const { claimDecisions } = await import('./verdict.js');
+    const decisions = new Map(claimDecisions(ledger).map((decision) => [decision.claimId, decision]));
     const answers = await readProbeAnswers(input.root, input.changeId);
     const answered = new Set(answers.map((answer) => answer.probeId));
     const gaps: RequestGap[] = [];
@@ -126,11 +128,19 @@ export async function verifyAgainstRequest(input: { root: string; changeId: stri
             gaps.push({ claimId: claim.id, what: 'the stored plan names no reading set for this claim, so the request could not scope it' });
         }
         if (claimRequest.requiredEvidence.minimumStrength > 0) {
-            const verdict = claim.evidenceIds
-                .map((id) => ledger.verdicts.find((entry) => entry.evidenceId === id))
-                .find((entry) => entry?.verdict === 'supported');
-            if (verdict === undefined) {
-                gaps.push({ claimId: claim.id, what: 'no supported verdict for this claim, so the evidence the request asked for has not been checked' });
+            // **Asked of the kernel, not of the verdict list.** This read `verdicts.find(verdict === 'supported')` and
+            // called that "the claim holds", which is a second derivation of the question `unsupportedClaims` answers: a
+            // supported verdict at a strength below what the claim's severity requires reads as satisfied here and as a
+            // deficit there. The gap message says which of the two facts is missing, because "not checked" and "checked
+            // and not enough" are different instructions.
+            const decision = decisions.get(claim.id);
+            if (decision === undefined || decision.state !== 'supported') {
+                gaps.push({
+                    claimId: claim.id,
+                    what: decision === undefined
+                        ? 'this claim has no decision, so the evidence the request asked for has not been judged'
+                        : `the claim is ${decision.state} (${decision.reasons.map((reason) => reason.code).join(', ') || 'no reason recorded'}), so the evidence the request asked for does not yet support it`,
+                });
             }
         }
     }
