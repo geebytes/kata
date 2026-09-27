@@ -1496,7 +1496,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     approvalTask.acceptanceMatrix,
                     existing.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
                 );
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, ...(ledgerApproval === null ? { reviewRoute: 'adversarial' } : { reviewRoute: 'ledger', ledgerReview: ledgerApproval }), approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
             return {
                 command: 'review',
                 taskId,
@@ -1605,6 +1605,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     const currentDiffHash = await computeDiffHash(root);
     const evidence = await readTaskEvidence(root, taskId, options);
     const findings = review.findings;
+    let reportFailedCriteria: string[] = [];
     const evidenceRevisionId = revisionIdForEvidence(evidence);
     const reviewRevisionId = await readReviewRevisionId(root, taskId);
     if (evidenceRevisionId && reviewRevisionId !== evidenceRevisionId) {
@@ -1628,22 +1629,22 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         reviewMode: task.workflowProfile?.reviewMode,
     } as import('../quality/judge.js').JudgeInput);
 
+    // **A judge FAIL records no obligation, and the reason is that it cannot be reached without a ledger.**
+    //
+    // The obligation existed to carry the failure across the re-seal that follows its repair, because `judgeResult ===
+    // 'FAIL'` is only read while the phase is `judge` and a repair moves the phase. That is now the ledger's job: the
+    // failing criterion is a claim, the evaluation that failed is that claim's evidence verdict, and `decide` re-derives
+    // "unsupported" on any revision — so the failure is carried by the same store that decides everything else.
+    //
+    // Measured before deleting it: the only production writer of an approved review is `review --approve` (line 1499),
+    // and that refuses any change without an evidence ledger. Judge refuses a review that is not approved, so it cannot
+    // be run on a ledger-less change — which makes the old branch unreachable rather than merely redundant. A guard that
+    // cannot fire is the class this repository has removed more often than any other; keeping it would also have kept two
+    // routes to the same repair (`repair_unresolved_obligations` and `repair_failed_judge`).
     if (judgeResult.result === 'FAIL') {
         const failed = judgeResult.acceptance.filter((a) => a.result === 'FAIL');
-        await persistBlockingJudgeResult(root, taskId, failed.map((a) => ({ id: a.id, result: a.result })));
-        // C1: a Judge FAIL gates the node for the same reason a blocking finding does, and it belongs to the same batch.
-        const { recordFindingsForBatching } = await import('../quality/repair-batch.js');
-        await recordFindingsForBatching(
-            root,
-            taskId,
-            failed.map((criterion) => ({
-                id: `judge-fail-${criterion.id}`,
-                severity: 'blocking',
-                message: `Judge FAIL on ${criterion.id}`,
-                acceptanceId: criterion.id,
-            })),
-            'judge',
-        ).catch(() => null);
+        // The list is still reported: it is what the caller acts on, and the repair is to make the claim hold.
+        reportFailedCriteria = failed.map((criterion) => criterion.id);
     }
 
     let judgePhase: Phase = 'judge';
@@ -1670,6 +1671,9 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
                 result: a.result,
                 repairScope: a.repairScope,
             })),
+            // Named rather than only counted, because the repair is to make *these* claims hold and the ledger is where
+            // they live (`ledger claim show <id>`, `ledger decide`).
+            ...(reportFailedCriteria.length > 0 ? { failedCriteria: reportFailedCriteria } : {}),
             evidenceCount: evidence.length,
             findingCount: findings.length,
             blockingFindings: findings.filter((f) => f.severity === 'blocking').length,
