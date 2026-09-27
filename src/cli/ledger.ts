@@ -7,7 +7,8 @@
  * carries the whole review.
  */
 import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
@@ -25,7 +26,7 @@ import { probesFor } from '../kernel/discovery.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
-import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName } from '../kernel/types.js';
+import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -38,33 +39,91 @@ function nowIso(): string {
     return new Date().toISOString();
 }
 
-function buildContext(root: string, subject: { revision: string; pathDigests: Record<string, string> }): VerifyContext {
+/**
+ * The verify context: where a command actually runs, and what it is allowed to touch.
+ *
+ * **Three properties that were missing, each measured.**
+ *
+ * 1. **The wall clock is enforced, not recorded.** The old runner passed a hard-coded 600 s, so `Policy.budgets.
+ *    maxWallMs` (the tier's envelope, and the number a ledger's `budget_exhausted` comes from) bounded nothing; a
+ *    verifier could run far past the envelope the decision then judged it against.
+ * 2. **A mutation cannot leave the repository.** Paths went through `resolve(root, path)`, which resolves `..` and
+ *    absolute paths happily, so a crafted evidence item could read or overwrite anything the user can — and the
+ *    restore step would then write the original content back to that outside path. Containment is now checked before
+ *    any read or write.
+ * 3. **The producing run has an identity.** `producer()` names the run and the actor, which is what lets
+ *    `groupByProducer` tell two independent readings from one reading counted twice, and lets `decide` refuse an
+ *    approval asked for by a party that produced the evidence.
+ */
+function containedPath(root: string, relativePath: string): string | null {
+    if (relativePath.trim() === '' || isAbsolute(relativePath)) return null;
+    const absolute = resolve(root, relativePath);
+    const inside = relative(root, absolute).replaceAll('\\\\', '/');
+    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null;
+    return absolute;
+}
+
+function buildContext(
+    root: string,
+    subject: { revision: string; pathDigests: Record<string, string> },
+    options: { timeoutMs: number; producer: VerdictProducer; onRefusal?: (what: string) => void },
+): VerifyContext {
     return {
         root,
         subject,
         run: async (command: string) => {
-            const result = await runProcess('sh', ['-c', command], { cwd: root, timeoutMs: 600_000, maxCaptureBytes: 200_000 });
+            const result = await runProcess('sh', ['-c', command], {
+                cwd: root,
+                // The tier's own envelope, passed through rather than a second hard-coded number: two limits for one
+                // fact is how a ledger came to report `budget_exhausted` against a bound nothing enforced.
+                timeoutMs: options.timeoutMs,
+                maxCaptureBytes: 200_000,
+            });
             return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: result.exitCode === 124 };
         },
         readText: async (relativePath: string) => {
+            const absolute = containedPath(root, relativePath);
+            if (absolute === null) {
+                options.onRefusal?.(`${relativePath} is outside the workspace root`);
+                return null;
+            }
             try {
-                return await readFile(join(root, relativePath), 'utf8');
+                return await readFile(absolute, 'utf8');
             } catch {
                 return null;
             }
         },
         exists: async (relativePath: string) => {
+            const absolute = containedPath(root, relativePath);
+            if (absolute === null) return false;
             try {
-                await readFile(join(root, relativePath));
+                await readFile(absolute);
                 return true;
             } catch {
                 return false;
             }
         },
         writeText: async (relativePath: string, content: string) => {
-            await writeFile(join(root, relativePath), content, 'utf8');
+            const absolute = containedPath(root, relativePath);
+            if (absolute === null) {
+                // Loud, because this one is the mutation restore path: silently declining to write would leave the
+                // injected defect in place, and a mutation that is not restored is a repository left broken.
+                throw new Error(`refusing to write ${relativePath}: it is outside the workspace root`);
+            }
+            await writeFile(absolute, content, 'utf8');
         },
         now: nowIso,
+        producer: () => options.producer,
+    };
+}
+
+function producerFor(argv: string[]): VerdictProducer {
+    // One run per `evidence verify` invocation: the same command run twice is two observations, which is what a quorum
+    // is made of, and a re-run of one invocation cannot claim to be one. The actor is the operator's own identity when
+    // they state one, and `cli` otherwise — a ledger cannot invent an identity this platform does not issue.
+    return {
+        runId: argValue(argv, '--run-id') ?? `run-${randomUUID()}`,
+        actor: argValue(argv, '--actor') ?? process.env.KATA_ACTOR?.trim() ?? 'cli',
     };
 }
 
@@ -381,7 +440,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 fail({ command: 'ledger evidence verify', error: 'there is no evidence to verify' });
                 return;
             }
-            const context = buildContext(options.root, ledger.subject);
+            const context = buildContext(options.root, ledger.subject, {
+                // The tier's envelope, not a second number: the budget the decision judges against is the one the runner
+                // enforces, which is the point of `budget_enforced` being a capability rather than a claim.
+                timeoutMs: ledger.policy.budgets.maxWallMs,
+                producer: producerFor(argv),
+            });
             const adapter = adapterFor(argv, options.root);
             // One list walk, with the adapter deciding: the adapter is what makes the round observed or relayed, and the
             // walk itself lives in one place so an adapter cannot accidentally skip an item.
@@ -518,7 +582,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 fail({ command: 'ledger challenge check', error: 'there is no open challenge to check' });
                 return;
             }
-            const context = buildContext(options.root, ledger.subject);
+            const context = buildContext(options.root, ledger.subject, {
+                // The tier's envelope, not a second number: the budget the decision judges against is the one the runner
+                // enforces, which is the point of `budget_enforced` being a capability rather than a claim.
+                timeoutMs: ledger.policy.budgets.maxWallMs,
+                producer: producerFor(argv),
+            });
             const outcomes: Array<{ id: string; code: number; state: Challenge['state'] }> = [];
             for (const challenge of open) {
                 const result = await context.run(challenge.command);
@@ -527,8 +596,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 const state: Challenge['state'] = result.code === 0 ? 'withdrawn' : 'open';
                 await resolveChallenge(options.root, changeId, challenge.id, {
                     state,
-                    observed: `exit ${result.code} when checked against ${ledger.subject.revision}`,
+                    observed: `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`,
                     at: nowIso(),
+                    // **The reproduction is what makes this a counterexample.** A command that exits 0 on the first check
+                    // never failed on anything, and counting it as an independent challenge is how `challenge add
+                    // --command 'exit 0'` satisfied the strict discovery floor.
+                    reproduced: result.code !== 0 && !result.timedOut,
                 });
                 outcomes.push({ id: challenge.id, code: result.code, state });
             }

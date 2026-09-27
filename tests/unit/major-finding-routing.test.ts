@@ -97,7 +97,7 @@ describe('the severity gate is one rule, applied by the kernel', () => {
             declaredRiskClasses: [],
             assurance: 'observed',
             usage: { toolCalls: 0, wallMs: 0, tokens: 0 },
-            discovery: { independentChallenges: 0 },
+            discovery: { independentChallenges: 0, verifiedChallenges: 0 },
         });
         expect(decision.verdict, 'the waived claim no longer decides against the change').not.toBe('fail');
     });

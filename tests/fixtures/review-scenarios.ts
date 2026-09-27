@@ -39,7 +39,7 @@ function base(overrides: Partial<DecideInput> = {}): DecideInput {
         declaredRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
-        discovery: { independentChallenges: 1 },
+        discovery: { independentChallenges: 1, verifiedChallenges: 1 },
         ...overrides,
     };
 }
@@ -159,8 +159,15 @@ export const reviewScenarios: ReviewScenario[] = [
         id: 'discovery-floor-missing',
         mode: 'discovery',
         why: 'A tier at or above medium with no independent challenge has had no discovery, whatever the automatic evidence says.',
-        build: () => base({ tier: 'strict', discovery: { independentChallenges: 0 } }),
+        build: () => base({ tier: 'strict', discovery: { independentChallenges: 0, verifiedChallenges: 0 } }),
         expect: { verdict: 'insufficient', reasons: ['discovery_floor'] },
+    },
+    {
+        id: 'discovery-declared-but-never-run',
+        mode: 'discovery',
+        why: 'The floor cannot be met by declaring a challenge: `challenge add --command \'exit 0\'` plus one check leaves a withdrawn challenge that never failed on anything, so the count is satisfied and nothing was challenged.',
+        build: () => base({ tier: 'strict', discovery: { independentChallenges: 1, verifiedChallenges: 0 } }),
+        expect: { verdict: 'insufficient', reasons: ['discovery_unverified'] },
     },
     {
         id: 'assurance-below-tier',
@@ -181,6 +188,17 @@ export const reviewScenarios: ReviewScenario[] = [
         expect: { verdict: 'insufficient', reasons: ['quorum_undiversified'] },
     },
     {
+        id: 'quorum-below-the-tier-contract',
+        mode: 'quorum',
+        why: 'A tier that asks for two independent reviewers must refuse one: the contract is a condition, not a comment, and a single reading is not a quorum however complete it looks.',
+        build: () => base({
+            tier: 'security',
+            assurance: 'sandboxed',
+            quorum: { disputedClaimIds: [], undiversified: false, reviewers: 1, requiredReviewers: 2 },
+        }),
+        expect: { verdict: 'insufficient', reasons: ['quorum_missing'] },
+    },
+    {
         id: 'quorum-disputed',
         mode: 'quorum',
         why: 'A disagreement is reported rather than averaged away.',
@@ -196,6 +214,13 @@ export const reviewScenarios: ReviewScenario[] = [
             quorum: { disputedClaimIds: [], undiversified: false, reviewers: 2 },
         }),
         expect: { verdict: 'fail', reasons: ['evidence_refuted'] },
+    },
+    {
+        id: 'approver-is-a-producer',
+        mode: 'record',
+        why: 'A verdict knows who produced it, so an approval asked for by one of those producers is refused: one machine cannot prove a context was fresh, but it can see that the same party wrote the evidence and signed it off.',
+        build: () => base({ actor: 'test' }),
+        expect: { verdict: 'insufficient', reasons: ['same_actor'] },
     },
     {
         id: 'uncovered-risk-class',

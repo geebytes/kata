@@ -53,6 +53,9 @@
               "evidence_stale_subject",
               "quorum_disputed",
               "quorum_undiversified",
+              "quorum_missing",
+              "discovery_unverified",
+              "same_actor",
               "uncovered_risk_class",
               "waived_without_reason"
             ]

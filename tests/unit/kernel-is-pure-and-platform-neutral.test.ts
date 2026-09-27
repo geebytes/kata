@@ -70,7 +70,7 @@ describe('the kernel is pure and platform-neutral', () => {
             declaredRiskClasses: ['consistency' as const],
             assurance: 'observed' as const,
             usage: { tokens: 10, wallMs: 10, toolCalls: 1 },
-            discovery: { independentChallenges: 1 },
+            discovery: { independentChallenges: 1, verifiedChallenges: 1 },
         };
         const first = decide(input);
         const second = decide(input);

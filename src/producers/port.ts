@@ -5,7 +5,7 @@
  * decides** (a verdict), and the two are never the same party for the same item. That is what replaces the receipt: the
  * evidence is re-decided by execution rather than trusted because of where it came from.
  */
-import type { AssuranceLevel, Claim, Evidence, EvidenceType, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceLevel, Claim, Evidence, EvidenceType, EvidenceVerdict, Subject, VerdictProducer } from '../kernel/types.js';
 
 export type CommandOutcome = { code: number; stdout: string; stderr: string; timedOut: boolean };
 
@@ -21,6 +21,14 @@ export type VerifyContext = {
     exists: (relativePath: string) => Promise<boolean>;
     writeText: (relativePath: string, content: string) => Promise<void>;
     now: () => string;
+    /**
+     * Who is producing the verdict this context will stamp.
+     *
+     * Supplied by the adapter rather than by the verifier, because the verifier is the deciding *method* and the producer
+     * is the deciding *party*. It is what makes a quorum possible: two verdicts are two observations only when they name
+     * different producing runs, so a reading cannot be re-submitted to look like agreement.
+     */
+    producer: () => VerdictProducer;
 };
 
 /** One evidence type, decided. `verifier` names the deciding party, recorded in the verdict for audit. */

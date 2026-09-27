@@ -77,6 +77,7 @@ export async function seedLedger(
         at: new Date().toISOString(),
         verifier: 'tests/helpers/ledger#fixture',
         subjectRevision: frozenAgain.subject.revision,
+        producer: { runId: 'fixture-run', actor: 'fixture' },
     })));
     await recordVerdicts(root, taskId, verdicts);
     // The discovery floor asks for one independent challenge above the standard tier; a probe that was asked and answered

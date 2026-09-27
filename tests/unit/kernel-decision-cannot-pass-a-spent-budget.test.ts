@@ -24,7 +24,7 @@ function baseline(): DecideInput {
         declaredRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
-        discovery: { independentChallenges: 1 },
+        discovery: { independentChallenges: 1, verifiedChallenges: 1 },
     };
 }
 

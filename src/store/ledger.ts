@@ -432,7 +432,7 @@ export async function resolveChallenge(
     root: string,
     changeId: string,
     challengeId: string,
-    resolution: { state: Challenge['state']; observed: string; at: string },
+    resolution: { state: Challenge['state']; observed: string; at: string; /** Whether this check observed the command fail. */ reproduced?: boolean },
 ): Promise<boolean> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
@@ -440,7 +440,16 @@ export async function resolveChallenge(
         const index = challenges.findIndex((entry) => entry.id === challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
-        challenges[index] = { ...current, state: resolution.state, resolution: { at: resolution.at, observed: resolution.observed } };
+        challenges[index] = {
+            ...current,
+            state: resolution.state,
+            resolution: { at: resolution.at, observed: resolution.observed },
+            // **A reproduction is a fact that is never cleared.** Set the moment a check observes the command failing,
+            // and kept through resolution and amendment: a counterexample that once reproduced is a counterexample,
+            // even after the fix makes it pass. This is what lets the discovery floor count challenges that actually
+            // challenged something rather than challenges that were declared.
+            ...(current.reproduced === true || resolution.reproduced === true ? { reproduced: true } : {}),
+        };
         await writeJson(root, changeId, FILES.challenges, challenges);
         return true;
     });

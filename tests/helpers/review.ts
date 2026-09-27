@@ -38,6 +38,7 @@ export function makeContext(input: {
             files[relativePath] = content;
         },
         now: () => '2026-09-27T00:00:00.000Z',
+        producer: () => ({ runId: 'test-run', actor: 'test' }),
     };
 }
 
@@ -76,6 +77,7 @@ export function makeVerdict(overrides: Partial<EvidenceVerdict> = {}): EvidenceV
         at: '2026-09-27T00:00:00.000Z',
         verifier: 'test',
         subjectRevision: 'rev:unknown',
+        producer: { runId: 'test-run', actor: 'test' },
         ...overrides,
     };
 }

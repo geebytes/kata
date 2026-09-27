@@ -229,6 +229,7 @@ behaviour of each surface, and nothing here is needed for an ordinary run.
 | `KATA_RUNTIME_REFRESH_TIMEOUT_MS` | `30000` | Budget for the runtime refresh's non-index stages (`comet`, `codegraph sync`). The refresh is best-effort: no stage failure aborts the platform update |
 | `KATA_GITFLOW_TIMEOUT_MS` | `300000` | Budget for a Git Flow subcommand. Both the interactive and non-interactive paths are bounded by it, so a git operation cannot hang an unattended run |
 | `KATA_LANGUAGE` | `zh` | Language for the prompts kata renders into a task's status and pause instructions (`en`/`zh`). An explicit language on the call wins over it; a task's own record does not override it |
+| `KATA_ACTOR` | `cli` | The identity recorded as the producer of a verdict when `ledger evidence verify` runs without `--actor`. A ledger cannot invent an identity the platform does not issue, so this is how an operator states one: two runs by two actors are two independent readings, and the decision refuses an approval asked for by an actor that also produced its evidence. Unset means `cli`, which is honest about being unattributed rather than claiming a person |
 
 ## Worktrees
 

@@ -53,6 +53,7 @@ export function createFileAdapter(input: { dir: string }): EvidenceAdapter {
                 at: parsed.at ?? context.now(),
                 verifier: parsed.verifier ?? 'assurance/adapters/file',
                 subjectRevision: parsed.subjectRevision,
+                producer: context.producer(),
             };
         },
     };
@@ -73,6 +74,7 @@ function verdictOf(
         at: context.now(),
         verifier,
         subjectRevision: context.subject.revision,
+        producer: context.producer(),
     };
 }
 

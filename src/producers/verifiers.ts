@@ -25,6 +25,11 @@ function makeVerdict(input: {
         at: input.context.now(),
         verifier: input.verifier,
         subjectRevision: input.context.subject.revision,
+        // **Stamped by the context, not by the verifier.** The party that decided is supplied by the adapter that hosted
+        // the run, which is what keeps a quorum possible: `groupByProducer` can only tell two readings from one if the
+        // reading names the run that produced it, and a verifier that filled this in from its own name would make two
+        // runs of one adapter look like one producer.
+        producer: input.context.producer(),
     };
 }
 
@@ -205,6 +210,7 @@ async function verifyOne(item: Evidence, context: VerifyContext): Promise<Eviden
             at: context.now(),
             verifier: 'producers/verifiers',
             subjectRevision: context.subject.revision,
+            producer: context.producer(),
         };
     }
     return verifier.verify(item, context);

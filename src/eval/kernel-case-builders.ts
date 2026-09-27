@@ -54,6 +54,7 @@ function verdict(id: string, outcome: EvidenceVerdict['verdict']): EvidenceVerdi
         at: '2026-09-27T00:00:00.000Z',
         verifier: 'eval/kernel-case-builders#fixture',
         subjectRevision: SUBJECT.revision,
+        producer: { runId: 'fixture-run', actor: 'fixture' },
     };
 }
 

@@ -30,7 +30,7 @@ function decidedFrom(verdicts: Parameters<typeof decide>[0]['verdicts']) {
         declaredRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
-        discovery: { independentChallenges: 1 },
+        discovery: { independentChallenges: 1, verifiedChallenges: 1 },
     });
 }
 

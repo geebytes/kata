@@ -24,6 +24,7 @@ export function createInlineAdapter(): EvidenceAdapter {
                     at: context.now(),
                     verifier: 'assurance/adapters/inline',
                     subjectRevision: context.subject.revision,
+                    producer: context.producer(),
                 };
             }
             return verifier.verify(evidence, context);

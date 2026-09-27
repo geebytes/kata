@@ -102,9 +102,18 @@ async function satisfyStrictTier(): Promise<void> {
         await ledger(['evidence', 'add', '--file', path]);
     }
     await ledger(['evidence', 'verify']);
-    // A challenge that **does not reproduce** is the discovery the floor asks for: it is raised, measured, and found not to
-    // hold. One left open would be a defect, which is a different state and not what this helper is for.
-    await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 0', '--id', 'X1']);
+    // **A challenge that reproduced is the discovery the floor asks for.** It is raised against a file outside the
+    // frozen subject, measured, and found to fail (`grep` finds no marker) — that failure is the reproduction the floor
+    // counts. The author then writes the marker, the same command passes, and the challenge is withdrawn.
+    //
+    // The previous fixture used `exit 0` and relied on the count alone, which is exactly the hole the floor's
+    // `verifiedChallenges` half closes: a command that never failed on anything is not a challenge, whatever state it
+    // ends in. The file lives outside the subject so applying the fix does not move the revision and stale the verdicts.
+    await mkdir(join(root, 'notes'), { recursive: true });
+    await writeFile(join(root, 'notes', 'discovery.txt'), 'Nothing here yet\n');
+    await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marked notes/discovery.txt', '--id', 'X1']);
+    await ledger(['challenge', 'check']);
+    await writeFile(join(root, 'notes', 'discovery.txt'), 'marked\n');
     await ledger(['challenge', 'check']);
 }
 

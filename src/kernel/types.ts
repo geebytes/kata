@@ -137,6 +137,14 @@ export type Evidence =
  * A verdict is produced by a verifier, never by the producer of the evidence. The kernel consumes verdicts and never
  * executes anything, which is what keeps `decide()` a pure function.
  */
+/** Which producer decided this item. A verdict carries who decided so two reviewers are two observations, not one. */
+export type VerdictProducer = {
+    /** The run that produced this verdict. Two verdicts on one item from one run are one observation, not a quorum. */
+    runId: string;
+    /** The party that did the deciding, recorded verbatim for audit. */
+    actor: string;
+};
+
 export type EvidenceVerdict = {
     evidenceId: string;
     evidenceType: EvidenceType;
@@ -147,6 +155,10 @@ export type EvidenceVerdict = {
     verifier: string;
     /** The revision the verdict is about. A verdict about another revision cannot support a claim about this one. */
     subjectRevision: string;
+    /**
+     * Who produced this reading, as an immutable pair.
+     */
+    producer: VerdictProducer;
 };
 
 export type ChallengeState = 'open' | 'resolved' | 'withdrawn';
@@ -171,6 +183,17 @@ export type Challenge = {
      * between amending a measurement and quietly rewriting a record.
      */
     amendment?: { command: string; reason: string; at: string };
+    /**
+     * Whether this counterexample was ever observed to reproduce.
+     *
+     * **The field the discovery floor needed.** A challenge whose command exits 0 is *withdrawn* by one check, and the
+     * floor used to count every non-open challenge as an independent challenge — so `challenge add --command 'exit 0'`
+     * followed by one `challenge check` satisfied the strict floor without anything having been challenged. A
+     * counterexample is only a counterexample if it failed at some point, and that failure is a fact the ledger can
+     * record: it is set when a check observes a non-zero exit, and it is never cleared, because a reproduction that
+     * happened stays a fact about the artifact.
+     */
+    reproduced?: boolean;
 };
 
 export type ReasonCode =
@@ -188,6 +211,9 @@ export type ReasonCode =
     | 'quorum_undiversified'
     | 'waived_without_reason'
     | 'claim_unsupported'
+    | 'quorum_missing'
+    | 'discovery_unverified'
+    | 'same_actor'
     | 'dependency_unresolvable';
 
 export type Reason = {
@@ -281,5 +307,17 @@ export const REASON_MESSAGES: Record<ReasonCode, { message: string; whoActs: 'au
     claim_unsupported: {
         message: 'No verdict supports this claim.',
         whoActs: 'author',
+    },
+    quorum_missing: {
+        message: 'Fewer independent reviewers decided this change than the tier requires, so the multi-reviewer tier contract is unmet.',
+        whoActs: 'policy-owner',
+    },
+    discovery_unverified: {
+        message: 'No challenge or probe with a recorded observation ran, so nothing here was independently read.',
+        whoActs: 'author',
+    },
+    same_actor: {
+        message: 'The party that approved this change is among the parties that produced its evidence, so the approval is not independent of its own claims.',
+        whoActs: 'policy-owner',
     },
 };

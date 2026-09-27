@@ -34,6 +34,8 @@ export type QuorumReport = {
     /** True when the reviewers were not diverse enough to count as independent. */
     undiversified: boolean;
     reviewers: number;
+    /** How many independent reviewers the tier asked for. Absent means the tier asked for none. */
+    requiredReviewers?: number;
 };
 
 export type DecideInput = {
@@ -49,9 +51,27 @@ export type DecideInput = {
     assurance: AssuranceLevel;
     usage: BudgetUsage;
     c0Tokens?: number | null;
-    discovery: { independentChallenges: number };
+    /**
+     * What independently challenged this change, and what actually ran.
+     *
+     * `independentChallenges` alone was satisfiable by a challenge whose command was `exit 0`: the count included every
+     * non-open challenge and every probe answer, so a challenge that never failed on anything counted as one, and a probe
+     * answer was a string with no expected value to compare against. `verifiedChallenges` is the half that can be
+     * checked — a challenge withdrawn with a recorded failure observation, or a probe answer whose recorded observation
+     * contains the digest prefix the probe asked about — and the decision refuses when it is zero at a tier that
+     * requires one, so the floor cannot be met by doing nothing.
+     */
+    discovery: { independentChallenges: number; /** Required, not optional: a caller must decide what it verified, or the floor is met by declaring. */ verifiedChallenges: number };
     quorum?: QuorumReport;
     previous?: { subject: Subject; claims: readonly Claim[] };
+    /**
+     * Who is asking for this decision, when it is known.
+     *
+     * Checked against the verdicts' producers: an approval asked for by a party that also produced the evidence is not
+     * independent of it. Optional because the pure kernel must decide from its input alone — a caller that does not
+     * know who it is gets the decision it would have got before, not a refusal it cannot act on.
+     */
+    actor?: string;
 };
 
 function reason(code: Reason['code'], detail: string, claimId?: string): Reason {
@@ -232,6 +252,22 @@ export function decide(input: DecideInput): Decision {
         deficits.push(...evaluation.deficits);
     }
 
+    // 4b. **Independence, as far as one machine can check it.** A ledger cannot prove a context was fresh — that is the
+    // assurance axis and why the receipt exists — but it does record who produced each verdict, and when a decision is
+    // asked for by an actor that is also one of those producers the approval is not independent of its own claims. The
+    // check is deliberately narrow: it refuses only when the *approving* actor is among the producers, because that is
+    // the one combination a single-actor workflow actually creates, and refusing more would need identities this
+    // platform does not issue.
+    if (input.actor !== undefined && input.actor.trim() !== '') {
+        const producers = new Set(input.verdicts.map((verdict) => verdict.producer?.actor).filter((actor): actor is string => Boolean(actor)));
+        if (producers.has(input.actor)) {
+            reasons.push(reason(
+                'same_actor',
+                `the decision was asked for by ${input.actor}, who also produced ${input.verdicts.filter((verdict) => verdict.producer?.actor === input.actor).length} of its verdict(s)`,
+            ));
+        }
+    }
+
     // 5. Coverage is over the finite risk space, not over every path.
     const claimed = new Set(input.claims.map((claim) => claim.riskClass));
     const uncovered = input.declaredRiskClasses.filter((riskClass) => !claimed.has(riskClass));
@@ -239,9 +275,20 @@ export function decide(input: DecideInput): Decision {
         reasons.push(reason('uncovered_risk_class', `no claim covers: ${uncovered.join(', ')}`));
     }
 
-    // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge.
+    // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge — and the challenge
+    //    must be one that actually ran. The count alone was satisfiable by `challenge add --command 'exit 0'` followed by
+    //    one check (the command exits 0, the state becomes `withdrawn`, the count increments), so a change could satisfy
+    //    the floor without anything having been challenged. `verifiedChallenges` counts the ones with a recorded
+    //    observation, which is the difference between a challenge and a declaration of one.
     if (input.tier !== 'standard' && input.discovery.independentChallenges === 0) {
         reasons.push(reason('discovery_floor', REASON_MESSAGES.discovery_floor.message));
+    }
+    if (input.tier !== 'standard'
+        && input.discovery.independentChallenges > 0
+        && (input.discovery.verifiedChallenges ?? 0) === 0) {
+        // Named separately from `discovery_floor` because the remediation differs: the first says "nothing challenged
+        // this", the second says "something claims to have, and no observation supports it".
+        reasons.push(reason('discovery_unverified', REASON_MESSAGES.discovery_unverified.message));
     }
 
     // 7. Quorum: a disagreement is reported, and a reproducible finding is never voted away (a refuted verdict above
@@ -252,6 +299,19 @@ export function decide(input: DecideInput): Decision {
     }
     if (quorum?.undiversified && input.tier === 'security') {
         reasons.push(reason('quorum_undiversified', REASON_MESSAGES.quorum_undiversified.message));
+    }
+
+    // **The reviewer count is a condition, not a report.** `tiers.<tier>.reviewers` is a number the tier's contract
+    // states, and nothing compared it: a single producer reached `security`, whose contract asks for two independent
+    // readings. The count is of *independent runs*, not of reviewer names, so replaying one reading twice does not form
+    // a quorum. `requiredReviewers` travels on the report so this stays a pure function of its input.
+    const requiredReviewers = quorum?.requiredReviewers ?? tierPolicy(input.policy, input.tier).reviewers;
+    if (requiredReviewers > 1 && (quorum?.reviewers ?? 0) < requiredReviewers) {
+        reasons.push(reason(
+            'quorum_missing',
+            `${requiredReviewers} independent reviewer(s) are required by the ${input.tier} contract and ${quorum?.reviewers ?? 0} submitted`
+            + (quorum === undefined ? '; no run recorded a verdict, so there is nothing to count' : ''),
+        ));
     }
 
     const verdict: Decision['verdict'] = reasons.some((entry) => entry.code === 'evidence_refuted')

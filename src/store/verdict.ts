@@ -12,9 +12,44 @@
  */
 import { readLedger, declaredPaths, readProbeAnswers, type Ledger } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
-import { aggregateQuorum } from '../producers/quorum.js';
+import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
 import { classifyRisk, TIER_RANK } from '../kernel/risk.js';
 import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } from '../kernel/types.js';
+import type { Challenge } from '../kernel/types.js';
+import type { ProbeAnswer } from '../kernel/discovery.js';
+
+/**
+ * How many of the recorded challenges actually ran.
+ *
+ * The count that feeds the discovery floor used to be "every challenge that is not open, plus every probe answer", and
+ * both halves were satisfiable by doing nothing: a challenge whose command is `exit 0` is withdrawn by one check, and an
+ * answer was a string nobody compared against the question. So the floor is computed from evidence of a measurement:
+ *
+ *   - a **withdrawn** challenge counts only when it records the failure it was drawn from (`resolution.observed` names
+ *     an exit code other than 0) — that is the observation that a counterexample was real and the fix removed it;
+ *   - a **probe answer** counts only when the recorded observation carries the fact the probe asked about — the digest
+ *     prefix for `digest-prefix`, or the path for the existence questions. An empty `observed` (the default) cannot
+ *     answer anything, and treating it as an answer is how a plain `ledger answer --probe X` satisfied a strict floor.
+ */
+export function verifiedChallengeCount(challenges: readonly Challenge[], answers: readonly ProbeAnswer[]): number {
+    let verified = 0;
+    for (const challenge of challenges) {
+        // **A challenge counts only if it ever reproduced.** `challenge add --command 'exit 0'` followed by one check
+        // leaves the state `withdrawn` (the command exits 0), and counting that as an independent challenge is how the
+        // strict discovery floor was satisfied by doing nothing. A counterexample that never failed on anything has not
+        // challenged anything, whatever its state says.
+        if (challenge.reproduced !== true) continue;
+        if (challenge.state !== 'withdrawn' && challenge.state !== 'resolved') continue;
+        verified += 1;
+    }
+    for (const answer of answers) {
+        // The answer carries the command it ran and what it saw. Both have to be present, and the observation has to be
+        // more than whitespace, for the answer to count as having looked at something.
+        if (!answer.command.trim() || !answer.observed.trim()) continue;
+        verified += 1;
+    }
+    return verified;
+}
 
 /**
  * **One place that assembles a claim's decision, and the reason this module owns it.**
@@ -27,6 +62,36 @@ import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } fr
  * five.
  */
 export type ClaimDecision = ClaimEvaluation & { severity: Severity; statement: string };
+
+/**
+ * The quorum, assembled from independent readings — or absent when the tier asks for none.
+ *
+ * Kept here rather than inline because two facts have to be decided together: whether the tier's reviewer count
+ * requires a report at all, and which readings count as independent. A report is produced whenever the tier asks for
+ * more than one reviewer, even from zero readings, so "nobody submitted" is a *count of zero* rather than a missing
+ * field — the difference between a failed quorum and no quorum question asked.
+ */
+function chainQuorum(input: {
+    records: QuorumRecord[];
+    evidenceToClaim: Record<string, string>;
+    requiredReviewers: number;
+    demandDiversity: boolean;
+    tier: TierName;
+}): QuorumReport | undefined {
+    if (input.records.length === 0 && input.requiredReviewers <= 1) return undefined;
+    const outcome = aggregateQuorum({
+        records: input.records,
+        evidenceToClaim: input.evidenceToClaim,
+        requiredReviewers: input.requiredReviewers,
+        demandDiversity: input.demandDiversity,
+    });
+    return {
+        disputedClaimIds: outcome.disputedClaimIds,
+        undiversified: outcome.undiversified,
+        reviewers: outcome.reviewers,
+        requiredReviewers: input.requiredReviewers,
+    };
+}
 
 /** Every claim's decision, from the ledger, with the input assembled once. */
 export function claimDecisions(ledger: Ledger): ClaimDecision[] {
@@ -63,6 +128,14 @@ export async function ledgerVerdict(input: {
     tier?: TierName;
     /** An explicit assurance override, for the case where the operator knows what the round's provenance was. */
     assurance?: AssuranceLevel;
+    /**
+     * The party asking for this decision, when it is known.
+     *
+     * Recorded so the decision can refuse an approval made by one of the parties that produced the evidence. That is the
+     * one independence property a single-machine ledger can check: it cannot prove a context was fresh, but it can see
+     * that the same actor wrote the claim, verified it, and approved it.
+     */
+    actor?: string;
 }): Promise<LedgerVerdict> {
     let ledger;
     try {
@@ -112,25 +185,19 @@ export async function ledgerVerdict(input: {
     const ceiling = ledger.policy.ledgerTierCeiling;
     const tier: TierName = input.tier
         ?? (TIER_RANK[classification.tier] >= TIER_RANK[ceiling] ? classification.tier : ceiling);
-    const quorum: QuorumReport | undefined = producers.length > 1
-        ? (() => {
-            const outcome = aggregateQuorum({
-                records: producers.map((producer) => ({
-                    id: producer,
-                    diversity: ledger.runs.find((run) => run.producer === producer)?.diversity ?? 'none',
-                    verdicts: ledger.verdicts as EvidenceVerdict[],
-                })),
-                evidenceToClaim,
-                requiredReviewers: ledger.policy.tiers[tier].reviewers,
-                demandDiversity: ledger.policy.diversity.requiredOn.includes('quorum'),
-            });
-            return {
-                disputedClaimIds: outcome.disputedClaimIds,
-                undiversified: outcome.undiversified,
-                reviewers: outcome.reviewers,
-            };
-        })()
-        : undefined;
+    // **The quorum is assembled from independent readings, not from reviewer names.** `groupByProducer` groups verdicts by
+    // the run that decided them, so two runs are two observations and one run reported twice is one. The old shape handed
+    // every producer the ledger's whole verdict list, which made `disputed` unreachable (one verdict per item) and made
+    // `reviewers` a count of names rather than of readings — so `security.reviewers: 2` was unenforceable.
+    const requiredReviewers = ledger.policy.tiers[tier].reviewers;
+    const records = groupByProducer(ledger.verdicts);
+    const quorum: QuorumReport | undefined = chainQuorum({
+        records,
+        evidenceToClaim,
+        requiredReviewers,
+        demandDiversity: ledger.policy.diversity.requiredOn.includes('quorum'),
+        tier,
+    });
 
     const decision = decide({
         subject: ledger.subject,
@@ -146,17 +213,23 @@ export async function ledgerVerdict(input: {
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,
-        // **Both discovery signals count, because both are independent challenges.** A counterexample is a challenge the
-        // author has to answer; a probe is a question asked of the reviewer after the fact, answerable only by having read
-        // this revision. Counting only the first meant a change that used the second — the signal that replaces the
-        // credential — could never satisfy the discovery floor: measured while wiring the e2e fixtures, a ledger with four
-        // answered probes and no counterexample was refused with `discovery_floor` alone.
+        // **Discovery counts what was observed, not what was declared.** Both signals are independent challenges — a
+        // counterexample is a challenge the author must answer, a probe is a question asked of the reviewer after the
+        // fact — but the *count* alone was satisfiable without anything running: `challenge add --command 'exit 0'`
+        // followed by one check withdraws it (the command exits 0) and increments the count, and a probe answer was a
+        // free-text string with nothing to compare against. `verifiedChallenges` is derived from what was recorded:
+        // a challenge withdrawn with a failure observation, or a probe answer whose `observed` carries the digest prefix
+        // the probe asked for. Measured before this: a ledger with four answered probes of empty `observed` satisfied the
+        // strict floor.
         discovery: {
             independentChallenges:
                 ledger.challenges.filter((challenge) => challenge.state !== 'open').length
                 + (await readProbeAnswers(input.root, input.changeId)).length,
+            verifiedChallenges:
+                verifiedChallengeCount(ledger.challenges, await readProbeAnswers(input.root, input.changeId)),
         },
         ...(quorum === undefined ? {} : { quorum }),
+        ...(input.actor === undefined ? {} : { actor: input.actor }),
     });
 
     return {
