@@ -1211,8 +1211,6 @@ async function cmdVerify(
     // `current` — the status payload is where an operator learns which of the two happened.
     const status = revision ? await revisionStatus(root, revision, taskId) : undefined;
     const drift = revision ? await workspaceDrift(root, revision.ownedPaths) : [];
-    const obligations = await readObligations(root, taskId);
-    const unresolvedObligations = obligations.filter((o) => !o.resolvedAt);
     const matrix = task.acceptanceMatrix;
     // F1.4: what has already been decided about this task's findings is printed here, so "known and deferred" is visible
     // at the node that concludes the implementation. It changes nothing about the gates: severity decides those (I1).
@@ -1240,7 +1238,7 @@ async function cmdVerify(
     // consumers now ask `revisionIsCurrent`, so there is one answer, and the diagnostics report which of the two it was.
     const verifyResult = status && !revisionIsCurrent(status)
         ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id)
-        : evaluateReadiness(taskId, task.acceptance, evidence, findings, currentDiffHash, scopeHashes, matrix, unresolvedObligations, task.workflowProfile?.reviewMode);
+        : evaluateReadiness(taskId, task.acceptance, evidence, findings, currentDiffHash, scopeHashes, matrix, task.workflowProfile?.reviewMode);
     if (revisionId) verifyResult.revisionId = revisionId;
     const implementationReady = verifyResult.result === 'PASS';
     const wikiClosure = await evaluateWikiClosure(root, taskId);
@@ -1324,7 +1322,6 @@ async function cmdVerify(
                 ),
             } : {}),
             wikiClosure,
-            ...(unresolvedObligations.length > 0 ? { unresolvedObligations: unresolvedObligations.length } : {}),
             ...(revisionId ? { revisionId } : {}),
             ...(status ? { revisionStatus: status.status } : {}),
             ...(revision ? { workspaceDrift: drift } : {}),
@@ -1616,7 +1613,6 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         };
     }
     const scopeHashes = await currentScopeHashes(root, evidence);
-    const obligations = await readObligations(root, taskId);
     const judgeResult = await judge({
         root,
         taskId,
@@ -1717,8 +1713,7 @@ function evaluateReadiness(
     currentDiffHash: string,
     scopeHashes: Map<string, string>,
     matrix?: import('../core/task.js').AcceptanceMatrix,
-    unresolvedObligations: Array<{ acceptanceId?: string; id: string; message: string }> = [],
-    reviewMode?: string,
+      reviewMode?: string,
 ): JudgeResult {
     const adequacy = evaluateAcceptanceAdequacy({
         acceptance,
@@ -1728,8 +1723,7 @@ function evaluateReadiness(
         currentScopeHashes: scopeHashes,
         ...(matrix ? { matrix } : {}),
         ...(reviewMode ? { reviewMode } : {}),
-        unresolvedObligations,
-    });
+        });
     return {
         taskId,
         result: adequacy.acceptance.every((item) => item.result === 'PASS') ? 'PASS' : 'FAIL',

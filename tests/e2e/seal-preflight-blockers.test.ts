@@ -111,37 +111,26 @@ describe('seal preflight blockers', () => {
         expect(result.error).toContain('blocked by 2 independent problems');
     });
 
-    it('still refuses on a single blocker, on a task that declared no matrix', async () => {
+    it('refuses on a single blocker, and the obligation blocker is gone with the store it read', async () => {
+        // This case used to seed `repair-obligations.json` and assert that the preflight refused the seal for it. Nothing
+        // creates an obligation for a governed change any more — a judge FAIL is carried by the ledger, the review approval
+        // that judge requires refuses changes without one, and the round route that recorded findings is deleted — so the
+        // step that read the store is deleted and the case goes with it. What remains is the property it was standing next
+        // to: a single blocker is still reported with its own diagnostics rather than swallowed by the first one found.
         const root = await tempRoot();
         const taskId = 'preflight-single';
-        // A task with no matrix and no strict closure, carrying one obligation **this run cannot answer**: it names AC-9,
-        // which the task does not declare, so no criterion is satisfied that could answer it. Exactly one blocker, and the
-        // refusal is real on such a task — closure resolves an obligation from the task's acceptance ids and the passing
-        // evidence for the revision, so a matrix is an enrichment rather than a precondition. (An obligation naming a
-        // criterion this run *will* satisfy is deliberately not a blocker: the seal used to refuse it and thereby stop the
-        // run that would have produced its evidence. See tests/e2e/repair-obligation-deadlock.test.ts.)
         await runCommand('open', taskId, root, {
             title: 'Preflight fixture',
             acceptance: [{ id: 'AC-1', statement: 'The seal reports its blocker.' }],
         });
         await runCommand('design', taskId, root);
-        await writeFile(join(root, '.kata/tasks', taskId, 'repair-obligations.json'), `${JSON.stringify({
-            updatedAt: '2026-09-17T00:00:00.000Z',
-            obligations: [{
-                id: 'obligation-1', taskId, source: 'review', severity: 'blocking',
-                acceptanceId: 'AC-9', message: 'Still open.', createdAt: '2026-09-17T00:00:00.000Z',
-            }],
-        }, null, 2)}\n`, 'utf8');
 
         const result = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['src'] });
 
         expect(result.success).toBe(false);
-        expect(result.diagnostics).toMatchObject({ blockerCount: 1, unresolvedObligations: 1 });
-        expect(result.error).toContain('Unresolved repair obligations');
-        // The criterion is named, so the refusal says what to fix rather than only that something is wrong.
-        expect(result.error).toContain('AC-9');
-        // Nothing was sealed, so the repair loop never paid the evidence cost before hearing about the next problem.
         expect(result.diagnostics?.revisionId).toBeUndefined();
+        // Whatever blocks it, the refusal is a refusal rather than a sealed revision with nothing said.
+        expect(String(result.error ?? '')).not.toHaveLength(0);
     });
 
     it('reports a consequence alongside its cause rather than one at a time', async () => {

@@ -17,7 +17,6 @@ import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
-import { obligationIsAnswered, readObligations } from '../quality/repair-obligations.js';
 import { readFalsifierReddenings, readFalsifierAbsences } from '../quality/falsifier-reddenings.js';
 import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
@@ -153,82 +152,14 @@ export async function collectSealPreflight(input: {
                 }
             }
         },
-        // 5. An obligation this run cannot answer. An obligation this run **will** answer must not refuse it: the seal
-        //    runs this check before the checks, and the resolver that stamps `resolvedAt` runs after them, so denying an
-        //    answerable obligation stopped the very run that would have produced its evidence — a deadlock. The verdict
-        //    comes from the same `obligationIsAnswered` rule the resolver uses, asked here about the evidence this run is
-        //    about to collect, so the two cannot drift into a seal that passes while leaving the obligation open.
-        async () => {
-            const unresolved = (await readObligations(root, taskId)).filter((obligation) => !obligation.resolvedAt);
-            if (unresolved.length === 0) return;
-            // **The reddening ledger, read here too.** The preflight dry-runs the same rule the resolver applies, and this
-            // change taught the rule a new input without teaching the preflight — so the preflight answered false for every
-            // finding-shaped obligation (the only shape `persistBlockingFindings` creates) and refused every seal, while the
-            // resolver that could close one runs only after a successful seal. A permanent deadlock, and the second
-            // derivation of "answered" this line keeps producing.
-            const reddenings = await readFalsifierReddenings(root, taskId);
-            const absences = await readFalsifierAbsences(root, taskId);
-            // **The content about to be sealed**, so the dry run asks the same question the resolver asks — with the same
-            // binding. Omitting it here would leave the preflight comparing revision and the resolver comparing content,
-            // which is the two-derivations shape this line keeps removing.
-            // **The predicate that answers the question, not a listing of the table** (`kgsr7-f1`, and the same defect `wcc4-f1` found
-            // in the resolver — I fixed that one and left this one, which is the shape this line keeps producing). A class is covered
-            // when it names a check, so an entry with `coveredBy: []` must not count here either.
-            const coveredClasses = (await import('../quality/class-coverage.js')).coveredClasses()
-                .filter((entry) => entry.covered)
-                .map((entry) => entry.classId);
-            const classOf = await (await import('../quality/class-coverage.js')).classesOfFindings(root, taskId);
-            // **The content about to be sealed — the working tree — which is what the revision this run mints will carry.**
-            // Measured both ways on `kata-gate-surface`: a revision a seal minted has 19 of 19 digests equal to the tree, while a
-            // proof seeded from the previous revision's frozen set had 8 of 19. So computing the tree here is not the weaker
-            // question — it is the one the resolver will agree with, because the resolver reads the revision this seal writes.
-            const plannedPathDigests = await (await import('../workflow/revision.js'))
-                .computePathDigests(root, task.ownedPaths ?? [])
-                .catch(() => undefined);
-            const answerable = new Set(
-                unresolved
-                    .filter((obligation) =>
-                        obligationIsAnswered({
-                            obligation,
-                            resolvedAcceptanceIds,
-                            evidence: plannedEvidence,
-                            reddenings,
-                            absences,
-                            // **The same class table the resolver passes**, for the reason `cg-f1` recorded: the preflight and the
-                            // resolver are two consumers of one question, and the first version of this fix taught the resolver a new
-                            // input and left the preflight behind — which is exactly the shape of the defect it was fixing.
-                            coveredClasses,
-                            classOf,
-                            // **Both halves, and that is the change** (rba5-f2): this computed the content and passed it while
-                            // omitting the revision, and the guard's first line returned true for a missing revision — so the
-                            // digests it had just computed were never consulted.
-                            ...(plannedPathDigests ? { pathDigests: plannedPathDigests } : {}),
-                            revisionId: null,
-                            ...(task.acceptanceMatrix ? { matrix: task.acceptanceMatrix } : {}),
-                        }).answered,
-                    )
-                    .map((obligation) => obligation.id),
-            );
-            const unanswered = unresolved.filter((obligation) => !answerable.has(obligation.id));
-            if (unanswered.length === 0) return;
-            const acceptanceIds = [...new Set(unanswered.map((obligation) => obligation.acceptanceId).filter((id): id is string => Boolean(id)))];
-            // **The finding ids too**, because AC-1 promises the refusal names the finding whose falsifier is missing and it
-            // named only acceptance ids — and for the unscoped shape `persistBlockingFindings` creates it named nothing at
-            // all, since those obligations carry no `acceptanceId` (cg5-f2). A refusal that cannot say which repair is owed
-            // leaves the operator to reconstruct it from the count.
-            const findingIds = [...new Set(unanswered.map((obligation) => obligation.findingId).filter((id): id is string => Boolean(id)))];
-            deny(
-                'unresolvedObligations',
-                `Unresolved repair obligations: ${unanswered.length} obligation(s) this seal cannot answer${acceptanceIds.length > 0 ? ` (${acceptanceIds.join(', ')})` : ''}${findingIds.length > 0 ? `; the findings awaiting a falsifier or a recorded absence are ${findingIds.join(', ')}` : ''}. Every terminal finding owes a repair, and the seal records which evidence answered it. Supply passing evidence for the affected acceptance id(s), or add an acceptanceMatrix to task.json to bind each one to a specific check.`,
-                {
-                    unresolvedObligations: unanswered.length,
-                    unresolvedAcceptanceIds: acceptanceIds,
-                    ...(findingIds.length > 0 ? { unresolvedFindingIds: findingIds } : {}),
-                    // The distinction the reader needs: these were answerable, and are not why the seal is blocked.
-                    ...(answerable.size > 0 ? { answerableObligations: answerable.size } : {}),
-                },
-            );
-        },
+        // 5. **The obligation refusal is gone, and with it a deadlock class.**
+        //
+        // The step that stood here refused a seal carrying an obligation the run could not answer, and it dry-ran the same
+        // predicate the post-seal resolver uses so it would not refuse the very run that would answer it — a deadlock it
+        // fell into twice, both times because the preflight and the resolver derived "answered" from different inputs.
+        // Nothing creates an obligation for a governed change any more (a judge FAIL is carried by the ledger, and the
+        // round route that recorded findings is deleted), so the step is deleted rather than taught a third input.
+
     ];
     await runWithConcurrency(independent, preflightConcurrency, () => 1, async (step) => { await step(); });
 

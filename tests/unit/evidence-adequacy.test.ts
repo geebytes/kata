@@ -97,11 +97,14 @@ describe('evidence adequacy', () => {
         expect(scopesOf(evaluate({ findings: [major], reviewMode: 'strict' }))).toEqual(['blocking_review_finding']);
     });
 
-    it('reports an unresolved obligation only when the caller supplies obligations (verify, not Judge)', () => {
-        const obligations = [{ id: 'obligation-1', acceptanceId: 'AC-1', message: 'Still open.' }];
-
-        expect(scopesOf(evaluate({ unresolvedObligations: obligations }))).toEqual(['unresolved_repair_obligation']);
-        expect(scopesOf(evaluate())).toEqual([undefined]);
+    it('has no obligation input, because nothing produces one for a governed change any more', () => {
+        // The scope `unresolved_repair_obligation` was reported when the caller supplied an obligation, and the caller was
+        // verify. Obligations came from a judge FAIL or a blocking finding, the review approval that judge requires refuses
+        // changes without a ledger, and the round route that recorded findings is deleted — so no governed change can have
+        // one, and the input is gone rather than left accepting a list nothing fills.
+        const scopes = scopesOf(evaluate());
+        expect(scopes).not.toContain('unresolved_repair_obligation');
+        expect(scopes).toEqual([undefined]);
     });
 
     it('refuses mixed-revision evidence only when the caller asks it to (Judge, not verify)', () => {

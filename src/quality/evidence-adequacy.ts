@@ -13,9 +13,6 @@ import type { JudgeAcceptanceResult, RepairScope } from './judge.js';
  *
  * - `rejectCrossRevision` — the Judge refuses to judge evidence that spans more than one revision, because a verdict
  *   computed over mixed revisions would be attached to neither.
- * - `unresolvedObligations` — verify carries repair obligations from the review and the Judge, which a Judge verdict
- *   cannot know about yet.
- */
 
 /**
  * A passing envelope, under the contract the collector stamps (L2-01).
@@ -36,7 +33,6 @@ export interface AcceptanceAdequacyInput {
     currentScopeHashes?: Map<string, string>;
     matrix?: AcceptanceMatrix;
     reviewMode?: string;
-    unresolvedObligations?: Array<{ acceptanceId?: string; id: string; message: string }>;
     rejectCrossRevision?: boolean;
 }
 
@@ -81,15 +77,12 @@ export function evaluateAcceptanceAdequacy(input: AcceptanceAdequacyInput): Acce
     const failingTestEvidence = freshEvidence.find((evidence) => evidence.kind === 'test' && !isPassingEvidence(evidence));
     const blockingFindings = input.findings.filter((finding) => finding.severity === 'blocking'
         || (input.reviewMode === 'strict' && finding.severity === 'major'));
-    const obligations = input.unresolvedObligations ?? [];
 
     const acceptance = input.acceptance.map((criterion): JudgeAcceptanceResult => {
         const acceptanceId = criterion.id ?? '';
         const blockingFinding = blockingFindings.find((finding) => !finding.acceptanceId || finding.acceptanceId === acceptanceId);
-        const obligation = obligations.find((item) => item.acceptanceId === acceptanceId || !item.acceptanceId);
 
         if (failingTestEvidence) return { id: acceptanceId, result: 'FAIL', repairScope: 'failing_evidence' };
-        if (obligation) return { id: acceptanceId, result: 'FAIL', repairScope: 'unresolved_repair_obligation' };
         if (freshPassingTestEvidence.length === 0 && input.evidence.some((evidence) => evidence.kind === 'test')) {
             return { id: acceptanceId, result: 'FAIL', repairScope: 'stale_evidence' };
         }
