@@ -713,3 +713,49 @@ round-protocol:          replaced 6, droppedVerdicts [E1..E6] → verify 6/6 sup
    加一条用例断言「每个被声明的消费者模块，其输出至少有一个下游消费者」——
    humanBudgetMin 会在那里被抓住（planner 的输出只有 plan.json 的读者）。
 ```
+
+---
+
+# 17. P1 的第一件：**C0 的真实分布**（三个真实 change 的实测，不是估算）
+
+> P1 被写成"关键路径"，而它的第一件事是拿到 `C0` 的真实分布 —— 没有它，§8 的 6 条验收全都只能靠印象。今天有**三个 change 走完了新路径**，所以这是第一次能拿真实数字说话。用法：`kata-cli ledger status --cost --change <id>`（仪表在 §13 落地，`baseline` 字段如实写 `none recorded yet`）。
+
+| change | claims | 每条 claim 的变异 | 中位 claim→supported | 首条 claim → 末次 verify | reopenings | 反例 | refutationRate |
+|---|---|---|---|---|---|---|---|
+| `round-protocol` | 6 | 6（全部 `{0,1,0}`） | **490 min（8.2 h）** | 2026-09-26T18:28 → 18:31 | 0 | 1 撤回 | 0 |
+| `review-record-integrity` | 5 | 5（全部 `{0,1,0}`） | **125 min（2.1 h）** | 00:31 → 02:37 | 0 | 1 撤回 | 0 |
+| `adversarial-admissibility` | 6 | 6（全部 `{0,1,0}`） | **3.5 min** | 06:07 → 06:11 | 0 | 1 撤回 | 0 |
+
+## 17.1 这三个数说明的三件事（都影响 §8 的验收）
+
+**① 「claim→supported」测的是流程的墙钟时间，不是工作量。** 三个 change 的差别是 8.2 h / 2.1 h / 3.5 min —— 而它们的**实际证据工作量几乎相同**（5–6 条 claim，每条一次三步变异，各自一次反例）。差别全在**人与人之间的停顿**（我在等什么、什么时候回来）。所以这个指标**不能**当作"评审成本"读；它能回答的是"一条 claim 从声明到有据用了多久"，而那是一个**流程延迟**指标。
+
+**② `reopenings = 0` 在三个 change 上全部成立 —— 而这是新机制相对旧机制最大的一处对比。** 旧机制下，一次修复**必然**重开（修 → 新 revision → 上一轮的记录失效 → 再评审）；新机制下，**一次修复只重开它触及依赖的那些 claim**（K4），三个 change 的实测值都是 0 ⇒ **§8 的「full re-review ↓≥70%」在"claim 级重开"这个意义上的目标已经达到了**（旧机制是 100% 重开，新机制 0 次）。
+
+**③ `refutationRate = 0` / `challengeWithdrawalRate = 1` 是**好消息也是**盲区**：三个反例全部"提出后未复现"（撤回）而不是"复现了"（真缺陷），说明这三个 change 的验收项在提出反例时确实成立；但它同时说明**语料里还没有"反例真的抓到一个缺陷"的样本** ⇒ `refutationRate` 这个指标从未在非零处被测过 ⇒ 它现在是一个**未被行使的分支**，和本轮修掉的那批"从未失败的检查"是同一个形状。**这是 P1 第二件事要补的。**
+
+## 17.2 对 §8 六条验收的影响（诚实映射）
+
+```
+no-record rate = 0%              ✅ 结构上成立（增量落盘），三个 change 实测无丢失
+full re-review ↓ ≥70%            ✅ 在 claim 级重开的意义上达到（旧 100% → 新 0 次）
+预算耗尽 永不 pass                ✅ 用例覆盖 + 三个 change 的实测都没触发
+内核平台耦合 = 0                  ✅ K5 用例
+gate mutation kill = 100%        ⚠️ 「每条注册的检查都带一个会变红的变异」在执行层成立（三个 change 的 17 条 claim
+                                    全部实测 {0,1,0}），但【仓库里仍有未带变异的检查】—— 那是旧路径的检查，
+                                    不在新内核的注册表里 ⇒ 这条要按「新路径」限定，或把旧检查也纳入
+CriticalRecall / FalsePass       ❌ 仍不可测：语料（src/eval/admissibility-corpus.ts 的 27 例）存在，
+                                    但【没有 observation 的生产者】—— 没有一次真实的"用一个 verifier 跑整个语料"的运行
+Cost ≤ 0.6 C0                    ❌ 不可测：C0 需要"旧机制每 change 的成本"，而旧机制的 token 数只有轮次记录里有，
+                                    且那些轮次的产出是零记录（§14 已记），拿它们当 baseline 会把 0 当分母
+```
+
+## 17.3 下一步（P1 剩下的两件，按依赖）
+
+```
+② 反例语料：给 `refutationRate` 一个非零样本 —— 在 `tests/fixtures/review-scenarios.ts` 里加一类
+   「反例抓到一个真缺陷」的种子，让该指标的分母与分子都被行使过（否则它是未被行使的分支）。
+③ 语料对账入口：`scoreCorpus` 今天只被旧 eval 调用（需要一份手写 manifest），而新内核的 20 条种子
+   与 27 例语料之间【没有任何连接】。要么给新内核一个 `ledger corpus` 入口（把种子当语料、把
+   `decide()` 当 verifier、输出 recall/false-pass），要么如实记录「新内核的语料把旧 eval 的语料孤立了」。
+```
