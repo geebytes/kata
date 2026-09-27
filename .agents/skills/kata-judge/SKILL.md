@@ -158,5 +158,5 @@ A criterion that fails for a reason only a test can close — `missing_test_evid
 a counterexample written here has no RED step, no owner and no place in the acceptance matrix. Report the missing
 coverage; do not author the test that would close it.
 
-Read `kata-cli repair-scope --scope <repairScope>` for the guided repair when a scope needs one, and let the reported
-owner decide where the repair is sent rather than inferring it from the scope name.
+Let the reported `repairOwner` decide where the repair is sent rather than inferring it from the scope name, and let the
+ledger's own deficits decide what the repair is: `ledger decide` names each claim it cannot support and why.

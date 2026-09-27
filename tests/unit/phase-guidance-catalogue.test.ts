@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderSkill, skillCommands } from '../../src/adapters/manifest.js';
-import { adversarialGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from '../../src/adapters/phase-guidance.js';
+import { ledgerReviewGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from '../../src/adapters/phase-guidance.js';
 
 /**
  * The skill documentation is catalogue data (L6-02).
@@ -23,9 +23,9 @@ describe('phase guidance is data keyed by command', () => {
     });
 
     it('carries the adversarial step only on the two nodes that conclude a change', () => {
-        expect(adversarialGuidanceFor({ id: 'kata-verify', cli: 'kata-cli verify --change <change-id>' })).toContain('--node verify');
-        expect(adversarialGuidanceFor({ id: 'kata-review', cli: 'kata-cli review --change <change-id>' })).toContain('--node review');
-        expect(adversarialGuidanceFor({ id: 'kata-build', cli: 'kata-cli build' })).toBe('');
+        expect(ledgerReviewGuidanceFor({ id: 'kata-verify', cli: 'kata-cli verify --change <change-id>' })).toContain('ledger run');
+        expect(ledgerReviewGuidanceFor({ id: 'kata-review', cli: 'kata-cli review --change <change-id>' })).toContain('ledger decide');
+        expect(ledgerReviewGuidanceFor({ id: 'kata-build', cli: 'kata-cli build' })).toBe('');
     });
 
     it('carries the automation contract only on the phases that drive a command to a verdict', () => {

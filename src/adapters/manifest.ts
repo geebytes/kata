@@ -1,5 +1,5 @@
 import { renderRepairScopeGuide } from '../quality/repair-scope-guide.js';
-import { adversarialGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from './phase-guidance.js';
+import { ledgerReviewGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from './phase-guidance.js';
 
 export type Platform =
     | 'codex'
@@ -337,7 +337,7 @@ ${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null,
 
     // Verify and review are exactly the nodes where the context that produced the change is the worst available
     // judge of it, so both carry the independent adversarial step.
-    const adversarialGuidance = adversarialGuidanceFor(command);
+    const reviewGuidance = ledgerReviewGuidanceFor(command);
 
     const automationContent = automationGuidanceFor(command, platform);
 
@@ -416,7 +416,7 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
-${adversarialGuidance}${automationContent}
+${reviewGuidance}${automationContent}
 
 \`\`\`json kata-command-manifest
 ${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null, 2)}

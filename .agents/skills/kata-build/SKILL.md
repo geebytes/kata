@@ -151,18 +151,24 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
-## Repair batches, and growing the audited surface
+## Repairs, and growing the audited surface
 
-Both are recorded by the platform, and both change what the next round costs — so they belong here, where the work happens.
+Both are recorded on the ledger, and both change what the next round costs — so they belong here, where the work happens.
 
-**A batch, not a finding.** When a pass or a gate reports blocking/major findings, repair them **together** and seal
-**once**: the platform opens a repair batch when findings are recorded and closes it after the seal, and that batch is what
-makes the next round a delta instead of a full re-verification. Do not seal per finding — that is the shape this exists to
-remove. Check where you are:
+**One revision, not one per finding.** A repair changes content, the sealed revision derives from content, and the review
+verdict is bound to the revision it was recorded against — so **sealing after each repair buys a round per repair**. Repair
+everything together and seal once. What a repair owes is a **claim whose evidence does not support it**, and the ledger is
+where that is written down:
 
 ```bash
-kata-cli adversarial status --change <task-id>   # the open batch, its findings, its base revision, what batching saved
+kata-cli ledger status --cost --change <task-id>   # per claim: state, reasons, evidence, and the author-side re-openings
+kata-cli ledger decide --change <task-id>          # the verdict the gates read: pass, fail or insufficient
 ```
+
+A claim is repaired by giving it evidence that holds, not by editing prose: `ledger evidence add` then
+`ledger evidence verify`, which runs the check and, where the evidence declares a mutation, the reddening that proves
+the check can fail. A change that needs to leave a problem unfixed says so as a decision
+(`ledger claim waive <id> --reason "<why>"`) rather than by leaving the claim unsupported.
 
 **Growing the audited surface is a decision.** Adding an owned path expands what the gate re-verifies **and** invalidates
 evidence, restarting the search. Say so, with a reason; the platform records the base the next round narrows against:

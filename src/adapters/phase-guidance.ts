@@ -125,18 +125,24 @@ Design decisions often establish lasting constraints and norms. Capture them as 
 3. These candidates are available to future tasks once promoted. The earlier you capture, the less context later agents will miss.`;
 
         case 'kata-build':
-            return `## Repair batches, and growing the audited surface
+            return `## Repairs, and growing the audited surface
 
-Both are recorded by the platform, and both change what the next round costs — so they belong here, where the work happens.
+Both are recorded on the ledger, and both change what the next round costs — so they belong here, where the work happens.
 
-**A batch, not a finding.** When a pass or a gate reports blocking/major findings, repair them **together** and seal
-**once**: the platform opens a repair batch when findings are recorded and closes it after the seal, and that batch is what
-makes the next round a delta instead of a full re-verification. Do not seal per finding — that is the shape this exists to
-remove. Check where you are:
+**One revision, not one per finding.** A repair changes content, the sealed revision derives from content, and the review
+verdict is bound to the revision it was recorded against — so **sealing after each repair buys a round per repair**. Repair
+everything together and seal once. What a repair owes is a **claim whose evidence does not support it**, and the ledger is
+where that is written down:
 
 \`\`\`bash
-kata-cli adversarial status --change <task-id>   # the open batch, its findings, its base revision, what batching saved
+kata-cli ledger status --cost --change <task-id>   # per claim: state, reasons, evidence, and the author-side re-openings
+kata-cli ledger decide --change <task-id>          # the verdict the gates read: pass, fail or insufficient
 \`\`\`
+
+A claim is repaired by giving it evidence that holds, not by editing prose: \`ledger evidence add\` then
+\`ledger evidence verify\`, which runs the check and, where the evidence declares a mutation, the reddening that proves
+the check can fail. A change that needs to leave a problem unfixed says so as a decision
+(\`ledger claim waive <id> --reason "<why>"\`) rather than by leaving the claim unsupported.
 
 **Growing the audited surface is a decision.** Adding an owned path expands what the gate re-verifies **and** invalidates
 evidence, restarting the search. Say so, with a reason; the platform records the base the next round narrows against:
@@ -188,11 +194,11 @@ A finding whose target is one of this task's **declared instruments** is judged 
 an adversarial search on a guard always finds the dimension it does not cover, so a guard is answerable for what its
 declaration **says** it covers and nothing more.
 
-- **Within** the declared coverage: a real gap — repair it like any other finding.
-- **Beyond** it: close it with the declaration as the reason (\`kata-cli findings defer --id <id> --reason "<why the
-  declaration already excludes this>"\`). This is the **one** case where a blocking/major finding may be closed instead of
-  repaired; it requires the finding to **quote a dimension declared in advance**, and the closure is displayed at review,
-  judge and archive.
+- **Within** the declared coverage: a real gap — repair it like any other claim.
+- **Beyond** it: the answer is the declaration itself. Record the decision with the declaration as its reason
+  (\`ledger claim waive <id> --reason "<why the declaration already excludes this>"\`) — the reason must **quote a dimension
+  declared in advance**, and the waiver is reported at review, judge and archive, and must be carried to a named
+  destination before the archive gate lets it through.
 - **No declaration means no exclusions**: declare the boundary (\`kata-cli scope boundary …\`) rather than arguing it
   finding by finding.
 
@@ -231,8 +237,9 @@ ${renderRepairScopeGuide()}
    exists: measured on this line, seven of the tests written during repairs could not fail, two repairs fixed one instance of a
    class with several, and every one of those was written by the author whose blind spot the review round exists to find. Dispatch
    the repair to a fresh session — \`.pi/agents/kata-implementer.md\` is one, with write access confined to a scratch copy — and
-   **record who made it**: \`kata-cli repair-author record --change <taskId> --finding <id> --session <s> --handed <h> --report <r>\`.
-   A repair whose record cannot say who made it is the shape this layer exists to remove.
+   **say so where the record is**: the ledger's producer fields name who submitted each claim and each piece of evidence
+   (\`ledger status --cost\` reports them per run), so a repair that arrived with evidence from another session is visible
+   rather than asserted.
 
 5. **Rebuild** — first repair and test the scoped implementation, then collect fresh evidence:
    \`\`\`bash
@@ -280,8 +287,8 @@ A criterion that fails for a reason only a test can close — \`missing_test_evi
 a counterexample written here has no RED step, no owner and no place in the acceptance matrix. Report the missing
 coverage; do not author the test that would close it.
 
-Read \`kata-cli repair-scope --scope <repairScope>\` for the guided repair when a scope needs one, and let the reported
-owner decide where the repair is sent rather than inferring it from the scope name.`;
+Let the reported \`repairOwner\` decide where the repair is sent rather than inferring it from the scope name, and let the
+ledger's own deficits decide what the repair is: \`ledger decide\` names each claim it cannot support and why.`;
 
         case 'kata-archive':
             return `## Knowledge distillation
@@ -481,110 +488,70 @@ Never let non-interactive CLI defaults silently choose the workflow profile.
 Do not ask the user to run \`/comet-open\` manually after \`/kata-open\`. When \`workflowProfile.comet.openStatus\` is \`required\`, \`/kata-design <task>\` performs the required acknowledgement before entering \`plan\`. Follow the returned next action after \`${command.slashCommand}\` completes.`;
 }
 
-/** The independent adversarial step, carried by exactly the two nodes that conclude a change. */
-export function adversarialGuidanceFor(command: { id: string; cli: string }): string {
+/**
+ * **What the independent review node is told, on the route that actually decides.**
+ *
+ * This used to describe the round-shaped protocol step by step — render a brief with `adversarial brief`, run it in a
+ * clean context, report what came back with `adversarial note`/`finding add`/`record`, and decide each finding with
+ * `findings defer`. Every one of those commands was deleted with the mechanism, so the text was an operating manual for a
+ * route that exits 1 — and because generated skills are what a fresh session reads, it was the most consequential stale
+ * text in the repository. The check that catches this class now reads the dispatcher's own vocabulary
+ * (`tests/unit/generated-skills-name-live-commands.test.ts`), which is why the rewrite cannot drift back unnoticed.
+ *
+ * The route it describes now: a **subject** frozen by content digest, **claims** with severities, **evidence** that a
+ * verifier decides by running it, and a **decision** the gates read. Independence is still the point, and the honest
+ * boundary is stated: the ledger records what was verified, not who wrote the claims.
+ */
+export function ledgerReviewGuidanceFor(command: { id: string; cli: string }): string {
     if (command.id !== 'kata-verify' && command.id !== 'kata-review') return '';
-    const node = command.id === 'kata-verify' ? 'verify' : 'review';
-    return `## Independent adversarial review (clean context)
+    return `## Independent review, on the evidence ledger
 
 Both nodes below must answer to a **different context than the one that wrote the change**. The same context that
-implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own
-confirmation is the weakest possible evidence that the change is sound.
+implemented a change shares its assumptions, its blind spots and its reading of its own evidence, so its own confirmation
+is the weakest possible evidence that the change is sound.
 
-Review concludes a change with one independent look, so its pass is mandatory on every run. Verify establishes that
-the evidence is current, complete and attributable, which is a deterministic question, so it carries a mandatory pass
-only in \`strict\` and \`security\` review modes — where the extra look is the point. \`kata-cli adversarial status --change
-<task-id>\` reports each node as required, satisfied, or \`not_required\`, so the difference is visible rather than
-inferred from an absent record.
-
-Where a pass is required, the node cannot conclude without one — before \`kata-cli verify\` reports success in an
-escalated mode, and before \`kata-cli review --approve\` records an approval, kata requires a recorded pass over the
-sealed revision or an explicit recorded waiver. The gate is not advisory: the command fails while the pass is missing.
-Tests are **not** this pass's to write. Run the change's own declared checks — the brief names the check ids and
-selectors, and the record must carry \`testPolicy: "reuse_declared_tests_only"\` — and when a claim can only be falsified
-by a test that does not exist, report that as a \`missing-test\` finding rather than authoring one here. Build owns the
-test: a counterexample written in this context has no author, no RED step and no place in the acceptance matrix, which
-is what made \"Verify and Review each wrote their own test\" cost twice and prove once.
+What makes the pass independent is not a field in a record: it is that **every claim rests on evidence a verifier
+re-executed**, and that the decision is derived from that evidence by a pure function rather than reported by the party
+being judged. The ledger does not verify *who* wrote a claim, and it does not pretend to — \`limits\` in the approval
+record says exactly that.
 
 Do this:
 
-1. Render the brief. It is self-contained and states the revision, its **round framing** (\`verify\` or \`cold\`), the sealed
-   evidence you may read instead of re-running, where to start reading, and the exact result shape:
+1. Read what the ledger already decides, and what it cannot:
    \`\`\`bash
-   kata-cli adversarial brief --change <task-id> --node ${node}
+   kata-cli ledger status --cost --change <task-id>   # per claim: state, reasons, evidence, challenges, cost
+   kata-cli ledger decide --change <task-id>          # pass | fail | insufficient, with the reasons
    \`\`\`
-   Read the framing before dispatching: a **cold** round withholds the author's claims on purpose, so do not add them —
-   and a round that says it is cold because the previous one was not is doing its job, not asking you to fix it.
-2. **Run that brief in a clean context.** Use the host platform's own subagent facility — a fresh session, no prior
-   conversation, no summary of this one — and hand it the brief text verbatim. Do not run the pass in this context, and
-   do not paraphrase the brief: a fresh context has nothing but what the brief says. The brief asks it to try to *falsify*
-
-   Take the brief from the packet, which carries the request *and* the brief it names, so the session's input and the
-   receipt's binding cannot come from two different places:
+2. Issue the review request. It carries the claim's reading set, the evidence type and strength that claim requires, a
+   numeric deadline, and the probes a reader must answer — and it deliberately carries no platform, session, model or
+   receipt, because assurance is a separate axis:
    \`\`\`bash
-   kata-cli adversarial brief --change <task-id> --node ${node} --emit-request <packet.json>
+   kata-cli ledger run --change <task-id> --out request.json
    \`\`\`
-   The platform cannot stop a round at the Nth tool call or the Nth output byte, and kata does not claim it can: on
-   this route do **not** report \`budget_enforced\` among the receipt's capabilities. Wall clock and the tool allowlist
-   are enforceable; a mid-flight tool budget is not, and a capability listed without the means to provide it is the
-   defect this whole mechanism exists to remove.
-   every claim, to run the attempts, and to return one JSON object.
-3. Record what came back, unchanged — **and report how long the pass took**. Two things write as the pass proceeds, so a
-   pass that dies mid-run keeps its work rather than taking all of it down:
+3. **Answer it in a clean context.** Hand the request to a session that has read nothing of this one. Where the platform
+   can launch one, that is what the request is for; where it cannot, say which session answered rather than implying a
+   separation the platform did not provide.
+4. **A probe is not a quiz.** \`ledger answer\` records the command that was run and what it printed, and a probe is
+   answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
+   the only way to get them right:
    \`\`\`bash
-   kata-cli adversarial note --change <task-id> --node ${node} --from-file <line.json>        # one line per BATCH of work
-   kata-cli adversarial finding add --change <task-id> --node ${node} --from-file <finding.json>   # as each is confirmed
+   kata-cli ledger ask --change <task-id>              # the probes this ledger asks, derived from its own claims
+   kata-cli ledger answer --change <task-id> --probe <id> --command "<what you ran>" --observed "<what it printed>"
    \`\`\`
-   One append per batch, never per hypothesis: every separate invocation is a full turn of the reviewer's own loop, which
-   is what a pass mostly costs. \`record\` at the end seals the verdict and the revision binding — it is the conclusion, not
-   the container.
+5. **Record what you found as evidence, not as a claim about yourself.** A counterexample is a challenge the author has to
+   answer, and it is recorded as one; it is withdrawn only when the ledger can see that it does not reproduce:
    \`\`\`bash
-   kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json>
+   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --expect "<what should happen>"
+   kata-cli ledger challenge check --change <task-id>
    \`\`\`
-   Telemetry is **not** typed in. \`--elapsed-ms\` and \`--tool-uses\` are retired: a duration the caller states is an
-   assertion about itself, which is the same reason the fresh-context boolean stopped being a proof. Telemetry comes
-   from the execution receipt, and the receipt arrives **on its own channel**:
-   \`\`\`bash
-   kata-cli adversarial record --change <task-id> --node ${node} --from-file <result.json> --receipt-file <receipt.json>
-   \`\`\`
-   A \`receipt\` inside the reviewer's own result file is refused: a receipt the reviewed party writes is that party
-   writing its own provenance. Write the figures the platform actually reported, **and leave the rest \`null\`** — an
-   unmeasured figure is not a zero, and \`kata-cli adversarial status --change <task-id>\` names which ones were not
-   measured. A subagent round returns tool uses, tokens and wall clock; it does not return output bytes or truncations,
-   so those are the fields that are usually unmeasured rather than the fields that are usually zero. Where a host
-   cannot produce a receipt at all, telemetry is simply unreported: status says the measurement is unavailable rather
-   than showing a number nobody can verify.
-4. **Put the brief's hash on the result**, whatever kind of round it was. \`record\` binds the pass to the brief kata
-   **issued** — a hash kata never handed out is refused, and so is one issued for another revision — and it takes the
-   round's scope from that brief, so you never pass a \`--since\` and never hand-write \`scope\`. For a delta brief the gate
-   then checks the declared paths cover **every** difference between the two revisions and refuses \`delta_stale\` if they
-   do not.
-5. Read the gate's answer in the command output. Blocking or major findings from the pass stop the node until they are
-   repaired; a pass recorded against an older revision or against a different brief does not satisfy the gate
-   (\`kata-cli adversarial status --change <task-id>\` shows both nodes).
-6. If the pass confirmed findings, decide what each one is worth: \`kata-cli findings defer --change <task-id> --id <id>
-   --reason "<why not now>"\` records a decision to live with a minor finding (and it stays visible at verify and
-   archive); \`blocking\` and \`major\` must be repaired — the command refuses them. And tell the truth about where your
-   findings came from: a pass whose findings were caused by the previous repair says so in
-   \`findingOrigins.causedByPreviousRepair\`, so "fix one, grow two" is a number in the record rather than an impression.
-7. Then run this Skill's own command again — the one printed in the command result as \`nextAction.slashCommand\`
-   (this Skill's own CLI form is \`${command.cli}\`).
+6. **Never write the code under review.** A review that repairs what it reviews has replaced the judgement rather than
+   informed it, and its evidence would be its own work. Report it; the author repairs it. When a check can only be
+   falsified by a test that does not exist, report that as a gap rather than authoring the test here.
 
-If the pass genuinely cannot run (no subagent facility on this platform, or the revision is trivial), record that
-decision explicitly instead of skipping it silently — the gate reports a waiver as a waiver:
-
-\`\`\`bash
-kata-cli adversarial waive --change <task-id> --node ${node} --reason "<why this node proceeds without an independent pass>"
-\`\`\`
-
-Kata cannot start a subagent or inspect the host's session: it renders the brief, checks the result against the revision
-and that brief, and holds the gate. **Who ran it comes from the receipt**, not from the agent's word: \`executor.platform\`
-is copied into the record's \`executedBy\` for display, and \`executedBy\` written into the result body is refused the same
-way a body-carried receipt is. That field is provenance only — the gate never reads it, because capability is the
-contract — and \`adversarial status\` reports \`provenanceMissing\` for a receipt that did not record where it ran, so a
-round whose figures passed through another session cannot read like one measured locally.
-
-`;
+What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
+and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved
+after the decision refuses the approval and names it; and under the strict tier the assurance floor is \`observed\`, so
+evidence nothing re-executed cannot carry it.`;
 }
 
 /** The Skill automation contract, carried by the phases that drive a command to a verdict. */
