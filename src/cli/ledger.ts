@@ -677,6 +677,31 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
+    if (sub === 'run') {
+        // **The action the plan was missing.** A review was dispatched by a human writing a prompt from memory; this hands
+        // over what the planner decided — the claim's own reading set, the evidence its tier requires, the deadline as a
+        // number, and the probes that must be answered — as a document. It carries no platform, session or model, because
+        // those are the assurance axis rather than a criterion.
+        const { buildReviewRequest } = await import('../store/review-request.js');
+        const built = await buildReviewRequest({ root: options.root, changeId });
+        if (!built.ok) {
+            fail({ command: 'ledger run', error: built.why });
+            return;
+        }
+        outputResult({ ok: true, command: 'ledger run', request: built.request });
+        return;
+    }
+
+    if (sub === 'request-check') {
+        // The check on the way back: what the request asked for, against what the ledger now holds. Gaps are named with
+        // their claim rather than counted, for the same reason the decision names its reasons.
+        const { verifyAgainstRequest } = await import('../store/review-request.js');
+        const { gaps } = await verifyAgainstRequest({ root: options.root, changeId });
+        outputResult({ ok: gaps.length === 0, command: 'ledger request-check', gaps });
+        if (gaps.length > 0) process.exitCode = 1;
+        return;
+    }
+
     if (sub === 'focus') {
         if (!ledger.subject) {
             fail({ command: 'ledger focus', error: 'the subject is not frozen: run `ledger freeze` first' });

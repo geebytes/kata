@@ -221,7 +221,18 @@ type Decision = {
 `plan`（落盘为 `plan.json`）· `decide` · `focus`（**消费 `plan.json` 的阅读集**，按漂移收窄）。
 **已落地（本轮补齐）**：`ask` / `answer` —— 事后向评审者出题（**从 claim 自己的依赖面自动生成**，
 按记录的 seed 抽取，可复现；答案**写一次**，重复回答被拒），并把 `probeResponseRate` 接进
-`status --cost` 的 discovery。**未落地**：`review run`（用 plan.json 发起一次评审并校验返回）—— 仍缺。
+`status --cost` 的 discovery。**已落地（本轮补齐）**：`run` / `request-check` —— `run` 把 plan 决定的**阅读集 / 所需证据类型 / 数字期限 /
+待答 probe** 组成一份**评审请求**交出去（`src/store/review-request.ts`）；`request-check` 把请求与账本现状对照，
+**按 claim 逐条具名**报出缺口（缺哪类证据 / 无 supported verdict / probe 未答）。
+**请求刻意不含** platform / session / model / receipt / provenance —— 那是 assurance 轴，写进请求就又把流程塞回判据里（用例断言的正是**字段集合**，不是散文）。
+
+```
+实测（scratch 工作区，一次完整往返）：
+  ledger run          → tier standard · deadline 200 · readingSet ['src/a.ts'] · required ['executable_falsifier'] · probes 2
+  ledger request-check → 3 个缺口，逐条具名（证据强度不足 / 无 verdict / P2-C1 未答）
+  ...补齐（把证据换成会变红的 falsifier、verify、答第二条 probe）
+  ledger request-check → ok: true · gaps: []
+```
 
 ```
 kata-cli subject freeze                     # 冻结 → pathDigests
