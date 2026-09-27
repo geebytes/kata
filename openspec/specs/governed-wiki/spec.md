@@ -1,7 +1,7 @@
 # governed-wiki Specification
 
 ## Purpose
-TBD - created by archiving change strata-foundation. Update Purpose after archive.
+The project's durable knowledge layer and the rules that keep it trustworthy: records carry their provenance, distillation produces candidates rather than assertions, drift and conflict block what has gone stale, context is scoped to the task that needs it, and promotion is an explicit decision rather than an automatic one.
 ## Requirements
 ### Requirement: Provenance-aware Wiki records
 Every verified Wiki record SHALL include a statement, scope, source paths or symbols, source hashes, validation task, evidence references, status, and last verification time.

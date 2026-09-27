@@ -1,7 +1,7 @@
 # platform-skills Specification
 
 ## Purpose
-TBD - created by archiving change strata-foundation. Update Purpose after archive.
+How kata installs itself into a host platform's own directories and how it stays honest about the differences: capability-based adapters that declare what a platform provides, an installation and update path that never overwrites what it did not write, and a generic fallback so a platform kata does not know about still gets a working, clearly-labelled experience.
 ## Requirements
 ### Requirement: Capability-based adapters
 The installer SHALL model platform support as capabilities such as skills, hooks, sub-agents, and model selection rather than assuming identical tool features.

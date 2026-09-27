@@ -1,7 +1,7 @@
 # evaluation-and-release Specification
 
 ## Purpose
-TBD - created by archiving change strata-foundation. Update Purpose after archive.
+How kata measures itself and how it is allowed to ship: cross-platform fixtures that hold the adapted surfaces to the same behaviour, workflow evaluation against a task corpus with declared release gates, and release safety rules that decide what may leave the repository as a published version.
 ## Requirements
 ### Requirement: Cross-platform compatibility fixtures
 The project SHALL test that each supported adapter installs the same command manifest, task schema, and guard contract.
