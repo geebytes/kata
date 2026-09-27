@@ -157,12 +157,6 @@ export async function readScopeChanges(root: string, taskId: string): Promise<Sc
     return (await readValidatedOptional<ScopeChangeRecord>('scope-changes', scopeChangesPath(root, taskId))) ?? { changes: [], updatedAt: new Date(0).toISOString() };
 }
 
-/** The base the next re-verification should measure against: the last recorded scope change's revision. */
-export async function lastScopeChangeBase(root: string, taskId: string): Promise<{ id: string } | null> {
-    const change = (await readScopeChanges(root, taskId)).changes.at(-1);
-    return change ? { id: change.baseRevisionId ?? change.id } : null;
-}
-
 /**
  * Whether the declared scope in the task record matches what the paths were last sized at.
  *

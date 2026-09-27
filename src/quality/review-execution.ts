@@ -95,17 +95,6 @@ export interface ReviewExecutionTelemetry {
 
 const TELEMETRY_FIELDS = ['toolCalls', 'outputBytes', 'tokens', 'truncations'] as const;
 
-/**
- * The telemetry fields this receipt could not measure, named rather than silently zero.
- *
- * A consumer exists so this is not a vocabulary with nothing reading it: `adversarial status` reports it per node, because
- * an operator asking "was this round measured" should not have to infer it from a `0`.
- */
-export function unmeasuredTelemetry(telemetry: Partial<ReviewExecutionTelemetry> | undefined): string[] {
-    if (!telemetry) return [...TELEMETRY_FIELDS];
-    return TELEMETRY_FIELDS.filter((field) => telemetry[field] === null);
-}
-
 /** Where a receipt came from. Provenance for an auditor; never a gate criterion. */
 export interface ReviewExecutionProvenance {
     /** Which host produced the receipt. */
@@ -158,69 +147,4 @@ export interface ReceiptRefusal {
     detail: string;
     /** Capabilities the node required and the receipt did not advertise. */
     missing: ExecutorCapability[];
-}
-
-/**
- * Whether a receipt proves the node's required capabilities for the request it claims to answer.
- *
- * Three separate refusals, deliberately kept apart because their remedies differ:
- *
- *   - `executor_unavailable` — no receipt at all, or one whose own status says the executor could not serve the run. The
- *     remedy is a capable host, never setting a flag.
- *   - `receipt_unbound` — a receipt for a *different* run. The remedy is to re-issue, not to trust it.
- *   - `capability_missing` — a bound receipt that does not advertise everything the node requires. The remedy is a host
- *     that provides the rest.
- *
- * A `budget_exhausted` status is **not** a refusal here: it is a truthful report about the round, and its refusal happens
- * one level up, where §3.1.2's predicate turns it into a refused state. Conflating the two would make "the round ran out
- * of budget" indistinguishable from "the host could not run the round".
- */
-export function verifyExecutionReceipt(input: {
-    request: ReviewRunRequest;
-    receipt?: ReviewExecutionReceipt;
-}): { ok: true; receipt: ReviewExecutionReceipt } | { ok: false; refusal: ReceiptRefusal } {
-    const { request, receipt } = input;
-
-    if (!receipt) {
-        return {
-            ok: false,
-            refusal: {
-                reason: 'executor_unavailable',
-                detail: `no execution receipt was recorded, so ${request.node} cannot be certified: a context the agent describes as fresh is not a capability`,
-                missing: request.requiredCapabilities,
-            },
-        };
-    }
-    if (receipt.status === 'executor_unavailable') {
-        return {
-            ok: false,
-            refusal: {
-                reason: 'executor_unavailable',
-                detail: 'the executor reported that it could not serve this request',
-                missing: request.requiredCapabilities,
-            },
-        };
-    }
-    if (receipt.runId !== request.runId || receipt.requestSha256 !== request.requestSha256) {
-        return {
-            ok: false,
-            refusal: {
-                reason: 'receipt_unbound',
-                detail: 'the receipt does not bind to this request, so it proves nothing about this run',
-                missing: [],
-            },
-        };
-    }
-    const missing = request.requiredCapabilities.filter((capability) => !receipt.capabilities.includes(capability));
-    if (missing.length > 0) {
-        return {
-            ok: false,
-            refusal: {
-                reason: 'capability_missing',
-                detail: `the executor does not provide ${missing.join(', ')}, which ${request.node} requires`,
-                missing,
-            },
-        };
-    }
-    return { ok: true, receipt };
 }

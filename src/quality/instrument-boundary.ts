@@ -118,27 +118,3 @@ export interface CoverageVerdict {
     undecidable?: string;
 }
 
-export function classifyFindingCoverage(
-    task: { instruments?: string[] },
-    declaration: BoundaryDeclaration | null | undefined,
-    finding: { path?: string; message?: string },
-): CoverageVerdict | null {
-    const layer: FindingLayer | null = finding.path && isInstrumentPath(task, finding.path) ? 'instrument' : null;
-    // Only an instrument finding can be beyond a declaration: the deliverable has no boundary to be outside of.
-    if (layer !== 'instrument') return null;
-    const instrument = instrumentPaths(task).find((candidate) => finding.path?.startsWith(candidate.replace(/\/$/, '')));
-    const boundary = (declaration?.boundaries ?? []).find((entry) => entry.instrument === instrument);
-    if (!boundary) {
-        return { classification: 'within-declared-coverage', undecidable: `'${instrument}' has no boundary declaration, so no dimension can be excluded — a guard with no stated boundary is answerable for everything it could cover` };
-    }
-    // Match the finding to a declared dimension by quoting it: the finding must name the dimension the declaration excluded.
-    const message = finding.message ?? '';
-    const excluded = (boundary.doesNotCover ?? []).find((entry) => message.includes(entry.dimension));
-    if (!excluded) {
-        return {
-            classification: 'within-declared-coverage',
-            undecidable: `the finding does not quote any dimension declared as not covered by '${instrument}' (declared: ${(boundary.doesNotCover ?? []).map((entry) => entry.dimension).join(', ') || 'none'})`,
-        };
-    }
-    return { classification: 'beyond-declared-coverage', dimension: excluded.dimension, canonicalStatement: boundary.canonicalStatement };
-}

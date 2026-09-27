@@ -247,38 +247,6 @@ export function revisionIsCurrent(status: RevisionStatus): boolean {
 }
 
 /**
- * The content a falsifier proof is **about**: the task's current declaration, or the revision's sealed owned set when the task
- * declares none.
- *
- * This is the single source both doors of `kata-cli falsify` read (rba7-f5, rba7-f6). It used to be `revision.pathDigests`
- * alone — the revision's frozen declaration — so a proof whose mutation was in a file the task has since declared but the
- * revision never carried (measured: `src/workflow/revision.ts`, declared by the task's 23 paths but not the revision's 11)
- * recorded digests for eleven paths that did not include the mutation's file, and the binding then either expired on the next
- * unrelated re-seal or credited content it never described. The absence door already read `task.ownedPaths`; there is now one
- * declaration for both doors, which is the class this change exists to remove.
- */
-export async function falsifierProofSurface(
-  root: string,
-  taskId: string,
-  revision: TaskRevision,
-): Promise<{ surface: string[]; pathDigests: Record<string, string>; drift: string[]; treeDigest: string }> {
-  const taskOwnedPaths = await readTask(root, taskId)
-    .then((task) => task.ownedPaths ?? [])
-    .catch(() => [] as string[]);
-  const sealed = revision.pathDigests ?? {};
-  // **The task's declaration is the surface, exactly as the absence door reads it**; the sealed set is the fallback for a
-  // task that declares none, which is the shape `resolveSealOwnedPaths` already orders the two sources in. Not unioned: a
-  // path the revision carried but the task no longer declares would be recorded here and then be absent from the revision a
-  // later seal mints over the smaller declaration, which would make the proof count against a surface it does not describe.
-  const surface = taskOwnedPaths.length > 0 ? normalizeOwnedPaths(root, taskOwnedPaths) : Object.keys(sealed).sort();
-  const current = surface.length > 0 ? await computePathDigests(root, surface) : {};
-  // The drift is a question only the **sealed** digests can answer: a declared path the revision never carried is not drift.
-  const drift = Object.keys(sealed).filter((path) => current[path] !== sealed[path]);
-  const treeDigest = surface.map((path) => `${path}:${current[path] ?? ''}`).join('\n');
-  return { surface, pathDigests: current, drift, treeDigest };
-}
-
-/**
  * Feeds one owned-path traversal into the rolling manifest digest and, when asked, the per-path table.
  *
  * `computeManifestHash` and `computePathDigests` each walked the same tree, so a seal read and hashed every owned

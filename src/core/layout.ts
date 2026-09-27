@@ -383,41 +383,9 @@ export function repairPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'repair.json');
 }
 
-/** The recorded outcome of one node's independent adversarial pass (or its explicit waiver). */
-export function adversarialReviewPath(root: string, taskId: string, node: string): string {
-    return join(taskDir(root, taskId), `adversarial-${node}.json`);
-}
-
-/**
- * Where the briefs kata has **issued** for a node are kept (D2, second fix).
- *
- * The gate used to validate a recorded pass by *re-deriving* the brief and comparing hashes, which made the record
- * depend on state a pass — or another node's round — can rewrite: the framing of the next round, the reading set
- * derived from the working tree, the findings `kata-cli review` resets. Recording a pass could therefore reject the very
- * brief it answered. The brief is now stored as it was issued, and the record binds to that copy.
- */
-export function adversarialBriefsDir(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'adversarial-briefs');
-}
-
-/** One issued brief log, keyed by the revision the brief named — the binding the record has to match. */
-export function adversarialBriefPath(root: string, taskId: string, node: string, revisionId: string): string {
-    const safe = revisionId.replace(/[^A-Za-z0-9._-]/g, '_');
-    return join(adversarialBriefsDir(root, taskId), `${node}-${safe}.json`);
-}
-
 /** Recorded scope changes (§21.3): what the audited surface grew by, and why. */
 export function scopeChangesPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'scope-changes.json');
-}
-
-/** Where a task's repair batches live (C1): findings opened together and closed together. */
-export function repairBatchPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'repair-batch.json');
-}
-
-export function repairObligationsPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'repair-obligations.json');
 }
 
 export function wikiClosurePath(root: string, taskId: string): string {
@@ -447,17 +415,6 @@ export function recoveryPath(root: string, taskId: string): string {
 /** The seal's own progress log: what a monitoring agent needs instead of guessing from process tables. */
 export function sealProgressPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'seal-progress.jsonl');
-}
-
-/**
- * The pass heartbeat (K1): one line per batch of an adversarial pass's work.
- *
- * Mirrors `sealProgressPath` on purpose — the seal has had a heartbeat since a long operation was found to be invisible
- * while it ran, and a pass is the same kind of operation with a single write point at the end, which is why a crash used to
- * take all of its work with it.
- */
-export function adversarialProgressPath(root: string, taskId: string): string {
-    return join(taskDir(root, taskId), 'adversarial-progress.jsonl');
 }
 
 export function taskProfilePath(root: string, taskId: string): string {
@@ -511,10 +468,6 @@ export function wikiDir(root: string): string {
 
 export function wikiCandidatesDir(root: string): string {
     return join(wikiDir(root), 'candidates');
-}
-
-export function wikiVerifiedDir(root: string): string {
-    return join(wikiDir(root), 'verified');
 }
 
 export function wikiRecordPath(root: string, id: string): string {
