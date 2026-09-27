@@ -1179,3 +1179,39 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 每条删除的理由都写在代码里。**判据本身**：`npm run check:wiring` → `clean: 136 declared path(s), nothing unreferenced and nothing unconsumed`；自校验用例的"手工测量的死导出清单"清零，且断言仍在跑 —— 下一个无消费者的声明会在这里点名失败。
 
 **测试**：145 文件 / 969 用例 / 0 失败（从 1017 下降：删掉的用例测的都是被删的声明）。
+
+## 23. ③ 完成：C0 有了分母，9 条验收逐条结清
+
+`kata-cli ledger baseline`（`src/store/baseline.ts`，146 → 147 个测试文件）：读**已在磁盘上、此前无读者**的两类记录 —— 11 个归档 change 的 `adversarial-review.json`（自报 `usage`）与账本路线的 `round-runs.json`（kata 读流时自己数的）。
+
+**实测**：`c0 = { changes: 11, meanReportedTokens: 1,039,167, meanPasses: 4.6, meanFindings: 28.9 }`；账本路线 `round-protocol` 实测 266,281 tokens · 603 次工具 · 4.6 MB 输出 · 182 分钟 ⇒ **0.256 × C0**。
+
+**9 条验收，逐条**：
+
+| 验收 | 状态 | 依据 |
+|---|---|---|
+| no-record rate = 0 | ✅ | 逐步写入（`ledger-records-each-fact-as-it-arrives`） |
+| 内核平台耦合 = 0 | ✅ | K5 文本+类型检查；本轮补上 `src/kernel/**` 之外**全仓**的耦合索引与 adapters 改变半径 = **4 个模块**（其中 2 个是 CLI 参数面，另 2 个是"一个事实两处"的工作区根检测） |
+| 预算耗尽永不 pass | ✅ | K3 决策矩阵 |
+| **Cost ≤ 0.6 C0** | ✅（带基准声明） | 0.256 × C0。**两侧证据性质不同**：C0 是自报（两份记录报 0，已标记 `tokensUnreported`），新路线是 kata 实测 —— 报告里用一个字段写明，不放进脚注 |
+| full re-review ↓≥70% | ✅（claim 级） | claim 级重开 **0** 次（旧路线：任何修复必然重开，实测 100%） |
+| blocking/major 证据 ≥95% 可重放 | ✅ | 3 个账本 change、17 条 claim，每条自带 `{before, mutated, after}` 实测三元组 |
+| gate mutation kill = 100% | ✅（内核层） | K2 按**每条**检查强制：无变异声明的检查按名拒绝。全仓其余检查未审计 —— 这是范围，不是遗漏 |
+| CriticalRecall ≥ baseline | ❌ **不可获得** | 分母是"旧机制在同一语料上的召回"，而旧机制已被删除 —— 这个基线永远测不到了。可得的替代是 `ledger verifier` 的内核召回 0.462，它测的是**判定**而非"评审者能否找到缺陷" |
+| FalsePass ≤ baseline | ❌ **同上** | 同因：要比较的机制不存在了 |
+
+**这两条应当从验收清单里移除或改写**，而不是继续挂着当"未完成" —— 一个永远拿不到的分母不是待办事项，是写错了的指标。
+
+## 24. ① P3 与 ② P6 的结清
+
+**P3「生产者层」：以另一种形式落地，实测如下，方案文字已过时。**
+方案写的是 `static-analysis`/`mutation`/`llm-review`/`human`/`quorum` 五个生产者模块。落地的形状是**四条证据类型 + 各自的 verifier**（`src/producers/verifiers.ts`）：`static_witness`（静态分析）· `executable_falsifier`（**变异**：跑前/变异/跑后三元组）· `cross_artifact_contradiction` · `expert_concurrence`；另加 `planner`（读取集/所需强度/期限）· `quorum`（按证据比较而非计数）· `submission`（生产者提交判定即按名拒绝）· `port`（三个接缝）。**"human 生产者"就是作者自己的 CLI 动词**（`ledger claim add` / `evidence add` / `verify`），"llm-review 生产者"是 `ledger run` 发出的请求 + 回答它的会话。真正缺的只有"机器生产者主动 propose"这一半，而它需要一次模型调用，不在确定性 CLI 的范围内。
+
+**P6 三项**：K6 差分 ✅（本轮补上"它行使哪几类证据"的守卫）· Platform Coupling Index ✅（本轮）· Adapter Change Radius ✅ = 4 · **shadow 试点 ❌**：需要跨时间的真实 change 样本，本仓没有；当前三点数据是它的第一批样本（claim 级重开 0 次），但把 3 个样本当试点结论就是编数字。
+
+## 25. 七个缺陷类：还差两条检查
+
+`docs/design/2026-09-27-the-seven-defect-classes.md` 的那一列在本轮之后是：**5 条有活检查**（1 · 3 · 5 · 6 · 7 —— 类 5 本轮补上"差分覆盖哪几类证据"的守卫，变异验证过：把 `expert_concurrence` 从两个清单里删掉即红）；**类 2、类 4 仍无活检查**，各自需要的形状是：
+- **类 2「读声明却声称读了现实」**：给每个 `*Status`/`*Verdict` 断言其 message 提到的对象与它真正读的对象一致 —— 需要一张"这个函数读的是 X"的表，而表本身就要人来写。
+- **类 4「一次决策多个入口，一个不留痕」**：断言"每个写决策的入口都留痕" —— 需要一个入口枚举，同样需要人来维护。
+两条都记在文档里，不假装已覆盖。
