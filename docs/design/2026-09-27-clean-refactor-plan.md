@@ -1081,3 +1081,53 @@ repair-batch.ts / class-coverage.ts  义务系统的类覆盖
 我在 §19.7 说 B 能删 `adversarial.ts` 一行族约 4,600 行。**实测显示不成立**：`finding-disposition`
 不是旧评审路由的私产，它承担"哪些问题已知且未处理"这个判定，而**archive 门依赖它**。
 所以 B 的安全子集就是本批这三件，**再往下就与 A 重合了** —— 我如实记为"B 已到边界"，不假装还有可删的余地。
+
+## 20. A 完成：旧路由已全部退出，删除量结算
+
+### 20.1 结果
+```
+src/quality：6,471 行（14 个旧模块）→ 已删 11 个模块；src/quality 现 5,848 行（含新内核与保留模块）
+src/cli/ops.ts：1,385 → 379 行        src/cli.ts：缩减 9 个 import + 一个 18 行判定函数
+schema：611 行（adversarial-review.schema.json）**待删**（尚无读者，但仍在 registry 里）
+测试：213 文件 / 1,454 用例 → 143 文件 / 1,020 用例（删掉的全是旧路由的夹具）
+```
+
+### 20.2 被删除的模块（按删除批次）
+```
+批次 1（命令面）：cli/matrix · cli/rounds · cli/findings · cli/repair-author · cli/lane · runAdversarialCommand · runFalsifyCommand
+批次 2（无消费者的叶子）：record-salvage · repair-rounds · repair-briefing · review-state · round-runner · round-registry · round-cost · round-protocol
+批次 3（本次）：adversarial · adversarial-progress · finding-disposition · repair-batch · repair-obligations · class-coverage · falsifier-reddenings · falsifier-run · repair-author
+```
+
+### 20.3 每一道门在删之前先被账本接住（这是次序，不是偏好）
+```
+审批门    → 账本判定（上一轮完成）
+阶梯      → openLedgerProblems（未支持的 claim）取代 findings 表；严重度来自 claim.severity
+archive   → 未支持的 claim 阻断；waive 需带理由；waive 未 carried 需 --findings-carried-to
+judge FAIL→ 由 claim 的证据判定承载（judge 无账本不可达 ⇒ 旧分支本就不可达）
+变更记录  → findings 字段改为账本的未支持 claim（**同一读取器**供记录与 archive 共用）
+审查准入  → 已在上一步改为只读账本
+```
+
+### 20.4 两处**定义变更**，逐条写明（不是删除，是改变）
+```
+① 严重度门槛：旧法"std 只 blocking 阻断、strict 加 major"。新法是【内核的一条规则】：
+   claim 的 severity 决定它需要的证据【强度】（MIN_STRENGTH_BY_SEVERITY · policy.evidenceStrength ·
+   blocking 额外要求可复现），而 tier 要求的每条 claim 都必须被支持。
+   ⇒ minor claim 无证据也构成缺口；"与已知问题共存"从【阈值放过】变成【带理由的决策】：
+     `ledger claim waive <id> --reason`，随后 archive 要求它被 carried。
+   ⇒ 能力保留并变显式：一个有理由的决策落在门所读的存储里，而不是一个让问题无声通过的阈值。
+
+② 类表（class-coverage）随模块删除。它曾是本仓【缺陷种类】的记录，每类带一条会变红的检查，
+   是 roundMayClose 可回答的原因。继任者是 tier 的 requiredRiskClasses —— planner 消费、decide 强制。
+   ⇒ 类级闭包现在是对【声明的风险空间】的覆盖契约，而不是七条历史类目的表。
+   ⇒ 七个类目作为【词汇】值得保留为散文（待办，已记录而非假装完成）。
+```
+
+### 20.5 未完成、如实记录
+```
+· adversarial-review.schema.json（611 行）仍在 schema registry 里，无读者 —— 删除它需要同时从
+  registry／package 装配里摘掉，留作下一步
+· 七个缺陷类目作为散文的保留（见 20.4 ②）
+· wiring check 55 条（起点 47）：增量全部是"删除后只剩测试引用"或"新模块导出尚未接线"，后者待接线
+```
