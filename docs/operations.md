@@ -21,12 +21,16 @@
 | `kata-cli next <change>` | Show next Comet action |
 | `kata-cli eval <manifest>` | Run evaluation from manifest |
 | `kata-cli baseline [--platform <p>] [--language en\|zh] [--change <id>]` | Measure rendered payload bytes/tokens and the authoritative read sizes before a phase runs |
-| `kata-cli adversarial brief <task-id> [--since <rev>] [--mode verify\|cold]` | Render the independent pass's brief and store it; only a stored brief's hash satisfies the gate |
-| `kata-cli adversarial record <task-id> --from-file <result.json>` | Seal a pass's verdict and its revision binding (see *Independent adversarial review*) |
-| `kata-cli adversarial note <task-id> --from-file <line.json>` | Append one heartbeat line — the work a killed pass would otherwise take with it |
-| `kata-cli adversarial finding add --change <task-id> --from-file <finding.json>` | Record one finding as it is confirmed, before the verdict |
-| `kata-cli adversarial status <task-id>` | Both nodes' gate state, the heartbeat, and a delta round's measured saving |
-| `kata-cli findings list \| defer \| accept \| carry <task-id>` | Give a finding a disposition (`blocking`/`major` cannot be deferred or accepted) |
+| `kata-cli ledger freeze --change <id> --path <p>...` | Freeze the **subject** — the content the decision will be about — by digest |
+| `kata-cli ledger claim add \| waive \| list` | Declare what the change must prove, with the severity that decides how strong its evidence must be |
+| `kata-cli ledger evidence add \| verify \| replace` | Attach evidence and let a verifier decide it by running it; `executable_falsifier` must declare the mutation that reddens it |
+| `kata-cli ledger plan` / `kata-cli ledger focus` | Plan what a review should read, then narrow that to the claims whose dependencies actually moved |
+| `kata-cli ledger ask` / `kata-cli ledger answer` | Ask a reviewer the probes this ledger derives from its own claims, and record the command and output that answered each |
+| `kata-cli ledger challenge add \| check` | Record a counterexample for the author to answer, and let the ledger see whether it still reproduces |
+| `kata-cli ledger decide` | The verdict the gates read: `pass`, `fail` or `insufficient`, with the kernel's reasons |
+| `kata-cli ledger status [--cost]` | Per claim: state, evidence, challenges — and the cost report, including the author-side re-openings |
+| `kata-cli ledger run` / `kata-cli ledger request-check` | Issue a review request, then check the ledger against it and name the gaps |
+| `kata-cli ledger corpus` / `ledger verifier` / `ledger detectability` / `ledger baseline` | The measurement instruments: the scenario corpus, the retired corpus scored by this kernel, whether a planted defect is detectable, and what each route cost per change |
 | `kata-cli revision digests <task-id> [--since <rev>]` | The per-path content table a delta round is measured against |
 | `kata-cli comet install [--version <ver>]` | Install or update Comet binary via npm |
 | `kata-cli comet update` | Update Comet to latest npm version |
@@ -261,70 +265,68 @@ checkout against whoever is working there.
 Task state itself stays tracked (that is what lets a worktree inherit the task), which also means branches fork task
 state and merging them merges it.
 
-## Independent adversarial review
+## Review, on the evidence ledger
 
 Verify and review are the two nodes where the context that produced the change is the worst available judge of it: it
-shares the implementation's assumptions, its blind spots, and its reading of its own evidence. Both nodes therefore
-require an **independent adversarial pass** over the sealed revision, executed in a context that did not author the
-change — the host platform's own subagent facility, a fresh session, no prior conversation.
+shares the implementation's assumptions, its blind spots, and its reading of its own evidence. What makes a pass
+independent is not a field in a record — it is that **every claim rests on evidence a verifier re-executed**, and that the
+decision is derived from that evidence rather than reported by the party being judged.
 
-Kata cannot start a subagent or inspect the host's session. What it does is render the brief, check the result against
-the revision and that brief, and hold the gate:
+That is the route. It replaced one where each review *round* produced one document, which kata judged by a citation guard
+and an admissibility conjunction; that mechanism and its commands (`adversarial brief|record|note|finding|status|waive`,
+`findings list|defer|accept|carry`, `repair-author`, `repair-scope`) are gone, and the records they wrote are read-only
+history. The design record is `docs/design/2026-09-26-decoupled-round-protocol.md` and its addendum; what follows is the
+route as it runs.
+
+**A subject, claims, evidence, a decision.** `ledger freeze` takes the content the decision will be about
+(`--path`, repeated; a directory expands to the files it holds) and records a digest per path. `ledger claim add` declares
+what must be proven, and the claim's **severity decides the evidence strength it needs** — a `blocking` claim cannot rest on
+a static witness. `ledger evidence add` attaches evidence; `ledger evidence verify` runs it and records a verdict, and a
+command-type check must declare the **mutation** that makes it fail, because a check that cannot be reddened is not
+evidence. `ledger decide` is the verdict the gates read, and it is a pure function of that data: the same input decides the
+same way twice, and **a spent budget is never a pass**.
 
 ```bash
-kata-cli adversarial brief  --change <task-id> --node verify|review [--since <revision-id>] [--mode verify|cold]
-kata-cli adversarial record --change <task-id> --node verify|review --from-file <result.json> \
-    --elapsed-ms <how long the pass took> [--tool-uses <how many tool calls>]
-kata-cli adversarial note   --change <task-id> --node verify|review --from-file <line.json>      # heartbeat, one line per batch
-kata-cli adversarial finding add --change <task-id> --node verify|review --from-file <finding.json>  # as confirmed
-kata-cli adversarial waive  --change <task-id> --node verify|review --reason "<why>"
-kata-cli adversarial status --change <task-id>                        # both nodes, plus the heartbeat
+kata-cli ledger freeze   --change <id> --path src/a.ts --path docs/spec.md
+kata-cli ledger claim    add --change <id> --id C1 --statement "..." --severity major --risk-class consistency --depends-on path:src/a.ts
+kata-cli ledger evidence add --change <id> --id E1 --type executable_falsifier --claim C1 \
+    --command "grep -q holds src/a.ts" --mutation-file src/a.ts --find holds --replace broken
+kata-cli ledger evidence verify --change <id>                 # runs it: before / mutated / after
+kata-cli ledger decide   --change <id>                        # pass | fail | insufficient, with reasons
+kata-cli ledger status   --change <id> --cost                 # per claim, plus what each route cost
 ```
 
-The brief states the sealed revision, the **round framing** (`verify` lists the author's claims; `cold` withholds them so
-the reviewer forms its own hypothesis), the acceptance criteria under test, the sealed evidence with the paths to read it
-and the project-declared checks **not** to re-run, a bounded starting set of files to read, and the exact JSON result
-shape. It instructs the reviewer to read the repository rather than the brief, to form and run at least one
-**falsification attempt per claim**, and to report a finding for every defect it confirmed.
+**What the gate refuses**, so a run can be satisfied rather than guessed at:
 
-`--since <revision-id>` renders a **delta brief**: the brief names only what changed since that revision, and the gate
-then requires the round to cover the whole change surface (`delta_stale` otherwise). `--mode` overrides the framing for one
-round; by default it **rotates**, and it will not rotate into `cold` while a `blocking`/`major` finding is unrepaired.
+- **No ledger, no approval.** `review --approve` refuses a change with no ledger and names the commands that record one. It
+  does not fall back to an independent-pass record — one fact with two answers is what the ledger replaced.
+- **A verdict does not outlive its content.** A declared path that moved after the decision refuses the approval and names
+  the paths that moved.
+- **An unreadable ledger is not an absent one.** Something written and unparseable decides nothing; a ledger nobody wrote
+  never claimed to. The two are reported apart.
+- **A non-pass routes to the deficits.** The ladder names `satisfy_ledger_deficits`, and the kernel's own reason codes say
+  what is missing — not a count of findings.
+- **Under the strict tier the assurance floor is `observed`.** `ledger evidence verify` records the adapter's level
+  (`inline` runs the checks and is `observed`; `file` reads results recorded elsewhere and is `relayed`), and the approval
+  record states the limit plainly: *the ledger records what was verified, not who wrote the claims*.
 
-**A pass writes as it goes.** `note` appends one heartbeat line per *batch* of work (not per hypothesis — every separate
-invocation is a full turn of the reviewer's own loop, which is what a pass mostly costs), and `finding add` records a
-finding the moment it is confirmed. A pass that dies mid-run therefore keeps its work: `status` reports the heartbeat, and
-a `record` later in the round keeps the findings that arrived separately. Until `record` runs there is no verdict, so a
-partial pass can never read as a passed one.
+**Repairing.** A repair changes content, the sealed revision derives from content, and a verdict is bound to the revision
+it was recorded against — so **sealing after each repair buys a round per repair**. Repair everything one revision can
+answer, then seal once. What a repair owes is a claim whose evidence does not support it, which `ledger decide` names.
 
-**A terminal finding owes a repair, and the obligation is what lets that repair be accounted for.** Adding a `blocking` or
-`major` finding writes a repair obligation, and a repair batch reads what it can close from the obligations that carry a
-`resolvedAt`. An obligation scoped to an acceptance id waits for that criterion; one scoped to nothing — an adversarial
-finding is not tied to a criterion the way a review finding is — is answered by the revision's passing evidence. A task
-does not need an acceptance matrix for either: the matrix binds an evidence item to a check, which sharpens the answer,
-but the task's own acceptance ids and the revision's evidence are enough without it.
+**Leaving a problem unfixed is a decision.** `kata-cli ledger claim waive <id> --reason "<why>"` records one, the reason
+must quote what the claim's own statement excludes, the waiver is reported at review, judge and archive, and the archive
+gate then requires it to be carried to a named destination. An implicit omission is what those gates exist to prevent.
 
-One consequence is worth knowing before you hit it: if a task has an unresolved obligation, the **seal refuses** and names
-the obligations. That is deliberate — the seal is where the platform stops passing silently while a batch stays open — but
-on a task with no matrix the refusal also blocks the run whose evidence would resolve the obligation, so the remedy is to
-supply the evidence the refusal asks for (or add a matrix to bind it to a specific check).
+**Measurement instruments** (deterministic, no model, no host): `ledger corpus` scores the scenario corpus against the
+kernel and reports mismatches rather than averaging them; `ledger verifier` scores the retired corpus with this kernel;
+`ledger detectability` puts a planted defect back and reports whether the check owning it reddens; `ledger baseline`
+reports what each route cost per change, labelling which side is self-reported.
 
-The gate:
-
-- `kata-cli verify` succeeds only with a recorded pass for the current revision, or an explicit waiver.
-- `kata-cli review --approve` likewise — an approval is the review's conclusion.
-- A pass recorded against another revision, without the fresh-context attestation, or against a brief kata did not issue
-  does not satisfy the gate; `status` reports which of those it was. `brief` stores every brief it hands out, and `record`
-  accepts only a hash from that store — a brief it renders but never issued does not count, and neither does one issued for
-  another revision. The refusal happens before anything is written, so a bad record cannot damage a good one.
-- Findings at `blocking` or `major` severity from the pass stop the node until they are repaired, exactly as reviewer
-  findings do.
-- A waiver satisfies the gate and is reported as a waiver, never hidden.
-
-`executedInFreshContext`/`contextNote` are attested by the executing agent, in the same way host model confirmation is.
-Kata checks everything else: that the pass names this revision, that it answered a brief kata **issued** for this node and
-revision, and that it actually attempted something. The scope a delta round is judged against comes from that issued brief,
-never from a flag on `record` — so the surface the gate checks is the surface the reviewer was given.
+**An archived change's records.** The eleven changes that ran on the round-shaped route hold their records on disk
+(`adversarial-review.json`, `repair-*.json`) with no kata command left to read them, and the six schemas they were written
+against are retired. They are history: git reads them, and the specification that described the route has been archived out
+of the live specs.
 
 ## Evaluation
 
@@ -565,12 +567,11 @@ To attach the only permitted prose, pass it at seal time:
 A governed record row can also declare itself checkable, using the same `claims[]` shape an acceptance statement uses, and
 a false row then fails the seal by claim id instead of waiting for the next review round.
 
-The adversarial brief carries the same idea in its finding history: prior findings grouped by class with each class's
-count and disposition, so a reviewer attacks the repair instead of re-deriving a class an earlier round already named.
-The class is derived (`acceptance:<id>`, `path:<file>`, `record:<source>`) rather than declared, and the **history
-projection** reads only the other node's durable record. Recording a pass may correctly update lifecycle framing, scope,
-claims, and the reading set; the gate binds the pass to the issued brief copy rather than demanding a later re-render
-remain byte-identical.
+The same idea lives in the ledger's class vocabulary: a claim carries a `risk-class`, and the tier a change is judged at
+declares which risk classes must be covered, so a new instance of a class nobody has covered is visible as an uncovered
+class rather than as another round of the same argument. The tier's contract is a fixed list rather than a union derived from
+the claims themselves — a requirement derived from what the author happened to write would make the coverage check
+unfailable, which is the one thing a gate must never be.
 
 ## The audited surface, and applying it
 
