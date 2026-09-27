@@ -107,11 +107,17 @@ describe('the evidence ledger can hold a review approval', () => {
         confirmHostModel: true,
     });
 
-    it('refuses without the independent pass when the change has no ledger', async () => {
+    it('refuses when the change has no ledger, and says what to record', async () => {
+        // The old route (an independent round-shaped pass) is closed: two answers to "was this reviewed" is the class this
+        // session spent its time removing, and which one a change got depended on which files happened to exist. The
+        // refusal names the remedy rather than the old gate, because the old gate is no longer a gate.
         const root = await reviewTask('no-ledger-task');
         const result = await approve(root, 'no-ledger-task');
         expect(result.success).toBe(false);
-        expect(String(result.error)).toContain('held by the independent adversarial pass');
+        expect(String(result.error)).toContain('requires an evidence ledger');
+        expect(String(result.error)).toContain('ledger freeze');
+        // And the diagnostics name the state, so a caller can tell "nothing recorded" from "recorded and unreadable".
+        expect((result.diagnostics as { ledger?: { state?: string } } | undefined)?.ledger?.state).toBe('absent');
     });
 
     it('approves on the ledger and records which route did it', async () => {

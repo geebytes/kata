@@ -9,7 +9,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { CometGuard } from '../../src/comet/guard.js';
 import { writeWikiClosure } from '../../src/wiki/closure.js';
-import { recordAdversarialPass } from '../helpers/adversarial.js';
+import { seedLedger } from '../helpers/ledger.js';
 
 /** The evidence envelope a seal recorded for a task, read from the recorded set (the `-hard.json` projection is gone). */
 async function readSealedEvidence(root: string, taskId: string): Promise<{ id: string; revisionId?: string; scope?: { paths: string[] } }> {
@@ -25,11 +25,12 @@ describe('Workflow resume and lifecycle', () => {
     const roots: string[] = [];
 
     /**
-     * The workflow now requires an independent adversarial pass at the verify and review nodes. Fixtures that walk a
-     * task through those nodes record one, exactly as the skill instructs the agent to.
+     * An approval now rests on an evidence ledger rather than on a round-shaped pass, so a fixture that walks a task to
+     * review, judge or archive records a ledger that decides `pass`. The two helpers coexist while the old modules are
+     * still present; only the ledger reaches an approval, because the route the other one fed is closed.
      */
-    async function adversarial(root: string, taskId: string, node: 'verify' | 'review' = 'verify'): Promise<void> {
-        await recordAdversarialPass(root, taskId, node);
+    async function adversarial(root: string, taskId: string, _node: 'verify' | 'review' = 'verify'): Promise<void> {
+        await seedLedger(root, taskId);
     }
 
     async function tempRoot(): Promise<string> {

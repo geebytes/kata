@@ -1431,19 +1431,26 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
 
             if (ledgerApproval === null) {
-            // An approval is the review's conclusion, so the independent adversarial pass belongs here: the reviewer
-            // may not certify a change their own context authored and read.
-            const adversarial = await adversarialGateFor(root, taskId, 'review');
-            if (!adversarial.satisfied) {
+                // **The old route is closed, and an approval now requires an evidence ledger.** The round-shaped pass was
+                // the route for a change whose review was a document about a round; the ledger is the route for a change
+                // whose review is claims and evidence kata verified itself. Keeping both meant two answers to "was this
+                // reviewed" — the same defect class this repository has spent the session removing — and *which* answer a
+                // change got depended on which files happened to exist.
+                //
+                // Measured before closing it: no change in flight needs the old route (the eleven tasks are archived, and
+                // the three with ledger content were approved through it), so the effect today is zero and the statement
+                // "the ledger is the gate" becomes a fact rather than a claim.
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: `Review approval is held by the independent adversarial pass: ${adversarialReasonFor(adversarial.reason, adversarial.detail)}`,
+                    error: 'Review approval requires an evidence ledger: this change has claims and evidence recorded by '
+                        + '`kata-cli ledger`, and an approval is decided by them. Record a subject, the claims and their '
+                        + 'evidence first (`ledger freeze`, `ledger claim add`, `ledger evidence add|verify`, `ledger plan`, '
+                        + '`ledger decide`), because a review that cannot be decided by evidence is not one this route can certify.',
                     diagnostics: {
-                        adversarial: { node: 'review', required: true, satisfied: false, reason: adversarial.reason ?? null },
-                        nextAction: nextActionForTask(taskId, '/kata-review', 'reviewer', 'adversarial_review_pending'),
+                        ledger: { state: ledger.kind, decided: ledger.kind === 'decided' ? ledger.decision.verdict : null },
+                        nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),
                     },
                 };
-            }
             }
             // **The tracked view, not the record's raw copy of the same fact** (`measured closing two changes`): `blockingAdversarialFindings`
             // reads severity off the pass record, whose findings carry no disposition — so once a pass reported a major finding,

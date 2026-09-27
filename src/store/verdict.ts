@@ -10,7 +10,7 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths } from './ledger.js';
+import { readLedger, declaredPaths, readProbeAnswers } from './ledger.js';
 import { decide, type QuorumReport } from '../kernel/decide.js';
 import { aggregateQuorum } from '../producers/quorum.js';
 import { classifyRisk, TIER_RANK } from '../kernel/risk.js';
@@ -113,7 +113,16 @@ export async function ledgerVerdict(input: {
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,
-        discovery: { independentChallenges: ledger.challenges.filter((challenge) => challenge.state !== 'open').length },
+        // **Both discovery signals count, because both are independent challenges.** A counterexample is a challenge the
+        // author has to answer; a probe is a question asked of the reviewer after the fact, answerable only by having read
+        // this revision. Counting only the first meant a change that used the second — the signal that replaces the
+        // credential — could never satisfy the discovery floor: measured while wiring the e2e fixtures, a ledger with four
+        // answered probes and no counterexample was refused with `discovery_floor` alone.
+        discovery: {
+            independentChallenges:
+                ledger.challenges.filter((challenge) => challenge.state !== 'open').length
+                + (await readProbeAnswers(input.root, input.changeId)).length,
+        },
         ...(quorum === undefined ? {} : { quorum }),
     });
 
