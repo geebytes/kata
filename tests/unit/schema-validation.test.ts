@@ -100,17 +100,13 @@ describe('schema-validated artefact reads', () => {
             createdAt: '2026-09-17T00:00:00.000Z',
         })).not.toThrow();
 
-        expect(() => validate('repair-obligations', {
-            obligations: [{
-                id: 'obligation-1',
-                taskId: 'schema-task',
-                source: 'judge',
-                severity: 'blocking',
-                message: 'Repair the failing acceptance.',
-                createdAt: '2026-09-17T00:00:00.000Z',
-            }],
-            updatedAt: '2026-09-17T00:00:00.000Z',
-        })).not.toThrow();
+        // **The schemas of the stores that no longer exist are gone from the registry, and that is asserted.** A schema
+        // registration is a declaration that something writes documents of that shape; the round-shaped route's six
+        // (`repair-obligations`, `repair-batch`, `repair-authors`, `falsifier-reddenings`, `adversarial-review`,
+        // `round-events`) went with their writers, and a registry that kept them would advertise a contract nothing holds.
+        for (const retired of ['repair-obligations', 'repair-batch', 'repair-authors', 'falsifier-reddenings', 'adversarial-review', 'round-events']) {
+            expect(() => validate(retired, {}), `${retired} must not be registered`).toThrow(/Unknown schema/);
+        }
 
         expect(() => validate('revision', {
             id: 'revision-1',
@@ -191,7 +187,7 @@ describe('the validator enforces the whole schema, not just the keywords the int
     it('compiles every bundled schema, so a malformed asset fails here and not at the first real artefact', () => {
         // `wiki-record.schema.json`'s `provenance` was a bare array — valid JSON, not a schema. The interpreter ignored
         // it; Ajv refuses to compile it, which is why the corpus repair had to land in the same change as the swap.
-        const names = ['task', 'workflow-state-record', 'workflow-state-event', 'evidence', 'review-finding', 'judge-result', 'wiki-record', 'handoff-packet', 'handoff-receipt', 'repair', 'repair-obligations', 'repair-batch', 'scope-changes', 'revision', 'user-choice-gate', 'task-choice', 'review', 'verify-result', 'kata-relations', 'adversarial-review'];
+        const names = ['task', 'workflow-state-record', 'workflow-state-event', 'evidence', 'review-finding', 'judge-result', 'wiki-record', 'handoff-packet', 'handoff-receipt', 'repair', 'scope-changes', 'revision', 'user-choice-gate', 'task-choice', 'review', 'verify-result', 'kata-relations'];
 
         for (const name of names) {
             expect(() => validate(name, {}), name).not.toThrow(/schema is invalid|must be object,boolean/);

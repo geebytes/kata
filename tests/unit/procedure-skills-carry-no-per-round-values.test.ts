@@ -1,65 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import { renderSkill, skillCommands, type Platform } from '../../src/adapters/manifest.js';
+import { skillCommands } from '../../src/adapters/manifest.js';
 
 /**
- * **The two skills whose subject is a procedure, not kata's lifecycle.**
+ * **A skill is an instruction, never a fact about the host, and never a per-round value.**
  *
- * `kata-host-adapter` is the operator's half of the round protocol and `kata-review-round` is the reviewer's; both were added because the
- * parties they instruct have no other channel from kata. That is also the reason for the rule this file tests: **a skill may carry an
- * instruction, never a per-round value.** A body that repeats the record's fields or the gate's conditions becomes a second channel for a
- * rule the brief already renders, and the measured cost of exactly that on this repository is 28 of 62 review rounds producing no record
- * while a hand-written dispatch prompt carried a missing requirement.
+ * This file was written for two procedure skills — `kata-review-round` and `kata-host-adapter` — which carried the reviewer's
+ * and the operator's halves of the round-shaped route. Both are deleted with that route: the ledger has no round, no wire
+ * format and no executor contract, so the skills' own command line (`kata-cli adversarial execute`) no longer exists.
+ *
+ * The rule they existed to enforce is the repository's, not theirs, and it survives their deletion — which is why the rule is
+ * asserted here against whatever the manifest declares rather than deleted with them. A skill may carry an instruction; a value
+ * the brief or the policy owns may appear in **one** place, and a second channel for it is how a missing requirement came to be
+ * carried by a hand-written dispatch prompt for twenty-eight of sixty-two rounds.
  */
-const PROCEDURE_SKILLS = ['kata-review-round', 'kata-host-adapter'] as const;
+const BRIEF_PRESCRIBED_KEYS = [
+    'readTests', 'wroteTests', 'classInstances', 'targets', 'hypotheses', 'briefSha256', 'revisionId',
+] as const;
 
-/** The JSON keys the brief prescribes for a record. A body that names them is restating the brief. */
-const BRIEF_PRESCRIBED_KEYS = ['readTests', 'wroteTests', 'classInstances', 'targets', 'hypotheses', 'briefSha256', 'revisionId', 'falsifier', 'impact', 'severity', 'observations'];
-
-describe('a procedure skill carries an instruction, not a per-round value', () => {
-    it('exists for each half of a round, and renders for every platform', () => {
-        for (const id of PROCEDURE_SKILLS) {
-            const command = skillCommands.find((entry) => entry.id === id);
-            expect(command, `${id} is shipped as a skill`).toBeTruthy();
-            // The union's members each carry their own literal shape, so `body` is read through the declared type for the ones that have it.
-            expect((command as { body?: string } | undefined)?.body, `${id} renders its own body rather than the workflow-entrypoint text`).toBeTruthy();
-            for (const platform of ['pi', 'codex', 'opencode', 'generic'] as Platform[]) {
-                const rendered = renderSkill(command!, platform);
-                expect(rendered).toContain(`name: ${id}`);
-                expect(rendered).toContain(`platform: ${platform}`);
-                // And it is not the generic body, which would describe resolving a task and reading its packet.
-                expect(rendered).not.toContain('Use this skill to inspect the Kata');
-            }
-        }
-    });
-
-    it('does not restate the record the brief prescribes', () => {
-        for (const id of PROCEDURE_SKILLS) {
-            const body = (skillCommands.find((entry) => entry.id === id) as { body?: string } | undefined)?.body ?? '';
+describe('a skill carries instructions, not values the brief or the policy owns', () => {
+    it('names no key the brief prescribes, in any skill the manifest declares', () => {
+        for (const command of skillCommands) {
+            const body = (command as { body?: string }).body ?? command.outputGoals.join('\n');
             for (const key of BRIEF_PRESCRIBED_KEYS) {
-                expect(body, `${id} names the brief-prescribed key \`${key}\`, so a second channel now carries the same rule`).not.toContain(key);
+                expect(
+                    body.includes(key),
+                    `${command.id} names the brief-prescribed key ${key}, so a second channel now carries the same rule`,
+                ).toBe(false);
             }
         }
     });
 
-    it('says what its own half of the round is, in the sentence that decides it', () => {
-        const reviewer = (skillCommands.find((entry) => entry.id === 'kata-review-round') as { body?: string } | undefined)?.body ?? '';
-        // The reviewer's deciding fact: the brief is authoritative and this skill does not restate it.
-        expect(reviewer).toContain('The brief is the whole instruction set');
-        expect(reviewer).toContain('28 of 62');
-
-        const host = (skillCommands.find((entry) => entry.id === 'kata-host-adapter') as { body?: string } | undefined)?.body ?? '';
-        // The host's deciding fact: it launches and describes, and it does not write the receipt.
-        expect(host).toContain('The host launches and describes');
-        expect(host).toContain('it does not write a receipt');
-        expect(host).toContain('$KATA_REVIEW_PACKET');
+    it('declares no skill whose command line does not exist', async () => {
+        // The measurement that deleted the two procedure skills: every line of their `cli` field named `kata-cli adversarial
+        // execute`, which exits 1 with "unknown command". A skill is installed into a platform's own directory, so a stale
+        // command line is not a comment — it is what an operator will run.
+        // The set is read from the dispatcher the same way the CLI reads it: the words `src/cli.ts` switches on. A
+        // hand-written list would go stale exactly as the two deleted skills' command lines did.
+        const { readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const dispatcher = readFileSync(join(process.cwd(), 'src/cli.ts'), 'utf8');
+        // Two sources, because the CLI splits its vocabulary in two: the workflow commands answer to `isWorkflowCommand`,
+        // and the rest are matched with `command === '<name>'` in the dispatcher. Reading only one of them would have
+        // failed the lifecycle skills, which is how this case found its own first version.
+        const { isWorkflowCommand } = await import('../../src/cli/workflow.js');
+        const known = new Set([...dispatcher.matchAll(/command === '([a-z-]+)'/g)].map((match) => `kata-cli ${match[1]}`));
+        for (const name of ['open', 'design', 'build', 'review', 'judge', 'verify', 'archive', 'hotfix', 'tweak', 'collect', 'next', 'status', 'ledger', 'wiki', 'gate', 'hooks', 'relations', 'tasks', 'orient', 'recover', 'doctor', 'revision', 'worktree', 'eval', 'baseline', 'codegraph', 'comet']) {
+            if (isWorkflowCommand(name) || known.has(`kata-cli ${name}`)) known.add(`kata-cli ${name}`);
+        }
+        for (const command of skillCommands) {
+            const cli = (command as { cli?: string }).cli;
+            if (!cli) continue;
+            // Only the first three words: `kata-cli wiki task` names the command and its subcommand, and the
+            // subcommand's existence is the wiki dispatcher's business rather than this case's.
+            const head = cli.split(/\s+/).slice(0, 2).join(' ');
+            expect(known.has(head), `${command.id} declares "${head}", which is not a command kata dispatches`).toBe(true);
+        }
     });
 
-    it('has no workflow phase, and the manifest does not invent one', async () => {
-        const { commandManifest } = await import('../../src/adapters/manifest.js');
-        for (const id of PROCEDURE_SKILLS) {
-            expect(commandManifest.find((entry) => entry.id === id)).not.toHaveProperty('phase');
-        }
-        // The other direction, so this case is not satisfiable by dropping the field from everything.
-        expect(commandManifest.find((entry) => entry.id === 'kata-build')).toHaveProperty('phase', 'implement');
+    it('still declares the lifecycle skills, so this file cannot pass vacuously', () => {
+        const ids = skillCommands.map((command) => command.id);
+        expect(ids.length).toBeGreaterThan(8);
+        expect(ids).toContain('kata-review');
+        expect(ids).not.toContain('kata-review-round');
     });
 });

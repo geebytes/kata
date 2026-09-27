@@ -13,7 +13,6 @@ import judgeResultSchema from 'kata-asset:schemas/judge-result.schema.json';
 import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
-import roundEventsSchema from 'kata-asset:schemas/round-events.schema.json';
 import { hashContent } from './hash.js';
 
 const schemaContents: Record<string, string> = {
@@ -25,11 +24,7 @@ const schemaContents: Record<string, string> = {
   'judge-result.schema.json': judgeResultSchema,
   'wiki-record.schema.json': wikiRecordSchema,
   'handoff-packet.schema.json': handoffPacketSchema,
-  'handoff-receipt.schema.json': handoffReceiptSchema,
-  // The protocol's definition, which `rpr-f1` shipped into the bundle and `rpr7-f7` found still reached no workspace — this map is what
-  // `kata update` copies into `.kata/schemas`, and a host adapter installed in a workspace reads it from there.
-  'round-events.schema.json': roundEventsSchema,
-};
+  'handoff-receipt.schema.json': handoffReceiptSchema,};
 
 export type LayoutResult = {
   created: string[];

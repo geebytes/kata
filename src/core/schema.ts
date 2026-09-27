@@ -8,10 +8,6 @@ import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
 import repairSchema from 'kata-asset:schemas/repair.schema.json';
-import repairObligationsSchema from 'kata-asset:schemas/repair-obligations.schema.json';
-import falsifierReddeningsSchema from 'kata-asset:schemas/falsifier-reddenings.schema.json';
-import repairAuthorsSchema from 'kata-asset:schemas/repair-authors.schema.json';
-import repairBatchSchema from 'kata-asset:schemas/repair-batch.schema.json';
 import scopeChangesSchema from 'kata-asset:schemas/scope-changes.schema.json';
 import revisionSchema from 'kata-asset:schemas/revision.schema.json';
 import userChoiceGateSchema from 'kata-asset:schemas/user-choice-gate.schema.json';
@@ -19,9 +15,7 @@ import taskChoiceSchema from 'kata-asset:schemas/task-choice.schema.json';
 import reviewSchema from 'kata-asset:schemas/review.schema.json';
 import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
 import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
-import adversarialReviewSchema from 'kata-asset:schemas/adversarial-review.schema.json';
 import changeRecordSchema from 'kata-asset:schemas/change-record.schema.json';
-import roundEventsSchema from 'kata-asset:schemas/round-events.schema.json';
 import reviewSubjectSchema from 'kata-asset:schemas/review-subject.schema.json';
 import reviewClaimSchema from 'kata-asset:schemas/review-claim.schema.json';
 import reviewEvidenceSchema from 'kata-asset:schemas/review-evidence.schema.json';
@@ -43,10 +37,6 @@ const schemaText: Record<string, string> = {
   'handoff-packet': handoffPacketSchema,
   'handoff-receipt': handoffReceiptSchema,
   repair: repairSchema,
-  'repair-obligations': repairObligationsSchema,
-  'falsifier-reddenings': falsifierReddeningsSchema,
-  'repair-authors': repairAuthorsSchema,
-  'repair-batch': repairBatchSchema,
   'scope-changes': scopeChangesSchema,
   revision: revisionSchema,
   'user-choice-gate': userChoiceGateSchema,
@@ -54,9 +44,7 @@ const schemaText: Record<string, string> = {
   review: reviewSchema,
   'verify-result': verifyResultSchema,
   'kata-relations': kataRelationsSchema,
-  'adversarial-review': adversarialReviewSchema,
   'change-record': changeRecordSchema,
-  'round-events': roundEventsSchema,
   'review-subject': reviewSubjectSchema,
   'review-claim': reviewClaimSchema,
   'review-evidence': reviewEvidenceSchema,
