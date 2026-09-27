@@ -135,12 +135,25 @@ function adapterFor(argv: string[], root: string): EvidenceAdapter {
     return createInlineAdapter();
 }
 
-/** Recompute the subject from the declared paths, without writing it: what the working tree holds right now. */
-async function currentSubject(input: LedgerCommandOptions): Promise<{ revision: string; pathDigests: Record<string, string> } | null> {
+/**
+ * Recompute the subject from the declared paths, without writing it: what the working tree holds right now.
+ *
+ * **The failure names the paths.** It returned `null` on both "nothing is declared" and "a declared path cannot be read",
+ * so `ledger plan` answered "declare ownedPaths or fix the paths" without saying which — the operator had to diff the
+ * declaration against the filesystem to find out. `freeze` already reports `unreadable`, so the two commands disagreed
+ * about how much to say about the same fact. Measured: a change whose declaration holds fifteen deleted paths got a
+ * message that named none of them.
+ */
+async function currentSubject(input: LedgerCommandOptions): Promise<
+    { ok: true; subject: { revision: string; pathDigests: Record<string, string> } }
+    | { ok: false; why: string; unreadable: string[] }
+> {
     const paths = await declaredPaths(input.root, input.changeId);
-    if (paths.length === 0) return null;
+    if (paths.length === 0) {
+        return { ok: false, why: 'no paths are declared on this task, so there is nothing to freeze', unreadable: [] };
+    }
     const frozen = await freezeSubject({ root: input.root, paths });
-    return frozen.ok ? frozen.subject : null;
+    return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 
 export async function runLedgerCommand(argv: string[], options: LedgerCommandOptions): Promise<void> {
@@ -258,11 +271,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             const history = await readVerdictHistory(options.root, changeId);
             const evidenceIds = new Set(claim.evidenceIds);
             const readings = history.entries.filter((entry) => evidenceIds.has(String(entry.evidenceId)));
+            // **An empty history and an unwritten one are the same list and different facts.** A ledger recorded before
+            // `verdict-history.jsonl` existed has no history file at all, and reporting `readings: []` for it would read as
+            // "these verdicts were never reversed" — a claim about the content — when the truth is that reversals were not
+            // being recorded. The field is present only when there is a history to read, and its absence is explained.
+            const historyExists = ledger.recordedFiles.includes('verdict-history.jsonl');
             outputResult({
                 ok: true,
                 claim,
                 verdicts: ledger.verdicts.filter((verdict) => claim.evidenceIds.includes(verdict.evidenceId)),
-                readings,
+                ...(historyExists
+                    ? { readings }
+                    : { readingsNote: 'no verdict history has been recorded for this change, so these verdicts cannot be asked whether any of them was reversed — the history was introduced after they were written' }),
                 ...(history.malformed > 0 ? { historyMalformed: `${history.malformed} line(s) of the verdict history cannot be parsed` } : {}),
             });
             return;
@@ -643,11 +663,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     }
 
     if (sub === 'plan') {
-        const current = await currentSubject({ root: options.root, changeId });
-        if (!current) {
-            fail({ command: 'ledger plan', error: 'the declared paths could not be frozen; declare ownedPaths or fix the paths' });
+        const computed = await currentSubject({ root: options.root, changeId });
+        if (!computed.ok) {
+            fail({ command: 'ledger plan', error: `the declared paths could not be frozen: ${computed.why}`, unreadable: computed.unreadable });
             return;
         }
+        const current = computed.subject;
         const changed = ledger.subject === null
             ? Object.keys(current.pathDigests)
             : (() => {
@@ -808,11 +829,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger focus', error: 'the subject is not frozen: run `ledger freeze` first' });
             return;
         }
-        const current = await currentSubject({ root: options.root, changeId });
-        if (!current) {
-            fail({ command: 'ledger focus', error: 'the declared paths could not be frozen' });
+        const computed = await currentSubject({ root: options.root, changeId });
+        if (!computed.ok) {
+            fail({ command: 'ledger focus', error: `the declared paths could not be frozen: ${computed.why}`, unreadable: computed.unreadable });
             return;
         }
+        const current = computed.subject;
         // **A focus narrows a plan; it does not invent one.** Without a stored plan there are no reading sets to narrow, and
         // producing an impact cone by re-deriving the dependencies here would be the second answer to a question the planner
         // already answered — so it is a named state rather than a silent fallback.
