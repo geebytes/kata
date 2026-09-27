@@ -320,29 +320,55 @@ function repeatedValues(argv: string[], flag: string): string[] {
     return values;
 }
 
+/**
+ * The receipt a mutation needs, and **why the refusal says which of two situations this is.**
+ *
+ * The message used to be one sentence for both: no receipt exists, or a receipt exists and no longer describes the task. It
+ * matters because the remedies differ — one is `handoff create` then `handoff acknowledge`, the other is to *re-acknowledge*
+ * after whatever moved the task (a scope apply, an edit to a declared path) — and the reader had to diff the packet against
+ * the working tree to discover which. Measured while walking a real change: two `scope apply` calls each invalidated the
+ * receipt, and the third attempt was refused with a sentence that named neither the cause nor the command.
+ */
 export async function requireWorkflowReceipt(root: string, taskId: string, role: HandoffRole): Promise<void> {
     const handoffDirectory = handoffDir(root, taskId);
     let entries: string[];
     try {
         entries = await readdir(handoffDirectory);
     } catch {
-        throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
+        throw new Error(
+            `Workflow mutation requires a current acknowledged handoff receipt for ${role}, and this task has none. `
+            + `Create one: \`kata-cli handoff create --task ${taskId} --from <role> --to ${role}\`, then acknowledge it with \`kata-cli handoff acknowledge --task ${taskId} --id <handoff-id> --platform <name> --role ${role}\`.`,
+        );
     }
     const ids = entries
         .filter((entry) => entry.startsWith('handoff-') && entry.endsWith('.receipt.json'))
         .map((entry) => entry.slice(0, -'.receipt.json'.length))
         .sort()
         .reverse();
+    // The freshest refusal is the informative one: an older receipt's reason is usually the same reason it was superseded.
+    let newestRefusal = '';
     for (const id of ids) {
         try {
             await requireAcknowledgedContextPacket({ root, taskId, id, role });
             return;
-        } catch {
-            // An older or stale receipt cannot authorize this command; try only
-            // another receipt for the same task before rejecting the mutation.
+        } catch (error) {
+            // An older or stale receipt cannot authorize this command; try only another receipt for the same task before
+            // rejecting the mutation.
+            if (newestRefusal === '') newestRefusal = (error as Error).message;
         }
     }
-    throw new Error(`Workflow mutation requires a current acknowledged handoff receipt for ${role}.`);
+    if (ids.length === 0) {
+        throw new Error(
+            `Workflow mutation requires a current acknowledged handoff receipt for ${role}, and this task has packets but none acknowledged. `
+            + `Acknowledge one: \`kata-cli handoff acknowledge --task ${taskId} --id <handoff-id> --platform <name> --role ${role}\`.`,
+        );
+    }
+    throw new Error(
+        `Workflow mutation requires a current acknowledged handoff receipt for ${role}, and none of this task's ${ids.length} receipt(s) is current. `
+        + `A receipt describes the task as it stood when it was acknowledged, so changing the task's declared paths or scope supersedes it. `
+        + `Last refusal: ${newestRefusal} `
+        + `Re-acknowledge after the change: \`kata-cli handoff create --task ${taskId} --from <role> --to ${role}\` then \`kata-cli handoff acknowledge --task ${taskId} --id <handoff-id> --platform <name> --role ${role}\`.`,
+    );
 }
 
 export function reviewEvidenceArg(argv: string[]): string | undefined {
