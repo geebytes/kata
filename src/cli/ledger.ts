@@ -531,6 +531,22 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
+    if (sub === 'corpus') {
+        // **The connection the two corpora never had.** `scoreCorpus` has existed since the old eval path was written, and
+        // the new mechanism's own seed corpus has existed since it was built, and nothing joined them: the old corpus could
+        // only be scored from a hand-written manifest, and the seeds were only ever read by one test file. So "what does the
+        // mechanism decide on the corpus of its own failure modes" was unanswerable, which is one of the reasons six of the
+        // plan's acceptance criteria say "not measurable".
+        //
+        // This is the referee, and it is deterministic by construction: the seeds are decided by `decide()`, the verdict is
+        // compared with what each seed expects, and the rates come out of that comparison. No tokens, no round, no host.
+        const { scoreSeeds } = await import('../store/corpus.js');
+        const score = await scoreSeeds();
+        outputResult({ ok: score.mismatched.length === 0, command: 'ledger corpus', ...score });
+        if (score.mismatched.length > 0) process.exitCode = 1;
+        return;
+    }
+
     if (sub === 'decide') {
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');

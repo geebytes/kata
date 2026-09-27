@@ -750,7 +750,27 @@ Cost ≤ 0.6 C0                    ❌ 不可测：C0 需要"旧机制每 change
                                     且那些轮次的产出是零记录（§14 已记），拿它们当 baseline 会把 0 当分母
 ```
 
-## 17.3 下一步（P1 剩下的两件，按依赖）
+## 17.3 已落地的两件（②③）
+
+**② 反例语料**：`tests/fixtures/review-scenarios.ts` 加了两条种子 —— `a-counterexample-that-reproduces`（反例真的复现 ⇒ blocked）与 `a-refuted-verdict-survives-the-counterexample`（已反驳的判决不被反例软化：`fail` 优先于 `insufficient`，两个 reason 并存）。**`refutationRate` 从此有一个非零样本**，而不再是一个只在 0 处被读过的指标。
+
+**③ 语料对账入口**：新增 `kata-cli ledger corpus` + `src/store/corpus.ts`。它把**新机制自己的失效模式语料**喂给 `decide()`，逐条对照每条种子写的期望，输出三样东西：
+
+```
+cases · matched · mismatched（带【两侧】：期望 vs 实际，以及缺哪些 reason）
+byVerdict（pass/insufficient/fail 的分布，让语料的形状漂移可见）
+reasonsExercised / reasonsUnexercised（内核能产出的每一个 reason 都必须被某条种子行使）
+measures（明确写出它【不】度量什么：不度量"没人埋的缺陷能否被发现"）
+```
+
+**实测**：`ledger corpus` → `22 / 22 matched · byVerdict {pass:5, insufficient:15, fail:2} · reasons 14 条全部被行使 · unexercised 空` ✓
+四个用例固定它的三条性质：**会报分歧而不是平均掉**（verdict 一致但 reason 缺失也算 mismatch）· **一条坏种子不会掩盖其余二十条**（builder 抛错被报成 mismatch）· **它说出自己不适合回答的问题**（`measures` 字段）。
+
+```
+§8 的映射因此更新：CriticalRecall / FalsePass 的【分母】现在有了（22 条种子 + 逐条期望），
+但分母的另一半 —— 真实 verifier 的 observation —— 仍需要一个会产出 observation 的运行；
+而"缺陷召回"这条仍是语料本身的局限（种子是我们写的，不是历史缺陷）。
+
 
 ```
 ② 反例语料：给 `refutationRate` 一个非零样本 —— 在 `tests/fixtures/review-scenarios.ts` 里加一类
