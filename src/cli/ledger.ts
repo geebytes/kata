@@ -25,7 +25,7 @@ import { envelopeFor } from '../kernel/budget.js';
 import { probesFor } from '../kernel/discovery.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
-import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
+import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
 import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
@@ -676,12 +676,22 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });
+        // **The tier the decision will use, not the classification alone.** These differed on a real change — the plan said
+        // `standard`, the decision said `strict` — because only one of them applied the policy's ceiling, so the plan's
+        // required evidence and risk classes were computed for a weaker tier than its own gate. `resolveTier` is that rule
+        // in one place, and `--tier` still wins.
+        const tierFlagPlan = argValue(argv, '--tier');
+        const plannedTier = resolveTier({
+            classification: risk,
+            policy: ledger.policy,
+            ...(tierFlagPlan === undefined ? {} : { override: tierFlagPlan as TierName }),
+        });
         const c0Raw = argValue(argv, '--c0');
         const plan = planReview({
             subject: current,
             claims: ledger.claims,
             policy: ledger.policy,
-            tier: risk.tier,
+            tier: plannedTier,
             changedPaths: changed.length > 0 ? changed : Object.keys(current.pathDigests),
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
         });

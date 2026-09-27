@@ -426,7 +426,10 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
         const planned = await ledger(['plan', '--c0', '600000']);
         const plan = planned.plan as { tier: string; discovery: { deadlineToolCalls: number | null }; readingSets: Array<{ paths: string[] }> };
-        expect(plan.tier).toBe('standard');
+        // **The tier the decision will use, which is the classification raised to the policy ceiling.** This asserted
+        // `standard` while `ledger decide` on the same ledger answered `strict` — two derivations of one fact, and the plan
+        // was the one computing its required evidence for a weaker tier than its own gate would enforce.
+        expect(plan.tier).toBe('strict');
         expect(plan.discovery.deadlineToolCalls).toBe(200);
         expect(plan.readingSets[0]?.paths).toEqual(['src/a.ts']);
     });

@@ -13,7 +13,7 @@
 import { readLedger, declaredPaths, readProbeAnswers, type Ledger } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
-import { classifyRisk, TIER_RANK } from '../kernel/risk.js';
+import { classifyRisk, resolveTier } from '../kernel/risk.js';
 import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } from '../kernel/types.js';
 import type { Challenge } from '../kernel/types.js';
 import type { ProbeAnswer } from '../kernel/discovery.js';
@@ -195,9 +195,9 @@ export async function ledgerVerdict(input: {
         paths: await declaredPaths(input.root, input.changeId),
         policy: ledger.policy,
     });
-    const ceiling = ledger.policy.ledgerTierCeiling;
-    const tier: TierName = input.tier
-        ?? (TIER_RANK[classification.tier] >= TIER_RANK[ceiling] ? classification.tier : ceiling);
+    // One derivation for the tier, shared with `ledger plan`: the ceiling is a rule about the tier, and a command that
+    // ignored it reported a weaker tier than the one being enforced.
+    const tier: TierName = resolveTier({ classification, policy: ledger.policy, ...(input.tier === undefined ? {} : { override: input.tier }) });
     // **The quorum is assembled from independent readings, not from reviewer names.** `groupByProducer` groups verdicts by
     // the run that decided them, so two runs are two observations and one run reported twice is one. The old shape handed
     // every producer the ledger's whole verdict list, which made `disputed` unreachable (one verdict per item) and made

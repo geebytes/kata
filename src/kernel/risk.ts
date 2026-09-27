@@ -38,6 +38,27 @@ export type RiskClassification = {
     reason: string;
 };
 
+/**
+ * **The tier a change is reviewed at — the one derivation, so no two commands disagree about it.**
+ *
+ * It was derived twice and the two answers differed on a real change: `ledger plan` reported the *classification* tier
+ * (`standard`) while `ledger decide` reported the policy ceiling (`strict`). The ceiling is not decoration — it exists
+ * because a floor is only as good as its patterns, and a change to what evidence is accepted sits under a pattern no rule
+ * names — so the command that ignored it was computing the plan's required evidence and risk classes for a weaker tier than
+ * the one the decision would enforce. A plan weaker than its gate is worse than no plan: it looks like a specification.
+ *
+ * An explicit override still wins: naming a tier is the operator making the decision the ceiling exists to keep honest.
+ */
+export function resolveTier(input: {
+    classification: RiskClassification;
+    policy: Policy;
+    override?: TierName;
+}): TierName {
+    if (input.override !== undefined) return input.override;
+    const ceiling = input.policy.ledgerTierCeiling;
+    return TIER_RANK[input.classification.tier] >= TIER_RANK[ceiling] ? input.classification.tier : ceiling;
+}
+
 export function classifyRisk(input: {
     paths: readonly string[];
     policy: Policy;
