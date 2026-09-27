@@ -66,6 +66,23 @@ describe('next-action resolver', () => {
             .toMatchObject({ nextSkill: '/kata-judge', role: 'judge', reason: 'judge_reviewed_change' });
     });
 
+    it('names both commands when entering review takes two', () => {
+        // **Measured on a real change:** the ladder sent `/kata-review`, whose `cliCommand` was the `--approve` form — and
+        // that command *refused*, because approval requires the task to already be in the `review` phase, which entering
+        // review is what produces. The reader was told what to type and it did not work, so the step names both commands and
+        // says which order they go in.
+        const action = nextActionForTask('demo-task', '/kata-review', 'reviewer', 'review_fresh_implementation');
+        expect(action.cliCommand).not.toContain('--approve');
+        expect(action.followUpCommand, 'the completing command must be stated').toContain('--approve');
+        expect(action.followUpCommand).toContain('demo-task');
+        expect(action.pauseInstruction, 'and the order must be stated, since running the second first is refused').toBeTruthy();
+    });
+
+    it('does not invent a follow-up for a step that is one command', () => {
+        const action = nextActionForTask('demo-task', '/kata-build', 'implementer', 'repair_failed_verify');
+        expect(action.followUpCommand).toBeUndefined();
+    });
+
     it('asks for Wiki closure before review when verify ran clean but the closure is open', () => {
         const suggestion = suggestCandidateAction('hardVerify', upstream({
             verifyResult: 'FAIL',

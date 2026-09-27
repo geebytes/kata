@@ -163,6 +163,15 @@ export type NextAction = {
   modelOrPlatformSwitchAllowed: boolean;
   trustBoundary?: TrustBoundary;
   pauseInstruction?: string;
+  /**
+   * The command that completes the step this action starts, when one command is not enough.
+   *
+   * Measured on a real change: the ladder sent `/kata-review`, whose own `cliCommand` is
+   * `kata-cli review --change <id> --approve` — and that command *refused*, because approval requires the task to already
+   * be in the `review` phase, which entering review is what produces. The working sequence is two commands, and the ladder
+   * named one of them; the reader was told what to type and it did not work. Set only where a step genuinely takes two.
+   */
+  followUpCommand?: string;
 };
 
 export async function readUpstreamSummary(root: string, taskId: string): Promise<UpstreamSummary> {
@@ -532,6 +541,15 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
     modelOrPlatformSwitchAllowed: gate !== null,
     ...(gate ? { trustBoundary: gate } : {}),
     ...(gate ? { pauseInstruction: boundaryPromptFor(gate, promptLanguage()) } : {}),
+    // **A two-step step says so.** Entering review and approving are different commands, and the one the ladder named was
+    // the second: it refuses until the first has run, so an operator following the ladder hits a refusal whose remedy is a
+    // command the ladder did not mention.
+    ...(reason === 'review_fresh_implementation'
+        ? {
+            followUpCommand: `kata-cli review --change ${taskId} --approve --review-evidence "<what the ledger decided and why it suffices>"`,
+            pauseInstruction: '先进 review 相位，再审批：`kata-cli review --change <id>` 会把相位推进 review，`kata-cli review --change <id> --approve` 在相位推进前会被拒绝。两者都要跑。',
+        }
+        : {}),
     ...(wikiClosure ? { pauseInstruction: '实现验证已通过；请决定本任务的知识闭环是 captured 还是 not_applicable，再重新执行 /kata-verify。' } : {}),
   };
 }
