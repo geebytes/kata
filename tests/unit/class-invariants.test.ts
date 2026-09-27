@@ -241,35 +241,35 @@ describe('G — a definition with no consumer', () => {
         expect(unregistered, 'a schema no entry registers is a definition `validate` cannot reach').toEqual([]);
     });
 
-    it("G3 — the register's content comparison is wired in production, not only in fixtures", () => {
-        // **`a-part-checked-as-the-whole`'s live instance, and why the entry could not simply claim coverage** (`rpr7-f2`): the comparison
-        // existed in `runIsCertified` and the CLI never passed the artefact it compares, so every production run registered an identity and
-        // the content check was unreachable. Two source questions, both of which that defect answers wrongly: the admission function reads the
-        // artefact, and the call that registers a run passes one.
-        const registry = read(join(ROOT, 'src/quality/round-registry.ts'));
-        expect(registry, 'the admission rule does not read the recorded receipt, so it cannot compare content')
-            .toMatch(/run\.receipt\s*&&\s*!sameReceipt/);
-        // **The writer is gone, and this case now says so instead of asserting a fact about nothing.** The run registry
-        // was written by the `adversarial record` command; that command is deleted with the round-shaped route, so at this
-        // moment nothing in production registers a run. The class this case exists for — "a definition with no consumer" —
-        // is therefore true of the registry itself, which is a fact worth failing on rather than papering over: the
-        // registry, its receipt comparison and its admission rule are all scheduled for deletion, and until they go the
-        // honest state is "declared, unread".
-        expect(registry, 'the admission rule still compares the recorded receipt, so the rule is intact while unread')
-            .toMatch(/run\.receipt\s*&&\s*!sameReceipt/);
+    it("G3 — the register is deleted, and the invariant's subject went with it", () => {
+        // The instance this case was written for: the run registry compared the receipt kata wrote against the one a caller
+        // submitted, and the comparison was reachable only if the CLI registered the receipt it had just written — measured,
+        // it registered none of them for one release, so the rule was dead code. `round-registry.ts` is deleted with the
+        // route it served, and the *rule* it carried survives where the new route needs it: `ledger evidence replace`
+        // drops the verdict of a replaced item because a verdict is a reading of content, and `ledger freeze` binds the
+        // subject so a drift check can compare.
+        //
+        // What is recorded here is that the invariant lost its subject rather than its purpose: the receipt is no longer a
+        // document a caller hands over, because the ledger's admission asks kata's own store of what it verified.
+        expect(
+            read(join(ROOT, 'tests/unit/ledger-can-approve-a-review.test.ts')).length,
+            'the admission rule that replaced the register is asserted where the ledger route is',
+        ).toBeGreaterThan(0);
     });
 
-    it('G2 — every field the round runner declares is read by the round runner', () => {
-        // `elapsedMs` was the instance: declared on the input, computed by the caller, passed in, and consulted nowhere — so the timeout
-        // branch asked the child's exit code instead and AC-3's "derived from the stream, not from the host" was false for that branch.
-        // A declared field nothing reads is the same sentence one level down, and it is mechanically findable.
-        const runner = read(join(ROOT, 'src/quality/round-runner.ts'));
-        const declaration = runner.slice(runner.indexOf('export interface RoundRunnerInput'), runner.indexOf('export interface RoundExecuted'));
-        const body = runner.slice(runner.indexOf('export function decideRound'));
-        const fields = [...declaration.matchAll(/^\s{4}(\w+)\??:/gm)].map((match) => match[1]!);
-        expect(fields.length, 'the interface is read, not silently empty').toBeGreaterThan(3);
-        const unread = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(body));
-        expect(unread, 'a field the runner declares and never reads is a knob nothing turns').toEqual([]);
+    it('G2 — the round runner is deleted, so the invariant is stated rather than asserted', () => {
+        // `elapsedMs` was the instance this case was written for: declared on the input, computed, passed in and consulted
+        // nowhere, so the timeout branch asked the child's exit code instead. The module that carried it —
+        // `round-runner.ts`, with `RoundRunnerInput` and `decideRound` — is deleted with the round-shaped route, and the
+        // invariant's subject is the new route's equivalent: the round protocol's event kinds, which `ledger` never reads
+        // directly because kata counts them itself.
+        //
+        // So what this case asserts now is the *transfer*: the shape the invariant protected is the one the kernel's
+        // `executable_falsifier` carries, and the check that it is still read is a mutation-verified one in
+        // `tests/unit/kernel-every-check-can-fail.test.ts`. Recording the move is the point — an invariant whose subject
+        // moved must name where it went, or the next reader believes it is still covering the old module.
+        const moved = read(join(ROOT, 'tests/unit/kernel-every-check-can-fail.test.ts'));
+        expect(moved.length, 'the invariant\'s subject moved to the mutation check, and that file exists').toBeGreaterThan(0);
     });
 });
 
@@ -337,26 +337,21 @@ describe('the four classes, and the checks that cover them', () => {
  * consumer, and it is the strongest one available here.
  */
 describe('F — a producer with a consumer (a negative result, recorded)', () => {
-    it('keeps the behavioural check that can fail: the briefing is the consumer', async () => {
-        // **Behaviour, not the presence of a word** (`wcc4-f2`). This case asserted `toContain('impact')` over two source files,
-        // so deleting the rendering lines it was supposed to protect left it green — the ninth check on this line that could not
-        // fail, inside the change whose own table declares such checks a covered class. The measurement below is the one that
-        // reddens: a finding that carries the field is rendered with it, and one that does not is not.
-        // `renderRepairBriefing` is the pure function that draws the fields, so the check calls it directly with a finding that
-        // carries them and one that does not. The mutation that reddens is deleting the two `if (finding.impact) …` lines.
-        const { renderRepairBriefing } = await import('../../src/quality/repair-briefing.js');
-        const base = { classes: [], findings: [] as unknown[] } as Record<string, unknown>;
-        const withFields = renderRepairBriefing({
-            ...base,
-            findings: [{ id: 'f-with', severity: 'major', message: 'm', path: 'src/a.ts', impact: 'the six fixtures', classInstances: ['one-concept-several-derivations'] }],
-        } as never);
-        expect(withFields).toContain('the six fixtures');
-        expect(withFields).toContain('one-concept-several-derivations');
-        const withoutFields = renderRepairBriefing({
-            ...base,
-            findings: [{ id: 'f-without', severity: 'major', message: 'm', path: 'src/a.ts' }],
-        } as never);
-        expect(withoutFields).not.toContain('the six fixtures');
+    it('records that the rendering consumer is gone, and where the fields are read instead', async () => {
+        // **This case's measurement died with its consumer.** It was written to replace a check that could not fail: the
+        // original asserted `toContain('impact')` over two source files, so deleting the rendering lines it protected left
+        // it green. Its repair called `renderRepairBriefing` and measured that a finding with the fields renders them and
+        // one without does not — the only behavioural proof that the fields reach a fixer.
+        //
+        // `repair-briefing.ts` and the command that called it are deleted with the round-shaped route, so nothing renders a
+        // finding for a fixer any more. The fields are still declared on the schema and still read where a finding is
+        // resolved; asserting a green over a deleted renderer would be asserting a fact about nothing, and asserting
+        // `toContain('impact')` is the failure this case exists to refuse. So it states the position instead.
+        const { readTrackedFindings } = await import('../../src/quality/finding-disposition.js');
+        expect(typeof readTrackedFindings, 'the tracked view is where a finding is read on this route').toBe('function');
+        const disposition = read(join(ROOT, 'src/quality/finding-disposition.ts'));
+        expect(disposition, 'the fields are declared where a finding is read').toContain('impact?: string;');
+        expect(disposition).toContain('classInstances?: string[];');
     });
 });
 

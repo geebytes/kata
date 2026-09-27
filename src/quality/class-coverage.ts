@@ -167,7 +167,10 @@ export const CLASS_COVERAGE: readonly CoverageEntry[] = [
         // confirm it"), and one of them had found a route the design never enumerated, which survived only because a human read
         // four megabytes of transcript.
         means: 'a required output has exactly one channel and that channel is not guaranteed, so a process that ends early produces nothing',
-        coveredBy: ['tests/unit/record-salvage.test.ts'],
+        // The cited fixture was `tests/unit/record-salvage.test.ts`, deleted with `record-salvage.ts` — the module existed to
+        // recover a record a pass never emitted, which the ledger's incremental writes make structurally unnecessary. The
+        // class is still covered, by the case that asserts the replacement: nothing is recovered because nothing is lost.
+        coveredBy: ['tests/unit/ledger-records-each-fact-as-it-arrives.test.ts'],
     },
 ];
 
