@@ -21,11 +21,19 @@ export const RISK_CLASSES = [
 ] as const;
 export type RiskClass = (typeof RISK_CLASSES)[number];
 
-/** The five evidence types. A finding must carry the type that fits it and the severity it claims. */
+/**
+ * The evidence types.
+ *
+ * **Four, not five** (`the K2 gap`). The fifth was `invariant_proof`: a command that exits 0 when an invariant holds. It
+ * was a weaker spelling of the type beside it — the only difference is whether the author declares the mutation that
+ * makes the check fail — and the weaker spelling had no mutation field at all, so a check that could never fail was
+ * admissible and carried a claim to `pass` (measured: `bash -c "exit 0"` verified as supported). Since the whole point of
+ * a check is that it can fail, the type that could not say so is gone rather than given a second rule to remember. A
+ * property test or type-level invariant is now expressed as a falsifier whose mutation violates it.
+ */
 export const EVIDENCE_TYPES = [
     'executable_falsifier',
     'static_witness',
-    'invariant_proof',
     'cross_artifact_contradiction',
     'expert_concurrence',
 ] as const;
@@ -89,9 +97,14 @@ export type Evidence =
         type: 'executable_falsifier';
         /** Removing or injecting the defect must make this command fail. */
         command: string;
-        /** The revision the command was authored against; a verdict for another revision is stale by construction. */
-        subjectRevision: string;
-        /** The defect this check is sensitive to: inject `find`, expect `command` to redden, restore. */
+        /**
+         * The defect this check is sensitive to: inject `find`, expect `command` to redden, restore.
+         *
+         * **The item carries no revision of its own** (`measured in the type merge`). It used to require one, and nothing
+         * read it: the fact that makes a verdict stale is recorded on the *verdict* (`context.subject.revision`), and the
+         * kernel compares that against the subject. A second copy on the item was a declaration with no consumer, which
+         * is why the requirement looked like a rule and behaved like paperwork.
+         */
         mutation: { file: string; find: string; replace: string };
     }
     | {
@@ -101,13 +114,6 @@ export type Evidence =
         ref: string;
         /** `contains:<literal>` or `not-contains:<literal>`. */
         assertion: string;
-    }
-    | {
-        id: string;
-        type: 'invariant_proof';
-        invariantId: string;
-        /** Exits 0 when the invariant holds on the frozen subject. */
-        command: string;
     }
     | {
         id: string;

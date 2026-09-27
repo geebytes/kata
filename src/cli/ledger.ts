@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport } from '../store/ledger.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -328,7 +328,13 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 return;
             }
             for (const claim of read.submission.claims) await appendClaim(options.root, changeId, claim);
-            for (const item of read.submission.evidence) await appendEvidence(options.root, changeId, item);
+            for (const item of read.submission.evidence) {
+                const added = await appendEvidence(options.root, changeId, item);
+                if (!added.ok) {
+                    fail({ command: 'ledger evidence add', error: added.why });
+                    return;
+                }
+            }
             await appendRun(options.root, changeId, {
                 at: nowIso(),
                 producer: argValue(argv, '--producer') ?? 'unstated',
@@ -345,6 +351,23 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             });
             return;
         }
+        if (action === 'replace') {
+            const file = argValue(argv, '--file');
+            const reason = argValue(argv, '--reason');
+            if (file === undefined || reason === undefined || reason.trim() === '') {
+                fail({ command: 'ledger evidence replace', error: '--file <set.json> and --reason <why> are required: the one operation that may rewrite evidence must say why.' });
+                return;
+            }
+            const read = readSubmission(JSON.parse(await readFile(file, 'utf8')) as unknown);
+            if (!read.ok) {
+                fail({ command: 'ledger evidence replace', errors: read.errors });
+                return;
+            }
+            const replaced = await replaceEvidence(options.root, changeId, read.submission.evidence, reason.trim());
+            outputResult({ ok: true, command: 'ledger evidence replace', reason: reason.trim(), ...replaced });
+            return;
+        }
+
         if (action === 'verify') {
             if (!ledger.subject) {
                 fail({ command: 'ledger evidence verify', error: 'the subject is not frozen: run `ledger freeze` first' });

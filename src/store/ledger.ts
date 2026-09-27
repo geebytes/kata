@@ -30,7 +30,7 @@ const FILES = {
     runs: 'runs.json',
 } as const;
 
-export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string };
+export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
 
 export type Ledger = {
     changeId: string;
@@ -223,13 +223,71 @@ export async function appendClaim(root: string, changeId: string, claim: Claim):
     });
 }
 
-export async function appendEvidence(root: string, changeId: string, evidence: Evidence): Promise<Evidence> {
+/**
+ * Add one evidence item, and refuse a conflicting id rather than quietly doing nothing.
+ *
+ * Evidence is **write-once**: an item is a fact about what was measured, so silently overwriting one would rewrite history,
+ * and silently ignoring one would report success for a fact that was not written. Both used to happen — the first version
+ * skipped an existing id, which is the same shape as an insert that claims to have persisted (`the challenge-id
+ * collision`, measured on this repository). An identical re-add is a no-op that says so.
+ */
+export async function appendEvidence(
+    root: string,
+    changeId: string,
+    evidence: Evidence,
+): Promise<{ ok: true; item: Evidence; written: boolean } | { ok: false; why: string }> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.evidence);
         const items = (await readJson<Evidence[]>(path)) ?? [];
-        if (!items.some((entry) => entry.id === evidence.id)) items.push(evidence);
+        const existing = items.find((entry) => entry.id === evidence.id);
+        if (existing) {
+            const same = JSON.stringify(existing) === JSON.stringify(evidence);
+            return same
+                ? { ok: true as const, item: existing, written: false }
+                : {
+                    ok: false as const,
+                    why: `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --reason <why>\` when the recorded item is wrong, so the correction carries its reason.`,
+                };
+        }
+        items.push(evidence);
         await writeJson(root, changeId, FILES.evidence, items);
-        return evidence;
+        return { ok: true as const, item: evidence, written: true };
+    });
+}
+
+/**
+ * Replace the whole evidence set, naming why.
+ *
+ * The one operation that may rewrite evidence, and it is a *named* operation with a **recorded reason** because there is a
+ * class of case that has no other door: an item recorded under a type or a shape this build no longer accepts (measured —
+ * five items of a removed type held a review approval, and they could not be re-verified, corrected or reached by any other
+ * command). Verdicts for replaced items are dropped with them: a verdict is a reading of content, and content that changed
+ * has no reading. The reason travels in the run ledger, so a reader sees the correction and why it happened.
+ */
+export async function replaceEvidence(
+    root: string,
+    changeId: string,
+    items: readonly Evidence[],
+    reason: string,
+): Promise<{ replaced: number; droppedVerdicts: string[] }> {
+    return mutate(root, changeId, async () => {
+        const evidencePath = join(reviewDir(root, changeId), FILES.evidence);
+        const verdictPath = join(reviewDir(root, changeId), FILES.verdicts);
+        const before = (await readJson<Evidence[]>(evidencePath)) ?? [];
+        const changed = items.filter((item) => {
+            const existing = before.find((entry) => entry.id === item.id);
+            return existing === undefined || JSON.stringify(existing) !== JSON.stringify(item);
+        });
+        const changedIds = new Set(changed.map((item) => item.id));
+        await writeJson(root, changeId, FILES.evidence, [...items]);
+        const verdicts = (await readJson<EvidenceVerdict[]>(verdictPath)) ?? [];
+        const kept = verdicts.filter((verdict) => !changedIds.has(verdict.evidenceId));
+        const dropped = verdicts.filter((verdict) => changedIds.has(verdict.evidenceId)).map((verdict) => verdict.evidenceId);
+        if (dropped.length > 0) await writeJson(root, changeId, FILES.verdicts, kept);
+        const runs = (await readJson<LedgerRun[]>(join(reviewDir(root, changeId), FILES.runs))) ?? [];
+        runs.push({ at: nowIso(), producer: 'operator', claims: 0, evidence: changed.length, diversity: 'n/a', note: reason });
+        await writeJson(root, changeId, FILES.runs, runs);
+        return { replaced: changed.length, droppedVerdicts: dropped };
     });
 }
 

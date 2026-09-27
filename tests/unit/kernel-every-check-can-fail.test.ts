@@ -29,12 +29,36 @@ describe('every evidence type has a verifier, and every verifier can fail', () =
         expect(missing[0]?.verdict).toBe('inconclusive');
     });
 
-    it('invariant proof reddens when the invariant is violated', async () => {
-        const evidence: Evidence = { id: 'E', type: 'invariant_proof', invariantId: 'no-duplicate-derivation', command: 'check' };
-        const green = await verifyAll([evidence], makeContext({ subject, exitRule: () => 0 }));
-        const red = await verifyAll([evidence], makeContext({ subject, exitRule: () => 1 }));
+    it('refuses a command-backed check that declares no mutation, which is the hole this suite exists for', async () => {
+        // **Measured, not argued.** Before the fifth evidence type was removed, an `invariant_proof` whose command was
+        // `bash -c "exit 0"` verified as `supported` and carried a major claim to `pass`: a check that can never fail,
+        // accepted as evidence. The type is gone, and a falsifier without a mutation is now inadmissible by shape — so the
+        // hole cannot reopen by someone forgetting a rule.
+        const noMutation = { id: 'E', type: 'executable_falsifier', command: 'check' } as Evidence;
+        expect(evidenceShapeProblems(noMutation)).toContain('mutation.file is required: a check that cannot be reddened is not evidence');
+
+        const incomplete = { ...noMutation, mutation: { file: 'src/a.ts', find: 'x', replace: '' } } as unknown as Evidence;
+        expect(evidenceShapeProblems(incomplete)).toEqual([]);
+
+        // And a declared mutation is checked by running the three steps, not by believing the declaration.
+        const declared = {
+            id: 'E',
+            type: 'executable_falsifier',
+            command: 'check',
+            mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
+        } as Evidence;
+        const green = await verifyAll([declared], makeContext({
+            subject,
+            files: { 'src/a.ts': 'holds\n' },
+            exitRule: (_command, files) => (files['src/a.ts']?.includes('broken') === true ? 1 : 0),
+        }));
         expect(green[0]?.verdict).toBe('supported');
-        expect(red[0]?.verdict).toBe('refuted');
+        const unsensitive = await verifyAll(
+            [{ ...declared, mutation: { file: 'src/a.ts', find: 'nothing-here', replace: 'x' } } as Evidence],
+            makeContext({ subject, files: { 'src/a.ts': 'holds\n' } }),
+        );
+        expect(unsensitive[0]?.verdict).toBe('inconclusive');
+        expect(String(unsensitive[0]?.observed)).toContain('mutation site is gone');
     });
 
     it('cross-artifact reddens when the contradiction resolves', async () => {
@@ -57,7 +81,6 @@ describe('every evidence type has a verifier, and every verifier can fail', () =
             id: 'E',
             type: 'executable_falsifier',
             command: 'run-the-check',
-            subjectRevision: subject.revision,
             mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
         };
         // The check fails exactly when the defect is present, which is what "sensitive" means.
@@ -114,7 +137,7 @@ describe('strength and admissibility', () => {
     it('refuses a malformed item before it reaches a verifier, naming the field', () => {
         expect(evidenceShapeProblems({ id: 'E', type: 'static_witness', ref: 'a', assertion: 'whatever' }))
             .toEqual(['assertion must be "contains:<literal>" or "not-contains:<literal>"']);
-        expect(evidenceShapeProblems({ id: 'E', type: 'executable_falsifier', command: '', subjectRevision: 'r', mutation: { file: 'f', find: 'a', replace: 'b' } }))
+        expect(evidenceShapeProblems({ id: 'E', type: 'executable_falsifier', command: '', mutation: { file: 'f', find: 'a', replace: 'b' } }))
             .toEqual(['command is required']);
         expect(evidenceShapeProblems({ id: 'E', type: 'expert_concurrence', reviewers: ['only-one'], humanAck: 'a' }))
             .toEqual(['at least two reviewers are required']);

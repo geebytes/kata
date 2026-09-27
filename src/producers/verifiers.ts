@@ -1,10 +1,11 @@
 /**
  * Verifiers — one per evidence type. A verifier decides; it never proposes.
  *
- * The strongest of them is the falsifier, and it is the three-step protocol this repository already measured: run the
+ * The command-backed type is the falsifier, and it is the three-step protocol this repository already measured: run the
  * check clean, inject the defect, watch the check redden, restore, watch it pass again. The point of the second and
  * third steps is the one the old ledger recorded as `did_not_redden` — a check that does not redden under its own defect
- * proves nothing, and a check that is already failing proves something else entirely.
+ * proves nothing, and a check that is already failing proves something else entirely. It is the **only** type that runs
+ * a command, which is what makes the mutation requirement structural rather than a rule to remember.
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
@@ -51,22 +52,6 @@ const staticWitness: EvidenceVerifier = {
             verdict: holds ? 'supported' : 'refuted',
             observed: `${evidence.ref} ${present ? 'contains' : 'does not contain'} "${literal.slice(0, 120)}"`,
             verifier: staticWitness.verifier,
-        });
-    },
-};
-
-const invariantProof: EvidenceVerifier = {
-    type: 'invariant_proof',
-    verifier: 'producers/verifiers#invariant-proof',
-    verify: async (evidence, context) => {
-        if (evidence.type !== 'invariant_proof') throw new Error('invariant verifier received another type');
-        const outcome = await context.run(evidence.command);
-        return makeVerdict({
-            evidence,
-            context,
-            verdict: outcome.code === 0 ? 'supported' : 'refuted',
-            observed: `${evidence.invariantId}: ${outcomeLine(outcome)}`,
-            verifier: invariantProof.verifier,
         });
     },
 };
@@ -200,7 +185,6 @@ const expertConcurrence: EvidenceVerifier = {
 export const VERIFIERS: readonly EvidenceVerifier[] = [
     executableFalsifier,
     staticWitness,
-    invariantProof,
     crossArtifact,
     expertConcurrence,
 ];

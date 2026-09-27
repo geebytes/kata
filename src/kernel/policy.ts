@@ -94,7 +94,7 @@ export function defaultPolicy(): Policy {
         version: 1,
         tiers: {
             standard: {
-                autoEvidence: ['static_witness', 'invariant_proof'],
+                autoEvidence: ['static_witness'],
                 reviewers: 0,
                 quorumOn: ['uncertainty', 'new_class', 'weak_evidence'],
                 assuranceFloor: 'none',
@@ -102,7 +102,7 @@ export function defaultPolicy(): Policy {
                 humanBudgetMin: 0,
             },
             strict: {
-                autoEvidence: ['static_witness', 'invariant_proof', 'executable_falsifier'],
+                autoEvidence: ['static_witness', 'executable_falsifier'],
                 reviewers: 1,
                 quorumOn: ['disagreement', 'high_risk'],
                 // Strict requires that kata itself observed the evidence: an approval on this route is held by the ledger,
@@ -112,7 +112,7 @@ export function defaultPolicy(): Policy {
                 humanBudgetMin: 10,
             },
             security: {
-                autoEvidence: ['static_witness', 'invariant_proof', 'executable_falsifier', 'cross_artifact_contradiction'],
+                autoEvidence: ['static_witness', 'executable_falsifier', 'cross_artifact_contradiction'],
                 reviewers: 2,
                 quorumOn: ['always'],
                 assuranceFloor: 'sandboxed',
@@ -130,7 +130,7 @@ export function defaultPolicy(): Policy {
         budgets: { maxTokensPerChange: '0.6*C0', maxWallMs: 1_800_000, deadlineToolCalls: null },
         evidenceStrength: {
             blocking: ['executable_falsifier'],
-            major: ['static_witness', 'invariant_proof', 'cross_artifact_contradiction', 'executable_falsifier'],
+            major: ['static_witness', 'cross_artifact_contradiction', 'executable_falsifier'],
             minor: 'any',
             nit: 'any',
         },

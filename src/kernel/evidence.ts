@@ -1,5 +1,5 @@
 /**
- * Evidence — the five types, what each is worth, and what a severity requires.
+ * Evidence — the four types, what each is worth, and what a severity requires.
  *
  * The rule this module encodes: a finding must carry the evidence type that fits it and the strength its severity
  * requires. Requiring a reddening check for *every* finding would be narrower than the truth and would systematically
@@ -11,7 +11,6 @@ import type { Evidence, EvidenceType, EvidenceVerdict, Severity } from './types.
 export const EVIDENCE_STRENGTH: Record<EvidenceType, number> = {
     executable_falsifier: 4,
     static_witness: 3,
-    invariant_proof: 3,
     cross_artifact_contradiction: 3,
     expert_concurrence: 1,
 };
@@ -20,7 +19,6 @@ export const EVIDENCE_STRENGTH: Record<EvidenceType, number> = {
 export const REPRODUCIBLE_TYPES: readonly EvidenceType[] = [
     'executable_falsifier',
     'static_witness',
-    'invariant_proof',
     'cross_artifact_contradiction',
 ];
 
@@ -64,18 +62,18 @@ export function evidenceShapeProblems(evidence: Evidence): string[] {
     const problems: string[] = [];
     switch (evidence.type) {
         case 'executable_falsifier':
+            // **A command-backed check must declare the mutation that reddens it** (`K2`): without one its verdict says a
+            // command exited 0, which is not evidence that the check is sensitive to anything.
             if (!evidence.command?.trim()) problems.push('command is required');
-            if (!evidence.subjectRevision?.trim()) problems.push('subjectRevision is required');
+            if (!evidence.mutation?.file?.trim()) problems.push('mutation.file is required: a check that cannot be reddened is not evidence');
+            if (evidence.mutation?.find === undefined || evidence.mutation.find === '') problems.push('mutation.find is required');
+            if (evidence.mutation?.replace === undefined) problems.push('mutation.replace is required');
             break;
         case 'static_witness':
             if (!evidence.ref?.trim()) problems.push('ref is required');
             if (!/^(contains|not-contains):/u.test(evidence.assertion ?? '')) {
                 problems.push('assertion must be "contains:<literal>" or "not-contains:<literal>"');
             }
-            break;
-        case 'invariant_proof':
-            if (!evidence.invariantId?.trim()) problems.push('invariantId is required');
-            if (!evidence.command?.trim()) problems.push('command is required');
             break;
         case 'cross_artifact_contradiction':
             if (!evidence.a?.trim() || !evidence.b?.trim()) problems.push('a and b are required');

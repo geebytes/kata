@@ -85,7 +85,6 @@ describe('two adapters must reach the same decision', () => {
             id: 'E1',
             type: 'executable_falsifier',
             command: 'definitely-not-run',
-            subjectRevision: subject.revision,
             mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
         };
         const context = makeContext({ subject, files: {} });

@@ -62,7 +62,6 @@ const evidence: Evidence = {
     id: 'E1',
     type: 'executable_falsifier',
     command: 'npm run check',
-    subjectRevision: 'rev:0123456789abcdef',
     mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
 };
 
