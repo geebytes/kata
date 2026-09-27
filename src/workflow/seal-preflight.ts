@@ -17,7 +17,6 @@ import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
-import { readFalsifierReddenings, readFalsifierAbsences } from '../quality/falsifier-reddenings.js';
 import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**

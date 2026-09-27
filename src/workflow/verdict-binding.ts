@@ -1,5 +1,5 @@
 import { readCurrentTaskRevision } from './revision.js';
-// A dynamic import: `quality/adversarial` reads `workflow/revision`, so a static edge here would close a cycle.
+// A dynamic import: the review-ir module reads `workflow/revision`, so a static edge here would close a cycle.
 // `candidateFreezeHashFor` is the one producer of the freeze identity (§7.4).
 import { surfaceDigests } from '../quality/code-surface.js';
 
@@ -84,7 +84,7 @@ export async function currentRevisionIdentity(root: string, taskId: string): Pro
     // §7.4: the freeze identity is delegated to one producer. Recomputing it here from a private guess at `node` and
     // `reviewPolicyHash` would mint a *different* identity for the same candidate, and every verdict would then refuse
     // to bind — a fabricated semantic surface. One derivation, many consumers.
-    const { candidateFreezeHashFor } = await import('../quality/adversarial.js');
+    const { candidateFreezeHashFor } = await import('../quality/review-ir.js');
     const freezeHash = task
         ? await candidateFreezeHashFor(root, taskId, 'review').catch(() => undefined)
         : undefined;

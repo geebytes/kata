@@ -23,10 +23,6 @@ import { describe, expect, it } from 'vitest';
 // that the list equals what a filesystem walk finds — so a citation left behind would fail, correctly, rather than
 // silently over-claim coverage. What remains is the part of `cli/ops.ts` that still has commands.
 const RECORDED_GUARDS: Array<{ file: string; condition: string }> = [
-    { file: 'src/quality/adversarial.ts', condition: 'retired.length > 0' },
-    { file: 'src/quality/adversarial.ts', condition: '!base' },
-    { file: 'src/quality/adversarial.ts', condition: '!revision' },
-    { file: 'src/quality/adversarial.ts', condition: '!scope.ok' },
     { file: 'src/quality/revision-delta.ts', condition: '!currentDigests' },
     { file: 'src/quality/acceptance-matrix.ts', condition: '!declaration.id' },
     { file: 'src/quality/acceptance-matrix.ts', condition: '!result.ok' },
@@ -37,7 +33,6 @@ const RECORDED_GUARDS: Array<{ file: string; condition: string }> = [
 ];
 
 const SURFACE = [
-    'src/quality/adversarial.ts',
     'src/quality/revision-delta.ts',
     'src/quality/acceptance-matrix.ts',
     'src/cli/ops.ts',
@@ -75,9 +70,13 @@ describe('the mutation check against the material it was built from', () => {
         const measured = [
             'commandsForPlatform', 'cometCompatibilitySnapshot', 'subagentProgressPath', 'migrationsPath', 'recoveryPath',
             'taskProfilePath', 'evidenceArchiveDir', 'evidenceFilePath', 'wikiCandidatesDir', 'llmwikiDir',
-            'handoffBaselinePath', 'writeAcceptanceMatrixMigration', 'isLegacyTask', 'readBriefFile', 'changeRecordHash',
-            'resolvedCheckId', 'describeFinding', 'validateBatchRecord', 'reopenObligation', 'validationRevisionId',
+            'handoffBaselinePath', 'writeAcceptanceMatrixMigration', 'isLegacyTask', 'changeRecordHash',
+            'resolvedCheckId', 'validationRevisionId',
             'readWikiRecordsStrict', 'deleteWikiRecord', 'computePathDigest',
+            // `readBriefFile`, `reopenObligation`, `describeFinding` and `validateBatchRecord` are gone with the modules
+            // that declared them — the brief is compiled by `review-ir`, and obligations and repair batches are no longer
+            // stores. Removing them from this list is the check working rather than a relaxation: a name that is no longer
+            // reported is a symbol that no longer exists, so a citation left behind would have failed.
         ];
         const findings = await findUnreferencedExports({ root: process.cwd(), surface: await filesUnder(process.cwd(), ['src']) });
         const reported = new Set(findings.map((finding) => finding.subject));
@@ -85,7 +84,7 @@ describe('the mutation check against the material it was built from', () => {
         expect(missing).toEqual([]);
 
         // And a symbol production code does call must not be reported — the assertion that catches an over-eager counter.
-        expect(reported.has('evaluateAdmissibility')).toBe(false);
+        expect(reported.has('evaluateAdmissibility'), 'a live export is not reported').toBe(false);
         expect(reported.has('runWiringCheck')).toBe(false);
     });
 

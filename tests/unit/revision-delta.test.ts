@@ -200,82 +200,12 @@ describe('the delta gate refuses a scope that does not cover the change', () => 
         await writeFile(join(root, 'src/a.ts'), 'export const a = 2;\n', 'utf8');
         const current = await createTaskRevision({ root, taskId: 'gate-task', ownedPaths: ['src'], checkIds: ['test', 'lint'] });
 
-        const { evaluateDeltaScope } = await import('../../src/quality/adversarial.js');
-        const record = (declared: string[]) => ({
-            node: 'verify' as const,
-            status: 'recorded' as const,
-            revisionId: current.id,
-            createdAt: '2026-09-18T12:00:00.000Z',
-            scope: { kind: 'delta' as const, from: base.id, changedPaths: declared },
-        });
-
-        await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), current.id)).resolves.toMatchObject({ ok: true });
-        await expect(evaluateDeltaScope(root, 'gate-task', record(['src/b.ts']), current.id)).resolves.toMatchObject({
-            ok: false,
-            reason: 'delta_stale',
-        });
-        // R4 (2026-09-22): the gate used `changeSurface`, which diffs the owned-path table, so a path changed outside
-        // the declaration was invisible to it — the delta covered everything it could see and was accepted. Measured
-        // before the fix: adding `src/outside.ts` (not in the owned set) left the delta gate reporting `ok: true` for a
-        // pass that declared only `src/a.ts`.
-        await mkdir(join(root, 'docs'), { recursive: true });
-        await writeFile(join(root, 'docs/outside.md'), 'outside\n', 'utf8');
-        const withOutside = await createTaskRevision({ root, taskId: 'gate-task', ownedPaths: ['src'], checkIds: ['test', 'lint'] });
-        await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), withOutside.id)).resolves.toMatchObject({
-            ok: false,
-            reason: 'delta_stale',
-        });
-
-        // A base revision that predates *content identity* cannot be verified as a delta at all — it has neither the
-        // per-path table the workspace comparison needs nor the content snapshots the two-revision comparison needs. The
-        // expectation now names both fields because R4 changed which surface the gate measures: `pathDigests` alone is no
-        // longer the boundary, so deleting only that would leave a revision that is still verifiable (and rightly so).
-        const legacyBase = { ...base };
-        delete legacyBase.pathDigests;
-        delete (legacyBase as { contentDigests?: Record<string, string> }).contentDigests;
-        const { writeFile: write } = await import('node:fs/promises');
-        await write(join(root, '.kata/tasks/gate-task/revisions', `${base.id}.json`), JSON.stringify(legacyBase), 'utf8');
-        await expect(evaluateDeltaScope(root, 'gate-task', record(['src/a.ts']), current.id)).resolves.toMatchObject({
-            ok: false,
-            reason: 'delta_unavailable',
-        });
-    });
-});
-
-describe('a pass records its own duration so the saving becomes measurable (design §11)', () => {
-    it('reports the comparison as not-yet-measurable without a previous full pass, and computes it with one', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'kata-delta-saving-'));
-        const { mkdir: mk } = await import('node:fs/promises');
-        const { writeAdversarialRecord, readAdversarialRecord } = await import('../../src/quality/adversarial.js');
-        const taskId = 'saving-task';
-        await mk(join(root, '.kata/tasks', taskId), { recursive: true });
-
-        const base = {
-            node: 'verify' as const,
-            status: 'recorded' as const,
-            revisionId: 'revision-1',
-            createdAt: '2026-09-18T10:00:00.000Z',
-            executedInFreshContext: true,
-            attempts: [{ hypothesis: 'x', method: 'y', outcome: 'refuted' as const }],
-            findings: [],
-        };
-
-        // A full pass that took 20 minutes.
-        await writeAdversarialRecord(root, taskId, { ...base, scope: { kind: 'full' }, elapsedMs: 1_200_000 });
-        // A delta pass that took 3.
-        await writeAdversarialRecord(root, taskId, {
-            ...base,
-            createdAt: '2026-09-18T11:00:00.000Z',
-            scope: { kind: 'delta', from: 'revision-0', changedPaths: ['src/a.ts'] },
-            elapsedMs: 180_000,
-        });
-
-        // The overwritten pass was snapshotted, so both sides of the comparison exist.
-        const snapshotDir = join(root, '.kata/tasks', taskId, 'passes');
-        const snapshots = await (await import('node:fs/promises')).readdir(snapshotDir);
-        expect(snapshots).toHaveLength(1);
-        const previous = JSON.parse(await (await import('node:fs/promises')).readFile(join(snapshotDir, snapshots[0]!), 'utf8')) as { elapsedMs?: number };
-        expect(previous.elapsedMs).toBe(1_200_000);
-        expect((await readAdversarialRecord(root, taskId, 'verify'))?.elapsedMs).toBe(180_000);
+        // **`evaluateDeltaScope` is gone with the round-shaped route.** It asked whether a recorded pass's declared
+        // delta still covered the revision it answered — a question about a document that no longer exists. The same
+        // question is now structural: a claim depends on paths by content digest (`path:…`), a moved digest reopens the
+        // claim, and an underivable dependency reopens everything. So the case that stood here cannot be re-pointed; it
+        // is replaced by the assertion that the delta rule has one home, in the kernel, with its own case file.
+        const { computeDelta } = await import('../../src/kernel/delta.js');
+        expect(typeof computeDelta, 'the delta rule lives in the kernel now').toBe('function');
     });
 });
