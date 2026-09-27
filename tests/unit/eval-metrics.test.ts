@@ -451,10 +451,12 @@ describe('Evaluation runner', () => {
 describe('the corpus covers the criterion that makes it a gate', () => {
     it('has no two criteria sharing one selector, so no criterion is left un-evidenced by dedup', async () => {
         const { readTask } = await import('../../src/core/task.js');
-        const task = await readTask(
-            '/data/work/ahaeureka/k2skills/kata/.kata/worktrees/adversarial-admissibility',
-            'adversarial-admissibility',
-        );
+        // **Read from this workspace, not from a path that happened to exist.** The first version pointed at
+        // `.kata/worktrees/adversarial-admissibility` — an absolute path inside a *leftover linked worktree* — so the case
+        // passed only while that stale checkout was on disk, and it broke the moment the leftover was removed. A test whose
+        // fixture is junk elsewhere in the tree is measuring the junk.
+        const task = await readTask(process.cwd(), 'adversarial-admissibility');
+        expect(task, 'the change whose matrix states this corpus\'s criteria must be present in this workspace').not.toBeNull();
         const bySelector = new Map<string, string[]>();
         for (const row of task?.acceptanceMatrix?.rows ?? []) {
             for (const item of row.evidence ?? []) {

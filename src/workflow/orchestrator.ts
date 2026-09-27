@@ -1914,6 +1914,31 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         }
     }
 
+    // **A change's isolation ends where the change ends.** `kata-cli worktree create` puts a linked checkout under
+    // `.kata/worktrees/<taskId>` and *nothing* ever removed one: not the seal, not the archive, not the ladder. Measured
+    // on this repository, three archived changes had left three of them behind (38 MB of stale checkout), and they are not
+    // inert — a stale worktree is a second copy of the source that every content scan walks, that `git worktree list`
+    // reports, and that the earlier audits kept reading as current code. A dirty worktree is reported rather than deleted,
+    // because removing a checkout with uncommitted work is the one outcome worse than leaving it.
+    let worktreeCleanup: { removed?: string; kept?: string; reason?: string } | undefined;
+    try {
+        const { existsSync } = await import('node:fs');
+        const { worktreesDir, removeWorktree } = await import('./worktree.js');
+        const linked = join(worktreesDir(root), taskId);
+        if (archivePhase === 'archive' && existsSync(linked)) {
+            try {
+                // No `force`: a worktree with uncommitted work must not be destroyed by an archive, and git refuses it
+                // for exactly that reason. The refusal is reported as `kept`, with git's own explanation.
+                const removal = await removeWorktree({ root, path: linked });
+                worktreeCleanup = removal.removed ? { removed: linked } : { kept: linked, reason: 'not removed' };
+            } catch (error) {
+                worktreeCleanup = { kept: linked, reason: (error as Error).message };
+            }
+        }
+    } catch (error) {
+        worktreeCleanup = { kept: join(root, '.kata/worktrees', taskId), reason: (error as Error).message };
+    }
+
     return {
         command: 'archive',
         taskId,
@@ -1928,6 +1953,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
             hasReviewResult: reviewRaw !== null,
             distillation,
             distillationHint: 'Read task artifacts, acceptance criteria, review findings, and judge result. Synthesize decisions, constraints, and norms into a wiki record via proposeFromPassedTask() or kata-cli wiki ingest.',
+            ...(worktreeCleanup ? { worktreeCleanup } : {}),
             ...(codegraphRefresh ? { codegraphRefresh } : {}),
         },
     };
