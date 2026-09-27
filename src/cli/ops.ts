@@ -166,17 +166,12 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
     throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove>`);
 }
 
-/**
- * §3.2.2 retired caller-stated telemetry, and it is one fact in two encodings.
- *
- * The retirement was written against `argv` only, so the same duration typed into a result line JSON body was still
- * accepted and written into the progress record — measured, then reproduced as a failing test. A second encoding of the
- * same self-report is the same defect, so the names and the remedy come from one place and both channels refuse them.
- */
-export const RETIRED_TELEMETRY_FLAGS = ['--elapsed-ms', '--tool-uses'] as const;
-export const RETIRED_TELEMETRY_FIELDS = ['elapsedMs', 'toolUses'] as const;
-const TELEMETRY_RETIREMENT_REMEDY =
-    'telemetry is reported by the execution receipt, which binds to the issued request and cannot be typed in. Record the receipt instead of a duration, or leave telemetry unreported.';
+// **`RETIRED_TELEMETRY_FLAGS` and `RETIRED_TELEMETRY_FIELDS` were deleted with the command that enforced them.** They were
+// one fact in two encodings — the flag channel and the result-line channel — and both refusals lived in
+// `runAdversarialCommand`, which is gone: caller-stated telemetry has no route to be written through any more, so a list of
+// names to refuse is a declaration with nothing to refuse. The wiring check reported them by name, which is how this was
+// found rather than remembered.
+
 
 // **`runAdversarialCommand` was here.** Seven hundred and fifty-nine lines: `create`, `remove`, `salvage`, `brief`,
 // `waive`, `note`, `finding`, `execute`, `record`, `status`, `acknowledge-open`, `version`, `path` and `verify` — the

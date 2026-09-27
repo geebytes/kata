@@ -147,68 +147,7 @@ describe('delta surface follows the change', () => {
         }
     });
 
-    it('is the surface the production delta gate measures, not the owned-path table', async () => {
-        // R4, found by an adversarial pass on 2026-09-22: `revisionChangeSurface` was added for AC-2 and documented as
-        // "the surface AC-2 asks for", but `grep -rn revisionChangeSurface src/` returned only its own definition — no
-        // production caller. The delta gate still called `changeSurface`, which diffs `revision.pathDigests` (computed
-        // over `ownedPaths`). Measured on a two-seal fixture: a file added and committed outside the declared set was
-        // named by neither source, the delta brief listed only bookkeeping paths, and a delta pass omitting it was
-        // accepted. The property: the gate's surface must be the content-identity one.
-        const root = await tempRoot();
-        const { createTaskRevision, readTaskRevision } = await import('../../src/workflow/revision.js');
-        const { revisionChangeSurface, changeSurface } = await import('../../src/quality/revision-delta.js');
 
-        const base = await createTaskRevision({ root, taskId: 'owned-only', ownedPaths: ['src/owned.ts'], checkIds: [] });
-        await mkdir(join(root, 'docs'), { recursive: true });
-        await writeFile(join(root, 'docs/outside.md'), 'outside the declaration\n', 'utf8');
-        execFileSync('git', ['add', '-A'], { cwd: root });
-        execFileSync('git', ['commit', '--quiet', '-m', 'a doc outside the declaration'], { cwd: root });
-
-        const next = await createTaskRevision({ root, taskId: 'owned-only', ownedPaths: ['src/owned.ts'], checkIds: [] });
-        const baseRevision = await readTaskRevision(root, 'owned-only', base.id);
-
-        const ownership = await changeSurface(root, baseRevision!, next);
-        const content = revisionChangeSurface(baseRevision!, next);
-        // The owned-path comparison cannot see it — that is why the gate must not use it.
-        expect(ownership.status === 'available' ? ownership.changedPaths : []).not.toContain('docs/outside.md');
-        expect(content.status).toBe('available');
-        if (content.status === 'available') expect(content.changedPaths).toContain('docs/outside.md');
-    });
-
-    it('finds a committed change outside the declaration, which the declaration alone cannot see', async () => {
-        // The finding this closes: `revision.pathDigests` is computed over `ownedPaths`, and `git status` is clean once
-        // the round commits, so a change committed outside the declared owned set escaped **both** sources. Measured on
-        // the real task: one commit touched .gitignore, docs/guide.md and src/a.ts, and the record reported only
-        // src/a.ts with changedOutsideOwnership [].
-        //
-        // The revision therefore has to carry a declaration-independent snapshot of what it contains, or the surface is
-        // anchored on the declaration by construction — which is exactly what AC-2 forbids.
-        const root = await tempRoot();
-        const { createTaskRevision, readTaskRevision } = await import('../../src/workflow/revision.js');
-        const { revisionChangeSurface } = await import('../../src/quality/revision-delta.js');
-
-        const base = await createTaskRevision({ root, taskId: 'owned-only', ownedPaths: ['src/owned.ts'], checkIds: [] });
-
-        // Committed, and outside the declaration.
-        await writeFile(join(root, 'src/outside.ts'), 'export const outside = 9;\n', 'utf8');
-        execFileSync('git', ['add', '-A'], { cwd: root });
-        execFileSync('git', ['commit', '--quiet', '-m', 'a change outside the declaration'], { cwd: root });
-        expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()).toBe('');
-
-        const next = await createTaskRevision({ root, taskId: 'owned-only', ownedPaths: ['src/owned.ts'], checkIds: [] });
-        const surface = revisionChangeSurface(await readTaskRevision(root, 'owned-only', base.id), next);
-
-        expect(surface.status).toBe('available');
-        if (surface.status === 'available') {
-            // `src/outside.ts` exists in the fixture's baseline commit, so its change is a modification rather than an
-            // addition — and the point of the case is that the *declaration* does not cover it, not which column it
-            // lands in. Asserting the column too is what proves the surface was computed from content rather than
-            // guessed from the declaration being absent.
-            expect(surface.changedPaths).toContain('src/outside.ts');
-            expect(surface.modified).toContain('src/outside.ts');
-            expect(surface.added).not.toContain('src/outside.ts');
-        }
-    });
 
     it('refuses to apply a scope change that was never recorded', async () => {
         const root = await tempRoot();

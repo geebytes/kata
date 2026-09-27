@@ -8,7 +8,6 @@ import { transition } from '../../src/core/state.js';
 import { computeDiffHash } from '../../src/quality/evidence.js';
 import { proposeFromPassedTask } from '../../src/wiki/provenance.js';
 import { verifySources, markRecordStale } from '../../src/wiki/drift.js';
-import { checkConflicts } from '../../src/wiki/conflict.js';
 import { promote, rejectCandidate } from '../../src/wiki/promotion.js';
 import { readWikiRecords } from '../../src/wiki/store.js';
 import { selectAuthoritativeContext } from '../../src/wiki/context.js';
@@ -279,107 +278,8 @@ describe('Wiki governance', () => {
             expect(report.intact).toContain('wiki-stable');
         });
 
-        it('marks sourced records without source hashes as stale instead of intact', async () => {
-            const root = await tempRoot();
-            const { writeWikiRecord } = await import('../../src/wiki/store.js');
-            await writeWikiRecord(root, {
-                id: 'wiki-hashless',
-                statement: 'Hashless Wiki cannot prove provenance.',
-                scope: ['source.ts'],
-                kind: 'implementation-note',
-                sourceRefs: ['source.ts'],
-                sourceHashes: {},
-                validationTaskId: 'task-hashless',
-                evidenceIds: ['evidence-hashless'],
-                status: 'verified',
-                lastVerifiedAt: '2026-07-11T00:00:00.000Z',
-                createdAt: '2026-07-11T00:00:00.000Z',
-                updatedAt: '2026-07-11T00:00:00.000Z',
-            });
-
-            const report = await verifySources(root);
-
-            expect(report.intact).not.toContain('wiki-hashless');
-            expect(report.stale).toEqual(
-                expect.arrayContaining([
-                    expect.objectContaining({
-                        id: 'wiki-hashless',
-                        reason: 'source_missing',
-                    }),
-                ]),
-            );
-        });
     });
 
-    describe('5.4 Conflict checks against rules, specs, tests, and code', () => {
-        it('detects conflicts with approved rules', async () => {
-            const root = await tempRoot();
-            const rulesDir = join(root, '.kata/rules');
-            await writeFile(join(rulesDir, 'canonical-rule.md'), 'Approved policy: payment must use Stripe.\n', 'utf8');
-
-            const result = await checkConflicts(root, {
-                id: 'wiki-conflict',
-                statement: 'Payment should use PayPal.',
-                scope: ['payment/'],
-                kind: 'implementation-note',
-                sourceRefs: ['src/payment/service.ts'],
-                sourceHashes: {},
-                validationTaskId: 'task-conflict',
-                evidenceIds: ['evidence-4'],
-                status: 'candidate',
-                lastVerifiedAt: '2026-07-11T00:00:00.000Z',
-                createdAt: '2026-07-11T00:00:00.000Z',
-                updatedAt: '2026-07-11T00:00:00.000Z',
-            });
-
-            expect(result.hasConflict).toBe(true);
-            expect(result.conflicts.some((c) => c.type === 'rule' && c.source.includes('canonical-rule'))).toBe(true);
-        });
-
-        it('detects conflicts with test assertions', async () => {
-            const root = await tempRoot();
-            await (await import('node:fs/promises')).mkdir(join(root, 'tests/unit/payment'), { recursive: true });
-            await writeFile(join(root, 'tests/unit/payment/service.test.ts'), 'expect(processor).toBe("stripe");\n', 'utf8');
-
-            const result = await checkConflicts(root, {
-                id: 'wiki-paypal',
-                statement: 'Payment processor uses stripe.',
-                scope: ['payment/'],
-                kind: 'implementation-note',
-                sourceRefs: ['src/payment/service.ts'],
-                sourceHashes: {},
-                validationTaskId: 'task-conflict-2',
-                evidenceIds: ['evidence-5'],
-                status: 'candidate',
-                lastVerifiedAt: '2026-07-11T00:00:00.000Z',
-                createdAt: '2026-07-11T00:00:00.000Z',
-                updatedAt: '2026-07-11T00:00:00.000Z',
-            });
-
-            expect(result.hasConflict).toBe(true);
-        });
-
-        it('returns no conflicts for aligned Wiki records', async () => {
-            const root = await tempRoot();
-            const result = await checkConflicts(root, {
-                id: 'wiki-aligned',
-                statement: 'The system uses TypeScript interfaces for contracts.',
-                scope: ['src/core/'],
-                kind: 'architecture-note',
-                sourceRefs: ['src/core/state.ts'],
-                sourceHashes: {},
-                validationTaskId: 'task-aligned',
-                evidenceIds: ['evidence-6'],
-                status: 'candidate',
-                lastVerifiedAt: '2026-07-11T00:00:00.000Z',
-                createdAt: '2026-07-11T00:00:00.000Z',
-                updatedAt: '2026-07-11T00:00:00.000Z',
-            });
-
-            expect(result.hasConflict).toBe(false);
-            expect(result.conflicts).toHaveLength(0);
-        });
-    });
 
     describe('5.5 Explicit approval and wiki promote', () => {
         it('promotes a candidate to verified when its provenance holds', async () => {

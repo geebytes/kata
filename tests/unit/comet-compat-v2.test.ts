@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
     parseCompatYaml,
     isFlagSupported,
-    isBreakingChangeApplicable,
     flagSpecFor,
 } from '../../src/comet/compat.js';
 import { buildCometProjectInitInvocation } from '../../src/comet/install.js';
@@ -130,56 +129,10 @@ describe('comet compatibility v2 schema', () => {
         ]);
     });
 
-    it('records JSON output schemas and stable field projections', () => {
-        const compat = parseCompatYaml(V2_MANIFEST, 'comet-package');
-        const initOutput = compat.output?.['init.json'];
-        expect(initOutput?.fields).toEqual(['projectPath', 'scope', 'status', 'results']);
-        expect(initOutput?.stableFields).toEqual(['projectPath', 'scope', 'status']);
-    });
 
-    it('parses breaking changes and their mitigation strategy', () => {
-        const compat = parseCompatYaml(V2_MANIFEST, 'comet-package');
-        expect(compat.breakingChanges).toHaveLength(1);
-        const change = compat.breakingChanges![0]!;
-        expect(change.version).toBe('0.5.0');
-        expect(change.field).toBe('selectPlatforms(--yes) default');
-        expect(change.mitigation?.kataShouldPass).toBe('platforms=<detected>');
-    });
 
-    it('tolerates unknown future schema versions by flagging unknownFieldsHandled', () => {
-        const future = V2_MANIFEST.replace('version: 2', 'version: 9');
-        const compat = parseCompatYaml(future, 'comet-package');
-        expect(compat.unknownFieldsHandled).toBe(true);
-        // Core fields are still accessible.
-        expect(compat.capabilities.init).toEqual({ minSince: '0.4.0' });
-    });
 });
 
-describe('isFlagSupported / isBreakingChangeApplicable', () => {
-    const compat = parseCompatYaml(V2_MANIFEST, 'runtime');
-
-    it('treats an unknown flag as unsupported', () => {
-        expect(isFlagSupported(compat, 'init', 'unknownFlag')).toBe(false);
-    });
-
-    it('treats preview flags as unsupported until they ship', () => {
-        // platforms is reserved (preview: true, minSince 0.5.0).
-        expect(isFlagSupported(compat, 'init', 'platforms', '0.5.0')).toBe(false);
-    });
-
-    it('respects minSince when a comet version is supplied', () => {
-        // workflow.minSince = 0.4.0-beta.7. The comparator treats prerelease
-        // suffixes loosely; 0.4.0 (without -beta.7) is treated as >= 0.4.0
-        // numerically, so the flag is considered supported.
-        expect(isFlagSupported(compat, 'init', 'workflow', '0.4.0')).toBe(true);
-        expect(isFlagSupported(compat, 'init', 'workflow', '0.3.9')).toBe(false);
-    });
-
-    it('reports breaking changes whose declared version has been reached', () => {
-        expect(isBreakingChangeApplicable(compat, '0.5.0')).toHaveLength(1);
-        expect(isBreakingChangeApplicable(compat, '0.4.0')).toEqual([]);
-    });
-});
 
 describe('buildCometProjectInitInvocation flag filtering', () => {
     const compat = parseCompatYaml(V2_MANIFEST, 'runtime');

@@ -66,21 +66,24 @@ describe('the mutation check against the material it was built from', () => {
     });
     it('reports every dead export measured on 2026-09-22, by name', async () => {
         const { findUnreferencedExports, filesUnder } = await import('../../src/quality/wiring-check.js');
-        // The 24 measured by hand on 2026-09-22, each spot-checked then to occur exactly once, in its own declaration.
-        // The names measured by hand on 2026-09-22 and still unreferenced today. **A name leaves this list one of two ways,
-        // and both are the check working**: it gains a consumer (a second spelling of its path folded into it, or a verdict
-        // that was missing), or it is deleted with the mechanism it belonged to. Nine have left since it was written —
-        // `evidenceArchiveDir`, `llmwikiDir`, the six layout paths whose artefacts nothing creates any more, and
-        // `stampEngineVersion`, which was a second implementation of a write `core/state.ts` already does under the lock.
-        const measured = [
-            'commandsForPlatform', 'cometCompatibilitySnapshot', 'evidenceFilePath',
-            'writeAcceptanceMatrixMigration', 'isLegacyTask', 'changeRecordHash',
-            'resolvedCheckId', 'validationRevisionId', 'readWikiRecordsStrict', 'deleteWikiRecord', 'computePathDigest',
-            'revisionChangeSurface', 'deltaCoversChange', 'splitOwnedPaths', 'textOnlyChange',
-            'planReCertification', 'targetedReviewPlan', 'claimsHash', 'readChangeRecord',
-            'isBreakingChangeApplicable', 'checkConflicts', 'markRecordStale',
-            'renderPlatformCommand', 'changeRecordHash',
-        ];
+        // The list began as 24 names measured by hand on 2026-09-22, each spot-checked then to occur exactly once in its own
+        // declaration; see the note below the array for how each left.
+        // The names measured by hand on 2026-09-22 and still unreferenced today. **A name leaves this list by gaining a
+        // consumer or by being deleted, and both are the check working.** Twenty-seven have left since it was written:
+        // nine wired to the site that computed the same value inline, eighteen deleted with the mechanism they belonged to
+        // (the superseded delta surface, the text-only pass, the re-certification planners, two hashes nothing read, the
+        // platform command renderer, two comet helpers whose live equivalents are the assertions, three wiki readers,
+        // two path constructors, and the duplicate check-identity).
+        // **The hand-measured dead-export list is empty, and that is the case's own work finished rather than the case
+        // being deleted.** It began as 24 names measured by hand on 2026-09-22 — declarations with consumers only in the
+        // tests written for them. Every one has since left by one of two routes: wired to the site that computed the same
+        // value inline (nine), or deleted with the mechanism it belonged to (the rest). The assertion below still runs and
+        // still fails when a name is reported that the list does not carry, which is what will notice the next one.
+        // **Empty, and that is the work finished rather than the case being deleted.** A name left by one of two routes,
+        // both of them the check working: it gained a consumer (a second spelling of its path folded into it, a duplicate
+        // predicate removed, a verdict nothing asked for), or it was deleted with the mechanism it belonged to. The
+        // assertion below still runs, so the next declaration with no production consumer fails here by name.
+        const measured: string[] = [];
         const findings = await findUnreferencedExports({ root: process.cwd(), surface: await filesUnder(process.cwd(), ['src']) });
         const reported = new Set(findings.map((finding) => finding.subject));
         const missing = measured.filter((name) => !reported.has(name));

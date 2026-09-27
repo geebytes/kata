@@ -170,12 +170,3 @@ export function describeClaimFailure(failure: ClaimFailure): string {
     const actual = failure.missing ? 'no evidence was recorded' : `exit ${failure.actualExitCode}`;
     return `claim ${failure.checkId} failed: "${failure.statement}" expected ${expected}, got ${actual}`;
 }
-
-/** The identity of the claims a revision was verified against, so a statement edit is visible as a change. */
-export function claimsHash(acceptance: AcceptanceCriterion[]): string {
-    const payload = acceptance
-        .flatMap((item) => (item.claims ?? []).map((claim: ClaimDeclaration) => `${item.id}\\u0000${claim.id}\\u0000${claim.statement}\\u0000${claim.check.command}\\u0000${(claim.check.args ?? []).join(' ')}\\u0000${claim.check.expect?.exitCode ?? ''}`))
-        .sort()
-        .join('\\u0001');
-    return hashContent(payload);
-}

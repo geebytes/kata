@@ -35,7 +35,7 @@ export async function verifySources(root: string): Promise<DriftReport> {
     if (record.sourceRefs.length > 0 && sourceHashEntries.length === 0) {
       stale.push({ id: record.id, reason: 'source_missing', changedSources: [...record.sourceRefs] });
       for (const sourceRef of record.sourceRefs) missingSources.add(sourceRef);
-      await updateWikiRecord(root, record.id, { status: 'stale' });
+      await markRecordStale(root, record.id);
       continue;
     }
 
@@ -56,7 +56,7 @@ export async function verifySources(root: string): Promise<DriftReport> {
     if (changedSources.length > 0) {
       const reason = changedSources.some((s) => missingSources.has(s)) ? 'source_missing' : 'source_changed';
       stale.push({ id: record.id, reason, changedSources });
-      await updateWikiRecord(root, record.id, { status: 'stale' });
+      await markRecordStale(root, record.id);
     } else {
       intact.push(record.id);
     }
@@ -70,6 +70,13 @@ export async function verifySources(root: string): Promise<DriftReport> {
   };
 }
 
+/**
+ * Mark one record stale, the way the drift walk does it.
+ *
+ * **The walk used to write this itself, twice**, which is the same write in three places: this function, the missing-source
+ * branch and the changed-source branch. A reader asking "what does marking a record stale do" had three answers, and the
+ * wiring check reported this one as having no consumer while the two copies were the consumers.
+ */
 export async function markRecordStale(root: string, id: string): Promise<void> {
   await updateWikiRecord(root, id, { status: 'stale' });
 }

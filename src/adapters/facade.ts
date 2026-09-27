@@ -32,8 +32,3 @@ export function renderSkillFor(
 export function platformDefaults(platform: Platform): (typeof platformCapabilities)[Platform] {
     return platformCapabilities[platform];
 }
-
-/** Every command this build ships, for consumers that render a whole platform's skill set. */
-export function commandsForPlatform(): readonly SkillCommand[] {
-    return skillCommands;
-}

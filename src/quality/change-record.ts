@@ -287,11 +287,6 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
     };
 }
 
-/** A stable digest of the record, so a statement edit is visible as a change rather than as a re-read. */
-export function changeRecordHash(record: ChangeRecord): string {
-    return hashContent(JSON.stringify(record));
-}
-
 /** Where a task's change record for a revision lives. */
 export function changeRecordPath(root: string, taskId: string, revisionId?: string): string {
     return revisionId

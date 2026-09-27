@@ -94,15 +94,6 @@ function remember(compatibility: CometCompatibility): CometCompatibility {
 }
 
 /**
- * The answer this process resolved most recently, for callers that cannot await and for diagnostics. It describes the
- * target of the last resolution, so a caller asking about a specific workspace should resolve (or pass its root to
- * `loadCometCompatibility`) rather than read this.
- */
-export function cometCompatibilitySnapshot(): CometCompatibility | null {
-    return resolvedSnapshot;
-}
-
-/**
  * The synchronous view. An explicit manifest path wins (tests and explicit overrides); otherwise the resolved snapshot
  * if this process has one; otherwise the workspace override and the bundled manifest. It never claims to have observed
  * the runtime: the `source` it reports is the layer it actually read.
@@ -647,15 +638,6 @@ export function isFlagSupported(
         return false;
     }
     return true;
-}
-
-export function isBreakingChangeApplicable(
-    compatibility: CometCompatibility,
-    version: string,
-): BreakingChange[] {
-    if (!compatibility.breakingChanges) return [];
-    const actual = parseVersion(version);
-    return compatibility.breakingChanges.filter((change) => compare(actual, parseVersion(change.version)) >= 0);
 }
 
 // =============================================================================

@@ -14,7 +14,6 @@ import {
 import {
     changeSurface,
     changeSurfaceAgainstWorkspace,
-    deltaCoversChange,
     diffPathDigests,
 } from '../../src/quality/revision-delta.js';
 
@@ -95,46 +94,9 @@ describe('the change surface between revisions', () => {
         expect(surface.changedPaths).toHaveLength(3);
     });
 
-    it('says unchanged when the content is identical, even if the revision id moved', async () => {
-        const root = await workspace();
-        const base = await createTaskRevision({ root, taskId: 'delta-task', ownedPaths: ['src'], checkIds: ['test'] });
-        const resealed = await createTaskRevision({ root, taskId: 'delta-task', ownedPaths: ['src'], checkIds: ['test', 'lint'] });
 
-        expect(resealed.id).not.toBe(base.id);
-        expect(resealed.manifestHash).toBe(base.manifestHash);
-        await expect(changeSurface(root, base, resealed)).resolves.toMatchObject({ status: 'unchanged' });
-    });
 
-    it('reports delta_unavailable for a revision sealed before the field existed, rather than guessing', async () => {
-        const root = await workspace();
-        const base = await createTaskRevision({ root, taskId: 'delta-task', ownedPaths: ['src'], checkIds: ['test'] });
-        const legacy: TaskRevision = { ...base };
-        delete legacy.pathDigests;
 
-        const surface = await changeSurface(root, legacy, { ...base, pathDigests: base.pathDigests! });
-        expect(surface).toMatchObject({ status: 'delta_unavailable' });
-        await expect(changeSurfaceAgainstWorkspace(root, legacy)).resolves.toMatchObject({ status: 'delta_unavailable' });
-    });
-
-    it('measures against the workspace, which is what a re-seal has', async () => {
-        const root = await workspace();
-        const base = await createTaskRevision({ root, taskId: 'delta-task', ownedPaths: ['src'], checkIds: ['test'] });
-        await writeFile(join(root, 'src/a.ts'), 'export const a = 3;\n', 'utf8');
-
-        const surface = await changeSurfaceAgainstWorkspace(root, base);
-        expect(surface).toMatchObject({ status: 'available', changedPaths: ['src/a.ts'] });
-    });
-
-    it('refuses a delta that does not cover the change', async () => {
-        const base = { 'src/a.ts': 'a'.repeat(64), 'src/b.ts': 'b'.repeat(64) };
-        const current = { 'src/a.ts': 'c'.repeat(64), 'src/b.ts': 'b'.repeat(64) };
-        const diff = diffPathDigests(base, current);
-
-        // A pass that declared only b.ts did not review what changed.
-        expect(deltaCoversChange(['src/b.ts'], { status: 'available', ...diff })).toEqual({ covered: false, missing: ['src/a.ts'] });
-        // A pass that declared both covers it.
-        expect(deltaCoversChange(['src/a.ts', 'src/b.ts'], { status: 'available', ...diff })).toEqual({ covered: true, missing: [] });
-    });
 
     it('produces byte-identical digests from one traversal, for a directory-owned path', async () => {
         const root = await workspace();

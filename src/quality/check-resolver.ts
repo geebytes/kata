@@ -241,11 +241,6 @@ export function dependencyRootsFor(authorRoot: string): string[] {
     return [...candidates].reverse().filter((candidate) => candidate !== join(authorRoot, 'node_modules'));
 }
 
-/** The stable identity of a resolved check, matching `resolveSealChecks`' naming for the revision id. */
-export function resolvedCheckId(check: CheckCommand): string {
-    return check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`;
-}
-
 /** Every declaration in the matrix, resolved and de-duplicated. Throws the resolver's error, as the seal always has. */
 export function matrixChecks(root: string, matrix: AcceptanceMatrix, options: { dependencyRoots?: string[] } = {}): CheckCommand[] {
     const checks: CheckCommand[] = [];

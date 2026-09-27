@@ -50,21 +50,6 @@ export async function readWikiRecords(root: string): Promise<WikiRecord[]> {
   return (await readWikiRecordsWithIssues(root)).records;
 }
 
-/**
- * Read every record, refusing on the first invalid one.
- *
- * Nothing calls this any more, and that is the point: a drifted record is a thing to report and repair, not a reason for
- * every task in the project to stop. Kept as the named behaviour it always was, so the difference between the two is
- * legible rather than an accident of which reader a caller happened to import.
- */
-export async function readWikiRecordsStrict(root: string): Promise<WikiRecord[]> {
-  const { records, invalid } = await readWikiRecordsWithIssues(root);
-  if (invalid.length > 0) {
-    throw new Error(`Wiki record ${invalid[0]!.path} is invalid: ${invalid[0]!.message}`);
-  }
-  return records;
-}
-
 export async function writeWikiRecord(root: string, record: WikiRecord): Promise<void> {
   const id = normalizeId(record.id);
   const wikiDir = layoutWikiDir(root);
@@ -89,13 +74,6 @@ export async function updateWikiRecord(root: string, id: string, update: Partial
     return `${JSON.stringify(updated, null, 2)}\n`;
   });
   return updated!;
-}
-
-export async function deleteWikiRecord(root: string, id: string): Promise<void> {
-  const normalizedId = normalizeId(id);
-  const filePath = layoutWikiRecordPath(root, normalizedId);
-  const { rm } = await import('node:fs/promises');
-  await rm(filePath);
 }
 
 export async function findWikiRecord(root: string, id: string): Promise<WikiRecord | undefined> {

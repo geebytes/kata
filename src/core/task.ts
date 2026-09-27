@@ -224,21 +224,6 @@ export interface AcceptanceMatrixMigrationNote {
     acceptanceIds: string[];
 }
 
-/**
- * Record the strict-matrix migration note on the task.
- *
- * The note is produced by `findMatrixDeclarationGaps` in the **verify path only** (`src/workflow/orchestrator.ts`). A
- * status call has no business writing a task record, and the verify result already carries the gaps for a reader who
- * wants them without sealing.
- */
-export async function writeAcceptanceMatrixMigration(root: string, taskId: string, note: Omit<AcceptanceMatrixMigrationNote, 'taskId'>): Promise<void> {
-  await mutateTaskArtefact(root, taskId, taskPath(root, taskId), async (current) => {
-    const task = JSON.parse(current) as TaskRecord;
-    task.acceptanceMatrixMigration = { taskId, ...note };
-    return `${JSON.stringify(task, null, 2)}\n`;
-  });
-}
-
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === 'object' && error !== null && 'code' in error;
 }

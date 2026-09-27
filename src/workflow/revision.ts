@@ -343,30 +343,13 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
   await feedOwnedTree(root, ownedPaths, manifest, null);
   return manifest.digest('hex');
 }
-
 /**
- * The per-file digest of one owned path, or its whole tree when the path is a directory.
- *
- * Same ignore policy and same no-size-cap rule as `computeManifestHash`, so the two agree about what "the owned content"
- * is; the difference is only the granularity of the bookkeeping.
+ * **`computePathDigest` was deleted, because nothing asks for one path's digest.** The two callers that walk a tree each
+ * need the whole set at once and have their own walker: `computeManifestHash` above, which hashes the declared surface into
+ * the revision identity, and the ledger's `freezeSubject`, which freezes a subject's per-path digests. A third walker for a
+ * single path had no caller — and a second implementation of "what is this path's digest" is exactly the shape that lets
+ * two of them disagree about the sentinels for unreadable and absent content.
  */
-export async function computePathDigest(root: string, path: string): Promise<string> {
-  const hash = createContentHasher();
-  try {
-    const fullPath = join(root, path);
-    const entry = await stat(fullPath);
-    if (entry.isDirectory()) {
-      await hashDirectoryRecursive(fullPath, root, hash);
-    } else if (entry.isFile()) {
-      hash.update(await readFile(fullPath));
-    } else {
-      hash.update('[unsupported]');
-    }
-  } catch {
-    hash.update('[missing]');
-  }
-  return hash.digest('hex');
-}
 
 /**
  * The owned set as a path → digest map, ordered so the result is deterministic.

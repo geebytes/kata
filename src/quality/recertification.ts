@@ -65,67 +65,6 @@ export function freezeCandidate(input: CandidateFreezeInput): CandidateFreeze {
 }
 
 /**
- * Decides whether a completed independent certification may be reused after a repair.
- *
- * The function is intentionally pure and fail-closed. It never decides that a pass is valid because a revision ID
- * happens to match; it returns reuse only after proving every changed path is outside the reviewed surface and every
- * contract identity is unchanged.
- */
-export function planReCertification(
-    previous: CandidateFreeze,
-    current: CandidateFreeze,
-    unresolvedFindings: readonly UnresolvedFindingTarget[],
-): ReCertificationDecision {
-    const changedPaths = diffPaths(previous.contentDigests, current.contentDigests);
-    const base = { changedPaths, previousFreezeHash: previous.hash };
-
-    if (
-        previous.acceptanceHash !== current.acceptanceHash
-        || previous.instrumentHash !== current.instrumentHash
-        || previous.reviewPolicyHash !== current.reviewPolicyHash
-        || previous.executorBoundaryHash !== current.executorBoundaryHash
-    ) {
-        return { kind: 'full_review', reason: 'semantic_contract_changed', ...base };
-    }
-
-    if (!samePaths(previous.reviewedPaths, current.reviewedPaths) || !sameCriterionPaths(previous.criterionPaths, current.criterionPaths)) {
-        return { kind: 'full_review', reason: 'review_scope_changed', ...base };
-    }
-
-    const reviewed = new Set(current.reviewedPaths);
-    if (unresolvedFindings.some((finding) => finding.targetPaths.length === 0 || finding.targetPaths.some((path) => reviewed.has(path)))) {
-        return { kind: 'full_review', reason: 'unresolved_finding_implicated', ...base };
-    }
-
-    const reviewedChangedPaths = changedPaths.filter((path) => reviewed.has(path));
-    const unmappedPath = reviewedChangedPaths.find((path) => criteriaForPath(current.criterionPaths, path).length === 0);
-    if (unmappedPath) return { kind: 'full_review', reason: 'unmapped_reviewed_path', ...base };
-
-    const impactedCriteria = new Set(reviewedChangedPaths.flatMap((path) => criteriaForPath(current.criterionPaths, path)));
-    for (const criterionId of changedEvidenceCriteria(previous.evidenceByCriterion, current.evidenceByCriterion)) impactedCriteria.add(criterionId);
-
-    if (impactedCriteria.size === 0) {
-        return {
-            kind: 'no_review_needed',
-            reason: 'outside_reviewed_surface',
-            changedPaths,
-            reusedFreezeHash: previous.hash,
-        };
-    }
-
-    const unknownEvidenceCriterion = [...impactedCriteria].find((criterionId) => !(criterionId in current.criterionPaths));
-    if (unknownEvidenceCriterion) return { kind: 'full_review', reason: 'semantic_contract_changed', ...base };
-
-    return {
-        kind: 'targeted_review',
-        reason: 'criteria_impacted',
-        changedPaths,
-        criterionIds: [...impactedCriteria].sort(),
-        previousFreezeHash: previous.hash,
-    };
-}
-
-/**
  * The criteria a narrowed round carries, and the ones it explicitly does not re-check.
  *
  * A `targeted_review` decision that only *reports* itself leaves the round full-sized: the reviewer still receives every
@@ -136,21 +75,6 @@ export function planReCertification(
 export interface TargetedReviewPlan {
     criterionIds: string[];
     carriedOverCriterionIds: string[];
-}
-
-export function targetedReviewPlan(
-    decision: ReCertificationDecision,
-    declaredCriterionIds: readonly string[],
-): TargetedReviewPlan {
-    const declared = [...new Set(declaredCriterionIds)].sort();
-    if (decision.kind !== 'targeted_review') {
-        return { criterionIds: declared, carriedOverCriterionIds: [] };
-    }
-    const impacted = new Set(decision.criterionIds);
-    return {
-        criterionIds: declared.filter((id) => impacted.has(id)),
-        carriedOverCriterionIds: declared.filter((id) => !impacted.has(id)),
-    };
 }
 
 function canonicalCandidate(input: CandidateFreezeInput): CandidateFreezeInput {

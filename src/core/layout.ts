@@ -429,10 +429,6 @@ export function evidenceArchiveDir(root: string, revisionId: string): string {
     return join(evidenceDir(root), 'superseded', revisionId);
 }
 
-export function evidenceFilePath(root: string, taskId: string, suffix: string): string {
-    return join(evidenceDir(root), `${taskId}-${suffix}.json`);
-}
-
 // ---------------------------------------------------------------------------
 // Relations, wiki, runtime
 // ---------------------------------------------------------------------------
@@ -460,10 +456,6 @@ export function activeTaskPath(root: string): string {
 
 /** The directory's name, exported so a consumer that only needs the name does not spell the string itself. */
 export const llmwikiDirName = '.llmwiki';
-
-export function llmwikiDir(root: string): string {
-    return join(root, llmwikiDirName);
-}
 
 // ---------------------------------------------------------------------------
 // Handoffs

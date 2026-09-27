@@ -8,6 +8,8 @@ import {
   type PromptLanguage,
 } from './prompt-catalogue.js';
 import type { RepairScope } from '../quality/judge.js';
+import { isLegacyTask } from '../quality/acceptance-matrix.js';
+import type { AcceptanceMatrix } from '../core/task.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
 import { readCurrentTaskRevision } from './revision.js';
@@ -264,7 +266,9 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
             },
         };
     })()),
-    ...(task && !task.acceptanceMatrix ? { missingAcceptanceMatrix: true } : {}),
+    // The matrix-less fact, asked through the predicate that names it: `isLegacyTask` is `!matrix`, and deriving it here
+    // as a second expression is how one fact gets two spellings.
+    ...(task && isLegacyTask(task.acceptanceMatrix as AcceptanceMatrix | undefined) ? { missingAcceptanceMatrix: true } : {}),
     ...(mixedRevision ? { mixedRevisionEvidence: true } : {}),
   };
 }

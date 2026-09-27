@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderSkill, skillCommands, type Platform } from '../../src/adapters/manifest.js';
 import { platformCommandPath, platformSkillPath } from '../../src/adapters/platforms.js';
-import { renderPlatformCommand } from '../../src/adapters/ownership.js';
 
 /**
  * The committed platform assets must be what the renderer produces today.
@@ -35,14 +34,11 @@ describe('the committed platform assets match what the renderer produces', () =>
                     renderSkill(command, platform, { language }));
             });
 
-            // OpenCode also ships command files, rendered from the same skill text with a different wrapper. They were
-            // drifting for exactly the same reason the skills were, and the first version of this guard missed them:
-            // a "generated asset" is not one file, it is whatever `update` writes.
-            const commandPath = platformCommandPath(platform, 'project', command.id, process.cwd());
-            if (!commandPath) continue;
-            it(`${platform}: command ${command.id}`, async () => {
-                await expectCurrent(commandPath, (language) => renderPlatformCommand(platform, command, language) ?? '');
-            });
+
+            // **The OpenCode command-file guard is gone with `renderPlatformCommand`.** It rendered a command file from the
+            // same skill text with a different wrapper, and the renderer had no production caller: `kata-cli update` writes
+            // skills, not platform command files, so the guard was comparing against a function nothing else used. What
+            // remains — the skill files themselves — is what `update` actually writes, and it still drifts loudly.
         }
     }
 });

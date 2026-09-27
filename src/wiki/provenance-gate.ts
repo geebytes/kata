@@ -93,9 +93,3 @@ export function provenanceRefusal(record: WikiRecord, check: ProvenanceCheck): s
         : ' Record the candidate from a task that passed Judge, with its evidence.';
     return `Cannot promote record '${record.id}': its provenance does not hold — ${details}.${remedy}`;
 }
-
-/** The sealed revision the record's validation task is bound to, for the audit trail. */
-export async function validationRevisionId(root: string, taskId: string): Promise<string | null> {
-    const revision = await readCurrentTaskRevision(root, taskId).catch(() => null);
-    return revision?.id ?? null;
-}

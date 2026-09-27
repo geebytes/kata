@@ -6,6 +6,7 @@ import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
 import { findMatrixDeclarationGaps } from '../quality/acceptance-matrix.js';
+import { readChangeRecord } from '../quality/change-record.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
 import { createHandoff } from './handoff.js';
@@ -1295,6 +1296,11 @@ async function cmdVerify(
             // **Counted from the ledger, which is where a problem is recorded on this route.** These two fields reported the
             // round-shaped findings table; `openLedgerProblems` is the same question in the vocabulary the gates read.
             openProblems: (await openLedgerProblems(root, taskId)).length,
+            // **The change record, read back.** The seal writes it and refuses prose that contradicts its own derived
+            // numbers, and until this line nothing ever read one: an audited artefact with a writer and no reader, which is
+            // the shape the wiring check reports and the shape `readChangeRecord` existed for. Reported here so an operator
+            // can see what the record says about the revision under verification.
+            changeRecord: await readChangeRecord(root, taskId).catch(() => null),
             implementationReady,
             governanceReady: wikiClosure.valid,
             ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),

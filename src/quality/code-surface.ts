@@ -37,28 +37,8 @@ export function isNonCodePath(path: string): boolean {
     if (NON_CODE_DIRECTORIES.some((directory) => normalized.startsWith(directory))) return true;
     return NON_CODE_EXTENSIONS.some((extension) => normalized.endsWith(extension));
 }
-
-/**
- * The owned paths, split three ways: **instrument**, **code**, and **governance text**.
- *
- * Two outputs were one short (design §24.4): a script under an owned path was "code", so an *instrument's* edits
- * invalidated a pass about the *deliverable* — the structural cause of four wasted rounds in one day. A declared
- * instrument is subtracted first, so its edits invalidate the instrument surface only.
- *
- * The instrument class is checked **before** the code/governance split on purpose: an instrument written in Markdown is
- * still an instrument, and the declaration is the more specific statement of what the path is for.
- */
-export function splitOwnedPaths(ownedPaths: string[], task: { instruments?: string[] } = {}): { instruments: string[]; code: string[]; nonCode: string[] } {
-    const instruments: string[] = [];
-    const code: string[] = [];
-    const nonCode: string[] = [];
-    for (const path of ownedPaths) {
-        if (isInstrumentPath(task, path)) instruments.push(path);
-        else if (isNonCodePath(path)) nonCode.push(path);
-        else code.push(path);
-    }
-    return { instruments, code, nonCode };
-}
+// **`splitOwnedPaths` was deleted.** The text-only-pass route that consumed it is gone, and the instrument/code distinction
+// it computed is available through `instrumentPaths` and `findingLayer`, which have readers.
 
 /**
  * The owned paths that are **instruments** (§21.1), or the empty array when the task declares none.
@@ -246,11 +226,5 @@ export function touchMovedCode(
     if (beforeHash === null || afterHash === null) return true;
     return beforeHash !== afterHash;
 }
-
-/** Whether the only difference is in non-code paths — the case whose re-verification the measurement said is wasted. */
-export function textOnlyChange(
-    before: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'> | null,
-    after: Pick<TaskRevision, 'ownedPaths' | 'pathDigests'>,
-): boolean {
-    return !touchMovedCode(before, after);
-}
+// **`textOnlyChange` was deleted with the route it spared.** It wrapped `touchMovedCode` to let a text-only revision skip a
+// review pass; there are no passes to skip, and `touchMovedCode` is itself unreferenced (see the wiring report).
