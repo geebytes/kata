@@ -6,7 +6,7 @@
  * written the moment they exist, so there is no last step to lose. Reading reports which files exist, so "nothing was
  * recorded" is a visible state rather than an empty list.
  */
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
@@ -27,7 +27,14 @@ const FILES = {
     evidence: 'evidence.json',
     verdicts: 'verdicts.json',
     challenges: 'challenges.json',
-    /** Questions asked of the reviewer after the fact. Generated from the claim surface, never authored. */
+    /**
+     * Append-only: every verdict ever recorded, with the producer that decided it and what it superseded.
+     *
+     * `verdicts.json` is a projection of this; the history is the record. A reversal used to be unobservable — the
+     * projection was overwritten in place — which made the most interesting fact about a verdict the one fact the ledger
+     * could not show.
+     */
+    verdictHistory: 'verdict-history.jsonl',
     probes: 'probes.json',
     /** What the reviewer answered, recorded with the command and the observation. */
     probeAnswers: 'probe-answers.json',
@@ -150,11 +157,20 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     const dir = reviewDir(root, changeId);
     const recordedFiles: string[] = [];
     const malformedFiles: string[] = [];
+    // **One file here is not a JSON document.** `verdict-history.jsonl` is line-delimited, so parsing it whole reports a
+    // healthy audit trail as malformed — and a malformed file makes the whole ledger `unreadable`, which is how a
+    // correctness fix for verdict reversals would have refused every change in the repository. The reader knows which
+    // shape each file has, so it parses the one JSONL file per line and reports *its* bad lines through the same field.
     for (const name of Object.values(FILES)) {
         if (!(await exists(join(dir, name)))) continue;
         recordedFiles.push(name);
         try {
-            JSON.parse(await readFile(join(dir, name), 'utf8'));
+            const text = await readFile(join(dir, name), 'utf8');
+            if (name.endsWith('.jsonl')) {
+                if (parseJsonLines(text).malformed > 0) malformedFiles.push(name);
+            } else {
+                JSON.parse(text);
+            }
         } catch {
             malformedFiles.push(name);
         }
@@ -366,19 +382,80 @@ export async function replaceEvidence(
     });
 }
 
-/** Verdicts replace by evidence id: a re-verification supersedes an earlier reading of the same item. */
+/**
+ * Record verdicts, and keep every reading that came before.
+ *
+ * **The defect this closes.** `recordVerdicts` replaced by `evidenceId`, so a second reading of one item silently became
+ * *the* reading: a `refuted` verdict could be overwritten by a later `supported` one and nothing recorded that a reversal
+ * had happened. On a store whose whole purpose is to be auditable that is the wrong direction — the reversal is the most
+ * interesting fact about a verdict, and it was the one fact the ledger could not show.
+ *
+ * So there are two files now. `verdicts.json` is the *current* reading of each item (what `decide` consumes and what
+ * every reader asks for), and `verdict-history.jsonl` is append-only: every verdict ever recorded, in order, with the
+ * producer that decided it. The current view is a projection of the history, and the history cannot be written backwards.
+ *
+ * The projection is deliberately still by `evidenceId` — re-verifying an item after a correction *should* supersede the
+ * old reading; what must not be lost is that the old reading existed. `superseded` records the reading a new one
+ * replaced, and it is `null` when the two agreed: an agreement is not a reversal.
+ */
 export async function recordVerdicts(root: string, changeId: string, incoming: readonly EvidenceVerdict[]): Promise<number> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.verdicts);
         const verdicts = (await readJson<EvidenceVerdict[]>(path)) ?? [];
+        const prior = new Map(verdicts.map((verdict) => [verdict.evidenceId, verdict]));
         for (const verdict of incoming) {
             const index = verdicts.findIndex((entry) => entry.evidenceId === verdict.evidenceId);
             if (index >= 0) verdicts[index] = verdict;
             else verdicts.push(verdict);
         }
         await writeJson(root, changeId, FILES.verdicts, verdicts);
+        // Appended after the projection is durable, so the history never names a reading the reader cannot see.
+        const historyPath = join(reviewDir(root, changeId), FILES.verdictHistory);
+        const lines = incoming.map((verdict) => JSON.stringify({ ...verdict, superseded: supersededBy(prior.get(verdict.evidenceId), verdict) }));
+        if (lines.length > 0) {
+            await mkdir(reviewDir(root, changeId), { recursive: true });
+            await appendFile(historyPath, `${lines.join('\n')}\n`, 'utf8');
+        }
         return incoming.length;
     });
+}
+
+/** The reading a new verdict replaced, or `null` when it was the first or when the two agreed. */
+function supersededBy(previous: EvidenceVerdict | undefined, next: EvidenceVerdict): { verdict: EvidenceVerdict['verdict']; at: string } | null {
+    if (!previous) return null;
+    if (previous.verdict === next.verdict) return null;
+    return { verdict: previous.verdict, at: previous.at };
+}
+
+/**
+ * Every verdict ever recorded, newest last, with what each one superseded.
+ *
+ * Read as JSONL and parsed per line: a line that cannot be parsed is *counted* rather than thrown, for the same reason
+ * the ledger keeps `malformedFiles` apart from `recordedFiles` — an unreadable audit trail is a fact a reader must see,
+ * and it must not be indistinguishable from an audit trail nobody wrote.
+ */
+function parseJsonLines(text: string): { entries: Record<string, unknown>[]; malformed: number } {
+    const entries: Record<string, unknown>[] = [];
+    let malformed = 0;
+    for (const line of text.split('\n')) {
+        if (line.trim() === '') continue;
+        try {
+            entries.push(JSON.parse(line) as Record<string, unknown>);
+        } catch {
+            malformed += 1;
+        }
+    }
+    return { entries, malformed };
+}
+
+export async function readVerdictHistory(root: string, changeId: string): Promise<{ entries: Record<string, unknown>[]; malformed: number }> {
+    let raw: string;
+    try {
+        raw = await readFile(join(reviewDir(root, changeId), FILES.verdictHistory), 'utf8');
+    } catch {
+        return { entries: [], malformed: 0 };
+    }
+    return parseJsonLines(raw);
 }
 
 export async function appendChallenge(root: string, changeId: string, challenge: Challenge): Promise<Challenge> {

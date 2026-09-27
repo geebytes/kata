@@ -13,6 +13,7 @@ import {
     declaredPaths,
     freezeSubject,
     readLedger,
+    readVerdictHistory,
     recordVerdicts,
     reviewDir,
     setUsage,
@@ -99,12 +100,43 @@ describe('the ledger records each fact as it arrives', () => {
         await setUsage(root, changeId, { tokens: 1234 });
 
         const ledger = await readLedger(root, changeId);
-        expect(ledger.recordedFiles.sort()).toEqual(['challenges.json', 'claims.json', 'evidence.json', 'runs.json', 'subject.json', 'usage.json', 'verdicts.json']);
+        expect(ledger.recordedFiles.sort()).toEqual(['challenges.json', 'claims.json', 'evidence.json', 'runs.json', 'subject.json', 'usage.json', 'verdict-history.jsonl', 'verdicts.json']);
         expect(ledger.verdicts).toHaveLength(1);
         expect(ledger.verdicts[0]?.verdict).toBe('supported');
         expect(ledger.challenges).toHaveLength(1);
         expect(ledger.usage.tokens).toBe(1234);
         expect(ledger.runs).toHaveLength(1);
+    });
+
+    it('keeps every reading a verdict replaced, so a reversal cannot be undone invisibly', async () => {
+        // **The defect this pins.** `recordVerdicts` replaced by `evidenceId`, so a second reading of one item silently
+        // became *the* reading: a `refuted` verdict could be overwritten by a later `supported` one and nothing recorded
+        // that a reversal had happened. The reversal is the most interesting fact about a verdict, and it was the one
+        // fact the ledger could not show.
+        const subject = await freezeSubject({ root, paths: ['src/a.ts'] });
+        expect(subject.ok).toBe(true);
+        if (!subject.ok) return;
+        await writeSubject(root, changeId, subject.subject);
+        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'refuted', subjectRevision: subject.subject.revision })]);
+        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: subject.subject.revision })]);
+
+        // The current reading is the projection…
+        const ledger = await readLedger(root, changeId);
+        expect(ledger.verdicts).toHaveLength(1);
+        expect(ledger.verdicts[0]?.verdict).toBe('supported');
+
+        // …and the history still holds both, with the second naming what it replaced.
+        const history = await readVerdictHistory(root, changeId);
+        expect(history.malformed).toBe(0);
+        expect(history.entries).toHaveLength(2);
+        expect(history.entries.map((entry) => entry.verdict)).toEqual(['refuted', 'supported']);
+        expect(history.entries[0]?.superseded).toBeNull();
+        expect((history.entries[1]?.superseded as { verdict: string }).verdict).toBe('refuted');
+
+        // An agreeing re-run is not a reversal, and says so rather than inventing one.
+        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: subject.subject.revision })]);
+        const again = await readVerdictHistory(root, changeId);
+        expect(again.entries[2]?.superseded).toBeNull();
     });
 
     it('expands a declared directory into the files it holds, instead of calling the directory unreadable', async () => {

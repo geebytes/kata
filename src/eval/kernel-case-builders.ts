@@ -102,7 +102,7 @@ function base(overrides: Partial<DecideInput> = {}): DecideInput {
         assurance: overrides.assurance ?? 'observed',
         usage: overrides.usage ?? {},
         c0Tokens: null,
-        discovery: overrides.discovery ?? { independentChallenges: 1 },
+        discovery: overrides.discovery ?? { independentChallenges: 1, verifiedChallenges: 1 },
         ...(overrides.previous ? { previous: overrides.previous } : {}),
     };
 }
