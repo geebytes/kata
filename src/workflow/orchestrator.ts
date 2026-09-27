@@ -1438,7 +1438,28 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // Kept in the record rather than the code: this was the sixth call site repaired for reading a copy of "is
             // this finding disposed" (`cg-f1`, `kgsr7-f3`, `rba-r3-f3`, `wcc7-f3`, navigation, and this one), and the
             // repair that ends the class is the removal of the second copy, not a seventh patch.
-            const { suggestedReviewedPaths } = await import('../quality/review-scope.js');
+            const { suggestedReviewedPaths, reviewScopeVerdict } = await import('../quality/review-scope.js');
+            // **F5's verdict, on the route that records what a review read.** The property is "the change stayed inside the
+            // paths the review declared reading"; the recorded `reviewedPaths` existed and nothing verdict it, so a review
+            // could declare two paths, the change could grow to twelve, and the approval would not notice. The drift is
+            // measured against the ledger's frozen subject, which is what "changed since the review" means here.
+            if (options.reviewedPaths?.length) {
+                const { ledgerDrift } = await import('../store/ledger.js');
+                const drift = await ledgerDrift(root, taskId);
+                if (drift && drift.changed.length + drift.added.length > 0) {
+                    const scope = reviewScopeVerdict({
+                        reviewedPaths: options.reviewedPaths,
+                        changedPaths: [...drift.changed, ...drift.added],
+                    });
+                    if (!scope.withinScope) {
+                        return {
+                            command: 'review', taskId, phase: 'review', success: false,
+                            error: `Review approval refused: ${scope.reason}. Re-run /kata-review — a review covers the paths it recorded reading, and this change now reaches others.`,
+                            diagnostics: { reviewScope: { outside: scope.outside, conservative: scope.conservative } },
+                        };
+                    }
+                }
+            }
             const approvalTask = await readTask(root, taskId);
             const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
