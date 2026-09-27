@@ -2391,19 +2391,7 @@ export async function buildAdversarialBrief(
                 .filter((finding) => !immutableScope || immutableScope.kind !== 'delta'
                     || !finding.path
                     || immutableScope.changedPaths.includes(finding.path))
-                .map((finding) => ({
-                    // **The class vocabulary the termination condition reads** (`kgsr7-f2`, and it is the reviewer's own instruction
-                    // channel). This grouped findings by `findingClassOf` — `acceptance:AC-1` / `path:src/a.ts` / `record:review` —
-                    // while `roundMayClose` reads the ids in `CLASS_COVERAGE` that a finding names in its `classInstances`. So the
-                    // brief taught one vocabulary and the gate scored another, and a reviewer following its brief would have kept
-                    // its round open forever (or, worse, believed it had closed it). The class a finding is an instance of is the
-                    // one the round recorded, so that is what the section shows.
-                    class: (finding.classInstances ?? []).join(', ') || '(no class recorded — name one, or the round cannot close)',
-                    severity: finding.severity,
-                    id: finding.id,
-                    message: finding.message,
-                    disposition: finding.disposition,
-                })),
+                .map((finding) => classHistoryEntry(finding)),
             ...(await readArchivedPassFindings(root, taskId, node))
                 .filter((finding) => !immutableScope || immutableScope.kind !== 'delta'
                     || !finding.path
@@ -2821,21 +2809,6 @@ async function readProjectQualityChecks(root: string): Promise<Array<{ name: str
  * carries state that recording a pass rewrites.
  */
 /**
- * A finding's class, derived from the two fields that describe it — its acceptance criterion and its path.
- *
- * Derived rather than declared, so grouping a finding needs no cooperation from the author and cannot be gamed by
- * writing a different class name. Two findings about the same criterion, or the same file, are findings about the same
- * thing, which is exactly what a reviewer needs to avoid re-deriving a class an earlier round already named. A finding
- * with neither is grouped under the record it came from, which is the honest answer for a finding about the record
- * itself — the class the measured change kept re-finding.
- */
-export function findingClassOf(finding: { acceptanceId?: string; path?: string; source?: string }): string {
-    if (finding.acceptanceId) return `acceptance:${finding.acceptanceId}`;
-    if (finding.path) return `path:${finding.path}`;
-    return `record:${finding.source ?? 'unknown'}`;
-}
-
-/**
  * The tracked findings, imported dynamically.
  *
  * `finding-disposition` imports this module's types, so a static edge here would be a cycle; the import is dynamic for
@@ -2878,6 +2851,33 @@ async function countWithheldClassHistory(
     return ids.size;
 }
 
+/**
+ * One entry in the brief's class history, from either producer.
+ *
+ * **One mapping, two sources** (`rri-f1`). The tracked view rendered the ids a finding recorded in `classInstances`; the
+ * archived passes rendered an older derived label (`acceptance:…` / `path:…`, grouped from whichever field the finding had) — so the same finding showed a different
+ * class depending on which store it came from, and a node's own earlier passes, whose snapshots carry no class ids, showed
+ * a label the gate does not read at all. `roundMayClose` reads the `CLASS_COVERAGE` ids, so that is the only vocabulary
+ * this table may speak: a finding that recorded none says so, in the same words the reviewer needs to act on.
+ */
+function classHistoryEntry(finding: {
+    id: string;
+    severity: string;
+    message: string;
+    disposition?: string;
+    classInstances?: string[];
+    path?: string;
+}): { class: string; severity: string; id: string; message: string; disposition: string; path?: string } {
+    return {
+        class: (finding.classInstances ?? []).join(', ') || '(no class recorded — name one, or the round cannot close)',
+        severity: finding.severity,
+        id: finding.id,
+        message: finding.message,
+        disposition: finding.disposition ?? 'open',
+        ...(finding.path ? { path: finding.path } : {}),
+    };
+}
+
 async function readArchivedPassFindings(
     root: string,
     taskId: string,
@@ -2892,7 +2892,7 @@ async function readArchivedPassFindings(
     for (const file of files) {
         const raw = await readFile(join(directory, file), 'utf8').catch(() => null);
         if (!raw) continue;
-        let parsed: { findings?: Array<{ id?: string; severity?: string; message?: string; acceptanceId?: string; path?: string; disposition?: string }> };
+        let parsed: { findings?: Array<{ id?: string; severity?: string; message?: string; acceptanceId?: string; path?: string; disposition?: string; classInstances?: string[] }> };
         try {
             parsed = JSON.parse(raw) as typeof parsed;
         } catch {
@@ -2902,19 +2902,18 @@ async function readArchivedPassFindings(
         }
         for (const finding of parsed.findings ?? []) {
             if (!finding.id || !finding.severity || !finding.message) continue;
-            history.push({
-                class: findingClassOf(finding),
-                severity: finding.severity,
+            // **The path is kept** (the snapshot holds it and this function once dropped it, which made the delta filter
+            // withhold nothing: every entry reached the renderer with `path` undefined and fell to the "keep what cannot
+            // be judged" branch) **and the class comes from the same mapping as the tracked branch**, so one finding shows
+            // one class whichever store it came from.
+            history.push(classHistoryEntry({
                 id: finding.id,
+                severity: finding.severity,
                 message: finding.message,
-                disposition: finding.disposition ?? 'open',
-                // **The path, which the snapshot already holds and this function dropped.** Without it the class section
-                // could not tell which findings a delta is about, so its filter withheld nothing: every entry reached the
-                // renderer with `path` undefined and fell to the "keep what cannot be judged" branch. Measured: 5 of 13
-                // findings on this change sit outside the delta, so the filter is worth ~5,700 of that section's 14,918
-                // characters. The defect was a mapping that dropped a field, one layer below the renderer that needed it.
+                ...(finding.disposition ? { disposition: finding.disposition } : {}),
+                ...(finding.classInstances ? { classInstances: finding.classInstances } : {}),
                 ...(finding.path ? { path: finding.path } : {}),
-            });
+            }));
         }
     }
     return history;

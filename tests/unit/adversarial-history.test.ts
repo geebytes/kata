@@ -195,18 +195,39 @@ describe('adversarial brief: finding history by class', () => {
                 findings,
             });
 
-            // Round 1 names a class; round 2 replaces it and archives round 1.
+            // Round 1 names a class; round 2 replaces it and archives round 1. The archived round records the class id the
+            // gate reads, which is the vocabulary the table must speak whichever store a finding came from (`rri-f1`).
             await writeAdversarialRecord(root, 'history-archive', round('2026-09-22T00:00:00.000Z', [
-                { id: 'h1', taskId: 'history-archive', severity: 'major', message: 'the delta omits two changed paths', path: 'src/a.ts' },
+                {
+                    id: 'h1',
+                    taskId: 'history-archive',
+                    severity: 'major',
+                    message: 'the delta omits two changed paths',
+                    path: 'src/a.ts',
+                    classInstances: ['a-definition-with-no-consumer'],
+                },
             ]));
             await writeAdversarialRecord(root, 'history-archive', round('2026-09-22T01:00:00.000Z', []));
 
             const brief = await buildAdversarialBrief(root, 'history-archive', 'review');
-            // The property is about the text a reviewer receives: the class table has to name what an earlier round found.
+            // The property is about the text a reviewer receives: the class table has to name what an earlier round found,
+            // in the ids the termination condition reads and not in a label derived from the finding's own fields.
             expect(brief.text).toContain('## Findings by class, and what was done about each');
             expect(brief.text).toContain('the delta omits two changed paths');
-            expect(brief.text).toContain('path:src/a.ts');
-            expect(brief.text).toMatch(/path:src\/a\.ts[^\n]*1 finding/i);
+            expect(brief.text).toContain('a-definition-with-no-consumer');
+            expect(brief.text).not.toContain('path:src/a.ts');
+            expect(brief.text).toMatch(/a-definition-with-no-consumer[^\n]*1 finding/i);
+
+            // And an archived finding that recorded no class says so, rather than showing a label the gate cannot read.
+            // It has to be *archived* to appear here at all: a node's own live record is the volatile surface the brief
+            // deliberately excludes, so the no-class case is written and then replaced, which snapshots it.
+            await writeAdversarialRecord(root, 'history-archive', round('2026-09-22T02:00:00.000Z', [
+                { id: 'h2', taskId: 'history-archive', severity: 'minor', message: 'a finding from before classes were recorded', path: 'src/a.ts' },
+            ]));
+            await writeAdversarialRecord(root, 'history-archive', round('2026-09-22T03:00:00.000Z', []));
+            const second = await buildAdversarialBrief(root, 'history-archive', 'review');
+            expect(second.text).toContain('a finding from before classes were recorded');
+            expect(second.text).toContain('no class recorded — name one, or the round cannot close');
         } finally {
             await rm(root, { recursive: true, force: true });
         }

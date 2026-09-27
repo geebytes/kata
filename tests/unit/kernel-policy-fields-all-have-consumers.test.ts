@@ -44,7 +44,9 @@ describe('the policy is data with no dead fields', () => {
         const policy = defaultPolicy();
         // A floor, not a set: the tier says how weak an assurance it will accept, and anything stronger passes.
         expect(tierPolicy(policy, 'standard').assuranceFloor).toBe('none');
-        expect(tierPolicy(policy, 'strict').assuranceFloor).toBe('relayed');
+        // Strict requires that kata observed the evidence: on the ledger route the approval is held by the evidence,
+        // and an evidence set nobody watched being produced is not enough for it.
+        expect(tierPolicy(policy, 'strict').assuranceFloor).toBe('observed');
         expect(tierPolicy(policy, 'security').assuranceFloor).toBe('sandboxed');
         expect(meetsAssuranceFloor(policy, 'standard', 'observed')).toBe(true);
         expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(false);

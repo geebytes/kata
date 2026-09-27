@@ -1360,6 +1360,77 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires non-empty review evidence.',
                 };
             }
+            // **Two routes to an approval, and the ledger's is the stronger one.** A change whose claims and evidence
+            // are recorded in a ledger is decided by the kernel over content kata verified itself, so what holds the
+            // approval is the evidence rather than a round-shaped pass about it. A change with no ledger keeps the route
+            // it had, and that absence is a fact the caller can see — which is what lets the old route be retired change
+            // by change instead of all at once.
+            const { ledgerVerdict: readLedgerVerdict } = await import('../store/verdict.js');
+            const { ledgerDrift } = await import('../store/ledger.js');
+            const ledger = await readLedgerVerdict({ root, changeId: taskId });
+            let ledgerApproval: { subjectRevision: string; tier: string; assurance: string; claims: number; limits: string[] } | null = null;
+            if (ledger.kind === 'unreadable') {
+                // A ledger that exists and cannot be read decides nothing, and it must not fall through to the other route
+                // as though it had never been written: those are two different facts.
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval cannot be judged by the evidence ledger: ${ledger.detail}`,
+                };
+            }
+            if (ledger.kind === 'decided') {
+                // A verdict must not outlive the content it was about, so the frozen digests are compared with what the
+                // paths hold now. A path that cannot be read makes the comparison impossible, which is a refusal rather
+                // than a silent pass.
+                const drift = await ledgerDrift(root, taskId);
+                if (drift && drift.unreadable.length > 0) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `Review approval cannot be judged by the evidence ledger: it names paths that cannot be read (${drift.unreadable.join(', ')}), so no comparison against the frozen subject is possible.`,
+                    };
+                }
+                const moved = drift ? [...drift.changed, ...drift.added, ...drift.removed] : [];
+                if (moved.length > 0) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `The ledger describes content that has moved since it was frozen: ${moved.join(', ')}. Re-freeze the subject and re-verify the claims the change reopened, then approve.`,
+                        diagnostics: {
+                            ledger: { state: 'decided', verdict: ledger.decision.verdict, subjectRevision: ledger.subjectRevision, moved },
+                            nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),
+                        },
+                    };
+                }
+                if (ledger.decision.verdict !== 'pass') {
+                    const reasons = ledger.decision.reasons
+                        .map((reason) => `${reason.code}${reason.claimId ? ` (${reason.claimId})` : ''}: ${reason.detail}`);
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}`,
+                        diagnostics: {
+                            ledger: {
+                                state: 'decided',
+                                verdict: ledger.decision.verdict,
+                                tier: ledger.tier,
+                                assurance: ledger.assurance,
+                                reasons: ledger.decision.reasons,
+                                deficits: ledger.decision.deficits,
+                            },
+                            nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),
+                        },
+                    };
+                }
+                ledgerApproval = {
+                    subjectRevision: ledger.subjectRevision,
+                    tier: ledger.tier,
+                    assurance: ledger.assurance,
+                    claims: ledger.claims,
+                    // **What this route does not establish, said out loud.** The ledger records what was verified, not who
+                    // declared the claims: this approval rests on evidence kata ran and on a discovery floor, not on an
+                    // independent session having written the record.
+                    limits: ['the ledger records what was verified, not who wrote the claims'],
+                };
+            }
+
+            if (ledgerApproval === null) {
             // An approval is the review's conclusion, so the independent adversarial pass belongs here: the reviewer
             // may not certify a change their own context authored and read.
             const adversarial = await adversarialGateFor(root, taskId, 'review');
@@ -1372,6 +1443,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         nextAction: nextActionForTask(taskId, '/kata-review', 'reviewer', 'adversarial_review_pending'),
                     },
                 };
+            }
             }
             // **The tracked view, not the record's raw copy of the same fact** (`measured closing two changes`): `blockingAdversarialFindings`
             // reads severity off the pass record, whose findings carry no disposition — so once a pass reported a major finding,
@@ -1456,7 +1528,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     approvalTask.acceptanceMatrix,
                     existing.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
                 );
-            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
+            await writeFile(reviewPath, `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, ...(ledgerApproval === null ? { reviewRoute: 'adversarial' } : { reviewRoute: 'ledger', ledgerReview: ledgerApproval }), approvedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
             return {
                 command: 'review',
                 taskId,

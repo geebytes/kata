@@ -19,7 +19,7 @@ import type { AssuranceLevel, Decision, EvidenceVerdict, TierName } from '../ker
 export type LedgerVerdict =
     | { kind: 'absent'; detail: string }
     | { kind: 'unreadable'; detail: string }
-    | { kind: 'decided'; tier: TierName; claims: number; decision: Decision };
+    | { kind: 'decided'; tier: TierName; claims: number; assurance: AssuranceLevel; subjectRevision: string; decision: Decision };
 
 export async function ledgerVerdict(input: {
     root: string;
@@ -110,5 +110,12 @@ export async function ledgerVerdict(input: {
         ...(quorum === undefined ? {} : { quorum }),
     });
 
-    return { kind: 'decided', tier, claims: ledger.claims.length, decision };
+    return {
+        kind: 'decided',
+        tier,
+        claims: ledger.claims.length,
+        assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
+        subjectRevision: ledger.subject.revision,
+        decision,
+    };
 }

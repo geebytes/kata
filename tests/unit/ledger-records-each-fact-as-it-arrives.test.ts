@@ -8,6 +8,7 @@ import {
     appendEvidence,
     appendRun,
     amendChallenge,
+    ledgerDrift,
     resolveChallenge,
     declaredPaths,
     freezeSubject,
@@ -104,6 +105,24 @@ describe('the ledger records each fact as it arrives', () => {
         expect(ledger.challenges).toHaveLength(1);
         expect(ledger.usage.tokens).toBe(1234);
         expect(ledger.runs).toHaveLength(1);
+    });
+
+    it('expands a declared directory into the files it holds, instead of calling the directory unreadable', async () => {
+        // A task declaration may name a directory (`openspec/changes/<id>` is a real one). Reading it as a file reported it
+        // as unreadable, which stopped a migration on a declaration that was correct.
+        await mkdir(join(root, 'notes', 'inner'), { recursive: true });
+        await writeFile(join(root, 'notes', 'a.md'), 'first\n');
+        await writeFile(join(root, 'notes', 'inner', 'b.md'), 'second\n');
+        const frozen = await freezeSubject({ root, paths: ['notes'] });
+        expect(frozen.ok).toBe(true);
+        if (!frozen.ok) return;
+        expect(Object.keys(frozen.subject.pathDigests).sort()).toEqual(['notes/a.md', 'notes/inner/b.md']);
+
+        // And a change inside the directory is drift, which is what makes the expansion worth having.
+        await writeSubject(root, changeId, frozen.subject);
+        await writeFile(join(root, 'notes', 'inner', 'b.md'), 'changed\n');
+        const drift = await ledgerDrift(root, changeId);
+        expect(drift?.changed).toEqual(['notes/inner/b.md']);
     });
 
     it('amends a counterexample by keeping the command it replaces, and drops the outcome it no longer earned', async () => {

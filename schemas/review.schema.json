@@ -25,15 +25,15 @@
       "type": "string"
     },
     "governanceManifestHash": {
-      "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
+      "description": "The governance-text surface at the time of this verdict (\u00a722/\u00a724). A text-only edit expires what this surface was verified for, and nothing else.",
       "type": "string"
     },
     "instrumentManifestHash": {
-      "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
+      "description": "The declared-instrument surface at the time of this verdict (\u00a724.4). Editing a declared instrument expires the instrument surface only \u2014 not the pass about the deliverable.",
       "type": "string"
     },
     "candidateFreezeSha256": {
-      "description": "The frozen candidate this verdict answered (§7.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
+      "description": "The frozen candidate this verdict answered (\u00a77.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
       "type": "string"
     },
     "status": {
@@ -48,7 +48,7 @@
       "minLength": 1
     },
     "reviewedPaths": {
-      "description": "The owned paths this review actually read (design §F5). Optional; when absent the review is treated as covering the whole revision, which is the conservative reading.",
+      "description": "The owned paths this review actually read (design \u00a7F5). Optional; when absent the review is treated as covering the whole revision, which is the conservative reading.",
       "type": "array",
       "items": {
         "type": "string",
@@ -63,6 +63,56 @@
       "type": "array",
       "items": {
         "$ref": "https://kata.dev/schemas/review-finding.schema.json"
+      }
+    },
+    "reviewRoute": {
+      "enum": [
+        "adversarial",
+        "ledger"
+      ]
+    },
+    "ledgerReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectRevision",
+        "tier",
+        "assurance",
+        "claims",
+        "limits"
+      ],
+      "properties": {
+        "subjectRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "enum": [
+            "standard",
+            "strict",
+            "security"
+          ]
+        },
+        "assurance": {
+          "enum": [
+            "none",
+            "relayed",
+            "observed",
+            "sandboxed",
+            "signed"
+          ]
+        },
+        "claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     }
   }

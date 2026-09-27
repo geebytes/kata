@@ -6,7 +6,7 @@
  * written the moment they exist, so there is no last step to lose. Reading reports which files exist, so "nothing was
  * recorded" is a visible state rather than an empty list.
  */
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
@@ -15,6 +15,7 @@ import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
 import { assuranceAtLeast } from '../kernel/types.js';
+import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
 import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
@@ -71,7 +72,7 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 async function exists(path: string): Promise<boolean> {
     try {
-        await access(path);
+        await stat(path);
         return true;
     } catch {
         return false;
@@ -138,9 +139,23 @@ export async function freezeSubject(input: { root: string; paths: readonly strin
     const unreadable: string[] = [];
     const digests: Record<string, string> = {};
     for (const path of [...input.paths].sort()) {
+        let stats: Awaited<ReturnType<typeof stat>>;
         try {
-            const content = await readFile(join(input.root, path));
-            digests[path] = hashContent(content);
+            stats = await stat(join(input.root, path));
+        } catch {
+            unreadable.push(path);
+            continue;
+        }
+        // **A declared directory is a set of files, not one unreadable path.** Task declarations name directories
+        // (`openspec/changes/<id>` is one), and reading such a path as a file reported it as unreadable — which is how a
+        // migration stopped on a declaration that was entirely correct. The walk skips only what is never content.
+        if (stats.isDirectory()) {
+            const walked = await walkFiles(join(input.root, path));
+            for (const file of walked) digests[`${path}/${file}`] = hashContent(await readFile(join(input.root, path, file)));
+            continue;
+        }
+        try {
+            digests[path] = hashContent(await readFile(join(input.root, path)));
         } catch {
             unreadable.push(path);
         }
@@ -155,6 +170,27 @@ export async function freezeSubject(input: { root: string; paths: readonly strin
         };
     }
     return { ok: true, subject: subjectOf(digests) };
+}
+
+/**
+ * Every file under a directory, relative to it.
+ *
+ * Deliberately not the identity policy's walk: that one exists for revision identity and skips whatever it is told to
+ * skip, while this one answers "what does this declaration hold", so it skips only directories that are never content and
+ * reports nothing it cannot read — an unreadable file becomes a missing digest, which the caller's comparison then reports
+ * as an added or removed path rather than as "unchanged".
+ */
+async function walkFiles(absolute: string, prefix = '', depth = 0): Promise<string[]> {
+    if (depth > 8) return [];
+    const entries = await readdir(absolute, { withFileTypes: true });
+    const found: string[] = [];
+    for (const entry of entries) {
+        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+        if (entry.isDirectory()) found.push(...await walkFiles(join(absolute, entry.name), relative, depth + 1));
+        else if (entry.isFile()) found.push(relative);
+    }
+    return found;
 }
 
 export async function writeSubject(root: string, changeId: string, subject: Subject): Promise<void> {
@@ -384,6 +420,37 @@ function median(values: number[]): number | null {
     return sorted.length % 2 === 1
         ? (sorted[middle] as number)
         : Math.round(((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2);
+}
+
+/**
+ * Is the ledger still about the current content?
+ *
+ * The same rule the dispositions learned the hard way: a verdict must not outlive the content it was about. The ledger
+ * froze a subject when it was created, so before anything is approved on its authority the frozen digests are compared
+ * with what the paths hold now — and a path that cannot be read is reported rather than treated as unchanged, because
+ * "invisible" and "identical" are not the same answer.
+ */
+export async function ledgerDrift(root: string, changeId: string): Promise<{
+    changed: string[];
+    added: string[];
+    removed: string[];
+    unreadable: string[];
+    subjectRevision: string;
+} | null> {
+    const ledger = await readLedger(root, changeId);
+    if (!ledger.subject) return null;
+    const frozen = await freezeSubject({ root, paths: Object.keys(ledger.subject.pathDigests) });
+    if (!frozen.ok) {
+        return { changed: [], added: [], removed: [], unreadable: frozen.unreadable, subjectRevision: ledger.subject.revision };
+    }
+    const diff = diffSubjects(ledger.subject, frozen.subject);
+    return {
+        changed: [...diff.changed],
+        added: [...diff.added],
+        removed: [...diff.removed],
+        unreadable: [],
+        subjectRevision: ledger.subject.revision,
+    };
 }
 
 export async function ledgerReport(root: string, changeId: string): Promise<LedgerReport> {

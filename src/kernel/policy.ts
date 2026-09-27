@@ -105,7 +105,9 @@ export function defaultPolicy(): Policy {
                 autoEvidence: ['static_witness', 'invariant_proof', 'executable_falsifier'],
                 reviewers: 1,
                 quorumOn: ['disagreement', 'high_risk'],
-                assuranceFloor: 'relayed',
+                // Strict requires that kata itself observed the evidence: an approval on this route is held by the ledger,
+                // and the ledger's credibility rests on the round having been run rather than reported.
+                assuranceFloor: 'observed',
                 requiredRiskClasses: ['consistency', 'boundary', 'failure_mode'],
                 humanBudgetMin: 10,
             },
