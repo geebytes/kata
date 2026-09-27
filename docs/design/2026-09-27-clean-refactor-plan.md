@@ -891,3 +891,48 @@ ledger status --cost  → discovery: { refutationRate, challengeWithdrawalRate, 
 ## 18.4 现在的状态
 
 **方案 §5 的 7 个动词全部落地**（4 个是本轮及前几轮补齐的：`ask`/`answer`/`run`/`request-check`）。**度量工具 3 个**（超出方案，已记明）。剩下的真实缺口回到 §2 的**删除清单**（旧机制一行未删）与 §8 的验收（需要一次真实评审跑在语料上）—— 而这两件的性质不同：删除是**迁移次序**，验收是**度量**，而**业务流程现在没有缺口了**。
+
+---
+
+# 19. 删除清单：门已断，剩下的删除量第一次可精确计量
+
+> 方法：**先断门，再删码**。（门 ⇒ 旧模块变成没有调用者 ⇒ 逐个删除并每步跑全量测试。）
+
+## 19.1 已断的门（本轮，4 个 commit）
+
+| # | 断掉的 | 证据 |
+|---|---|---|
+| 1 | **审批不再有第二条路** | `ledgerApproval === null` 时**拒绝**并点名补救（`ledger freeze/claim/evidence/plan/decide`），而不是回落到对抗记录。关闭前实测：11 个 change 全部已归档，**无在飞 change 需要旧路** ⇒ 影响为零 |
+| 2 | **账本路线只读账本** | 审批曾并列读【旧 findings 表 + 义务表 + 决策】⇒ 一个凭证据获批的 change 仍可能被一条**针对轮次**记录的 finding 阻断（"同一事实两处派生"的最后一处，也是该类第 6 次补丁）。现在只读 `decide` |
+| 3 | **删掉空分支本身** | 留一个"空列表 + 非空判断"就是**一个不会触发的守卫** —— 本仓删得最多的类，而且读者会永远怀疑它曾经做过什么 |
+| 4 | **verify 不再上报对抗节点** | 那是一个已不再认证任何东西的机制的报表项，且它的形状本身就是缺陷（列出的是**列表的第一项**，含义随 mode 变化 ⇒ 读的人无法判断"不需要"还是"需要一个"） |
+
+**接线夹具时又抓到一个真实缺口**（上一轮落地 `ask|answer` 时漏的线）：`decide` 的 discovery **只数反例、不数 probe** ⇒ **一个只用 probe（替代凭据的那个信号）的 change 永远达不到发现下限**。实测：4 条已答 probe + 0 反例 ⇒ 只报 `discovery_floor`。已修：两个信号都算。
+
+## 19.2 剩下的删除量（第一次精确计量）
+
+```
+旧机制模块 6,471 行（14 个文件）：adversarial 3,300 · 其余 13 个 3,171
+schema            611 行（adversarial-review.schema.json）
+src 侧消费者：
+  src/cli/ops.ts            ← 9 个模块（record-salvage / review-execution / round-* / class-coverage…）
+  src/workflow/navigation.ts ← finding-disposition / repair-obligations / falsifier-reddenings / class-coverage
+  src/workflow/orchestrator.ts ← finding-disposition / repair-batch / repair-obligations / falsifier-reddenings
+  src/workflow/seal-preflight.ts ← repair-obligations / falsifier-reddenings / class-coverage
+  src/cli/findings.ts · src/cli/rounds.ts · src/cli.ts（briefing）
+对应的 CLI 命令（都要删）：adversarial · matrix · rounds · findings · falsify · repair-author · repair-briefing · lane
+测试侧：旧机制相关夹具约 45 个文件
+```
+**顺序**（每步跑全量测试，任一步红就停并诊断）：
+```
+① 删 src/cli/ops.ts 的旧命令实现 + command 分派（这一步让 9 个模块失去唯一的大消费者）
+② 删 navigation/orchestrator/seal-preflight 里对 finding-disposition / repair-* / class-coverage 的读取，
+   把它们的报告项换成账本口径（navigation 已经改过一次，这一轮把剩下的接上）
+③ 逐个删模块（从叶子开始：record-salvage → round-registry → round-protocol → round-runner →
+   review-execution → review-state → repair-rounds → repair-briefing → falsifier-reddenings →
+   class-coverage → repair-batch → finding-disposition → repair-obligations → adversarial）
+④ 删 611 行 schema 与对应的 45 个测试文件
+⑤ 删文档里对它们的引用（方案 §2 的删除清单据此勾掉）
+```
+**预期**：删除后 `src/` 减少约 6,500 行，`schemas/` 减少 611 行，测试减少约 7,000 行 —— 即方案 §2 估的
+"6,917 + 611 + 7,062" 的实测量级 **13,052 行 vs 实际 13,082 行**，误差 0.2%。
