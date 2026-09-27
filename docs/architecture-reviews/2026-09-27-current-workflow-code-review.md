@@ -405,3 +405,64 @@ D 类原本是我判为"需要外部条件"的四项。实测后**两项其实�
 - 三个测试夹具被新规则抓出**自身不诚实**：e2e ledger 夹具用 `exit 0` 满足 discovery floor；approval 夹具从未写过 plan；installer 夹具写了不符合自身 schema 的 state 文档（缺 `actor`）。三处都改为按真实流程走，而不是放宽规则。
 - 一处修复会引发大规模故障并已被阻止：`verdict-history.jsonl` 是行分隔文件，而 ledger 的文件走查把每个文件当作 JSON 文档解析 ⇒ 健康的历史被报为 malformed，而 malformed 会让整个账本 `unreadable`。读取器现在按文件形状解析，并按同一字段报告它自己的坏行。
 
+
+---
+
+## 12. 走一遍真实变更之后：9 个新缺陷，全部已修
+
+第 11 节的修复完成后，我按本会话早先提出的建议做了一件只有真实运行才能回答的事：**用新路由把一个新变更从 `open` 走到 `archive`**。它走到了 `review` 通过（账本路线），并且在路上抓到 9 个缺陷 —— 每一个都由真实命令或机器暴露，不是阅读发现的。这一节记录它们，以及各自的处置；处置的判据是**每个缺陷都留下一条会变红的检查**，否则它只是被这一次路过修掉。
+
+### 12.1 门本身是可满足的（这是这一趟的主要结论）
+
+```
+open --bootstrap-file → intake        design → 拒绝一次（孤立 AC-1）→ 补 delta → plan
+gate approve implementation_gate      build → implement
+scope change ×2 → scope apply         handoff create/verify/acknowledge ×3
+build --seal → revision-6b98657c3ef309f2 · 5 checks · passing 5 · failing 0
+verify → PASS                          ledger freeze → rev:67584e545ea6d4b0
+ledger claim add ×3                    ledger evidence add（submission）→ 3 条 executable_falsifier
+ledger evidence verify ×3 → supported（实测三元组 {"before":0,"mutated":1,"after":0}）
+ledger plan → ask → answer ×6          ledger request-check → gaps: []
+ledger decide → 【pass】· tier strict · 3 claims · reasons []
+review → review --approve → review.json 记的是 reviewRoute: "ledger"
+```
+
+在此之前，新路由**从未走通过任何一个真实变更**：12 个任务里 8 个走的是旧 round 路由，3 个有账本但在新规则下都是 `insufficient`。所以"新路径能不能把一个变更送到终点"这个问题此前没有任何样本回答过 —— 现在有一个，答案是可以。
+
+### 12.2 九个缺陷与它们的检查
+
+| # | 缺陷（实测） | 根因 | 处置与检查 |
+|---|---|---|---|
+| 1 | `open` 之后**没有任何受治理命令**能声明 upstream coverage | 声明有读者、无写入者 | `kata-cli tasks declare --field upstreamCoverage`；写入时执行 `design` 的同一条规则 |
+| 2 | 同上，`acceptanceMatrix` 也没有写入者，而 seal 仍在强制它 | 同类 | 同一命令的另一个 `--field`；payload 走 task schema |
+| 3 | handoff 收据被 `scope apply`/编辑作废，而拒绝只说"requires a current acknowledged handoff receipt"，不说**是缺失还是过期**，也不说 `handoff create` 是出路 | 一句话覆盖两种情形，补救办法不同 | 两个分支各自点名情形、原因、命令；陈旧分支附上最新一次拒绝的原因 |
+| 4 | **seal 的隔离快照不含 `.kata/`**（gitignore），所以任何读真实任务记录的测试**在 seal 内必红、在外部绿** —— 而我在本会话早先"修好"的那个用例正是这么写的 | 测试的夹具借自仓库 | `tests-do-not-read-the-live-task-store`：扫描测试树里的读形状；用例自己的两个样本行由文件名排除，且有一条用例断言每个模式能匹配自己的样本（否则模式里的笔误会把检查变成注释） |
+| 5 | `ledger freeze --help` **执行了 freeze** —— 一次帮助请求产生状态变更 | 守卫只覆盖 9 个命令族中的 workflow 一族；而 `init`/`uninstall` 默认静默，使答案即便生成也不被打印（**两个独立原因**） | 守卫覆盖全部命令族；usage 文本成为一张按族索引的 map，完整性由"扫描 dispatcher 源码里的 `command === '<族>'` 字面量"来检查；`wiki` 被具名豁免，因为它的帮助比一行 usage 更丰富 —— 而豁免的理由写在代码里 |
+| 6 | `ledger plan` 报 `standard`，`ledger decide` 报 `strict` —— **同一事实两处推导**，且 plan 忽略了策略上限，于是它为比自己更弱的 tier 计算所需证据与风险类 | tier 在两条路径上各推导一次 | `resolveTier` 成为唯一推导；上限是 tier 的下界而非上界（由"触碰 `src/kernel/decide.ts` 仍解析为 `security`"的用例钉住）；`--tier` 双向覆盖 |
+| 7 | `ledger ask --per-claim 2` 产出 6 个 probe，其中 3 对完全相同 —— 而 discovery floor 读的正是**回答数** | 抽取可重复命中同一 (kind, path)；计数按记录而非按问题 | 生成器跳过已问过的题；floor 与 response rate 都按**去重后的问题**计数。probe 的 identity 是它问的那条命令 |
+| 8 | `wiki ingest --from <file>` 用**stub**覆盖了已存在的受治理页面：3,535 字节写成 355 字节，并注册了重复记录 | stub 渲染器无条件写入 | 页面存在即拒绝（raw 副本仍刷新，因为刷新它正是 ingest 的目的），拒绝点名两条真正说明自己行为的出路；CLI 把拒绝报出来 —— 否则被拒绝的 ingest 与成功的一次输出无法区分 |
+| 9 | 阶梯只给一个 `/kata-review`，而它的 `cliCommand` 是 `--approve` 形式，该命令**在相位推进前会被拒绝**：读者被告知要敲的命令敲不通 | 一个两步的步骤只说了一步 | `NextAction.followUpCommand` 只在真正两步时出现；`pauseInstruction` **与信任边界文本拼接而非替换**（第一版替换掉了"kata 不路由宿主模型"那段必需文本，是修 9 时引入的回归，由 e2e 用例抓到并单独修） |
+
+### 12.3 三个由机器抓到、而不是由我读出来的细节
+
+- **#5 有两个独立原因**，第二个藏在第一个后面：守卫修好后 `init --help` 仍然什么都不打印，因为 `init`/`uninstall` 默认静默（它们叙述进度而不是返回文档）。一条消息缺陷有两个成因，修掉一个会让另一个不可见。
+- **#9 的修复本身引入回归**：`pauseInstruction` 被替换而不是拼接，丢掉了强制性的宿主模型提示与 `--confirm-host-model` 步骤。抓到它的是那个用 `toEqual` 断言整个 action 对象的 e2e 用例 —— 它同时也因为新增字段而失败。该用例改为 `toMatchObject` 加三条独立断言：一个对**增长中的记录**做精确形状钉住的断言，会在每一次新增时失败，无论新增对不对。
+- **新命令的第一个真实输入就崩了**：`tasks declare` 拿到整个 bootstrap 契约而不是一个 coverage 对象时，规则先读了 `sources` 并抛出 `coverage.sources is not iterable`。**该崩溃的地方出现了拒绝的反面** —— 输入到达了一个假定形状的函数，而没有任何东西检查过那个形状。schema 现在先跑。
+
+### 12.4 这一趟的收尾状态
+
+```
+npx tsc --noEmit            exit 0
+npx vitest run              159 文件 / 1031 用例 / 0 失败（本会话起点 143 / 1020）
+npm run check:wiring        clean（140 条声明路径）
+npm run build / pack        通过
+git status                  clean · 本节 9 个 commit
+```
+
+`enrich-packet-outside-the-task-store` 走到 `review` 通过（账本路线），随后**被本节的修复本身作废**：它声明的路径被这些修复改动，revision 变成 `superseded`，于是 `build --seal` 拒绝继续，要求先重跑 review。这不是故障，而是记忆 #689 那条约束的现场演示 —— 九个变更共享六个中心文件，所以一个变更的"就绪"有保质期，而唯一能让最后一个变更归档的顺序是**先做完会触碰共享路径的那一个**。该变更要重新走一遍 `seal → verify → review → judge → archive` 才能归档，而它现在的处境恰好证明了这套机制在正确地拒绝为一棵已经移动的树出证。
+
+### 12.5 仍然未完成的，以及为什么
+
+- **shadow pilot**：需要跨时间的真实样本；这一趟提供了第一个完整的真实样本（一个变更从 open 到 review 通过），但把 1 个样本当试点结论就是编数字。
+- **机器主动 propose 的 producer**：需要一次模型调用，不在确定性 CLI 范围内 —— 架构边界，不是未完成的工作。
+- **七个缺陷类中的两条**（读声明却声称读了现实；一次决策多个入口只有一个留痕）仍无活检查：两者都需要一张**人工维护**的"这个函数读的是什么"表。其中第二条在本会话又被撞到三次（`tasks declare` 之外的 `task.json` 写路径、`open --bootstrap-file`、prompt 期手写 task.json），说明它值得一张真表，而那是一份独立的工作。
