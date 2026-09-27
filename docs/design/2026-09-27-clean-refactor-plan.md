@@ -219,7 +219,9 @@ type Decision = {
 `claim`（`list|show|add|waive|reopen`）· `usage`（`set`，**实测数字的写入者**）·
 `evidence`（`list|add|verify` + `replace --reason`，唯一的改写门）· `challenge`（`list|add|check|amend`）·
 `plan`（落盘为 `plan.json`）· `decide` · `focus`（**消费 `plan.json` 的阅读集**，按漂移收窄）。
-**未落地**：`challenge ask|answer`（随机出题与应答率）—— 落地的是反例账本那一半。
+**已落地（本轮补齐）**：`ask` / `answer` —— 事后向评审者出题（**从 claim 自己的依赖面自动生成**，
+按记录的 seed 抽取，可复现；答案**写一次**，重复回答被拒），并把 `probeResponseRate` 接进
+`status --cost` 的 discovery。**未落地**：`review run`（用 plan.json 发起一次评审并校验返回）—— 仍缺。
 
 ```
 kata-cli subject freeze                     # 冻结 → pathDigests

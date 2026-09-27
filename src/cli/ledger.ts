@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -21,6 +21,7 @@ import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
 import { reasonMessage } from '../kernel/decide.js';
 import { envelopeFor } from '../kernel/budget.js';
+import { probesFor } from '../kernel/discovery.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
@@ -405,6 +406,66 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         fail({ command: 'ledger evidence', error: `unknown action "${action}"` });
+        return;
+    }
+
+    if (sub === 'ask') {
+        // **The after-the-fact question, as a business action rather than a metric.** A reviewer cannot prove its context,
+        // so it is asked something only a reader of this revision can answer — generated from the claim's own surface at a
+        // recorded seed, so the set cannot be softened for the round being asked, and recorded as write-once answers so a
+        // reviewer cannot try until something passes.
+        if (ledger.subject === null) {
+            fail({ command: 'ledger ask', error: 'the subject is not frozen: run `ledger freeze` first' });
+            return;
+        }
+        const count = Number(argValue(argv, '--per-claim') ?? 2);
+        const seed = argValue(argv, '--seed') ?? ledger.subject.revision;
+        const asked: string[] = [];
+        const skipped: Array<{ claimId: string; why: string }> = [];
+        for (const claim of ledger.claims) {
+            const probes = probesFor({ claim, subject: ledger.subject, seed, count, askedAt: nowIso() });
+            if (probes.length === 0) {
+                // A claim with no probe is named rather than padded: a question nobody can answer from looking measures
+                // nothing, and silently asking one would report a response rate about a claim that was never probed.
+                skipped.push({ claimId: claim.id, why: 'the claim rests on no path that exists at this subject, so nothing can be asked about it' });
+                continue;
+            }
+            for (const probe of probes) {
+                await appendProbe(options.root, changeId, probe);
+                asked.push(probe.id);
+            }
+        }
+        outputResult({ ok: true, command: 'ledger ask', seed, perClaim: count, asked, skipped, note: 'each probe is answered once; a re-answer is refused, so a reviewer cannot try until something passes' });
+        return;
+    }
+
+    if (sub === 'answer') {
+        const probeId = argValue(argv, '--probe');
+        if (probeId === undefined) {
+            fail({ command: 'ledger answer', error: '--probe <id> is required' });
+            return;
+        }
+        const probes = await readProbes(options.root, changeId);
+        const probe = probes.find((entry) => entry.id === probeId);
+        if (probe === undefined) {
+            const known = probes.map((entry) => entry.id);
+            fail({ command: 'ledger answer', error: `no probe ${probeId} has been asked${known.length === 0 ? ' — run `ledger ask` first' : `; asked: ${known.join(', ')}`}` });
+            return;
+        }
+        // The reviewer runs its own command and reports what it saw; the probe's own command is what kata can run, and it
+        // is recorded beside the answer so a reader can compare the two rather than trust either.
+        const observed = argValue(argv, '--observed') ?? '';
+        const recorded = await answerProbe(options.root, changeId, {
+            probeId,
+            command: argValue(argv, '--command') ?? probe.command,
+            observed,
+            answeredAt: nowIso(),
+        });
+        if (!recorded.ok) {
+            fail({ command: 'ledger answer', error: recorded.why });
+            return;
+        }
+        outputResult({ ok: true, command: 'ledger answer', probeId, asked: probe.command, observed });
         return;
     }
 

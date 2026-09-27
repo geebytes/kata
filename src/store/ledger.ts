@@ -15,6 +15,7 @@ import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
 import { assuranceAtLeast } from '../kernel/types.js';
+import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
 import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
@@ -26,11 +27,57 @@ const FILES = {
     evidence: 'evidence.json',
     verdicts: 'verdicts.json',
     challenges: 'challenges.json',
+    /** Questions asked of the reviewer after the fact. Generated from the claim surface, never authored. */
+    probes: 'probes.json',
+    /** What the reviewer answered, recorded with the command and the observation. */
+    probeAnswers: 'probe-answers.json',
     usage: 'usage.json',
     runs: 'runs.json',
     /** The plan the operator was handed, kept so `focus` narrows a *record* rather than re-deriving one. */
     plan: 'plan.json',
 } as const;
+
+export async function appendProbe(root: string, changeId: string, probe: Probe): Promise<Probe> {
+    return mutate(root, changeId, async () => {
+        const path = join(reviewDir(root, changeId), FILES.probes);
+        const items = (await readJson<Probe[]>(path)) ?? [];
+        if (!items.some((entry) => entry.id === probe.id)) items.push(probe);
+        await writeJson(root, changeId, FILES.probes, items);
+        return probe;
+    });
+}
+
+export async function readProbes(root: string, changeId: string): Promise<Probe[]> {
+    return (await readJson<Probe[]>(join(reviewDir(root, changeId), FILES.probes))) ?? [];
+}
+
+/**
+ * Record an answer, and refuse a second one.
+ *
+ * A probe's answer is **write-once** for the same reason evidence is: it is a fact about what the reviewer observed. A
+ * re-answer would let a reviewer that failed once keep trying until something passed, which is the opposite of an after-
+ * the-fact question.
+ */
+export async function answerProbe(
+    root: string,
+    changeId: string,
+    answer: ProbeAnswer,
+): Promise<{ ok: true; answer: ProbeAnswer } | { ok: false; why: string }> {
+    return mutate(root, changeId, async () => {
+        const path = join(reviewDir(root, changeId), FILES.probeAnswers);
+        const items = (await readJson<ProbeAnswer[]>(path)) ?? [];
+        if (items.some((entry) => entry.probeId === answer.probeId)) {
+            return { ok: false as const, why: `${answer.probeId} has already been answered; a probe is answered once, so a reviewer cannot try until something passes` };
+        }
+        items.push(answer);
+        await writeJson(root, changeId, FILES.probeAnswers, items);
+        return { ok: true as const, answer };
+    });
+}
+
+export async function readProbeAnswers(root: string, changeId: string): Promise<ProbeAnswer[]> {
+    return (await readJson<ProbeAnswer[]>(join(reviewDir(root, changeId), FILES.probeAnswers))) ?? [];
+}
 
 export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
 
@@ -485,6 +532,15 @@ export type LedgerReport = {
         refutationRate: number | null;
         /** Withdrawn counterexamples over all counterexamples: how often the author's fix actually removed the defect. */
         challengeWithdrawalRate: number | null;
+        /**
+         * Answered probes over asked ones — the response rate the after-the-fact question exists to produce.
+         *
+         * `null` when nothing was asked, never zero: an empty denominator is an unmeasured question, and this is the same
+         * rule the other two rates follow.
+         */
+        probeResponseRate: number | null;
+        probesAsked: number;
+        probesAnswered: number;
         baseline: 'none recorded yet';
     };
 };
@@ -614,6 +670,12 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             challengeWithdrawalRate: ledger.challenges.length === 0
                 ? null
                 : ledger.challenges.filter((challenge) => challenge.state === 'withdrawn').length / ledger.challenges.length,
+            probeResponseRate: responseRate({
+                asked: (await readProbes(root, changeId)).length,
+                answered: (await readProbeAnswers(root, changeId)).length,
+            }),
+            probesAsked: (await readProbes(root, changeId)).length,
+            probesAnswered: (await readProbeAnswers(root, changeId)).length,
             baseline: 'none recorded yet',
         },
     };
