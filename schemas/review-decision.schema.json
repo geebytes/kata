@@ -40,20 +40,21 @@
         "properties": {
           "code": {
             "enum": [
-              "budget_exhausted",
               "assurance_below_tier",
-              "evidence_refuted",
+              "budget_exhausted",
+              "challenge_open",
+              "claim_unsupported",
+              "dependency_unresolvable",
+              "discovery_floor",
               "evidence_below_strength",
               "evidence_inconclusive",
-              "evidence_stale_subject",
               "evidence_missing",
-              "challenge_open",
-              "uncovered_risk_class",
-              "discovery_floor",
+              "evidence_refuted",
+              "evidence_stale_subject",
               "quorum_disputed",
               "quorum_undiversified",
-              "waived_without_reason",
-              "claim_unsupported"
+              "uncovered_risk_class",
+              "waived_without_reason"
             ]
           },
           "detail": {

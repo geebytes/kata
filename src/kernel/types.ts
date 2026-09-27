@@ -187,7 +187,8 @@ export type ReasonCode =
     | 'quorum_disputed'
     | 'quorum_undiversified'
     | 'waived_without_reason'
-    | 'claim_unsupported';
+    | 'claim_unsupported'
+    | 'dependency_unresolvable';
 
 export type Reason = {
     code: ReasonCode;
@@ -228,6 +229,10 @@ export const REASON_MESSAGES: Record<ReasonCode, { message: string; whoActs: 'au
     assurance_below_tier: {
         message: 'The process assurance recorded for this subject is below what the tier requires.',
         whoActs: 'policy-owner',
+    },
+    dependency_unresolvable: {
+        message: 'A claim rests on something that cannot be resolved against this subject, so nothing here is checkable.',
+        whoActs: 'author',
     },
     evidence_refuted: {
         message: 'An accepted evidence item reports this claim as refuted: the defect it names is present.',

@@ -40,15 +40,15 @@ export function computeDelta(input: {
     verdicts: readonly EvidenceVerdict[];
 }): Delta {
     const nextIds = input.next.claims.map((claim) => claim.id);
-    if (!input.previous) {
-        return { reusable: [], revalidate: nextIds, underivable: false, underivableRefs: [], reusedEvidence: [] };
-    }
-
     const knownClaims = new Set(nextIds);
     const knownPaths = new Set(Object.keys(input.next.subject.pathDigests));
     const underivableRefs: string[] = [];
     for (const claim of input.next.claims) {
         for (const dep of claim.dependsOn) {
+            // **Resolvability is checked on the first path too** (measured by the corpus scorer: a claim resting on a path
+            // that is not in the subject was certified when there was no previous revision). The rule used to run only
+            // after the early return, so it was a check that ran on one of two paths — the class this repository has now
+            // repaired seven times, found here by the retired corpus rather than by reading the code.
             if (dep.startsWith('path:') && !knownPaths.has(dep.slice('path:'.length))) {
                 underivableRefs.push(`${claim.id} -> ${dep}`);
             }
@@ -59,6 +59,12 @@ export function computeDelta(input: {
     }
     if (underivableRefs.length > 0) {
         return { reusable: [], revalidate: nextIds, underivable: true, underivableRefs, reusedEvidence: [] };
+    }
+
+    if (!input.previous) {
+        // Nothing to reuse on a first freeze, and the refs are already known to resolve — so this is the reuse decision
+        // only, not an early exit that skips a rule.
+        return { reusable: [], revalidate: nextIds, underivable: false, underivableRefs: [], reusedEvidence: [] };
     }
 
     const previousById = new Map(input.previous.claims.map((claim) => [claim.id, claim]));

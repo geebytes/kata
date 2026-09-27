@@ -209,6 +209,15 @@ export function decide(input: DecideInput): Decision {
     });
     const reused = new Set(delta.reusedEvidence);
 
+    // **A dependency that cannot be resolved is a reason, not only a reuse decision.** The delta's  flag was
+    // computed and read by nobody in the decision: measured by the corpus scorer, a claim resting on a path absent from
+    // the subject was certified because the resolvability check and this report were in different places — and the check
+    // itself ran on one of two paths (repaired in ). Two repairs to one fact is this repository's oldest shape;
+    // the fact is now one, and the decision carries it as a reason a reader can see.
+    if (delta.underivable) {
+        reasons.push(reason('dependency_unresolvable', `these dependencies cannot be resolved against the subject: ${delta.underivableRefs.join(', ')}`));
+    }
+
     // 4. Every claim, for itself — through the one implementation of that question.
     for (const claim of input.claims) {
         const evaluation = evaluateClaim(claim, {

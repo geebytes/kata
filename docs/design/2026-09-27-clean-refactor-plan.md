@@ -750,6 +750,25 @@ Cost ≤ 0.6 C0                    ❌ 不可测：C0 需要"旧机制每 change
                                     且那些轮次的产出是零记录（§14 已记），拿它们当 baseline 会把 0 当分母
 ```
 
+## 17.3c 召回：拿旧语料评新内核，**并因此抓到两个真实缺口**（本轮最重要的产出）
+
+`kata-cli ledger verifier` 把 27 条旧语料的期望与 `decide()` 的判定对上，映射写在一处（`no_defect_found→pass` · `defects_found→fail` · `inconclusive→insufficient` · `budget_exhausted→insufficient+budget_exhausted`）。20 条可由内核状态表达（其余 7 条是**工作区操作**：一次提交、一次 seal、一份 brief、第二个写者 —— 已具名列出）。
+
+```
+scored 20 · critical 13 · recall 0.462 · falsePasses ['prompt-injection-in-the-material']
+```
+
+### 它抓到的两个缺口（都是读代码不会发现的）
+
+**① `delta.ts`：可解析性规则只在两条路径中的一条上运行 ——【已修复】**
+`computeDelta` 有一条"依赖引用必须可解析"的规则（依赖的 path 不在 `subject.pathDigests` 里 ⇒ underivable），**但它写在 `if (!input.previous) return …` 早退之后**。⇒ **一个 claim 依赖一条不存在的路径，在【没有 previous】时被判为可认证** —— corpus 用它自己的构造器证明了这一点（该用例得到 `pass`）。
+修法两条一起做，因为它们本是同一个事实：**把可解析性检查移到早退之前**（两条路径都跑），**并把 `delta.underivable` 变成 `decide()` 的一个 reason**（新 reason code `dependency_unresolvable`，带文案与 `whoActs: 'author'`）—— 此前这个标志被算出来、**没有任何人读**。
+这是"只在第二条路径上执行的检查"这个类在**本线的第 8 次**，而这次**不是靠读代码发现的，是靠语料**。
+
+**② 注入：`static_witness` 的断言是自由文本，内核没有"文本被当作权威"的概念 ——【记为能力缺口，不改】**
+`prompt-injection-in-the-material` 用例在新内核上得到 `pass`：一段注入说明在类型系统里是一条**形状完全合法的证据**。旧机制的注入防护在 **brief 渲染层**（`untrustedMaterial`），新内核的 evidence 类型里**没有它的位置**。
+⇒ 这是**能力缺口而不是缺陷**：新内核从未声称处理注入，而 corpus 用例声称任何 verifier 都该报它。**它留在记录里**（`falsePasses` 是会被打印的列表，不是被解释掉的百分比）。
+
 ## 17.3b 召回缺口的一半：**可探测性**（本轮新增）
 
 `scoreCorpus` 的 observation 此前只能手写，因为没有**会产出 finding id 的 verifier 实现** —— 这就是"召回不可测"的根因。本轮落下它的**便宜那一半，且诚实**：

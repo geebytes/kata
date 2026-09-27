@@ -550,6 +550,21 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
+    if (sub === 'verifier') {
+        // **The recall measurement, as far as it can honestly go today.** The corpus's expectations are scored against the
+        // kernel's own judgement for the cases whose state *is* a kernel state, and the rest are named with a reason. It is
+        // not a reviewer and it says so: `decide` is a pure function over a state, so this measures the judgement rather
+        // than whether a pass would have found the defect — and finding ids are not produced, so a case naming specific
+        // findings is scored on its verdict.
+        const { scoreWithKernel } = await import('../eval/kernel-verifier.js');
+        const { kernelCaseBuilders } = await import('../eval/kernel-case-builders.js');
+        const { builders, notExpressible } = kernelCaseBuilders();
+        const score = scoreWithKernel({ builders: builders as never, notExpressible: [...notExpressible] });
+        outputResult({ ok: score.falsePasses.length === 0, command: 'ledger verifier', ...score });
+        if (score.falsePasses.length > 0) process.exitCode = 1;
+        return;
+    }
+
     if (sub === 'detectability') {
         // **The measurement the recall gap needed a cheaper form of.** Four corpus cases carry a reproduction that names an
         // exact implementation change, and a planted defect is *detectable* exactly when the check that owns it reddens

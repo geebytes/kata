@@ -234,6 +234,13 @@ export const reviewScenarios: ReviewScenario[] = [
         note: 'Pinned as a policy property (classification reaches `high`), which is where reachability belongs.',
     },
     {
+        id: 'a-claim-resting-on-a-path-that-is-not-there',
+        mode: 'delta',
+        why: 'The reason the corpus scorer found before any test did: a claim depending on a path absent from the subject was certified whenever there was no previous revision, because the resolvability rule ran on one of two paths and the delta flag it set was read by nobody.',
+        build: () => base({ claims: [makeClaim({ id: 'C1', dependsOn: ['path:src/deleted.ts'], evidenceIds: ['E1'] })] }),
+        expect: { verdict: 'insufficient', reasons: ['dependency_unresolvable'] },
+    },
+    {
         id: 'a-counterexample-that-reproduces',
         mode: 'challenge',
         why: 'The branch the discovery rate has never exercised: every counterexample raised on the three changes that went through this route was measured and did NOT reproduce, so `refutationRate` has only ever been zero. This is the other side — a challenge that reproduces and therefore blocks.',
