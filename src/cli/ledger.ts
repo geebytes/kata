@@ -638,6 +638,16 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
+    if (sub === 'baseline') {
+        // **The change-level baseline six acceptance items were waiting for.** It reads records already on disk — eleven
+        // archived changes' self-reported pass costs and three ledger-route changes' kata-measured runs — and reports the
+        // C0 they imply, labelled with which side of the comparison is self-reported.
+        const { buildBaseline } = await import('../store/baseline.js');
+        const report = await buildBaseline(options.root);
+        outputResult({ ok: true, command: 'ledger baseline', ...report });
+        return;
+    }
+
     if (sub === 'decide') {
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');
