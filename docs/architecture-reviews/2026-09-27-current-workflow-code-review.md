@@ -480,3 +480,77 @@ git status                  clean · 本节 9 个 commit
 把上面那条"验收项 → claim"的连接从**约定**变成**规则**（在 `decide` 里要求：某个受影响的验收标准、某条改动路径必须被某条 claim 覆盖），方案既没承诺也没禁止。**支持**：方案自己的纪律里就有"一个事实一处推导""有声明无消费者"两类，而今天两个门（seal/verify 认证验收标准，账本认证 claims）之间**没有规则相连**，全靠操作者按 §15 步骤①手工对齐。**反对**：§1.3 拒绝开集覆盖的理由同样适用于"覆盖每条验收标准"；且 §15 把这一步写成人做的决定，代价是它依赖操作者。
 
 因此它是一条提案：要落地就该先写进方案、按 §14 的 A–E 分类入表，再实现；不落地则它不属于任何清单。**我不把它算作缺陷。**
+
+---
+
+## 13. 按方案的验收依据重审代码：5 条违反，其中 1 条是 fail-open
+
+这一节的方法与  相同：把方案里**可核对的断言**逐条拿出来，用命令核对代码，而不是重读自己的叙述。分类用方案自己的词汇（A 一致 · B 落地但形态不同有理由 · C 未落地 · D 文档陈旧/自相矛盾 · **E 落地本身引入了方案要消除的缺陷**）。
+
+### 13.1 逐条结果
+
+| 依据 | 方案说什么 | 实测 | 类 |
+|---|---|---|---|
+| §8 · 判定依据是账本（D1） | 档位与通过 = 证据强度 × assurance，由账本决定 | **审批门对 `absent` 拒绝 ✅**、对 `unreadable` 拒绝 ✅；**archive 门对 `unreadable` 拒绝 ✅、对 `absent` 不拒绝 ❌**（见 13.2） | **E** |
+| §7 P6 · Platform Coupling Index | P6 交付项之一 | **代码里不存在**（全仓检索标识符与概念名，只命中方案文档本身） | **C ⚠️ 而文档自称 ✅** |
+| §7 P6 · Adapter Change Radius | P6 交付项之一 | **代码里不存在**；§14 第 21 条记为 C ✅ 正确，而 §23/§25 两处记为 **✅ = 4 个模块** —— **同一文档自相矛盾** | **D**（同一份方案对同一事实两个答案） |
+| §8 · `新平台接入修改非 adapter 文件数 = 0` | 验收项 | **无仪器**；唯一一次手测的值是 **4**，即**按验收标准本身不合格** | **C** |
+| §8 · `blocking/major 证据 ≥95% 可重放` | 验收项 | 记为 ✅，依据是"每条自带 `{before, mutated, after}` 实测三元组" —— 但**三元组是记录，不是重放**；全仓没有重放器（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正是有一条 `mutation site is gone` 的路径 | **D**（把一个记录形状当成另一个性质） |
+| §8 · `gate mutation kill = 100%`（K2） | 验收项 | 无 harness。**实测一条规则**：把 `uncovered_risk_class` 关掉 → **11 个用例变红**（5 个文件）。所以**逐条规则的仪器有效**，而"100%"这个整体claim**未测** | **C**（未测，不是未落地） |
+| §8 · `full re-review ↓ ≥70%` | 验收项 | 读的数是 `claim.reopens`，而它的**唯一写入者是 `ledger claim reopen`**（操作者命令，**没有任何测试行使过它**）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实**，验收项读的是操作者计数 | **B**（形态不同且没写明） |
+| §8 · `no-record rate = 0%` | 结构上成立 | ✅ 增量落盘，新路径无"最后交一份文档"这一步 | A |
+| §8 · `Cost ≤ 0.6 × C0` | 验收项 | ✅ 仪器存在（`ledger baseline`）且实测 0.256 × C0（1 个样本） | A（样本少） |
+| §8 · `CriticalRecall / FalsePass ≥/≤ baseline` | 验收项 | 分母不可获得（旧机制已删除）；已改写为信息性，**但方案文本尚未改** | D（欠一处同步） |
+| §4 K1/K3/K4/K5/K7 | 内核不变量 | 各有会失败的用例（纯函数+平台中立 4 例 · 预算永不 pass · delta 只复用未变依赖 · 策略字段消费者 · floor 变更需评审） | A |
+| §4 K6 | 同主体两 adapter 同判定 | ✅ 用例存在，且**自述只行使最弱的两类证据** | A（覆盖已写明） |
+
+### 13.2 最要紧的一条：`absent` 让 archive 门 fail open（E 类，实测）
+
+**仪器**：把任务目录复制进临时工作区（不读活跃 store），分别在"账本存在但不可读"与"账本目录被删除"两种状态下调用门本身，并打印它自己的拒绝文本。
+
+```
+WITH    (unreadable): ledger=unreadable · review.cleared=true
+REFUSAL A: Cannot enter distill: no fresh passing test evidence is recorded for the current revision;
+           the Judge has not passed this change (not_passed);
+           【the ledger cannot be read: the ledger holds claims but no frozen subject…】
+
+WITHOUT (absent):     ledger=absent     · review.cleared=true
+REFUSAL B: Cannot enter distill: no fresh passing test evidence is recorded for the current revision;
+           the Judge has not passed this change (not_passed)
+           【账本不在失败清单里】
+```
+
+**机制**：`assertDistillGates` 只对 `unreadable` 与 `not-pass` 记失败（`distill-gates.ts:216-217`），`absent` 一次都没被测。而 `review.cleared` 由 `evaluateReviewClearance` 给出，它读 `review.json` 的 `status`/`reviewEvidence`/`findings`/revision 绑定，**从不读它所引用的账本**。
+
+**为什么这是 E 类而不是"可接受的边界"**：`absent` 对**从未用过账本**的变更是一个合法状态，对**以账本为依据通过审批**的变更是一个 fail-open 状态。区分这两者的事实**已经被记录下来**：
+
+```
+review.json: { "status": "approved", "reviewRoute": "ledger",
+               "ledgerReview": { "subjectRevision": "rev:67584e545ea6d4b0", … } }
+
+grep -rn "reviewRoute" src/   →  只有一处【写入】（orchestrator.ts:1544），没有任何读者
+grep -rn "state === 'absent'"  src/   →  只有一处【返回】（distill-gates.ts:165），没有任何测试
+```
+
+也就是：**恰好是那个能堵住这个洞的字段，写下来却没人读。** 这与本会话早先修掉的第七个消费者（"门拒绝了一它看不见的证据"）与"空分支本身"是同一类，只是方向相反 —— 那次是拒绝得没道理，这次是**该拒绝而没拒绝**。
+
+**影响面（不夸大）**：要走到这一步，变更必须已经通过审批、已有 judge PASS 与新鲜证据，然后其账本目录被删除（例如误 `rm -rf`、工作树清理、迁移脚本）。归档门此时会在"新鲜证据 / 评审清关 / judge"三半都成立的情况下，**不再对账本说任何话**。也就是说：**审批所引用的全部证据基础可以被移除，而门照过。**
+
+**修法（它只需要一个已经存在的字段）**：`assertDistillGates` 在 `review.json` 记录 `reviewRoute === 'ledger'` 时，要求账本状态是 `decided`；`absent` 与 `unreadable` 一视同仁地拒绝，并在拒绝里点名"这次审批的依据是账本，而账本不在了"。这既是 fail-closed，也是"一个事实一处推导"——清关不该由记录*关于*证据的那份文件给出，而应由证据本身给出。
+
+### 13.3 这一趟也确认了这些（审计不能只有坏消息）
+
+- K1–K7 每一条都有会失败的用例；`K5` 的文本+类型双查通过（4 例）。
+- 归档门对 `unreadable` 与 `not-pass` **确实**拒绝（`distill-gates.ts:216-217`），措辞点名原因与补救。
+- 审批门对账本 `absent` **确实**拒绝并给出补救命令序列 —— 所以这个 fail-open **只在归档门**，不在审批门。
+- 阶梯把账本状态排在 `reviewReady` 之前：实测一个 `reviewReady: true` 而账本 `unreadable` 的变更，`nextAction` 是 `satisfy_ledger_deficits` → `/kata-build`，不是 `/kata-judge`。**排序正确救了一次**。
+- 逐条规则的变异 kill 有效：关掉 `uncovered_risk_class` → 11 个用例变红。所以 K2 缺的是**完整的 100% 测量**，不是仪器。
+
+### 13.4 逐条处置建议（按价值排序）
+
+1. **E 类（13.2）先修** —— 一个已记录、无读者的字段就是这个洞的补丁；加一条用例：删掉账本目录后门必须拒绝，并点名"审批的依据是账本"。
+2. **`reviewRoute` 加读者** 与上一条同一处修改（它与清关的推导应合并，使清关由证据给出而不是由关于证据的记录给出）。
+3. **方案文档三处同步**：P6 两个交付项改回 C（或写明"手测一次、无仪器"）· §23/§25 与 §14 的 ✅/C 冲突消解 · §8 两条不可获得的验收按改写后的状态落文。
+4. **`≥95% 可重放` 要么建重放器，要么改成可测的形态**（例如"每条证据的变异点在本 revision 上仍可解析"），否则它是一个永远只能靠记录的claim。
+5. **`full re-review ↓ ≥70%` 的口径**：把"自动重开"（`revalidateClaims`）与"操作者重开"（`claim.reopens`）分开命名，并让验收读前者或两者的和，同时补一条行使 `claim reopen` 的用例 —— 一个从未被行使的写入者与"只能读 0 的指标"是同一形状。
+6. **`gate mutation kill = 100%`** 补 harness（18 条 reason × 各一条变异），或把验收写成"每条 reason 都有一个能被删除规则触发的种子"，后者已有仪器（26 种子 / 18 reason）。
