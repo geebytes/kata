@@ -272,6 +272,44 @@ describe('each acceptance criterion declares its own evidence selector', () => {
 });
 
 describe('Release gates', () => {
+    it('requires the quality gate that is computed, and marks the one whose inputs are declared', async () => {
+        // **The decision, pinned.** `verifier-critical-recall` compares two observation sets that the *manifest* supplies —
+        // the runner has no verifier to execute — and the baseline it should hold against is the retired mechanism's recall
+        // on this corpus, which no longer exists. A gate with an author-written input and an unobtainable baseline cannot
+        // be required, so it is informational and says so. What is required is `mechanism-seeds`, which is computed: the
+        // kernel's own decision over every seed the mechanism ships.
+        const { checkReleaseGates } = await import('../../src/eval/release-gates.js');
+        const { mkdtemp, mkdir, writeFile } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const root = await mkdtemp(join(tmpdir(), 'kata-release-required-'));
+        await mkdir(join(root, '.kata/wiki'), { recursive: true });
+
+        const result = await checkReleaseGates(root, {
+            acceptancePassRate: 0.95, repairRate: 0.2, escalationRate: null,
+            avgCostPerTask: null, avgLatencyMs: 500, wikiRejectionRate: 0,
+            totalTasks: 10, totalAcceptances: 20, totalPassed: 19, totalFailed: 1,
+            totalRepairs: 2, totalEscalations: null, totalTokens: null, totalCost: null,
+            totalLatencyMs: 5000, totalWikiRejected: 0, totalWikiPromoted: 5,
+            metricCoverage: { tokens: 0, cost: 0, escalations: 0 },
+        } as never);
+
+        const seeds = result.gates.find((gate) => gate.name === 'mechanism-seeds');
+        expect(seeds, 'the computed quality gate must be present').toBeDefined();
+        expect(seeds?.pass).toBe(true);
+        expect(seeds?.details).toContain('seeds matched');
+        expect(seeds?.details, 'and it says how much of the vocabulary was exercised').toContain('refusal reason(s) exercised');
+
+        // The seed gate is required: a release is not ready while the mechanism's own seeds disagree with it.
+        expect(result.unmeasuredRequiredGates.map((gate) => gate.name)).not.toContain('mechanism-seeds');
+
+        // And the recall gate is not, with the reason on it rather than in a comment.
+        const recall = result.gates.find((gate) => gate.name === 'verifier-critical-recall');
+        expect(recall?.skipped).toBe(true);
+        expect(recall?.details).toContain('Informational: not required for a release');
+        expect(result.unmeasuredRequiredGates.map((gate) => gate.name)).not.toContain('verifier-critical-recall');
+    });
+
   it('passes when all gates meet thresholds', async () => {
     const metrics = {
       acceptancePassRate: 0.95, repairRate: 0.2, escalationRate: 0.1,

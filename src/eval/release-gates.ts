@@ -181,18 +181,53 @@ export async function checkReleaseGates(
         description: 'Critical defect recall >= baseline, and false-pass rate <= baseline',
         pass: true,
         skipped: true,
-        details: 'No verifier was scored against the admissibility corpus, so recall was not measured; the gate is skipped rather than passed on an assumption.',
+        details: 'No verifier was scored against the admissibility corpus, so recall was not measured; the gate is skipped rather than passed on an assumption. Informational: not required for a release — see `mechanism-seeds` for the quality gate that is computed.',
       }
     : {
         name: 'verifier-critical-recall',
         description: 'Critical defect recall >= baseline, and false-pass rate <= baseline',
         pass: current.criticalRecall >= baseline.criticalRecall && current.falsePassRate <= baseline.falsePassRate,
-        details: `Critical recall ${(current.criticalRecall * 100).toFixed(1)}% vs baseline ${(baseline.criticalRecall * 100).toFixed(1)}%; false-pass ${(current.falsePassRate * 100).toFixed(1)}% vs baseline ${(baseline.falsePassRate * 100).toFixed(1)}% (${current.cases} corpus cases).`
+        details: `DECLARED, NOT RUN — both sides come from the manifest, because the runner has no verifier to execute. `
+          + `Critical recall ${(current.criticalRecall * 100).toFixed(1)}% vs baseline ${(baseline.criticalRecall * 100).toFixed(1)}%; `
+          + `false-pass ${(current.falsePassRate * 100).toFixed(1)}% vs baseline ${(baseline.falsePassRate * 100).toFixed(1)}% (${current.cases} corpus cases). `
+          + 'Informational: this gate is not required for a release, because a comparison whose two sides an author writes cannot hold a line.'
           + (current.criticalRecall < baseline.criticalRecall
             ? ' Recall fell: a cheaper verifier that misses defects is not an optimization.'
             : current.falsePassRate > baseline.falsePassRate ? ' The false-pass rate rose above the baseline.' : ''),
       };
   gates.push(recallGate);
+
+  /**
+   * The mechanism's own seed corpus, decided and compared — **the gate that replaced one that could not be measured.**
+   *
+   * `ledger corpus` scores every seed the mechanism ships against the verdict it declares, with no model, no round and no
+   * host: a mismatch is a defect in the kernel or a wrong expectation, and both sides are printed. It is the check that
+   * can fail (26 seeds today, every refusal reason exercised), which is what makes it usable as a required gate where
+   * `verifier-critical-recall` — whose two sides are both declared in a manifest — is not.
+   */
+  let seedGate: ReleaseGate;
+  try {
+    const { scoreSeeds } = await import('../store/corpus.js');
+    const seeds = await scoreSeeds();
+    seedGate = {
+      name: 'mechanism-seeds',
+      description: 'Every seed the review mechanism ships decides as its own expectation declares',
+      pass: seeds.mismatched.length === 0 && seeds.reasonsUnexercised.length === 0,
+      details: `${seeds.matched}/${seeds.cases} seeds matched (${Object.entries(seeds.byVerdict).map(([verdict, count]) => `${verdict} ${count}`).join(', ')}); `
+        + `${seeds.reasonsExercised.length} refusal reason(s) exercised, ${seeds.reasonsUnexercised.length} never exercised`
+        + (seeds.mismatched.length > 0 ? `; mismatched: ${seeds.mismatched.map((entry) => entry.id).join(', ')}` : '')
+        + (seeds.reasonsUnexercised.length > 0 ? `; never exercised: ${seeds.reasonsUnexercised.join(', ')}` : ''),
+    };
+  } catch (error) {
+    // Fails closed: a seed corpus that cannot be scored has measured nothing, and "could not run" is not a pass.
+    seedGate = {
+      name: 'mechanism-seeds',
+      description: 'Every seed the review mechanism ships decides as its own expectation declares',
+      pass: false,
+      details: `the seed corpus could not be scored: ${(error as Error).message}`,
+    };
+  }
+  gates.push(seedGate);
 
   // A skipped gate is neither a pass nor a failure: it is the report saying it does not know.
   const scored = gates.filter((gate) => gate.skipped !== true);
@@ -203,7 +238,13 @@ export async function checkReleaseGates(
   // on its own it can read `true` while the quality comparison that matters most was never made. The quality gates are
   // required; cost and escalation-rate gates are informational because their inputs are not always available (a run with
   // no fixtures has no escalation rate to report).
-  const qualityGates = new Set(['verifier-critical-recall', 'acceptance-pass-rate', 'wiki-rejection-rate']);
+  // **Which gates are required is a decision about what can be measured.** `verifier-critical-recall` compares two
+  // *declared* observation sets — the runner has no verifier to run, so both sides come from the manifest — and the
+  // baseline it should compare against is the retired mechanism's recall on this corpus, which no longer exists. A gate
+  // whose input is author-declared and whose baseline is unobtainable cannot be required, so it is informational and says
+  // so in its details. What replaces it is `mechanism-seeds`, which is computed: the kernel's own decision over every seed
+  // the mechanism ships, with no hand-declared answers anywhere in the path.
+  const qualityGates = new Set(['mechanism-seeds', 'acceptance-pass-rate', 'wiki-rejection-rate']);
   const unmeasuredRequiredGates = gates
     .filter((gate) => gate.skipped === true && qualityGates.has(gate.name))
     .map((gate) => ({ name: gate.name, details: gate.details }));
