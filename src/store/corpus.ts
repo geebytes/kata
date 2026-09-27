@@ -105,6 +105,112 @@ export function scoreSeedCorpus(corpus: SeedScorer): SeedScore {
 }
 
 /**
+ * Reconcile the two corpora: which failure modes each one holds, and which side has a gap.
+ *
+ * This is **not** a recall measurement and the output says so. It is the cheaper question that had no answer at all: the
+ * old corpus (27 cases about the round-shaped verifier, judged from a hand-written manifest) and the new corpus (the
+ * mechanism's own seeds, decided by `decide`) were never compared, so "does the new mechanism's corpus cover what the old
+ * one covered, and what does the old one have that the new one lacks" was unanswerable. A corpus gap is not a defect the
+ * verifier missed — it is a question nobody has asked yet, which is exactly the kind of thing a referee's *coverage* half
+ * is for.
+ *
+ * Matching is by **criterion and kind**, not by prose: the old cases declare a `criterion` label and a `kinds` set, the new
+ * seeds declare a `mode`. The mapping is stated in one place below so a divergence is visible rather than inferred from
+ * names that happen to look alike.
+ */
+export type CorpusReconciliation = {
+    /** The classes the two sides share, with the counts on each side. */
+    shared: Array<{ kind: string; retired: number; current: number }>;
+    /** Classes only the old corpus holds — questions the new corpus does not ask. */
+    onlyRetired: Array<{ kind: string; retired: number }>;
+    /** Modes only the new corpus holds — questions the old corpus never asked. */
+    onlyCurrent: Array<{ kind: string; current: number }>;
+    retiredCases: number;
+    currentCases: number;
+    measures: string;
+};
+
+/**
+ * The class vocabulary, mapped once.
+ *
+ * The two sides were written at different times by different routes (a pass found the old ones; the new ones were designed
+ * as failure modes), so their labels are not the same words. Mapping them here rather than by string similarity is the
+ * decision, and it is the part a reader should check.
+ */
+const CLASS_MAP: Record<string, string> = {
+    // The old corpus's classes are about *what the case is*; the new one's modes are about *which mechanism fails*.
+    'planted-defect': 'a-defect-that-shipped',
+    'mutation-case': 'a-defect-that-shipped',
+    'clean-revision': 'a-clean-revision',
+    'malicious-fixture': 'a-defect-that-shipped',
+    'guard-false-negative': 'a-guard-that-refused-honest-work',
+};
+
+const MODE_MAP: Record<string, string> = {
+    delta: 'a-defect-that-shipped',
+    strength: 'a-defect-that-shipped',
+    challenge: 'a-defect-that-shipped',
+    budget: 'a-defect-that-shipped',
+    discovery: 'a-defect-that-shipped',
+    assurance: 'a-guard-that-refused-honest-work',
+    quorum: 'a-defect-that-shipped',
+    coverage: 'a-defect-that-shipped',
+    record: 'a-defect-that-shipped',
+    clean: 'a-clean-revision',
+};
+
+export function reconcileCorpora(input: {
+    retired: Array<{ kinds: string[] }>;
+    current: Array<{ mode: string }>;
+}): CorpusReconciliation {
+    const retiredByClass = new Map<string, number>();
+    for (const entry of input.retired) {
+        for (const kind of entry.kinds) {
+            const mapped = CLASS_MAP[kind] ?? kind;
+            retiredByClass.set(mapped, (retiredByClass.get(mapped) ?? 0) + 1);
+        }
+    }
+    const currentByMode = new Map<string, number>();
+    for (const entry of input.current) {
+        const mapped = MODE_MAP[entry.mode] ?? entry.mode;
+        currentByMode.set(mapped, (currentByMode.get(mapped) ?? 0) + 1);
+    }
+    // A mode the map does not know is reported as its own class rather than dropped: an unmapped label is a corpus that
+    // grew without the reconciliation being updated, and silently ignoring it would understate the current side.
+    const classes = [...new Set([...retiredByClass.keys(), ...currentByMode.keys()])].sort();
+    const reconcilable = 'corpus coverage overlap between the two corpora, not recall or defect-finding ability';
+    return {
+        shared: classes
+            .filter((kind) => retiredByClass.has(kind) && currentByMode.has(kind))
+            .map((kind) => ({ kind, retired: retiredByClass.get(kind) ?? 0, current: currentByMode.get(kind) ?? 0 })),
+        onlyRetired: classes
+            .filter((kind) => retiredByClass.has(kind) && !currentByMode.has(kind))
+            .map((kind) => ({ kind, retired: retiredByClass.get(kind) ?? 0 })),
+        onlyCurrent: classes
+            .filter((kind) => !retiredByClass.has(kind) && currentByMode.has(kind))
+            .map((kind) => ({ kind, current: currentByMode.get(kind) ?? 0 })),
+        retiredCases: input.retired.length,
+        currentCases: input.current.length,
+        measures: reconcilable,
+    };
+}
+
+/**
+ * Reconcile the repository's two corpora.
+ *
+ * Both are loaded dynamically, and the retired one is loaded from production code because it *is* production code — the
+ * old eval path scores it. The current one is a fixture, which is loaded the same way `scoreSeeds` loads it.
+ */
+export async function reconcileRepositoryCorpora(): Promise<CorpusReconciliation> {
+    const { admissibilityCorpus } = await import('../eval/admissibility-corpus.js');
+    const module = await import('../../tests/fixtures/review-scenarios.js') as unknown as { reviewScenarios: SeedScorer['scenarios'] };
+    return reconcileCorpora({
+        retired: admissibilityCorpus().map((entry) => ({ kinds: entry.kinds as unknown as string[] })),
+        current: module.reviewScenarios.map((entry) => ({ mode: entry.mode })),
+    });
+}
+
+/**
  * Score the repository's seed corpus.
  *
  * The fixture is loaded dynamically: it imports the test helpers, and a production module importing a test helper would

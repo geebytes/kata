@@ -540,9 +540,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         //
         // This is the referee, and it is deterministic by construction: the seeds are decided by `decide()`, the verdict is
         // compared with what each seed expects, and the rates come out of that comparison. No tokens, no round, no host.
-        const { scoreSeeds } = await import('../store/corpus.js');
+        const { scoreSeeds, reconcileRepositoryCorpora } = await import('../store/corpus.js');
         const score = await scoreSeeds();
-        outputResult({ ok: score.mismatched.length === 0, command: 'ledger corpus', ...score });
+        // The coverage half rides along: whether the two corpora ask the same questions is cheap to answer and was never
+        // asked, and it is the part a reader needs to know how to read the match count.
+        const reconciliation = await reconcileRepositoryCorpora();
+        outputResult({ ok: score.mismatched.length === 0, command: 'ledger corpus', ...score, reconciliation });
         if (score.mismatched.length > 0) process.exitCode = 1;
         return;
     }

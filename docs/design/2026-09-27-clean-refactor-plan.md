@@ -750,6 +750,19 @@ Cost ≤ 0.6 C0                    ❌ 不可测：C0 需要"旧机制每 change
                                     且那些轮次的产出是零记录（§14 已记），拿它们当 baseline 会把 0 当分母
 ```
 
+## 17.3a 语料对账（本轮新增，零成本、确定性）
+
+`ledger corpus` 现在同时输出 **对账**：两批语料各持有哪些类、哪一边有缺口。
+
+```
+shared      a-clean-revision(2 vs 1) · a-defect-that-shipped(24 vs 20) · a-guard-that-refused-honest-work(3 vs 1)
+onlyRetired []        ← 【旧语料问的每一个问题，新语料也问】
+onlyCurrent []        ← 反向亦然
+counts      27 vs 22
+measures    corpus coverage overlap between the two corpora, not recall or defect-finding ability
+```
+**这是"语料覆盖"而不是"召回率"**，且输出里明写了这一点。它零成本、可确定性重跑，回答的是此前**完全没有人问过**的问题：新语料的覆盖面有没有落下旧语料问过的任何一类。今天的答案是**两边没有缺口**（类目映射写在 `CLASS_MAP`/`MODE_MAP` 一处，供人核对），而**未映射的标签会被报成它自己的一类**而不是被丢掉 —— 否则当前一侧会被低报。
+
 ## 17.3 已落地的两件（②③）
 
 **② 反例语料**：`tests/fixtures/review-scenarios.ts` 加了两条种子 —— `a-counterexample-that-reproduces`（反例真的复现 ⇒ blocked）与 `a-refuted-verdict-survives-the-counterexample`（已反驳的判决不被反例软化：`fail` 优先于 `insufficient`，两个 reason 并存）。**`refutationRate` 从此有一个非零样本**，而不再是一个只在 0 处被读过的指标。
