@@ -78,9 +78,16 @@ function surfacesOf(claim: Claim, subject: Subject): string[] {
 /**
  * Generate the probe set for a claim.
  *
- * One probe per requested question, each drawn from the claim's surface at the seed. A claim whose surface is empty gets
- * no probes — and that is reported by the caller rather than padded, because a padded probe would be a question nobody can
- * answer from looking.
+ * One probe per **distinct** requested question, each drawn from the claim's surface at the seed. A claim whose surface is
+ * empty gets no probes — and that is reported by the caller rather than padded, because a padded probe would be a question
+ * nobody can answer from looking.
+ *
+ * **Distinct, because the count is what the discovery floor reads.** Measured on a real change: asking two questions per
+ * claim produced six probes of which three were duplicates — `P1-AC-1` and `P2-AC-1` carried the same kind, the same path
+ * and therefore the same command — so the floor was satisfied by answering the same question twice. A count that can be
+ * inflated by repetition is not a count of independent readings, which is the one thing this mechanism exists to supply;
+ * the draws advance past a question already asked, and a claim whose surface cannot supply the number asked for simply
+ * gets fewer, which the caller reports.
  */
 export function probesFor(input: {
     claim: Claim;
@@ -93,9 +100,16 @@ export function probesFor(input: {
     if (surface.length === 0 || input.count <= 0) return [];
     const kinds: ProbeKind[] = ['file-exists', 'digest-prefix', 'file-exists'];
     const probes: Probe[] = [];
-    for (let index = 0; index < input.count; index += 1) {
+    const asked = new Set<string>();
+    // Bounded attempts: the (path, kind) space is finite, so a request for more distinct questions than it holds must end
+    // rather than spin. Six attempts per wanted question is generous for the surfaces real claims have (a handful of paths).
+    const attempts = input.count * 6 + kinds.length * surface.length;
+    for (let index = 0; index < attempts && probes.length < input.count; index += 1) {
         const path = surface[draw(input.seed, index * 3, surface.length)]!;
         const kind = kinds[draw(input.seed, index * 3 + 1, kinds.length)]!;
+        const identity = `${kind}:${path}`;
+        if (asked.has(identity)) continue;
+        asked.add(identity);
         const digest = input.subject.pathDigests[path] ?? '';
         // The command asks about **content of one path the claim rests on**, in a form that cannot be answered from the
         // claim's own text: the file's presence, and the first eight characters of its recorded digest.
@@ -104,7 +118,7 @@ export function probesFor(input: {
             ? `test -f ${path}`
             : `test "$(node -e "process.stdout.write(require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync('${path}')).digest('hex').slice(0,8))")" = "${prefix}"`;
         probes.push({
-            id: `P${index + 1}-${input.claim.id}`,
+            id: `P${probes.length + 1}-${input.claim.id}`,
             claimId: input.claim.id,
             kind,
             path,

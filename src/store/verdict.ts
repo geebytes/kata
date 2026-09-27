@@ -42,10 +42,21 @@ export function verifiedChallengeCount(challenges: readonly Challenge[], answers
         if (challenge.state !== 'withdrawn' && challenge.state !== 'resolved') continue;
         verified += 1;
     }
+    // **Distinct questions, not distinct answer records.** Counting answers let the same question answered twice satisfy
+    // the floor twice — and the generator could produce such duplicates, which is how it was found: a real change asked six
+    // probes of which three pairs were identical, and the floor read six. Identity is the question itself (its kind and the
+    // path it is about), so the count is of independent readings whatever produced the list.
+    const askedQuestion = new Set<string>();
     for (const answer of answers) {
         // The answer carries the command it ran and what it saw. Both have to be present, and the observation has to be
         // more than whitespace, for the answer to count as having looked at something.
         if (!answer.command.trim() || !answer.observed.trim()) continue;
+        // **The command *is* the question.** A probe's identity is the command it asks, so two answers to one command are
+        // one reading however they were recorded — the answer type carries no kind or path, and inventing one from the
+        // stored probe list would make the count depend on a lookup that can be absent.
+        const identity = answer.command.trim();
+        if (askedQuestion.has(identity)) continue;
+        askedQuestion.add(identity);
         verified += 1;
     }
     return verified;

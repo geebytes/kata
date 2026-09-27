@@ -653,6 +653,17 @@ export type LedgerReport = {
 };
 
 /** The baseline, or a named reason it could not be read — never a placeholder that reads as a measurement. */
+/**
+ * How many *different* questions a probe list asks.
+ *
+ * The probe's identity is the command it asks — the answer type carries no kind and no path, and both are recoverable from
+ * the command anyway. Counting distinct commands means a stored list that repeats a question reports one, whatever produced
+ * it, which is the property the discovery floor needs.
+ */
+function distinctProbeCount(items: ReadonlyArray<{ command: string }>): number {
+    return new Set(items.map((item) => item.command.trim())).size;
+}
+
 async function baselineOrReason(root: string): Promise<LedgerReport['discovery']['baseline']> {
     try {
         const { buildBaseline } = await import('./baseline.js');
@@ -789,12 +800,16 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             challengeWithdrawalRate: ledger.challenges.length === 0
                 ? null
                 : ledger.challenges.filter((challenge) => challenge.state === 'withdrawn').length / ledger.challenges.length,
+            // **Distinct questions on every count, so the rate and the floor read the same denominator.** A stored probe
+            // list can hold the same question twice — a hand-written ledger, or one recorded before the generator was
+            // de-duplicated — and the rate is the quantity the discovery floor reads, so counting records rather than
+            // questions would let repetition raise it.
             probeResponseRate: responseRate({
-                asked: (await readProbes(root, changeId)).length,
-                answered: (await readProbeAnswers(root, changeId)).length,
+                asked: distinctProbeCount(await readProbes(root, changeId)),
+                answered: distinctProbeCount(await readProbeAnswers(root, changeId)),
             }),
-            probesAsked: (await readProbes(root, changeId)).length,
-            probesAnswered: (await readProbeAnswers(root, changeId)).length,
+            probesAsked: distinctProbeCount(await readProbes(root, changeId)),
+            probesAnswered: distinctProbeCount(await readProbeAnswers(root, changeId)),
             // Read rather than asserted. `buildBaseline` is the only reader of the retired records and the run registry,
             // and a failure to read them is reported as the reason rather than as the constant it replaces.
             baseline: await baselineOrReason(root),
