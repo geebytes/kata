@@ -34,10 +34,8 @@ import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { readTask } from '../core/task.js';
-import { readObligations, hasUnresolvedObligations, persistBlockingFindings, persistBlockingJudgeResult, resolveObligationsForRevision } from '../quality/repair-obligations.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
-import { readTrackedFindings } from '../quality/finding-disposition.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
 
 export type KataCommand = 'open' | 'design' | 'build' | 'review' | 'judge' | 'verify' | 'archive' | 'hotfix' | 'tweak';
@@ -411,6 +409,30 @@ export async function sealProgressWriter(
     return writer;
 }
 
+/**
+ * The ledger's claims that are not supported, for the change record and the ladder's diagnostics.
+ *
+ * One reader for one question: the record and the archive gate must not disagree about which problems are open, which is
+ * the defect this file's history is largely made of. Returns an empty list for a change with no ledger, because a record
+ * about a change that predates the ledger has no problems to report from it.
+ */
+async function ledgerClaimsForRecord(root: string, taskId: string): Promise<Array<{ id: string; severity: string; status: string }>> {
+    const { readLedger } = await import('../store/ledger.js');
+    const { evaluateClaim } = await import('../kernel/decide.js');
+    const ledger = await readLedger(root, taskId);
+    return ledger.claims
+        .filter((claim) => claim.status !== 'waived')
+        .filter((claim) => evaluateClaim(claim, {
+            evidence: ledger.evidence,
+            verdicts: ledger.verdicts,
+            reusedEvidence: new Set(),
+            policy: ledger.policy,
+            challenges: ledger.challenges,
+            subjectRevision: ledger.subject?.revision ?? '',
+        }).state !== 'supported')
+        .map((claim) => ({ id: claim.id, severity: claim.severity, status: claim.status }));
+}
+
 async function cmdBuild(
     taskId: string,
     root: string,
@@ -714,7 +736,12 @@ async function cmdBuild(
             ...(baseRevision?.contentDigests ? { baseContentDigests: baseRevision.contentDigests } : {}),
             ...(options.judgement ? { judgement: options.judgement } : {}),
             claimFailures: claimSummary.failures,
-            findings: (await readTrackedFindings(root, taskId)).map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition })),
+            // **The record reports the ledger's own problems.** It used to list the round-shaped findings table; with the
+            // claims in the ledger, an unsupported claim is what "known and not answered" means now, and the record's
+            // self-evidence check still refuses prose that restates the count differently from the field.
+            findings: (await ledgerClaimsForRecord(root, taskId)).map((claim) => ({
+                id: claim.id, severity: claim.severity, disposition: claim.status,
+            })),
         }).catch(() => null)
         : null;
     // §6 self-evidence for A: a record whose prose restates a derivable quantity is refused, and the refusal names both
@@ -778,18 +805,7 @@ async function cmdBuild(
     }
 
     if (revision) {
-        // A matrix enriches the mapping from an obligation to the evidence that answers it; it is not a precondition for
-        // one existing. Requiring it here meant a task opened without one — the `/kata-open` default — could never
-        // resolve an obligation, so a repair batch on such a task stayed open however well the repair went.
-        const acIds = task.acceptanceMatrix
-            ? task.acceptanceMatrix.rows.map((row) => row.acceptanceId)
-            : task.acceptance.flatMap((item) => (item.id ? [item.id] : []));
-        await resolveObligationsForRevision(
-            root, taskId, revision.id, acIds,
-            evidence.filter((e) => isPassing(e)).map((e) => e.id),
-            task.acceptanceMatrix,
-            evidence,
-        );
+
     }
     // C1: a successful seal is what ends a repair batch — its contract is one seal and one delta round per node per batch.
     // The base revision was stamped when the batch opened, so nothing here supplies one.
@@ -802,23 +818,6 @@ async function cmdBuild(
     // cost. An unclosed batch means the next round gets no delta — so it reviews the whole change surface instead of the
     // repair, which is the difference between 2.82M and 9.88M tokens on the change this was measured on. The mechanism was
     // never missing: it runs, decides correctly, and its answer was thrown away. So the answer is read.
-    let batchClosure: { closed: boolean; reason?: string; findings?: string[] } | undefined;
-    if (evidence.every(isPassing)) {
-        const { closeBatchAfterSeal } = await import('../quality/repair-batch.js');
-        // **The revision, which no caller passed.** Without it the carried-forward batch had no base, the batch a later round
-        // reads as the last closed one yielded no delta, and every round reviewed the whole surface instead of the repair —
-        // measured at 2.5-2.7x the necessary cost.
-        const closure = await closeBatchAfterSeal(root, taskId).catch(() => null);
-        if (closure && 'refused' in closure && closure.refused) {
-            batchClosure = {
-                closed: false,
-                reason: closure.reason,
-                findings: (closure.findings ?? []).map((finding) => finding.id),
-            };
-        } else if (closure) {
-            batchClosure = { closed: true };
-        }
-    }
     // A review repair is outstanding only when the manifest changed, which the preflight just established; resolving
     // it here is what closes the repair against the revision that superseded it.
     if (revision && await readActiveReviewRepairBaseline(root, taskId)) {
@@ -855,7 +854,6 @@ async function cmdBuild(
             wikiClosure,
             // A batch left open is reported rather than swallowed: it is the reason the next round has no delta to narrow
             // against, and "why is the next review expensive" should be answerable from the seal that caused it.
-            ...(batchClosure ? { batchClosure } : {}),
             ...(ownedPaths.length ? { ownedPaths, ownedPathsSource: task.ownedPaths?.length ? 'task' : 'build-option' } : {}),
             ...(codeGraphCandidates.length > 0 ? { codeGraphCandidates, ...(codeGraphDisposition ?? {}) } : {}),
             ...(revision ? { revisionId: revision.id } : {}),
@@ -1212,10 +1210,6 @@ async function cmdVerify(
     const status = revision ? await revisionStatus(root, revision, taskId) : undefined;
     const drift = revision ? await workspaceDrift(root, revision.ownedPaths) : [];
     const matrix = task.acceptanceMatrix;
-    // F1.4: what has already been decided about this task's findings is printed here, so "known and deferred" is visible
-    // at the node that concludes the implementation. It changes nothing about the gates: severity decides those (I1).
-    const { deferredFindings: deferred, readTrackedFindings } = await import('../quality/finding-disposition.js');
-    const deferredForDiagnostics = deferred(await readTrackedFindings(root, taskId));
     // A project that declared `tier: 'frozen'` checks asked for that verification at the point the artefact is frozen —
     // which is here. Refusing while one has no passing evidence for this revision makes the declaration real instead of
     // advice, and the refusal names the command that fixes it.

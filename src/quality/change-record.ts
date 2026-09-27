@@ -43,6 +43,14 @@ export interface ChangeRecordClaimFailure {
     missing: boolean;
 }
 
+/**
+ * A problem the record reports as still open, with what was decided about it.
+ *
+ * **A claim, not a finding.** The round-shaped route raised findings; the ledger raises claims, and the two are the same
+ * question — "what is known and not yet answered" — in the vocabulary of the route that is actually in use. The field name
+ * is kept because every reader of this record (the prose self-evidence check, the archive ledger, the dashboards) asks it
+ * under that name, and renaming it would make the disagreement invisible rather than resolved.
+ */
 export interface ChangeRecordFinding {
     id: string;
     severity: string;
@@ -109,6 +117,7 @@ export interface ChangeRecordInput {
     ownedPaths: string[];
     evidence: Array<{ id?: string; checkId?: string; name?: string; command?: string; exitCode: number | null; passed?: boolean }>;
     claimFailures: ChangeRecordClaimFailure[];
+    /** The ledger's unsupported claims, mapped to this record's shape by the caller that holds the ledger. */
     findings: ChangeRecordFinding[];
     /**
      * The sealed revision's content identity, and its base's — the fact that survives the round committing.
