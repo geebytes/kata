@@ -4,21 +4,6 @@ import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from '../workflow/worktree.js';
-import {
-    adversarialGateFor,
-    adversarialReasonFor,
-    blockingAdversarialFindings,
-    buildAdversarialBrief,
-    persistAdversarialBrief,
-    prepareAdversarialCertification,
-    issuedBriefPool,
-    readAdversarialRecord,
-    writeAdversarialRecord,
-    type AdversarialNode,
-    type AdversarialRecord,
-    type AdversarialBriefScope,
-    adversarialNodes,
-    issuedRunRequest,} from '../quality/adversarial.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
 import { runProcess, runProcessSync } from '../process/run.js';
 
@@ -87,47 +72,6 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
  * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
  * checkout) and carries the task's state into the checkout.
  */
-/**
- * The saving a delta pass actually delivered, against the full pass it narrowed (design §11).
- *
- * The design's largest unverified assumption was that a delta pass costs a fraction of a full one, and it could not be
- * measured because nothing recorded how long a pass took. Now the passes do; this reports the comparison, and reports
- * that it is *not yet measurable* rather than inventing an answer when only one side exists.
- */
-async function deltaSaving(
-    root: string,
-    taskId: string,
-    node: 'verify' | 'review',
-    record: AdversarialRecord | null,
-): Promise<Record<string, unknown>> {
-    if (!record || record.scope?.kind !== 'delta' || !record.elapsedMs) return {};
-    const { readdir } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    // Every recorded pass for this node lives in `.kata/tasks/<id>/adversarial-<node>.json`; the previous full pass is
-    // whatever that file held before, so the comparison the design wants needs the historical snapshot — which the
-    // workspace keeps only for the current record. Where it is absent, say so plainly.
-    const directory = join(root, '.kata/tasks', taskId, 'passes');
-    const snapshots = await readdir(directory).catch(() => [] as string[]);
-    const full = [];
-    for (const file of snapshots.filter((name) => name.includes(node) && name.endsWith('.json'))) {
-        const previous = JSON.parse(await readFile(join(directory, file), 'utf8')) as { scope?: { kind?: string }; elapsedMs?: number };
-        if (previous.scope?.kind === 'full' && previous.elapsedMs) full.push(previous.elapsedMs);
-    }
-    if (full.length === 0) {
-        return { deltaSaving: { measurable: false, note: 'the previous full pass recorded no elapsed time, so the saving cannot be computed yet' } };
-    }
-    const baseline = full.reduce((sum, value) => sum + value, 0) / full.length;
-    return {
-        deltaSaving: {
-            measurable: true,
-            fullMs: Math.round(baseline),
-            deltaMs: record.elapsedMs,
-            savedMs: Math.round(baseline - record.elapsedMs),
-            factor: baseline > 0 ? Number((baseline / record.elapsedMs).toFixed(2)) : null,
-        },
-    };
-}
-
 /** `kata-cli revision digests --change <task> [--since <revision-id|manifestHash>]` — the per-path content table. */
 export async function runRevisionCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
@@ -245,9 +189,6 @@ const TELEMETRY_RETIREMENT_REMEDY =
 // whether a recorded pass bound to the current revision. The ledger answers the same question by construction — a
 // disposition binds the working tree the next seal will mint, and a drift check compares them — so what was a command
 // here is a property of the store now.
-export function isAdversarialNode(value: string): value is AdversarialNode {
-    return (adversarialNodes as readonly string[]).includes(value);
-}
 
 export async function readStdin(): Promise<string> {
     if (process.stdin.isTTY) return '';
