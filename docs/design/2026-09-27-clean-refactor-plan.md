@@ -653,3 +653,62 @@ round-protocol:          replaced 6, droppedVerdicts [E1..E6] → verify 6/6 sup
 
 - **`review --approve` 学会了账本路线**（§13.8 之前的工作）：`absent` 走旧路、`decided+pass` 走账本、`unreadable`/漂移/非 pass 各自按名拒绝，记录里写 `reviewRoute` 与 `ledgerReview.limits`。**这使 §14 #20 的"同一事实两处派生"从"巧合安全"变成"设计安全"**：账本通过而旧 findings 表仍有 open major 时，门取更严的那个，且拒绝信息同时也是账本缺口的清单。
 - **`host/pi-adapter.ts` 仍是真实的第二支平台代码**。它现在只做"启动 + 映射事件流"，语言里没有任何平台概念（kata 侧平台词汇量 = 0）—— 这是"平台解耦"在**代码**层面成立的证据，而不是声称。
+
+---
+
+# 16. 第四轮审查：**结合设计方案再读一遍代码**（10 条，其中 4 条新发现）
+
+> 方法：不再读自己的叙述，而是**拿设计方案的每一句当断言去核代码**——三层边界、三种对象、四条不变量、CLI 动词、保留清单、D1–D10。上两轮（§14/§15）已处置的 17 条不重复，这里是**新一轮**读出来的。
+
+## 16.1 设计说对了、代码也对（复核，A 类 6 条）
+
+| # | 设计断言 | 代码事实 |
+|---|---|---|
+| 1 | 「`src/kernel/` 纯函数 · 无 I/O · 无平台名」（§1.1） | `KERNEL_BANNED_BUILTINS` 枚举 `node:fs` / `child_process` / `net` / `http(s)` / `os` / `worker_threads`；K5 用例文本+类型双查通过 |
+| 2 | 「三种对象，替代今天的一整族」（§1.2） | `Subject{revision, pathDigests}` · `Claim{…at,reopens,waiver}` · `Evidence`（4 类）——**没有再出现第四种记录型对象** |
+| 3 | 「`decide()` 取数据，不跑命令、不读文件、不命名平台」（§1.4） | `DecideInput` 15 个字段**全是数据**；无回调、无 port、无 clock |
+| 4 | 「预算耗尽永不等于通过」，且「预算第一个判定」（§1.4 / K3） | `decide.ts:192` 是函数体第一段判定，且只 push `insufficient` 类 reason |
+| 5 | 「每条命令型检查都必须带变异」（§4 K2，§15 已改成结构性） | `executable_falsifier` 是唯一的命令型；形状检查对缺变异给出**具名**拒绝 |
+| 6 | 保留清单 7 项中 6 项原样搬走（§3） | `pathDigests` ✓ · `ledgerDrift`/`focus` ✓ · 三步 `{before,mutated,after}` ✓ · 逐条变异纪律 ✓ · `deriveDeadline` ✓ · 严重度门槛 ✓ |
+| 7 | D4「`expert_concurrence` 不得单独支撑 blocking」（§6） | `MIN_STRENGTH_BY_SEVERITY.blocking = 4` + `!isReproducible(type)` 双条件，**且拒绝话说得出理由** |
+
+## 16.2 设计说「是」，代码说「不是」——**新发现的 4 条**
+
+| # | 设计断言 | 代码事实 | 类 |
+|---|---|---|---|
+| **A** | **§7 P5 说 assurance overlay 会把「旧轮协议登记表降级为一个 adapter」** | **今天有两个预算/包络真源**：`kernel/policy.budgets`（`maxWallMs: 1_800_000` · `deadlineToolCalls` · `maxTokensPerChange`）与旧路径的 `DEFAULT_REVIEW_BUDGET`（由 `MEASURED_REVIEW_PASS_COST × REVIEW_HEADROOM` 派生，`adversarial.ts:2088-2102`）。**新路径的 `budgetStatus` 读前者**，而 `falsify`/证据验证的**实际执行**仍由后者的常量家族与 `runProcess` 超时控制。§9 风险表把「同一事实两处派生」列为必须由「每阶段带删除动作」消除的对象——**这正是它的一个活实例**，而且两条路给出的数不同（1.8e6 ms vs 实测派生的值） | **E**（受迁移次序约束，但**必须记名**：两个数不一致时，没有任何检查会说话） |
+| **B** | **D10「无记录在结构上不可能：claim/evidence 是增量落盘」** | 增量落盘为真（`appendClaim` / `appendEvidence` 逐条 `mutate`），**但「一次提交一份文档」的旧形态仍然在线上并仍是门的一方**：`adversarial record` 仍要求 `adversarial-review.json` + 611 行 schema，`review --approve` 在**没有账本时**仍以它为通过依据。所以 D10 今天成立的是「**新路径**没有单通道产物」，而不是「仓库没有」 | **B**（文档措辞需限定：D10 说的是新路径，不是全仓） |
+| **C** | **§1.5 的 `humanBudgetMin` 是「人工预算：人的时间必须显式定价」（D7）** | 它由 `planner` 算进 `ReviewPlan`、`plan` 落盘为 `plan.json`，**但没有任何消费者读它**：CLI 不打印、`focus` 不用、`decide` 不看。这与 §15 修掉的 `readingSet` 是**同一个类**（`a-definition-with-no-consumer`），只是它还没被抓到——因为 §15 只修了被点名的那个 | **E** |
+| **D** | **§5 的动词表把 `focus` 写成「影响锥与漂移（吸收 lane）」** | 落地形态是「**收窄计划里的阅读集**」——它读 `plan.json`，没有计划就按名拒绝。这**更好**（它消费计划的答案而不是第二遍推导），但**它现在不能独立回答「哪些 claim 受影响」**：没有 `plan.json` 时它什么也不说，而 §14 记录的「影响锥」语义因此**只在有计划的路径上存在**。文档已按实况改写，但**「lane 的漂移计算」这一保留项实际只保留了一半**（漂移有，独立的影响锥没有） | **B** |
+
+## 16.3 设计与代码的措辞差（需一次文档修订，无代码改动）
+
+```
+① D3「反例落在 challenges/，在产品测试套件之外」：未落地（无 challenges/ 目录）。
+   今天反例的载体是账本的 challenge 账（可执行命令 + check 的三态），它满足 D3 的**意图**
+   （角色分离、可执行、不进产品套件），但没有落成 D3 描述的那个**文件形态**。
+   ⇒ 文档应改写为「反例作为一个可执行的账目条目，而不是写入产品套件」，并说明未采用目录形态的理由。
+② §8 的 6 条不可测验收（§14 已记）与 §16.2 A 是同一个成因：**P1 语料未开始**，
+   而两条预算真源的「哪个数是对的」也只能靠语料回答（实测分布 vs 派生常量）。
+③ §1.1 说 assurance 层「沙箱 · 身份 · 签名 · 审计 · 旧轮 protocol 的 demoted 适配器」：
+   落地的是**两支持久化 adapter**（inline=observed / file=relayed），沙箱与签名仍是占位。
+   这不是缺陷（D8 明确 v2 不引入签名），但 §1.1 的括号内容应改为「已落地的两支持久化 adapter + 占位」。
+```
+
+## 16.4 本轮审查的判决
+
+**设计对代码的符合度**：`§1`–`§7` 的**结构性断言全部成立**（三层、三种对象、纯内核、四不变量、保留清单 6/7）。**不成立或部分成立的是"这一层已经收口"的四条**——都是迁移次序的产物，不是设计错误：
+
+- **A（两条预算真源）** 是这四条里唯一有**真实风险**的：它让「预算耗尽永不 pass」在新路径上由一个数决定，而实际执行由另一个数约束，**两者不一致时没有任何检查会说话**。
+- **C（humanBudgetMin 无消费者）** 是 §15 那个类的**漏网实例**：修一个被点名的，还有一个没被点名的——**这说明那个类的检查（wiring check 只覆盖导出，不覆盖 policy 字段的"下游消费者"）本身有盲区**：policy 字段的消费者是**声明**在 `POLICY_CONSUMERS` 里的，而那个声明由人写；`humanBudgetMin → producers/planner` 是**真的**（planner 确实读了），只是 planner 的输出没人读。**所以「有消费者」这条不变量的传递性没有检查**——一层有消费者、二层没有。
+
+## 16.5 建议的两条修（都不需要架构决策，且都不动在飞的 change）
+
+```
+① 两条预算真源：让 kernel 的 policy.budgets 成为唯一的数源，
+   旧路径的 DEFAULT_REVIEW_BUDGET 改为**读取 policy**（或至少加一条断言：两者相等，
+   不等即失败）。这样「实测分布」与「策略数据」的差会变成一个会失败的事实，而不是两个数。
+② policy 字段的消费者要检查**传递性**：`POLICY_CONSUMERS` 只证明第一跳有人读；
+   加一条用例断言「每个被声明的消费者模块，其输出至少有一个下游消费者」——
+   humanBudgetMin 会在那里被抓住（planner 的输出只有 plan.json 的读者）。
+```
