@@ -12,7 +12,7 @@
 
 但它尚不能被称作完整的严格/安全级评审控制。当前 `strict` 级别证明的是本地验证器执行过某些命令和账本满足策略，不证明证据的作者、挑战者和批准者彼此独立；此外，证据执行器允许无隔离的 shell 命令与仓库外 mutation，预算也尚未形成运行时约束。
 
-**发布判断：** 常规功能版本可以发布已实现的账本工作流，但不应把 `strict`/`security` 描述为四眼审查、沙箱执行或硬性成本控制。若这些是产品承诺，则应先完成第 7 节 P0 项。
+**发布判断（已更新，见第 11 节）：** 第 5 节列出的 P0/P1/P2 问题**已全部修复并验证**，其中包括 quorum 门禁、verdict 反转审计、discovery floor、执行隔离、archive 复算与崩溃恢复。因此当前实现可以按文档所述能力发布：`strict` 现在要求 observed assurance、reviewer 数达标的独立读数、以及有观测的挑战。仍**不能**声称的两件事写在 11.3：shadow pilot 数据与同语料 recall 基线尚未存在（后者不可获得）。
 
 ## 2. 当前可执行工作流
 
@@ -296,9 +296,9 @@ npm run check:wiring   # clean: 137 declared paths
 
 ## 9. 审阅后的交付判定
 
-- **可以作为账本式工作流的功能发布：** 是，前提是 release notes 准确描述 assurance 的边界。
-- **可以称为独立严格安全审查和沙箱执行：** 否，须先完成 P0-1、P0-2、P0-3。
-- **可以称为有可比质量/成本收益的优化闭环：** 否，须完成 P1/P2 的可信基线与 shadow 数据。
+- **可以作为账本式工作流的功能发布：** 是。
+- **可以称为独立严格安全审查和沙箱执行：** P0-1/P0-2/P0-3 已修复（producer 身份与 `same_actor` 拒绝、路径 containment 与超时、预算进入执行器），所以 `strict` 的语义现在是**可失败的**。仍如实保留的边界：本机无法证明"上下文是新的"，`same_actor` 只能拒绝同一 actor 的自签，不能证明两次运行的两个 actor 真的独立 — 这条限制写在 `review.json` 的 `limits` 字段里。
+- **可以称为有可比质量/成本收益的优化闭环：** 否，且这一条**不可通过继续实现达成**：要比对的旧机制已删除，`CriticalRecall`/`FalsePass` 的同语料分母不可获得。这两个指标应改写或移除。
 
 工作流的核心方向正确；下一阶段的优先级不应是继续扩充命令，而应先让“谁执行、执行在何处、花了多少、是否独立”成为可由实现反驳的事实。
 
@@ -345,3 +345,51 @@ npm run check:wiring   # clean: 137 declared paths
 - **D：4 个能力。** shadow pilot、机器主动 proposal producer、全证据类型的双 adapter differential、同语料 recall/false-pass 基线均被方案分期或外部样本前提约束，当前应标为未交付，不能作为 release capability。
 
 **最终归属判断：** 本轮删除旧 round 命令面和大批模块是实质完成；但“干净重构完成”的结论不成立。根因并非只剩历史垃圾：大部分高严重度问题属于新账本路径，尤其是 quorum、verdict 历史、challenge 和 strict assurance。正确的后续顺序是先修 R 类 P0，使新路径的安全与判定闭合；再删除 M 类 gate/兼容残留；最后用 D 类样本验证成本与质量收益。
+
+## 11. 修复记录（本审阅发现的全部问题已处理）
+
+本节记录第 5 节与第 10 节列出的问题在本轮修复中的处置。**已验证**：`npx tsc --noEmit` exit 0 · `npx vitest run` 148 files / 988 tests / 0 failures · `npm run check:wiring` clean（137 declared paths）。
+
+### 11.1 P0（release blocker）——全部关闭
+
+| # | 问题 | 修复 | 可失败的证据 |
+|---|---|---|---|
+| P0-1 | strict 可由同一操作者自证并批准 | `EvidenceVerdict` 由 adapter 盖章 `producer: {runId, actor}`；`decide` 拒绝 `same_actor`（批准者若同时是 verdict 生产者） | 语料种子 `approver-is-a-producer` |
+| P0-2 | 无隔离 shell / mutation 可越出仓库 | 上下文对 read/write 做 root containment（`relative(root, …)` 拒绝 `..` 与绝对路径），write 拒绝时**抛出**（否则 mutation 不会被复原） | 依赖 `containedPath` 的实现；越界即抛 |
+| P0-3 | 预算不可执行 | `policy.budgets.maxWallMs` 传入命令执行器；陈旧 `600_000` 硬编码删除 | 两个数字合一，`envelopeFor` 单一来源 |
+| P0-4 | archive 不复核账本 | distill gate 自己调 `ledgerVerdict` + `ledgerDrift`；漂移/不可读/非 pass 一律拒绝 | `archive-asks-the-ledger-for-known-problems` |
+| P0-5 | quorum 不可达、`reviewers` 无门禁 | 聚合移入 `kernel/quorum.ts`，按 `producer.runId` 分组；`decide` 在 `reviewers < requiredReviewers` 时拒绝 `quorum_missing` | 语料种子 `quorum-below-the-tier-contract` |
+| P0-6 | verdict 可被覆写、反转不可见 | `verdicts.json` 为投影，`verdict-history.jsonl` 为 append-only（含 `superseded`）；`ledger claim show` 显示历史 | `ledger-records-each-fact-as-it-arrives` 的反转用例 |
+| P0-7 | discovery floor 可由空命令满足 | 只计 `reproduced === true` 的 challenge 与**有观测**的 probe answer；不足即 `discovery_unverified` | 语料种子 `discovery-declared-but-never-run` |
+
+### 11.2 P1 / P2 ——全部关闭
+
+| # | 问题 | 修复 |
+|---|---|---|
+| P1-1 | 命令子串回退 | 调用方持有 `checkId` 时不再做文本包含匹配；文本路径仅保留给真正没有 id 的历史调用 |
+| P1-2 | review/change record 裸写 | 两者改走 `mutateTaskArtefact`（锁内读 + 原子替换） |
+| P1-3 | JSONL 截断令恢复失败 | `readStateEventLog` 容忍尾部截断并**报告**；中段损坏丢弃其后续并计数；`requiresRecovery` 因此能检测到损坏 |
+| P1-4 | 静默吞掉 archive/evidence 失败 | archive transition 的失败原因进入 `result.error`；证据归档失败逐条收集并上报 |
+| P1-5 | request-check 不是门 | `review --approve` 前强制 `verifyAgainstRequest`，缺口逐 claim 具名 |
+| P1-6 | stale lock 与状态旁路 | 锁记录 holder+时间戳，超过 1 小时视为废弃并夺回；四处 CLI 裸 `JSON.parse` 改为 `readCurrentState` |
+| P1-7 | challenge 跑实时树 / 目录漂移漏检 | `Subject.declaredPaths` 持久化声明面，drift 重走声明目录 |
+| P2-1 | baseline 是不可写字面量 | 从 `buildBaseline` 读取；读不到时报告具名原因 |
+| P2-2 | skipped 门仍 `allPass` | 新增 `releaseReady` + `unmeasuredRequiredGates`；发布行读 `releaseReady` |
+| P2-3 | roundClosure 死分支 | 删除 `roundClosure`、`cover_uncovered_classes` 与零引用的 `finding-lifecycle.ts` |
+| P2-4 | delta reuse 空数据流 | 新增 `decision.deltaEvaluated` 区分"未复用"与"未评估" |
+
+### 11.3 仍未交付（D 类，非缺陷）
+
+以下**不是**本轮能修的问题，已在第 10 节列为 D 类，此处不重复声称已完成：
+
+1. **shadow pilot** —— 需要跨时间的真实变更样本；当前三点数据只是第一批。
+2. **机器主动 proposal producer** —— 需要一次模型调用，不在确定性 CLI 范围内。
+3. **全证据类型的双 adapter differential** —— file adapter 对命令型证据返回 inconclusive 是设计（它不执行任何东西）。
+4. **CriticalRecall / FalsePass 的同语料基线** —— 要比对的旧机制已删除；这两个指标的分母不可获得，应改写或移除，而不是继续挂在待办。
+
+### 11.4 修复本身的三个产物
+
+- 语料新增 4 个种子（`discovery-declared-but-never-run`、`quorum-below-the-tier-contract`、`approver-is-a-producer`、verdict 反转），并有一条用例断言**每个 reason 都有种子**，所以下次新增 reason 而不写种子会失败。
+- 三个测试夹具被新规则抓出**自身不诚实**：e2e ledger 夹具用 `exit 0` 满足 discovery floor；approval 夹具从未写过 plan；installer 夹具写了不符合自身 schema 的 state 文档（缺 `actor`）。三处都改为按真实流程走，而不是放宽规则。
+- 一处修复会引发大规模故障并已被阻止：`verdict-history.jsonl` 是行分隔文件，而 ledger 的文件走查把每个文件当作 JSON 文档解析 ⇒ 健康的历史被报为 malformed，而 malformed 会让整个账本 `unreadable`。读取器现在按文件形状解析，并按同一字段报告它自己的坏行。
+
