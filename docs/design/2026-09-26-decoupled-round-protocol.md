@@ -165,3 +165,31 @@ vocabulary becomes the only thing a host must learn.
    single-implementation until somebody writes one.
 4. **It does not reduce the loop.** The convergence problem (`docs/design/2026-09-25-why-review-does-not-converge.md`) is orthogonal: this
    document is about *who may certify a round and with what*, not about how many rounds a change needs.
+
+
+## Addendum (2026-09-27): the host adapter went with the route it served
+
+`host/pi-adapter.ts` was the reference launcher of this design: kata ran it as `adversarial execute --executor "node
+host/pi-adapter.ts"`, it spawned an isolated session and mapped that session's stream into the six event kinds, and kata
+derived the status and wrote the receipt from what it saw. It is deleted, and this addendum says why rather than leaving a
+gap where the file was.
+
+**Its invoker was deleted first.** `kata-cli adversarial execute` was the only thing that ran it — the file's own error
+message still told an operator to use the deleted command — and the whole round-shaped route (the protocol parser, the
+runner, the registry, the receipt) has since been retired in favour of the evidence ledger. A launcher with no command to
+launch it is the same defect this repository removes in code: a declaration with no consumer, except here the declaration
+is a 300-line program that nothing type-checks (`host/` is outside `tsconfig.include`) and nothing calls.
+
+**The ledger route does not need a launcher, and that is a design statement rather than an omission.** Assurance on the
+ledger comes from the adapter that *decides the evidence*: `inline` runs the declared checks inside kata and records
+`observed`; `file` reads results recorded elsewhere and records `relayed`. Both are honest labels about what was verified,
+and neither requires a receipt, because the thing being certified is the evidence rather than the process that produced
+it. The design's `limits` field carries the boundary in the record itself: *the ledger records what was verified, not who
+wrote the claims*.
+
+**What is genuinely gone, so it is not missed later.** The ability to certify that a *review session* ran in an isolated
+context. That was the capability the receipt existed for, and the reason it was dropped is that on this platform the
+receipt could only be written by the party whose independence was in question (see
+`2026-09-26-platform-decoupled-round-methodology.md`, §2). If a future route needs it again, what it needs is not this file
+restored: it is a live command that launches the session, an event stream kata can read while it counts, and a store of
+record for the runs — which is what this design specified and what its own removal of the round protocol took with it.

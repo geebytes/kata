@@ -11,20 +11,30 @@ import { describe, expect, it } from 'vitest';
  */
 
 describe('the boundary between kata and its executor', () => {
-    it('keeps the enforcement in kata: the adapter writes no receipt and computes no envelope', async () => {
-        // The property *is* the absence of code, so it is asserted over the file. The first version checked three string absences and
-        // missed the real one: the adapter read `budget.maxWallMs`, added 30 000 ms and armed its own `kill` — the envelope's wall-clock
-        // term, derived and enforced by the host, which kata also arms. A test that names a few strings is a test that passes until
-        // someone writes the thing it did not think of, so this one names the whole family.
-        const adapter = await readFile('host/pi-adapter.ts', 'utf8');
-        const code = adapter.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-        for (const forbidden of ['requestSha256', 'maxToolCalls', 'maxWallMs', 'maxHypotheses', 'maxOutputBytes', 'setTimeout', 'kill(', 'receiptPath', 'kind: \'receipt\'']) {
-            expect(code, `the adapter names \`${forbidden}\`, so it is enforcing or authoring something kata owns`).not.toContain(forbidden);
+    /**
+     * **This case asserted a property of a file that no longer exists, and the file is the reason it is kept as a note.**
+     *
+     * `host/pi-adapter.ts` was the reference launcher: kata ran it through `adversarial execute`, it spawned an isolated
+     * session and mapped that session's stream into the six event kinds, and this case proved it held no enforcement — no
+     * envelope arithmetic, no receipt, no kill. Its invoker was deleted with the round protocol, so the boundary it sat on
+     * has nothing on the other side; the file went with it (`2026-09-26-decoupled-round-protocol.md`, addendum).
+     *
+     * The property itself is not lost, and that is why the note stays: on the ledger route **kata runs the checks itself**
+     * through the `inline` adapter, so there is no host half left to hold enforcement away from. What the case was for — an
+     * authorised party must not be able to produce its own independence evidence — is now the kernel's shape rather than a
+     * boundary between two programs.
+     */
+    it('has no host half left to police: assurance comes from the adapter kata itself runs', async () => {
+        const { createInlineAdapter, createFileAdapter } = await import('../../src/assurance/adapters/inline-adapter.js')
+            .then(async (inline) => ({ createInlineAdapter: inline.createInlineAdapter, createFileAdapter: (await import('../../src/assurance/adapters/file-adapter.js')).createFileAdapter }));
+        expect(createInlineAdapter().assurance).toBe('observed');
+        expect(createFileAdapter({ dir: '.kata/review-results' }).assurance).toBe('relayed');
+        // No level above these two is offered, so no adapter can claim isolation it has not got.
+        for (const adapter of [createInlineAdapter(), createFileAdapter({ dir: '.kata/review-results' })]) {
+            expect(['observed', 'relayed']).toContain(adapter.assurance);
         }
-        // And what it does do: emit the events and nothing else.
-        expect(code).toContain("kind: 'launched'");
-        expect(code).toContain("kind: 'result'");
     });
+
     it('is not part of the kata executable: src/ never imports host/', async () => {
         // The boundary is a checked fact, not a promise. `host/` produces the events that become a receipt for rounds reviewing kata's own
         // changes; if kata could call it, the authorised party would be producing its own independence evidence.
