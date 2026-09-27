@@ -384,7 +384,13 @@ describe('the ledger verbs', () => {
         expect(beforePlan.ok).toBe(false);
         expect(String(beforePlan.error)).toContain('no plan has been stored');
 
-        await ledger(['plan', '--c0', '600000']);
+        const planned = await ledger(['plan', '--c0', '600000']);
+        // The envelope is reported from the policy, not derived a second time: a plan that says what evidence a review must
+        // produce is incomplete without the limits it must produce it within, and one number for one fact is the point.
+        const envelope = planned.envelope as { maxWallMs: number; deadlineToolCalls: number | null };
+        expect(envelope.maxWallMs).toBe(3_940_500);
+        expect(envelope.deadlineToolCalls).toBeNull();
+
         const unchanged = await ledger(['focus']);
         expect((unchanged.reopened as unknown[]).length).toBe(0);
         expect((unchanged.untouched as string[])).toEqual(['C1']);

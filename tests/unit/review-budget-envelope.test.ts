@@ -8,6 +8,7 @@ import { createTaskRevision } from '../../src/workflow/revision.js';
 import { buildAdversarialBrief, issueAdversarialBrief, renderAdversarialBrief } from '../../src/quality/adversarial.js';
 import { evaluateAdmissibility, type ReviewState } from '../../src/quality/review-state.js';
 import * as budgetModule from '../../src/quality/adversarial.js';
+import * as policyModule from '../../src/kernel/policy.js';
 
 /**
  * The headroom the module applies over a measured cost. Restated here rather than imported so a silent change to the
@@ -180,6 +181,18 @@ describe('the review envelope is calibrated from measured pass cost', () => {
             DEFAULT_REVIEW_BUDGET.maxOutputBytes,
             `an output limit below the largest measured payload (${MEASURED_REVIEW_PASS_COST.bytesPerToolCall} B/tool call) cannot bound a real round`,
         ).toBeGreaterThan(MEASURED_REVIEW_PASS_COST.bytesPerToolCall * MEASURED_REVIEW_PASS_COST.mostToolCalls);
+    });
+
+    it('reads the wall clock from the policy, so one fact has one number', () => {
+        // Before this: the policy carried `maxWallMs: 1_800_000` while this module derived a second value from the measured
+        // cost, and nothing compared them — so a ledger's `budget_exhausted` came from one number while what actually
+        // bounded a run was the other. Two numbers for one fact is the class the plan's risk table says each deletion step
+        // exists to remove, and the assertion is the comparison that was missing.
+        const { DEFAULT_REVIEW_BUDGET, MEASURED_REVIEW_PASS_COST } = budgetModule;
+        const { defaultPolicy } = policyModule;
+        expect(DEFAULT_REVIEW_BUDGET.maxWallMs).toBe(defaultPolicy().budgets.maxWallMs);
+        // And it is still a calibrated value rather than a literal: the relationship to the measurement survives the move.
+        expect(DEFAULT_REVIEW_BUDGET.maxWallMs).toBe(Math.ceil(MEASURED_REVIEW_PASS_COST.slowestWallMs * REVIEW_HEADROOM));
     });
 
     it('derives the limits rather than restating them, so a recalibration moves all three together', () => {

@@ -145,7 +145,14 @@ export function defaultPolicy(): Policy {
         ledgerTierCeiling: 'strict',
         diversity: { requiredOn: ['quorum'], kinds: ['model_family', 'prompt_strategy', 'tool_profile'] },
         sampling: { rate: 0.2 },
-        budgets: { maxTokensPerChange: '0.6*C0', maxWallMs: 1_800_000, deadlineToolCalls: null },
+        // **The wall clock is the measured envelope's own number, not an illustrative one** (`the two-budget finding`,
+        // §16.2). The policy is the single source — `DEFAULT_REVIEW_BUDGET` reads this value rather than deriving a second
+        // one — so the figure here has to be the calibrated one: the slowest pass this repository has recorded is 43.8
+        // minutes, and a limit of 30 minutes would refuse honest work instead of stopping a runaway. The 65-minute value
+        // is that measurement times the headroom the calibration test asserts. The three resource limits moved to the
+        // policy as a unit (tokens, wall clock, tool calls); `maxOutputBytes` is not a policy field because nothing
+        // enforces it here.
+        budgets: { maxTokensPerChange: '0.6*C0', maxWallMs: 3_940_500, deadlineToolCalls: null },
         evidenceStrength: {
             blocking: ['executable_falsifier'],
             major: ['static_witness', 'cross_artifact_contradiction', 'executable_falsifier'],

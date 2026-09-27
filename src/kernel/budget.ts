@@ -64,6 +64,22 @@ export function budgetStatus(input: {
     };
 }
 
+/**
+ * The envelope the new route enforces, derived from the policy rather than restated.
+ *
+ * The old path's `DEFAULT_REVIEW_BUDGET` is derived from measured pass costs, and until this function existed there were
+ * **two numbers for one fact**: the policy's `maxWallMs` (which this module reads, and which is where a ledger's
+ * `budget_exhausted` comes from) and the measured constant (which is what actually bounds a run). Neither was derived from
+ * the other and nothing compared them, so a disagreement would have been silent — the class the plan's risk table says
+ * each phase's deletion step exists to remove.
+ *
+ * `maxWallMs` is therefore the policy's value and **not** a second derivation: the measured figure is what the policy's
+ * default was chosen from, and `policy.budgets` is the one place it is stated.
+ */
+export function envelopeFor(policy: Policy): { maxWallMs: number; deadlineToolCalls: number | null } {
+    return { maxWallMs: policy.budgets.maxWallMs, deadlineToolCalls: policy.budgets.deadlineToolCalls };
+}
+
 export function budgetDetail(status: BudgetStatus): string {
     if (status.exceeded.length > 0) {
         return status.exceeded

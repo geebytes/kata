@@ -20,6 +20,7 @@ import type { EvidenceAdapter, VerifyContext } from '../producers/port.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
 import { reasonMessage } from '../kernel/decide.js';
+import { envelopeFor } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
@@ -518,7 +519,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read
         // afterwards is a printout rather than a record.
         await writePlan(options.root, changeId, plan);
-        outputResult({ ok: true, command: 'ledger plan', plan, stored: 'plan.json' });
+        // The envelope is reported where the operator looks, and it comes from the policy rather than a second derivation:
+        // a plan that says what a review must produce is incomplete without the limits it must produce it within.
+        outputResult({
+            ok: true,
+            command: 'ledger plan',
+            plan,
+            stored: 'plan.json',
+            envelope: envelopeFor(ledger.policy),
+        });
         return;
     }
 

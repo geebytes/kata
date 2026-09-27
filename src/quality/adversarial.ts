@@ -1,3 +1,4 @@
+import { defaultPolicy } from '../kernel/policy.js';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -2099,7 +2100,10 @@ export const DEFAULT_REVIEW_BUDGET: ReviewBudget = {
     maxHypotheses: 6,
     maxToolCalls: Math.ceil(MEASURED_REVIEW_PASS_COST.mostToolCalls * REVIEW_HEADROOM),
     maxOutputBytes: Math.ceil(MEASURED_REVIEW_PASS_COST.largestPassPayloadBytes * REVIEW_HEADROOM),
-    maxWallMs: Math.ceil(MEASURED_REVIEW_PASS_COST.slowestWallMs * REVIEW_HEADROOM),
+    // **The wall clock is read from the policy, not derived a second time** (`the two-budget finding`). This constant and
+    // `kernel/policy.budgets.maxWallMs` were two numbers for one fact with no comparison between them, and the two paths
+    // used different ones: a ledger's `budget_exhausted` came from the policy while what actually bounded a run was this.
+    maxWallMs: defaultPolicy().budgets.maxWallMs,
 };
 
 /**
