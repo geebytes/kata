@@ -550,6 +550,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
+    if (sub === 'detectability') {
+        // **The measurement the recall gap needed a cheaper form of.** Four corpus cases carry a reproduction that names an
+        // exact implementation change, and a planted defect is *detectable* exactly when the check that owns it reddens
+        // with the defect restored. That is weaker than "a reviewer found it" and it is measurable today, deterministically,
+        // with no model — and the output says which it is.
+        const { measureDetectability } = await import('../store/detectability.js');
+        const report = await measureDetectability({ root: options.root });
+        outputResult({ ok: report.undetected.length === 0 && report.inconclusive.length === 0, command: 'ledger detectability', ...report });
+        if (report.undetected.length > 0 || report.inconclusive.length > 0) process.exitCode = 1;
+        return;
+    }
+
     if (sub === 'decide') {
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');

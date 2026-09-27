@@ -750,6 +750,25 @@ Cost ≤ 0.6 C0                    ❌ 不可测：C0 需要"旧机制每 change
                                     且那些轮次的产出是零记录（§14 已记），拿它们当 baseline 会把 0 当分母
 ```
 
+## 17.3b 召回缺口的一半：**可探测性**（本轮新增）
+
+`scoreCorpus` 的 observation 此前只能手写，因为没有**会产出 finding id 的 verifier 实现** —— 这就是"召回不可测"的根因。本轮落下它的**便宜那一半，且诚实**：
+
+9 条 critical 语料中有 **4 条**的 `reproduction` 已经精确到"改实现里的哪一处"（`mutation-case`）。一条已埋缺陷是**可探测的**，当且仅当**拥有它的那条检查在缺陷被放回时变红**。于是：
+
+```
+kata-cli ledger detectability
+  · 对每条 probe 跑三步：检查先绿 → 放回缺陷 → 检查变红 → 还原 → 检查复绿
+  · 实测：measured 4 · detected 4 · undetected [] · inconclusive []
+    每条的 observed = {before: 0, mutated: 1, after: 0}
+  · NOT_PROBED 列出 14 条【未覆盖】的 critical 用例，每条带原因（"需要一次 CLI 会话"／"需要两个 revision"…）
+  · measures 明写：它度量的是"拥有该缺陷的检查是否仍能看见它"，【不是】"评审者是否会找到它"
+```
+
+三条诚实规则被用例固定：**probe 集合与语料的 mutation-case 必须双向吻合**（有 case 没 probe、有 probe 没 case 都拒绝）· **未覆盖的用例必须具名带原因**（"4/4 detected" 不能被读成 "4/27"）· **锚点消失按 inconclusive 报**而不是按"探测失败"报（缺陷的位置变了，是需要重写那条用例，不是 detection 失败）。
+
+**它的价值边界**：这个率**不会因为读得更仔细而上升**，只会因为一条检查被修好而上升 —— 所以它弱于召回、强于一无所有，且它是**目前唯一不需要 verifier 实现就能拿到的形式**。
+
 ## 17.3a 语料对账（本轮新增，零成本、确定性）
 
 `ledger corpus` 现在同时输出 **对账**：两批语料各持有哪些类、哪一边有缺口。
