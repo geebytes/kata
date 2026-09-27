@@ -66,7 +66,3 @@ export function usageFor(command: string): string {
 export const SELF_HANDLED_HELP: Record<string, string> = {
     wiki: 'its own parser answers with the verb list, which one usage line cannot carry',
 };
-
-export function commandFamilies(): string[] {
-    return Object.keys(USAGE).sort();
-}

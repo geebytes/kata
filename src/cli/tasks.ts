@@ -352,6 +352,37 @@ export async function runTasksCommand(argv: string[]): Promise<Record<string, un
     const [subcommand, ...rest] = argv;
     const args = parseTasksArgs(rest);
     const root = args.root ?? resolveWorkspaceRoot();
+    if (subcommand === 'declare') {
+        // **The entry point that was missing.** `upstreamCoverage` and `acceptanceMatrix` live in `task.json`, and until this
+        // verb neither had a governed writer: `design` refused a change for an unmapped criterion and the only remedy
+        // available to the author was editing the file by hand — outside every lock, with no record of who decided or why.
+        // `ownedPaths` already had `scope change`; these two had nothing.
+        if (!args.task || !args.field || !args.file || !args.reason) {
+            throw new Error('Usage: kata-cli tasks declare --change <task-id> --field <upstreamCoverage|acceptanceMatrix> --file <json> --reason "<why>" [--by <actor>] [--root <path>]');
+        }
+        if (args.field !== 'upstreamCoverage' && args.field !== 'acceptanceMatrix') {
+            throw new Error(`Unknown declaration field '${args.field}'; this command writes upstreamCoverage or acceptanceMatrix. A task's acceptance criteria are its contract and are not rewritten here.`);
+        }
+        const { declareTaskField } = await import('../quality/declaration-change.js');
+        const value = JSON.parse(await readFile(args.file, 'utf8')) as unknown;
+        const result = await declareTaskField({
+            root,
+            taskId: args.task,
+            field: args.field,
+            value,
+            reason: args.reason,
+            by: args.by ?? 'cli',
+        });
+        if (!result.ok) return { command: 'tasks declare', ok: false, error: result.refused };
+        return {
+            command: 'tasks declare',
+            ok: true,
+            taskId: args.task,
+            field: result.field,
+            summary: result.summary,
+            record: 'declaration-changes.jsonl',
+        };
+    }
     if (subcommand === 'relate') {
         if (!args.from || !args.to || !args.type) {
             throw new Error('Usage: kata-cli tasks relate --from <task> --to <task> --type <superseded_by|covered_by|duplicate_of|merged_into|parent_of|spawned_from|related_to> [--reason <text>] [--root <path>]');
@@ -637,8 +668,11 @@ export function parseTasksArgs(argv: string[]): {
     type?: string;
     reason?: string;
     root?: string;
+    field?: string;
+    file?: string;
+    by?: string;
 } {
-    const args: { from?: string; to?: string; task?: string; type?: string; reason?: string; root?: string } = {};
+    const args: { from?: string; to?: string; task?: string; type?: string; reason?: string; root?: string; field?: string; file?: string; by?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index];
         const value = argv[index + 1];
@@ -647,6 +681,15 @@ export function parseTasksArgs(argv: string[]): {
             index += 1;
         } else if (arg === '--to' && value !== undefined) {
             args.to = value;
+            index += 1;
+        } else if (arg === '--field' && value !== undefined) {
+            args.field = value;
+            index += 1;
+        } else if (arg === '--file' && value !== undefined) {
+            args.file = value;
+            index += 1;
+        } else if (arg === '--by' && value !== undefined) {
+            args.by = value;
             index += 1;
         } else if ((arg === '--task' || arg === '--change') && value !== undefined) {
             args.task = value;

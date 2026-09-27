@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../../src/cli.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
-import { commandFamilies, SELF_HANDLED_HELP, USAGE } from '../../src/cli/usage.js';
+import { SELF_HANDLED_HELP, USAGE } from '../../src/cli/usage.js';
 
 /**
  * **AC-5: `--help` is a read, for every command.**
@@ -40,21 +40,29 @@ async function captureJsonOutput(action: () => Promise<void>): Promise<Record<st
 }
 
 describe('a help request is a read, for every command family', () => {
-    it('describes every family the dispatcher answers', async () => {
-        // **Derived from the dispatcher's own source, not from a hand-copied list.** The guard is only safe if the map is
-        // complete, so the completeness is what is checked: every `command === '<family>'` in `src/cli.ts` must have an
-        // entry. Without this, adding a family reintroduces exactly the defect this case is about — a command that answers
-        // `--help` by running.
+    /**
+     * **The families the dispatcher answers, read from its own source rather than from a hand-copied list.**
+     *
+     * This is the only list the cases use, and it is derived on purpose: the guard is safe only if the map is complete, so
+     * completeness is what gets checked. A list taken from the map would be circular — a family missing from the map would
+     * be missing from the list, and the case would pass on exactly the defect it exists to catch.
+     */
+    async function dispatcherFamilies(): Promise<string[]> {
         const dispatcher = await readFile(new URL('../../src/cli.ts', import.meta.url), 'utf8');
         const literals = [...dispatcher.matchAll(/command === '([a-z][a-z-]*)'/g)].map((match) => match[1] as string);
+        return [...new Set(literals)].sort();
+    }
+
+    it('describes every family the dispatcher answers', async () => {
+        const literals = await dispatcherFamilies();
         expect(literals.length).toBeGreaterThan(20);
-        const undescribed = [...new Set(literals)].filter((family) => USAGE[family] === undefined);
+        const undescribed = literals.filter((family) => USAGE[family] === undefined);
         expect(undescribed, 'a family the dispatcher answers must be described, or `--help` on it will run it').toEqual([]);
     });
 
     it('answers --help for every family that does not answer it itself', async () => {
-        const families = await commandFamilies();
-        expect(families.length).toBeGreaterThan(25);
+        const families = await dispatcherFamilies();
+        expect(families.length).toBeGreaterThan(20);
         for (const family of families) {
             if (SELF_HANDLED_HELP[family] !== undefined) continue;
             const output = await captureJsonOutput(() => main([family, '--help']));
@@ -67,7 +75,7 @@ describe('a help request is a read, for every command family', () => {
         // The first version of the guard intercepted `wiki --help` and answered with a usage line, dropping the verb list
         // the wiki parser had been returning — a regression introduced by the fix. The exception is stated in one place and
         // its claim (that the family answers, rather than that it is exempt) is what is checked here.
-        expect(commandFamilies()).toEqual(expect.arrayContaining(Object.keys(SELF_HANDLED_HELP)));
+        expect(await dispatcherFamilies()).toEqual(expect.arrayContaining(Object.keys(SELF_HANDLED_HELP)));
         const help = await captureJsonOutput(() => main(['wiki', '--help']));
         expect(help.command).toBe('wiki help');
         expect(Array.isArray(help.commands)).toBe(true);
