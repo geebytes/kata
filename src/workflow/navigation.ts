@@ -16,6 +16,7 @@ import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
+import { countFindingsBySeverity, mergeBlockingSeverities } from './review-read.js';
 
 /**
  * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
@@ -193,7 +194,10 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // holds the answer in its own vocabulary: an unsupported claim is a problem, its `severity` is the field the tier
   // contract already requires, and a waiver is the author's decision not to fix it.
   const openProblems: Array<{ id: string; severity: string; statement: string }> = await openLedgerProblems(root, taskId);
-  const findings = openProblems.map((problem) => ({ severity: problem.severity }));
+  // Counted by name, judged by the ladder: `countFindingsBySeverity` only reports how many carry each name, and
+  // **which** of them blocks is `mergeBlockingSeverities`' answer, so this file holds neither a severity literal nor
+  // a second copy of the rule.
+  const problemCounts = countFindingsBySeverity(openProblems);
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
@@ -227,9 +231,9 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
       };
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
-    reviewFindings: findings.length,
-    blockingFindings: findings.filter((finding) => finding.severity === 'blocking').length,
-    majorFindings: findings.filter((finding) => finding.severity === 'major').length,
+    reviewFindings: openProblems.length,
+    blockingFindings: problemCounts.blocking,
+    majorFindings: problemCounts.major,
     ...(reviewMode ? { reviewMode } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
@@ -416,7 +420,13 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1020 + upstream.failedVerifyAcceptance,
     };
   }
-  if (phase === 'review' && upstream.blockingFindings > 0) {
+  // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
+  // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
+  // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
+  // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
+  const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
+  const hardestSeverity = blockingSeverities[0];
+  if (phase === 'review' && hardestSeverity !== undefined && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
@@ -424,9 +434,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1000 + upstream.blockingFindings,
     };
   }
-  // Strict mode, deliberately: the severity gate is "blocking, and major in strict" (design
-  // `2026-09-18-what-an-adversarial-pass-costs.md`). In std a major finding is reported and does not hold the task back.
-  if (phase === 'review' && upstream.reviewMode === 'strict' && upstream.majorFindings > 0) {
+  if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFindings > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',

@@ -6,7 +6,9 @@ import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type 
 import type { RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
-import { verifyPath, reviewPath, taskPath, judgePath } from '../core/layout.js';
+import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
+import { mergeBlockingProblems, mergeBlockingSeverities, readReviewMode, reviewTierFor } from './review-read.js';
+import { openLedgerProblems } from './navigation.js';
 
 /**
  * Whether a task may leave a gate and re-enter implementation, and what that entry is recorded as.
@@ -116,9 +118,6 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     if (!review) {
         return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
     }
-    const task = await readValidatedOptional<{ workflowProfile?: { reviewMode?: string } }>('task', taskPath(root, taskId))
-        .catch(() => null);
-    const isStrict = task?.workflowProfile?.reviewMode === 'strict';
     const revision = await readCurrentTaskRevision(root, taskId);
     const identity = await currentRevisionIdentity(root, taskId);
     if (!bindsToRevision(review, identity)) {
@@ -129,19 +128,40 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
         );
     }
 
+    // **One ladder, asked over both sources.** This entry used to filter `review.json`'s findings with a bare
+    // `severity === 'blocking'` plus an `isStrict` literal — two copies of the ladder that navigation had already
+    // stopped reading, because that record's findings field has no producer on the current route. The ledger's open
+    // problems are where a problem is recorded now, so both are asked once here.
+    const reviewMode = await readReviewMode(root, taskId);
     const findings = review.findings ?? [];
-    const blockingFindings = findings.filter((finding) => finding.severity === 'blocking');
-    const majorFindings = isStrict ? findings.filter((finding) => finding.severity === 'major') : [];
-    const severityAuthorized = blockingFindings.length + majorFindings.length > 0;
+    const blockingProblems = mergeBlockingProblems({
+        mode: reviewMode,
+        findings,
+        claims: await openLedgerProblems(root, taskId),
+    });
+    const severityAuthorized = blockingProblems.length > 0;
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
     const superseded = (await revisionNoLongerDescribes(root, taskId)) !== null;
     if (!severityAuthorized && !superseded) {
-        return denial(entryPhase, 'Build cannot run from review without blocking (or strict-mode major) review findings, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
+        return denial(
+            entryPhase,
+            `Build cannot run from review without a problem the ${reviewTierFor(reviewMode)} ladder blocks on (${mergeBlockingSeverities(reviewMode).join(', ')}) and none has been disposed of, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.`,
+        );
     }
 
-    const repairFindings = severityAuthorized ? [...blockingFindings, ...majorFindings] : findings;
+    // Both shapes are mapped to the record's own shape, so the payload that reaches `repair.json` does not depend on
+    // which source named the problem — a ledger claim has no `path`, and a legacy finding has no statement.
+    const repairFindings: Array<{ id: string; severity: string; message: string; acceptanceId?: string; path?: string }> = severityAuthorized
+        ? blockingProblems.map((problem) => ({ id: problem.id, severity: problem.severity, message: problem.message }))
+        : findings.map((finding) => ({
+            id: finding.id ?? '',
+            severity: finding.severity ?? '',
+            message: finding.message ?? '',
+            ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
+            ...(finding.path ? { path: finding.path } : {}),
+        }));
     return {
         authorized: true,
         entryPhase,

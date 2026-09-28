@@ -6,6 +6,8 @@ import { readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
+import { mergeBlockingProblems, readReviewMode } from './review-read.js';
+import { openLedgerProblems } from './navigation.js';
 
 /**
  * Whether a task may enter distill.
@@ -82,7 +84,21 @@ export async function evaluateReviewClearance(
     if (!review) return { cleared: false, restsOn: 'unstated', reason: 'not_approved' };
     if (review.status !== 'approved') return { cleared: false, restsOn, reason: 'not_approved' };
     if (!review.reviewEvidence?.trim()) return { cleared: false, restsOn, reason: 'no_review_evidence' };
-    if (!Array.isArray(review.findings) || review.findings.some((finding) => finding.severity === 'blocking')) {
+    // A record whose `findings` is present but not a list is refused before anything reads it: the malformed field is
+    // not an empty one, and the previous spelling got this one right.
+    if (review.findings !== undefined && !Array.isArray(review.findings)) {
+        return { cleared: false, restsOn, reason: 'blocking_findings' };
+    }
+    // **The blocking question, asked once, of the one ladder, over both sources that can carry a problem.** This gate
+    // used to answer it with a bare `severity === 'blocking'` that never read the mode, so under `strict` a `major`
+    // problem cleared distill while the ladder routing repairs sent the same change back to build — one question, two
+    // answers, and the archive resting on the weaker one.
+    const blockingProblems = mergeBlockingProblems({
+        mode: await readReviewMode(root, taskId),
+        findings: review.findings ?? [],
+        claims: await openLedgerProblems(root, taskId),
+    });
+    if (blockingProblems.length > 0) {
         return { cleared: false, restsOn, reason: 'blocking_findings' };
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
