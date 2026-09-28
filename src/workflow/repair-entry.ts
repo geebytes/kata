@@ -3,7 +3,7 @@ import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
-import type { RepairPayload } from '../quality/repair.js';
+import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
@@ -162,6 +162,14 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
             ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
             ...(finding.path ? { path: finding.path } : {}),
         }));
+    // **The round is recorded before it is entered**, and only when it is entered: this is the fact the escalation reads to
+    // decide whether the loop is moving. A repair opened because the revision was superseded has no count to record, and
+    // says so with `null` rather than with a zero that would read as progress.
+    await appendReviewRound(root, taskId, {
+        at: new Date().toISOString(),
+        blockingIds: blockingProblems.map((problem) => problem.id),
+        blockingCount: severityAuthorized ? blockingProblems.length : null,
+    });
     return {
         authorized: true,
         entryPhase,

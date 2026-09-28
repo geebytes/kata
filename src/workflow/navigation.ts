@@ -17,6 +17,7 @@ import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { countFindingsBySeverity, mergeBlockingSeverities } from './review-read.js';
+import { readReviewRounds, reviewProgress } from '../quality/repair.js';
 
 /**
  * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
@@ -53,6 +54,13 @@ export type UpstreamSummary = {
   wikiClosureReason?: string;
   evidenceFiles: string[];
   failingEvidence: number;
+  /**
+   * Set when the review loop has stopped making progress, so the ladder escalates instead of re-dispatching.
+   *
+   * The count and the ids come from the recorded rounds (`review-rounds.jsonl`), never from prose: an escalation that
+   * cannot say what it counted is a sentence, not a state.
+   */
+  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[] };
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
   /**
@@ -95,6 +103,7 @@ export const nextActionReasons = [
   'complete_review_conclusion',
   'continue_implementation',
   'design_intake_task',
+  'escalate_review_without_progress',
   'git_flow_confirmation_required',
   'inspect_task',
   'invalid_review_approval',
@@ -198,6 +207,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **which** of them blocks is `mergeBlockingSeverities`' answer, so this file holds neither a severity literal nor
   // a second copy of the rule.
   const problemCounts = countFindingsBySeverity(openProblems);
+  const reviewProgressOfChange = reviewProgress(await readReviewRounds(root, taskId));
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
@@ -241,6 +251,11 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
+    // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
+    // the trailing run that changed nothing is what stops the next one from being dispatched.
+    ...(reviewProgressOfChange.escalating
+        ? { reviewEscalation: { rounds: reviewProgressOfChange.rounds, noProgressRounds: reviewProgressOfChange.noProgressRounds, blockingIds: reviewProgressOfChange.blockingIds } }
+        : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     wikiClosureValid: wikiClosure.valid,
@@ -420,6 +435,17 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1020 + upstream.failedVerifyAcceptance,
     };
   }
+  // **The terminal state, and it comes first.** A loop that has stopped making progress is not sent back to build for
+  // another round: it stops, names what is still open, and waits for a person. Ordering matters — the branches below
+  // would otherwise re-dispatch the repair this one exists to refuse.
+  if (phase === 'review' && upstream.reviewEscalation) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'escalate_review_without_progress',
+      priority: 1200,
+    };
+  }
   // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
   // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
   // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
@@ -545,7 +571,9 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
       : cliVerb ? `kata-cli ${cliVerb} --change ${taskId}${seal}` : `kata-cli status --change ${taskId}`,
     role,
     reason,
-    requiresUserConfirmation: gate !== null || wikiClosure,
+    // The escalation is a decision, not a dispatch: it stops with or without a model trust boundary, because the next
+    // step is a person deciding whether to keep repairing, waive a problem, or stop the change.
+    requiresUserConfirmation: gate !== null || wikiClosure || reason === 'escalate_review_without_progress',
     modelOrPlatformSwitchAllowed: gate !== null,
     ...(gate ? { trustBoundary: gate } : {}),
     ...(gate ? { pauseInstruction: boundaryPromptFor(gate, promptLanguage()) } : {}),
@@ -588,6 +616,8 @@ export function statusActionPrompts(
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
   satisfy_ledger_deficits: null,
+  // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
+  escalate_review_without_progress: null,
   review_fresh_implementation: 'review_gate',
   judge_reviewed_change: 'judge_gate',
   archive_judged_change: 'archive_gate',

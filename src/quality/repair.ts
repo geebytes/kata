@@ -1,3 +1,7 @@
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { taskDir } from '../core/layout.js';
+import { withTaskLock } from '../core/state.js';
 import type { Phase } from '../core/state.js';
 import type { ReviewSeverity } from './reviewer.js';
 import type { AcceptanceMatrix } from '../core/task.js';
@@ -119,4 +123,121 @@ export interface RepairPayload {
   scopes?: Array<{ id?: string; repairScope?: string }>;
   baselineRevisionId?: string;
   baselineManifestHash?: string;
+}
+
+/**
+ * One review-to-repair round, as it was opened.
+ *
+ * `repair.json` records the repair in flight and is overwritten by the next one, so the loop's history had nowhere to
+ * live. Without it nothing could ask whether the repairs were reducing the problems they were opened for, and the loop
+ * had no terminal state: review → repair → review could continue indefinitely, each round justified on its own terms.
+ */
+export interface ReviewRound {
+    at: string;
+    /** The problems the round was opened for, by id — the escalation names these rather than a count alone. */
+    blockingIds: string[];
+    /**
+     * How many problems blocked when the round was opened.
+     *
+     * **`null` when the round could not be measured** — never `0`, which would read as "this round reduced the
+     * problems to none". A repair opened only because the sealed revision was superseded has nothing to count, and
+     * saying so is different from saying nothing was blocking.
+     */
+    blockingCount: number | null;
+}
+
+/**
+ * How many consecutive rounds without a reduction of the blocking count stop the loop.
+ *
+ * A judgement, not a measurement, so it is a named constant the escalation reports rather than a number buried in a
+ * comparison: the caller can disagree with it, and a reader can see what was assumed.
+ */
+export const NO_PROGRESS_ROUNDS = 3;
+
+export interface ReviewProgress {
+    /** Every round recorded, measured or not. */
+    rounds: number;
+    /** The trailing run of rounds that did not reduce the count. */
+    noProgressRounds: number;
+    escalating: boolean;
+    /** What the newest measured round was opened for. Empty when no round measured anything. */
+    blockingIds: string[];
+    /** Rounds that recorded no count, reported rather than dropped: an unmeasured round is not an improvement. */
+    unmeasuredRounds: number;
+}
+
+export function reviewRoundsPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'review-rounds.jsonl');
+}
+
+/**
+ * Derive the loop's progress from the recorded rounds.
+ *
+ * Only rounds that measured a count participate in the comparison, and a run of them is what escalates: a round that
+ * measured nothing can neither be progress nor be read as one.
+ */
+export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
+    const measured = rounds.filter((entry): entry is ReviewRound & { blockingCount: number } => entry.blockingCount !== null);
+    let streak = 0;
+    for (let index = measured.length - 1; index >= 1; index -= 1) {
+        if (measured[index]!.blockingCount >= measured[index - 1]!.blockingCount) streak += 1;
+        else break;
+    }
+    const newestMeasured = measured[measured.length - 1];
+    return {
+        rounds: rounds.length,
+        noProgressRounds: streak,
+        escalating: streak >= NO_PROGRESS_ROUNDS,
+        blockingIds: [...(newestMeasured?.blockingIds ?? [])],
+        unmeasuredRounds: rounds.length - measured.length,
+    };
+}
+
+/**
+ * Record a round under the task's single-writer lock, one line per round.
+ *
+ * Append-only, because the history is the point: a record the next repair overwrites cannot say whether the loop is
+ * moving. The lock is the repository's one rule for task artefacts, and this file keeps a single write entry point so
+ * there is no second, unlocked way in.
+ */
+export async function appendReviewRound(root: string, taskId: string, round: ReviewRound): Promise<void> {
+    const path = reviewRoundsPath(root, taskId);
+    // The directory before the lock: this is the first write of a round, and a task that has not written anything yet has
+    // no directory for the lock's own file to live in.
+    await mkdir(dirname(path), { recursive: true });
+    await withTaskLock(root, taskId, async () => {
+        await appendFile(path, `${JSON.stringify(round)}\n`, 'utf8');
+    });
+}
+
+/**
+ * Read the recorded rounds, oldest first.
+ *
+ * A line that cannot be parsed becomes an **unmeasured round** rather than being dropped: dropping it would shorten
+ * the trailing run and read a damaged history as a loop that is still moving, which is the fail-open direction for a
+ * heuristic whose whole job is to stop something. An absent file is an empty history — a change under its first repair
+ * has no rounds yet — and that is the only case that reads as nothing was ever recorded.
+ */
+export async function readReviewRounds(root: string, taskId: string): Promise<ReviewRound[]> {
+    let raw: string;
+    try {
+        raw = await readFile(reviewRoundsPath(root, taskId), 'utf8');
+    } catch {
+        return [];
+    }
+    const rounds: ReviewRound[] = [];
+    for (const line of raw.split('\n')) {
+        if (line.trim() === '') continue;
+        try {
+            const parsed = JSON.parse(line) as Partial<ReviewRound>;
+            rounds.push({
+                at: typeof parsed.at === 'string' ? parsed.at : '',
+                blockingIds: Array.isArray(parsed.blockingIds) ? parsed.blockingIds.filter((id): id is string => typeof id === 'string') : [],
+                blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
+            });
+        } catch {
+            rounds.push({ at: '', blockingIds: [], blockingCount: null });
+        }
+    }
+    return rounds;
 }
