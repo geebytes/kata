@@ -118,6 +118,22 @@ export function countFindingsBySeverity(problems: ReadonlyArray<{ severity: stri
  * A missing or unreadable task is reported as `undefined` rather than thrown: the ladder treats that as the std
  * ladder, which is what a task opened before the profile existed was held to.
  */
+/**
+ * The refusal sentence for the problems a mode blocks on, or an empty string when there are none.
+ *
+ * **Why this is a function and not a line of prose in the caller.** The approval used to refuse with the ledger's reason
+ * codes alone, which say *that* the ledger does not pass and leave the reader to reconstruct which of those reasons the
+ * current mode's bar is about — the mode's severity rule lived nowhere a person could read it. The sentence names each
+ * problem by id and severity and states the bar it was measured against, and it is derived from the same ladder the three
+ * routers read, so the refusal and the routing cannot disagree about what blocks.
+ */
+export function describeBlockingProblems(mode: string | undefined, problems: readonly MergeBlockingProblem[]): string {
+    if (problems.length === 0) return '';
+    const issues = problems.map((problem) => `${problem.id} (${problem.severity}): ${problem.message}`);
+    return `At the ${reviewTierFor(mode)} bar (${mergeBlockingSeverities(mode).join(', ')}), `
+        + `${problems.length} problem(s) are open: ${issues.join(' | ')}`;
+}
+
 export async function readReviewMode(root: string, taskId: string): Promise<string | undefined> {
     try {
         const raw = await readFile(taskPath(root, taskId), 'utf8');

@@ -121,20 +121,30 @@ AC-2 要求的性质是单调：`std ⊆ strict ⊆ security`，且 `std` 严格
 - 把“不下降”的判断反向，升级用例失败；
 - 阻塞项数量无法测量时输出 `null` 而不是 0，且用例断言这一点。
 
-## 5. AC-3 与既有决定的冲突（实施中发现，待决策）
+## 5. AC-3 的收口：选择 A（不改既有决定）
 
-设计阶段把 AC-3 当作“把 review 侧阻塞接回批准路径”。实施时核对代码后，这个做法与本仓库一条**有记录的、刻意的删除**冲突，因此停下来记录，而不是照做。
+AC-3 要求 `review --approve` 在“达到模式门槛的问题开放时”拒绝并具名。实施时核到，在 `cmdReview` 里重新读 `review.json.findings` 并据此拒绝，等于**撤销一次有记录的修复**。`src/workflow/orchestrator.ts` 的 ledger 分支里留着删除说明（约 1463 行起）：
 
-`src/workflow/orchestrator.ts` 的 ledger 分支在批准路径上留有一段说明（`cmdReview` 内，约 1463 行起）：
+> “This branch used to consult the round-shaped findings table and the obligation store beside the decision … the last place where one fact had two derivations … the dead branch is deleted rather than left empty. An ordered list with nothing in it, checked for being non-empty, **is a guard that cannot fire — the class this repository has removed more times than any other**.”
 
-> “This branch used to consult the round-shaped findings table and the obligation store beside the decision … the last place where one fact had two derivations … An approval that rests on claims and evidence is answered by `decide` … a table about a pass that no longer gates anything has nothing to add to it. The dead branch is deleted rather than left empty. An ordered list with nothing in it, checked for being non-empty, is a guard that cannot fire — the class this repository has removed more times than any other.”
+因此采用**不改既有决定**的收口：批准路径不再新增第二个门，而是把已有的拒绝**用同一把阶梯具名**。
 
-也就是说：在 `cmdReview` 里重新读 `review.json.findings` 并据此拒绝，等于**撤销这次修复**，并把“不会触发的守卫”这一类重新引入。
+- `review-read.ts` 新增 `describeBlockingProblems(mode, problems)`：把每个问题按 id 与 severity 列出，并写明它是对着哪个门槛量的；
+- `cmdReview` 在 ledger verdict 非 `pass` 时附上这句话，并把 `blockingProblems` 放进 diagnostics；
+- 阶梯、拒绝与路由读的是同一个 `mergeBlockingSeverities`，三者不可能对“什么阻塞”给出不同答案。
 
-同时，AC-3 的第二半（“低于门槛的 finding 仍然批准”）在 ledger 路线上不可达：内核 `evaluateClaim` 对**任何**未支持/被反驳的 claim 都产生 reason，`Decision.verdict` 因此为 `fail`/`insufficient`，与严重度无关（严重度只影响**所需证据强度**，不影响是否拒绝）。所以不存在“minor 开放而批准”的情形，除非把 `review.json.findings` 恢复成第二个判定来源。
+### 5.1 AC-3 中不可取证的一个子句
 
-## 6. 待你选择的两种收口
+AC-3 的末句“低于门槛的 finding 仍然批准”在 ledger 路线**没有见证**：内核 `evaluateClaim` 对任何未支持/被反驳的 claim 都产生 reason ⇒ `Decision.verdict` 为 `fail`/`insufficient`，与严重度无关（严重度只决定**所需证据强度**，不决定 ledger 是否通过）。所以低于门槛的问题仍然被拒，只是**不被点名**。
 
-**A. 对齐说法（不改既有决定）**：AC-3 的第一半由现有拒绝承担（ledger verdict 非 `pass` 即拒绝），并把该拒绝的措辞改为**用具名问题表达模式门槛**（`mergeBlockingProblems` 在同一个派生上跑一遍，把 claim id 与 severity 写进错误与 diagnostics）。第二半无法取证，需要你在验收上明确接受“该子句在 ledger 路线不可达”。
+`tests/unit/review-approval-refuses-open-findings.test.ts` 把这个差别钉住，而不是回避它：
 
-**B. 恢复第二个来源（撤销既有决定）**：把 `review.json.findings` 接回批准路径，使 AC-3 按字面成立。代价是重新引入“同一问题两个来源”，并需要一个 findings 的写入者，否则该分支仍是不会触发的守卫——而那正属于本仓库反复清除的类别。
+- `strict` 下的 `major`：拒绝，且句子说“At the strict bar (blocking, major)”，点名 `C-4 (major)`；
+- `std` 下的同一个 `major`：仍然拒绝（内核规则），但句子为空，`blockingProblems` 为 `[]`——因为它在 `std` 的门槛之下。
+
+也就是说：**模式决定“点名什么”，内核决定“是否通过”。** 末句若要按字面成立，必须把 `review.json.findings` 恢复成第二个判定来源，而那正是本仓库反复清除的类别；这一条留给你在验收上明确接受或推翻。
+
+## 6. 尚未完成
+
+- 本 revision 尚未 seal：四条 AC 的测试证据已经齐备，但 5.1 说明的那个子句需要你在验收层明确接受，或改由新的 change 处理；
+- 父设计中与平台无关的 Skill 化 reviewer 路线（`.agents/skills/kata-review` 之外的部分）不在本 slice。

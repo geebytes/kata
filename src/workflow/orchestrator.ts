@@ -29,7 +29,7 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { readReview } from './review-read.js';
+import { describeBlockingProblems, mergeBlockingProblems, readReview, readReviewMode } from './review-read.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -1400,10 +1400,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 if (ledger.decision.verdict !== 'pass') {
                     const reasons = ledger.decision.reasons
                         .map((reason) => `${reason.code}${reason.claimId ? ` (${reason.claimId})` : ''}: ${reason.detail}`);
+                    // **The verdict says the ledger does not pass; this says which problems are at this mode's bar.** The
+                    // reasons are the kernel's vocabulary and the caller had to reconstruct the mode's severity rule from
+                    // them; naming the problems is the same ladder the routers read, so the refusal and the routing cannot
+                    // disagree about what blocks. A mode whose bar no open problem reaches adds nothing to the sentence.
+                    const reviewMode = await readReviewMode(root, taskId);
+                    const blockingProblems = mergeBlockingProblems({ mode: reviewMode, claims: await openLedgerProblems(root, taskId) });
+                    const bar = describeBlockingProblems(reviewMode, blockingProblems);
                     return {
                         command: 'review', taskId, phase: 'review', success: false,
-                        error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}`,
+                        error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}${bar === '' ? '' : `. ${bar}`}`,
                         diagnostics: {
+                            blockingProblems,
                             ledger: {
                                 state: 'decided',
                                 verdict: ledger.decision.verdict,
