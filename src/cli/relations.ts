@@ -15,6 +15,7 @@ import {
     inspectGitFlow,
     type GitFlowBranchKind,
     type GitFlowPlan as GitFlowPlanType,
+    toGitFlowState,
 } from '../core/git-flow.js';
 import { relationsRelativePath, resolveWorkspaceRoot } from '../core/layout.js';
 import { parseChangeArg } from './invocation.js';
@@ -49,13 +50,20 @@ export async function runGitFlowCommand(argv: string[], root: string): Promise<R
             },
         };
     }
-    const state = inspected.status === 'pending_confirmation' ? applyGitFlowPlan(root, inspected) : inspected;
+    // **A plan is projected before it is persisted.** `inspected` is a `GitFlowPlan`, and on the branch-already-current path
+    // it was stored as-is — which is how `command: []` reached `task.json` and closed the gate one command later. The
+    // projection runs after `applyGitFlowPlan` too, because its early return spread the plan as well.
+    // Both branches project, and they project *differently*: executing the plan builds a new state from its fields, while
+    // the branch-already-current path has nothing to execute and only needs the plan's fields narrowed to a state.
+    const state = inspected.status === 'pending_confirmation'
+        ? applyGitFlowPlan(root, inspected)
+        : toGitFlowState(inspected);
     const workflowProfile = await updateGitFlowProfile(root, taskId, state);
     return {
         command: 'git-flow apply', taskId, workflowProfile,
         nextAction: state.status === 'active'
             ? { slashCommand: `/kata-design ${taskId}`, cliCommand: `kata-cli design --change ${taskId}` }
-            : { cliCommand: `kata-cli git-flow apply --change ${taskId} --confirm`, reason: (inspected as GitFlowPlan).reason ?? 'git_flow_setup_failed' },
+            : { cliCommand: `kata-cli git-flow apply --change ${taskId} --confirm`, reason: inspected.reason ?? 'git_flow_setup_failed' },
     };
 }
 

@@ -1,5 +1,5 @@
 import { resolveWorkspaceRoot } from '../core/layout.js';
-import { parseChangeArg } from './invocation.js';
+import { argValue, parseChangeArg } from './invocation.js';
 import { readTask } from '../core/task.js';
 
 /**
@@ -59,7 +59,7 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
         // The subcommand `scope change` has always told the operator to run, and which did not exist: recording a scope
         // change wrote the decision and left `ownedPaths` untouched, so the audited surface never actually grew.
         const { applyScopeChange } = await import('../quality/scope-change.js');
-        const changeId = valueAfter(rest, '--id');
+        const changeId = argValue(rest, '--id');
         const applied = await applyScopeChange(root, change, changeId);
         if (!applied.applied) throw new Error(applied.reason ?? 'the scope change could not be applied');
         return {
@@ -75,7 +75,7 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
     if (subcommand === 'change') {
         const { recordScopeChange } = await import('../quality/scope-change.js');
         const task = await readTask(root, change);
-        const reason = valueAfter(rest, '--reason');
+        const reason = argValue(rest, '--reason');
         const additions = valuesAfter(rest, '--add');
         const removals = valuesAfter(rest, '--remove');
         if (additions.length === 0 && removals.length === 0) {
@@ -87,7 +87,7 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
             next,
             current,
             reason: reason ?? '',
-            by: valueAfter(rest, '--by') ?? 'user',
+            by: argValue(rest, '--by') ?? 'user',
             ...(rest.includes('--allow-ownership-conflicts') ? { allowConflicts: true } : {}),
         });
         if ('refused' in result) throw new Error(result.refused);
@@ -104,7 +104,7 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
     }
 
     if (subcommand === 'declare') {
-        const instrument = valueAfter(rest, '--instrument');
+        const instrument = argValue(rest, '--instrument');
         if (!instrument) throw new Error('Usage: kata-cli scope declare --change <task-id> --instrument <path>');
         const { mutateTaskArtefact } = await import('../core/state.js');
         const { taskPath } = await import('../core/layout.js');
@@ -119,8 +119,8 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
     }
 
     if (subcommand === 'boundary') {
-        const instrument = valueAfter(rest, '--instrument');
-        const statement = valueAfter(rest, '--statement');
+        const instrument = argValue(rest, '--instrument');
+        const statement = argValue(rest, '--statement');
         const covers = valuesAfter(rest, '--covers');
         const excludes = valuesAfter(rest, '--excludes');
         if (!instrument || !statement) {
@@ -152,13 +152,6 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
     }
 
     throw new Error(`Unknown scope subcommand: ${subcommand}. Usage: kata-cli scope <show|change|declare|boundary>`);
-}
-
-function valueAfter(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    if (index === -1) return undefined;
-    const value = argv[index + 1];
-    return value && !value.startsWith('--') ? value : undefined;
 }
 
 function valuesAfter(argv: string[], flag: string): string[] {

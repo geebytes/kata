@@ -255,9 +255,37 @@ export function gitFlowTimeoutMs(): number {
     return Number.isSafeInteger(configured) && configured >= 1_000 && configured <= 600_000 ? configured : 120_000;
 }
 
+/**
+ * **A plan is not a state, and this is the only place one becomes the other.**
+ *
+ * `GitFlowPlan extends GitFlowState`, so TypeScript accepts a plan wherever a state is required and the extra property is
+ * invisible at the type level — which is how a `GitFlowPlan` reached `task.json`. Measured in a downstream repository:
+ * `schemas/task.schema.json` forbids extra properties, so every git_flow task kata itself created failed its own schema on
+ * the next read, and `design` — the mandated next step after `open` — refused a record kata had written one command
+ * earlier.
+ *
+ * Every persistence path calls this. `applyGitFlowPlan` used to be the only projection, and even it leaked `command` on its
+ * early return, because `{ ...plan }` carries whatever the plan carries. Projecting field by field is the fix that cannot
+ * go stale: a field added to `GitFlowPlan` later is *not* in a state until someone decides it is.
+ */
+export function toGitFlowState(plan: GitFlowPlan): GitFlowState {
+    return {
+        strategy: plan.strategy,
+        branch: plan.branch,
+        baseBranch: plan.baseBranch,
+        status: plan.status,
+        ...(plan.installation ? { installation: plan.installation } : {}),
+        ...(plan.reason === undefined ? {} : { reason: plan.reason }),
+        ...(plan.output === undefined ? {} : { output: plan.output }),
+        ...(plan.interactive ? { interactive: true } : {}),
+    };
+}
+
 export function applyGitFlowPlan(root: string, plan: GitFlowPlan, run: GitCommandRunner = runGit): GitFlowState {
     if (plan.status !== 'pending_confirmation' || plan.command.length === 0) {
-        return { ...plan, status: 'failed', reason: 'no_branch_command_recorded' };
+        // `{ ...plan }` here would carry `command` into the record, and this branch is reached on the ordinary path where
+        // the branch already exists — the same leak the main return was written field-by-field to avoid.
+        return { ...toGitFlowState(plan), status: 'failed', reason: 'no_branch_command_recorded' };
     }
     const result = run(root, plan.command);
     const output = result.stdout.trim();

@@ -1,5 +1,6 @@
 import { taskPath } from './layout.js';
 import { mutateTaskArtefact } from './state.js';
+import { validate } from './schema.js';
 export const isolationModes = ['current_worktree', 'isolated_worktree', 'git_flow', 'user_decides'] as const;
 export const developmentModes = ['tdd', 'standard'] as const;
 export const reviewModes = ['std', 'strict', 'security'] as const;
@@ -49,8 +50,19 @@ export async function acknowledgeCometOpen(root: string, taskId: string): Promis
   }));
 }
 
+/**
+ * Persist a git-flow **state**, refusing anything that would leave a record its own reader rejects.
+ *
+ * **Two halves, and the writer needed both.** The parameter is a `GitFlowState`, but `GitFlowPlan extends GitFlowState`, so
+ * the type does not stop a caller handing over a plan — measured downstream, where `command: []` reached `task.json` on
+ * every git_flow `open` and made the next `readTask` refuse the file kata had just written. Projecting at the call sites is
+ * the first half (`toGitFlowState`); validating the result here is the second, and it is the one that cannot be forgotten by
+ * a future call site: a writer that can persist a schema-invalid artefact is the defect, whatever the argument's type says.
+ *
+ * Same shape as `quality/declaration-change.ts`, which validates the task a declaration would produce before writing it.
+ */
 export async function updateGitFlowProfile(root: string, taskId: string, gitFlow: GitFlowState): Promise<WorkflowProfile> {
-  return updateProfile(root, taskId, (profile) => ({ ...profile, gitFlow }));
+  return updateProfile(root, taskId, (profile) => ({ ...profile, gitFlow }), (task) => validate('task', task));
 }
 
 /**
@@ -64,15 +76,33 @@ async function updateProfile(
   root: string,
   taskId: string,
   change: (profile: WorkflowProfile) => WorkflowProfile,
+  /**
+   * Run against the whole task before it is written, so the write and the read agree about what a task is.
+   *
+   * Optional because most profile changes cannot make a record invalid, and required at the one writer that could: the
+   * git-flow profile was the only place a value the schema forbids could arrive, and it arrived from a type that claimed to
+   * be something it was not.
+   */
+  check?: (task: Record<string, unknown>) => void,
 ): Promise<WorkflowProfile> {
   const { readFile } = await import('node:fs/promises');
   const path = taskPath(root, taskId);
   let next: WorkflowProfile = defaultWorkflowProfile();
   await mutateTaskArtefact(root, taskId, path, async () => {
-    const task = JSON.parse(await readFile(path, 'utf8')) as { workflowProfile?: unknown };
+    const task = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown> & { workflowProfile?: unknown };
     const profile = isWorkflowProfile(task.workflowProfile) ? task.workflowProfile : defaultWorkflowProfile();
     next = change(profile);
     task.workflowProfile = next;
+    // Before the write, inside the lock: an invalid record must never reach the disk, because every reader validates and
+    // the failure then surfaces one command later, at a step someone else was told to take.
+    try {
+      check?.(task);
+    } catch (error) {
+      throw new Error(
+        `refusing to persist a workflow profile this task's own schema rejects: ${(error as Error).message}. `
+        + 'Nothing was written: the file on disk is unchanged.',
+      );
+    }
     return `${JSON.stringify(task, null, 2)}\n`;
   });
   return next;

@@ -20,8 +20,8 @@ export const USAGE: Record<string, string> = {
     review: 'kata-cli review --change <task-id> [--approve --review-evidence <text>]',
     judge: 'kata-cli judge --change <task-id> --root <path>',
     archive: 'kata-cli archive --change <task-id>',
-    hotfix: 'kata-cli hotfix --change <task-id>',
-    tweak: 'kata-cli tweak --change <task-id>',
+    hotfix: 'kata-cli hotfix --change <task-id> [--title <text>]',
+    tweak: 'kata-cli tweak --change <task-id> [--title <text>]',
     collect: 'kata-cli collect --change <task-id>',
     next: 'kata-cli next --change <task-id>',
     tasks: 'kata-cli tasks <relate|relations|show> [--change <task-id>]',
@@ -40,7 +40,7 @@ export const USAGE: Record<string, string> = {
     wiki: 'kata-cli wiki <init|orient|ingest|query|lint|verify|register|task|candidate|closure|audit|refresh|promote|reject|retire|revalidate>',
     // The family with the most verbs gets its own line, since the generic one said nothing about it.
     ledger: 'kata-cli ledger <freeze|claim|evidence|plan|focus|ask|answer|challenge|decide|status|run|request-check|policy|usage|corpus|verifier|detectability|baseline> --change <task-id>',
-    'git-flow': 'kata-cli git-flow <start|finish|status> --change <task-id>',
+    'git-flow': 'kata-cli git-flow apply --change <task-id> [--confirm]',
 };
 
 export function usageFor(command: string): string {

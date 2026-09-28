@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildContextManifest, summarizeExcludedWiki } from '../core/context.js';
 import { currentGitBranch } from '../core/git.js';
@@ -274,7 +274,14 @@ export async function runLocalStatusCommand(
         engine: { running: engineVersion(), ...(engine ? { task: engine } : {}) },
         ...(engineNote ? { engineNote } : {}),
         ...(taskContext
-            ? { task: taskContext.task, requiredReads: taskContext.requiredReads, context: taskContext.context }
+            ? {
+                task: taskContext.task,
+                requiredReads: taskContext.requiredReads,
+                // Carried together, because "the list is shorter than you expected" is not something a reader can act on:
+                // what was omitted, and the command that creates each, is the actionable half.
+                ...(taskContext.absentRequiredReads.length === 0 ? {} : { absentRequiredReads: taskContext.absentRequiredReads }),
+                context: taskContext.context,
+            }
             : {}),
     };
 }
@@ -306,9 +313,23 @@ export async function runDispatchStatusCommand(root: string): Promise<Record<str
     return statusDiagnostic(candidates);
 }
 
+/** Whether a path exists, with anything other than "not found" allowed to surface rather than silently read as absent. */
+async function pathExists(path: string): Promise<boolean> {
+    try {
+        await access(path);
+        return true;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+    }
+}
+
 export async function readTaskContext(root: string, change: string): Promise<{
     task: { title: string; acceptance: Array<{ id?: string; statement: string }> };
+    /** Only the paths that exist: a dispatch must not tell an agent to read a file that is not there. */
     requiredReads: string[];
+    /** What was left out, why, and which command creates each. Empty when everything listed is present. */
+    absentRequiredReads: Array<{ path: string; createdBy: string; note: string }>;
     context: Record<string, unknown>;
     engine?: { version: string; stampedAt: string };
 }> {
@@ -326,15 +347,35 @@ export async function readTaskContext(root: string, change: string): Promise<{
             title: task.title,
             acceptance: task.acceptance,
         },
-        requiredReads: [
-            'AGENTS.md',
-            skillsIndexRelativePath,
-            '.llmwiki/SCHEMA.md',
-            '.llmwiki/index.md',
-            '.llmwiki/log.md',
-            `.kata/tasks/${change}/task.json`,
-            `.kata/tasks/${change}/current-state.json`,
-        ],
+        // **A dispatch must not list a path it has not checked is there.** `.kata/skills-index.md` is written by
+        // `kata-cli init`; in a repository that has never run it the file is absent, and the handoff named it anyway, so an
+        // agent was told to read something that does not exist and nothing on the path said why. The answer already existed
+        // — `adapters/doctor.ts` classifies it as a `support` check — it simply was not where the reader looks.
+        requiredReads: await Promise.all(
+            [
+                'AGENTS.md',
+                skillsIndexRelativePath,
+                '.llmwiki/SCHEMA.md',
+                '.llmwiki/index.md',
+                '.llmwiki/log.md',
+                `.kata/tasks/${change}/task.json`,
+                `.kata/tasks/${change}/current-state.json`,
+            ].map(async (path) => ({ path, present: await pathExists(join(root, path)) })),
+        ).then((entries) => entries.filter((entry) => entry.present).map((entry) => entry.path)),
+        /**
+         * The reads the dispatch would have named and could not, with the reason and the command that creates each.
+         *
+         * Reported rather than dropped: an absent file the handoff silently stopped mentioning is the same omission in the
+         * other direction — an agent cannot tell "this repository has no skills index" from "kata forgot to mention it".
+         */
+        absentRequiredReads: await Promise.all(
+            [
+                { path: skillsIndexRelativePath, createdBy: 'kata-cli init' },
+                { path: '.llmwiki/SCHEMA.md', createdBy: 'kata-cli wiki ingest' },
+                { path: '.llmwiki/index.md', createdBy: 'kata-cli wiki ingest' },
+                { path: '.llmwiki/log.md', createdBy: 'kata-cli wiki ingest' },
+            ].map(async (entry) => ({ ...entry, present: await pathExists(join(root, entry.path)) })),
+        ).then((entries) => entries.filter((entry) => !entry.present).map(({ path, createdBy }) => ({ path, createdBy, note: `not present; ${createdBy} creates it` }))),
         context: {
             authoritativeWikiCount: context.authoritativeWiki.length,
             // L3-03: the relevant records keep their reasons; the rest is a count with a pointer at the Wiki's own audit,
@@ -545,6 +586,7 @@ export async function runOrientCommand(argv: string[]): Promise<Record<string, u
         task: taskContext.task,
         state,
         requiredReads: taskContext.requiredReads,
+        ...(taskContext.absentRequiredReads.length === 0 ? {} : { absentRequiredReads: taskContext.absentRequiredReads }),
         // The packet's own read sets, so the receiver can see the split rather than guess which of thirteen paths is new.
         ...(contextPacket.context.continuedReads?.length
             ? {

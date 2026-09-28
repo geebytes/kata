@@ -20,7 +20,7 @@ import {
     requireUserChoiceGate,
     type UserChoiceBoundary,
 } from '../workflow/user-choice-gate.js';
-import { inspectGitFlow, type GitFlowBranchKind } from '../core/git-flow.js';
+import { inspectGitFlow, toGitFlowState, type GitFlowBranchKind } from '../core/git-flow.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { resolveWorkspaceRootForTask } from '../core/layout.js';
 import {
@@ -95,14 +95,20 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     const openRequirements = command === 'open' ? await readRequirementsFile(argv.slice(1)) : undefined;
     const bootstrap = command === 'open' ? await readBootstrapFile(argv.slice(1)) : undefined;
     const result = await runCommand(commandToRun, change, root, {
-        title: openRequirements?.[0]?.statement.slice(0, 80) ?? (command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`),
+        // **`--title` is documented on `open`, `hotfix` and `tweak`, and nothing read it.** A documented flag that is
+        // silently dropped is the shape this repository removes most often; the flag is honoured rather than deleted from
+        // the usage text, because it is the only way to name a task whose requirements file is absent or whose first
+        // statement is not a title. The fallback chain stays for the case where nobody passed one.
+        title: argValue(argv, '--title')?.trim()
+            || openRequirements?.[0]?.statement.slice(0, 80)
+            || (command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`),
         ...(openRequirements ? { requirements: openRequirements } : command === 'hotfix' || command === 'tweak'
             ? { acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }] }
             : {}),
         ...(platform ? { platform } : {}),
         ...(commandToRun === 'build' ? { seal: argv.includes('--seal') } : {}),
-        ...(commandToRun === 'build' && valueAfter(argv, '--judgement')
-            ? { judgement: valueAfter(argv, '--judgement') as string }
+        ...(commandToRun === 'build' && argValue(argv, '--judgement')
+            ? { judgement: argValue(argv, '--judgement') as string }
             : {}),
         // The frozen tier is opt-in per run: a seal defers `tier: 'frozen'` checks and names them unless asked.
         ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
@@ -114,8 +120,8 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...((command === 'review' || command === 'judge' || command === 'archive') ? { confirmHostModel: boundary !== null } : {}),
         // Closing a task with deferred findings names where they go (`finding-disposition`): the archive refuses an
         // uncarried deferral, so the decision to live with a known problem is recorded rather than implied.
-        ...(command === 'archive' && valueAfter(argv, '--findings-carried-to')
-            ? { findingsCarriedTo: valueAfter(argv, '--findings-carried-to') as string }
+        ...(command === 'archive' && argValue(argv, '--findings-carried-to')
+            ? { findingsCarriedTo: argValue(argv, '--findings-carried-to') as string }
             : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
         ...(commandToRun === 'build' ? { allowOutOfScopeRepair: argv.includes('--allow-out-of-scope-repair') } : {}),
@@ -142,8 +148,10 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         : null;
     if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
     if (result.success && workflowProfile?.isolationMode === 'git_flow') {
+        // Projected, not stored as inspected: `inspectGitFlow` returns a plan on all six of its returns, and persisting one
+        // is what made every git_flow task invalid on the next read (`kata-cli design` refusing a record kata wrote).
         const plan = inspectGitFlow(root, result.taskId, undefined, gitFlowBranchKindForCommand(command));
-        workflowProfile = await updateGitFlowProfile(root, result.taskId, plan);
+        workflowProfile = await updateGitFlowProfile(root, result.taskId, toGitFlowState(plan));
     }
     const upstream = await readUpstreamSummary(root, result.taskId).catch(() => null);
     const suggestion = workflowProfile ? null : upstream ? suggestCandidateAction(result.phase, upstream) : null;
@@ -286,9 +294,9 @@ export function boundaryForCommand(command: KataCommand, phase: string | null): 
 
 export async function runGateCommand(argv: string[], root: string): Promise<Record<string, unknown>> {
     if (argv[0] !== 'approve') throw new Error('Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated> [--for-task]');
-    const task = valueAfter(argv, '--task');
-    const boundary = valueAfter(argv, '--boundary') as UserChoiceBoundary | undefined;
-    const choice = valueAfter(argv, '--choice') as 'continue_current' | 'switched' | 'delegated' | undefined;
+    const task = argValue(argv, '--task');
+    const boundary = argValue(argv, '--boundary') as UserChoiceBoundary | undefined;
+    const choice = argValue(argv, '--choice') as 'continue_current' | 'switched' | 'delegated' | undefined;
     if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
     // --for-task records the same answer for the whole task: the boundaries still exist and are still recorded, they
     // just stop asking the same human the same question (and they report when they reuse the answer).
@@ -302,11 +310,6 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
         approved: true,
         ...(forTask ? { recordedForTask: true } : {}),
     };
-}
-
-export function valueAfter(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
 }
 
 export /** Every value a repeated flag carries, in order. */
@@ -488,7 +491,7 @@ export async function readBootstrapFile(argv: string[]): Promise<{
     acceptanceMatrix?: AcceptanceMatrix;
     upstreamCoverage?: UpstreamCoverage;
 } | undefined> {
-    const path = valueAfter(argv, '--bootstrap-file');
+    const path = argValue(argv, '--bootstrap-file');
     if (!path) return undefined;
 
     let parsed: unknown;

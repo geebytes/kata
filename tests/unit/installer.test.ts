@@ -1237,7 +1237,13 @@ describe('Kata platform installer', () => {
                     title: 'Active status task',
                     acceptance: [{ id: 'AC-1', statement: 'Status can resume active task.' }],
                 },
-                requiredReads: expect.arrayContaining(['AGENTS.md', '.llmwiki/SCHEMA.md', '.kata/tasks/active-status-task/task.json']),
+                // **The dispatch names what is there.** The old assertion required `.llmwiki/SCHEMA.md`, which this
+                // workspace never created — it asserted a listing rather than a fact, which is how the handoff came to
+                // name a file an agent cannot read.
+                requiredReads: expect.arrayContaining(['.kata/tasks/active-status-task/task.json']),
+                absentRequiredReads: expect.arrayContaining([
+                    expect.objectContaining({ path: '.llmwiki/SCHEMA.md', createdBy: 'kata-cli wiki ingest' }),
+                ]),
                 context: expect.objectContaining({
                     authoritativeWikiCount: 0,
                     excludedWikiCount: 0,
@@ -2152,7 +2158,9 @@ describe('Kata platform installer', () => {
             command: 'orient',
             taskId: 'orient-task',
             nextSkill: '/kata-design',
-            requiredReads: expect.arrayContaining(['AGENTS.md', '.llmwiki/SCHEMA.md', '.llmwiki/index.md', '.llmwiki/log.md']),
+            // Listing is not the property; existence is. Every entry must be a path this workspace actually holds.
+            requiredReads: expect.arrayContaining(['.kata/tasks/orient-task/task.json']),
+            absentRequiredReads: expect.arrayContaining(['.llmwiki/SCHEMA.md', '.llmwiki/index.md', '.llmwiki/log.md'].map((path) => expect.objectContaining({ path }))),
         });
         expect(result.guardInstructions).toEqual(expect.arrayContaining([expect.stringContaining('Write only to src/')]));
     });
@@ -2176,7 +2184,10 @@ describe('Kata platform installer', () => {
             taskId: 'no-route-task',
             nextSkill: '/kata-design',
         });
-        expect(result.requiredReads).toEqual(expect.arrayContaining(['AGENTS.md', '.llmwiki/SCHEMA.md']));
+        expect(result.requiredReads).toEqual(expect.arrayContaining(['.kata/tasks/no-route-task/task.json']));
+        // The wiki is not there because this fixture never ingested any: an absent read is named with the command that
+        // creates it, so an agent can tell "this repository has no wiki" from "the dispatch forgot to mention it".
+        expect(result.absentRequiredReads).toEqual(expect.arrayContaining([expect.objectContaining({ path: '.llmwiki/SCHEMA.md' })]));
     });
 
     it('passes codegraph arguments without shell interpolation', async () => {

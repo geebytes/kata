@@ -162,7 +162,12 @@ function compile(schemaName: string): ValidateFunction {
 export function validate<T>(schemaName: string, value: unknown): T {
   const check = compile(schemaName);
   if (check(value)) return value as T;
-  throw new Error(renderError((check.errors ?? [])[0] as ErrorObject));
+  const failure = (check.errors ?? [])[0] as ErrorObject;
+  // **The structured error travels with the message.** `readValidated` needs to know *where* the violation was to name the
+  // fields the failing object accepts, and a rendered string has thrown that away — which is how a nested violation came
+  // to be answered with the root object's field list. Attached rather than returned so `validate`'s signature and its
+  // single-line throw stay what every existing caller expects.
+  throw Object.assign(new Error(renderError(failure)), { validationError: failure });
 }
 
 /**
@@ -187,13 +192,107 @@ export async function readValidated<T>(schemaName: string, path: string): Promis
   try {
     return validate<T>(schemaName, parsed);
   } catch (error) {
-    // Name what IS allowed: an error that says "…is not allowed" without the allowed set leaves the reader (or the
-    // agent) to open the bundle and find the schema — the measured cost of the wiki record that blocked every
-    // workflow mutation.
-    const allowed = allowedTopLevelFields(schemaName);
-    const hint = allowed.length > 0 ? ` Allowed fields: ${allowed.join(', ')}.` : '';
+    // **Name what is allowed *there*, not what is allowed at the root.** The hint used to come from the root schema's
+    // properties whatever the violation, so a task.json carrying `workflowProfile.gitFlow.command` was answered with the
+    // task's own field list — an allowed set for an object the reader was not looking at, which is not a remedy. Measured
+    // on that exact artefact; the hint is now derived from the subschema the error occurred in.
+    const failure = error instanceof Error ? (error as Error & { validationError?: ErrorObject }).validationError : undefined;
+    const hint = failure === undefined || failure.schemaPath === undefined ? '' : fieldHint(schemaName, failure);
     throw new Error(`${schemaName} artefact ${path} does not match its schema: ${error instanceof Error ? error.message : String(error)}.${hint}`);
   }
+}
+
+/**
+ * The fields the failing object accepts, and where that object is.
+ *
+ * Only two keywords are answered with a field list, because only two make it the remedy: `additionalProperties` ("this key
+ * is not allowed" → which keys are) and `required` ("this key is missing" → what the object demands). An `enum`, `type` or
+ * `pattern` failure is answered by the value itself and a field list there is noise that reads like advice.
+ */
+function fieldHint(schemaName: string, error: ErrorObject): string {
+    const keyword = error.keyword;
+    if (keyword !== 'additionalProperties' && keyword !== 'required') return '';
+    const owner = schemaNodeAt(schemaName, error.schemaPath);
+    if (owner === null) return '';
+    const properties = owner.properties;
+    const fields = properties && typeof properties === 'object' ? Object.keys(properties).sort() : [];
+    if (fields.length === 0) return '';
+    const where = toJsonPath(error.instancePath) || '$';
+    return keyword === 'additionalProperties'
+        ? ` Fields allowed at ${where}: ${fields.join(', ')}.`
+        : ` Fields required at ${where}: ${fields.join(', ')}.`;
+}
+
+/**
+ * The subschema a violation happened in, found by walking the root document with the error's `schemaPath`.
+ *
+ * `$ref` is followed through the bundled schema table rather than by dereferencing the document, because the referenced
+ * schema is a separate registered document (`review.schema.json` is the only one that refs today, and it will not be the
+ * last). A path this walk cannot follow returns `null` and the caller emits no hint — an absent hint is honest, a hint
+ * about the wrong object is not.
+ */
+function schemaNodeAt(schemaName: string, schemaPath: string): { properties?: unknown; [key: string]: unknown } | null {
+    /**
+     * **Two shapes of `schemaPath`, and the second was the reason the ref case produced no hint.**
+     *
+     * An inline violation is `#/properties/workflowProfile/properties/gitFlow/additionalProperties`. A violation inside a
+     * `$ref`'d schema is `https://kata.dev/schemas/review-finding.schema.json/additionalProperties` — an absolute `$id`
+     * followed by the path *within that document*, which also means the id itself must not be split on `/`. Measured on a
+     * review.json whose finding carried an extra key.
+     */
+    let document: Record<string, unknown> | undefined = schemaText[schemaName] === undefined ? undefined : (JSON.parse(schemaText[schemaName] as string) as Record<string, unknown>);
+    let rest = schemaPath.replace(/^#\/?/, '');
+    // Matched against each schema's **`$id`**, not the table key: the key is `review-finding` and the id is the URL Ajv
+    // actually reports. Matching keys was the first version of this and it silently found nothing.
+    for (const entry of parsedSchemas()) {
+        if (!schemaPath.startsWith(entry.id)) continue;
+        document = entry.document;
+        rest = schemaPath.slice(entry.id.length).replace(/^\//, '');
+        break;
+    }
+    if (document === undefined) return null;
+    // Drop the trailing keyword segment, which names the rule rather than the object the rule applies to.
+    const segments = rest.split('/').filter((part) => part !== '').slice(0, -1);
+    let node: unknown = document;
+    for (const segment of segments) {
+        if (Array.isArray(node)) {
+            const index = Number.parseInt(segment, 10);
+            if (!Number.isSafeInteger(index)) return null;
+            node = node[index];
+            continue;
+        }
+        if (node === null || typeof node !== 'object') return null;
+        const record = node as Record<string, unknown>;
+        // A reference switches documents: the node is `{ $ref: 'https://kata.dev/schemas/x.schema.json' }` and the rest of
+        // the path applies inside the referenced document.
+        const reference = record.$ref;
+        if (typeof reference === 'string') {
+            const target = schemaTextForId(reference);
+            if (target === undefined) return null;
+            node = target;
+        }
+        if (segment === '$ref') continue;
+        node = (node as Record<string, unknown>)[segment];
+        if (node === undefined) return null;
+    }
+    return node !== null && typeof node === 'object' ? (node as { properties?: unknown }) : null;
+}
+
+/** The bundled schemas by `$id`, parsed once: both the `$ref` walk and the `schemaPath` walk need them. */
+let parsedCache: Array<{ id: string; document: Record<string, unknown> }> | undefined;
+function parsedSchemas(): Array<{ id: string; document: Record<string, unknown> }> {
+    if (parsedCache === undefined) {
+        parsedCache = Object.values(schemaText)
+            .map((text) => JSON.parse(text) as Record<string, unknown> & { $id?: string })
+            .filter((document): document is Record<string, unknown> & { $id: string } => typeof document.$id === 'string')
+            .map((document) => ({ id: document.$id, document }));
+    }
+    return parsedCache;
+}
+
+/** The bundled schema registered under an `$id`, for following a `$ref` without dereferencing the document. */
+function schemaTextForId(id: string): Record<string, unknown> | undefined {
+    return parsedSchemas().find((entry) => entry.id === id)?.document;
 }
 
 /**

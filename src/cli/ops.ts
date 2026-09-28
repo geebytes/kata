@@ -363,11 +363,6 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
  * gate refuses the pass as `delta_unavailable` rather than accepting a delta nobody can check.
  */
 
-function valueAfter(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
-}
-
 // **`runFalsifyCommand` was here**, with the entire round-shaped disposition machinery behind it: a finding's subject had
 // to exist in the task's records, an absence bound to the content surface the next seal would mint, and the reddening
 // ledger recorded `{before, mutated, after}`. What the new route keeps from it is the *shape* — `executable_falsifier`

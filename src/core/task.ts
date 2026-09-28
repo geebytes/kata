@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appendStateEvent, writeCurrentState, type Phase, type StateRecord } from './state.js';
-import { readValidated } from './schema.js';
+import { readValidated, validate } from './schema.js';
 import { mutateTaskArtefact } from './state.js';
 import { assertValidTaskId } from './ids.js';
 import { engineVersion, type EngineStamp } from './engine-version.js';
@@ -190,6 +190,16 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
       throw new Error(`Task ${task.id} already exists; use kata status --change ${task.id} to resume it instead of kata open.`);
     }
     throw error;
+  }
+  // **The record this writer is about to create must be one its own reader accepts.** Measured on the bootstrap path: a
+  // bootstrap whose `upstreamCoverage.sources[0]` lacked `ref` was accepted here, and the invalid task.json it wrote was
+  // refused by the *next* command — `design` — while `status` and `orient` kept working, because they read the file
+  // without the schema. A writer that can persist a record its reader rejects is the defect whatever the input's origin;
+  // the field hint in the message now names the failing object's fields, so the bootstrap author is told what to change.
+  try {
+    validate('task', task);
+  } catch (error) {
+    throw new Error(`refusing to create task ${task.id}: the record would not match its schema, so every later read would fail. ${(error as Error).message} Nothing was written.`);
   }
   await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 

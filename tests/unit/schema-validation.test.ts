@@ -133,8 +133,10 @@ describe('a validation failure names what the schema allows', () => {
         const file = join(root, 'record.json');
         await writeFile(file, JSON.stringify({ id: 'x', unexpected: true }), 'utf8');
 
-        // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema.
-        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Allowed fields: .*id/);
+        // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema — and the
+        // set is now named with the object it belongs to (`$` here, since the violation is at the root), which is what
+        // makes the hint usable when the violation is nested.
+        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Fields required at \$: .*id/);
         await rm(root, { recursive: true, force: true });
     });
 });
@@ -142,8 +144,8 @@ describe('a validation failure names what the schema allows', () => {
     it('names what a schema allows when a field is not accepted', async () => {
         const file = await tempFile('record.json', JSON.stringify({ id: 'x', unexpected: true }));
 
-        // The remedy for "…is not allowed" is the allowed set, without opening the bundle to find the schema.
-        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Allowed fields: .*id/);
+        // The remedy for "…is not allowed" is the allowed set, named with the object it belongs to.
+        await expect(readValidated('wiki-record', file)).rejects.toThrow(/Fields (required|allowed) at \$: .*id/);
     });
 });
 
