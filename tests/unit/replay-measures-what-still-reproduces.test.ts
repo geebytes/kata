@@ -105,6 +105,18 @@ describe('replay measures whether recorded verdicts still reproduce', () => {
         expect(report.measures).toContain('not whether the checks are adequate');
     });
 
+    it('has no relayed route, because a relayed replay would be the record comparing itself', async () => {
+        // The file adapter's `verify` re-reads a recorded result, so replaying through it can only say "agrees" (the file
+        // says what it says) or "inconclusive" (it is missing or stale). The verb briefly offered `--adapter file`, which
+        // promised a comparison it could not make. `route` is a single value so a caller can state the route rather than
+        // assume it, and the report still names the route it ran on.
+        const workspaceRoot = await ledgerWithVerdicts();
+        const report = await replayEvidence({ root: workspaceRoot, changeId: 'replay-task', route: 'execute' });
+        if ('refused' in report) throw new Error(report.refused);
+        expect(report.adapter).toBe('inline');
+        expect(report.assurance).toBe('observed');
+    });
+
     it('refuses to replay against a subject that was never frozen, because there is nothing to compare against', async () => {
         root = await mkdtemp(join(tmpdir(), 'kata-replay-unfrozen-'));
         await mkdir(join(root, '.kata/tasks/replay-task/review'), { recursive: true });

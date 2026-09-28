@@ -1196,7 +1196,7 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 | **Cost ≤ 0.6 C0** | ✅（带基准声明） | 0.256 × C0。**两侧证据性质不同**：C0 是自报（两份记录报 0，已标记 `tokensUnreported`），新路线是 kata 实测 —— 报告里用一个字段写明，不放进脚注 |
 | full re-review ↓≥70% | ⚠️ **口径需澄清** | 读的数是 `claim.reopens`，其**唯一写入者是 `ledger claim reopen`**（操作者命令，**无任何测试行使**）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实** ⇒ 该验收当前读的是操作者计数，不是机制的重开次数，见 §26 |
 | blocking/major 证据 ≥95% 可重放 | ⚠️ **记录形状成立，可重放率未测** | 3 个账本 change、17 条 claim，每条自带 `{before, mutated, after}` 实测三元组 —— 但**三元组是记录，不是重放**。全仓**没有重放器**（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正有一条 `mutation site is gone` 的分支。此前的 ✅ 是把一个记录形状当成了另一个性质，见 §26 |
-| gate mutation kill = 100% | ⚠️ **未测整体，逐条仪器有效** | K2 按**每条**检查强制：无变异声明的检查按名拒绝。**实测一条规则**：关掉 `uncovered_risk_class` → **11 个用例变红**（5 个文件）⇒ 逐条规则可被杀死；而"18 条 reason × 各一条变异 = 100%"这个整体claim**没有 harness**，未测，见 §26 |
+| gate mutation kill = 100% | ✅ **实测 18/18** | 仪器 `scripts/mutation-kill.mjs`：按 `ReasonCode` 联合逐条取出 reason，找到它在 `decide.ts` 里**产出它的语句**并注释掉，然后要求 5 个 watcher 文件里至少一个变红。**实测 18/18，零 survivor**，每条规则都是可被关闭的。两道防伪：变异后先过 `esbuild` 语法门（否则整文件不解析会让每条都"被杀"），且原始文本在 `finally` 里复原（harness 结束时 `git status` 为空）。另有一条例行用例把"联合 ↔ `review-decision.schema.json` 枚举同一套键"钉住 —— 见 §26.4 |
 | CriticalRecall ≥ baseline | ❌ **不可获得** | 分母是"旧机制在同一语料上的召回"，而旧机制已被删除 —— 这个基线永远测不到了。可得的替代是 `ledger verifier` 的内核召回 0.462，它测的是**判定**而非"评审者能否找到缺陷" |
 | FalsePass ≤ baseline | ❌ **同上** | 同因：要比较的机制不存在了 |
 
@@ -1251,9 +1251,13 @@ grep reviewRoute src/   → 只有一处写入，没有任何读者
 - **`blocking/major 证据 ≥95% 可重放`** 的 ✅ 依据是"每条自带 `{before, mutated, after}` 三元组"。**三元组是记录，不是重放**：全仓没有重放器，且重放率可证 <100%（变异点在代码里，代码一动就消失，而 falsifier 正有一条 `mutation site is gone` 的分支）。已改为"记录形状成立，可重放率未测"，并列为待决定：建重放器，或把验收改成可测形态（例如"每条证据的变异点在本 revision 上仍可解析"）。
 - **`full re-review ↓ ≥70%`** 读的是 `claim.reopens`，而机制自身的自动重开是 `decision.revalidateClaims`（从不增加该计数）。一个词覆盖两个事实。**已修**：分开命名为 `automaticReopens`（delta 算出、不落盘）与 `attributableReopens`（操作者盖章），给出和 `reReviewClaims`。**并更正一处我自己的错判**：我先前写"该写入者无任何测试行使"—— 错。字符串搜索 `claim reopen` 漏掉了 e2e 里 `['claim','reopen','C1']` 的数组形式，而那个用例**断言了计数为 1**。这个错误与本节主题同源：**判据是运行，不是搜索**（本会话已有一次同类 —— 动态 import 让静态搜索找不到消费者）。
 
-### 26.4 C 类（未测）：`gate mutation kill = 100%` 没有 harness
+### 26.4 C 类（已修）：`gate mutation kill = 100%` 现在有仪器，实测 **18/18**
 
-K2 落地的是**逐条强制**（无变异声明的检查按名拒绝）。**实测一条规则**：关掉 `uncovered_risk_class` → **11 个用例变红**（5 个文件），所以逐条规则的仪器有效；而"18 条 reason 各有一条能杀死它的变异"这个整体claim**未测**。两个可选处置：补 harness（18 条变异），或把验收改写成"每条 reason 都有一个能被删除规则触发的种子"—— 后者已有仪器（26 种子 / 18 reason 全部被行使）。
+K2 落地的是**逐条强制**（无变异声明的检查按名拒绝）。补上的整体仪器是 `scripts/mutation-kill.mjs`：从 `ReasonCode` 联合逐条取 reason，在 `decide.ts` 里找到**产出它的那条语句**并注释掉，然后要求 5 个 watcher 文件里至少一个变红。**实测 18 条全杀，零 survivor**；全量约 8 分钟，按需运行（不作为默认套件的一部分）。
+
+**变异是派生的，不是手写的**：手写表会在规则移动时腐烂。两道防伪：变异后先过 `esbuild` 语法门（一个不解析的文件会让每条规则看起来都被"杀死"），且原文在 `finally` 里复原（harness 跑完 `git status` 为空 —— 实测如此）。
+
+**这个仪器第一版自己被机器抓到两处错**，都属于本节在删的同一类（数字看起来合理就没人再问）：它按 `export type Reason` 前缀匹配到了 `ReasonCode`，又固定读 4000 字符，于是从**后面的**联合里收进了 `fail`、`insufficient`、`verifier` 三个非 reason 成员 —— 报告说 21 条、1 个 survivor，而真值是 **18 条、0 个 survivor**。两个数字都合理，所以现在**联合与 `review-decision.schema.json` 的枚举必须同一套键**、且每条 reason 必须在 `decide.ts` 里有产出语句，两者各有一条会变红的用例（`every-decision-rule-can-be-disabled`）。
 
 ### 26.5 这一节之后，本文档与代码的关系
 

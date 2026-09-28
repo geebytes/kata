@@ -496,7 +496,7 @@ git status                  clean · 本节 9 个 commit
 | §7 P6 · Adapter Change Radius | P6 交付项之一 | **代码里不存在**；§14 第 21 条记为 C ✅ 正确，而 §23/§25 两处记为 **✅ = 4 个模块** —— **同一文档自相矛盾** | **D**（同一份方案对同一事实两个答案） |
 | §8 · `新平台接入修改非 adapter 文件数 = 0` | 验收项 | **无仪器**；唯一一次手测的值是 **4**，即**按验收标准本身不合格** | **C** |
 | §8 · `blocking/major 证据 ≥95% 可重放` | 验收项 | 记为 ✅，依据是"每条自带 `{before, mutated, after}` 实测三元组" —— 但**三元组是记录，不是重放**；全仓没有重放器（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正是有一条 `mutation site is gone` 的路径 | **D**（把一个记录形状当成另一个性质） |
-| §8 · `gate mutation kill = 100%`（K2） | 验收项 | 无 harness。**实测一条规则**：把 `uncovered_risk_class` 关掉 → **11 个用例变红**（5 个文件）。所以**逐条规则的仪器有效**，而"100%"这个整体claim**未测** | **C**（未测，不是未落地） |
+| §8 · `gate mutation kill = 100%`（K2） | 验收项 | **已修**：`scripts/mutation-kill.mjs` 按 `ReasonCode` 逐条注释掉产出该 reason 的语句，要求 5 个 watcher 里至少一个变红 —— **实测 18/18、零 survivor**（此前只有单条实测：关掉 `uncovered_risk_class` → 11 个用例变红） | **C → 已测** |
 | §8 · `full re-review ↓ ≥70%` | 验收项 | 读的数是 `claim.reopens`，其写入者是 `ledger claim reopen`（操作者命令 —— **更正：它有测试行使**，`ledger-cli-end-to-end` 里 `['claim','reopen','C1']` 并断言计数为 1；我先前用字符串 `claim reopen` 搜测试，漏掉了被拆成数组的 argv）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实**，验收项读的是操作者计数 | **B**（已修：两个名字 + 和） |
 | §8 · `no-record rate = 0%` | 结构上成立 | ✅ 增量落盘，新路径无"最后交一份文档"这一步 | A |
 | §8 · `Cost ≤ 0.6 × C0` | 验收项 | ✅ 仪器存在（`ledger baseline`）且实测 0.256 × C0（1 个样本） | A（样本少） |
@@ -553,4 +553,4 @@ grep -rn "state === 'absent'"  src/   →  只有一处【返回】（distill-ga
 3. **方案文档三处同步**：P6 两个交付项改回 C（或写明"手测一次、无仪器"）· §23/§25 与 §14 的 ✅/C 冲突消解 · §8 两条不可获得的验收按改写后的状态落文。
 4. **`≥95% 可重放` 要么建重放器，要么改成可测的形态**（例如"每条证据的变异点在本 revision 上仍可解析"），否则它是一个永远只能靠记录的claim。
 5. **`full re-review ↓ ≥70%` 的口径**（已修）：分开命名为 `automaticReopens`（delta 算出、从不落盘）与 `attributableReopens`（`ledger claim reopen` 盖章），并给出和 `reReviewClaims`；验收读后者的和。**更正一处**：我先前说"该写入者无任何测试行使"，那是错的 —— 我用字符串 `claim reopen` 搜测试，而 e2e 里是 `['claim','reopen','C1']` 的数组形式，且它断言了计数为 1。**结构性原因让 grep 说谎**（此前还有一次是动态 import）—— 所以判据应是"运行它"，不是"搜它"。
-6. **`gate mutation kill = 100%`** 补 harness（18 条 reason × 各一条变异），或把验收写成"每条 reason 都有一个能被删除规则触发的种子"，后者已有仪器（26 种子 / 18 reason）。
+6. **`gate mutation kill = 100%`**（已修）：`scripts/mutation-kill.mjs` 派生变异（从 `ReasonCode` 联合取 reason、在 `decide.ts` 里找产出语句并注释），**实测 18/18、零 survivor**；两道防伪是 `esbuild` 语法门与 `finally` 复原（跑完 `git status` 为空）。**这个仪器第一版自己被机器抓到两处错**：前缀匹配到 `ReasonCode` 后又固定读 4000 字符，收进了 `fail`/`insufficient`/`verifier` 三个非 reason 成员 —— 报告说 21 条 1 survivor，真值是 18 条 0 survivor。两处都补了会变红的用例（联合 ↔ schema 枚举同一套键；每条 reason 在 `decide.ts` 有产出语句）。

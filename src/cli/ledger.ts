@@ -754,12 +754,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // the check reads, and the mutation site the falsifier edits. This re-runs every recorded item through the same
         // verifier and reports how many verdicts still reproduce. Nothing is written: verdicts are returned, not recorded.
         const { replayEvidence } = await import('../store/replay.js');
-        const replayed = await replayEvidence({
-            root: options.root,
-            changeId,
-            ...(argValue(argv, '--adapter') === 'file' ? { adapter: 'file' as const } : {}),
-            ...(argValue(argv, '--results-dir') === undefined ? {} : { resultsDir: argValue(argv, '--results-dir')! }),
-        });
+        // No `--adapter`: a replay executes the evidence, and the relayed route cannot replay anything — see the module's
+        // note. An option that promised otherwise would be a switch whose name overstates what it does.
+        const replayed = await replayEvidence({ root: options.root, changeId });
         if ('refused' in replayed) {
             fail({ command: 'ledger replay', error: replayed.refused });
             return;

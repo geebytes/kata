@@ -2,7 +2,6 @@ import type { EvidenceVerdict } from '../kernel/types.js';
 import { readLedger } from './ledger.js';
 import { buildContext } from './verify-context.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
-import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
 import { CHECK_CANNOT_RUN, verifyAll } from '../producers/verifiers.js';
 import type { EvidenceAdapter } from '../producers/port.js';
 
@@ -68,10 +67,16 @@ export interface ReplayReport {
 export async function replayEvidence(input: {
     root: string;
     changeId: string;
-    /** `inline` runs commands here; `file` reads verdicts a host recorded. Default `inline`, which is the observed route. */
-    adapter?: 'inline' | 'file';
-    /** Where the file adapter reads host-recorded results; ignored by `inline`. */
-    resultsDir?: string;
+    /**
+     * The route the replay executes on. There is one, and the parameter exists so a caller can say so rather than assume it.
+     *
+     * **A relayed replay would be the record comparing itself.** The file adapter's `verify` re-reads `${dir}/${id}.json` —
+     * a result somebody recorded — so replaying through it can only report `agrees` (the file says what it says) or
+     * `inconclusive` (the file is missing or was recorded against another revision). It measures file availability, not
+     * whether the evidence still reproduces. The `--adapter file` switch this verb briefly offered promised a comparison it
+     * could not make, which is the shape this repository removes most often: an option whose name overstates what it does.
+     */
+    route?: 'execute';
     /** The envelope a replayed command runs under. Defaults to two minutes, the standard tier's own wall clock. */
     timeoutMs?: number;
     now?: () => string;
@@ -82,7 +87,7 @@ export async function replayEvidence(input: {
             refused: 'the subject is not frozen, so there is no revision the recorded verdicts are about and no way to replay them against one. Run `ledger freeze` first.',
         };
     }
-    const adapter: EvidenceAdapter = input.adapter === 'file' ? createFileAdapter({ dir: input.resultsDir ?? '.kata/review-results' }) : createInlineAdapter();
+    const adapter: EvidenceAdapter = createInlineAdapter();
     // **The same context the recording path used**, not a second one: containment, the wall clock and the producer
     // identity are exactly what a replay has to hold constant for its comparison to mean anything. A replay that
     // enforced a different envelope would be measuring a different thing than the verdict it compares against.
