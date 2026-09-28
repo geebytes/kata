@@ -66,6 +66,39 @@ export async function checkReleaseGates(
     verifierBaseline?: CorpusScore;
     verifierCurrent?: CorpusScore;
     /**
+     * What `ledger replay` measured, per ledger, when the caller ran it.
+     *
+     * **Replayability is the one criterion here that had to be rewritten before it could be measured**, and the rewrite is
+     * in the shape of this input. The original item — "≥95% of blocking/major evidence is replayable" — was recorded as
+     * satisfied because each item carries a `{before, mutated, after}` triple, which is the *record* of a measurement. Run
+     * for real (`kata-cli ledger replay`), the repository's 17 recorded verdicts come back 6 reproduced · **0 disagreed** ·
+     * 11 that could no longer be evaluated: the cited test files were deleted with the retired route, so the check's
+     * command exits non-zero before any mutation.
+     *
+     * So the criterion has two parts, and they are not the same requirement:
+     *
+     * - **`disagreements` must be zero.** A recorded verdict a replay contradicts is a false record, and no rate excuses
+     *   it. This holds for every ledger, archived or not.
+     * - **`replayRate` must clear the floor, but only for a ledger whose content still exists.** A ledger frozen against a
+     *   revision whose paths have since moved cannot be replayed, because the artifact the check reads and the mutation site
+     *   it edits are both gone — the rate then measures the code's life rather than the record's truth, and requiring it
+     *   would demand that nothing ever be refactored. Those ledgers are reported with their rate and excluded by
+     *   `contentMoved`, named rather than quietly dropped.
+     */
+    evidenceReplay?: Array<{
+      changeId: string;
+      /** Verdicts re-run through the same verifier that decided them. The denominator. */
+      replayed: number;
+      /** How many reproduced. */
+      agrees: number;
+      /** Recorded verdicts a replay contradicts. Any non-zero count fails the gate. */
+      disagreements: string[];
+      /** Entries that could not be evaluated — the mutation site or the artifact is gone. */
+      decayed: string[];
+      /** True when the ledger's frozen content has moved since, which makes the rate uninformative rather than false. */
+      contentMoved: boolean;
+    }>;
+    /**
      * Declared verifier observations the corpus does not know (R6).
      *
      * A manifest naming a case id no corpus entry carries has measured nothing, so the gate fails and says which side was
@@ -229,6 +262,47 @@ export async function checkReleaseGates(
   }
   gates.push(seedGate);
 
+  /**
+   * **Evidence replay, with the two requirements the rewrite separated.**
+   *
+   * Zero disagreements always; a rate floor only where the content the ledger is about still exists. The original item was
+   * satisfied on the shape of a record and is 0.353 when run — 6 of 17 reproduced, none contradicted, 11 un-runnable
+   * because the files they cite were deleted with the retired route. Reading that as a quality failure would be wrong in one
+   * direction and reading it as a pass would be wrong in the other, so the gate reports both numbers and gates on the part
+   * that is a requirement either way.
+   */
+  const replay = options.evidenceReplay;
+  const misplaced = (replay ?? []).filter((entry) => entry.disagreements.length > 0);
+  const canBeJudged = (replay ?? []).filter((entry) => !entry.contentMoved && entry.replayed > 0);
+  const replayRate = canBeJudged.length === 0
+    ? null
+    : canBeJudged.reduce((total, entry) => total + entry.agrees, 0) / canBeJudged.reduce((total, entry) => total + entry.replayed, 0);
+  const movedCount = (replay ?? []).filter((entry) => entry.contentMoved).length;
+  const decayedCount = (replay ?? []).reduce((total, entry) => total + entry.decayed.length, 0);
+  const replayGate: ReleaseGate = replay === undefined
+    ? {
+        name: 'evidence-replayable',
+        description: 'No recorded verdict is contradicted by a replay, and replayable content reproduces at >= 95%',
+        pass: true,
+        skipped: true,
+        details: 'No ledger was replayed, so no recorded verdict was re-checked.',
+      }
+    : {
+        name: 'evidence-replayable',
+        description: 'No recorded verdict is contradicted by a replay, and replayable content reproduces at >= 95%',
+        pass: misplaced.length === 0 && (replayRate === null || replayRate >= 0.95),
+        details: `${replay.length} ledger(s) replayed: ${canBeJudged.reduce((total, entry) => total + entry.agrees, 0)}/${canBeJudged.reduce((total, entry) => total + entry.replayed, 0)} of the replayable verdicts reproduced`
+          + (replayRate === null ? ' (nothing replayable to score, so no rate)' : ` (rate ${replayRate.toFixed(3)})`)
+          + (misplaced.length > 0
+            ? `; CONTRADICTED: ${misplaced.map((entry) => `${entry.changeId} [${entry.disagreements.join(', ')}]`).join(', ')}`
+            : '; no recorded verdict was contradicted')
+          + (decayedCount > 0 ? `; ${decayedCount} verdict(s) could not be evaluated` : '')
+          + (movedCount > 0
+            ? `; ${movedCount} ledger(s) excluded from the rate because the content they are about has moved since, which makes the rate measure the code's life rather than the record's truth`
+            : ''),
+      };
+  gates.push(replayGate);
+
   // A skipped gate is neither a pass nor a failure: it is the report saying it does not know.
   const scored = gates.filter((gate) => gate.skipped !== true);
   const allPass = scored.every((gate) => gate.pass);
@@ -244,7 +318,7 @@ export async function checkReleaseGates(
   // whose input is author-declared and whose baseline is unobtainable cannot be required, so it is informational and says
   // so in its details. What replaces it is `mechanism-seeds`, which is computed: the kernel's own decision over every seed
   // the mechanism ships, with no hand-declared answers anywhere in the path.
-  const qualityGates = new Set(['mechanism-seeds', 'acceptance-pass-rate', 'wiki-rejection-rate']);
+  const qualityGates = new Set(['mechanism-seeds', 'acceptance-pass-rate', 'wiki-rejection-rate', 'evidence-replayable']);
   const unmeasuredRequiredGates = gates
     .filter((gate) => gate.skipped === true && qualityGates.has(gate.name))
     .map((gate) => ({ name: gate.name, details: gate.details }));

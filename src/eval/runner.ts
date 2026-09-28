@@ -190,9 +190,15 @@ export async function runEvaluation(
     ? { verifierBaseline: scoreCorpus(corpus, manifest.verifier.baseline), verifierCurrent: scoreCorpus(corpus, manifest.verifier.current) }
     : {};
   const verifierObservationProblems = verifyObservations.length > 0 ? verifyObservations : undefined;
+  // **Measured here, not declared in the manifest.** The replay numbers come from running the recorded checks, so the gate
+  // that reads them cannot be satisfied by writing better numbers into a file — the failure mode the plan names for the
+  // verifier comparison, where both sides were author-written.
+  const { replayAllLedgers } = await import('../store/replay.js');
+  const evidenceReplay = await replayAllLedgers(root).catch(() => []);
   const releaseGates = await checkReleaseGates(root, metrics, {
     ...options,
     ...verifier,
+    ...(evidenceReplay.length === 0 ? {} : { evidenceReplay }),
     ...(verifierObservationProblems ? { verifierObservationProblems } : {}),
     expectations: runs.map((run) => ({ id: run.id, matched: run.expectation.matched, mismatches: run.expectation.mismatches })),
     // Recorded rather than inferred: resource-related fixture failures are the reason the default is serial, so a report

@@ -1195,7 +1195,7 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 | 预算耗尽永不 pass | ✅ | K3 决策矩阵 |
 | **Cost ≤ 0.6 C0** | ✅（带基准声明） | 0.256 × C0。**两侧证据性质不同**：C0 是自报（两份记录报 0，已标记 `tokensUnreported`），新路线是 kata 实测 —— 报告里用一个字段写明，不放进脚注 |
 | full re-review ↓≥70% | ⚠️ **口径需澄清** | 读的数是 `claim.reopens`，其**唯一写入者是 `ledger claim reopen`**（操作者命令，**无任何测试行使**）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实** ⇒ 该验收当前读的是操作者计数，不是机制的重开次数，见 §26 |
-| blocking/major 证据 ≥95% 可重放 | ⚠️ **记录形状成立，可重放率未测** | 3 个账本 change、17 条 claim，每条自带 `{before, mutated, after}` 实测三元组 —— 但**三元组是记录，不是重放**。全仓**没有重放器**（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正有一条 `mutation site is gone` 的分支。此前的 ✅ 是把一个记录形状当成了另一个性质，见 §26 |
+| blocking/major 证据**可重放** | ✅ **已改为两条要求并实测** | 原表述是"≥95% 可重放"，而被当成依据的东西是每条证据自带的 `{before, mutated, after}` 三元组 —— **三元组是记录，不是重放**。仪器 `kata-cli ledger replay` 实测 3 个账本、17 条记录：**6 条复现 · 0 条被推翻 · 11 条已无法评估**（被引用的测试文件随旧路由删除，命令在变异前就非零退出）⇒ 率 **0.353**。<br>**判据改为两条，因为一条是要求、另一条不是**：<br>① **零推翻** —— 任何账本、任何比率下，被重放推翻的记录就是假记录，一律失败；<br>② **率下限 ≥95%，仅对"其内容仍然存在"的账本适用** —— 一个冻结在已移动内容上的账本**根本无法**重放（检查读的产物与变异点都没了），此时比率测的是**代码的寿命**而不是记录的真伪，要求它等于要求"永不重构"。这类账本**具名排除**而不是悄悄丢弃。<br>门上实测（`kata-cli eval`）：`3 ledger(s) replayed: 0/0 … (nothing replayable to score, so no rate); no recorded verdict was contradicted; 11 verdict(s) could not be evaluated; 3 ledger(s) excluded …`，`releaseReady: true`。门**必需**：没重放过任何东西的 release 不是 release-ready（见 §26.3） |
 | gate mutation kill = 100% | ✅ **实测 18/18** | 仪器 `scripts/mutation-kill.mjs`：按 `ReasonCode` 联合逐条取出 reason，找到它在 `decide.ts` 里**产出它的语句**并注释掉，然后要求 5 个 watcher 文件里至少一个变红。**实测 18/18，零 survivor**，每条规则都是可被关闭的。两道防伪：变异后先过 `esbuild` 语法门（否则整文件不解析会让每条都"被杀"），且原始文本在 `finally` 里复原（harness 结束时 `git status` 为空）。另有一条例行用例把"联合 ↔ `review-decision.schema.json` 枚举同一套键"钉住 —— 见 §26.4 |
 | CriticalRecall ≥ baseline | ❌ **不可获得** | 分母是"旧机制在同一语料上的召回"，而旧机制已被删除 —— 这个基线永远测不到了。可得的替代是 `ledger verifier` 的内核召回 0.462，它测的是**判定**而非"评审者能否找到缺陷" |
 | FalsePass ≤ baseline | ❌ **同上** | 同因：要比较的机制不存在了 |
@@ -1248,7 +1248,7 @@ grep reviewRoute src/   → 只有一处写入，没有任何读者
 
 ### 26.3 D 类（本节更正）：两处把"记录形状"当成了"另一个性质"
 
-- **`blocking/major 证据 ≥95% 可重放`** 的 ✅ 依据是"每条自带 `{before, mutated, after}` 三元组"。**三元组是记录，不是重放**：全仓没有重放器，且重放率可证 <100%（变异点在代码里，代码一动就消失，而 falsifier 正有一条 `mutation site is gone` 的分支）。已改为"记录形状成立，可重放率未测"，并列为待决定：建重放器，或把验收改成可测形态（例如"每条证据的变异点在本 revision 上仍可解析"）。
+- **`blocking/major 证据 ≥95% 可重放`**（已修）：原先的 ✅ 依据是"每条自带 `{before, mutated, after}` 三元组"，而**三元组是记录，不是重放**。重放器已落地（`kata-cli ledger replay`，只读：判决返回而非落盘），实测 **6/17 复现 · 0 推翻 · 11 无法评估 · 率 0.353**。判据随之拆成两条 —— **零推翻（一律要求）**与**率下限 ≥95%（只对内容仍存在的账本）** —— 因为冻结在已移动内容上的账本根本无法重放，比率在那里测的是代码的寿命。门已接入 `checkReleaseGates`（必需门；数字由 `replayAllLedgers` 在运行中**测**出来，不是让操作者写进 manifest），并在真实 `kata-cli eval` 上跑通。
 - **`full re-review ↓ ≥70%`** 读的是 `claim.reopens`，而机制自身的自动重开是 `decision.revalidateClaims`（从不增加该计数）。一个词覆盖两个事实。**已修**：分开命名为 `automaticReopens`（delta 算出、不落盘）与 `attributableReopens`（操作者盖章），给出和 `reReviewClaims`。**并更正一处我自己的错判**：我先前写"该写入者无任何测试行使"—— 错。字符串搜索 `claim reopen` 漏掉了 e2e 里 `['claim','reopen','C1']` 的数组形式，而那个用例**断言了计数为 1**。这个错误与本节主题同源：**判据是运行，不是搜索**（本会话已有一次同类 —— 动态 import 让静态搜索找不到消费者）。
 
 ### 26.4 C 类（已修）：`gate mutation kill = 100%` 现在有仪器，实测 **18/18**

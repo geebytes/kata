@@ -64,6 +64,52 @@ export interface ReplayReport {
     measures: string;
 }
 
+/**
+ * Replay every ledger in the workspace that has evidence, and report what a release gate needs.
+ *
+ * **The gate reads a measurement, not a declaration.** The first shape of this would have taken the numbers from the
+ * evaluation manifest, which is the defect the plan names for `verifier-critical-recall`: two author-written sides cannot
+ * hold a line. So the runner calls this instead, and what reaches the gate was produced by running the checks.
+ *
+ * `contentMoved` is the classification the rewritten criterion needs. A ledger frozen against a revision whose paths have
+ * since moved cannot be replayed — the artifact the check reads and the mutation site it edits are both gone — so its rate
+ * measures the code's life rather than the record's truth. Those are counted and named rather than quietly dropped, and the
+ * gate is told so it can apply the rate floor only where the rate means something.
+ */
+export async function replayAllLedgers(root: string): Promise<Array<{
+    changeId: string;
+    replayed: number;
+    agrees: number;
+    disagreements: string[];
+    decayed: string[];
+    contentMoved: boolean;
+}>> {
+    const { changeIdsWithRecords } = await import('./baseline.js');
+    const { ledgerDrift } = await import('./ledger.js');
+    const out: Array<{ changeId: string; replayed: number; agrees: number; disagreements: string[]; decayed: string[]; contentMoved: boolean }> = [];
+    for (const changeId of await changeIdsWithRecords(root)) {
+        const drift = await ledgerDrift(root, changeId);
+        // No frozen subject means no recorded verdict is about anything: `replayEvidence` refuses, and a refusal is not a
+        // measurement, so the ledger is left out rather than reported as a zero rate.
+        if (drift === null) continue;
+        const report = await replayEvidence({ root, changeId });
+        if ('refused' in report) continue;
+        if (report.replayed === 0 && report.neverVerified.length === 0) continue;
+        const moved = drift.changed.length + drift.added.length + drift.removed.length + drift.unreadable.length > 0;
+        out.push({
+            changeId,
+            replayed: report.replayed,
+            agrees: report.agrees,
+            // A disagreement is a recorded verdict the replay contradicts. `decayed` is excluded on purpose: it is the
+            // record that cannot be checked, which is a different statement and gets its own count.
+            disagreements: report.changed.map((item) => `${item.evidenceId}: recorded ${item.recorded}, replayed ${item.replayed}`),
+            decayed: report.decayed.map((item) => `${item.evidenceId}: ${item.observed.slice(0, 120)}`),
+            contentMoved: moved,
+        });
+    }
+    return out;
+}
+
 export async function replayEvidence(input: {
     root: string;
     changeId: string;
