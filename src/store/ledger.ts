@@ -596,7 +596,12 @@ export type LedgerReport = {
     claims: {
         total: number;
         byStatus: Record<ClaimStatus, number>;
-        reopenings: number;
+        /** Claims whose dependencies moved since their verdict, computed per decision (`ClaimState.stale`). */
+        automaticReopens: number;
+        /** Claims a person re-opened with `ledger claim reopen`, stamped by the store. */
+        attributableReopens: number;
+        /** The sum — the quantity the acceptance item means by "re-review", under a name that says so. */
+        reReviewClaims: number;
         /** Claims that name no evidence at all. */
         withoutEvidence: number;
         /** Claims naming an evidence id no item carries: the same gap the kernel reports as `evidence_missing`. */
@@ -769,7 +774,23 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
         claims: {
             total: ledger.claims.length,
             byStatus,
-            reopenings: ledger.claims.reduce((total, claim) => total + (claim.reopens ?? 0), 0),
+            /**
+             * **Two facts, two names — they used to share one.**
+             *
+             * `decision.revalidateClaims` is the *automatic* reopen: the claims the delta says must be re-verified because
+             * their dependencies moved, computed at every decision and never persisted. `claim.reopens` is the
+             * *attributable* reopen: a person ran `ledger claim reopen` because they judged the claim had to be re-opened,
+             * and it is stamped by the store so the decision survives.
+             *
+             * The acceptance item "full re-review count falls" read the second while the first is what "re-review" means to
+             * the mechanism, and the second had no test exercising it — a number that could only ever read zero. Both are
+             * reported now, under names that say which is which, and `reReviewClaims` is their sum for a reader who wants
+             * the one number.
+             */
+            automaticReopens: (evaluations ?? []).filter((evaluation) => evaluation.state === 'stale').length,
+            attributableReopens: ledger.claims.reduce((total, claim) => total + (claim.reopens ?? 0), 0),
+            reReviewClaims: (evaluations ?? []).filter((evaluation) => evaluation.state === 'stale').length
+                + ledger.claims.reduce((total, claim) => total + (claim.reopens ?? 0), 0),
             withoutEvidence: ledger.claims.filter((claim) => claim.evidenceIds.length === 0).length,
             namingUnrecordedEvidence: ledger.claims
                 .filter((claim) => claim.evidenceIds.some((id) => !ledger.evidence.some((item) => item.id === id)))

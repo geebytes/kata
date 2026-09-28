@@ -335,7 +335,7 @@ describe('the ledger verbs', () => {
         await ledger(['freeze']);
         await ledger(claimArgv());
         const empty = (await ledger(['status', '--cost'])).report as {
-            claims: { total: number; reopenings: number; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null; derived: Array<{ state: string }> };
+            claims: { total: number; automaticReopens: number; attributableReopens: number; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null; derived: Array<{ state: string }> };
             evidence: { unverified: number };
             discovery: { refutationRate: number | null; baseline: string };
             authorSide: { medianClaimToSupportedMs: number | null };
@@ -345,6 +345,9 @@ describe('the ledger verbs', () => {
         // The claim names E1 and no evidence item carries that id, which is the same gap the kernel reports as
         // `claim_unsupported` — the report and the decision name the same thing.
         expect(empty.claims.namingUnrecordedEvidence).toBe(1);
+        // Nothing has moved and nobody has re-opened anything, so both counters are a measured zero rather than absent.
+        expect(empty.claims.attributableReopens).toBe(0);
+        expect(empty.claims.automaticReopens).toBe(0);
         // The declared status is `open` while the measured one is derived from the evidence: the report says both, and the
         // second comes from the same predicate the gate uses, so the two halves of a report cannot answer different
         // questions.
@@ -367,12 +370,19 @@ describe('the ledger verbs', () => {
         await ledger(['evidence', 'verify']);
         await ledger(['claim', 'reopen', 'C1']);
         const measured = (await ledger(['status', '--cost'])).report as {
-            claims: { total: number; reopenings: number; byStatus: Record<string, number>; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null };
+            claims: { total: number; automaticReopens: number; attributableReopens: number; reReviewClaims: number; byStatus: Record<string, number>; namingUnrecordedEvidence: number; bySupport: Record<string, number> | null };
             evidence: { unverified: number; byType: Record<string, number> };
             discovery: { refutationRate: number | null };
             authorSide: { medianClaimToSupportedMs: number | null; firstClaimAt: string | null };
         };
-        expect(measured.claims.reopenings).toBe(1);
+        // **Two facts, two names.** `attributableReopens` is what `ledger claim reopen` stamps — a person's decision,
+        // recorded so it survives. `automaticReopens` is what the delta computes at each decision (claims whose
+        // dependencies moved, `ClaimState.stale`) and never persists. They used to share one field called `reopenings`,
+        // and the acceptance item about re-review read the operator's counter while the mechanism's own reopen went
+        // uncounted; `reReviewClaims` is their sum, for a reader who wants the one number.
+        expect(measured.claims.attributableReopens).toBe(1);
+        expect(measured.claims.automaticReopens).toBe(0);
+        expect(measured.claims.reReviewClaims).toBe(measured.claims.attributableReopens + measured.claims.automaticReopens);
         expect(measured.claims.namingUnrecordedEvidence).toBe(0);
         expect(measured.claims.byStatus.open).toBe(1);
         expect(measured.claims.bySupport?.supported).toBe(1);

@@ -497,7 +497,7 @@ git status                  clean · 本节 9 个 commit
 | §8 · `新平台接入修改非 adapter 文件数 = 0` | 验收项 | **无仪器**；唯一一次手测的值是 **4**，即**按验收标准本身不合格** | **C** |
 | §8 · `blocking/major 证据 ≥95% 可重放` | 验收项 | 记为 ✅，依据是"每条自带 `{before, mutated, after}` 实测三元组" —— 但**三元组是记录，不是重放**；全仓没有重放器（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正是有一条 `mutation site is gone` 的路径 | **D**（把一个记录形状当成另一个性质） |
 | §8 · `gate mutation kill = 100%`（K2） | 验收项 | 无 harness。**实测一条规则**：把 `uncovered_risk_class` 关掉 → **11 个用例变红**（5 个文件）。所以**逐条规则的仪器有效**，而"100%"这个整体claim**未测** | **C**（未测，不是未落地） |
-| §8 · `full re-review ↓ ≥70%` | 验收项 | 读的数是 `claim.reopens`，而它的**唯一写入者是 `ledger claim reopen`**（操作者命令，**没有任何测试行使过它**）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实**，验收项读的是操作者计数 | **B**（形态不同且没写明） |
+| §8 · `full re-review ↓ ≥70%` | 验收项 | 读的数是 `claim.reopens`，其写入者是 `ledger claim reopen`（操作者命令 —— **更正：它有测试行使**，`ledger-cli-end-to-end` 里 `['claim','reopen','C1']` 并断言计数为 1；我先前用字符串 `claim reopen` 搜测试，漏掉了被拆成数组的 argv）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实**，验收项读的是操作者计数 | **B**（已修：两个名字 + 和） |
 | §8 · `no-record rate = 0%` | 结构上成立 | ✅ 增量落盘，新路径无"最后交一份文档"这一步 | A |
 | §8 · `Cost ≤ 0.6 × C0` | 验收项 | ✅ 仪器存在（`ledger baseline`）且实测 0.256 × C0（1 个样本） | A（样本少） |
 | §8 · `CriticalRecall / FalsePass ≥/≤ baseline` | 验收项 | 分母不可获得（旧机制已删除）；已改写为信息性，**但方案文本尚未改** | D（欠一处同步） |
@@ -552,5 +552,5 @@ grep -rn "state === 'absent'"  src/   →  只有一处【返回】（distill-ga
 2. **`reviewRoute` 加读者** 与上一条同一处修改（它与清关的推导应合并，使清关由证据给出而不是由关于证据的记录给出）。
 3. **方案文档三处同步**：P6 两个交付项改回 C（或写明"手测一次、无仪器"）· §23/§25 与 §14 的 ✅/C 冲突消解 · §8 两条不可获得的验收按改写后的状态落文。
 4. **`≥95% 可重放` 要么建重放器，要么改成可测的形态**（例如"每条证据的变异点在本 revision 上仍可解析"），否则它是一个永远只能靠记录的claim。
-5. **`full re-review ↓ ≥70%` 的口径**：把"自动重开"（`revalidateClaims`）与"操作者重开"（`claim.reopens`）分开命名，并让验收读前者或两者的和，同时补一条行使 `claim reopen` 的用例 —— 一个从未被行使的写入者与"只能读 0 的指标"是同一形状。
+5. **`full re-review ↓ ≥70%` 的口径**（已修）：分开命名为 `automaticReopens`（delta 算出、从不落盘）与 `attributableReopens`（`ledger claim reopen` 盖章），并给出和 `reReviewClaims`；验收读后者的和。**更正一处**：我先前说"该写入者无任何测试行使"，那是错的 —— 我用字符串 `claim reopen` 搜测试，而 e2e 里是 `['claim','reopen','C1']` 的数组形式，且它断言了计数为 1。**结构性原因让 grep 说谎**（此前还有一次是动态 import）—— 所以判据应是"运行它"，不是"搜它"。
 6. **`gate mutation kill = 100%`** 补 harness（18 条 reason × 各一条变异），或把验收写成"每条 reason 都有一个能被删除规则触发的种子"，后者已有仪器（26 种子 / 18 reason）。

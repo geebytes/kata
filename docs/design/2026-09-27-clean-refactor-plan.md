@@ -1249,7 +1249,7 @@ grep reviewRoute src/   → 只有一处写入，没有任何读者
 ### 26.3 D 类（本节更正）：两处把"记录形状"当成了"另一个性质"
 
 - **`blocking/major 证据 ≥95% 可重放`** 的 ✅ 依据是"每条自带 `{before, mutated, after}` 三元组"。**三元组是记录，不是重放**：全仓没有重放器，且重放率可证 <100%（变异点在代码里，代码一动就消失，而 falsifier 正有一条 `mutation site is gone` 的分支）。已改为"记录形状成立，可重放率未测"，并列为待决定：建重放器，或把验收改成可测形态（例如"每条证据的变异点在本 revision 上仍可解析"）。
-- **`full re-review ↓ ≥70%`** 读的是 `claim.reopens`，其唯一写入者是**操作者命令** `ledger claim reopen`（无任何测试行使），而机制自身的自动重开是 `decision.revalidateClaims`（从不增加该计数）。一个词覆盖两个事实。已改为"口径需澄清"，并列为待决定：分开命名，并补一条行使 `claim reopen` 的用例。
+- **`full re-review ↓ ≥70%`** 读的是 `claim.reopens`，而机制自身的自动重开是 `decision.revalidateClaims`（从不增加该计数）。一个词覆盖两个事实。**已修**：分开命名为 `automaticReopens`（delta 算出、不落盘）与 `attributableReopens`（操作者盖章），给出和 `reReviewClaims`。**并更正一处我自己的错判**：我先前写"该写入者无任何测试行使"—— 错。字符串搜索 `claim reopen` 漏掉了 e2e 里 `['claim','reopen','C1']` 的数组形式，而那个用例**断言了计数为 1**。这个错误与本节主题同源：**判据是运行，不是搜索**（本会话已有一次同类 —— 动态 import 让静态搜索找不到消费者）。
 
 ### 26.4 C 类（未测）：`gate mutation kill = 100%` 没有 harness
 
