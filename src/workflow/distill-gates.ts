@@ -49,6 +49,15 @@ export async function freshPassingTestEvidence(
 export interface ReviewClearance {
     cleared: boolean;
     revisionId?: string;
+    /**
+     * What the approval says it rested on — **read from the record, and the reader `reviewRoute` never had.**
+     *
+     * The field was written by the approval path and read by nothing, which is how the gate came to fail *open* on one
+     * state: `assertDistillGates` refused a ledger it could not read and said nothing about a ledger that was not there,
+     * while the approval clearing it named that ledger as its basis. `absent` is legitimate for a change that never used
+     * the ledger and a hole for one approved *on* it, and this is the fact that tells the two apart.
+     */
+    restsOn: 'ledger' | 'adversarial' | 'unstated';
     reason?: 'not_approved' | 'no_review_evidence' | 'blocking_findings' | 'stale_review';
 }
 
@@ -64,19 +73,24 @@ export async function evaluateReviewClearance(
         manifestHash?: string;
         status?: string;
         reviewEvidence?: string;
+        reviewRoute?: string;
     }>('review', reviewPath(root, taskId));
-    if (!review) return { cleared: false, reason: 'not_approved' };
-    if (review.status !== 'approved') return { cleared: false, reason: 'not_approved' };
-    if (!review.reviewEvidence?.trim()) return { cleared: false, reason: 'no_review_evidence' };
+    // The route travels with the refusal as well as the clearance: a caller that only learns "not cleared" cannot tell an
+    // absent record from a record whose basis is gone.
+    const restsOn: ReviewClearance['restsOn'] =
+        review?.reviewRoute === 'ledger' ? 'ledger' : review?.reviewRoute === 'adversarial' ? 'adversarial' : 'unstated';
+    if (!review) return { cleared: false, restsOn: 'unstated', reason: 'not_approved' };
+    if (review.status !== 'approved') return { cleared: false, restsOn, reason: 'not_approved' };
+    if (!review.reviewEvidence?.trim()) return { cleared: false, restsOn, reason: 'no_review_evidence' };
     if (!Array.isArray(review.findings) || review.findings.some((finding) => finding.severity === 'blocking')) {
-        return { cleared: false, reason: 'blocking_findings' };
+        return { cleared: false, restsOn, reason: 'blocking_findings' };
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
     // expiring the clearance there is what made a re-seal re-run the whole review.
     if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentity(root, taskId)), revisionId })) {
-        return { cleared: false, reason: 'stale_review' };
+        return { cleared: false, restsOn, reason: 'stale_review' };
     }
-    return { cleared: true, ...(revisionId ? { revisionId } : {}) };
+    return { cleared: true, restsOn, ...(revisionId ? { revisionId } : {}) };
 }
 
 export interface JudgePass {
@@ -136,17 +150,20 @@ export interface DistillGateReport {
      * `null` means the change has no ledger and is decided by the round-shaped route, which is not an error — but a
      * ledger that exists and cannot be read, or that no longer passes, is a refusal.
      */
-    ledger: { state: 'absent' | 'unreadable' | 'pass' | 'not-pass'; detail: string; reasons: string[] };
+    ledger: { state: 'absent' | 'required-but-missing' | 'unreadable' | 'pass' | 'not-pass'; detail: string; reasons: string[] };
 }
 
 export async function evaluateDistillGates(root: string, taskId: string): Promise<DistillGateReport> {
     const currentDiffHash = await computeDiffHash(root);
     const freshEvidence = await freshPassingTestEvidence(root, taskId, currentDiffHash);
-    const [review, judge, ledger] = await Promise.all([
+    const [review, judge] = await Promise.all([
         evaluateReviewClearance(root, taskId, freshEvidence?.revisionId),
         evaluateJudgePass({ root, taskId, currentDiffHash, freshEvidence }),
-        evaluateLedgerAtArchive(root, taskId),
     ]);
+    // The ledger half runs *after* the clearance and is told what it rested on, so there is one reader of the approval's
+    // route rather than a second lookup: what the record says its basis was is exactly what decides whether an absent
+    // ledger is a legitimate state or a hole.
+    const ledger = await evaluateLedgerAtArchive(root, taskId, review.restsOn === 'ledger');
 
     return { freshEvidence, review, judge, ledger };
 }
@@ -158,11 +175,32 @@ export async function evaluateDistillGates(root: string, taskId: string): Promis
  * archive a sibling change can edit a shared path. Asking for the verdict without asking whether it is still about this
  * content would certify a decision about a revision that has moved.
  */
-async function evaluateLedgerAtArchive(root: string, taskId: string): Promise<DistillGateReport['ledger']> {
+async function evaluateLedgerAtArchive(
+    root: string,
+    taskId: string,
+    /**
+     * Whether the approval that cleared this change says it rested on the ledger.
+     *
+     * **This is the difference between a legitimate absence and a hole.** Measured before it existed: with the review
+     * record marked `reviewRoute: 'ledger'` and the ledger directory removed, the gate's refusal named the fresh evidence
+     * and the Judge and said nothing about the ledger at all — the entire basis of the approval could be deleted and the
+     * gate still cleared the review half, because `evaluateReviewClearance` reads the record *about* the evidence rather
+     * than the evidence.
+     */
+    restsOnLedger: boolean,
+): Promise<DistillGateReport['ledger']> {
     const { ledgerVerdict } = await import('../store/verdict.js');
     const { ledgerDrift } = await import('../store/ledger.js');
     const verdict = await ledgerVerdict({ root, changeId: taskId });
-    if (verdict.kind === 'absent') return { state: 'absent', detail: verdict.detail, reasons: [] };
+    if (verdict.kind === 'absent') {
+        return restsOnLedger
+            ? {
+                state: 'required-but-missing',
+                detail: 'the review approval names the evidence ledger as its basis, and this change has no ledger',
+                reasons: ['ledger_required_but_absent'],
+            }
+            : { state: 'absent', detail: verdict.detail, reasons: [] };
+    }
     if (verdict.kind === 'unreadable') return { state: 'unreadable', detail: verdict.detail, reasons: [] };
 
     const drift = await ledgerDrift(root, taskId);
@@ -215,6 +253,15 @@ export async function assertDistillGates(root: string, taskId: string): Promise<
     if (!report.judge.passed) failures.push(`the Judge has not passed this change (${report.judge.reason ?? 'unknown'})`);
     if (report.ledger.state === 'unreadable') failures.push(`the ledger cannot be read: ${report.ledger.detail}`);
     if (report.ledger.state === 'not-pass') failures.push(`the ledger does not pass: ${report.ledger.detail}`);
+    if (report.ledger.state === 'required-but-missing') {
+        // The refusal has to say *why* an absent ledger is a failure here and not elsewhere, because the two states look
+        // identical from the outside and only the approval's own record tells them apart.
+        failures.push(
+            `the review approval rests on the evidence ledger, and that ledger is gone: ${report.ledger.detail}. `
+            + 'An approval cannot outlive the evidence it names — re-record the ledger (`ledger freeze`, `ledger claim add`, '
+            + '`ledger evidence add|verify`, `ledger decide`) so the decision about this content can be read again.',
+        );
+    }
     if (failures.length === 0) return;
     throw new Error(`Cannot enter distill: ${failures.join('; ')}`);
 }

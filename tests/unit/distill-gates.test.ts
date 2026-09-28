@@ -50,6 +50,45 @@ describe('distill gates', () => {
         await writeFile(join(root, '.kata/tasks', taskId, 'review.json'), `${JSON.stringify({ findings: [], status: 'approved', ...review })}\n`, 'utf8');
     }
 
+    /**
+     * **An approval cannot outlive the evidence it names.**
+     *
+     * Measured before this: with the review record marked `reviewRoute: 'ledger'` and the ledger directory removed, the
+     * gate's refusal named the fresh evidence and the Judge and said nothing about the ledger at all — the entire basis of
+     * the approval could be deleted and the review half still cleared, because `evaluateReviewClearance` read the record
+     * *about* the evidence rather than the evidence. `reviewRoute` was written by the approval path and read by nothing.
+     *
+     * `absent` is legitimate for a change that never used the ledger, so the two are told apart by what the approval says
+     * it rested on — and that is now the one reader of the field.
+     */
+    it('refuses to clear an approval whose ledger is gone, and clears one that never had a ledger', async () => {
+        const root = await tempRoot();
+        await recordEvidence(root, `${taskId}-hard.json`);
+        await writeJudge(root, {});
+        await writeReview(root, { reviewEvidence: 'approved on the ledger', reviewRoute: 'ledger' });
+
+        const clearance = await evaluateReviewClearance(root, taskId);
+        expect(clearance, 'the clearance reports what the approval rested on').toMatchObject({ cleared: true, restsOn: 'ledger' });
+
+        const report = await evaluateDistillGates(root, taskId);
+        expect(report.ledger.state, 'a ledger the approval names cannot be missing').toBe('required-but-missing');
+        const refusal = await assertDistillGates(root, taskId).then(() => 'NO REFUSAL', (error: Error) => error.message);
+        expect(refusal).toContain('the review approval rests on the evidence ledger');
+        expect(refusal).toContain('An approval cannot outlive the evidence it names');
+    });
+
+    it('does not turn a legitimate absence into a refusal', async () => {
+        // The other direction: a change that never used the ledger still clears, or the rule becomes a wall.
+        const root = await tempRoot();
+        await recordEvidence(root, `${taskId}-hard.json`);
+        await writeJudge(root, {});
+        await writeReview(root, { reviewEvidence: 'approved on a round-shaped pass' });
+
+        const report = await evaluateDistillGates(root, taskId);
+        expect(report.ledger.state).toBe('absent');
+        expect(report.review).toMatchObject({ cleared: true, restsOn: 'unstated' });
+    });
+
     async function writeJudge(root: string, judge: Record<string, unknown>): Promise<void> {
         const diffHash = await computeDiffHash(root);
         await writeFile(join(root, '.kata/tasks', taskId, 'judge.json'), `${JSON.stringify({
