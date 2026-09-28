@@ -554,3 +554,72 @@ grep -rn "state === 'absent'"  src/   →  只有一处【返回】（distill-ga
 4. **`≥95% 可重放`**（**已修**）：重放器落地（`ledger replay`，**只读** —— 判决返回而非落盘，用例用账本目录的字节快照钉住），实测 **6/17 复现 · 0 推翻 · 11 无法评估 · 率 0.353**。判据拆成**零推翻（一律）**与**率下限 ≥95%（仅内容仍存在的账本）**，接入 `checkReleaseGates` 成为**必需门**，数字由 `replayAllLedgers` 现场测出而不是写进 manifest。
 5. **`full re-review ↓ ≥70%` 的口径**（已修）：分开命名为 `automaticReopens`（delta 算出、从不落盘）与 `attributableReopens`（`ledger claim reopen` 盖章），并给出和 `reReviewClaims`；验收读后者的和。**更正一处**：我先前说"该写入者无任何测试行使"，那是错的 —— 我用字符串 `claim reopen` 搜测试，而 e2e 里是 `['claim','reopen','C1']` 的数组形式，且它断言了计数为 1。**结构性原因让 grep 说谎**（此前还有一次是动态 import）—— 所以判据应是"运行它"，不是"搜它"。
 6. **`gate mutation kill = 100%`**（已修）：`scripts/mutation-kill.mjs` 派生变异（从 `ReasonCode` 联合取 reason、在 `decide.ts` 里找产出语句并注释），**实测 18/18、零 survivor**；两道防伪是 `esbuild` 语法门与 `finally` 复原（跑完 `git status` 为空）。**这个仪器第一版自己被机器抓到两处错**：前缀匹配到 `ReasonCode` 后又固定读 4000 字符，收进了 `fail`/`insufficient`/`verifier` 三个非 reason 成员 —— 报告说 21 条 1 survivor，真值是 18 条 0 survivor。两处都补了会变红的用例（联合 ↔ schema 枚举同一套键；每条 reason 在 `decide.ts` 有产出语句）。
+
+---
+
+## 14. Schema 扫描：24 个注册 schema 里 6 个没有任何消费者，其中 3 个已与值漂移
+
+起因是修 git-flow 报告时发现的一类反复出现的缺陷——**写入方能存下自己读者会拒绝的记录**——所以把"每个把文件写进 `.kata/` 的路径，都在出口过一次对应 schema 的校验"当通则扫了一遍。结论比预期严重：**不是某些写入路径漏了校验，而是账本这条路根本没有校验。**
+
+### 14.1 扫描方法（可复核）
+
+对 24 个注册 schema 逐个回答两个问题，全部用命令而不是阅读：
+
+1. 它在 `src/` 里被引用几次？（任何形式，排除注册表本身）
+2. 它的**读者**是否强制它（`readValidated*`）、**写者**是否校验它（`validate(name, …)`）？
+
+```
+零 validate 调用、零 readValidated 引用的 schema：8 个
+  其中六个是 review-* 家族（review-subject / claim / evidence / evidence-verdict / decision / policy）
+  —— 在 src/ 里各出现【一次】，就是注册表那一行。
+```
+
+那六个 schema 被**编译它们自己**的用例（`review-schemas-constrain.test.ts` 直接加载 JSON 并编译）钉住了约束，而**没有任何代码路径**校验它——即"有声明、无消费者"，六份。同时 `src/store/ledger.ts` 的 `readJson`/`writeJson` **既不校验读写，也不过 schema**：`claims.json` 里放字符串、subject 的 digest 不是 digest，都会作为一个健康账本被读走。
+
+### 14.2 给它们消费者时暴露的三处漂移（都没有测试能看见）
+
+| schema | 漂移 | 后果 |
+|---|---|---|
+| `review-decision` | 值里多了 `deltaEvaluated`（本轮新增，用于区分"没有可复用"与"从未评估"），schema 没有 | 内核产出的决定**过不了它自己的 schema**；此前无消费者，所以无人知道 |
+| `review-subject` | 值里多了 `declaredPaths?`（漂移判定要按声明而非展开比较），schema 没有 | **若先上线写入侧校验，`ledger freeze` 会整体失效**——实测：夹具走真实 writer 时写入被拒 |
+| `review-evidence-verdict` | 值里多了 `producer {runId, actor}`（本会话为 quorum 与 same-actor 规则加的），schema 没有 | 同上：**每一个新写入的 verdict 都会被拒** |
+
+三处的形状相同：**schema 是手写的、值是类型化的，两者之间没有规则相连**，所以值前进、schema 不动，而"用夹具编译 schema"的用例永远看不见——手写实例不会与任何东西漂移。修法是给值一个消费者（写入侧校验 + 读扫描 + `ledger decide` 校验自己的响应），漂移立刻显形。
+
+`producer` 与 `declaredPaths` 都设为**可选**：磁盘上已有的记录写在字段出现之前，要求必填会把历史判死——而"缺失字段取它的缺失所隐含的值并报告"是这条路早就学过的规则。
+
+### 14.3 顺带发现的第 4 处：测试夹具产出 schema 禁止的证据
+
+`tests/helpers/review.ts` 的 `makeEvidence` 先铺 `static_witness` 的字段再 spread overrides，于是 `makeEvidence({type:'executable_falsifier', command, mutation})` **仍然带着 `ref` 与 `assertion`** —— 一个生产者不会产出、schema 也会拒绝的条目，三个用例正拿它断言。
+
+这与 2026-09-28 那份报告里 F1 的成因同源：**"用 `toMatchObject`/手写夹具断言"跳过了拒绝它的那个读者**。修法是助手按判别联合的 `type` 分组默认值，而不是"一套默认值 + spread"。
+
+### 14.4 修法：两个出口 + 一条不变量
+
+- **写入侧**（`writeJson`，账本唯一的写入入口）：映射文件 → schema，不满足就**拒绝且不写**。首版把映射按 `FILES` 的**键名**（`subject`）而不是**文件名**（`subject.json`）建，于是两个调用点（都持有文件名）永远匹配不到——**新用例当场发现**（本该拒绝的写入 resolved 了）。
+- **读取侧**：能解析但不符合 schema 的文件与不能解析的一样不可用，且**报出原因**（`malformedReasons`）——"claims.json 无法解析"与"claims.json 里放的是字符串"是两种不同的修法。
+- **`policy.json` 例外，且理由是实测的**：它有一个宽容的读者（填入文档早于的字段并报告 `policyFilled`），而按**原样文档**套严格 schema 会重犯那条修过的事故——实测两个归档账本存的是 `ledgerTierCeiling` 之前的 policy，被判成"cannot be parsed"。校验因此落在**填入之后的值**上，也就是每个消费者真正看到的东西。
+- **不变量用例**（`every-schema-has-a-consumer`，5 例）：① 每个注册 schema 必须在 `src/` 被使用，或**有 `$ref` 引用它**（`review-finding` 属后者，首版按 `.json` 匹配漏掉了带 `.schema.json` 的 id，把在用 schema 报成未用）；② 每个账本文件必须在三类里**恰好**有一席位——原样校验 / 经其读者校验 / 具名无 schema 及理由；③ **真实 writer 填出的账本**必须全部通过，**内核真实产出的决定**必须通过（这两条是抓漂移的那两条）；④ 越界的写入被拒且不落盘。
+
+第三类存在是刻意的：`challenges.json` / `probes.json` / `usage.json` / `runs.json` / `plan.json` / `verdict-history.jsonl` 是模块内部的记账，没有 schema。把它们**具名列出并写明理由**，而不是静默跳过——新增一个账本文件就必须有人决定它属于哪一类。
+
+### 14.5 验证与变异
+
+```
+npx tsc --noEmit      exit 0
+npx vitest run        168 文件 / 1065 用例 / 0 失败   （扫描前 167 / 1060）
+npm run check:wiring  clean（142 条声明路径）
+npm run build         通过
+```
+
+| 变异 | 变红的用例 |
+|---|---|
+| 拿掉 `writeJson` 的校验 | 1（`refuses to write a ledger file that would not match its schema`） |
+| 映射键改回 `FILES` 的键名（首版的错） | 3 |
+| 读扫描不校验 schema | 2 |
+
+实机复核（不是断言）：三个归档账本**恢复可读**（`decide` 给出 `insufficient`，与新规则一致，不再是 `unreadable`）；一个全新账本走完 `freeze → claim add → evidence add → evidence verify`，`recordedFiles` 七个文件全部通过自己的 schema，`malformedFiles` 为空；`evidence verify` 实测变异三元组 `{"before":0,"mutated":1,"after":0}`。
+
+### 14.6 未做（具名，不假装覆盖）
+
+`challenges.json` / `probes.json` / `probe-answers.json` / `usage.json` / `runs.json` / `plan.json` / `verdict-history.jsonl` **仍无 schema**，各自理由写在 `ARTEFACTS_WITHOUT_A_SCHEMA` 里。给它们写 schema 不是必需（它们的读者是同一个模块自己的类型），但它们是这条链上唯一还没有机械约束的部分——这一点写在代码里而不是这里，因为漏一个就会被不变量用例抓住。

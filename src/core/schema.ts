@@ -171,6 +171,34 @@ export function validate<T>(schemaName: string, value: unknown): T {
 }
 
 /**
+ * Validate an **artefact**, which may be an object or a list of them.
+ *
+ * The distinction matters because the schemas and the files are not the same unit: `review-claim.schema.json` describes a
+ * claim, while `claims.json` holds a list of them. Validating the file with the element's schema would fail on every
+ * healthy ledger, which is presumably why nothing did it — so the six ledger schemas were registered, exercised only by a
+ * test that loads the JSON and compiles it directly, and enforced by **no code path**: a definition with no consumer, six
+ * times over, and six files a writer could fill with anything.
+ *
+ * A list is validated element by element and the failure names the index, because "claims.json is invalid" is not
+ * something an operator can act on.
+ */
+export function validateArtefact<T>(schemaName: string, value: unknown): T {
+  if (!Array.isArray(value)) return validate<T>(schemaName, value);
+  value.forEach((element, index) => {
+    try {
+      validate(schemaName, element);
+    } catch (error) {
+      // The path inside the element's message is relative to the element, so the index is prefixed here rather than
+      // rewritten there: one place knows about the list, and it is this one.
+      const detail = (error as Error).message;
+      const withIndex = detail.startsWith('$') ? `$[${index}]${detail.slice(1)}` : `$[${index}]: ${detail}`;
+      throw new Error(withIndex);
+    }
+  });
+  return value as T;
+}
+
+/**
  * Reads a JSON artefact and validates it against its schema. Every failure names the artefact and the path, so a
  * drifted file is reported where it is read instead of surfacing later as a missing field in a decision.
  */

@@ -20,6 +20,14 @@
         "type": "string",
         "minLength": 8
       }
+    },
+    "declaredPaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "The paths as declared, before directory expansion. A declared directory expands into the files it held at the freeze, and the drift check compares against the declaration rather than the expansion \u2014 otherwise a file added inside it later is invisible. Absent on subjects frozen before the field existed."
     }
   }
 }

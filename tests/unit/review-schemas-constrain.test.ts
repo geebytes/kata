@@ -100,6 +100,11 @@ describe('the review schemas constrain their documents', () => {
             reasons: [{ code: 'challenge_open', detail: 'one open counterexample' }],
             reusedEvidence: [],
             revalidateClaims: ['C1'],
+            // **A fixture, not a writer.** This case builds a decision by hand — which is why it did not notice that the
+            // schema had fallen behind the value: `deltaEvaluated` was added to the real decision and not to the schema, and
+            // a hand-written instance cannot drift *from* anything. The case below that validates a decision the kernel
+            // actually produced is the one that catches that.
+            deltaEvaluated: false,
             deficits: [{ claimId: 'C1', need: 'evidence of strength >= 3' }],
             undiversified: false,
         };

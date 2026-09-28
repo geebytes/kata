@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
 import { withTaskLock } from '../core/state.js';
+import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
@@ -43,6 +44,58 @@ const FILES = {
     /** The plan the operator was handed, kept so `focus` narrows a *record* rather than re-deriving one. */
     plan: 'plan.json',
 } as const;
+
+/**
+ * **Which schema each ledger file is written and read under.**
+ *
+ * Five of the six ledger schemas had no code path using them: they were registered, a test compiled them directly to assert
+ * their constraints, and nothing validated a written artefact against them. A file a writer can fill with anything is a
+ * record nobody can trust; the schemas existed because these shapes are the ledger's own vocabulary.
+ *
+ * The five below are enforced at both ends now — `writeJson` refuses to write a file that would not satisfy its schema, and
+ * the read scan reports one that does not. `ARTEFACTS_WITHOUT_A_SCHEMA` names the rest, with the reason, and the invariant
+ * case requires the two lists to be exactly `FILES`: a new ledger file cannot arrive without someone deciding which it is.
+ */
+const ARTEFACT_SCHEMAS: Record<string, string> = {
+    // **Keyed by file name, not by the `FILES` key.** Both callers — `writeJson` and the read scan — hold the name on disk,
+    // so a map keyed by `subject` was consulted with `subject.json` and matched nothing. The first version of this did
+    // exactly that, and the case that should have refused a bad subject resolved instead.
+    'subject.json': 'review-subject',
+    'claims.json': 'review-claim',
+    'evidence.json': 'review-evidence',
+    'verdicts.json': 'review-evidence-verdict',
+};
+
+/**
+ * Files whose schema is checked **through their reader**, because the document on disk may legitimately predate a required
+ * field.
+ *
+ * `policy.json` has a tolerant reader that fills the sections a stored policy predates and reports what it filled — a
+ * required field added later had made every earlier document unreadable, so the reader substitutes and names it. Checking
+ * the *raw* document against the strict schema undid that: measured, two of the three archived ledgers store a policy
+ * written before `ledgerTierCeiling` existed and were reported as files that "cannot be parsed". The check belongs on what
+ * the reader produces, which is what every consumer sees.
+ */
+const ARTEFACTS_VALIDATED_THROUGH_THEIR_READER: Record<string, string> = {
+    'policy.json': 'review-policy',
+};
+
+/**
+ * The ledger files with no schema, and why each is safe.
+ *
+ * Every entry here is a file whose shape is internal bookkeeping read through one module's own type, not a vocabulary any
+ * other consumer validates against. They are listed rather than skipped so the decision is visible and forced: adding a
+ * file to `FILES` without either a schema or a line here fails the invariant case.
+ */
+const ARTEFACTS_WITHOUT_A_SCHEMA: Record<string, string> = {
+    'challenges.json': 'internal: read through `readLedger` into `Challenge[]` and consumed only by `decide`, which is pure and typed',
+    'verdict-history.jsonl': 'line-delimited, not a JSON document: the history is an audit trail appended one entry per line',
+    'probes.json': 'internal: derived deterministically from the claims and read only by `ask`/`answer`',
+    'probe-answers.json': 'internal: the reviewer’s own answers, read only by the discovery count',
+    'usage.json': 'internal: two counters the cost report reads, with `null` for anything unmeasured',
+    'runs.json': 'internal: the write log the cost report reads; a corrupt entry is reported, not acted on',
+    'plan.json': 'internal: the plan the operator was handed, read back by `focus` through the planner’s own type',
+};
 
 export async function appendProbe(root: string, changeId: string, probe: Probe): Promise<Probe> {
     return mutate(root, changeId, async () => {
@@ -103,6 +156,13 @@ export type Ledger = {
     /** The files that exist. An empty list is the honest report of a review that recorded nothing. */
     recordedFiles: string[];
     /**
+     * Why a file that exists cannot be used, keyed by file name: unparseable, or parseable but not its schema's shape.
+     *
+     * The reason is carried because "claims.json cannot be parsed" and "claims.json holds a string where a claim belongs"
+     * are different repairs, and the reader that reports one has to say which.
+     */
+    malformedReasons: Record<string, string>;
+    /**
      * Files that exist and cannot be parsed.
      *
      * Kept apart from `recordedFiles` because a corrupted ledger and an absent one are different facts: a read that
@@ -161,6 +221,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     // healthy audit trail as malformed — and a malformed file makes the whole ledger `unreadable`, which is how a
     // correctness fix for verdict reversals would have refused every change in the repository. The reader knows which
     // shape each file has, so it parses the one JSONL file per line and reports *its* bad lines through the same field.
+    const malformedReasons = new Map<string, string>();
     for (const name of Object.values(FILES)) {
         if (!(await exists(join(dir, name)))) continue;
         recordedFiles.push(name);
@@ -169,7 +230,20 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             if (name.endsWith('.jsonl')) {
                 if (parseJsonLines(text).malformed > 0) malformedFiles.push(name);
             } else {
-                JSON.parse(text);
+                const parsed = JSON.parse(text) as unknown;
+                // **Parseable is not usable.** A file that satisfies JSON but not its schema is as broken as one that does
+                // not parse, and before this it was accepted: `claims.json` holding strings, or a subject whose digests
+                // were not digests, read as a healthy ledger. The schema is the shape every consumer assumes, so the
+                // consumer that scans the directory is where it has to be checked.
+                const schemaName = ARTEFACT_SCHEMAS[name];
+                if (schemaName !== undefined) {
+                    try {
+                        validateArtefact(schemaName, parsed);
+                    } catch (error) {
+                        malformedFiles.push(name);
+                        malformedReasons.set(name, `does not match ${schemaName}: ${(error as Error).message}`);
+                    }
+                }
             }
         } catch {
             malformedFiles.push(name);
@@ -191,6 +265,14 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         if (loaded.ok) {
             policy = loaded.policy;
             policyFilled = loaded.filled;
+            // Checked here rather than in the raw scan: what every consumer sees is the filled policy, and the fill is
+            // reported in `policyFilled`. A document that predates a field is not a corrupt document.
+            try {
+                validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, policy);
+            } catch (error) {
+                malformedFiles.push('policy.json');
+                malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates: ${(error as Error).message}`);
+            }
         } else policyRejected = loaded.error;
     }
     const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
@@ -208,12 +290,31 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         runs: (await readJson<LedgerRun[]>(join(dir, FILES.runs))) ?? [],
         recordedFiles,
         malformedFiles,
+        malformedReasons: Object.fromEntries(malformedReasons),
         policyRejected,
         policyFilled,
     };
 }
 
+/**
+ * The single write entry point for every ledger file, and therefore the place a record can be checked **before** it exists.
+ *
+ * A refusal here means the file on disk is untouched, which is the property the whole rule turns on: a writer that returns
+ * successfully having persisted something its reader rejects is the defect, and it surfaces one command later at a step
+ * someone else was told to take.
+ */
 async function writeJson(root: string, changeId: string, file: string, value: unknown): Promise<void> {
+    const schemaName = ARTEFACT_SCHEMAS[file];
+    if (schemaName !== undefined) {
+        try {
+            validateArtefact(schemaName, value);
+        } catch (error) {
+            throw new Error(
+                `refusing to write ${file} for ${changeId}: the record would not match ${schemaName}, so nothing that reads it could use it. `
+                + `${(error as Error).message} Nothing was written.`,
+            );
+        }
+    }
     const dir = reviewDir(root, changeId);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, file), `${JSON.stringify(value, null, 2)}\n`, 'utf8');

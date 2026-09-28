@@ -48,6 +48,25 @@
     "subjectRevision": {
       "type": "string",
       "minLength": 1
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "actor"
+      ],
+      "description": "Which producer decided this item. Two verdicts are two independent readings only when different runs produced them, so the run id is what makes a quorum meaningful. Absent on verdicts written before the field existed, which are counted as one unattributed reading rather than as several.",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }

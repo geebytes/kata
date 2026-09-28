@@ -26,6 +26,7 @@ import { envelopeFor } from '../kernel/budget.js';
 import { probesFor } from '../kernel/discovery.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
+import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
 import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
@@ -707,6 +708,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         const { decision } = verdict;
+        // **The response contract is enforced where it is produced.** `review-decision` was the sixth ledger schema with no
+        // code path using it: registered, exercised by a test that compiles the JSON directly, and validated against nothing
+        // — so when `deltaEvaluated` was added to the decision the schema was not, and the drift was invisible until the
+        // schema was finally given a consumer. Validated before printing, because a documented response shape that the code
+        // can leave behind is not a contract.
+        validateArtefact('review-decision', decision);
         outputResult({
             ok: decision.verdict === 'pass',
             command: 'ledger decide',

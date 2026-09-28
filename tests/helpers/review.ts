@@ -58,14 +58,29 @@ export function makeClaim(overrides: Partial<Claim> = {}): Claim {
     };
 }
 
+/**
+ * **A fixture per evidence type, because the union is discriminated and `oneOf` means exactly one branch.**
+ *
+ * The old helper always carried `static_witness`'s fields and then spread the overrides, so every fixture built as
+ * `makeEvidence({type: 'executable_falsifier', command, mutation})` still carried `ref` and `assertion` — an item no
+ * writer produces, and one the schema refuses. Three cases were building evidence that way and passing, because nothing
+ * validated what a fixture wrote; they failed the moment the ledger enforced its schemas.
+ */
 export function makeEvidence(overrides: Partial<Evidence> = {}): Evidence {
-    return {
-        id: 'E1',
-        type: 'static_witness',
-        ref: 'src/a.ts',
-        assertion: 'contains:holds',
-        ...overrides,
-    } as Evidence;
+    const byType: Record<Evidence['type'], Record<string, unknown>> = {
+        static_witness: { id: 'E1', type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' },
+        executable_falsifier: {
+            id: 'E1', type: 'executable_falsifier', command: 'grep -q holds src/a.ts',
+            mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
+        },
+        cross_artifact_contradiction: {
+            id: 'E1', type: 'cross_artifact_contradiction', a: 'src/a.ts', b: 'src/b.ts', literal: 'holds',
+            comparator: 'literal-in-a-not-b',
+        },
+        expert_concurrence: { id: 'E1', type: 'expert_concurrence', reviewers: ['one', 'two'], humanAck: 'ack-1' },
+    };
+    const type = (overrides.type ?? 'static_witness') as Evidence['type'];
+    return { ...byType[type], ...overrides } as Evidence;
 }
 
 export function makeVerdict(overrides: Partial<EvidenceVerdict> = {}): EvidenceVerdict {

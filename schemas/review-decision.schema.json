@@ -5,28 +5,38 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "verdict",
-    "riskTier",
+    "deficits",
+    "deltaEvaluated",
     "reasons",
     "reusedEvidence",
     "revalidateClaims",
-    "deficits",
-    "undiversified"
+    "riskTier",
+    "undiversified",
+    "verdict"
   ],
   "properties": {
-    "verdict": {
-      "enum": [
-        "pass",
-        "fail",
-        "insufficient"
-      ]
+    "deficits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claimId",
+          "need"
+        ],
+        "properties": {
+          "claimId": {
+            "type": "string"
+          },
+          "need": {
+            "type": "string"
+          }
+        }
+      }
     },
-    "riskTier": {
-      "enum": [
-        "standard",
-        "strict",
-        "security"
-      ]
+    "deltaEvaluated": {
+      "type": "boolean",
+      "description": "Whether reuse was decided at all: with no previous subject the empty restrictions are the conservative default, not a comparison result."
     },
     "reasons": {
       "type": "array",
@@ -81,27 +91,22 @@
         "type": "string"
       }
     },
-    "deficits": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "claimId",
-          "need"
-        ],
-        "properties": {
-          "claimId": {
-            "type": "string"
-          },
-          "need": {
-            "type": "string"
-          }
-        }
-      }
+    "riskTier": {
+      "enum": [
+        "standard",
+        "strict",
+        "security"
+      ]
     },
     "undiversified": {
       "type": "boolean"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "insufficient"
+      ]
     }
   }
 }
