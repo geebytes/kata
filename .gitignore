@@ -5,6 +5,11 @@ node_modules/
 node_modules
 dist/
 
+# Build output from `npm pack`. It was committed once — by a `git add -A` right after a release check ran `npm pack` — and a
+# packed tarball in the repository is a stale snapshot of dist/ that drifts from the source and ships to nobody. `dist/` was
+# already ignored; this is the same rule for the archive the same command produces.
+*.tgz
+
 # Comet change runtime state. Durable artifacts stay tracked: the change's .comet.yaml and
 # .openspec.yaml, .comet/handoff/, and .comet/subagent-progress.md.
 openspec/changes/*/.comet/*
