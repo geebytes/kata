@@ -28,7 +28,7 @@
 - `kata-cli adversarial record`（旧记录器）与 `src/quality/reviewer.ts` 的写入半已删除（`src/cli/ops.ts:167-186`、`:360-372`）。
 - 实测三个已批准 change：`round-protocol` `status=approved findings=0`；`kata-gate-surface` `approved findings=0`；`review-record-integrity` `approved route=ledger findings=0`。
 
-因此 §1.1 的三处派生今天读的是一个**永远为空的字段**：`navigation.ts:419,429` 的两个分支不可达，`repair-entry.ts:133-135` 只剩 `superseded` 一条能进入，`distill-gates.ts:85` 恒为假。
+**三处读的不是同一个来源。** `navigation.ts:189-196` 已经从 ledger 取开放问题（`openLedgerProblems`，活的生产者），只是名字仍叫 findings；`repair-entry.ts:133-135` 与 `distill-gates.ts:85` 读的却是 `review.json.findings`，而该字段没有生产者，因此这两处今天恒为假（`repair-entry` 只剩 `superseded` 一条能进入）。同一个问题、两个来源、三处派生：这是本 change 要收口的东西，也是设计阶段第一版把它写成“三处都读空字段”时看错的地方。
 
 这不是意外，而是被有意留下的半成品。`src/cli/ops.ts:370` 明确写了新路线的主张：
 
