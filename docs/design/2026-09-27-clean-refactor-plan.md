@@ -1191,12 +1191,12 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 | 验收 | 状态 | 依据 |
 |---|---|---|
 | no-record rate = 0 | ✅ | 逐步写入（`ledger-records-each-fact-as-it-arrives`） |
-| 内核平台耦合 = 0 | ✅ | K5 文本+类型检查；本轮补上 `src/kernel/**` 之外**全仓**的耦合索引与 adapters 改变半径 = **4 个模块**（其中 2 个是 CLI 参数面，另 2 个是"一个事实两处"的工作区根检测） |
+| 内核平台耦合 = 0 | ✅（K5 部分） | K5 文本+类型检查是**唯一有仪器**的一半。`src/kernel/**` 之外的全仓耦合索引与 adapters 改变半径**只有一次手测**（= **4 个模块**：2 个 CLI 参数面 + 2 个"一个事实两处"的工作区根检测），**代码里不存在** —— 全仓检索标识符与概念名只命中本文档。按 §14 第 21 条应记为 **C**；本节此前写成 ✅ 是错的，见 §26 |
 | 预算耗尽永不 pass | ✅ | K3 决策矩阵 |
 | **Cost ≤ 0.6 C0** | ✅（带基准声明） | 0.256 × C0。**两侧证据性质不同**：C0 是自报（两份记录报 0，已标记 `tokensUnreported`），新路线是 kata 实测 —— 报告里用一个字段写明，不放进脚注 |
-| full re-review ↓≥70% | ✅（claim 级） | claim 级重开 **0** 次（旧路线：任何修复必然重开，实测 100%） |
-| blocking/major 证据 ≥95% 可重放 | ✅ | 3 个账本 change、17 条 claim，每条自带 `{before, mutated, after}` 实测三元组 |
-| gate mutation kill = 100% | ✅（内核层） | K2 按**每条**检查强制：无变异声明的检查按名拒绝。全仓其余检查未审计 —— 这是范围，不是遗漏 |
+| full re-review ↓≥70% | ⚠️ **口径需澄清** | 读的数是 `claim.reopens`，其**唯一写入者是 `ledger claim reopen`**（操作者命令，**无任何测试行使**）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实** ⇒ 该验收当前读的是操作者计数，不是机制的重开次数，见 §26 |
+| blocking/major 证据 ≥95% 可重放 | ⚠️ **记录形状成立，可重放率未测** | 3 个账本 change、17 条 claim，每条自带 `{before, mutated, after}` 实测三元组 —— 但**三元组是记录，不是重放**。全仓**没有重放器**（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正有一条 `mutation site is gone` 的分支。此前的 ✅ 是把一个记录形状当成了另一个性质，见 §26 |
+| gate mutation kill = 100% | ⚠️ **未测整体，逐条仪器有效** | K2 按**每条**检查强制：无变异声明的检查按名拒绝。**实测一条规则**：关掉 `uncovered_risk_class` → **11 个用例变红**（5 个文件）⇒ 逐条规则可被杀死；而"18 条 reason × 各一条变异 = 100%"这个整体claim**没有 harness**，未测，见 §26 |
 | CriticalRecall ≥ baseline | ❌ **不可获得** | 分母是"旧机制在同一语料上的召回"，而旧机制已被删除 —— 这个基线永远测不到了。可得的替代是 `ledger verifier` 的内核召回 0.462，它测的是**判定**而非"评审者能否找到缺陷" |
 | FalsePass ≤ baseline | ❌ **同上** | 同因：要比较的机制不存在了 |
 
@@ -1207,7 +1207,7 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 **P3「生产者层」：以另一种形式落地，实测如下，方案文字已过时。**
 方案写的是 `static-analysis`/`mutation`/`llm-review`/`human`/`quorum` 五个生产者模块。落地的形状是**四条证据类型 + 各自的 verifier**（`src/producers/verifiers.ts`）：`static_witness`（静态分析）· `executable_falsifier`（**变异**：跑前/变异/跑后三元组）· `cross_artifact_contradiction` · `expert_concurrence`；另加 `planner`（读取集/所需强度/期限）· `quorum`（按证据比较而非计数）· `submission`（生产者提交判定即按名拒绝）· `port`（三个接缝）。**"human 生产者"就是作者自己的 CLI 动词**（`ledger claim add` / `evidence add` / `verify`），"llm-review 生产者"是 `ledger run` 发出的请求 + 回答它的会话。真正缺的只有"机器生产者主动 propose"这一半，而它需要一次模型调用，不在确定性 CLI 的范围内。
 
-**P6 三项**：K6 差分 ✅（本轮补上"它行使哪几类证据"的守卫）· Platform Coupling Index ✅（本轮）· Adapter Change Radius ✅ = 4 · **shadow 试点 ❌**：需要跨时间的真实 change 样本，本仓没有；当前三点数据是它的第一批样本（claim 级重开 0 次），但把 3 个样本当试点结论就是编数字。
+**P6 四项的实况（更正）**：K6 差分 ✅（本轮补上"它行使哪几类证据"的守卫）· **Platform Coupling Index ❌ 与 Adapter Change Radius ❌ 代码里不存在** —— 本轮手测过一次全仓耦合与半径 = 4，但**没有留下仪器**，所以它们是 **C 类（未落地）**；本节此前写成 ✅ 与 §14 第 21 条直接冲突，是同一文档对同一事实给出两个答案 · **shadow 试点 ❌**：需要跨时间的真实 change 样本，本仓没有；当前四点数据是它的第一批样本，但把 4 个样本当试点结论就是编数字。
 
 ## 25. 七个缺陷类：还差两条检查
 
@@ -1215,3 +1215,50 @@ wiring check：47（起点）→ 41，且**全部**是"仅由测试引用"的既
 - **类 2「读声明却声称读了现实」**：给每个 `*Status`/`*Verdict` 断言其 message 提到的对象与它真正读的对象一致 —— 需要一张"这个函数读的是 X"的表，而表本身就要人来写。
 - **类 4「一次决策多个入口，一个不留痕」**：断言"每个写决策的入口都留痕" —— 需要一个入口枚举，同样需要人来维护。
 两条都记在文档里，不假装已覆盖。
+
+---
+
+## 26. 按验收依据重审后的更正（四类，全部实测）
+
+本节录入一次"把本文档的可核对断言逐条拿去核对代码"的结果。方法同 §14，分类同 §14（A 一致 · B 落地但形态不同有理由 · C 未落地 · D 文档陈旧/自相矛盾 · **E 落地本身引入了方案要消除的缺陷**）。完整的调查记录在 `docs/architecture-reviews/2026-09-27-current-workflow-code-review.md` §13。
+
+### 26.1 E 类（已修）：归档门对**账本缺失**fail open
+
+`assertDistillGates` 对账本 `unreadable` 与 `not-pass` 记失败，**对 `absent` 一次都没测**；而 `review.cleared` 由 `evaluateReviewClearance` 给出，它读 `review.json` 而**从不读它所引用的账本**。用门自己的拒绝文本实测（任务目录复制进临时工作区）：
+
+```
+账本存在但不可读:  …; the ledger cannot be read: the ledger holds claims but no frozen subject…
+账本目录被删除:    …; the Judge has not passed this change (not_passed)   ← 账本不在失败清单里
+```
+
+区分"合法缺失"与"洞"的事实**已经被记录**：
+
+```
+review.json: { status: "approved", reviewRoute: "ledger", ledgerReview: { subjectRevision: … } }
+grep reviewRoute src/   → 只有一处写入，没有任何读者
+```
+
+**修法**：`reviewRoute` 有了它缺的读者 —— `ReviewClearance.restsOn`（`ledger` | `adversarial` | `unstated`），`evaluateLedgerAtArchive` 被告知清关"依据什么"，于是"审批所引用的账本不在了"成为独立状态 `required-but-missing`，且拒绝文本说明"为什么同样的缺失在这里是失败、在别处不是"。两处推导并为一处：清关不再由记录*关于*证据的那份文件回答。用例覆盖双向（缺失的账本路审批被拒并点名校本；从未用过账本的变更仍然清关）。commit `46ddadb`。
+
+### 26.2 D 类（本节更正）：同一份文档对同一事实两个答案
+
+- **§14 第 21 条**记 P6 两项为 **C（未落地）** —— **正确**。
+- **§23 与 §24** 记 Platform Coupling Index ✅、Adapter Change Radius ✅ = 4 —— **错误**：全仓检索标识符（`platformCoupling` / `couplingIndex` / `adapterChangeRadius`）与概念名，**只命中本文档**，代码里不存在。它们是一次手测，没有留下仪器。
+- 处置：§23/§24 已改为"C 类 + 手测一次、无仪器"。**结论：判断落地是否达标的基准就是本文档，所以本文档自己必须只有一种答案** —— 这就是本节存在的理由。
+
+### 26.3 D 类（本节更正）：两处把"记录形状"当成了"另一个性质"
+
+- **`blocking/major 证据 ≥95% 可重放`** 的 ✅ 依据是"每条自带 `{before, mutated, after}` 三元组"。**三元组是记录，不是重放**：全仓没有重放器，且重放率可证 <100%（变异点在代码里，代码一动就消失，而 falsifier 正有一条 `mutation site is gone` 的分支）。已改为"记录形状成立，可重放率未测"，并列为待决定：建重放器，或把验收改成可测形态（例如"每条证据的变异点在本 revision 上仍可解析"）。
+- **`full re-review ↓ ≥70%`** 读的是 `claim.reopens`，其唯一写入者是**操作者命令** `ledger claim reopen`（无任何测试行使），而机制自身的自动重开是 `decision.revalidateClaims`（从不增加该计数）。一个词覆盖两个事实。已改为"口径需澄清"，并列为待决定：分开命名，并补一条行使 `claim reopen` 的用例。
+
+### 26.4 C 类（未测）：`gate mutation kill = 100%` 没有 harness
+
+K2 落地的是**逐条强制**（无变异声明的检查按名拒绝）。**实测一条规则**：关掉 `uncovered_risk_class` → **11 个用例变红**（5 个文件），所以逐条规则的仪器有效；而"18 条 reason 各有一条能杀死它的变异"这个整体claim**未测**。两个可选处置：补 harness（18 条变异），或把验收改写成"每条 reason 都有一个能被删除规则触发的种子"—— 后者已有仪器（26 种子 / 18 reason 全部被行使）。
+
+### 26.5 这一节之后，本文档与代码的关系
+
+```
+判断落地是否达标的基准 = 本文档
+所以本文档里每一个 ✅ 必须有一个【仪器】而不是一次手测，且同一事实只能有一个答案。
+以上四条里：1 条是代码缺陷（已修）· 3 条是本文档自身的缺陷（已改），其中 2 条留为待决定。
+```
