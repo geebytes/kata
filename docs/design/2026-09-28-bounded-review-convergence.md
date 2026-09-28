@@ -120,3 +120,21 @@ AC-2 要求的性质是单调：`std ⊆ strict ⊆ security`，且 `std` 严格
 - 去掉批准前的阻塞检查，`review --approve` 用例失败；
 - 把“不下降”的判断反向，升级用例失败；
 - 阻塞项数量无法测量时输出 `null` 而不是 0，且用例断言这一点。
+
+## 5. AC-3 与既有决定的冲突（实施中发现，待决策）
+
+设计阶段把 AC-3 当作“把 review 侧阻塞接回批准路径”。实施时核对代码后，这个做法与本仓库一条**有记录的、刻意的删除**冲突，因此停下来记录，而不是照做。
+
+`src/workflow/orchestrator.ts` 的 ledger 分支在批准路径上留有一段说明（`cmdReview` 内，约 1463 行起）：
+
+> “This branch used to consult the round-shaped findings table and the obligation store beside the decision … the last place where one fact had two derivations … An approval that rests on claims and evidence is answered by `decide` … a table about a pass that no longer gates anything has nothing to add to it. The dead branch is deleted rather than left empty. An ordered list with nothing in it, checked for being non-empty, is a guard that cannot fire — the class this repository has removed more times than any other.”
+
+也就是说：在 `cmdReview` 里重新读 `review.json.findings` 并据此拒绝，等于**撤销这次修复**，并把“不会触发的守卫”这一类重新引入。
+
+同时，AC-3 的第二半（“低于门槛的 finding 仍然批准”）在 ledger 路线上不可达：内核 `evaluateClaim` 对**任何**未支持/被反驳的 claim 都产生 reason，`Decision.verdict` 因此为 `fail`/`insufficient`，与严重度无关（严重度只影响**所需证据强度**，不影响是否拒绝）。所以不存在“minor 开放而批准”的情形，除非把 `review.json.findings` 恢复成第二个判定来源。
+
+## 6. 待你选择的两种收口
+
+**A. 对齐说法（不改既有决定）**：AC-3 的第一半由现有拒绝承担（ledger verdict 非 `pass` 即拒绝），并把该拒绝的措辞改为**用具名问题表达模式门槛**（`mergeBlockingProblems` 在同一个派生上跑一遍，把 claim id 与 severity 写进错误与 diagnostics）。第二半无法取证，需要你在验收上明确接受“该子句在 ledger 路线不可达”。
+
+**B. 恢复第二个来源（撤销既有决定）**：把 `review.json.findings` 接回批准路径，使 AC-3 按字面成立。代价是重新引入“同一问题两个来源”，并需要一个 findings 的写入者，否则该分支仍是不会触发的守卫——而那正属于本仓库反复清除的类别。
