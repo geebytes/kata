@@ -1,5 +1,7 @@
 # Review decided by evidence: the round-shaped route is gone
 
+> **Version 0.2.0.** Read the addendum and the 0.2.0 section at the end for what changed after the first draft.
+
 **2026-09-27 · changes `round-protocol`, `adversarial-admissibility`, `review-record-integrity` + the settlement that followed**
 
 ## What changed for an operator
@@ -174,3 +176,37 @@ by name, pointing at the JSON form.
 producing statement can be removed and a watcher turns red — but the instrument is `scripts/mutation-kill.mjs`, run on
 demand (~8 minutes), not part of the suite; the ✅ in the plan is a measurement, not a continuously verified property.
 `shadow pilot` remains undone: it needs samples over time, and one sample is not a pilot.
+
+---
+
+# 0.2.0 — the local release
+
+**2026-09-27 · version bump, and the last three findings from installing the artifact**
+
+**The version is 0.2.0.** It was still 0.1.0 while this release deletes eight commands, renames a cost-report field and
+adds a required release gate; pre-1.0 semver allows all three in the minor slot.
+
+**A required gate that cannot be measured is a wall, not a standard.** Installing the packaged artifact into a scratch
+workspace and running the manifest there reported `releaseReady: false` — "evidence-replayable produced no
+measurement". With no ledger in the workspace the gate can never be scored, so a fresh project could never certify a
+release. The criterion is about *recorded verdicts*, and a project that has none has nothing for a replay to contradict.
+The gate now tells three cases apart:
+
+| the workspace | what the gate reports |
+|---|---|
+| no ledger at all | `skipped`, **not a gap**, and its details say so |
+| ledgers exist, nothing scored | still required and still unmeasured ⇒ **not release-ready** |
+| the sweep itself failed | stays required — a repository that could not be walked is not an empty one |
+
+Measured both ways: this repository (three ledgers, replay runs) reports `releaseReady: true` with 7 scored gates and 2
+informational skips; a fresh install reports `releaseReady: true` with 6 scored and 3 skips, the third reading "This
+workspace has no evidence ledger, so there is nothing to replay. Not a gap".
+
+**A packed tarball was committed, and is not any more.** `npm pack` ran during the release check and a following
+`git add -A` swept `kata-dev-kata-0.1.0.tgz` into the commit — a stale snapshot of `dist/` that ships to nobody and drifts
+from the source. `dist/` was already ignored; `*.tgz` is ignored now, and the file is untracked. Found by the post-merge
+`git status`, which is the check that exists for exactly this.
+
+**One more refusal by name.** `evals/dogfood-app.yaml` was a second copy of a JSON manifest in a format the loader never
+parsed, and running it produced `Unexpected token '#'` — a complaint about a token rather than about the rule. The file is
+gone and a non-JSON manifest is refused by name, pointing at the JSON form.

@@ -29,6 +29,7 @@
 | `kata-cli ledger challenge add \| check` | Record a counterexample for the author to answer, and let the ledger see whether it still reproduces |
 | `kata-cli ledger decide` | The verdict the gates read: `pass`, `fail` or `insufficient`, with the kernel's reasons |
 | `kata-cli ledger status [--cost]` | Per claim: state, evidence, challenges — and the cost report, including the author-side re-openings |
+| `kata-cli ledger replay` | Re-run every recorded evidence item through the verifier that decided it and report how many verdicts still reproduce. **Writes nothing** — verdicts are returned, not recorded. Exit 1 when a verdict was contradicted or could not be evaluated |
 | `kata-cli ledger run` / `kata-cli ledger request-check` | Issue a review request, then check the ledger against it and name the gaps |
 | `kata-cli ledger corpus` / `ledger verifier` / `ledger detectability` / `ledger baseline` | The measurement instruments: the scenario corpus, the retired corpus scored by this kernel, whether a planted defect is detectable, and what each route cost per change |
 | `kata-cli revision digests <task-id> [--since <rev>]` | The per-path content table a delta round is measured against |
@@ -324,6 +325,19 @@ kernel and reports mismatches rather than averaging them; `ledger verifier` scor
 `ledger detectability` puts a planted defect back and reports whether the check owning it reddens; `ledger baseline`
 reports what each route cost per change, labelling which side is self-reported.
 
+**`ledger replay` answers a different question from the other four, and it is the one the release gate reads.** A recorded
+`{before, mutated, after}` triple is the *record* of a measurement, and it cannot say whether the measurement still holds:
+the artifact the check reads and the mutation site the falsifier edits both move. Replay re-runs each item and compares.
+Measured on this repository's three archived ledgers: 17 recorded verdicts, **6 reproduced · 0 contradicted · 11 could no
+longer be evaluated** — the test files they cite were deleted with the retired route, so the check exits non-zero before
+any mutation. It reports `changed` (the record and the world disagree) and `decayed` (the check cannot be run) as separate
+lists, because "the record is false" and "the record can no longer be checked" are different statements.
+
+The `--cost` report names its two re-openings separately, because one word used to cover both: `attributableReopens` is
+what `ledger claim reopen` stamps (a person's decision, persisted), `automaticReopens` is what the delta computes at each
+decision (`ClaimState.stale`, never persisted), and `reReviewClaims` is their sum — the quantity the acceptance item about
+re-review means.
+
 **An archived change's records.** The eleven changes that ran on the round-shaped route hold their records on disk
 (`adversarial-review.json`, `repair-*.json`) with no kata command left to read them, and the six schemas they were written
 against are retired. They are history: git reads them, and the specification that described the route has been archived out
@@ -351,16 +365,32 @@ The harness executes every fixture the manifest declares — open, design, a sea
 
 ## Release gates
 
-Before release, Kata checks:
+`kata-cli eval <manifest>` scores nine gates. **Read `releaseReady`, not `allPass`.** They answer different questions:
+`allPass` says "of the gates that were scored, all passed" — a gate that never received its input is reported `skipped`
+and excluded — so `allPass: true` can be printed while a gate that matters was never measured. `releaseReady` is false
+whenever a **required** gate was skipped, and names them.
 
-1. **Acceptance pass rate** >= 80%
-2. **Repair rate** <= 1.0 per task
-3. **Escalation rate** <= 0.5 per task
-4. **Wiki governance** — records present
-5. **Wiki rejection rate** <= 50%
+| Gate | What it reads | Required? |
+|---|---|---|
+| `acceptance-pass-rate` | >= 80% of acceptance criteria passed | yes |
+| `repair-rate` | <= 1.0 repairs per task | yes |
+| `mechanism-seeds` | the kernel's own decision over every seed the mechanism ships, with no hand-declared answer in the path | yes |
+| `wiki-rejection-rate` | <= 50% | yes |
+| `evidence-replayable` | what `ledger replay` measured during this run | yes* |
+| `fixture-expectations` | every fixture produced what its manifest declared | scored when fixtures ran |
+| `wiki-governance` | the Wiki records exist | informational |
+| `escalation-rate` | <= 0.5 per task | informational — a run with no fixtures has no escalation rate |
+| `verifier-critical-recall` | a comparison of two *declared* observation sets | informational |
 
-All gates must pass for release. A gate whose metric was not measured is reported as `skipped` and does not count
-toward the pass/fail total, so "all gates passed" never means "cost was measured".
+`\*` **`evidence-replayable` is required where there is something to replay.** No contradiction is tolerated at any rate;
+the >= 95% floor applies only to ledgers whose content still exists, because a ledger frozen over moved content cannot be
+replayed at all — the artifact and the mutation site are both gone — so its rate would measure the code's life rather than
+the record's truth, and those ledgers are excluded **by name**. A workspace with no evidence ledger at all reports the
+gate `skipped` and *not* as a gap: the criterion is about recorded verdicts, and there are none to contradict. A workspace
+that has ledgers but produced no measurement is a gap, and is not release-ready.
+
+The numbers are measured during the run, not declared in the manifest — the plan's own lesson from
+`verifier-critical-recall`, whose two sides were once both author-written, which cannot hold a line.
 
 ### Runtime refresh after `update`
 
