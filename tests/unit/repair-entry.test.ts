@@ -136,7 +136,7 @@ describe('repair authorisation', () => {
             expect((await authorizeReviewRepair(root, taskId)).denial).toMatch(/not bound to the current sealed revision/);
 
             await writeJson(root, `.kata/tasks/${taskId}/review.json`, { status: 'pending', findings: [{ id: 'finding-1', taskId, severity: 'minor', message: 'Advisory' }] });
-            expect((await authorizeReviewRepair(root, taskId)).denial).toMatch(/blocking \(or strict-mode major\) review findings/);
+            expect((await authorizeReviewRepair(root, taskId)).denial).toMatch(/a problem the standard ladder blocks on \(blocking\)/);
         });
     });
 
