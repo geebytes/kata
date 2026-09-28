@@ -495,7 +495,7 @@ git status                  clean · 本节 9 个 commit
 | §7 P6 · Platform Coupling Index | P6 交付项之一 | **代码里不存在**（全仓检索标识符与概念名，只命中方案文档本身） | **C ⚠️ 而文档自称 ✅** |
 | §7 P6 · Adapter Change Radius | P6 交付项之一 | **代码里不存在**；§14 第 21 条记为 C ✅ 正确，而 §23/§25 两处记为 **✅ = 4 个模块** —— **同一文档自相矛盾** | **D**（同一份方案对同一事实两个答案） |
 | §8 · `新平台接入修改非 adapter 文件数 = 0` | 验收项 | **无仪器**；唯一一次手测的值是 **4**，即**按验收标准本身不合格** | **C** |
-| §8 · `blocking/major 证据 ≥95% 可重放` | 验收项 | 记为 ✅，依据是"每条自带 `{before, mutated, after}` 实测三元组" —— 但**三元组是记录，不是重放**；全仓没有重放器（`grep replayable src/` 为空），且重放率**可证 <100%**：变异点在代码里，代码一动它就消失，而 falsifier 正是有一条 `mutation site is gone` 的路径 | **D**（把一个记录形状当成另一个性质） |
+| §8 · `blocking/major 证据 ≥95% 可重放` | 验收项 | **已修**：原 ✅ 的依据是"每条自带 `{before, mutated, after}` 三元组" —— 而**三元组是记录，不是重放**。重放器落地后实测 **6/17 复现 · 0 推翻 · 11 无法评估 · 率 0.353**（被引用的测试文件随退役路由删除，命令在变异前就非零退出）。判据拆成**零推翻（一律要求）**与**率下限 ≥95%（仅内容仍存在的账本，具名排除已移动的）**，接入 `checkReleaseGates` 成为**必需门** | **D → 已修** |
 | §8 · `gate mutation kill = 100%`（K2） | 验收项 | **已修**：`scripts/mutation-kill.mjs` 按 `ReasonCode` 逐条注释掉产出该 reason 的语句，要求 5 个 watcher 里至少一个变红 —— **实测 18/18、零 survivor**（此前只有单条实测：关掉 `uncovered_risk_class` → 11 个用例变红） | **C → 已测** |
 | §8 · `full re-review ↓ ≥70%` | 验收项 | 读的数是 `claim.reopens`，其写入者是 `ledger claim reopen`（操作者命令 —— **更正：它有测试行使**，`ledger-cli-end-to-end` 里 `['claim','reopen','C1']` 并断言计数为 1；我先前用字符串 `claim reopen` 搜测试，漏掉了被拆成数组的 argv）；机制自身的自动重开是 `decision.revalidateClaims`（每次判定算出、**从不增加该计数**）。**一个词覆盖两个事实**，验收项读的是操作者计数 | **B**（已修：两个名字 + 和） |
 | §8 · `no-record rate = 0%` | 结构上成立 | ✅ 增量落盘，新路径无"最后交一份文档"这一步 | A |
@@ -551,6 +551,6 @@ grep -rn "state === 'absent'"  src/   →  只有一处【返回】（distill-ga
 1. **E 类（13.2）先修** —— 一个已记录、无读者的字段就是这个洞的补丁；加一条用例：删掉账本目录后门必须拒绝，并点名"审批的依据是账本"。
 2. **`reviewRoute` 加读者** 与上一条同一处修改（它与清关的推导应合并，使清关由证据给出而不是由关于证据的记录给出）。
 3. **方案文档三处同步**：P6 两个交付项改回 C（或写明"手测一次、无仪器"）· §23/§25 与 §14 的 ✅/C 冲突消解 · §8 两条不可获得的验收按改写后的状态落文。
-4. **`≥95% 可重放` 要么建重放器，要么改成可测的形态**（例如"每条证据的变异点在本 revision 上仍可解析"），否则它是一个永远只能靠记录的claim。
+4. **`≥95% 可重放`**（**已修**）：重放器落地（`ledger replay`，**只读** —— 判决返回而非落盘，用例用账本目录的字节快照钉住），实测 **6/17 复现 · 0 推翻 · 11 无法评估 · 率 0.353**。判据拆成**零推翻（一律）**与**率下限 ≥95%（仅内容仍存在的账本）**，接入 `checkReleaseGates` 成为**必需门**，数字由 `replayAllLedgers` 现场测出而不是写进 manifest。
 5. **`full re-review ↓ ≥70%` 的口径**（已修）：分开命名为 `automaticReopens`（delta 算出、从不落盘）与 `attributableReopens`（`ledger claim reopen` 盖章），并给出和 `reReviewClaims`；验收读后者的和。**更正一处**：我先前说"该写入者无任何测试行使"，那是错的 —— 我用字符串 `claim reopen` 搜测试，而 e2e 里是 `['claim','reopen','C1']` 的数组形式，且它断言了计数为 1。**结构性原因让 grep 说谎**（此前还有一次是动态 import）—— 所以判据应是"运行它"，不是"搜它"。
 6. **`gate mutation kill = 100%`**（已修）：`scripts/mutation-kill.mjs` 派生变异（从 `ReasonCode` 联合取 reason、在 `decide.ts` 里找产出语句并注释），**实测 18/18、零 survivor**；两道防伪是 `esbuild` 语法门与 `finally` 复原（跑完 `git status` 为空）。**这个仪器第一版自己被机器抓到两处错**：前缀匹配到 `ReasonCode` 后又固定读 4000 字符，收进了 `fail`/`insufficient`/`verifier` 三个非 reason 成员 —— 报告说 21 条 1 survivor，真值是 18 条 0 survivor。两处都补了会变红的用例（联合 ↔ schema 枚举同一套键；每条 reason 在 `decide.ts` 有产出语句）。
