@@ -85,6 +85,14 @@ export async function checkReleaseGates(
      *   would demand that nothing ever be refactored. Those ledgers are reported with their rate and excluded by
      *   `contentMoved`, named rather than quietly dropped.
      */
+    /**
+     * How many task directories the replay sweep found.
+     *
+     * Zero means this workspace has nothing to replay — a fresh project, or one that has not recorded an evidence ledger
+     * yet — and the gate reports that as a state rather than as an unmeasured requirement. Non-zero with nothing scored is
+     * a gap and stays required.
+     */
+    evidenceLedgerCount?: number;
     evidenceReplay?: Array<{
       changeId: string;
       /** Verdicts re-run through the same verifier that decided them. The denominator. */
@@ -279,13 +287,19 @@ export async function checkReleaseGates(
     : canBeJudged.reduce((total, entry) => total + entry.agrees, 0) / canBeJudged.reduce((total, entry) => total + entry.replayed, 0);
   const movedCount = (replay ?? []).filter((entry) => entry.contentMoved).length;
   const decayedCount = (replay ?? []).reduce((total, entry) => total + entry.decayed.length, 0);
+  const noLedgerYet = options.evidenceLedgerCount === 0;
   const replayGate: ReleaseGate = replay === undefined
     ? {
         name: 'evidence-replayable',
         description: 'No recorded verdict is contradicted by a replay, and replayable content reproduces at >= 95%',
         pass: true,
         skipped: true,
-        details: 'No ledger was replayed, so no recorded verdict was re-checked.',
+        details: noLedgerYet
+          // A state, not a gap: there is no recorded evidence in this workspace, so there is nothing a replay could
+          // contradict. Measured on a fresh install of the packaged artifact, where treating this as a gap made
+          // `releaseReady` permanently false — a wall unrelated to the quality the criterion is about.
+          ? 'This workspace has no evidence ledger, so there is nothing to replay. Not a gap: the criterion is about recorded verdicts, and none exist.'
+          : 'Ledgers exist in this workspace but nothing was scored, so no recorded verdict was re-checked.',
       }
     : {
         name: 'evidence-replayable',
@@ -321,6 +335,9 @@ export async function checkReleaseGates(
   const qualityGates = new Set(['mechanism-seeds', 'acceptance-pass-rate', 'wiki-rejection-rate', 'evidence-replayable']);
   const unmeasuredRequiredGates = gates
     .filter((gate) => gate.skipped === true && qualityGates.has(gate.name))
+    // **Except where the requirement cannot have an input.** A workspace with no ledger is the one case where
+    // `evidence-replayable` is skipped and that is not a gap: there is no recorded verdict for a replay to contradict.
+    .filter((gate) => !(gate.name === 'evidence-replayable' && noLedgerYet))
     .map((gate) => ({ name: gate.name, details: gate.details }));
   const releaseReady = allPass && unmeasuredRequiredGates.length === 0;
 

@@ -76,18 +76,31 @@ export interface ReplayReport {
  * measures the code's life rather than the record's truth. Those are counted and named rather than quietly dropped, and the
  * gate is told so it can apply the rate floor only where the rate means something.
  */
-export async function replayAllLedgers(root: string): Promise<Array<{
-    changeId: string;
-    replayed: number;
-    agrees: number;
-    disagreements: string[];
-    decayed: string[];
-    contentMoved: boolean;
-}>> {
+export async function replayAllLedgers(root: string): Promise<{
+    /**
+     * How many task directories exist at all.
+     *
+     * **This is what tells "nothing to replay" apart from "something to replay that was not measured".** Measured by
+     * installing the packaged artifact into a scratch workspace and running the evaluation manifest there: with no ledger
+     * in the workspace the gate could never be measured, and a required gate that cannot be measured made `releaseReady`
+     * permanently false for a fresh project — a wall with nothing to do with quality. A workspace with ledgers that yield
+     * no measurement is the opposite case and *is* a gap.
+     */
+    ledgers: number;
+    entries: Array<{
+        changeId: string;
+        replayed: number;
+        agrees: number;
+        disagreements: string[];
+        decayed: string[];
+        contentMoved: boolean;
+    }>;
+}> {
     const { changeIdsWithRecords } = await import('./baseline.js');
     const { ledgerDrift } = await import('./ledger.js');
+    const ids = await changeIdsWithRecords(root);
     const out: Array<{ changeId: string; replayed: number; agrees: number; disagreements: string[]; decayed: string[]; contentMoved: boolean }> = [];
-    for (const changeId of await changeIdsWithRecords(root)) {
+    for (const changeId of ids) {
         const drift = await ledgerDrift(root, changeId);
         // No frozen subject means no recorded verdict is about anything: `replayEvidence` refuses, and a refusal is not a
         // measurement, so the ledger is left out rather than reported as a zero rate.
@@ -107,7 +120,7 @@ export async function replayAllLedgers(root: string): Promise<Array<{
             contentMoved: moved,
         });
     }
-    return out;
+    return { ledgers: ids.length, entries: out };
 }
 
 export async function replayEvidence(input: {

@@ -64,11 +64,35 @@ describe('evidence replay is gated where it means something', () => {
         expect(moved.details).toContain('nothing replayable to score, so no rate');
     });
 
-    it('is a required gate, so a release that never replayed anything is not release-ready', async () => {
-        const never = await checkReleaseGates('.', metrics, {});
-        const gate = never.gates.find((entry) => entry.name === 'evidence-replayable')!;
+    it('is required where there is something to replay: ledgers exist and nothing was scored', async () => {
+        // Ledgers are present in the workspace (`evidenceLedgerCount` > 0) and the gate received no measurement: that is a
+        // gap, and a required gate that was never measured cannot certify a release.
+        const gap = await checkReleaseGates('.', metrics, { evidenceLedgerCount: 3 });
+        const gate = gap.gates.find((entry) => entry.name === 'evidence-replayable')!;
         expect(gate.skipped, 'nothing was replayed, so the gate reports that it does not know').toBe(true);
-        expect(never.releaseReady, 'a required gate that was never measured cannot certify a release').toBe(false);
-        expect(never.unmeasuredRequiredGates.map((entry) => entry.name)).toContain('evidence-replayable');
+        expect(gate.details).toContain('Ledgers exist in this workspace but nothing was scored');
+        expect(gap.releaseReady, 'a required gate that was never measured cannot certify a release').toBe(false);
+        expect(gap.unmeasuredRequiredGates.map((entry) => entry.name)).toContain('evidence-replayable');
+    });
+
+    it('is not a gap in a workspace that has no ledger at all', async () => {
+        // **Measured by installing the packaged artifact into a scratch workspace and running the manifest there.** With no
+        // ledger, the gate could never be measured, and treating that as an unmeasured requirement made `releaseReady`
+        // permanently false for a fresh project — a wall with nothing to do with the quality the criterion is about.
+        const fresh = await checkReleaseGates('.', metrics, { evidenceLedgerCount: 0 });
+        const gate = fresh.gates.find((entry) => entry.name === 'evidence-replayable')!;
+        expect(gate.skipped).toBe(true);
+        expect(gate.details).toContain('no evidence ledger');
+        expect(gate.details).toContain('Not a gap');
+        expect(fresh.unmeasuredRequiredGates.map((entry) => entry.name)).not.toContain('evidence-replayable');
+    });
+
+    it('keeps a failed sweep a gap, because a broken sweep is not an empty workspace', async () => {
+        // The runner passes `-1` when the sweep throws, so a repository it could not walk is not reported as one with
+        // nothing to replay.
+        const broken = await checkReleaseGates('.', metrics, { evidenceLedgerCount: -1 });
+        const gate = broken.gates.find((entry) => entry.name === 'evidence-replayable')!;
+        expect(gate.details).not.toContain('Not a gap');
+        expect(broken.unmeasuredRequiredGates.map((entry) => entry.name)).toContain('evidence-replayable');
     });
 });
