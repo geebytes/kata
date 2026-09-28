@@ -4,7 +4,7 @@
 
 ## What changed for an operator
 
-**Eight commands are gone.** Each now exits 1 with `unknown command`:
+**Eight commands are gone** (see the addendum at the end for what followed). Each now exits 1 with `unknown command`:
 
 ```
 kata-cli adversarial  brief | record | note | finding | finding add | status | waive | execute | salvage | version | path
@@ -121,3 +121,56 @@ as evidence that the commands ran, never as the current number: run them.
   inventing a number.
 - **Two acceptance items have no obtainable denominator** (`CriticalRecall` and `FalsePass` against the retired route's
   baseline): the mechanism to measure was deleted with the route. They should be rewritten rather than carried.
+
+---
+
+# Addendum — the re-audit, and what it changed for an operator
+
+**2026-09-27 (later) · the settlement re-checked against the plan's own acceptance basis**
+
+After the deletion list was worked through, the landing was re-audited by taking each checkable assertion in
+`docs/design/2026-09-27-clean-refactor-plan.md` and checking it against code (the plan's own A–E vocabulary; full record in
+`docs/architecture-reviews/2026-09-27-current-workflow-code-review.md` §13 and the plan's §26). Five items were wrong. Four
+of them change what an operator sees, so they belong here rather than only in a design doc.
+
+**One command is new: `ledger replay`.** It re-runs every recorded evidence item through the verifier that decided it and
+reports how many verdicts still reproduce. It writes nothing — verdicts are returned, not recorded — so a replay never
+disturbs the ledger it measures. Measured on this repository's three archived ledgers: 17 recorded verdicts, **6
+reproduced · 0 contradicted · 11 could no longer be evaluated** (the cited test files were deleted with the retired route,
+so the checks exit non-zero before any mutation). Exit code is 1 when anything was contradicted or could not be evaluated.
+
+**A new required release gate: `evidence-replayable`.** It reads what `ledger replay` measured during the run — not a
+number written into a manifest — and fails on **any** contradicted verdict, while applying the ≥95% floor only to ledgers
+whose content still exists (a ledger frozen over moved content cannot be replayed at all, so its rate would measure the
+code's life rather than the record's truth; those ledgers are excluded by name). Because it is required, a release that
+never replayed anything is **not release-ready** — the gate reports `skipped` and `releaseReady: false` rather than
+passing on an assumption.
+
+**`ledger status --cost` renamed one field and added two.** `claims.reopenings` is gone:
+
+| was | is | what it counts |
+|---|---|---|
+| `reopenings` | `attributableReopens` | claims a person re-opened with `ledger claim reopen` |
+| — | `automaticReopens` | claims the delta says must be re-verified (`ClaimState.stale`) — computed per decision, never persisted |
+| — | `reReviewClaims` | their sum, which is what the acceptance item means by "re-review" |
+
+One word had covered two facts, and the acceptance item read the operator's counter while the mechanism's own reopen went
+uncounted. Anything parsing this JSON must be updated.
+
+**An approval can no longer outlive its evidence.** `review.json` records `reviewRoute`, and for a ledger-route approval
+the archive gate now refuses when the ledger is **gone** and not only when it cannot be read. Previously the gate refused a
+ledger it could not read and said nothing about one that was not there, so deleting `.kata/tasks/<id>/review/` cleared the
+review half while the approval named that ledger as its basis. The refusal says which situation it is.
+
+**`ledger plan` now reports the tier the decision will use.** It reported the *classification* tier (`standard`) while
+`ledger decide` reported the policy ceiling (`strict`), so a plan's required evidence and risk classes were computed for a
+weaker tier than its own gate. An explicit `--tier` still wins, including below the ceiling.
+
+**Two manifests, one left.** `evals/dogfood-app.yaml` was a second copy of `evals/dogfood-app.json` in a format this loader
+never parsed; running it produced a token error rather than a rule. The file is gone and a non-JSON manifest is now refused
+by name, pointing at the JSON form.
+
+**Not fixed, and how the two criteria stand.** `gate mutation kill = 100%` is measured — **18/18**, every decision rule's
+producing statement can be removed and a watcher turns red — but the instrument is `scripts/mutation-kill.mjs`, run on
+demand (~8 minutes), not part of the suite; the ✅ in the plan is a measurement, not a continuously verified property.
+`shadow pilot` remains undone: it needs samples over time, and one sample is not a pilot.

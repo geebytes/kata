@@ -354,10 +354,32 @@ export async function persistEvaluationReport(
   await writeReport(filePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 }
 
+/**
+ * Read an evaluation manifest, and **refuse a non-JSON one by name**.
+ *
+ * The manifest is JSON, not YAML: the decorator this reads is a JSON object, and the loader has always parsed JSON. What
+ * it did not do was say so. Measured on this repository's own second manifest — `evals/dogfood-app.yaml`, unreferenced and
+ * left over from before the format was settled — running it produced
+ *
+ *     Unexpected token '#', "#Strata d"... is not valid JSON
+ *
+ * which tells the operator about a token, not about the rule. Worse, a YAML manifest is a *second copy* of one that
+ * already exists as JSON, so the two drift while both look runnable. This refuses by name and points at the JSON form.
+ */
 export async function loadEvaluationManifest(
   filePath: string,
 ): Promise<EvaluationManifest> {
   const { readFile } = await import('node:fs/promises');
   const raw = await readFile(filePath, 'utf8');
-  return JSON.parse(raw) as EvaluationManifest;
+  if (/\.ya?ml$/i.test(filePath)) {
+    throw new Error(
+      `${filePath} is a YAML manifest, and an evaluation manifest must be JSON: this loader reads a JSON object and there is no YAML parser on this path. `
+      + 'Write the manifest as JSON (see `evals/dogfood-app.json`) rather than keeping a second copy in another format, which drifts from the one that runs.',
+    );
+  }
+  try {
+    return JSON.parse(raw) as EvaluationManifest;
+  } catch (error) {
+    throw new Error(`${filePath} is not readable JSON, and an evaluation manifest must be JSON: ${(error as Error).message}`);
+  }
 }
