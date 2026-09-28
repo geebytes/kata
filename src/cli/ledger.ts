@@ -13,6 +13,7 @@ import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
 import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
+import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
@@ -37,84 +38,6 @@ function fail(payload: Record<string, unknown>): void {
 
 function nowIso(): string {
     return new Date().toISOString();
-}
-
-/**
- * The verify context: where a command actually runs, and what it is allowed to touch.
- *
- * **Three properties that were missing, each measured.**
- *
- * 1. **The wall clock is enforced, not recorded.** The old runner passed a hard-coded 600 s, so `Policy.budgets.
- *    maxWallMs` (the tier's envelope, and the number a ledger's `budget_exhausted` comes from) bounded nothing; a
- *    verifier could run far past the envelope the decision then judged it against.
- * 2. **A mutation cannot leave the repository.** Paths went through `resolve(root, path)`, which resolves `..` and
- *    absolute paths happily, so a crafted evidence item could read or overwrite anything the user can — and the
- *    restore step would then write the original content back to that outside path. Containment is now checked before
- *    any read or write.
- * 3. **The producing run has an identity.** `producer()` names the run and the actor, which is what lets
- *    `groupByProducer` tell two independent readings from one reading counted twice, and lets `decide` refuse an
- *    approval asked for by a party that produced the evidence.
- */
-function containedPath(root: string, relativePath: string): string | null {
-    if (relativePath.trim() === '' || isAbsolute(relativePath)) return null;
-    const absolute = resolve(root, relativePath);
-    const inside = relative(root, absolute).replaceAll('\\\\', '/');
-    if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null;
-    return absolute;
-}
-
-function buildContext(
-    root: string,
-    subject: { revision: string; pathDigests: Record<string, string> },
-    options: { timeoutMs: number; producer: VerdictProducer; onRefusal?: (what: string) => void },
-): VerifyContext {
-    return {
-        root,
-        subject,
-        run: async (command: string) => {
-            const result = await runProcess('sh', ['-c', command], {
-                cwd: root,
-                // The tier's own envelope, passed through rather than a second hard-coded number: two limits for one
-                // fact is how a ledger came to report `budget_exhausted` against a bound nothing enforced.
-                timeoutMs: options.timeoutMs,
-                maxCaptureBytes: 200_000,
-            });
-            return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: result.exitCode === 124 };
-        },
-        readText: async (relativePath: string) => {
-            const absolute = containedPath(root, relativePath);
-            if (absolute === null) {
-                options.onRefusal?.(`${relativePath} is outside the workspace root`);
-                return null;
-            }
-            try {
-                return await readFile(absolute, 'utf8');
-            } catch {
-                return null;
-            }
-        },
-        exists: async (relativePath: string) => {
-            const absolute = containedPath(root, relativePath);
-            if (absolute === null) return false;
-            try {
-                await readFile(absolute);
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        writeText: async (relativePath: string, content: string) => {
-            const absolute = containedPath(root, relativePath);
-            if (absolute === null) {
-                // Loud, because this one is the mutation restore path: silently declining to write would leave the
-                // injected defect in place, and a mutation that is not restored is a repository left broken.
-                throw new Error(`refusing to write ${relativePath}: it is outside the workspace root`);
-            }
-            await writeFile(absolute, content, 'utf8');
-        },
-        now: nowIso,
-        producer: () => options.producer,
-    };
 }
 
 function producerFor(argv: string[]): VerdictProducer {
@@ -821,6 +744,30 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         outputResult({ ok: true, command: 'ledger run', request: built.request });
+        return;
+    }
+
+    if (sub === 'replay') {
+        // **The instrument behind "≥95% of the evidence can be replayed".** That item was recorded as satisfied on the
+        // strength of each item carrying a `{before, mutated, after}` triple — a *record* of a measurement, and the record's
+        // shape cannot say whether the measurement still holds, because the two things that make it hold move: the artifact
+        // the check reads, and the mutation site the falsifier edits. This re-runs every recorded item through the same
+        // verifier and reports how many verdicts still reproduce. Nothing is written: verdicts are returned, not recorded.
+        const { replayEvidence } = await import('../store/replay.js');
+        const replayed = await replayEvidence({
+            root: options.root,
+            changeId,
+            ...(argValue(argv, '--adapter') === 'file' ? { adapter: 'file' as const } : {}),
+            ...(argValue(argv, '--results-dir') === undefined ? {} : { resultsDir: argValue(argv, '--results-dir')! }),
+        });
+        if ('refused' in replayed) {
+            fail({ command: 'ledger replay', error: replayed.refused });
+            return;
+        }
+        outputResult({ ok: true, command: 'ledger replay', report: replayed });
+        // A disagreement or a decayed check is a finding about this ledger, not a formatting detail: exiting 0 would let a
+        // script read a broken record as a healthy one.
+        if (replayed.changed.length > 0 || replayed.decayed.length > 0) process.exitCode = 1;
         return;
     }
 

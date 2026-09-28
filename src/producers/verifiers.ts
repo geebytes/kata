@@ -90,6 +90,15 @@ const crossArtifact: EvidenceVerifier = {
  * is injected is not sensitive to that defect, and one that is red before anything is injected is reporting a defect that
  * is already present — both are verdicts about the artifact, not about the check's paperwork.
  */
+/**
+ * The prefix a falsifier writes when its check could not be *evaluated* rather than when the mutation did not redden.
+ *
+ * Exported so the one consumer that needs to tell the two apart — `ledger replay` — reads a constant rather than a
+ * sentence: the verdict is `refuted` in both cases, because the evidence item is invalid either way, but only one of them
+ * means the claim is false.
+ */
+export const CHECK_CANNOT_RUN = 'the check was already failing before any mutation:';
+
 const executableFalsifier: EvidenceVerifier = {
     type: 'executable_falsifier',
     verifier: 'producers/verifiers#executable-falsifier',
@@ -101,7 +110,12 @@ const executableFalsifier: EvidenceVerifier = {
                 evidence,
                 context,
                 verdict: 'refuted',
-                observed: `the check was already failing before any mutation: ${outcomeLine(before)}`,
+                // **Named, because a reader has to classify this case and prose matching is not a derivation.** The verdict
+                // is `refuted` — the evidence item is not valid — but the *cause* is that the check could not be evaluated
+                // at all, and that is a different fact from a claim being false. `ledger replay` reads this marker to split
+                // "the record no longer holds" from "the record can no longer be checked": the same sentence used to be
+                // matched by hand, and a reworded message would have silently moved every such item into the wrong bucket.
+                observed: `${CHECK_CANNOT_RUN} ${outcomeLine(before)}`,
                 verifier: executableFalsifier.verifier,
             });
         }
