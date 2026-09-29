@@ -202,3 +202,28 @@ riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
 **修法**（与该项目既有的"读者填补它之前就存在的部分并报告"同一模式）：`loadPolicy` 遇到字符串 floor 时，从默认表取该模式的类；默认表不认识的模式则填**所有 tier 的必需类**（保守方向，需求至少和当初一样宽）；并把 `riskFloors` 记入 `policyFilled`，使替换可见而不是静默。用例落在 AC-6 的证据文件里：整份默认文档降级为旧形状后必须仍可读、`filled` 必须包含 `riskFloors`、且默认表不认识的模式拿到多于一个类。
 
 **教训**：改了**存储形状**就等于改了**已存记录**的可读性；写入侧的测试全绿说明不了任何事。
+
+## 10. 批准阶段的账本墙：四个原因，两个来自改动的**旧**代码
+
+把 change 推到 `review --approve` 需要账本 pass。账本已按要求建好（6 claim / 6 executable falsifier，`evidence verify` 全部 `supported`），但 `decide` 返回 `insufficient`，四条原因：
+
+| 原因 | 来源 | 是否可解 |
+|---|---|---|
+| `assurance_below_tier`：`observed` 低于 security 的 `sandboxed` | 本 change 触及 `src/kernel/policy.ts`／`decide.ts`（floor `high`）→ 自身档位是 **`security`** | **本机不可解**：内联适配器记录 `observed`，沙箱化运行是宿主能力缺口（父设计已登记的 `#722`／`#728`） |
+| `uncovered_risk_class`：`no claim covers: failure_mode` | **`dist/` 里 master 的 `decide`**，用 `required` 全量判定 —— 而本 change 的改动正是把它改成 `required ∩ touched` | **本 change 自己修的就是它**（重建 `dist/` 后即消失）。实测：本 change 的 `touched = [consistency, privilege, state_transition]`，`required ∩ touched` 已被 C-1／C-4 覆盖 |
+| `discovery_floor`：没有独立 challenge | master 的判定（security 档要求） | 可解：跑一次独立审查并记录 |
+| `quorum_missing`：security 要 2 名独立 reviewer，现有 1 | 同上 | 可解：第二位独立审查者 |
+
+`deficits: []` 而 `reasons` 非空 —— 这**不是**本 change 的缺陷：那四条可执行 deficit 就在 worktree 源码里（§8.3 R-4），而运行的是 master 的 `dist/`（§9.1）。**这条输出本身就是 §9.1 那条漂移的第三个证据。**
+
+### 10.1 结论
+
+- **档位是被动抬升的**：改内核策略文件 → `security` → 该档要求 2 名 reviewer 与沙箱保证。其中沙箱保证在本机无法提供，因此**本 change 无法由账本自己 pass**，只能由人放行——与上一轮 §21 同类，但原因不同（上一轮是风险类判定，这一轮是**过程保证**）。
+- **同族第四次出现**：一条在全量判定下必然为真的要求，作用在一个无法满足它的主体上。上一轮记的是 `strict` 的 `failure_mode`，这一轮记的是 `security` 的 `sandboxed`。差别值得写清楚：前者是**代码可修的**（AC-6 已修），后者是**宿主能力**，只能靠适配器或换执行环境。
+- **`failure_mode` 那条不是缺陷而是证据**：它恰好证明了本 change 的 AC-6 在旧代码下会拒绝一个它应该接受的变更——也就是本 change 存在的理由。
+
+### 10.2 交给用户的三条路
+
+1. **重建 `dist/` 后重跑流程**（推荐）：只有这样才能让流程的判定来自本 change 的**自己的代码**，也才能端到端验证它（§9.2 的 R-10 正是"真的跑一遍"才发现的）。重建会改变**这台机器上所有工作流**使用的 CLI，因此需要授权。重建后仍需人工放行 `assurance_below_tier`（本机无沙箱），但 `uncovered_risk_class` 会消失，`discovery_floor`／`quorum_missing` 可由一次独立审查补齐。
+2. **不重建，直接人工放行**（与上一轮 §21 同形）：账本 `insufficient` 与四条原因如实记录，审批准予人为判断，缺口登记为 follow-up。
+3. **补一条 `failure_mode` claim**：能把 master 判定下的类要求补上，但 `assurance_below_tier` 仍然拒绝，所以仍需人工放行——修的是症状而非墙。
