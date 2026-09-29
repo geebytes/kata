@@ -222,18 +222,49 @@ export function loadPolicy(value: unknown): PolicyLoad {
     if (typeof value.version !== 'number') return { ok: false, error: 'version must be a number' };
     // Only for version 1, and only for known sections: an unknown key is still refused by the enumeration below.
     if (value.version === 1) {
-        const stored: Record<string, unknown> = value;
-        // `Record<string, unknown>` is what the *stored* document is; the defaults are a `Policy`, and treating them as an
-        // untyped bag was only ever needed to index them by name. `policyKeyPaths` already answers that question.
+        // **Fills compose, and the filled document is what is returned.** The first version of this step patched the
+        // sections a stored policy predates and returned the *patched* document — while patching only the floors fell
+        // through to the original, so the conversion was computed and then discarded. One accumulator, one return.
         const defaults: Record<string, unknown> = { ...defaultPolicy() };
+        const stored: Record<string, unknown> = { ...value };
         const filled: string[] = [];
         for (const section of ['tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline']) {
-            if (stored[section] === undefined) filled.push(section);
+            if (stored[section] === undefined) {
+                stored[section] = defaults[section];
+                filled.push(section);
+            }
+        }
+        // **A `riskFloors` entry stored as a bare floor predates the risk classes it now carries, and it is filled rather
+        // than refused.** Measured, by running a governed change through the installed CLI and then reading its policy with
+        // this build: `{"src/quality/**": "medium"}` — the shape every policy written before this change has — was rejected
+        // with `riskFloors["src/quality/**"] must be an object carrying floor and riskClasses`, which would have made every
+        // existing ledger unreadable and every review undecidable. A reader that cannot read a store of record has destroyed
+        // the record.
+        //
+        // The classes an old entry is about come from the defaults for that pattern; a pattern the defaults do not name is
+        // filled with every tier's required classes, which is the conservative direction — the demand stays at least as wide
+        // as it was when the table was written — and the substitution is named in `filled`.
+        const storedFloors = stored.riskFloors;
+        if (isRecord(storedFloors)) {
+            const defaultFloors = defaults.riskFloors as Record<string, { floor: string; riskClasses: string[] }>;
+            const required = [...new Set(Object.values(defaults.tiers as Record<string, { requiredRiskClasses: string[] }>).flatMap((tier) => tier.requiredRiskClasses))];
+            let convertedAny = false;
+            const converted: Record<string, unknown> = {};
+            for (const [pattern, entry] of Object.entries(storedFloors)) {
+                if (typeof entry !== 'string') {
+                    converted[pattern] = entry;
+                    continue;
+                }
+                converted[pattern] = { floor: entry, riskClasses: defaultFloors[pattern]?.riskClasses ?? required };
+                convertedAny = true;
+            }
+            if (convertedAny) {
+                stored.riskFloors = converted;
+                if (!filled.includes('riskFloors')) filled.push('riskFloors');
+            }
         }
         if (filled.length > 0) {
-            const patched: Record<string, unknown> = { ...stored };
-            for (const section of filled) patched[section] = defaults[section];
-            const result = loadFilled(patched);
+            const result = loadFilled(stored);
             return result.ok ? { ...result, filled } : result;
         }
     }

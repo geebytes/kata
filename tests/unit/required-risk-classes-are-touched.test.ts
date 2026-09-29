@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decide, type DecideInput } from '../../src/kernel/decide.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
+import { loadPolicy } from '../../src/kernel/policy.js';
 import { classifyRisk } from '../../src/kernel/risk.js';
 import { makeClaim, makeEvidence, makePolicy, makeSubject, makeVerdict } from '../helpers/review.js';
 
@@ -72,5 +73,29 @@ describe('the required risk classes are the ones the change touches', () => {
         // The same call answers the floor, so the two cannot be derived from different walks of the same table.
         expect(quality.floor).toBe('medium');
         expect(kernel.floor).toBe('high');
+    });
+});
+describe('the table this rule reads is one the reader can still read', () => {
+    it('fills a stored entry that predates the risk classes rather than refusing the policy', () => {
+        // **Measured, and only by running the flow.** The installed CLI wrote `{"src/quality/**": "medium"}` — the shape
+        // every policy in existence has — and this build refused it with `must be an object carrying floor and riskClasses`.
+        // That would have made every existing ledger unreadable and every review undecidable: a change that breaks the state
+        // it governs. The reader fills the entry instead, from the defaults for that pattern, and names the fill.
+        // The whole document, taken from the defaults and then degraded to the old shape — so the case is about the floor
+        // shape and nothing else.
+        const stored = {
+            ...(JSON.parse(JSON.stringify(defaultPolicy())) as Record<string, unknown>),
+            riskFloors: { 'src/quality/**': 'medium' },
+        };
+        const loaded = loadPolicy(stored);
+        expect(loaded.ok).toBe(true);
+        if (!loaded.ok) return;
+        expect(loaded.filled).toContain('riskFloors');
+        expect(loaded.policy.riskFloors['src/quality/**']).toEqual({ floor: 'medium', riskClasses: ['consistency'] });
+        // A pattern the defaults do not name keeps the widest demand: every class the tiers require.
+        const unknown = loadPolicy({ ...stored, riskFloors: { 'somewhere/else/**': 'high' } });
+        expect(unknown.ok).toBe(true);
+        if (!unknown.ok) return;
+        expect(unknown.policy.riskFloors['somewhere/else/**']?.riskClasses.length).toBeGreaterThan(1);
     });
 });

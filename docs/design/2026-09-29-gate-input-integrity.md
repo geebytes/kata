@@ -162,3 +162,43 @@ R-1／R-2／R-5／R-6／R-9 是同一件事的五次出现：**用一个"我恰�
 
 1. `kata-cli wiki orient` 在 wiki store 不存在时抛 `ENOENT … .llmwiki/SCHEMA.md`，而不是回答"还没有 wiki"。该路由**宣称**的命令是 `wiki closure …`（它结构化回答），`orient` 是同一族的另一个动词，前置条件是 `wiki init`——所以 AC-5 成立，但这是同族的一处毛边。
 2. `runCommand('archive', <不存在的 task>)` 抛裸 `ENOENT`（`current-state.json`）。路由永远不会指名一个不存在的任务，所以不在 AC-5 之内；但"命令用值拒绝、不用异常拒绝"这条纪律在若干命令上仍只覆盖到已有的任务。
+
+## 9. 批准阶段发现的两件事（修复批之后）
+
+把 change 推到 `review --approve` 时，两道关卡各暴露了一件事。**第二件由本次变更自己引入，且只有"真的把流程跑一遍"才会看见。**
+
+### 9.1 CLI 解析到的是**主检出的 `dist/`**，不是本 worktree 的源码
+
+```
+which kata-cli → /home/work/.nvm/.../bin/kata-cli → /data/work/ahaeureka/k2skills/kata/dist/cli.js
+```
+
+也就是说：这一路以来的 `verify`/`review`/`seal`/`ledger` 行为来自**主检出 `master` 的构建产物**，而本 change 的代码在 `.kata/worktrees/gate-input-integrity/src/**`，只被**测试**驱动。对本 change 尤其重要——它改的正是 CLI 自己的输入面（封存、路由、账本），所以：
+
+- **验收面（15 条 AC）由测试证明**，那些断言驱动的是 worktree 的源码；
+- **治理流程的行为仍滞后于源码**，直到有人重建 `dist/`；
+- 由此还得到一个诊断上的好处：**9.2 是被这次"工具与产物版本不一致"照出来的**。
+
+**处置**：我把重建 `dist/` 视为需要用户授权的环境动作（重建会改变**这台机器上所有工作流**所用的 CLI），所以不自行执行，只记录并提交给用户决定。
+
+### 9.2 存储策略的 `riskFloors` 形状不兼容（本次变更引入，已修）
+
+**实测**：流程用已安装的 CLI 写出 `policy.json`，其中
+
+```json
+{ "src/quality/**": "medium" }
+```
+
+而本 change 之后的 `loadPolicy` 拒绝它：
+
+```
+riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
+```
+
+**后果**：**现存的每一份 `policy.json`（都是旧形状）都会变成不可读** → 账本 `unreadable` → review 批准、distill 门、修复入口全部拒绝。这是"一个改动弄坏了它自己要治理的状态"，比之前任何一条 finding 都严重。
+
+**根因**：AC-6/AC-7 把两种答案合并进一个条目（`{floor, riskClasses}`），却只改了写入侧，没有给读取侧留迁移。独立审查没有抓到——它的靶子是 AC 的条款，而条款只描述新形状；我的套件也没有"读一份旧策略"的用例。
+
+**修法**（与该项目既有的"读者填补它之前就存在的部分并报告"同一模式）：`loadPolicy` 遇到字符串 floor 时，从默认表取该模式的类；默认表不认识的模式则填**所有 tier 的必需类**（保守方向，需求至少和当初一样宽）；并把 `riskFloors` 记入 `policyFilled`，使替换可见而不是静默。用例落在 AC-6 的证据文件里：整份默认文档降级为旧形状后必须仍可读、`filled` 必须包含 `riskFloors`、且默认表不认识的模式拿到多于一个类。
+
+**教训**：改了**存储形状**就等于改了**已存记录**的可读性；写入侧的测试全绿说明不了任何事。
