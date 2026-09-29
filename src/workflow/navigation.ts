@@ -216,7 +216,10 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The blocking question, asked once, of the reader every other consumer asks.** The status this file returns is what
   // the router and the surfaces read, and it used to assemble its own inputs — one of three call sites that did, which is
   // how the approval and the archive gate came to answer the same question differently.
-  const blockingRead = await readBlockingProblems(root, taskId);
+  // **Handed the read taken above.** Asking for the pointer again is how a failing second read came to be reported as an
+  // unreadable *review record* — a different reason, a different route, and one that bypasses the branch written for this
+  // very state.
+  const blockingRead = await readBlockingProblems(root, taskId, sealedRead);
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
