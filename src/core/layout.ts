@@ -152,7 +152,7 @@ function findDescendantTaskRoots(taskId: string, root: string): string[] {
   function scan(dir: string): void {
     let entries: Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true }) as unknown as Dirent[];
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       return;
     }

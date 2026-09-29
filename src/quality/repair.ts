@@ -258,6 +258,18 @@ export type ReviewRoundsRead =
  * file looking shorter than it is. An absent file is an empty history — a change under its first repair has no rounds
  * yet — and that is the only case that reads as nothing was ever recorded.
  */
+/**
+ * Whether a parsed line is a review round.
+ *
+ * The fields the reader uses, and their types: a bare number, an array, or an object without `at` and `blockingIds` is not
+ * a round, and reading one as a round is how a corrupt file becomes a history with rounds in it.
+ */
+function isRoundRecord(value: unknown): value is { at: string; blockingIds: unknown[]; blockingCount?: unknown } {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.at === 'string' && Array.isArray(record.blockingIds);
+}
+
 export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
     let raw: string;
     try {
@@ -271,10 +283,19 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
     for (const line of raw.split('\n')) {
         if (line.trim() === '') continue;
         try {
-            const parsed = JSON.parse(line) as Partial<ReviewRound>;
+            const parsed = JSON.parse(line) as unknown;
+            // **A record that parses but is not a round is malformed, not a round.** `JSON.parse` answers for `42`, `{}`
+            // and `[]` alike, and the previous version pushed all three as rounds — so a file of numbers read as a
+            // history of unmeasured rounds and the loop's escalation counted rounds it never had. Shape and parse are two
+            // facts, and only the first is about the record.
+            if (!isRoundRecord(parsed)) {
+                malformedLine ??= rounds.length + 1;
+                rounds.push({ at: '', blockingIds: [], blockingCount: null });
+                continue;
+            }
             rounds.push({
-                at: typeof parsed.at === 'string' ? parsed.at : '',
-                blockingIds: Array.isArray(parsed.blockingIds) ? parsed.blockingIds.filter((id): id is string => typeof id === 'string') : [],
+                at: parsed.at,
+                blockingIds: parsed.blockingIds.filter((id): id is string => typeof id === 'string'),
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
             });
         } catch {

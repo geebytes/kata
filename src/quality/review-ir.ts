@@ -1,3 +1,4 @@
+import type { CurrentRevisionRead } from '../workflow/revision.js';
 /**
  * The review IR and the candidate freeze: the identity a verdict binds to.
  *
@@ -257,8 +258,15 @@ export async function candidateFreezeHashFor(
     root: string,
     taskId: string,
     node: AdversarialNode,
-    /** A revision the caller has already read, so the identity is not assembled from two file states. */
-    revisionRead?: { kind: 'absent' } | { kind: 'current'; revision: { id: string } } | { kind: 'unreadable'; detail: string },
+    /**
+     * A revision the caller has already read, so the identity is not assembled from two file states.
+     *
+     * Typed as the reader's own result — the exported type, not a structural copy of it. A copy drifts silently: the
+     * copy here declared `revision: { id: string }` while the real read carries the whole `TaskRevision`, which is why
+     * the call site needed `as never` to compile and why the freeze hash and the revision id could end up describing
+     * different reads.
+     */
+    revisionRead?: CurrentRevisionRead,
 ): Promise<string | undefined> {
     const { readTask } = await import('../core/task.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
@@ -270,7 +278,7 @@ export async function candidateFreezeHashFor(
     // the revision id it was paired with. An `unreadable` answer is propagated as "no freeze hash" only because the callers
     // that reach here have already refused on it.
     if (revisionRead) {
-        return currentCandidateFreezeHash(task, revisionRead.kind === 'current' ? (revisionRead.revision as never) : null, node);
+        return currentCandidateFreezeHash(task, revisionRead.kind === 'current' ? revisionRead.revision : null, node);
     }
     const revision = await readCurrentTaskRevision(root, taskId);
     return currentCandidateFreezeHash(task, revision, node);

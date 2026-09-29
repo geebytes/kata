@@ -203,10 +203,9 @@ export async function promptCometOptions(input: {
         const value = await promptSingleFlag(flagName, spec, input.language, ii);
         if (value === undefined) continue;
 
-        // The overwrite flow emits a sentinel 'skip' string to mean "skip all
-        // existing"; translate it into the sibling skipExisting flag key so
-        // the extras map mirrors comet's own flag surface.
-        if (flagName === 'overwrite' && value === ('skip' as unknown as boolean)) {
+        // The overwrite flow answers 'skip' to mean "skip all existing"; translate it into the sibling skipExisting flag
+        // key so the extras map mirrors comet's own flag surface.
+        if (flagName === 'overwrite' && value === 'skip') {
             result.skipExisting = true;
             continue;
         }
@@ -251,13 +250,12 @@ async function promptSingleFlag(
                 ],
                 io,
             );
-            // Caller consumes the result as a single-key record; we encode the
-            // decision as { overwrite: true } / { skipExisting: true } via the
-            // "extras" map after returning. To stay within the return type we
-            // emit just the boolean toggle here and rely on the caller's loop
-            // to set the appropriate key.
+            // The caller turns this into `{ overwrite: true }` / `{ skipExisting: true }` through the extras map.
+            // `'skip'` is returned as the string it is: the function's return type already allows strings, so the
+            // `as unknown as boolean` that used to stand here asserted a lie the type did not require — and the caller
+            // then had to repeat the same lie to recognise the value.
             if (choice === 'overwrite') return true;
-            if (choice === 'skip') return 'skip' as unknown as boolean; // sentinel
+            if (choice === 'skip') return 'skip';
             return undefined;
         }
         // Generic boolean flag: yes/no.

@@ -153,7 +153,12 @@ export async function recordScopeChange(
         };
         return `${JSON.stringify({ changes: [...record.changes, recorded], updatedAt: new Date().toISOString() }, null, 2)}\n`;
     });
-    return recorded as unknown as ScopeChange;
+    // **A guard rather than a cast.** `recorded` is assigned inside the callback, so TypeScript cannot narrow it after
+    // the `await` — and the cast to `never`-through-`unknown` said "trust me" where the code can simply look. Reaching
+    // this line means the writer ran, so the null branch is an assertion about the writer, and it fails loudly if a later
+    // edit makes the callback conditional.
+    if (recorded === null) throw new Error('the scope change was accepted but not written, so the surface did not grow');
+    return recorded;
 }
 
 export async function readScopeChanges(root: string, taskId: string): Promise<ScopeChangeRecord> {

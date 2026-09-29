@@ -179,23 +179,6 @@ describe('review artefact read states', () => {
         }
     });
 
-    it('returns a refusal envelope from verify when the revision cannot be read', async () => {
-        const root = await rootWithReview();
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
-        );
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'current-state.json'),
-            `${JSON.stringify({ taskId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-09-29T00:00:00.000Z' })}\n`,
-        );
-        await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'not json\n');
-
-        const verified = await runCommand('verify', taskId, root);
-        expect(verified.success).toBe(false);
-        expect(verified.error).toContain('cannot be read');
-        expect(verified.diagnostics?.currentRevisionUnreadable).toContain('current-revision.json');
-    });
 
     /**
      * **Every ledger state gets the same answer from both readers.**

@@ -23,7 +23,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
+import { type TaskRevision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
@@ -1179,7 +1179,9 @@ async function deriveSealRelevantChecks(
     root: string,
     taskId: string,
     checks: CheckCommand[],
-    revision: { id: string; pathDigests?: Record<string, string> } | null,
+    /** The sealed revision this run is a re-seal of, or `null` for a first seal. Typed as the revision itself: the narrow
+     * structural type that stood here was what forced the `as never` at the delta call below. */
+    revision: TaskRevision | null,
     options: CommandOptions,
 ): Promise<{ checks?: CheckCommand[]; derivation?: Record<string, unknown> }> {
     // Only a re-seal can be narrowed: the first seal has nothing to compare against, and the freeze points must see
@@ -1190,7 +1192,9 @@ async function deriveSealRelevantChecks(
     const base = revision ?? previous;
     if (!base?.pathDigests) return {};
     const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
-    const surface = await changeSurfaceAgainstWorkspace(root, base as never);
+    // `base` is a `TaskRevision` here — the guard above established it carries `pathDigests`, which is a field of that
+    // type and of nothing else in the union. The cast that used to stand here said so instead of showing it.
+    const surface = await changeSurfaceAgainstWorkspace(root, base);
     if (surface.status !== 'available') return {};
 
     const task = await readTask(root, taskId).catch(() => null);

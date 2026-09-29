@@ -203,9 +203,9 @@ export function reconcileCorpora(input: {
  */
 export async function reconcileRepositoryCorpora(): Promise<CorpusReconciliation> {
     const { admissibilityCorpus } = await import('../eval/admissibility-corpus.js');
-    const module = await import('../../tests/fixtures/review-scenarios.js') as unknown as { reviewScenarios: SeedScorer['scenarios'] };
+    const module = (await import('../../tests/fixtures/review-scenarios.js')) as { reviewScenarios: SeedScorer['scenarios'] };
     return reconcileCorpora({
-        retired: admissibilityCorpus().map((entry) => ({ kinds: entry.kinds as unknown as string[] })),
+        retired: admissibilityCorpus().map((entry) => ({ kinds: [...entry.kinds] })),
         current: module.reviewScenarios.map((entry) => ({ mode: entry.mode })),
     });
 }
@@ -218,6 +218,6 @@ export async function reconcileRepositoryCorpora(): Promise<CorpusReconciliation
  * as an empty one — the same rule the ledger applies to its own files.
  */
 export async function scoreSeeds(): Promise<SeedScore> {
-    const module = await import('../../tests/fixtures/review-scenarios.js') as unknown as { reviewScenarios: SeedScorer['scenarios'] };
+    const module = (await import('../../tests/fixtures/review-scenarios.js')) as { reviewScenarios: SeedScorer['scenarios'] };
     return scoreSeedCorpus({ scenarios: module.reviewScenarios });
 }

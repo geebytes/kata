@@ -111,12 +111,15 @@ export function readSubmission(value: unknown): SubmissionRead {
             errors.push(`evidence[${index}].type must be one of ${EVIDENCE_TYPES.join(', ')}`);
             continue;
         }
-        const problems = evidenceShapeProblems(entry as unknown as Evidence);
+        // One assertion, named, after the checks that make it true — rather than two `as unknown as Evidence` casts that
+        // said "any value at all is an Evidence" and would have kept compiling after the checks above changed.
+        const item = entry as Evidence;
+        const problems = evidenceShapeProblems(item);
         if (problems.length > 0) {
             errors.push(...problems.map((problem) => `evidence[${index}] (${entry.id as string}): ${problem}`));
             continue;
         }
-        evidence.push(entry as unknown as Evidence);
+        evidence.push(item);
     }
 
     if (errors.length > 0) return { ok: false, errors };

@@ -87,22 +87,65 @@ const FABRICATED_IDENTITY = /['"`]revision-[a-z0-9]|\bid:\s*['"`]|\bid:\s*[a-zA-
  */
 const STAGED_DEFECT = /(['"`]\{\}['"`]|\{\}\s*\n|JSON\.stringify\(\{\}\)|not json|not-json|malformed|corrupt)/i;
 
-/** One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed. */
+/**
+ * Every comment blanked, so the rule reads the *write* and not the prose around it.
+ *
+ * **The newlines are kept, and that is not cosmetic.** Deleting a block comment removes the line breaks inside it, so the
+ * returned text is shorter than the source and every index into it points at a different line than the caller thinks —
+ * measured while writing this: the window for a busy call was assembled from a region eighteen lines away, which is why a
+ * truncated payload sitting on the write itself was not found. Blanking preserves the numbering the caller relies on.
+ */
+function codeOnly(text: string): string {
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ''))
+        .split('\n')
+        .map((line) => (line.trim().startsWith('//') ? '' : line))
+        .join('\n');
+}
+
+/** True when the window carries a string literal that looks like JSON and does not parse — a deliberately corrupt artefact. */
+function windowHasTruncatedJson(window: string): boolean {
+    for (const match of window.matchAll(/'((?:\\.|[^'\\])*)'/g)) {
+        const literal = (match[1] ?? '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
+        if (!/^[{[]/.test(literal.trim())) continue;
+        try {
+            JSON.parse(literal);
+        } catch {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed.
+ *
+ * **The window is read as code, not as prose.** This is the fix the guard needed and did not have: `STAGED_DEFECT` was
+ * tested against a fourteen-line window that included comments, and these files are full of comments saying `malformed`,
+ * `corrupt` and `not json` — so a fixture that fabricated an identity was whitelisted by a *sentence* about corruption
+ * somewhere near it. Measured: a fabricated record beside a comment naming a malformed one passed. The rule now strips
+ * comments first, so only code can whitelist code.
+ */
 function closureDrivenWriteOffenders(text: string, file: string): string[] {
     const lines = text.split('\n');
+    const code = codeOnly(text).split('\n');
     const offenders: string[] = [];
     for (const [index, line] of lines.entries()) {
         if (!REVISION_ARTEFACT.test(line)) continue;
-        // **Prose is not code.** The first version of this guard counted its own doc comment in `revision-delta.test.ts`,
-        // where the file is named in a sentence explaining why the fixture no longer writes it — and this suite's sibling
-        // guard had to exclude itself for the very same reason. A line that is entirely a comment cannot write anything.
+        // A line that is entirely a comment cannot write anything.
         const trimmed = line.trim();
         if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
         // A *write*, spelled any way: the artefact has to be produced by this line or by a call it makes.
         if (!/write|seed|persist|save|create/i.test(line)) continue;
-        const window = lines.slice(Math.max(0, index - 14), index + 4).join('\n');
+        const window = code.slice(Math.max(0, index - 14), index + 4).join('\n');
         if (!FABRICATED_IDENTITY.test(window)) continue;
         if (STAGED_DEFECT.test(window)) continue;
+        // **A truncated payload is a staged defect, and it is recognised by parsing rather than by a keyword.** The cases
+        // that build an unreadable artefact write a literal that *looks* like JSON and is cut off — measured:
+        // `'{"id": "rev-1", "manif'` in `review-approval-refuses-open-findings.test.ts`, which the keyword list could not
+        // name and which the identity pattern therefore reported as a fabricated record. The rule reads the payload: a
+        // brace- or bracket-initial string literal that `JSON.parse` refuses is a deliberate corruption, not an identity.
+        if (windowHasTruncatedJson(window)) continue;
         offenders.push(`${file}:${index + 1}`);
     }
     return offenders;
@@ -137,11 +180,38 @@ describe('a fixture does not fabricate the revision identity', () => {
             // writing its name as a literal. It is the shape this suite already used once while the guard reported nothing.
             ['the path helper instead of a literal', "await writeFile(currentRevisionPath(root, 'delta-task'), record, 'utf8');\nconst record = { id: 'revision-from-helper', manifestHash: 'd'.repeat(64) };", true],
             ['a malformed payload that is not {}', "await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'not json\\n');", false],
+            // **A truncated payload is staged on purpose**, and it is recognised by asking whether the literal parses —
+            // not by a keyword. `review-approval-refuses-open-findings.test.ts` writes exactly this shape.
+            ['a truncated JSON payload', "await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{\"id\": \"rev-1\", \"manif');", false],
+            // **The defect this rule was rebuilt for.** A comment about corruption used to whitelist a fabricated record,
+            // because the staged-defect test ran over prose: the window is read as code now, so this must be flagged.
+            ['a comment about corruption beside a real record', "// this file is deliberately corrupt in the other case\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), record, 'utf8');\nconst record = { id: 'revision-seeded', manifestHash: 'e'.repeat(64) };", true],
         ];
 
         for (const [name, source, shouldFlag] of samples) {
             const flagged = closureDrivenWriteOffenders(source, name).length > 0;
             expect([name, flagged]).toEqual([name, shouldFlag]);
+        }
+    });
+
+    /**
+     * **The guard's blind spots, asserted as negatives rather than left to be discovered.**
+     *
+     * Each of these fabricates an identity and this rule does not see it. They are written down because a guard whose
+     * limits are unstated reads as a guard with none — the mistake this suite made twice, including the earlier version
+     * that claimed "any write call" while recognising three spellings. What the rule covers is a record written near its
+     * own path; what it cannot cover is a record assembled somewhere else entirely.
+     */
+    it('names the shapes it cannot see, so its reach is stated rather than assumed', () => {
+        const unseen: Array<[string, string]> = [
+            ['the record assembled in another module', "import { seedRevision } from './helpers/seed.js';\nawait writeFile(currentRevisionPath(root, taskId), seedRevision(), 'utf8');"],
+            ['the path computed at runtime', "const file = ['current-revision', 'json'].join('.');\nawait writeFile(join(root, file), { id: 'revision-x', manifestHash: 'y' }, 'utf8');"],
+            ['the identity field named something else', "await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), { revision: 'abc', frozen: 'def' }, 'utf8');"],
+            ['a factory that writes on its own', "await seedFrozenRevision(root, taskId, { id: 'revision-abc', manifestHash: 'z' });"],
+        ];
+        for (const [name, source] of unseen) {
+            // The assertion is the *absence* of a report: these are the limits, kept honest by being written down.
+            expect([name, closureDrivenWriteOffenders(source, name).length > 0]).toEqual([name, false]);
         }
     });
 });

@@ -227,7 +227,7 @@ async function runMain(argv: string[]): Promise<void> {
             : undefined;
         outputResult(
             {
-                ...(report as unknown as Record<string, unknown>),
+                ...report,
                 ...(runtimeRefresh ? { runtimeRefresh } : {}),
                 ...(gitFlowInit ? { gitFlowInit } : {}),
             },
@@ -288,7 +288,7 @@ async function runMain(argv: string[]): Promise<void> {
     }
 
     if (command === 'baseline') {
-        outputResult(await runBaselineCommand(argv.slice(1)) as unknown as Record<string, unknown>);
+        outputResult(await runBaselineCommand(argv.slice(1)));
         return;
     }
 
@@ -411,7 +411,7 @@ async function runMain(argv: string[]): Promise<void> {
             gitFlowInit: await initializeGitFlowProject(workspaceRoot, { interactive: process.stdin.isTTY }),
         });
     }
-    else if (command === 'next') outputResult(await client.next(change) as unknown as Record<string, unknown>);
+    else if (command === 'next') outputResult(await client.next(change));
     else if (isWorkflowCommand(command)) {
         const result = await runWorkflowCommand(command, change, workspaceRoot, workflowPlatform(argv.slice(1)) ?? resolved?.platform, argv.slice(1));
         outputResult(result);

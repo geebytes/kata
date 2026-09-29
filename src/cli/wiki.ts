@@ -24,6 +24,14 @@ import { confirmDestructive } from './prompt.js';
  * promotion) because it is the operator's entry point to all of them. Nothing here imports the entry point.
  */
 
+/**
+ * The command's answer.
+ *
+ * The two branches that return a wiki engine result spread it (`{ ...result }`) instead of casting it. A named interface
+ * has no implicit index signature, so assigning one to `Record<string, unknown>` needs a cast — and the cast those
+ * branches carried was `as unknown as Record<string, unknown>`, which asserts that *any* value whatsoever is the answer.
+ * A spread produces an object literal, which needs nothing: the fields keep their types and the signature stays honest.
+ */
 export async function runWikiCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
     if (!subcommand || subcommand === '--help' || subcommand === '-h') {
@@ -162,7 +170,7 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
     }
     if (subcommand === 'register') {
         const result = await registerWikiPages({ root: args.root, wikiPath: args.wikiPath });
-        return result as unknown as Record<string, unknown>;
+        return { ...result };
     }
     if (subcommand === 'rebuild') {
         const confirmed = args.force ?? await confirmDestructive(
@@ -173,7 +181,7 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
             return { command: 'wiki rebuild', aborted: true };
         }
         const result = await rebuildLlmWiki({ root: args.root, wikiPath: args.wikiPath });
-        return result as unknown as Record<string, unknown>;
+        return { ...result };
     }
     if (subcommand === 'promote') {
         const id = rest[0];

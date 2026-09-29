@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
-import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
 import { readCurrentTaskRevisionState, type CurrentRevisionRead } from './revision.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
@@ -102,7 +102,17 @@ export async function readReviewRecord(
     }
     // **Derived from the read above, not read again.** The pointer is written non-atomically, so asking the same question
     // twice could throw out of a gate that has already answered it.
-    const bound = bindsToRevision(record as never, await currentRevisionIdentityFrom(revisionRead, root, taskId));
+    // **The binding is read off the record's own fields, not asserted onto it.** `record as never` said the whole parsed
+    // document was a `VerdictBinding`, which is not true of a record whose `revisionId` is a number or whose
+    // `manifestHash` is an object — and a cast turns that into a comparison that silently answers "not bound" for the
+    // wrong reason. Only string fields count, and the reader says so.
+    const binding: VerdictBinding = {
+        ...(typeof record.revisionId === 'string' ? { revisionId: record.revisionId } : {}),
+        ...(typeof record.manifestHash === 'string' ? { manifestHash: record.manifestHash } : {}),
+        ...(typeof record.codeManifestHash === 'string' ? { codeManifestHash: record.codeManifestHash } : {}),
+        ...(typeof record.governanceManifestHash === 'string' ? { governanceManifestHash: record.governanceManifestHash } : {}),
+    };
+    const bound = bindsToRevision(binding, await currentRevisionIdentityFrom(revisionRead, root, taskId));
     return {
         ok: true,
         findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>,

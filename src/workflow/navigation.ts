@@ -86,7 +86,14 @@ export type UpstreamSummary = {
    * not, so a typed reader could not see it and only a JSON dump showed it. A producer whose output is not declared is one
    * half of the same defect as a declaration nothing reads — the field exists, and no reader can ask for it.
    */
-  ledgerClosure?: { mayClose: boolean; unsupportedClaims: string[]; reason: string };
+  /**
+   * The claims the ledger does not support, and why — the data behind the closure bound.
+   *
+   * It carried a `mayClose: boolean` that two branches set to `false` and nothing read: a bound that is constant is not a
+   * bound, and a field with a writer and no reader is the shape this change exists to remove. The closure *decision* is
+   * the route below (`satisfy_ledger_deficits`), which the ledger's own verdict already answers.
+   */
+  ledgerClosure?: { unsupportedClaims: string[]; reason: string };
 };
 
 /**
@@ -304,7 +311,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         if (ledgerDecision.kind === 'unreadable') {
             return {
                 ledgerClosure: {
-                    mayClose: false,
                     unsupportedClaims: [],
                     reason: `the evidence ledger cannot be read: ${ledgerDecision.detail}`,
                 },
@@ -322,7 +328,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         if (unsupported.length === 0) return {};
         return {
             ledgerClosure: {
-                mayClose: false,
                 unsupportedClaims: unsupported.map((claim) => claim.id),
                 reason: `${unsupported.length} claim(s) are not supported, so the ledger does not yet decide a pass`,
             },
@@ -429,20 +434,10 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2100,
     };
   }
-  // **The obligation gate is gone, and the ledger answers the question it asked.** It read "is there a recorded failure
-  // that has not been answered yet", which a judge FAIL used to satisfy by writing an obligation —
-  // and judge can no longer be reached without a ledger, so nothing creates one for a governed change any more
-  // (measured: the only writer of an approved review refuses ledger-less changes, and judge refuses unapproved reviews).
-  //
-  // The failure is not lost: it lives where the failing criterion lives. That criterion is a claim, its evaluation is a
-  // verdict, and an unsupported claim is what `satisfy_ledger_deficits` below routes on. Legacy acceptance matrices keep
-  // their own branch, because "the matrix was never declared" is a property of the task rather than of an obligation.
-  // When the latest verify failed in review phase, the verify repair reason
-  // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
-  // over blocking or major review findings so --seal is attached to the build
-  // command and stale evidence is refreshed alongside any finding repairs.
-  // **The terminal state is evaluated first, and that word is load-bearing.** A loop that has stopped making progress is
-  // not sent back to build for another round: it stops, names what is still open, and waits for a person.
+  // **This branch's own note: an unreadable pointer outranks the ledger routes.** Both statements describe something
+  // wrong; this one is about the artefact every other statement is derived from, and dispatching a repair that cannot
+  // run is worse than naming the artefact to repair. It sits above the ledger branches for the reason the escalation
+  // terminal does — the state that stops everything is reported before the states that describe what is left.
   if (phase === 'review' && upstream.currentRevisionUnreadable) {
     return {
       nextSkill: '/kata-build',
@@ -454,7 +449,16 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
   // verdicts, open counterexamples and the discovery floor in one place, where the branches below count findings — and
   // counting findings is the part this replaces. It sits below the two state gates above it (mixed-revision evidence,
-  // unresolved obligations), because those make every piece of evidence meaningless rather than merely insufficient.
+  // an unreadable current revision), because those make every piece of evidence meaningless rather than merely
+  // insufficient.
+  //
+  // **The obligation gate is gone, and this branch answers the question it asked.** That gate read "is there a recorded
+  // failure not yet answered", which a judge FAIL used to satisfy by writing an obligation — and judge can no longer be
+  // reached without a ledger, so nothing creates one for a governed change any more (measured: the only writer of an
+  // approved review refuses ledger-less changes, and judge refuses unapproved reviews). The failure is not lost: it
+  // lives where the failing criterion lives, as a claim whose evaluation is a verdict, and an unsupported claim is what
+  // this branch routes on. Legacy acceptance matrices keep their own branch below, because "the matrix was never
+  // declared" is a property of the task rather than of an obligation.
   if (upstream.ledger && upstream.ledger.state === 'decided' && upstream.ledger.verdict !== 'pass') {
     return {
       nextSkill: '/kata-build',
@@ -577,6 +581,10 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
     };
   }
   if (phase === 'hardVerify' && upstream.verifyResult === 'FAIL') {
+    // A verify that failed because its evidence predates the content is not repaired by arguing with the verdict: the
+    // evidence is re-read against what is on disk now, which is what `--seal` does. The note that used to stand here said
+    // "in review phase" and described a priority over review findings — a branch that no longer exists, in a phase this
+    // one is not.
     if (uniformScopeReason(upstream.verifyRepairScopes) === 'rebuild_stale_evidence') {
       return {
         nextSkill: '/kata-build',

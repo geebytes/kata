@@ -223,7 +223,9 @@ export function loadPolicy(value: unknown): PolicyLoad {
     // Only for version 1, and only for known sections: an unknown key is still refused by the enumeration below.
     if (value.version === 1) {
         const stored: Record<string, unknown> = value;
-        const defaults = defaultPolicy() as unknown as Record<string, unknown>;
+        // `Record<string, unknown>` is what the *stored* document is; the defaults are a `Policy`, and treating them as an
+        // untyped bag was only ever needed to index them by name. `policyKeyPaths` already answers that question.
+        const defaults: Record<string, unknown> = { ...defaultPolicy() };
         const filled: string[] = [];
         for (const section of ['tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline']) {
             if (stored[section] === undefined) filled.push(section);
@@ -339,7 +341,9 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
         return { ok: false, error: 'deadline.emitFirstRecordByToolCall must be a number or "auto"' };
     }
 
-    const policy = value as unknown as Policy;
+    // A named assertion at the end of the validation above, not an escape: every field it reads has been checked, and the
+    // type says which shape the checks established.
+    const policy = value as Policy;
     const declared = new Set(policyKeyPaths(policy));
     const known = new Set(Object.keys(POLICY_CONSUMERS));
     for (const key of declared) {

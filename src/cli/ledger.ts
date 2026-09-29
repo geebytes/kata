@@ -594,10 +594,13 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         const current = computed.subject;
-        const changed = ledger.subject === null
+        const subject = ledger.subject;
+        const changed = subject === null
             ? Object.keys(current.pathDigests)
             : (() => {
-                const diff = diffSubjects(ledger.subject as never, current as never);
+                // Both sides are `Subject` here: the branch above is what makes the left one non-null, and `current` comes
+                // from the frozen computation. `as never` hid that the comparison was even type-checked.
+                const diff = diffSubjects(subject, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });
@@ -663,7 +666,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const { scoreWithKernel } = await import('../eval/kernel-verifier.js');
         const { kernelCaseBuilders } = await import('../eval/kernel-case-builders.js');
         const { builders, notExpressible, retired } = kernelCaseBuilders();
-        const score = scoreWithKernel({ builders: builders as never, notExpressible: [...notExpressible], retired: [...retired] });
+        const score = scoreWithKernel({ builders, notExpressible: [...notExpressible], retired: [...retired] });
         outputResult({ ok: score.falsePasses.length === 0, command: 'ledger verifier', ...score });
         if (score.falsePasses.length > 0) process.exitCode = 1;
         return;
