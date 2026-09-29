@@ -28,6 +28,21 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: '代码在上次证据封存后发生变化；无需重做已完成实现，先执行 /kata-build <task> --seal 重新运行检查并封存新证据。',
         en: 'The code changed after the last seal. Nothing needs re-implementing: run /kata-build <task> --seal to re-run the checks and seal fresh evidence.',
     },
+    unreadable_review_record: {
+        // Named rather than folded into "invalid approval": the record may be perfectly approved and simply unreadable,
+        // and the repair is to re-read or re-record it, not to re-review a change nobody has looked at.
+        zh: 'review.json 读不出来（不是 schema 的形态，或它绑定的 revision 读不出来），因此没有任何东西可以据此判定。请重新执行 /kata-review 读取或重建这条记录。',
+        en: 'The review record cannot be read — it is not the shape its schema declares, or the revision it binds to cannot be read — so nothing can be decided from it. Re-run /kata-review to read or rebuild the record.',
+    },
+    escalate_review_without_progress: {
+        // **The terminal state has to have a voice of its own.** Without this entry the lookup fell through to the
+        // generic line, "Recommended: run /kata-review as reviewer" — advice that contradicts the state it is
+        // describing, since the escalation exists precisely because another review round is not the next step. The
+        // counts and the ids are not repeated here: they ride on the change's status under `reviewEscalation`, which is
+        // the same answer the router read, so there is one of it.
+        zh: '审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewEscalation 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
+        en: 'The review loop has stopped making progress: the recent repairs did not reduce the blocking problems, so /kata-build is no longer dispatched. The rounds and the problems still open are recorded on this change status under reviewEscalation; a person decides — keep repairing, waive a problem, or stop the change.',
+    },
     resolve_wiki_closure: {
         zh: '实现验收和证据均已通过；当前仅 Wiki closure 待决。请决定知识是否应 captured 或 not_applicable，记录 closure 后执行 /kata-verify，不要回退到 /kata-build。',
         en: 'Acceptance and evidence pass; only the Wiki closure is open. Decide whether the knowledge is captured or not_applicable, record the closure, then run /kata-verify — do not go back to /kata-build.',

@@ -40,6 +40,14 @@
         "pattern": "^[0-9a-f]{64}$"
       }
     },
+    "contentDigests": {
+      "type": "object",
+      "description": "Immutable full content snapshot at seal time; absent only on legacy revisions that predate content-bound identity.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
     "createdAt": {
       "type": "string",
       "minLength": 1

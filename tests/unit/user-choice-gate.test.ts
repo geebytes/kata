@@ -93,4 +93,36 @@ describe('user choice gates', () => {
         await expect(requireUserChoiceGate({ root, taskId, boundary: 'review_gate' }))
             .rejects.toThrow(/requires an explicit user choice/);
     });
+
+    /**
+     * **A revision nobody can read is not a revision nobody sealed.**
+     *
+     * `currentRevisionIdentity` read the revision through a wrapper that answers `null` for both absence and corruption,
+     * and `bindsToRevision` defines a `null` identity as "nothing was sealed" (`if (!current.revisionId) return
+     * !artifact.revisionId;`). So a corrupted `current-revision.json` made every task-level choice bind — the gate reused
+     * an answer the human gave about *other* content and reported `reusedFromTaskChoice`, which is the one direction this
+     * boundary must never take on its own. Measured before the fix: an invalid-JSON pointer returned
+     * `{ choice: 'continue_current', reusedFromTaskChoice: true }` where the same device with readable-but-changed
+     * content correctly refused.
+     */
+    it('refuses rather than reusing a task-level choice when the revision cannot be read', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-task-choice-unreadable-'));
+        roots.push(root);
+        const taskId = 'task-choice-unreadable';
+        await initLayout(root);
+        await createTask({ root, id: taskId, title: 'Unreadable revision', acceptance: [{ id: 'AC-1', statement: 'x' }] });
+        await writeFile(join(root, '.kata/tasks', taskId, 'user-choice-task.json'), JSON.stringify({
+            taskId, choice: 'continue_current', manifestHash: 'ff'.repeat(32),
+            createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
+        }), 'utf8');
+        // The artefact exists and cannot be parsed: nothing can be said about which content the choice was about.
+        await writeFile(join(root, '.kata/tasks', taskId, 'current-revision.json'), 'not json\n');
+
+        // The refusal names the real reason rather than pretending the choice is simply missing: the artefact exists and
+        // cannot be read, and that is what the operator has to fix.
+        await expect(requireUserChoiceGate({ root, taskId, boundary: 'review_gate' }))
+            .rejects.toThrow(/cannot be read/);
+        // And no boundary record claims a reuse: the audit trail must not assert an authorisation that did not happen.
+        await expect(readFile(join(root, '.kata/tasks', taskId, 'user-choice-review_gate.json'), 'utf8')).rejects.toThrow();
+    });
 });

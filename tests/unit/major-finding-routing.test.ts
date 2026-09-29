@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
-import { openLedgerProblems, readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
+import { openLedgerProblems } from '../../src/store/verdict.js';
+import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { appendClaim, readLedger } from '../../src/store/ledger.js';
 import { seedLedger } from '../helpers/ledger.js';
 import { decide } from '../../src/kernel/decide.js';
@@ -61,8 +62,10 @@ describe('the severity gate is one rule, applied by the kernel', () => {
     it('reports an unsupported claim at every severity, and routes it to the ledger repair', async () => {
         for (const severity of ['blocking', 'major', 'minor'] as const) {
             const { root, taskId } = await taskWith(severity);
-            const problems = await openLedgerProblems(root, taskId);
-            expect(problems.map((problem) => problem.id), `${severity} is a problem whatever its severity`).toEqual([`C-${severity}`]);
+            const read = await openLedgerProblems(root, taskId);
+            // The reader reports unreadable as a value now, so a case that is meant to have problems says so first.
+            if (read.kind !== 'read') throw new Error(`expected a readable ledger, got ${read.detail}`);
+            expect(read.problems.map((problem) => problem.id), `${severity} is a problem whatever its severity`).toEqual([`C-${severity}`]);
 
             const upstream = await readUpstreamSummary(root, taskId);
             const action = suggestCandidateAction('review', upstream);
@@ -74,7 +77,8 @@ describe('the severity gate is one rule, applied by the kernel', () => {
     it('lets the author live with one, as a decision with a reason, and stops reporting it', async () => {
         const { root, taskId } = await taskWith('minor');
         const before = await openLedgerProblems(root, taskId);
-        expect(before).toHaveLength(1);
+        // Read through the value the reader reports, so the case is about the problem rather than about the shape.
+        expect(before.kind === 'read' ? before.problems : []).toHaveLength(1);
 
         const claim = (await readLedger(root, taskId)).claims.find((item) => item.id === 'C-minor')!;
         await appendClaim(root, taskId, {
@@ -83,7 +87,8 @@ describe('the severity gate is one rule, applied by the kernel', () => {
             waiver: { reason: 'below the bar for this change; tracked outside it', at: new Date().toISOString() },
         });
 
-        expect(await openLedgerProblems(root, taskId), 'a waiver is a decision, so the problem is no longer open').toEqual([]);
+        const after = await openLedgerProblems(root, taskId);
+        expect(after.kind === 'read' ? after.problems : [], 'a waiver is a decision, so the problem is no longer open').toEqual([]);
         // And the kernel agrees: the waiver is what decides, not a severity threshold.
         const ledger = await readLedger(root, taskId);
         const decision = decide({

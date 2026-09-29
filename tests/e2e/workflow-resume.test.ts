@@ -1017,7 +1017,8 @@ describe('Workflow resume and lifecycle', () => {
         );
 
         await expect(runCommand('build', taskId, root)).rejects.toThrow(
-            'Build cannot run from review without blocking (or strict-mode major) review findings',
+            // The bar is the mode's, not a literal: strict blocks on blocking and major, and the sentence names it.
+            'Build cannot run from review without a problem the strict ladder blocks on (blocking, major)',
         );
         const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
         expect(state.phase).toBe('review');
@@ -1117,7 +1118,8 @@ describe('Workflow resume and lifecycle', () => {
         );
 
         await expect(runCommand('build', taskId, root)).rejects.toThrow(
-            'Build cannot run from review without blocking (or strict-mode major) review findings',
+            // Standard blocks on blocking alone, so a major finding is reported and does not authorise repair here.
+            'Build cannot run from review without a problem the standard ladder blocks on (blocking)',
         );
         const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
         expect(state.phase).toBe('review');

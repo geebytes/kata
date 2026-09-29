@@ -1,4 +1,4 @@
-import { readCurrentTaskRevision } from './revision.js';
+import { readCurrentTaskRevisionState, type CurrentRevisionRead } from './revision.js';
 // A dynamic import: the review-ir module reads `workflow/revision`, so a static edge here would close a cycle.
 // `candidateFreezeHashFor` is the one producer of the freeze identity (§7.4).
 import { surfaceDigests } from '../quality/code-surface.js';
@@ -77,7 +77,31 @@ export interface RevisionIdentity {
  * bucket and its edits invalidate a pass about the deliverable — the structural cause of four wasted rounds in one day.
  */
 export async function currentRevisionIdentity(root: string, taskId: string): Promise<RevisionIdentity> {
-    const revision = await readCurrentTaskRevision(root, taskId);
+    // **A revision nobody can read must not become an identity that says "nothing was sealed".** `bindsToRevision`
+    // defines a missing `revisionId` as exactly that, so an unreadable artefact used to make every task-level choice
+    // bind — the gate then reused an answer the human gave about other content, in the one direction this boundary must
+    // never take by itself. Reading the three states here is what keeps "absent" and "unreadable" apart at the point the
+    // identity is minted; callers that refuse (the choice gate) get the refusal from this throw, which is the behaviour
+    // the boundary is named for.
+    return currentRevisionIdentityFrom(await readCurrentTaskRevisionState(root, taskId), root, taskId);
+}
+
+/**
+ * The same identity, derived from **a read already in hand**.
+ *
+ * A gate that has asked whether the revision is readable must not then read the same file again to derive the identity:
+ * the pointer is written non-atomically (`revision.ts`), so the second read can answer differently from the first and
+ * throw out of a gate that has already decided. One question, one read, one answer.
+ */
+export async function currentRevisionIdentityFrom(
+    read: CurrentRevisionRead,
+    root: string,
+    taskId: string,
+): Promise<RevisionIdentity> {
+    if (read.kind === 'unreadable') {
+        throw new Error(`The revision this decision is about cannot be read: ${read.detail}`);
+    }
+    const revision = read.kind === 'current' ? read.revision : null;
     const { readTask } = await import('../core/task.js');
     const task = await readTask(root, taskId).catch(() => null);
     const surfaces = surfaceDigests(revision, task ?? {});
@@ -85,8 +109,10 @@ export async function currentRevisionIdentity(root: string, taskId: string): Pro
     // `reviewPolicyHash` would mint a *different* identity for the same candidate, and every verdict would then refuse
     // to bind — a fabricated semantic surface. One derivation, many consumers.
     const { candidateFreezeHashFor } = await import('../quality/review-ir.js');
+    // The read this identity was derived from is handed to the freeze-hash producer: reading the same non-atomic file
+    // again could yield a *second* state, and the identity would then describe two things at once.
     const freezeHash = task
-        ? await candidateFreezeHashFor(root, taskId, 'review').catch(() => undefined)
+        ? await candidateFreezeHashFor(root, taskId, 'review', read).catch(() => undefined)
         : undefined;
     return {
         revisionId: revision?.id ?? null,

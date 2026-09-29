@@ -4,6 +4,7 @@ import type { AcceptanceCriterion, AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evaluateAcceptanceAdequacy } from './evidence-adequacy.js';
 import { judgePath as layoutJudgePath, taskDir } from '../core/layout.js';
+import { readCurrentTaskRevisionState } from '../workflow/revision.js';
 
 export interface JudgeInput {
   /**
@@ -17,6 +18,8 @@ export interface JudgeInput {
    */
   root: string;
   taskId: string;
+  /** The caller's own read of the current revision, when it has one: the stamp must not re-read a non-atomic file. */
+  revisionRead?: import('../workflow/revision.js').CurrentRevisionRead;
   acceptance: AcceptanceCriterion[];
   evidence: EvidenceEnvelope[];
   currentDiffHash: string;
@@ -104,6 +107,18 @@ export interface JudgeResult {
   evidenceIds?: string[];
 }
 
+/**
+ * The identity to stamp: from the caller's own read when it has one, else read here.
+ *
+ * A judgement is a library call as well as a command, so it cannot require the read — but when the caller has already
+ * decided the artefact is readable, re-reading it is the check-then-use the whole round is about.
+ */
+async function identityFor(input: JudgeInput, root: string): Promise<import('../workflow/verdict-binding.js').RevisionIdentity> {
+  const { currentRevisionIdentity, currentRevisionIdentityFrom } = await import('../workflow/verdict-binding.js');
+  const read = input.revisionRead ?? (await readCurrentTaskRevisionState(root, input.taskId));
+  return currentRevisionIdentityFrom(read, root, input.taskId);
+}
+
 export async function judge(input: JudgeInput): Promise<JudgeResult> {
   // The ladder lives in quality/evidence-adequacy.ts, shared with the workflow's verify step. The Judge's own input is
   // the cross-revision refusal: a verdict over mixed revisions would be attached to neither of them.
@@ -134,8 +149,11 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
   const root = input.root;
   // Stamped like every other verdict: the id names the revision, the manifest hash names the content it judged, so a
   // re-seal that changed nothing does not expire the judgement (see `workflow/verdict-binding.ts`).
-  const { currentRevisionIdentity, revisionBindingFields } = await import('../workflow/verdict-binding.js');
-  const binding = revisionBindingFields(await currentRevisionIdentity(root, input.taskId));
+  // **Derived from a read taken by the command, not re-read here.** The pointer is written non-atomically, so this stamp
+  // used to be able to throw *after* the judgement was computed and before it was written — discarding the run. The caller
+  // reads the states once and hands the revision over.
+  const { revisionBindingFields } = await import('../workflow/verdict-binding.js');
+  const binding = revisionBindingFields(await identityFor(input, root));
   await mkdir(taskDir(root, input.taskId), { recursive: true });
   await writeFile(
     layoutJudgePath(root, input.taskId),

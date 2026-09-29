@@ -3,10 +3,12 @@ import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
-import type { RepairPayload } from '../quality/repair.js';
+import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
-import { verifyPath, reviewPath, taskPath, judgePath } from '../core/layout.js';
+import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
+import { readBlockingProblems } from './review-read.js';
+import { mergeBlockingSeverities, reviewTierFor } from '../quality/review-ladder.js';
 
 /**
  * Whether a task may leave a gate and re-enter implementation, and what that entry is recorded as.
@@ -109,39 +111,65 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
 /** review: blocking findings (or strict-mode major ones), or a superseded sealed revision. */
 export async function authorizeReviewRepair(root: string, taskId: string): Promise<RepairAuthorization> {
     const entryPhase: RepairEntryPhase = 'review';
-    const review = await readValidatedOptional<{
-        revisionId?: string;
-        findings?: Array<{ id?: string; acceptanceId?: string; severity?: string; message?: string; path?: string }>;
-    }>('review', reviewPath(root, taskId));
-    if (!review) {
+    // **The record is read once, by the reader, and this entry adds no read of its own.** It used to open `review.json`
+    // with a validating read *before* asking the reader, so a record that did not match its schema threw out of the repair
+    // entry while the gate refused the same record — one malformed file, two behaviours, and the crash was the one an
+    // operator would see. The reader's answer carries everything this entry needs: the mode, the problems, whether the
+    // record describes the current content, and the findings themselves.
+    const blockingRead = await readBlockingProblems(root, taskId);
+    if (!blockingRead.ok) {
+        return denial(entryPhase, `Build cannot run from review because the recorded review cannot be read as one: ${blockingRead.why}`);
+    }
+    const reviewMode = blockingRead.mode;
+    const findings = [...blockingRead.findings];
+    const blockingProblems = blockingRead.problems;
+    // **After the reader, and unguarded — because the guard here could not fire.** This was a `try/catch` written when the
+    // revision reader threw on drift; once it answered `null` instead, the catch became unreachable and the comment beside
+    // it claimed a refusal that happened somewhere else entirely (the reader above refuses an unreadable revision, since
+    // the review's binding cannot be established without it). Measured: no input reaches this catch. What is honest is the
+    // plain read, with the refusal left where it actually is.
+    const revision = await readCurrentTaskRevision(root, taskId);
+    if (!blockingRead.exists) {
         return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
     }
-    const task = await readValidatedOptional<{ workflowProfile?: { reviewMode?: string } }>('task', taskPath(root, taskId))
-        .catch(() => null);
-    const isStrict = task?.workflowProfile?.reviewMode === 'strict';
-    const revision = await readCurrentTaskRevision(root, taskId);
-    const identity = await currentRevisionIdentity(root, taskId);
-    if (!bindsToRevision(review, identity)) {
+    if (!blockingRead.boundToCurrentRevision) {
         return denial(
             entryPhase,
             'Build cannot run from review because its findings are not bound to the current sealed revision (or to the same '
             + 'content under a new revision). Re-run /kata-review.',
         );
     }
-
-    const findings = review.findings ?? [];
-    const blockingFindings = findings.filter((finding) => finding.severity === 'blocking');
-    const majorFindings = isStrict ? findings.filter((finding) => finding.severity === 'major') : [];
-    const severityAuthorized = blockingFindings.length + majorFindings.length > 0;
+    const severityAuthorized = blockingProblems.length > 0;
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
     const superseded = (await revisionNoLongerDescribes(root, taskId)) !== null;
     if (!severityAuthorized && !superseded) {
-        return denial(entryPhase, 'Build cannot run from review without blocking (or strict-mode major) review findings, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.');
+        return denial(
+            entryPhase,
+            `Build cannot run from review without a problem the ${reviewTierFor(reviewMode)} ladder blocks on (${mergeBlockingSeverities(reviewMode).join(', ')}) and none has been disposed of, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.`,
+        );
     }
 
-    const repairFindings = severityAuthorized ? [...blockingFindings, ...majorFindings] : findings;
+    // Both shapes are mapped to the record's own shape, so the payload that reaches `repair.json` does not depend on
+    // which source named the problem — a ledger claim has no `path`, and a legacy finding has no statement.
+    const repairFindings: Array<{ id: string; severity: string; message: string; acceptanceId?: string; path?: string }> = severityAuthorized
+        ? blockingProblems.map((problem) => ({ id: problem.id, severity: problem.severity, message: problem.message }))
+        : findings.map((finding) => ({
+            id: finding.id ?? '',
+            severity: finding.severity ?? '',
+            message: finding.message ?? '',
+            ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
+            ...(finding.path ? { path: finding.path } : {}),
+        }));
+    // **The round is recorded before it is entered**, and only when it is entered: this is the fact the escalation reads to
+    // decide whether the loop is moving. A repair opened because the revision was superseded has no count to record, and
+    // says so with `null` rather than with a zero that would read as progress.
+    await appendReviewRound(root, taskId, {
+        at: new Date().toISOString(),
+        blockingIds: blockingProblems.map((problem) => problem.id),
+        blockingCount: severityAuthorized ? blockingProblems.length : null,
+    });
     return {
         authorized: true,
         entryPhase,

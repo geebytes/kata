@@ -1,3 +1,14 @@
+  // **The terminal state is evaluated first — of everything that returns a repair route.**
+  //
+  // **Measured: it was not, twice.** It first sat below the two ledger branches while its own comment claimed the
+  // opposite order, so a change whose loop had escalated *and* whose ledger was unreadable or failing was dispatched to
+  // `/kata-build` (a looping repair is exactly the state in which the ledger is likely to be broken too). It was then
+  // moved above those two and left below `mixedRevisionEvidence` on the argument that mixed evidence "is a fact about the
+  // evidence, not a route out of a stuck loop" — and that argument was wrong for the same reason: an escalated loop
+  // whose evidence names two revisions was still dispatched to `/kata-build`, which is the one thing AC-4 forbids.
+  //
+  // So the rule is stated as what it is: **every branch that returns a repair route is below this one.** What remains
+  // above it is `phase === 'archive'`, which is not a repair route but the end of the workflow.
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Phase } from '../core/state.js';
@@ -12,27 +23,14 @@ import { isLegacyTask } from '../quality/acceptance-matrix.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
-import { readCurrentTaskRevision } from './revision.js';
+import { readCurrentTaskRevisionState } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
+import { readBlockingProblems } from './review-read.js';
+import { countFindingsBySeverity, mergeBlockingSeverities } from '../quality/review-ladder.js';
+import { readReviewRoundsState, reviewProgress } from '../quality/repair.js';
 
-/**
- * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
- *
- * Exported because the ladder and the archive gate must not disagree about which problems are open — the defect this file's
- * history is largely made of — and because a second derivation is exactly what a shared reader prevents.
- */
-export async function openLedgerProblems(
-    root: string,
-    taskId: string,
-): Promise<Array<{ id: string; severity: string; statement: string }>> {
-    const { readLedger } = await import('../store/ledger.js');
-    const { unsupportedClaims } = await import('../store/verdict.js');
-    const ledger = await readLedger(root, taskId);
-    // The decision, not a second derivation of it: `unsupportedClaims` assembles the input once for every consumer.
-    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement }));
-}
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -52,6 +50,17 @@ export type UpstreamSummary = {
   wikiClosureReason?: string;
   evidenceFiles: string[];
   failingEvidence: number;
+  /**
+   * Set when the review loop has stopped making progress, so the ladder escalates instead of re-dispatching.
+   *
+   * The count and the ids come from the recorded rounds (`review-rounds.jsonl`), never from prose: an escalation that
+   * cannot say what it counted is a sentence, not a state.
+   */
+  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[]; unmeasurable?: boolean };
+  /** Why the recorded review could not be read, when it could not be. Absent when it could. */
+  reviewRecordUnreadable?: string;
+  /** Why the current revision could not be read, when it could not be. Absent when it could — or when it is simply unwritten. */
+  currentRevisionUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
   /**
@@ -94,6 +103,9 @@ export const nextActionReasons = [
   'complete_review_conclusion',
   'continue_implementation',
   'design_intake_task',
+  'escalate_review_without_progress',
+  'unreadable_review_record',
+  'repair_unreadable_current_revision',
   'git_flow_confirmation_required',
   'inspect_task',
   'invalid_review_approval',
@@ -181,19 +193,34 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : undefined;
   // The sealed content, so a verdict that named the previous id but reviewed the same bytes still counts.
-  const sealed = await readCurrentTaskRevision(root, taskId);
+  //
+  // **Read through the three-state reader, because this is the surface that used to crash on drift.** A corrupted
+  // `current-revision.json` threw here while the sibling reader (`readReviewRecord`, on the same file set) refused with a
+  // reason — one fact, two answers. `absent` is a normal state for a change nobody has sealed yet; `unreadable` is a
+  // refusal, reported below in the same shape the review record's unreadable state is.
+  const sealedRead = await readCurrentTaskRevisionState(root, taskId);
+  const sealed = sealedRead.kind === 'current' ? sealedRead.revision : null;
   const binding = { revisionId: currentRevisionId ?? '', manifestHash: sealed?.manifestHash ?? null };
   const review = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), binding)
-    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
+    // The shape this file reads is status and evidence: the findings on the record are read by `readBlockingProblems`,
+    // through the reader that binds them to the current revision. Declaring them here too was a second reader waiting to
+    // disagree, and it now reads nothing.
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)), binding)
+    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)) : null;
   // **The severity the ladder routes on comes from the ledger, not from a findings table.**
   //
   // This is the sixth consumer of one question — "which problems are open and severe enough to block" — and it read
   // `review.json`'s raw findings, then the tracked view, and each repair taught another copy the same lesson. The ledger
   // holds the answer in its own vocabulary: an unsupported claim is a problem, its `severity` is the field the tier
   // contract already requires, and a waiver is the author's decision not to fix it.
-  const openProblems: Array<{ id: string; severity: string; statement: string }> = await openLedgerProblems(root, taskId);
-  const findings = openProblems.map((problem) => ({ severity: problem.severity }));
+  // **The blocking question, asked once, of the reader every other consumer asks.** The status this file returns is what
+  // the router and the surfaces read, and it used to assemble its own inputs — one of three call sites that did, which is
+  // how the approval and the archive gate came to answer the same question differently.
+  const blockingRead = await readBlockingProblems(root, taskId);
+  const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
+  const problemCounts = countFindingsBySeverity(openProblems);
+  const reviewRounds = await readReviewRoundsState(root, taskId);
+  const reviewProgressOfChange = reviewProgress(reviewRounds.rounds);
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
@@ -227,16 +254,32 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
       };
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
-    reviewFindings: findings.length,
-    blockingFindings: findings.filter((finding) => finding.severity === 'blocking').length,
-    majorFindings: findings.filter((finding) => finding.severity === 'major').length,
+    reviewFindings: openProblems.length,
+    blockingFindings: problemCounts.blocking,
+    majorFindings: problemCounts.major,
     ...(reviewMode ? { reviewMode } : {}),
+    // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it.
+    ...(!blockingRead.ok ? { reviewRecordUnreadable: blockingRead.why } : {}),
+    // Same refusal for the revision artefact, which this reader used to throw on instead of reporting.
+    ...(sealedRead.kind === 'unreadable' ? { currentRevisionUnreadable: sealedRead.detail } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
+    // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
+    // the trailing run that changed nothing is what stops the next one from being dispatched.
+    ...((reviewRounds.kind === 'unreadable' || reviewProgressOfChange.escalating)
+        ? {
+            reviewEscalation: {
+                rounds: reviewProgressOfChange.rounds,
+                noProgressRounds: reviewProgressOfChange.noProgressRounds,
+                blockingIds: reviewProgressOfChange.blockingIds,
+                ...(reviewRounds.kind === 'unreadable' || reviewProgressOfChange.unmeasurable ? { unmeasurable: true } : {}),
+            },
+        }
+        : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     wikiClosureValid: wikiClosure.valid,
@@ -252,16 +295,26 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // tier requires but no claim covers are the class-level half of it, which is what the termination condition is about:
     // "every class an open finding names has a check" became "every class the tier requires has a claim".
     ...(await (async () => {
+        // The decision boundary already distinguishes absent, decided and unreadable.
+        // Do not reopen raw ledger files here: a malformed claim list must refuse
+        // closure, never escape as a `.map` exception or masquerade as zero claims.
+        if (ledgerDecision.kind === 'unreadable') {
+            return {
+                ledgerClosure: {
+                    mayClose: false,
+                    unsupportedClaims: [],
+                    reason: `the evidence ledger cannot be read: ${ledgerDecision.detail}`,
+                },
+            };
+        }
+        // `kind !== 'decided'` already covers the zero-claim case: `ledgerVerdict` answers `absent` for a ledger with no
+        // claims, so the extra conjunct was a condition that could not change the outcome — the shape this file argues
+        // against two hundred lines below.
+        if (ledgerDecision.kind !== 'decided') return {};
         const { readLedger } = await import('../store/ledger.js');
         const { unsupportedClaims } = await import('../store/verdict.js');
         const ledgerState = await readLedger(root, taskId);
         const unsupportedIds = new Set(unsupportedClaims(ledgerState).map((decision) => decision.claimId));
-        if (ledgerState.claims.length === 0) {
-            // No ledger is a state, not an empty verdict: a change on this route may legitimately have none yet, and saying
-            // "cannot close" about nothing recorded would be a refusal of work that has not started.
-            return {};
-        }
-        // The kernel's answer, asked once for the whole ledger rather than re-derived per claim.
         const unsupported = ledgerState.claims.filter((claim) => unsupportedIds.has(claim.id));
         if (unsupported.length === 0) return {};
         return {
@@ -353,6 +406,18 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   if (phase === 'archive') {
     return phaseFallbackAction('archive');
   }
+  if (phase === 'review' && upstream.reviewEscalation) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'escalate_review_without_progress',
+      // **Above every route it precedes.** The branch returns first, but `priority` is not decoration: `candidates.sort`
+      // in `cli/tasks.ts` orders the list an operator reads, so a terminal carrying a lower number than the repair routes
+      // it outranks would still sort below them. Measured against the routes below: ledger 1985/1990/1995, mixed evidence
+      // 2100 — so the terminal has to sit above those, not merely return before them.
+      priority: 2200,
+    };
+  }
   if (upstream.mixedRevisionEvidence) {
     return {
       nextSkill: '/kata-build',
@@ -373,6 +438,16 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
   // over blocking or major review findings so --seal is attached to the build
   // command and stale evidence is refreshed alongside any finding repairs.
+  // **The terminal state is evaluated first, and that word is load-bearing.** A loop that has stopped making progress is
+  // not sent back to build for another round: it stops, names what is still open, and waits for a person.
+  if (phase === 'review' && upstream.currentRevisionUnreadable) {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'repair_unreadable_current_revision',
+      priority: 1160,
+    };
+  }
   // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
   // verdicts, open counterexamples and the discovery floor in one place, where the branches below count findings — and
   // counting findings is the part this replaces. It sits below the two state gates above it (mixed-revision evidence,
@@ -416,6 +491,25 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1020 + upstream.failedVerifyAcceptance,
     };
   }
+  // **A record nobody can read is not a record that found nothing.** This used to be *reported* on the summary
+  // (`reviewRecordUnreadable`) and read by nobody, while the problems list fell back to empty — so a change whose review
+  // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a
+  // refusal, and the step it refuses towards is a re-read of the review, not a judgement of the change.
+
+  if (phase === 'review' && upstream.reviewRecordUnreadable) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'unreadable_review_record',
+      priority: 1150,
+    };
+  }
+  // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
+  // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
+  // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
+  // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
+  const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
+  const hardestSeverity = blockingSeverities[0];
   if (phase === 'review' && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -424,9 +518,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1000 + upstream.blockingFindings,
     };
   }
-  // Strict mode, deliberately: the severity gate is "blocking, and major in strict" (design
-  // `2026-09-18-what-an-adversarial-pass-costs.md`). In std a major finding is reported and does not hold the task back.
-  if (phase === 'review' && upstream.reviewMode === 'strict' && upstream.majorFindings > 0) {
+  if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFindings > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
@@ -537,7 +629,9 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
       : cliVerb ? `kata-cli ${cliVerb} --change ${taskId}${seal}` : `kata-cli status --change ${taskId}`,
     role,
     reason,
-    requiresUserConfirmation: gate !== null || wikiClosure,
+    // The escalation is a decision, not a dispatch: it stops with or without a model trust boundary, because the next
+    // step is a person deciding whether to keep repairing, waive a problem, or stop the change.
+    requiresUserConfirmation: gate !== null || wikiClosure || reason === 'escalate_review_without_progress',
     modelOrPlatformSwitchAllowed: gate !== null,
     ...(gate ? { trustBoundary: gate } : {}),
     ...(gate ? { pauseInstruction: boundaryPromptFor(gate, promptLanguage()) } : {}),
@@ -580,6 +674,11 @@ export function statusActionPrompts(
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
   satisfy_ledger_deficits: null,
+  // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
+  escalate_review_without_progress: null,
+  // Also a decision about the change rather than about which platform runs: the record has to be read again.
+  unreadable_review_record: null,
+  repair_unreadable_current_revision: null,
   review_fresh_implementation: 'review_gate',
   judge_reviewed_change: 'judge_gate',
   archive_judged_change: 'archive_gate',

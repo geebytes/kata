@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStateEvents, type Actor } from '../core/state.js';
-import { readCurrentTaskRevision } from '../workflow/revision.js';
+import { readCurrentTaskRevisionState } from '../workflow/revision.js';
 import { collectEvidence, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { judge } from '../quality/judge.js';
 import { readWikiRecords } from '../wiki/store.js';
@@ -282,7 +282,13 @@ async function runFixture(
     }
 
     const evidence = await readRecordedEvidence(root, fixture.id);
-    const revision = await readCurrentTaskRevision(root, fixture.id);
+    // The identity is read as three states: an unreadable pointer must not silently become "no manifest hash", which
+    // would score a fixture against content nobody identified.
+    const revisionRead = await readCurrentTaskRevisionState(root, fixture.id);
+    if (revisionRead.kind === 'unreadable') {
+      throw new Error(`The eval fixture's current revision cannot be read (${revisionRead.detail}).`);
+    }
+    const revision = revisionRead.kind === 'current' ? revisionRead.revision : null;
     const scopeHashes = new Map(evidence.map((item) => [item.id, revision?.manifestHash ?? item.scope?.hash ?? '']));
     const judgeResult = await judge({
       root,

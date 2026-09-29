@@ -132,7 +132,10 @@ export async function recordScopeChange(
     }
 
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
-    const base = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    // No catch: this reader cannot reject any more, and a dead catch is a comment claiming a refusal that never happens.
+    // A base revision that cannot be read is treated as absent here because the *record* is the deliverable of this
+    // function; the scope record itself is written either way, and the reader that must refuse does.
+    const base = await readCurrentTaskRevision(root, taskId);
 
     let recorded: ScopeChange | null = null;
     await mutateTaskArtefact(root, taskId, scopeChangesPath(root, taskId), async () => {

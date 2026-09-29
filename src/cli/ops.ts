@@ -75,7 +75,7 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
 /** `kata-cli revision digests --change <task> [--since <revision-id|manifestHash>]` — the per-path content table. */
 export async function runRevisionCommand(argv: string[]): Promise<Record<string, unknown>> {
     const [subcommand, ...rest] = argv;
-    const { readCurrentTaskRevision, readTaskRevision, computePathDigests } = await import('../workflow/revision.js');
+    const { readCurrentTaskRevisionState, readTaskRevision, computePathDigests } = await import('../workflow/revision.js');
     const { changeSurface, changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
 
     if (subcommand !== 'digests') {
@@ -84,7 +84,21 @@ export async function runRevisionCommand(argv: string[]): Promise<Record<string,
     const taskId = parseChangeArg(rest);
     if (!taskId) throw new Error('Usage: kata-cli revision digests --change <task-id> [--since <revision-id|manifestHash>]');
     const root = resolveWorkspaceRoot();
-    const revision = await readCurrentTaskRevision(root, taskId);
+    // **Three states, because the two answers this command can give are not the same news.** It used to read only the
+    // revision and report `revisionId: null` with "no revision is sealed for this task" — and once the reader stopped
+    // throwing, a corrupted pointer produced exactly that sentence, telling an operator there was nothing sealed for a task
+    // whose seal is sitting there unreadable.
+    const revisionRead = await readCurrentTaskRevisionState(root, taskId);
+    if (revisionRead.kind === 'unreadable') {
+        return {
+            command: 'revision digests',
+            taskId,
+            revisionId: null,
+            digestCount: 0,
+            error: `The sealed revision cannot be read, so its digests cannot be listed (${revisionRead.detail}).`,
+        };
+    }
+    const revision = revisionRead.kind === 'current' ? revisionRead.revision : null;
     if (!revision) return { command: 'revision digests', taskId, revisionId: null, digestCount: 0, note: 'no revision is sealed for this task' };
 
     const since = argValue(rest, '--since');

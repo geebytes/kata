@@ -1,3 +1,7 @@
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { taskDir } from '../core/layout.js';
+import { withTaskLock } from '../core/state.js';
 import type { Phase } from '../core/state.js';
 import type { ReviewSeverity } from './reviewer.js';
 import type { AcceptanceMatrix } from '../core/task.js';
@@ -120,3 +124,171 @@ export interface RepairPayload {
   baselineRevisionId?: string;
   baselineManifestHash?: string;
 }
+
+/**
+ * One review-to-repair round, as it was opened.
+ *
+ * `repair.json` records the repair in flight and is overwritten by the next one, so the loop's history had nowhere to
+ * live. Without it nothing could ask whether the repairs were reducing the problems they were opened for, and the loop
+ * had no terminal state: review → repair → review could continue indefinitely, each round justified on its own terms.
+ */
+export interface ReviewRound {
+    at: string;
+    /** The problems the round was opened for, by id — the escalation names these rather than a count alone. */
+    blockingIds: string[];
+    /**
+     * How many problems blocked when the round was opened.
+     *
+     * **`null` when the round could not be measured** — never `0`, which would read as "this round reduced the
+     * problems to none". A repair opened only because the sealed revision was superseded has nothing to count, and
+     * saying so is different from saying nothing was blocking.
+     */
+    blockingCount: number | null;
+}
+
+/**
+ * How many consecutive rounds without a reduction of the blocking count stop the loop.
+ *
+ * **Counted in rounds that did not reduce**, so a flat history escalates on the round after these: four recorded rounds
+ * for the first escalation, not three. The sentence and the loop have to agree on that, because an off-by-one between two
+ * readings of "three rounds" is a defect that hides in the gap between them — `reviewProgress` returns the trailing run so
+ * a caller can see which reading it got.
+ *
+ * A judgement, not a measurement, so it is a named constant the escalation reports rather than a number buried in a
+ * comparison: the caller can disagree with it, and a reader can see what was assumed.
+ */
+export const NO_PROGRESS_ROUNDS = 3;
+
+export interface ReviewProgress {
+    /** Every round recorded, measured or not. */
+    rounds: number;
+    /** The trailing run of rounds that did not reduce the count. */
+    noProgressRounds: number;
+    escalating: boolean;
+    /** What the newest measured round was opened for. Empty when no round measured anything. */
+    blockingIds: string[];
+    /** Rounds that recorded no count, reported rather than dropped: an unmeasured round is not an improvement. */
+    unmeasuredRounds: number;
+    /**
+     * True when the history exists but **nothing** in it could be measured.
+     *
+     * A loop that cannot be judged must not read as a loop that is fine: with every line unmeasurable, `noProgressRounds`
+     * is 0, which is indistinguishable from a change whose first round went perfectly. The state is named so the escalation
+     * can say which of the two it is, and it escalates, because the alternative is to keep dispatching repairs on the
+     * strength of a history nobody can read.
+     */
+    unmeasurable: boolean;
+}
+
+export function reviewRoundsPath(root: string, taskId: string): string {
+    return join(taskDir(root, taskId), 'review-rounds.jsonl');
+}
+
+/**
+ * Derive the loop's progress from the recorded rounds.
+ *
+ * Only rounds that measured a count participate in the comparison, and a run of them is what escalates: a round that
+ * measured nothing can neither be progress nor be read as one.
+ */
+export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
+    // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
+    // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is
+    // plainly stuck: it has not reached a new low since round 2. A loop that only ever gets worse is the same fact with
+    // the sign flipped, and both must escalate.
+    let best: number | null = null;
+    let noProgressRounds = 0;
+    let unmeasuredRounds = 0;
+    let newestMeasuredIds: string[] = [];
+    for (const round of rounds) {
+        if (round.blockingCount === null) {
+            // **Neutral, and counted.** A round that measured nothing is neither progress nor a failure to progress, so it
+            // neither resets the run nor extends it; `unmeasuredRounds` reports it, because a history that could not be
+            // measured at all must not read as a healthy loop.
+            unmeasuredRounds += 1;
+            continue;
+        }
+        newestMeasuredIds = [...round.blockingIds];
+        if (best === null || round.blockingCount < best) {
+            best = round.blockingCount;
+            noProgressRounds = 0;
+        } else {
+            noProgressRounds += 1;
+        }
+    }
+    const measurable = rounds.length - unmeasuredRounds;
+    const unmeasurable = rounds.length > 0 && measurable === 0;
+    return {
+        rounds: rounds.length,
+        noProgressRounds,
+        escalating: noProgressRounds >= NO_PROGRESS_ROUNDS || unmeasurable,
+        blockingIds: newestMeasuredIds,
+        unmeasuredRounds,
+        unmeasurable,
+    };
+}
+
+/**
+ * Record a round under the task's single-writer lock, one line per round.
+ *
+ * Append-only, because the history is the point: a record the next repair overwrites cannot say whether the loop is
+ * moving. The lock is the repository's one rule for task artefacts, and this file keeps a single write entry point so
+ * there is no second, unlocked way in.
+ */
+export async function appendReviewRound(root: string, taskId: string, round: ReviewRound): Promise<void> {
+    const path = reviewRoundsPath(root, taskId);
+    // The directory before the lock: this is the first write of a round, and a task that has not written anything yet has
+    // no directory for the lock's own file to live in.
+    await mkdir(dirname(path), { recursive: true });
+    await withTaskLock(root, taskId, async () => {
+        await appendFile(path, `${JSON.stringify(round)}\n`, 'utf8');
+    });
+}
+
+export type ReviewRoundsRead =
+    | { kind: 'absent'; rounds: ReviewRound[] }
+    | { kind: 'readable'; rounds: ReviewRound[] }
+    | { kind: 'unreadable'; rounds: ReviewRound[]; detail: string };
+
+/**
+ * Read the recorded rounds, oldest first.
+ *
+ * A line that cannot be parsed becomes an **unmeasured round** rather than being dropped. Both readings leave
+ * `reviewProgress`'s trailing run identical — an unmeasured round is neutral there — so the difference is what the
+ * history *says about itself*: `rounds` and `unmeasuredRounds` count a damaged line, and a dropped one would leave the
+ * file looking shorter than it is. An absent file is an empty history — a change under its first repair has no rounds
+ * yet — and that is the only case that reads as nothing was ever recorded.
+ */
+export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
+    let raw: string;
+    try {
+        raw = await readFile(reviewRoundsPath(root, taskId), 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent', rounds: [] };
+        return { kind: 'unreadable', rounds: [], detail: (error as Error).message };
+    }
+    const rounds: ReviewRound[] = [];
+    let malformedLine: number | undefined;
+    for (const line of raw.split('\n')) {
+        if (line.trim() === '') continue;
+        try {
+            const parsed = JSON.parse(line) as Partial<ReviewRound>;
+            rounds.push({
+                at: typeof parsed.at === 'string' ? parsed.at : '',
+                blockingIds: Array.isArray(parsed.blockingIds) ? parsed.blockingIds.filter((id): id is string => typeof id === 'string') : [],
+                blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
+            });
+        } catch {
+            malformedLine ??= rounds.length + 1;
+            rounds.push({ at: '', blockingIds: [], blockingCount: null });
+        }
+    }
+    if (malformedLine !== undefined) {
+        return { kind: 'unreadable', rounds, detail: `review-rounds history has malformed JSONL at record ${malformedLine}` };
+    }
+    return { kind: 'readable', rounds };
+}
+
+// **The deprecated wrapper is gone, not kept.** It existed for callers that only wanted the list, and once the router
+// moved to `readReviewRoundsState` that left it with test-only consumers — the single unreferenced export in `src/`, which
+// this repository's own wiring check reports. A reader whose `kind` is dropped at the call site is the defect this change
+// exists to remove, so the convenience wrapper that dropped it is not a convenience.

@@ -6,6 +6,7 @@ import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
 import { findMatrixDeclarationGaps } from '../quality/acceptance-matrix.js';
+import { reviewTierFor } from '../quality/review-ladder.js';
 import { readChangeRecord } from '../quality/change-record.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
@@ -16,20 +17,22 @@ import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { describeClaimFailure, evaluateClaims, resolveClaimChecks, validateClaims } from '../quality/claims.js';
 import { collectSealPreflight } from './seal-preflight.js';
-import { bindsToRevision, currentRevisionIdentity, revisionBindingFields } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentity, currentRevisionIdentityFrom, revisionBindingFields } from './verdict-binding.js';
 import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
-import { openLedgerProblems, nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
+import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
+import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { readReview } from './review-read.js';
+import { readBlockingProblems, readReview, readReviewMode } from './review-read.js';
+import { describeBlockingProblems } from '../quality/review-ladder.js';
+import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -597,7 +600,7 @@ async function cmdBuild(
     try {
     // What this seal narrows against: the revision that was current before it. Its digests are half the change
     // surface the record derives — the half that survives the round committing.
-    const baseRevision = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    const baseRevision = await readCurrentTaskRevision(root, taskId);
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
@@ -1163,7 +1166,7 @@ async function deriveSealRelevantChecks(
     // everything regardless.
     if (options.frozen === true || options.fullChecks === true) return {};
     const { readCurrentTaskRevision } = await import('./revision.js');
-    const previous = revision ? null : await readCurrentTaskRevision(root, taskId).catch(() => null);
+    const previous = revision ? null : await readCurrentTaskRevision(root, taskId);
     const base = revision ?? previous;
     if (!base?.pathDigests) return {};
     const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
@@ -1261,7 +1264,32 @@ async function cmdVerify(
     }
     // The verdict names the revision it is about (id) and the content it saw (manifest hash), so a re-seal that changed
     // nothing does not expire it.
-    const verifyBinding = await currentRevisionIdentity(root, taskId);
+    //
+    // **Read as three states at the command boundary, because this is where an operator stands.** `currentRevisionIdentity`
+    // refuses an unreadable artefact by throwing, which is right for the decision surfaces and wrong here: measured with a
+    // corrupted pointer, the router reported `currentRevisionUnreadable`, dispatched `/kata-verify`, and the command then
+    // threw *after* verifying everything and *before* writing `verify.json` — so the run was discarded and the operator got
+    // no envelope at all from the command the router had just recommended. A repair tool has to answer with a refusal it
+    // can read.
+    const verifyRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+    if (verifyRevisionRead.kind === 'unreadable') {
+        return {
+            command: 'verify',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Verification cannot conclude: the current revision cannot be read (${verifyRevisionRead.detail}). `
+                + 'The sealed content this verdict would be about is unknown, so nothing is recorded. Repair or remove the artefact and run verify again.',
+            // No `openProblems` here: this refusal runs before the ledger is read, and publishing `0` beside the reason
+            // would be the "0 means no problems" substitution this round exists to remove, in its own new field.
+            diagnostics: { currentRevisionUnreadable: verifyRevisionRead.detail },
+        };
+    }
+    // **Derived from the read taken above, not read again.** The pointer is written non-atomically, so a check followed by
+    // an independent read is not a check: measured by corrupting the file between the two reads, the command threw at this
+    // line after verifying everything and before writing `verify.json` — the very discard the refusal above was added to
+    // prevent. This is the same fix `review-read.ts` needed, and the primitive for it already exists.
+    const verifyBinding = await currentRevisionIdentityFrom(verifyRevisionRead, root, taskId);
     await writeFile(
         verifyPath(root, taskId),
         `${JSON.stringify({ ...verifyResult, ...revisionBindingFields(verifyBinding) }, null, 2)}\n`,
@@ -1282,8 +1310,9 @@ async function cmdVerify(
     const reviewMode = task.workflowProfile?.reviewMode;
     // A strict matrix declaration gap is reported, not blocked: a task sealed before strict rows required declared check
     // ids must keep verifying, or the rule would retroactively invalidate every binding it holds.
-    const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewMode === 'strict');
+    const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewTierFor(reviewMode) !== 'standard');
 
+    const ledgerProblems = await openLedgerProblems(root, taskId);
     return {
         command: 'verify',
         taskId,
@@ -1312,7 +1341,11 @@ async function cmdVerify(
             evidenceCount: evidence.length,
             // **Counted from the ledger, which is where a problem is recorded on this route.** These two fields reported the
             // round-shaped findings table; `openLedgerProblems` is the same question in the vocabulary the gates read.
-            openProblems: (await openLedgerProblems(root, taskId)).length,
+            // **Absent, not zero, when the ledger could not be read.** Publishing `0` beside a separate detail string
+            // was the same substitution in a new costume: a consumer reading only `openProblems` sees "no problems" for a
+            // ledger that said nothing of the kind. The field is omitted instead, and the reason is what carries the fact
+            // — which is exactly how the envelope already reports a check it could not run.
+            ...openProblemsReportFields(ledgerProblems),
             // **The change record, read back.** The seal writes it and refuses prose that contradicts its own derived
             // numbers, and until this line nothing ever read one: an audited artefact with a writer and no reader, which is
             // the shape the wiring check reports and the shape `readChangeRecord` existed for. Reported here so an operator
@@ -1358,14 +1391,50 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires non-empty review evidence.',
                 };
             }
+            // **The bar, asked of the one reader, before anything is written.** The branch that read `review.json`'s
+            // findings here was deleted once on the argument that the ledger route "reads the ledger, and only the
+            // ledger" — and an independent review then measured what that left behind: with an open `blocking` finding in
+            // the record and a ledger that passes, the approval was granted, the change was routed to the judge, and the
+            // repair entry was authorised, while the distill gate refused the very same change (`tmp/repro-c3c4.mts`).
+            // Removing the branch did not remove the second answer; it moved it one surface over.
+            //
+            // The repair is not to add a branch back, it is to stop each caller assembling the question: the refusal now
+            // asks `readBlockingProblems`, the same reader the gate, the repair entry and the router ask. A record that
+            // cannot be read refuses here too, rather than escaping as an exception.
+            const { ledgerVerdict: readLedgerVerdict } = await import('../store/verdict.js');
+            // Read once and used by both refusals below: the bar sentence says which problems are open, and the
+            // kernel's reasons say why the ledger does not pass. An operator needs both, and one message that
+            // carried only one of them would send them looking for the other.
+            const ledger = await readLedgerVerdict({ root, changeId: taskId });
+            const approvalBar = await readBlockingProblems(root, taskId);
+            if (!approvalBar.ok) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval cannot be judged by the evidence ledger and cannot be decided: ${approvalBar.why}.`,
+                };
+            }
+            if (approvalBar.problems.length > 0) {
+                const ledgerReasons = ledger.kind === 'decided' && ledger.decision.verdict !== 'pass'
+                    ? `. The evidence ledger does not pass (${ledger.decision.verdict}): ${ledger.decision.reasons
+                        .map((reason) => `${reason.code}${reason.claimId ? ` (${reason.claimId})` : ''}: ${reason.detail}`)
+                        .join(' | ')}`
+                    : '';
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval requires every problem at the mode's bar to be disposed of. ${describeBlockingProblems(approvalBar.mode, approvalBar.problems)}${ledgerReasons}`,
+                    diagnostics: {
+                        blockingProblems: approvalBar.problems,
+                        ...(ledger.kind === 'decided' ? { ledger: { state: 'decided' as const, verdict: ledger.decision.verdict, reasons: ledger.decision.reasons } } : {}),
+                        nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
+                    },
+                };
+            }
             // **Two routes to an approval, and the ledger's is the stronger one.** A change whose claims and evidence
             // are recorded in a ledger is decided by the kernel over content kata verified itself, so what holds the
             // approval is the evidence rather than a round-shaped pass about it. A change with no ledger keeps the route
             // it had, and that absence is a fact the caller can see — which is what lets the old route be retired change
             // by change instead of all at once.
-            const { ledgerVerdict: readLedgerVerdict } = await import('../store/verdict.js');
             const { ledgerDrift } = await import('../store/ledger.js');
-            const ledger = await readLedgerVerdict({ root, changeId: taskId });
             let ledgerApproval: { subjectRevision: string; tier: string; assurance: string; claims: number; limits: string[] } | null = null;
             if (ledger.kind === 'unreadable') {
                 // A ledger that exists and cannot be read decides nothing, and it must not fall through to the other route
@@ -1400,10 +1469,23 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 if (ledger.decision.verdict !== 'pass') {
                     const reasons = ledger.decision.reasons
                         .map((reason) => `${reason.code}${reason.claimId ? ` (${reason.claimId})` : ''}: ${reason.detail}`);
+                    // **The verdict says the ledger does not pass; this says which problems are at this mode's bar.** The
+                    // reasons are the kernel's vocabulary and the caller had to reconstruct the mode's severity rule from
+                    // them; naming the problems is the same ladder the routers read, so the refusal and the routing cannot
+                    // disagree about what blocks. A mode whose bar no open problem reaches adds nothing to the sentence.
+                    const blockingRead = await readBlockingProblems(root, taskId);
+                    // **The bar sentence names the problems at the bar, and only those.** Naming every open problem would
+                    // claim the mode refuses something it does not — a `major` problem is open under `std` and is not at
+                    // std's bar, so a sentence that listed it would be a declaration claiming more than its reality.
+                    const blockingProblems = blockingRead.ok ? blockingRead.problems : [];
+                    const bar = blockingRead.ok
+                        ? describeBlockingProblems(blockingRead.mode, blockingProblems)
+                        : blockingRead.why;
                     return {
                         command: 'review', taskId, phase: 'review', success: false,
-                        error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}`,
+                        error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}${bar === '' ? '' : `. ${bar}`}`,
                         diagnostics: {
+                            blockingProblems,
                             ledger: {
                                 state: 'decided',
                                 verdict: ledger.decision.verdict,
@@ -1518,16 +1600,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence. Re-run /kata-review before approving.',
                 };
             }
-            // **The severity refusal over `review.json`'s findings is deleted, and this is the class-closing repair its own
-            // comment asked for.** It read the round-shaped findings table, whose only remaining producer is the eval
-            // harness — for a governed change the table is empty, so the branch could not fire on the route it guards,
-            // while eval-fixture data could make it fire on a finding the ledger route never sees.
+            // **The severity refusal over `review.json`'s findings was deleted here once, and that deletion is what an
+            // independent review falsified.** The argument was that the ledger route answers severity by itself — a claim's
+            // severity decides the evidence strength it requires, `decide` applies it — and that the findings table is empty
+            // for a governed change, so the branch could not fire. The second half was wrong: the table is not empty when a
+            // record carries findings, and the distill gate reads them, so deleting the branch here did not end the class,
+            // it moved the second answer to the surface that *does* read them.
             //
-            // Severity has one home now, and it is not here: a claim's severity decides the evidence strength it requires
-            // (`MIN_STRENGTH_BY_SEVERITY`, `policy.evidenceStrength`, reproducibility for `blocking`), `decide` applies it,
-            // and `ledger claim waive --reason` is how the author decides to live with one. The comment this replaces said
-            // the repair that ends the class is the removal of the second copy rather than a seventh patch; this is that
-            // removal, and the second copy is gone.
+            // What is fixed is the cause rather than the branch: the question is asked by `readBlockingProblems` and by
+            // nothing else, so a caller cannot assemble a different version of it. The refusal above is that reader's
+            // answer, and it fires on exactly what the gate fires on.
             // F5: the reviewer may state which paths they read; absent, the review is read as covering the whole revision
             // (the conservative direction). When none was stated, the matrix's suggestion is *offered* in the result
             // rather than written behind the reviewer's back — the design's F5 rests on their honesty, not on kata's.
@@ -1663,6 +1745,23 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             diagnostics: { revisionId: evidenceRevisionId, reviewRevisionId: reviewRevisionId ?? null, repairScope: 'cross_revision_review' },
         };
     }
+    // **The same boundary refusal `verify` got, for the same reason.** `judge` computes the whole result and only then
+    // reads the revision to stamp it — so a corrupted pointer threw at the stamp and `judge.json` was never written,
+    // discarding a judgement that had already been computed. Measured: `runCommand('judge')` with a corrupted pointer threw
+    // at `quality/judge.ts:138` (the write is at `:140`). A tool an operator runs while repairing a task directory has to
+    // answer with something it can read.
+    const judgeRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+    if (judgeRevisionRead.kind === 'unreadable') {
+        return {
+            command: 'judge',
+            taskId,
+            phase: 'review',
+            success: false,
+            error: `The judgement cannot be recorded: the current revision cannot be read (${judgeRevisionRead.detail}). `
+                + 'The content it would speak for is unknown, so nothing is written. Repair or remove the artefact and run judge again.',
+            diagnostics: { currentRevisionUnreadable: judgeRevisionRead.detail },
+        };
+    }
     const scopeHashes = await currentScopeHashes(root, evidence);
     const judgeResult = await judge({
         root,
@@ -1673,6 +1772,10 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         currentScopeHashes: scopeHashes,
         matrix: task.acceptanceMatrix,
         reviewMode: task.workflowProfile?.reviewMode,
+        // **The read taken above, handed over.** Without it the stamp re-reads the non-atomic pointer, and the refusal
+        // above becomes a check-then-use: measured by corrupting the file between the two reads, the command still threw
+        // after computing the judgement and before writing it.
+        revisionRead: judgeRevisionRead,
     } as import('../quality/judge.js').JudgeInput);
 
     // **A judge FAIL records no obligation, and the reason is that it cannot be reached without a ledger.**
@@ -1704,6 +1807,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         judgeTransitionError = error instanceof Error ? error.message : String(error);
     }
 
+    const ledgerProblems = await openLedgerProblems(root, taskId);
     return {
         command: 'judge',
         taskId,
@@ -1721,11 +1825,24 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             // they live (`ledger claim show <id>`, `ledger decide`).
             ...(reportFailedCriteria.length > 0 ? { failedCriteria: reportFailedCriteria } : {}),
             evidenceCount: evidence.length,
-            openProblems: (await openLedgerProblems(root, taskId)).length,
+            // **Absent, not zero, when the ledger could not be read.** Publishing `0` beside a separate detail string
+            // was the same substitution in a new costume: a consumer reading only `openProblems` sees "no problems" for a
+            // ledger that said nothing of the kind. The field is omitted instead, and the reason is what carries the fact
+            // — which is exactly how the envelope already reports a check it could not run.
+            ...openProblemsReportFields(ledgerProblems),
         },
     };
 }
 
+/**
+ * The ledger's open problems, for the two report surfaces (`verify`, `judge`).
+ *
+ * **This is where a reader that cannot fail silently is read, and the three answers stay three.** A ledger with problems
+ * reports them; a ledger with none reports an empty list; a ledger that cannot be read reports *that*, rather than `0`
+ * problems, which would be the claim that there are none — the substitution this change exists to remove. It replaced a
+ * bare `(await openLedgerProblems(...)).length`, which is also why a corrupt `claims.json` used to become a stack trace
+ * on these two commands instead of a refusal.
+ */
 async function readTaskEvidence(root: string, taskId: string, options: CommandOptions = {}): Promise<EvidenceEnvelope[]> {
     // The recorded set, read through the shared reader. Only a genuinely absent directory falls back to collecting now.
     try {
