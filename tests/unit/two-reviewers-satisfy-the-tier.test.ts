@@ -34,6 +34,7 @@ beforeEach(async () => {
     const frozen = await freezeSubject({ root, paths: ['src/kernel.ts'] });
     if (!frozen.ok) throw new Error(frozen.error);
     await writeSubject(root, changeId, frozen.subject);
+    subjectRevision = frozen.subject.revision;
     await ensureAssurance(root, changeId, 'observed');
     await appendClaim(root, changeId, makeClaim({ id: 'C1', severity: 'major', riskClass: 'consistency', evidenceIds: ['E1'], dependsOn: ['path:src/kernel.ts'] }));
     await appendEvidence(root, changeId, makeEvidence({ id: 'E1', type: 'executable_falsifier', command: 'true' }));
@@ -43,8 +44,16 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-function reading(runId: string, actor: string): EvidenceVerdict {
-    return { ...makeVerdict({ evidenceId: 'E1', verdict: 'supported', at: NOW }), subjectRevision: 'rev:whatever', producer: { runId, actor } };
+/** A reading of this ledger's own subject: the projection's revision region only applies to readings that name it. */
+let subjectRevision = '';
+
+function reading(runId: string, actor: string, overrides: Partial<EvidenceVerdict> = {}): EvidenceVerdict {
+    return {
+        ...makeVerdict({ evidenceId: 'E1', verdict: 'supported', at: NOW }),
+        subjectRevision,
+        producer: { runId, actor },
+        ...overrides,
+    };
 }
 
 async function reasonCodes(): Promise<string[]> {
@@ -92,12 +101,14 @@ describe('two independent readings satisfy the tier that asks for them', () => {
     });
 
     it('a second run that refutes the evidence makes the item refuted rather than outvoted', async () => {
-        await recordVerdicts(root, changeId, [reading('run-1', 'reviewer-a')]);
-        await recordVerdicts(root, changeId, [{ ...reading('run-2', 'reviewer-b'), verdict: 'refuted' }]);
-        // Two readings, and the counterexample is what the claim is judged on: the projection does not average them.
+        // **The refutation is the OLDER reading**, which is the point: with the newest reading supporting the item, only
+        // refuted-priority can produce `evidence_refuted`. The first version of this case had the refutation last, so it
+        // stayed green under a projection that simply took the newest — it could not tell the two rules apart.
+        await recordVerdicts(root, changeId, [reading('run-1', 'reviewer-a', { verdict: 'refuted', at: '2026-09-28T00:00:00.000Z' })]);
+        await recordVerdicts(root, changeId, [reading('run-2', 'reviewer-b', { at: '2026-09-29T12:00:00.000Z' })]);
         const codes = await reasonCodes();
         expect(codes).toContain('evidence_refuted');
-        expect(await reasonCodes()).toContain('evidence_refuted');
+        expect(codes).not.toContain('claim_unsupported');
     });
 
     it('an open counterexample still stands beside a satisfied quorum, because the two are different questions', async () => {

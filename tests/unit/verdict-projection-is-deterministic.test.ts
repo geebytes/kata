@@ -21,6 +21,51 @@ function reading(overrides: Partial<EvidenceVerdict> & { evidenceId: string }): 
     };
 }
 
+describe('a reading about another revision does not decide this one', () => {
+    const CURRENT = 'rev:current';
+    const OLD = 'rev:old';
+
+    it('does not let a refutation of an older revision outrank support for the current one', () => {
+        // **Measured by an independent review, and a regression this change introduced.** The store used to replace on the
+        // evidence id, so a later reading about the current revision simply replaced an earlier refutation of an older one.
+        // Once both are kept, refuted-priority applied across revisions made the item refuted *forever*: the projection
+        // reports the reading it picked, and the store only drops verdicts for an evidence item whose content changed — so
+        // re-reading, which is the remedy `decide` names, could never clear it.
+        const projected = projectVerdicts(
+            [
+                reading({ evidenceId: 'E1', verdict: 'refuted', at: '2026-09-28T00:00:00.000Z', subjectRevision: OLD }),
+                reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-29T12:00:00.000Z', subjectRevision: CURRENT }),
+            ],
+            { currentRevision: CURRENT },
+        );
+        expect(projected.map((entry) => `${entry.verdict}@${entry.subjectRevision}`)).toEqual([`supported@${CURRENT}`]);
+    });
+
+    it('still lets a refutation of the current revision win, which is the whole point of keeping it', () => {
+        const projected = projectVerdicts(
+            [
+                reading({ evidenceId: 'E1', verdict: 'refuted', at: '2026-09-29T00:00:00.000Z', subjectRevision: CURRENT }),
+                reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-29T12:00:00.000Z', subjectRevision: CURRENT }),
+            ],
+            { currentRevision: CURRENT },
+        );
+        expect(projected.map((entry) => entry.verdict)).toEqual(['refuted']);
+    });
+
+    it('falls back to the newest reading when nothing was read against this revision, so the item is reported stale', () => {
+        // The state a re-seal creates before anyone re-reads: no reading is about the new revision, and the kernel's answer
+        // is staleness for the item — not silence, and not a stale reading pretending to be current.
+        const projected = projectVerdicts(
+            [
+                reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-28T00:00:00.000Z', subjectRevision: OLD }),
+                reading({ evidenceId: 'E1', verdict: 'inconclusive', at: '2026-09-28T06:00:00.000Z', subjectRevision: OLD }),
+            ],
+            { currentRevision: CURRENT },
+        );
+        expect(projected.map((entry) => `${entry.verdict}@${entry.subjectRevision}`)).toEqual([`inconclusive@${OLD}`]);
+    });
+});
+
 describe('what a claim is judged on when an item has several readings', () => {
     it('is the reading itself when there is only one, so nothing changes for every ledger in existence', () => {
         const only = reading({ evidenceId: 'E1' });
@@ -64,6 +109,37 @@ describe('what a claim is judged on when an item has several readings', () => {
             reading({ evidenceId: 'E1', producer: { runId: 'run-3', actor: 'c' } }),
         ]);
         expect(projected).toHaveLength(1);
+    });
+
+    it('orders two refuted readings by time as well, so the newest refutation is the one reported', () => {
+        // **Measured by an independent review.** The refuted branch returned before the timestamp was compared, so two
+        // refutations were resolved by document position — and since the store appends, the winner was the OLDEST, while its
+        // `observed`, `at`, `subjectRevision` and `producer` are what the reader sees.
+        const older = reading({ evidenceId: 'E1', verdict: 'refuted', observed: 'failed before', at: '2026-01-01T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        const newer = reading({ evidenceId: 'E1', verdict: 'refuted', observed: 'failed differently', at: '2026-09-01T00:00:00.000Z', producer: { runId: 'run-2', actor: 'b' } });
+        expect(projectVerdicts([older, newer]).map((entry) => entry.observed)).toEqual(['failed differently']);
+        expect(projectVerdicts([newer, older]).map((entry) => entry.observed)).toEqual(['failed differently']);
+    });
+
+    it('resolves a same-moment tie by content rather than by position, for the cell the order-independence case misses', () => {
+        // Two readings with the same `at` and the same run id cannot come from the store (it would have replaced one), but a
+        // hand-written or legacy document can hold them — and then the answer must still not depend on the order.
+        const supported = reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        const inconclusive = reading({ evidenceId: 'E1', verdict: 'inconclusive', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        expect(projectVerdicts([supported, inconclusive]).map((entry) => entry.verdict)).toEqual(['supported']);
+        expect(projectVerdicts([inconclusive, supported]).map((entry) => entry.verdict)).toEqual(['supported']);
+    });
+
+    it('never lets an unparseable timestamp win on recency, because a relayed reading writes that string itself', () => {
+        const junk = reading({ evidenceId: 'E1', verdict: 'inconclusive', at: 'zzz', producer: { runId: 'run-1', actor: 'a' } });
+        const real = reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-2', actor: 'b' } });
+        expect(projectVerdicts([junk, real]).map((entry) => entry.verdict)).toEqual(['supported']);
+        expect(projectVerdicts([real, junk]).map((entry) => entry.verdict)).toEqual(['supported']);
+        // And two junk timestamps do not fall back to position either: the run id orders them.
+        const junkA = reading({ evidenceId: 'E1', verdict: 'inconclusive', at: '{junk}', producer: { runId: 'run-a', actor: 'a' } });
+        const junkB = reading({ evidenceId: 'E1', verdict: 'supported', at: 'also-junk', producer: { runId: 'run-b', actor: 'b' } });
+        expect(projectVerdicts([junkA, junkB]).map((entry) => entry.verdict)).toEqual(['supported']);
+        expect(projectVerdicts([junkB, junkA]).map((entry) => entry.verdict)).toEqual(['supported']);
     });
 
     it('breaks a tie on the run id rather than on the position, so a document edited by hand cannot reorder the answer', () => {

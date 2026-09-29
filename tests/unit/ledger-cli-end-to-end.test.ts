@@ -124,6 +124,26 @@ describe('the ledger verbs', () => {
         expect(String(result.note)).toContain('nothing has been recorded');
     });
 
+    it('reports every reading beside the projection, so a lost reading would be visible', async () => {
+        // **The number that makes "no reading is lost" observable.** With one entry per evidence item the two counts always
+        // agreed, so an operator had no way to see that a second independent reading had been recorded — an independent
+        // review found `readings` observable only through the quorum's verdict.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        const once = await ledger(['status']);
+        expect(once.readings).toBe(once.verdicts);
+
+        // A second run deciding the same evidence: the projection still holds one answer per item, and the readings count
+        // moves — which is the fact that says the second reader exists.
+        await ledger(['evidence', 'verify', '--run-id', 'run-2', '--actor', 'reviewer-b']);
+        const twice = await ledger(['status']);
+        expect(twice.verdicts).toBe(once.verdicts);
+        expect(twice.readings).toBe(2);
+    });
+
     it('reads its own --change flag, so a subcommand is not mistaken for an id', async () => {
         // The regression this pins: `ledger status --change x` read `status` as the change id, because the entry point's
         // positional guesser cannot tell a subcommand from an id.

@@ -160,7 +160,7 @@ for (const verdict of incoming) {
 
 **改动面**（与设计 §8 一致）：`src/store/ledger.ts`、`src/store/verdict.ts`（quorum 取数点一行）、`src/kernel/evidence.ts`。`store/replay.ts`、`kernel/delta.ts`、`cli/ledger.ts` **一行未改**——它们要的是"这个证据算哪条"，拿投影即可，这正是把投影放在 store 的收益。
 
-全套：191 文件 / 1210 用例通过，`tsc --noEmit` 干净。
+全套：193 文件 / 1216 用例通过，`tsc --noEmit` 干净（数字随后续修复批更新）。
 
 ## 10. 流程本身上发现的三件事（都在本 change 里踩到）
 
@@ -169,3 +169,39 @@ for (const verdict of incoming) {
 3. **三条命令必须相邻**：`tasks declare` / `scope change` 会改变任务的声明面 ⇒ implementer 收据失效 ⇒ 先 `handoff create` + `handoff acknowledge`，再 `--seal`；而**失败的封存同样消耗收据**。此外 `scope change` 的 `--add` 是**逐条**的（逗号不分词），且新矩阵行引用的测试文件必须在 ownedPaths 里，否则封存报 "Owned path coverage incomplete"。
 
 **一条状态报告**：本 change 触及 `src/kernel/evidence.ts` 等内核路径 ⇒ 自身档位为 `security` ⇒ 若记录账本，`assurance_below_tier`（本机无沙箱执行器）仍会令 `decide` 返回 `insufficient`。本 change **未记录账本**：其六条验收标准各有可执行用例、每条都用变异证明会变红，而账本在本仓当前状态下对本 change 无法 pass（原因不在本 change 表面，见 `gate-input-integrity` 设计文档 §12）。这条选择在此写明，而不是留给读者去猜。
+
+## 11. 第一次独立审查（`revision-3a003d2f9a113a94`）与修复批
+
+审查由一个**不同上下文**的独立审查者执行（它没有作者上下文），七条 finding 全部由我复跑确认，**一条是 blocking**，而且是**本 change 引入的**。
+
+### 11.1 关键发现：跨 revision 的证伪会永久作废该证据（R-1，blocking）
+
+- **测量**：readings = `[refuted@rev:old（更早）, supported@<当前 subject>（更晚）]` ⇒ 投影取 `refuted@rev:old`，`decide` 报 `evidence_refuted`（不是 `evidence_stale_subject`），claim 状态为 `refuted` ⇒ 永久 `fail`。
+- **为什么是本 change 引入**：改动前 store 按 `evidenceId` **替换**，后一条读取覆盖前一条，不会出现这个状态。
+- **为什么不能自愈**：`replaceEvidence` 对**内容未变**的证据不丢判决（实测 `replaced: 0, droppedVerdicts: []`），所以"重读证据"这条 `decide` 自己开出的补救路径永远清不掉它。
+- **修法**：投影增加"**当前 revision 区域**"作为第一判据——关于当前 subject 的读数优先于关于其他 revision 的读数；区域内仍是"证伪优先 → 最新 → runId → 判决强度 → `observed`"的全序。当**没有任何**读数关于当前 revision 时，回退到"全局最新"（这正是旧行为，`decide` 会把它报成 `stale`，而不是当成当前读数）。
+- **对 AC-3 措辞的收窄（必须写明）**：AC-3 的原文是"**任一** refuted 读数使该项保持 refuted"。实现现在收窄为"**关于当前 revision 的**任一 refuted 读数"。理由与内核既有规则一致：关于另一个 revision 的判决**不能**对当前 revision 作出结论（`evidence_stale_subject` 就是这条规则的名字）。AC 文本在 `open` 时冻结（`tasks declare` 只能改矩阵／upstreamCoverage），因此这条收窄记录在此，并以用例钉住两个方向：**当前 revision 的证伪仍然胜出**（否则修复会把反例变成可投票抹掉的东西），**旧 revision 的证伪不再否决**。
+
+### 11.2 同一轮的其他发现
+
+| id | 级别 | 事实（我已复跑） | 修法 |
+|---|---|---|---|
+| R-2 | minor | 投影**不是全序**：两条 `refuted` 由文档顺序决定，而 store 是 append ⇒ 胜者是**最旧**那条，而 `observed`／`at`／`subjectRevision`／`producer` 全取它并展示给读者 | 证伪之间也比 `at`（解析有效的）→ `runId` → 判决强度 → `observed` |
+| R-3 | minor | 同 `at` 同 `runId` 的两条读数仍由位置决定（AC-3 的顺序无关用例未覆盖这一格） | 增加"判决强度"判据：同一时刻同一 run 下 `supported` 胜 `inconclusive`（`refuted` 已在更前面判定，所以永远不会因此被洗掉） |
+| R-4 | minor | `at` 是**未校验**的排序键：中继读数（`file-adapter` 用文件里的 `at`）写入 `at: "zzz"` 即可赢得"最新"分支 | 时间戳必须可解析才参与排序；不可解析者排最后 |
+| R-5 | minor | **AC-5/AC-6 没有变异证明**，且 AC-6 声明的落点（`readingKey` 的空 run 回退）**不在读路径上**（只有写路径用它）——把回退改成随机值，1210 条用例一条不红 | AC-6 的用例补 `readings` 与 **quorum 归组**断言；变异改为**读路径**（按当前 revision 过滤读数 ⇒ 旧文档投影为空 ⇒ 用例红，实测） |
+| R-6 | minor | AC-4 里"第二个 run 证伪"的用例在"投影完全忽略 refuted、只取最新"的变异下**保持绿色**（它的证伪读数恰好也最新，分不清两条规则） | 把该用例的证伪读数改成**更早**的时间戳——只有"证伪优先"成立才可能通过（实测：忽略 refuted 的变异现在让它红） |
+| R-7 | nit | `ledger status` 报的是投影数（存两条读数时仍显示 1），"没有读数丢失"在操作员看得见的地方**不可观测** | `status` 增加 `readings` 计数，并加一条用例（把该行改回投影 ⇒ 用例红） |
+
+### 11.3 审查者**未能**证伪的（负结果，同样重要）
+
+- **消费者审计**：`src/` 中唯一读 `ledger.readings` 的是 quorum（`store/verdict.ts`）；其余（`cli/ledger.ts`、`store/replay.ts`、`kernel/delta.ts`、`store/ledger.ts` 的报告、`store/verdict.ts` 的两处、`workflow/orchestrator.ts`、`store/baseline.ts`、`store/review-request.ts`）都按"一条证据一个答案"使用投影，逐个核对无错配。
+- **AC-6 的真实数据**：仓库现存 6 份账本（含两个 worktree 的历史 change）全部 `readings.length === verdicts.length`、`evidenceId` 一对一、逐字段相同——**没有一份旧文档因新形状读错**。
+- **quorum 两个方向**：一次 `evidence verify` 只调用一次 `producerFor`，无法自造 quorum；无 producer 的旧判决全部归入同一条未归属 run；`replay` 不写账本；`reviewers` 在 `strict`=1／`security`=2 未变。
+- 两条变异（退回 `evidenceId` 键、投影忽略 refuted）确实变红，红在预期用例上。
+
+### 11.4 修复批的验证
+
+全套 193 文件 / **1217 用例**通过，`tsc --noEmit` 干净；三条新变异各自红在预期用例上（忽略 revision 区域 → R-1 用例红；忽略 refuted → 4 条红含 R-6 的用例；读路径过滤读数 → AC-6 用例红）。
+
+**一条环境事实**：`kata-cli` 运行的是**主检出的 `dist/`**（本次未重建），所以 `ledger status` 的新字段要等 `dist/` 重建后才由 CLI 显示；改动与用例都在源码里（用例直接驱动 `cli/ledger.ts` 的路径）。

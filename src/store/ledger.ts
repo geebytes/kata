@@ -299,10 +299,13 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     }
     const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
     const verdictsRaw = (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [];
+    // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
+    // about another one, and it is the same value the caller receives as `subject`.
+    const subjectForProjection = await readJson<Subject>(join(dir, FILES.subject));
     return {
         changeId,
         dir,
-        subject: await readJson<Subject>(join(dir, FILES.subject)),
+        subject: subjectForProjection,
         policy,
         claims: (await readJson<Claim[]>(join(dir, FILES.claims))) ?? [],
         evidence: (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? [],
@@ -310,7 +313,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         // cannot see a projection computed from different content than the readings it is compared against.
         ...(() => {
             const readings = verdictsRaw;
-            return { readings, verdicts: projectVerdicts(readings) };
+            return { readings, verdicts: projectVerdicts(readings, { currentRevision: subjectForProjection?.revision ?? null }) };
         })(),
         challenges: (await readJson<Challenge[]>(join(dir, FILES.challenges))) ?? [],
         usage: usage?.usage ?? {},

@@ -102,7 +102,16 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             subject: ledger.subject?.revision ?? null,
             claims: ledger.claims.length,
             evidence: ledger.evidence.length,
+            /** The projection: one answer per evidence item. */
             verdicts: ledger.verdicts.length,
+            /**
+             * **Every reading the document holds**, which is what the quorum counts runs from.
+             *
+             * Reported because it is the one number that says "no reading was lost": with one entry per item these two
+             * agreed, and an operator had no way to see that a second independent reading had been recorded — measured by
+             * an independent review, which found `readings` observable only through the quorum.
+             */
+            readings: ledger.readings.length,
             challenges: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
             runs: ledger.runs.length,
             assurance: ledger.assurance,

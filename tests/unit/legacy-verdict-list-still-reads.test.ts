@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendClaim, appendEvidence, freezeSubject, readLedger, reviewDir, verdictsPath, writeSubject } from '../../src/store/ledger.js';
+import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence } from '../helpers/review.js';
 
 /**
@@ -47,7 +48,18 @@ describe('a document written before readings were per run', () => {
         );
 
         const ledger = await readLedger(root, changeId);
+        // **Both views, because this document is read by both.** `readings` is what the old document holds — one entry,
+        // with no producer — and the projection must answer for the item even though no reading names the current subject
+        // revision: the revision region is for telling readings apart, not a filter that can empty the list.
+        expect(ledger.readings).toHaveLength(1);
+        expect(ledger.readings[0]?.producer).toBeUndefined();
         expect(ledger.verdicts.map((entry) => entry.verdict)).toEqual(['supported']);
         expect(ledger.verdicts[0]?.evidenceId).toBe('E1');
+        // And the quorum counts the whole document as ONE unattributed reading, not one per item: an old ledger must not
+        // look like a quorum. This is the property the design doc maps to this criterion, and it is asserted here because
+        // mutating the writer-side key left every case green.
+        const decision = await ledgerVerdict({ root, changeId, tier: 'security' });
+        if (decision.kind !== 'decided') throw new Error(`expected a decided ledger, got ${decision.kind}`);
+        expect(decision.decision.reasons.map((reason) => reason.code)).toContain('quorum_missing');
     });
 });
