@@ -61,7 +61,6 @@ describe('the closure bound the ladder names, after the class table was retired'
         const action = suggestCandidateAction('review', {
             ...(base as Record<string, unknown>),
             ledger: { state: 'decided', verdict: 'insufficient', claims: 3, reason: 'claims are not supported', deficits: ['C1'] },
-            ledgerClosure: { mayClose: false, unsupportedClaims: ['C1'], reason: '1 claim(s) are not supported' },
         } as never);
         expect(action.reason).toBe('satisfy_ledger_deficits');
     });

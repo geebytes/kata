@@ -76,76 +76,111 @@ const READS_TASK_STATE = [
  * authority*, not the act of writing.
  */
 const REVISION_ARTEFACT = /current-revision\.json|currentRevisionPath\s*\(/;
-const FABRICATED_IDENTITY = /['"`]revision-[a-z0-9]|\bid:\s*['"`]|\bid:\s*[a-zA-Z]|manifestHash\s*[:=]/;
-/**
- * A staged defect: the artefact is deliberately unreadable, which no command can produce and which a reader must refuse.
- *
- * It is not only `{}`. The unreadable-state cases stage whatever a truncated or corrupted artefact looks like — `'{}'`,
- * `'not json\\n'`, a bare string — and the guard has to allow the whole class, because a corrupt artefact is exactly what
- * a fixture cannot obtain any other way. What it must not allow is a *well-formed* record, which is what the identity
- * check below rejects.
- */
-const STAGED_DEFECT = /(['"`]\{\}['"`]|\{\}\s*\n|JSON\.stringify\(\{\}\)|not json|not-json|malformed|corrupt)/i;
+/** The markers of a *revision record*: an id in the revision namespace, or a manifest/hash field being set. */
+const REVISION_ISH = /revision-[a-z0-9]|manifestHash\s*[:=]|pathDigests\s*[:=]|contentDigests\s*[:=]/;
+/** The calls that produce a revision identity: a write whose payload comes from one of these is the engine's, not a fixture's. */
+const ENGINE_PRODUCES = /createTaskRevisionIfChanged|currentRevisionIdentity|readCurrentTaskRevision|readTaskRevision|sealRevision/;
+/** A write to the artefact, spelled any way. */
+const WRITE_CALL = /write|seed|persist|save|create/i;
 
-/**
- * Every comment blanked, so the rule reads the *write* and not the prose around it.
- *
- * **The newlines are kept, and that is not cosmetic.** Deleting a block comment removes the line breaks inside it, so the
- * returned text is shorter than the source and every index into it points at a different line than the caller thinks —
- * measured while writing this: the window for a busy call was assembled from a region eighteen lines away, which is why a
- * truncated payload sitting on the write itself was not found. Blanking preserves the numbering the caller relies on.
- */
-function codeOnly(text: string): string {
+/** Comments blanked, names intact — the view in which the artefact **is named**, which string-blanking would erase. */
+function withoutComments(text: string): string {
     return text
-        .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ''))
-        .split('\n')
-        .map((line) => (line.trim().startsWith('//') ? '' : line))
-        .join('\n');
+        .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' '))
+        .replace(/^[ \t]*\/\/.*$/gm, (line) => ' '.repeat(line.length));
 }
 
-/** True when the window carries a string literal that looks like JSON and does not parse — a deliberately corrupt artefact. */
-function windowHasTruncatedJson(window: string): boolean {
-    for (const match of window.matchAll(/'((?:\\.|[^'\\])*)'/g)) {
-        const literal = (match[1] ?? '').replace(/\\n/g, '\n').replace(/\\"/g, '"');
-        if (!/^[{[]/.test(literal.trim())) continue;
-        try {
-            JSON.parse(literal);
-        } catch {
-            return true;
+/**
+ * The `n`th argument of the call that names the artefact, as text — read by balance, not by a regex that stops at the
+ * first comma.
+ *
+ * **A line is not a statement, and that was the blocking finding.** The previous version required the artefact's name and a
+ * write call on the *same line*, so a live hand-written revision record laid out over three lines
+ * (`review-artefact-read-state.test.ts`: path on one line, payload on the next) was invisible — measured: the guard
+ * reported nothing for a file containing an instance of exactly the class it exists for, while the same record written on
+ * one line was reported. A payload can be a multi-line object literal, so the span is found by parenthesis balance.
+ */
+function argumentAfterPath(statement: string): string | null {
+    const path = /current-revision\.json['"`]|currentRevisionPath\s*\([^)]*\)/.exec(statement);
+    if (!path) return null;
+    // Walk forward from the path to the separator that ends it, then to the separator that ends the argument after it.
+    // Depth starts at zero *outside* the call that produced the path, so the comma after a nested `join(…)` or
+    // `currentRevisionPath(…)` counts — which is what makes one rule cover both spellings, including a payload on its own
+    // line.
+    let depth = 0;
+    let argumentStart = -1;
+    for (let index = path.index + path[0].length; index < statement.length; index += 1) {
+        const char = statement[index] ?? '';
+        if (char === '(' || char === '{' || char === '[') depth += 1;
+        else if (char === ')' || char === '}' || char === ']') depth -= 1;
+        else if (char === ',' && depth <= 0) {
+            if (argumentStart === -1) argumentStart = index + 1;
+            else return statement.slice(argumentStart, index).trim();
         }
     }
-    return false;
+    if (argumentStart === -1) return null;
+    return statement.slice(argumentStart).replace(/\)\s*;?\s*$/, '').trim();
 }
 
 /**
  * One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed.
  *
- * **The window is read as code, not as prose.** This is the fix the guard needed and did not have: `STAGED_DEFECT` was
- * tested against a fourteen-line window that included comments, and these files are full of comments saying `malformed`,
- * `corrupt` and `not json` — so a fixture that fabricated an identity was whitelisted by a *sentence* about corruption
- * somewhere near it. Measured: a fabricated record beside a comment naming a malformed one passed. The rule now strips
- * comments first, so only code can whitelist code.
+ * The rule, in three lines: find a statement that writes the revision artefact; ignore it when the identity comes from an
+ * engine call; report it when **the payload it writes** is a revision record. Comments are blanked before the rule looks,
+ * and only the payload is classified — so neither a sentence nor a neighbouring string can whitelist a fabricated record
+ * (measured: `const note = 'the corrupt fixture';` used to do exactly that). A payload literal that *looks* like JSON and
+ * does not parse is the one thing allowed through: a corrupt artefact is what a fixture cannot obtain from a command.
  */
 function closureDrivenWriteOffenders(text: string, file: string): string[] {
-    const lines = text.split('\n');
-    const code = codeOnly(text).split('\n');
+    const lines = withoutComments(text).split('\n');
     const offenders: string[] = [];
     for (const [index, line] of lines.entries()) {
         if (!REVISION_ARTEFACT.test(line)) continue;
-        // A line that is entirely a comment cannot write anything.
-        const trimmed = line.trim();
-        if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
-        // A *write*, spelled any way: the artefact has to be produced by this line or by a call it makes.
-        if (!/write|seed|persist|save|create/i.test(line)) continue;
-        const window = code.slice(Math.max(0, index - 14), index + 4).join('\n');
-        if (!FABRICATED_IDENTITY.test(window)) continue;
-        if (STAGED_DEFECT.test(window)) continue;
-        // **A truncated payload is a staged defect, and it is recognised by parsing rather than by a keyword.** The cases
-        // that build an unreadable artefact write a literal that *looks* like JSON and is cut off — measured:
-        // `'{"id": "rev-1", "manif'` in `review-approval-refuses-open-findings.test.ts`, which the keyword list could not
-        // name and which the identity pattern therefore reported as a fabricated record. The rule reads the payload: a
-        // brace- or bracket-initial string literal that `JSON.parse` refuses is a deliberate corruption, not an identity.
-        if (windowHasTruncatedJson(window)) continue;
+        // The statement: from the previous statement boundary through the line that closes this call.
+        const from = (() => {
+            for (let cursor = index - 1; cursor >= 0 && index - cursor <= 16; cursor -= 1) {
+                if (/;\s*$/.test(lines[cursor] ?? '') || /\{\s*$/.test(lines[cursor] ?? '')) return cursor + 1;
+            }
+            return Math.max(0, index - 4);
+        })();
+        let depth = 0;
+        let to = index;
+        for (let cursor = index; cursor < Math.min(lines.length, index + 24); cursor += 1) {
+            const current = lines[cursor] ?? '';
+            depth += (current.match(/\(/g) ?? []).length - (current.match(/\)/g) ?? []).length;
+            to = cursor;
+            if (depth <= 0 && /;\s*$/.test(current)) break;
+        }
+        // The statement, plus the window in which its payload may have been *assembled* — above it, or on the line after
+        // it, which is how these fixtures are usually written (`const revision = {…}` under the write that uses it).
+        const window = lines.slice(Math.max(0, from - 4), Math.min(lines.length, to + 12)).join('\n');
+        const statement = lines.slice(from, to + 1).join('\n');
+        // **The write test belongs to the statement, not to the line that happens to name the artefact.** Measured: the
+        // live instance this round found has the name inside a `join(…)` on one line and `await writeFile(` on the line
+        // above it, so a per-line test reported nothing for a file that fabricates an identity — the third time this rule
+        // was narrowed by its own spelling.
+        if (!WRITE_CALL.test(statement)) continue;
+        if (ENGINE_PRODUCES.test(statement)) continue;
+        let payload = argumentAfterPath(statement);
+        if (payload === null || payload === '') continue;
+        // An identifier payload: what it was assigned is what gets written, and the assignment may sit outside the
+        // statement itself. Without this, one spelling of the same fixture (the record declared on the next line) was
+        // invisible while the other (declared in the same call) was caught.
+        if (/^[A-Za-z_$][\w$]*$/.test(payload)) {
+            const assigned = new RegExp(`(?:const|let|var)\\s+${payload}\\s*=\\s*([\\s\\S]*?);`).exec(window);
+            if (assigned?.[1]) payload = assigned[1];
+        }
+        // A staged defect: a brace- or bracket-initial literal that does not parse. Plain junk (`'not json'`) is not a
+        // record either and is not reported, because nothing about it claims an identity.
+        const literal = /^['"`]([\s\S]*)['"`]$/.exec(payload)?.[1];
+        if (literal !== undefined && /^[{[]/.test(literal.trim())) {
+            try {
+                JSON.parse(literal);
+            } catch {
+                continue;
+            }
+        }
+        if (!REVISION_ISH.test(payload)) continue;
         offenders.push(`${file}:${index + 1}`);
     }
     return offenders;
@@ -185,6 +220,13 @@ describe('a fixture does not fabricate the revision identity', () => {
             ['a truncated JSON payload', "await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{\"id\": \"rev-1\", \"manif');", false],
             // **The defect this rule was rebuilt for.** A comment about corruption used to whitelist a fabricated record,
             // because the staged-defect test ran over prose: the window is read as code now, so this must be flagged.
+            // **The form an independent review measured as invisible, and the one that sat live in this suite**: the
+            // artefact named inside a `join(…)`, the write on the line above it, the payload on the line below.
+            ['the record laid out over three lines', "await writeFile(\n    join(root, '.kata', 'tasks', taskId, 'current-revision.json'),\n    `${JSON.stringify({ id: 'revision-laid-out', manifestHash: 'f'.repeat(64) })}\\n`,\n);", true],
+            // A *string* that names a corruption must not whitelist code, which is the second half of the same finding.
+            ['a string about corruption in the same statement', "const note = 'this fixture is the corrupt one';\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), `${JSON.stringify({ id: 'revision-seeded', manifestHash: 'g'.repeat(64) })}`, 'utf8');", true],
+            // An identity the engine produces is nobody's fixture: the same write, with the payload from the seal.
+            ['an identity the engine produced', "const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/a.ts'], checkIds: [] });\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), JSON.stringify(sealed.revision), 'utf8');", false],
             ['a comment about corruption beside a real record', "// this file is deliberately corrupt in the other case\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), record, 'utf8');\nconst record = { id: 'revision-seeded', manifestHash: 'e'.repeat(64) };", true],
         ];
 

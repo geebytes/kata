@@ -352,6 +352,13 @@ export function decide(input: DecideInput): Decision {
     //    observation, which is the difference between a challenge and a declaration of one.
     if (input.tier !== 'standard' && input.discovery.independentChallenges === 0) {
         reasons.push(reason('discovery_floor', REASON_MESSAGES.discovery_floor.message));
+        // **The step, not only the state.** These five refusals were `reasons` non-empty with an empty `deficits` list, which
+        // is the shape this criterion exists to remove: an author reading "no independent challenge ran" has to invent the
+        // remedy, and the remedy is a command. Each one now names what to add.
+        deficits.push({
+            claimId: 'discovery:independent_challenge',
+            need: 'record an independent challenge (`kata-cli ledger challenge add --command <cmd>`) that can fail on this change',
+        });
     }
     if (input.tier !== 'standard'
         && input.discovery.independentChallenges > 0
@@ -359,6 +366,11 @@ export function decide(input: DecideInput): Decision {
         // Named separately from `discovery_floor` because the remediation differs: the first says "nothing challenged
         // this", the second says "something claims to have, and no observation supports it".
         reasons.push(reason('discovery_unverified', REASON_MESSAGES.discovery_unverified.message));
+        deficits.push({
+            claimId: 'discovery:verified_challenge',
+            need: 'run the recorded challenge and let it record its observation (`kata-cli ledger challenge run`); a challenge '
+                + 'that never ran verifies nothing',
+        });
     }
 
     // 7. Quorum: a disagreement is reported, and a reproducible finding is never voted away (a refuted verdict above
@@ -366,9 +378,20 @@ export function decide(input: DecideInput): Decision {
     const quorum = input.quorum;
     if (quorum && quorum.disputedClaimIds.length > 0) {
         reasons.push(reason('quorum_disputed', `disputed: ${quorum.disputedClaimIds.join(', ')}`));
+        // One deficit per disputed claim, so the list is actionable per claim rather than as a sentence.
+        for (const claimId of quorum.disputedClaimIds) {
+            deficits.push({
+                claimId,
+                need: 'the reviewers disagree about this claim: settle it with evidence, or record the disagreement as a decision',
+            });
+        }
     }
     if (quorum?.undiversified && input.tier === 'security') {
         reasons.push(reason('quorum_undiversified', REASON_MESSAGES.quorum_undiversified.message));
+        deficits.push({
+            claimId: 'quorum:diversity',
+            need: `this tier needs reviewers from more than one producer; the runs recorded so far do not form an independent quorum`,
+        });
     }
 
     // **The reviewer count is a condition, not a report.** `tiers.<tier>.reviewers` is a number the tier's contract
@@ -382,6 +405,11 @@ export function decide(input: DecideInput): Decision {
             `${requiredReviewers} independent reviewer(s) are required by the ${input.tier} contract and ${quorum?.reviewers ?? 0} submitted`
             + (quorum === undefined ? '; no run recorded a verdict, so there is nothing to count' : ''),
         ));
+        deficits.push({
+            claimId: 'quorum:reviewers',
+            need: `${requiredReviewers} independent run(s) have to submit a verdict for the ${input.tier} contract; `
+                + `${quorum?.reviewers ?? 0} have, and a replay of one reading is not a second reviewer`,
+        });
     }
 
     const verdict: Decision['verdict'] = reasons.some((entry) => entry.code === 'evidence_refuted')

@@ -24,8 +24,8 @@ function git(...args: string[]): void {
     execFileSync('git', args, { cwd: root, stdio: 'ignore', env: { ...process.env, LC_ALL: 'C' } });
 }
 
-async function repo(declared: string[]): Promise<string[]> {
-    const result = await undeclaredChanges({ root, declaredPaths: declared });
+async function repo(declared: string[], previousPathDigests?: string[]): Promise<string[]> {
+    const result = await undeclaredChanges({ root, declaredPaths: declared, ...(previousPathDigests ? { previousPathDigests } : {}) });
     return result.paths.sort();
 }
 
@@ -88,6 +88,17 @@ describe('a changed path outside the declared surface is named before the seal f
         await mkdir(join(root, 'tmp'), { recursive: true });
         await writeFile(join(root, 'tmp', 'probe.ts'), 'export const probe = 1;\n');
         expect(await repo(['src/declared.ts'])).toEqual([]);
+    });
+
+    it('sees a committed change outside the declaration, which git status alone cannot report', async () => {
+        // `git status` is clean here, and the file is still not declared: the previous revision's digests are the second
+        // reading of the same question, and without them a committed undeclared path was invisible — which matters because
+        // the declaration is where the risk classes come from.
+        await writeFile(join(root, 'src', 'committed.ts'), 'export const committed = 1;\n');
+        git('add', '-A');
+        git('commit', '-qm', 'a change the declaration does not cover');
+        expect(await repo(['src/declared.ts'])).toEqual([]);
+        expect(await repo(['src/declared.ts'], ['src/declared.ts', 'src/committed.ts'])).toEqual(['src/committed.ts']);
     });
 
     it('compares against the declaration after the same normalization the declaration gets', async () => {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readReviewRecord } from '../../src/workflow/review-read.js';
-import { readCurrentTaskRevisionState } from '../../src/workflow/revision.js';
+import { createTaskRevisionIfChanged, readCurrentTaskRevisionState } from '../../src/workflow/revision.js';
 import { currentRevisionIdentityFrom } from '../../src/workflow/verdict-binding.js';
 import { appendClaim, freezeSubject, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict, openLedgerProblems, openProblemsReportFields } from '../../src/store/verdict.js';
@@ -96,10 +96,11 @@ describe('review artefact read states', () => {
      */
     it('stamps a judgement from the read the command already took', async () => {
         const root = await rootWithReview();
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'current-revision.json'),
-            `${JSON.stringify({ id: 'revision-early', taskId, ownedPaths: ['src/a.ts'], manifestHash: 'a'.repeat(64), pathDigests: {}, contentDigests: {}, createdAt: '2026-09-29T00:00:00.000Z' })}\n`,
-        );
+        // **The revision is the engine's, not the fixture's.** This case used to hand-write a well-formed record — an `id`
+        // in the revision namespace, a manifest hash, the digests — which is a fixture deciding the very identity the
+        // command is supposed to read, and the guard that forbids it reported the line for two rounds while a per-line rule
+        // could not see it. Sealing through the engine gives the same case a real identity to be bound to.
+        const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/a.ts'], checkIds: [] });
         // Read once, through the same function the command uses, then make a *second* read answer differently.
         const taken = await readCurrentTaskRevisionState(root, taskId);
         expect(taken.kind).toBe('current');
@@ -108,8 +109,8 @@ describe('review artefact read states', () => {
         // The stamp must come from `taken`; a re-read would throw here.
         const { revisionBindingFields } = await import('../../src/workflow/verdict-binding.js');
         const identity = revisionBindingFields(await currentRevisionIdentityFrom(taken, root, taskId));
-        expect(identity.revisionId).toBe('revision-early');
-        expect(identity.manifestHash).toBe('a'.repeat(64));
+        expect(identity.revisionId).toBe(sealed.revision.id);
+        expect(identity.manifestHash).toBe(sealed.revision.manifestHash);
     });
 
     /**

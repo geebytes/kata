@@ -125,6 +125,55 @@ describe('a gate that no longer speaks for the content says how to rebuild it', 
     });
 });
 
+describe('every refusal the kernel can return carries a next step', () => {
+    /**
+     * The state table, one entry per reason the kernel can produce from the states a caller can build.
+     *
+     * The three cases above are the ones an independent review named; this walks the vocabulary, because the defect was
+     * never three messages — it was that the shape `reasons` non-empty with `deficits` empty was allowed anywhere. The
+     * codes this table cannot reach from a pure input are listed below the loop and counted, so the case states its own
+     * reach rather than implying it.
+     */
+    const states: Array<[string, Partial<DecideInput>]> = [
+        ['discovery_floor', { discovery: { independentChallenges: 0, verifiedChallenges: 0 } }],
+        ['discovery_unverified', { discovery: { independentChallenges: 1, verifiedChallenges: 0 } }],
+        ['quorum_disputed', { quorum: { disputedClaimIds: ['C1'], undiversified: false, reviewers: 2 } as never }],
+        ['quorum_missing', { tier: 'security' }],
+        ['quorum_undiversified', { tier: 'security', quorum: { disputedClaimIds: [], undiversified: true, reviewers: 2, requiredReviewers: 2 } as never }],
+        ['claim_unsupported', { claims: [makeClaim({ severity: 'major', evidenceIds: [] })] }],
+        ['evidence_missing', { evidence: [makeEvidence({ type: 'executable_falsifier', command: 'true' })] }],
+        ['evidence_inconclusive', { verdicts: [makeVerdict({ subjectRevision: 'rev:other' })] }],
+        ['budget_exhausted', { usage: { tokens: 10_000_000 } }],
+    ];
+
+    it('gives each refusal either a deficit or a message naming what produced it', () => {
+        const seen: string[] = [];
+        for (const [name, overrides] of states) {
+            const result = decide(baseline(overrides));
+            for (const reason of result.reasons) seen.push(reason.code);
+            for (const reason of result.reasons) {
+                const actionable = result.deficits.length > 0 || /\b(claim|path|revision|pattern|run|reviewer)/i.test(reason.detail);
+                expect([name, reason.code, actionable]).toEqual([name, reason.code, true]);
+            }
+        }
+        // **The reach, asserted as a set rather than assumed.** A table that produced no reasons would pass the loop
+        // above without testing anything — and this assertion is how I learned which codes these states actually reach:
+        // I had written three of them off as unreachable, and the run said otherwise.
+        expect([...new Set(seen)].sort()).toEqual([
+            'assurance_below_tier',
+            'claim_unsupported',
+            'dependency_unresolvable',
+            'discovery_floor',
+            'discovery_unverified',
+            'evidence_below_strength',
+            'evidence_stale_subject',
+            'quorum_disputed',
+            'quorum_missing',
+            'quorum_undiversified',
+        ]);
+    });
+});
+
 describe('the policy the refusal is judged against is the one on disk', () => {
     it('names the tier the demand belongs to, so the reader can raise it deliberately', async () => {
         const policy = defaultPolicy();

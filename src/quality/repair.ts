@@ -280,8 +280,8 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
     }
     const rounds: ReviewRound[] = [];
     let malformedLine: number | undefined;
-    for (const line of raw.split('\n')) {
-        if (line.trim() === '') continue;
+    const lines = raw.split('\n').filter((line) => line.trim() !== '');
+    for (const line of lines) {
         try {
             const parsed = JSON.parse(line) as unknown;
             // **A record that parses but is not a round is malformed, not a round.** `JSON.parse` answers for `42`, `{}`
@@ -289,8 +289,11 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
             // history of unmeasured rounds and the loop's escalation counted rounds it never had. Shape and parse are two
             // facts, and only the first is about the record.
             if (!isRoundRecord(parsed)) {
-                malformedLine ??= rounds.length + 1;
-                rounds.push({ at: '', blockingIds: [], blockingCount: null });
+                // **Counted as damage, not as a round.** This used to push a placeholder, so a file with one damaged line
+                // reported one more round than it had — and `navigation` feeds these rounds to `reviewProgress` whatever
+                // the kind says, so the loop's escalation counted rounds nobody recorded. The parseable prefix stays, for
+                // diagnosis; the count does not grow for a line that is not a round.
+                malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;
                 continue;
             }
             rounds.push({
@@ -299,8 +302,7 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
             });
         } catch {
-            malformedLine ??= rounds.length + 1;
-            rounds.push({ at: '', blockingIds: [], blockingCount: null });
+            malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;
         }
     }
     if (malformedLine !== undefined) {

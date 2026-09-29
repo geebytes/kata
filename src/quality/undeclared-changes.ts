@@ -49,6 +49,16 @@ function isExcluded(path: string): boolean {
 export async function undeclaredChanges(input: {
     root: string;
     declaredPaths: readonly string[];
+    /**
+     * The paths the previous revision hashed, when the caller has them.
+     *
+     * **`git status` only reports uncommitted work**, so a change that was committed outside the declaration was invisible
+     * to this check — measured: `committed: []` where the uncommitted form reports the path. AC-4's wording is "the
+     * working tree", so the criterion was met and the *consequence* was not: the declared surface is what the risk
+     * classes are derived from, so a committed undeclared path's risk classes were never demanded. The previous
+     * revision's digests are the second, complementary reading of the same question.
+     */
+    previousPathDigests?: readonly string[];
 }): Promise<UndeclaredChanges> {
     // Normalized the same way on both sides: the declaration may be written with a leading `./` or with backslashes, and
     // git reports repository-relative paths with forward slashes. Comparing the raw strings would report a declared path
@@ -61,7 +71,9 @@ export async function undeclaredChanges(input: {
     const directoryPrefixes = declared.filter((path) => !path.includes('.') || path.endsWith('/**')).map((path) => path.replace(/\/\*\*$/, ''));
     const isCovered = (path: string): boolean => declaredSet.has(path) || directoryPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
-    const paths = changedGitPaths(input.root)
+    // What git reports, plus what the previous revision hashed — the second covers work that is already committed.
+    const candidates = [...changedGitPaths(input.root), ...(input.previousPathDigests ?? [])];
+    const paths = candidates
         .map(normalize)
         .filter((path) => path.length > 0)
         .filter((path) => !isExcluded(path))

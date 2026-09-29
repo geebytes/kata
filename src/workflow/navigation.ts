@@ -86,14 +86,6 @@ export type UpstreamSummary = {
    * not, so a typed reader could not see it and only a JSON dump showed it. A producer whose output is not declared is one
    * half of the same defect as a declaration nothing reads — the field exists, and no reader can ask for it.
    */
-  /**
-   * The claims the ledger does not support, and why — the data behind the closure bound.
-   *
-   * It carried a `mayClose: boolean` that two branches set to `false` and nothing read: a bound that is constant is not a
-   * bound, and a field with a writer and no reader is the shape this change exists to remove. The closure *decision* is
-   * the route below (`satisfy_ledger_deficits`), which the ledger's own verdict already answers.
-   */
-  ledgerClosure?: { unsupportedClaims: string[]; reason: string };
 };
 
 /**
@@ -297,42 +289,15 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ledger,
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
-    // **May this round close?** — asked of the ledger rather than of a findings table.
+    // **The closure question is answered by the ledger branch in `navigation`, not by a field here.**
     //
-    // This used to compute a closure verdict from `readTrackedFindings`, the falsifier ledger and the class table: three
-    // readers of the round-shaped route's records, on the one surface that decides what happens next. With the ledger as
-    // the route, the same question has a simpler answer — how many claims are not supported — and the risk classes the
-    // tier requires but no claim covers are the class-level half of it, which is what the termination condition is about:
-    // "every class an open finding names has a check" became "every class the tier requires has a claim".
-    ...(await (async () => {
-        // The decision boundary already distinguishes absent, decided and unreadable.
-        // Do not reopen raw ledger files here: a malformed claim list must refuse
-        // closure, never escape as a `.map` exception or masquerade as zero claims.
-        if (ledgerDecision.kind === 'unreadable') {
-            return {
-                ledgerClosure: {
-                    unsupportedClaims: [],
-                    reason: `the evidence ledger cannot be read: ${ledgerDecision.detail}`,
-                },
-            };
-        }
-        // `kind !== 'decided'` already covers the zero-claim case: `ledgerVerdict` answers `absent` for a ledger with no
-        // claims, so the extra conjunct was a condition that could not change the outcome — the shape this file argues
-        // against two hundred lines below.
-        if (ledgerDecision.kind !== 'decided') return {};
-        const { readLedger } = await import('../store/ledger.js');
-        const { unsupportedClaims } = await import('../store/verdict.js');
-        const ledgerState = await readLedger(root, taskId);
-        const unsupportedIds = new Set(unsupportedClaims(ledgerState).map((decision) => decision.claimId));
-        const unsupported = ledgerState.claims.filter((claim) => unsupportedIds.has(claim.id));
-        if (unsupported.length === 0) return {};
-        return {
-            ledgerClosure: {
-                unsupportedClaims: unsupported.map((claim) => claim.id),
-                reason: `${unsupported.length} claim(s) are not supported, so the ledger does not yet decide a pass`,
-            },
-        };
-    })()),
+    // This used to publish a `roundClosure`/`ledgerClosure` verdict — `mayClose`, the unsupported claim ids and a reason —
+    // and a route read it. The route was replaced by the ledger branch (`satisfy_ledger_deficits`, which asks the ledger's
+    // own verdict and carries its deficits), and the field was kept as a report with nobody to report to: declared here,
+    // written by two branches, read by no production code. Measured by grep, and by history — at the commit that replaced
+    // the route the old field's reader was deleted in the same diff, which is how a field acquires a writer and loses its
+    // reason to exist. The information survives where it is decided: `ledger.verdict` for the question, `ledger.deficits`
+    // for what is missing, and `openLedgerProblems` for the claim ids.
     // The matrix-less fact, asked through the predicate that names it: `isLegacyTask` is `!matrix`, and deriving it here
     // as a second expression is how one fact gets two spellings.
     ...(task && isLegacyTask(task.acceptanceMatrix as AcceptanceMatrix | undefined) ? { missingAcceptanceMatrix: true } : {}),
@@ -411,9 +376,11 @@ export function phaseFallbackAction(phase: Phase): { nextSkill: string; role: st
 }
 
 export function suggestCandidateAction(phase: string, upstream: UpstreamSummary): SuggestedAction {
+  // Nothing routes out of archive: the change is being distilled, and the wiki/archive commands are the operator's.
   if (phase === 'archive') {
     return phaseFallbackAction('archive');
   }
+  // A loop that has stopped reducing its blocking count is not sent back for another round; it stops for a person.
   if (phase === 'review' && upstream.reviewEscalation) {
     return {
       nextSkill: '/kata-review',
@@ -426,6 +393,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2200,
     };
   }
+  // Evidence from more than one revision cannot be judged together, so the seal that produced it is redone first.
   if (upstream.mixedRevisionEvidence) {
     return {
       nextSkill: '/kata-build',
@@ -467,6 +435,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1990 + upstream.ledger.deficits.length,
     };
   }
+  // A ledger that exists and cannot be read is a refusal, not an absence: falling through would let the round-shaped
+  // branches decide as if nothing were wrong.
   if (upstream.ledger && upstream.ledger.state === 'unreadable') {
     // A ledger that exists and cannot be read decides nothing, and that is not the same fact as one that was never
     // written — so it refuses here rather than falling through to the round-shaped branches as if nothing were wrong.
@@ -490,6 +460,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1985,
     };
   }
+  // A failed verify is repaired before review findings are read: the findings were formed against content that no longer stands.
   if (phase === 'review' && upstream.verifyResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -503,6 +474,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a
   // refusal, and the step it refuses towards is a re-read of the review, not a judgement of the change.
 
+  // A recorded review that cannot be read decides nothing, so it is re-read rather than worked around.
   if (phase === 'review' && upstream.reviewRecordUnreadable) {
     return {
       nextSkill: '/kata-review',
@@ -517,6 +489,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const hardestSeverity = blockingSeverities[0];
+  // An open problem at the tier's bar is repaired, not argued with.
   if (phase === 'review' && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -525,6 +498,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1000 + upstream.blockingFindings,
     };
   }
+  // `strict` blocks on major findings too; a weaker tier reports them without opening a repair, which is why the list is asked for rather than assumed.
   if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -533,6 +507,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 980 + upstream.majorFindings,
     };
   }
+  // An approval with no review evidence is not an approval: the record says a judgement was made and nothing says what on.
   if (phase === 'review' && upstream.invalidReviewApproval) {
     return {
       nextSkill: '/kata-review',
@@ -554,6 +529,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 970,
     };
   }
+  // A judge FAIL whose failed criteria are repairable goes back to implementation rather than to another judge.
   if (phase === 'judge' && upstream.judgeResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -562,6 +538,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 900 + upstream.failedAcceptance,
     };
   }
+  // A check that exited non-zero is evidence against the change, whatever the verdict files say.
   if (upstream.failingEvidence > 0) {
     return {
       nextSkill: '/kata-build',
@@ -580,6 +557,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 770,
     };
   }
+  // A verify FAIL repairs the acceptance criteria it named, once the uniform-scope case above did not apply.
   if (phase === 'hardVerify' && upstream.verifyResult === 'FAIL') {
     // A verify that failed because its evidence predates the content is not repaired by arguing with the verdict: the
     // evidence is re-read against what is on disk now, which is what `--seal` does. The note that used to stand here said
@@ -601,21 +579,27 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 750 + upstream.failedVerifyAcceptance,
     };
   }
+  // A passing verify is what makes a review possible, so the next step is the review.
   if (phase === 'hardVerify' && upstream.verifyResult === 'PASS') {
     return { nextSkill: '/kata-review', role: 'reviewer', reason: 'review_fresh_implementation', priority: 740 };
   }
+  // A hardVerify change with no recorded verdict has not been verified yet.
   if (phase === 'hardVerify') {
     return phaseFallbackAction('hardVerify');
   }
+  // In review, a readable record with no open problem is ready for its conclusion.
   if (phase === 'review') {
     return phaseFallbackAction('review');
   }
+  // Past the judge, the remaining work is the operator's: inspect and archive.
   if (phase === 'judge' || phase === 'distill') {
     return phaseFallbackAction('judge');
   }
+  // Before the first seal there is nothing to inspect but the task's own declaration.
   if (phase === 'plan' || phase === 'implement' || phase === 'intake') {
     return phaseFallbackAction(phase);
   }
+  // In review, a readable record with no open problem is ready for its conclusion.
   if (phase === 'review') {
     return phaseFallbackAction('review');
   }

@@ -17,7 +17,7 @@ import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { undeclaredChanges } from '../quality/undeclared-changes.js';
 import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
-import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
+import { findOwnershipConflicts, inferOwnedPathsFromWorkspace, readCurrentTaskRevisionState } from './revision.js';
 import { executedChecks, renderCommand, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 
 /**
@@ -167,7 +167,11 @@ export async function collectSealPreflight(input: {
         //    fact is only a drift report on a revision that already exists.
         async () => {
             if (ownedPaths.length === 0) return;
-            const undeclared = await undeclaredChanges({ root, declaredPaths: ownedPaths });
+            // The previous revision's hashed paths join the reading: `git status` only sees uncommitted work, so the
+            // committed half of the same question is answered from what the last revision recorded.
+            const previousRead = await readCurrentTaskRevisionState(root, taskId);
+            const previousPathDigests = previousRead.kind === 'current' ? Object.keys(previousRead.revision.pathDigests ?? {}) : [];
+            const undeclared = await undeclaredChanges({ root, declaredPaths: ownedPaths, previousPathDigests });
             if (undeclared.paths.length === 0) return;
             deny(
                 'undeclaredChanges',

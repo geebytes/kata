@@ -119,3 +119,46 @@
 这三处都不影响 gate 的正确性（没有任何一条让"应通过"变成"不通过"，也没有让"不通过"变成"通过"），但它们符合本 change 一直在修的那个形状：**一个事实只有一个可见入口**。§7.1 与 §7.3 都是"工具知道、操作者只能靠经验知道"的语义；§7.2 是"存在一条惰性记录，没有任何输出指出它"。
 
 因此它们**不进入本 change 的验收面**（AC 文本在 `open` 时冻结，且这属于 CLI 表面而非 gate 输入完整性），而是作为**下一轮候选**记录在此。
+
+## 8. 独立审查（第十轮）与修复批
+
+第一次独立审查对 15 条 AC 的判决是**未通过**：9 条 finding，其中 6 条 blocking/major。**每一条都由我独立复现过**（探针在 `tmp/probe/`），并且它们的共同形状比单条缺陷更重要。
+
+### 8.1 判决
+
+| id | 级别 | AC | 事实 |
+|---|---|---|---|
+| R-1 | **blocking** | AC-13 | fixture 守卫只认"文件名与写动作同一行"。`tests/unit/review-artefact-read-state.test.ts:100` 躺着一条**活的**手工 revision（路径在 `join(…)` 一行、写入在上一行、载荷在下一行）→ 守卫报零；同一记录写成一行则被报。**守卫漏掉了它存在的理由那一类，实例就在本 change 自己的测试文件里。** |
+| R-2 | major | AC-13 | 白名单仍读文本：`const note = 'the corrupt fixture';` 一句字符串即可给伪造记录开白名单（我堵了注释，没堵字符串）。 |
+| R-3 | major | AC-12 | `ledgerClosure` 有声明（:96）与两处写入（:313/:330），**生产代码零读者**。历史诊断更清楚：`becfbf7` 用 ledger 分支替换了唯一读它的分支（`if (phase === 'review' && upstream.roundClosure)`），**并在同一个 diff 里删掉了读者**，只留下字段与一段"仍在报告"的注释。**处置：删除**——它的问题已由 ledger 分支与 `ledger.deficits` 回答，而它是同一事实的第三个面。 |
+| R-4 | major | AC-8 | 五处活的拒绝是"`reasons` 非空 + `deficits: []`"且不指名路径：`discovery_floor`、`discovery_unverified`、`quorum_disputed`、`quorum_undiversified`、`quorum_missing`。实测 `reasons ["discovery_floor"] deficits 0`。 |
+| R-5 | major | AC-15 | 前半句（"每个分支都记录自己的理由"）**既没实现也没检查**：函数内 26 个分支只有 6 个有注释，且 `/^\s{2}if \(/` 看不见嵌套分支。我的用例只断言了否定方向。 |
+| R-6 | major | AC-9 | 逃逸扫描漏掉 `x as never as T`（条款点名的形态）与裸 `as unknown`。 |
+| R-7 | minor | AC-11 | 畸形 round **仍被计入**（push 占位），而 `navigation` 无论 kind 都把它喂给 `reviewProgress`。用例自己写着长度 3（含一行 `{}`）。 |
+| R-8 | minor | AC-4→AC-6 | 已**提交**的未声明改动两个面都看不见（`committed: []`）。AC-4 措辞是"working tree"，故不算伪造；连锁后果是 AC-6：已提交未声明路径的风险类永不被要求。 |
+| R-9 | minor | AC-5 | 用例在 `if (!command) return;` **静默跳过**两条路由，报"通过"而只覆盖 5/7 skill。 |
+
+审查**试过但未能伪造**：AC-1（`readLedger` 把坏文件收进 `malformedFiles` 而不抛，"一边抛一边返回 unreadable"不可达）、AC-7、AC-10（用 vitest JSON 报告取真值：同文件重名标题 0）、AC-14。AC-2/AC-3 只能有 mock 证据——pointer 只有一个入口，无 double 时无法构造"第二次读失败"。这是证据强度的诚实上限。
+
+### 8.2 共同形状：**守卫比它宣称的窄**
+
+R-1／R-2／R-5／R-6／R-9 是同一件事的五次出现：**用一个"我恰好想得到的写法"的正则，去证明一条全称条款**。行窗口（R-1）、注释 vs 字符串（R-2）、两级缩进（R-5）、正则的字面边界（R-6）、缺项的映射表（R-9）——每一条都让"通过"只覆盖作者想到的那一半。
+
+判据（写入本 change 的教训）：**一条全称条款的守卫，必须把它看不见的写法写成断言**，否则它通过时说不出自己覆盖了什么。
+
+### 8.3 修复批（一次收口）
+
+- **R-1**：守卫改为按**语句**判定——用括号配平找出写入语句的跨度，写动作测试施加于整条语句，载荷用 `argumentAfterPath` 按平衡提取（不再被第一个逗号截断），标识符载荷在其赋值窗口内解析。同时**修掉活实例**：`review-artefact-read-state.test.ts` 改为用 `createTaskRevisionIfChanged` 让引擎产生身份。控制用例新增三种形态（三行布局／同语句里的 corruption 字符串／引擎产出的身份）。
+- **R-2**：分类只看**载荷**；注释与字符串在扫描视图里被置空（保留换行）。代码不再能给代码开白名单。
+- **R-3**：删除 `ledgerClosure`（声明、两处写入、描述它的注释），并把 `one-derivation-of-claim-support` 的断言移到真正决定事情的两个面（问题列表与 ledger verdict）。
+- **R-4**：五处各带一条可执行 deficit；AC-8 的用例改为**遍历内核词汇**，并把实测触达的 10 个 reason 写成断言（我原本"不可达"的三个判断被这次运行推翻）。
+- **R-5**：补齐 18 条分支注释；扫描改为**断言存在**（任意缩进），并单独用例证明嵌套分支会被看见。
+- **R-6**：模式放宽到任意位置的 `as never` 与 `as unknown as T`；字符串同样置空。**裸 `as unknown` 有意不禁**——全仓 13 处都是 `JSON.parse(…) as unknown`，那是在**移除** `any`；禁掉它会把作者推向"断言到一个没人校验的类型"，比它替换掉的 `any` 更糟。判据写进了测试的 docblock。
+- **R-7**：畸形行**只计为损坏**，不再 push 占位 round；用例的计数期望从 3 改为 2。
+- **R-8**：`undeclaredChanges` 接受上一 revision 的 `pathDigests`，封存前把**已提交**的未声明路径一并点名。
+- **R-9**：skill→命令的映射表补全，并断言"未映射的 skill 会失败而不是被跳过"；两条不属于 `runCommand` 的路由（wiki closure、archive）改用各自宣称的命令单独驱动。
+
+### 8.4 修复中另发现的两处（本 AC 之外，记录不修）
+
+1. `kata-cli wiki orient` 在 wiki store 不存在时抛 `ENOENT … .llmwiki/SCHEMA.md`，而不是回答"还没有 wiki"。该路由**宣称**的命令是 `wiki closure …`（它结构化回答），`orient` 是同一族的另一个动词，前置条件是 `wiki init`——所以 AC-5 成立，但这是同族的一处毛边。
+2. `runCommand('archive', <不存在的 task>)` 抛裸 `ENOENT`（`current-state.json`）。路由永远不会指名一个不存在的任务，所以不在 AC-5 之内；但"命令用值拒绝、不用异常拒绝"这条纪律在若干命令上仍只覆盖到已有的任务。

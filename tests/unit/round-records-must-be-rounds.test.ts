@@ -52,7 +52,7 @@ describe('a review-round record whose JSON parses but whose shape is not a round
         expect(read.rounds[0]?.blockingCount).toBe(1);
     });
 
-    it('keeps the parseable prefix and reports the damage, rather than reading the file as shorter', async () => {
+    it('keeps the parseable rounds and reports the damage, rather than counting the damage as a round', async () => {
         await writeRounds(
             '{"at":"2026-09-29T00:00:00.000Z","blockingIds":["R-1"],"blockingCount":2}',
             '{}',
@@ -60,7 +60,10 @@ describe('a review-round record whose JSON parses but whose shape is not a round
         );
         const read = await readReviewRoundsState(root, taskId);
         if (read.kind !== 'unreadable') throw new Error(`expected unreadable, got ${read.kind}`);
-        expect(read.rounds).toHaveLength(3);
+        // **Two rounds, three lines.** The damaged line is damage: counting it as a round is how a file of junk became a
+        // history the loop's escalation counted (measured — this case used to assert three).
+        expect(read.rounds).toHaveLength(2);
         expect(read.detail).toContain('malformed');
+        expect(read.detail).toContain('2');
     });
 });

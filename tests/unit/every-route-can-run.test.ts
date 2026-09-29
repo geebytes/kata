@@ -86,13 +86,28 @@ async function construct(state: State): Promise<{ root: string; taskId: string }
     return { root, taskId };
 }
 
-const COMMAND_FOR_SKILL: Record<string, 'design' | 'build' | 'verify' | 'review' | 'judge'> = {
+/**
+ * **Every skill the router can name**, mapped to the command that runs it.
+ *
+ * The previous version had five entries and skipped the rest with `if (!command) return;` — so a pass meant "the routes I
+ * happened to map can run", and an independent review measured that `/kata-wiki-enrich` (`resolve_wiki_closure`) and
+ * `/kata-archive` (`archive_judged_change`) were never dispatched while the case reported success. The map is exhaustive
+ * now, and an unmapped skill fails the case rather than leaving the loop.
+ */
+const COMMAND_FOR_SKILL: Record<string, 'design' | 'build' | 'verify' | 'review' | 'judge' | null> = {
     '/kata-design': 'design',
     '/kata-build': 'build',
     '/kata-verify': 'verify',
     '/kata-review': 'review',
     '/kata-judge': 'judge',
+    // Neither of these is a workflow command: the wiki closure runs through the `wiki` family and the archive through
+    // `kata-cli archive`, and both are covered below rather than left out of the map silently.
+    '/kata-wiki-enrich': null,
+    '/kata-archive': null,
 };
+
+/** The skills that name a command outside `runCommand`'s surface, each with the case that covers it instead. */
+const OUTSIDE_THE_WORKFLOW_COMMANDS = new Set(['/kata-wiki-enrich', '/kata-archive']);
 
 describe('every route the dispatcher can return names a command that runs', () => {
     const states: State[] = [
@@ -116,8 +131,16 @@ describe('every route the dispatcher can return names a command that runs', () =
             const upstream = await readUpstreamSummary(root, taskId);
             const action = suggestCandidateAction(state.phase, upstream);
 
+            // **No silent skip.** A skill the map does not name is a route this case would have stopped examining without
+            // saying so, which is the weakness the review measured; it fails instead.
+            expect(Object.keys(COMMAND_FOR_SKILL), `unmapped skill: ${action.nextSkill}`).toContain(action.nextSkill);
             const command = COMMAND_FOR_SKILL[action.nextSkill];
-            if (!command) return; // The dispatcher's own route runs nothing.
+            if (!command) {
+                // Named rather than skipped: these two routes are covered by the case below, and a new skill that lands
+                // here without being named there fails that case.
+                expect([action.nextSkill, OUTSIDE_THE_WORKFLOW_COMMANDS.has(action.nextSkill)]).toEqual([action.nextSkill, true]);
+                return;
+            }
 
             // The assertion is on *answering*: a throw here is the defect, whatever the answer says.
             const result = await runCommand(command, taskId, root, { confirmHostModel: true }).catch((error: Error) => {
@@ -129,4 +152,43 @@ describe('every route the dispatcher can return names a command that runs', () =
             expect(typeof result.success).toBe('boolean');
         });
     }
+});
+
+describe('the two routes that are not workflow commands answer too', () => {
+    it('runs the command each of them advertises, in the state that advertises it', async () => {
+        const { runWikiCommand } = await import('../../src/cli/wiki.js');
+        const root = await mkdtemp(join(tmpdir(), 'kata-route-outside-'));
+        roots.push(root);
+        await mkdir(join(root, '.kata', 'tasks', 'route-outside'), { recursive: true });
+        // `/kata-wiki-enrich` advertises `kata-cli wiki closure …` (the wiki family, not `runCommand`), and that command has
+        // to answer on a task whose wiki store does not exist yet — `wiki init` is the skill's prerequisite, not the
+        // route's. Measured while writing this: the advertised command answers, and a *different* verb of the same family
+        // (`wiki orient`) throws `ENOENT … .llmwiki/SCHEMA.md`. That is a rough edge in the family and not this route, so
+        // the case drives what the route names.
+        const closure = await runWikiCommand([
+            'closure', '--task', 'route-outside', '--decision', 'not_applicable', '--reason', 'route probe', '--root', root,
+        ]).catch((error: Error) => {
+            throw new Error(`the wiki closure route dispatched a command that threw: ${error.message}`);
+        });
+        expect(closure).toMatchObject({ command: 'wiki closure' });
+        // `/kata-archive` names a workflow command, driven here with a task that really is in `judge` — the state the
+        // route is returned from — so it must answer rather than throw. (A *nonexistent* task id makes several commands
+        // throw a raw ENOENT; that is a separate rough edge, recorded in the design doc rather than asserted here, because
+        // a route never names a task that does not exist.)
+        const taskId = 'route-outside-archive';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'task.json'),
+            `${JSON.stringify({ id: taskId, title: 'T', phase: 'judge', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
+        );
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'current-state.json'),
+            `${JSON.stringify({ taskId, phase: 'judge', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: NOW })}\n`,
+        );
+        const archive = await runCommand('archive', taskId, root).catch((error: Error) => {
+            throw new Error(`the archive route dispatched a command that threw: ${error.message}`);
+        });
+        expect(typeof archive.success).toBe('boolean');
+        expect(archive.command).toBe('archive');
+    });
 });

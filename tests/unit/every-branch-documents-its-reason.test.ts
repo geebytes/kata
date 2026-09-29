@@ -16,46 +16,76 @@ import { describe, expect, it } from 'vitest';
 const REASON_RETURNED = /reason:\s*'([a-z_]+)'/g;
 const QUOTED_WORD = /`([a-z_]+)`|'([a-z_]+)'/g;
 
-/** The comments directly above each `if (` in a function body, keyed by the line the branch starts on. */
-function branchComments(lines: string[]): Array<{ line: number; text: string }> {
-    const blocks: Array<{ line: number; text: string }> = [];
+/**
+ * The function body, from its declaration to the closing brace at column zero.
+ *
+ * Scoped rather than taken to the end of the file: the previous version scanned past the function, so two branches in a
+ * helper below it were attributed to the router — and, more importantly, a branch nested deeper than the two spaces the
+ * pattern required was never examined at all (measured: one such branch).
+ */
+function routerBody(lines: string[]): string[] {
+    const start = lines.findIndex((line) => line.includes('export function suggestCandidateAction'));
+    const end = lines.findIndex((line, index) => index > start && line === '}');
+    return lines.slice(start, end + 1);
+}
+
+/**
+ * Every branch in the body, with the comment block directly above it (empty when there is none).
+ *
+ * `if (` at **any** indentation: a nested branch is a branch, and the first version's `/^\s{2}if \(/` could not see one.
+ */
+function branches(lines: string[]): Array<{ line: number; text: string; condition: string }> {
+    const out: Array<{ line: number; text: string; condition: string }> = [];
     for (const [index, line] of lines.entries()) {
-        if (!/^\s{2}if \(/.test(line)) continue;
+        const match = /^(\s*)if \((.*)$/.exec(line);
+        if (!match) continue;
         const collected: string[] = [];
         for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
             const previous = lines[cursor] ?? '';
             if (!/^\s*\/\//.test(previous)) break;
             collected.unshift(previous);
         }
-        if (collected.length > 0) blocks.push({ line: index + 1, text: collected.join('\n') });
+        out.push({ line: index + 1, text: collected.join('\n'), condition: (match[2] ?? '').trim() });
     }
-    return blocks;
+    return out;
 }
 
 describe('every route branch documents its own reason', () => {
     it('finds no branch carrying a note about another branch', async () => {
-        const source = await readFile('src/workflow/navigation.ts', 'utf8');
-        const lines = source.split('\n');
-        const start = lines.findIndex((line) => line.includes('export function suggestCandidateAction'));
-        expect(start).toBeGreaterThan(0);
-        const body = lines.slice(start);
+        const body = routerBody((await readFile('src/workflow/navigation.ts', 'utf8')).split('\n'));
+        const all = branches(body);
+        // A function with no branches would pass every assertion below, so the scan asserts what it examined.
+        expect(all.length).toBeGreaterThan(15);
 
+        // **The half that was never checked**: every branch states why it returns.
+        const undocumented = all.filter((branch) => branch.text.trim() === '').map((branch) => `${branch.line}: ${branch.condition}`);
+        expect(undocumented).toEqual([]);
+
+        // And the half that was: no branch carries a note about a *different* branch.
         const returned = new Set<string>();
         for (const match of body.join('\n').matchAll(REASON_RETURNED)) if (match[1]) returned.add(match[1]);
         expect(returned.size).toBeGreaterThan(10);
 
         const borrowed: string[] = [];
-        for (const block of branchComments(body)) {
-            for (const match of block.text.matchAll(QUOTED_WORD)) {
+        for (const branch of all) {
+            for (const match of branch.text.matchAll(QUOTED_WORD)) {
                 const name = match[1] ?? match[2];
                 if (!name || !returned.has(name)) continue;
-                // It is this branch's own reason only if the branch returns it; find the branch's reason below it.
-                const branchText = body.slice(block.line - 1, block.line + 14).join('\n');
+                const branchText = body.slice(branch.line - 1, branch.line + 14).join('\n');
                 const own = /reason:\s*'([a-z_]+)'/.exec(branchText)?.[1];
-                if (name !== own) borrowed.push(`line ${block.line}: comment names \`${name}\` but the branch returns \`${own ?? 'nothing'}\``);
+                if (name !== own) borrowed.push(`line ${branch.line}: comment names \`${name}\` but the branch returns \`${own ?? 'nothing'}\``);
             }
         }
         expect(borrowed).toEqual([]);
+    });
+
+    it('examines nested branches too, which the first version stepped over', () => {
+        // The one nested branch in the router: a two-space pattern cannot see four.
+        const body = ['export function suggestCandidateAction() {', '  if (a) {', '    // its own note', '    if (b) {', '      return 1;', '    }', '  }', '}'];
+        const found = branches(body);
+        expect(found.map((branch) => branch.line)).toEqual([2, 4]);
+        // And the nested one is *reported* when it carries no note, which is the point of seeing it.
+        expect(found.filter((branch) => branch.text.trim() === '').map((branch) => branch.condition)).toEqual(['a) {']);
     });
 
     it('would notice the note this change removed', () => {

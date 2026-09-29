@@ -9,7 +9,7 @@ import { suggestCandidateAction, type UpstreamSummary } from '../../src/workflow
  * bound, and the same shape as a field with a producer and no consumer. The closure *decision* is the route, and the
  * ledger's own verdict already answers it — so the constant is not carried, and the data behind the bound still is.
  */
-describe('the closure bound is the route, not a constant field', () => {
+describe('the closure bound is the route, not a field', () => {
     const base = {
         phase: 'review',
         reviewRecordReadable: true,
@@ -25,14 +25,17 @@ describe('the closure bound is the route, not a constant field', () => {
         expect(action.reason).toBe('satisfy_ledger_deficits');
     });
 
-    it('carries no `mayClose`, because nothing read it and a constant is not a bound', async () => {
-        // Read the source rather than assert on an empty object literal: the claim is about the shape the router publishes,
-        // and a check that cannot fail for any input would be the same defect in a different place.
+    it('carries no closure field at all, because the route is the decision', async () => {
+        // **A removed field, asserted where it would have been published.** The previous version of this case asserted only
+        // that a nested `mayClose` had gone, and an independent review measured what that left: the outer field was still
+        // declared, still written by two branches, and read by no production code — the same writer-without-reader shape,
+        // one level up. The assertion is now on the whole name, in the source that would have declared it.
         const source = (await readFile('src/workflow/navigation.ts', 'utf8'))
-            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ''))
             .replace(/^\s*\/\/.*$/gm, '');
-        expect(source).not.toContain('mayClose');
-        // And the data behind the bound is still published, so removing the constant did not remove the fact.
-        expect(source).toContain('unsupportedClaims');
+        expect(source).not.toContain('ledgerClosure');
+        expect(source).not.toContain('roundClosure');
+        // And the fact it used to report is still reachable through the ledger, which is what decides.
+        expect(source).toContain("'satisfy_ledger_deficits'");
     });
 });
