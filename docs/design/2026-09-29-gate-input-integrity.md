@@ -255,3 +255,12 @@ riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
 
 1. **`assurance_below_tier`**：改内核策略文件 → 自身档位被动抬到 `security` → 要 `sandboxed`，本机无法提供（内联适配器记录 `observed`）。
 2. **`quorum_missing` 结构上不可满足**：`recordVerdicts`（`src/store/ledger.ts:505`）按 `evidenceId` **替换**判决，于是每个 evidence 只有一条判决，`groupByProducer` 永远只见一个 run → `security.reviewers: 2` 无法达成。实测：记录第二次独立读数（`--adapter file --actor independent-review-2`，6 条全 `supported`）后 `decide` 仍报 "1 submitted"。这与 `kernel/quorum.ts` 自己的注释同族第五次出现——**修了聚合，没修存储**。
+
+### 11.4 声明的缺口：已提交但未声明的改动
+
+**明确声明：一次已提交但落在声明面之外的改动，本 change 的两条读都看不见。**
+
+- **工作树这一读**（`git status --porcelain`）只报告未提交的改动；
+- **上一 revision 的 digests 这一读**只能知道"它曾经 hash 过哪些路径"，而这些键**恒等于声明面本身**（实测当前 revision 61/61 集合相等），所以它能证明的只有一件事：**声明把一个曾经被覆盖的路径丢掉了**（声明缩水）。
+
+因此 C-3 的措辞在第二轮被改成它真能证明的事，并**把这个缺口写在这里**，而不是让它作为一句暗示留在代码注释里。要真正覆盖"已提交的未声明改动"，需要的是 **revision delta**（上一 revision 的 `pathDigests` 键集与当前工作树/当前 revision 的差异并集），那是另一条 change 的工作，已登记为 follow-up。
