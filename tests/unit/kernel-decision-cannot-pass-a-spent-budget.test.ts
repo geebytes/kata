@@ -22,6 +22,7 @@ function baseline(): DecideInput {
         policy: makePolicy(),
         tier: 'strict',
         declaredRiskClasses: ['consistency'],
+        touchedRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
         discovery: { independentChallenges: 1, verifiedChallenges: 1 },

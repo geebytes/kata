@@ -48,8 +48,25 @@ export type DecideInput = {
     challenges: readonly Challenge[];
     policy: Policy;
     tier: TierName;
-    /** The risk classes this change's review space declares. Every one of them must be claimed by some claim. */
+    /** The risk classes this change's review space declares. One of them must be claimed by some claim when it is reached. */
     declaredRiskClasses: readonly RiskClass[];
+    /**
+     * The classes the change actually reaches, from the paths it touches.
+     *
+     * Required rather than optional: without it the demand falls back to the tier's whole list, which is the behaviour
+     * that made a consistency-only repair unpassable. A caller with the paths in hand can answer this through
+     * `classifyRisk`; a caller without them must say so by passing an empty list and will then be asked for the full
+     * tier list, which is the conservative direction.
+     */
+    touchedRiskClasses: readonly RiskClass[];
+    /**
+     * Which path pattern produced which reached class, when the caller has it.
+     *
+     * Recorded so the refusal can say *what made this necessary* rather than only that something is missing: the same
+     * classes reached through a different pattern are a different repair, and an operator reading `no claim covers:
+     * failure_mode` has no way to know which file to look at.
+     */
+    riskClassSources?: ReadonlyArray<{ pattern: string; classes: readonly RiskClass[] }>;
     assurance: AssuranceLevel;
     usage: BudgetUsage;
     c0Tokens?: number | null;
@@ -139,6 +156,12 @@ export function evaluateClaim(
     }
 
     const supportedStrengths: number[] = [];
+
+    // Which items were skipped because they belong to another revision: the difference between "no evidence" and
+
+    // "evidence about other content", which the strength message used to conflate.
+
+    const staleEvidenceIds: string[] = [];
     const problems = new Set<ClaimState>();
     for (const item of items) {
         const verdict = verdictFor(item.id, input.verdicts);
@@ -166,6 +189,7 @@ export function evaluateClaim(
                 claim.id,
             ));
             problems.add('stale');
+            staleEvidenceIds.push(item.id);
             continue;
         }
         supportedStrengths.push(strengthOf(item.type));
@@ -178,15 +202,34 @@ export function evaluateClaim(
     const allowedSatisfied = allowed === undefined
         || items.some((item) => allowed.has(item.type) && supportedStrengths.some((strength) => strength === strengthOf(item.type)));
     if (strongestSupported < required || !allowedSatisfied) {
-        reasons.push(reason(
-            'evidence_below_strength',
-            `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
-            claim.id,
-        ));
-        deficits.push({
-            claimId: claim.id,
-            need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
-        });
+        // **A stale verdict is not a weak one.** Every item this claim rests on was decided against another revision, so
+        // `strongestSupported` is 0 for a reason that has nothing to do with strength — and the message named the strength
+        // anyway ("major requires strength 3 … strongest supported is 0"), which sends an author to write a stronger check
+        // when the remedy is to re-read the evidence against the current content. Measured on a real change: that misreading
+        // is exactly what happened.
+        const onlyStale = supportedStrengths.length === 0 && staleEvidenceIds.length === items.length && items.length > 0;
+        if (onlyStale) {
+            reasons.push(reason(
+                'evidence_below_strength',
+                `${claim.severity} has no verdict about this revision: every item (${staleEvidenceIds.join(', ')}) was decided `
+                + 'against an earlier one, so nothing here is a statement about a strength that could be raised',
+                claim.id,
+            ));
+            deficits.push({
+                claimId: claim.id,
+                need: `re-read ${staleEvidenceIds.join(', ')} against the current subject — the evidence stands, its verdict is out of date`,
+            });
+        } else {
+            reasons.push(reason(
+                'evidence_below_strength',
+                `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
+                claim.id,
+            ));
+            deficits.push({
+                claimId: claim.id,
+                need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
+            });
+        }
         problems.add('below_strength');
     }
 
@@ -197,6 +240,15 @@ export function evaluateClaim(
             `${openChallenges.length} open counterexample(s): ${openChallenges.map((challenge) => challenge.id).join(', ')}`,
             claim.id,
         ));
+        // A standing counterexample is a claim that was tested and broke, so the step is per challenge: reproduce it, or
+        // repair the claim. Without this the refusal named a challenge id and no command.
+        for (const challenge of openChallenges) {
+            deficits.push({
+                claimId: `challenge:${challenge.id}`,
+                need: `counterexample ${challenge.id} still fails (\`${challenge.command}\`): repair \`${claim.id}\` until that `
+                    + 'command exits 0, or record why it is not a counterexample',
+            });
+        }
         problems.add('challenged');
     }
 
@@ -213,14 +265,36 @@ export function decide(input: DecideInput): Decision {
 
     // 1. Budget first: a spent budget can only ever be `insufficient`.
     const budget = budgetStatus({ policy: input.policy, usage: input.usage, c0Tokens: input.c0Tokens ?? null });
-    if (budget.exhausted) reasons.push(reason('budget_exhausted', budgetDetail(budget)));
+    if (budget.exhausted) {
+        reasons.push(reason('budget_exhausted', budgetDetail(budget)));
+        // **The step, not only the state.** Four refusals were `reasons` non-empty with `deficits: []` and a message that
+        // named no path, pattern or remedy — the shape this criterion exists to remove — and an independent reading found
+        // them by checking each reason against its *own* deficit instead of the decision's list. Whose step it is matters
+        // too: a spent budget is the policy owner's to answer, not the author's.
+        deficits.push({
+            claimId: 'budget:exhausted',
+            need: `the round spent its budget (${budgetDetail(budget)}) before the ledger reached a supported state: raise the `
+                + 'budget for this change (`kata-cli ledger policy --init` then edit `budgets`), or reduce the evidence set '
+                + 'to what the tier actually requires — a spent budget is never a pass',
+        });
+    }
 
     // 2. Process assurance is a separate axis, judged against the tier's threat model.
     if (!meetsAssuranceFloor(input.policy, input.tier, input.assurance)) {
+        const floor = tierPolicy(input.policy, input.tier).assuranceFloor;
         reasons.push(reason(
             'assurance_below_tier',
-            `assurance ${input.assurance} is below the ${input.tier} floor of ${tierPolicy(input.policy, input.tier).assuranceFloor}`,
+            `assurance ${input.assurance} is below the ${input.tier} floor of ${floor}`,
         ));
+        // **A capability gap says so.** The next step for a missing executor is not "try harder": either the round runs on
+        // an executor that can provide the floor, or a person records the exception. Naming neither is how this refusal
+        // came to be a dead end that a kernel edit reaches automatically.
+        deficits.push({
+            claimId: 'assurance:tier',
+            need: `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: run the round `
+                + 'on an executor whose adapter can provide it, or have a person record the tier exception '
+                + '(`kata-cli ledger decide --tier <tier>` names the decision rather than leaving it implicit)',
+        });
     }
 
     // 3. What the change forces back open, and which verdicts survive it.
@@ -267,14 +341,45 @@ export function decide(input: DecideInput): Decision {
                 'same_actor',
                 `the decision was asked for by ${input.actor}, who also produced ${input.verdicts.filter((verdict) => verdict.producer?.actor === input.actor).length} of its verdict(s)`,
             ));
+            deficits.push({
+                claimId: 'quorum:same_actor',
+                need: `every verdict in this ledger was produced by ${input.actor}, and that is also who asked for the decision: `
+                    + 'a second actor has to read the evidence (`kata-cli ledger evidence verify --actor <name>`), because an '
+                    + 'approval cannot be independent of its own claims',
+            });
         }
     }
 
-    // 5. Coverage is over the finite risk space, not over every path.
+    // 5. Coverage is over the finite risk space, not over every path, **and over the part of it this change reaches**.
+    //
+    // The tier's list used to be demanded in full: a change that touches `src/quality/**` was asked for `failure_mode`
+    // whatever it did, so a consistency-only repair could only pass by declaring a claim about a failure mode it does not
+    // have — a gate satisfied by prose — and the refusal listed no deficit to close. The demand is now the intersection of
+    // what the tier requires and what the change touches, which still cannot be satisfied by construction: the touched set
+    // comes from the path table, not from the claims.
     const claimed = new Set(input.claims.map((claim) => claim.riskClass));
-    const uncovered = input.declaredRiskClasses.filter((riskClass) => !claimed.has(riskClass));
+    const reached = input.touchedRiskClasses.length > 0
+        ? input.declaredRiskClasses.filter((riskClass) => input.touchedRiskClasses.includes(riskClass))
+        : input.declaredRiskClasses;
+    const uncovered = reached.filter((riskClass) => !claimed.has(riskClass));
     if (uncovered.length > 0) {
-        reasons.push(reason('uncovered_risk_class', `no claim covers: ${uncovered.join(', ')}`));
+        const because = uncovered.map((riskClass) => {
+            const sources = (input.riskClassSources ?? []).filter((source) => (source.classes as readonly RiskClass[]).includes(riskClass));
+            return sources.length > 0 ? `${riskClass} (reached via ${sources.map((source) => source.pattern).join(', ')})` : riskClass;
+        });
+        reasons.push(reason(
+            'uncovered_risk_class',
+            `no claim covers: ${because.join('; ')} — required at this tier and reached by this change, so each needs a claim `
+            + 'of that risk class',
+        ));
+        // **The deficit that used to be missing.** This reason refused a change while listing nothing to do about it, so the
+        // only readable remedy was the one the message did not describe. Each class becomes a deficit naming the claim.
+        for (const riskClass of uncovered) {
+            deficits.push({
+                claimId: `risk_coverage:${riskClass}`,
+                need: `a claim whose riskClass is ${riskClass}, covering what the change does about it`,
+            });
+        }
     }
 
     // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge — and the challenge
@@ -284,6 +389,13 @@ export function decide(input: DecideInput): Decision {
     //    observation, which is the difference between a challenge and a declaration of one.
     if (input.tier !== 'standard' && input.discovery.independentChallenges === 0) {
         reasons.push(reason('discovery_floor', REASON_MESSAGES.discovery_floor.message));
+        // **The step, not only the state.** These five refusals were `reasons` non-empty with an empty `deficits` list, which
+        // is the shape this criterion exists to remove: an author reading "no independent challenge ran" has to invent the
+        // remedy, and the remedy is a command. Each one now names what to add.
+        deficits.push({
+            claimId: 'discovery:independent_challenge',
+            need: 'record an independent challenge (`kata-cli ledger challenge add --command <cmd>`) that can fail on this change',
+        });
     }
     if (input.tier !== 'standard'
         && input.discovery.independentChallenges > 0
@@ -291,16 +403,35 @@ export function decide(input: DecideInput): Decision {
         // Named separately from `discovery_floor` because the remediation differs: the first says "nothing challenged
         // this", the second says "something claims to have, and no observation supports it".
         reasons.push(reason('discovery_unverified', REASON_MESSAGES.discovery_unverified.message));
+        deficits.push({
+            claimId: 'discovery:verified_challenge',
+            need: 'run the recorded challenge and let it record its observation (`kata-cli ledger challenge run`); a challenge '
+                + 'that never ran verifies nothing',
+        });
     }
 
     // 7. Quorum: a disagreement is reported, and a reproducible finding is never voted away (a refuted verdict above
     //    already produced `fail`; the quorum cannot cancel it).
     const quorum = input.quorum;
     if (quorum && quorum.disputedClaimIds.length > 0) {
-        reasons.push(reason('quorum_disputed', `disputed: ${quorum.disputedClaimIds.join(', ')}`));
+        // **A dispute is about a claim, so the refusal names it.** One reason per disputed claim, carrying the claim id: a
+        // single sentence listing ids left `reason.claimId` empty, so the reason could not be matched to its own deficit and
+        // a reader had to parse a comma-separated string to find which claim a repair belonged to.
+        for (const claimId of quorum.disputedClaimIds) {
+            reasons.push(reason('quorum_disputed', `disputed: ${claimId}`, claimId));
+            deficits.push({
+                claimId,
+                need: `the reviewers disagree about ${claimId}: settle it with evidence, or record the disagreement as a `
+                    + 'decision with a named owner',
+            });
+        }
     }
     if (quorum?.undiversified && input.tier === 'security') {
         reasons.push(reason('quorum_undiversified', REASON_MESSAGES.quorum_undiversified.message));
+        deficits.push({
+            claimId: 'quorum:diversity',
+            need: `this tier needs reviewers from more than one producer; the runs recorded so far do not form an independent quorum`,
+        });
     }
 
     // **The reviewer count is a condition, not a report.** `tiers.<tier>.reviewers` is a number the tier's contract
@@ -314,6 +445,11 @@ export function decide(input: DecideInput): Decision {
             `${requiredReviewers} independent reviewer(s) are required by the ${input.tier} contract and ${quorum?.reviewers ?? 0} submitted`
             + (quorum === undefined ? '; no run recorded a verdict, so there is nothing to count' : ''),
         ));
+        deficits.push({
+            claimId: 'quorum:reviewers',
+            need: `${requiredReviewers} independent run(s) have to submit a verdict for the ${input.tier} contract; `
+                + `${quorum?.reviewers ?? 0} have, and a replay of one reading is not a second reviewer`,
+        });
     }
 
     const verdict: Decision['verdict'] = reasons.some((entry) => entry.code === 'evidence_refuted')

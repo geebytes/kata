@@ -53,7 +53,15 @@ export type TierPolicy = {
 export type Policy = {
     version: number;
     tiers: Record<TierName, TierPolicy>;
-    riskFloors: Record<string, Floor>;
+    /**
+     * Per path pattern: the floor it raises the change to, **and the risk classes reaching it makes the change about**.
+     *
+     * **One entry carries both answers on purpose.** The alternative — a second table from pattern to risk class — would
+     * be two lists that must agree about which patterns exist, which is the "one fact, two sources" defect this
+     * repository removes everywhere else; deriving the classes from `riskFloors` instead of from a copy of it means a
+     * pattern cannot be floored without also saying what it is about.
+     */
+    riskFloors: Record<string, { floor: Floor; riskClasses: RiskClass[] }>;
     riskFloorAudit: { changesRequireReview: boolean };
     /**
      * The weakest tier the ledger route accepts, whatever the classification says.
@@ -131,15 +139,18 @@ export function defaultPolicy(): Policy {
             },
         },
         riskFloors: {
-            'src/quality/**': 'medium',
-            'src/workflow/**': 'medium',
+            'src/quality/**': { floor: 'medium', riskClasses: ['consistency'] },
+            'src/workflow/**': { floor: 'medium', riskClasses: ['consistency', 'state_transition'] },
+            'src/store/**': { floor: 'medium', riskClasses: ['consistency', 'provenance'] },
+            'src/cli/**': { floor: 'medium', riskClasses: ['boundary'] },
             // **`high` has to exist or the security tier is unreachable.** The classification is the maximum floor over the
             // paths a change touches, so with no `high` rule no change could ever be routed to the tier whose whole point is
             // the stricter evidence and the higher assurance floor — `quorum`, `sandboxed` and the privilege risk class were
             // all inert. These two are where the gate itself lives: a change to the policy or to the decision is a change to
             // the thing that judges everything else.
-            'src/kernel/policy.ts': 'high',
-            'src/kernel/decide.ts': 'high',
+            'src/kernel/policy.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
+            'src/kernel/decide.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
+            'src/kernel/risk.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
         },
         riskFloorAudit: { changesRequireReview: true },
         ledgerTierCeiling: 'strict',
@@ -211,16 +222,49 @@ export function loadPolicy(value: unknown): PolicyLoad {
     if (typeof value.version !== 'number') return { ok: false, error: 'version must be a number' };
     // Only for version 1, and only for known sections: an unknown key is still refused by the enumeration below.
     if (value.version === 1) {
-        const stored: Record<string, unknown> = value;
-        const defaults = defaultPolicy() as unknown as Record<string, unknown>;
+        // **Fills compose, and the filled document is what is returned.** The first version of this step patched the
+        // sections a stored policy predates and returned the *patched* document — while patching only the floors fell
+        // through to the original, so the conversion was computed and then discarded. One accumulator, one return.
+        const defaults: Record<string, unknown> = { ...defaultPolicy() };
+        const stored: Record<string, unknown> = { ...value };
         const filled: string[] = [];
         for (const section of ['tiers', 'riskFloors', 'riskFloorAudit', 'ledgerTierCeiling', 'diversity', 'sampling', 'budgets', 'evidenceStrength', 'deadline']) {
-            if (stored[section] === undefined) filled.push(section);
+            if (stored[section] === undefined) {
+                stored[section] = defaults[section];
+                filled.push(section);
+            }
+        }
+        // **A `riskFloors` entry stored as a bare floor predates the risk classes it now carries, and it is filled rather
+        // than refused.** Measured, by running a governed change through the installed CLI and then reading its policy with
+        // this build: `{"src/quality/**": "medium"}` — the shape every policy written before this change has — was rejected
+        // with `riskFloors["src/quality/**"] must be an object carrying floor and riskClasses`, which would have made every
+        // existing ledger unreadable and every review undecidable. A reader that cannot read a store of record has destroyed
+        // the record.
+        //
+        // The classes an old entry is about come from the defaults for that pattern; a pattern the defaults do not name is
+        // filled with every tier's required classes, which is the conservative direction — the demand stays at least as wide
+        // as it was when the table was written — and the substitution is named in `filled`.
+        const storedFloors = stored.riskFloors;
+        if (isRecord(storedFloors)) {
+            const defaultFloors = defaults.riskFloors as Record<string, { floor: string; riskClasses: string[] }>;
+            const required = [...new Set(Object.values(defaults.tiers as Record<string, { requiredRiskClasses: string[] }>).flatMap((tier) => tier.requiredRiskClasses))];
+            let convertedAny = false;
+            const converted: Record<string, unknown> = {};
+            for (const [pattern, entry] of Object.entries(storedFloors)) {
+                if (typeof entry !== 'string') {
+                    converted[pattern] = entry;
+                    continue;
+                }
+                converted[pattern] = { floor: entry, riskClasses: defaultFloors[pattern]?.riskClasses ?? required };
+                convertedAny = true;
+            }
+            if (convertedAny) {
+                stored.riskFloors = converted;
+                if (!filled.includes('riskFloors')) filled.push('riskFloors');
+            }
         }
         if (filled.length > 0) {
-            const patched: Record<string, unknown> = { ...stored };
-            for (const section of filled) patched[section] = defaults[section];
-            const result = loadFilled(patched);
+            const result = loadFilled(stored);
             return result.ok ? { ...result, filled } : result;
         }
     }
@@ -272,9 +316,20 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
     }
 
     if (!isRecord(value.riskFloors)) return { ok: false, error: 'riskFloors is required' };
-    for (const [pattern, floor] of Object.entries(value.riskFloors)) {
-        if (floor !== 'low' && floor !== 'medium' && floor !== 'high') {
-            return { ok: false, error: `riskFloors["${pattern}"] must be low, medium or high` };
+    for (const [pattern, entry] of Object.entries(value.riskFloors)) {
+        if (!isRecord(entry)) return { ok: false, error: `riskFloors["${pattern}"] must be an object carrying floor and riskClasses` };
+        if (entry.floor !== 'low' && entry.floor !== 'medium' && entry.floor !== 'high') {
+            return { ok: false, error: `riskFloors["${pattern}"].floor must be low, medium or high` };
+        }
+        if (!Array.isArray(entry.riskClasses) || entry.riskClasses.length === 0) {
+            // A pattern that reaches nothing about the change would be a floor with no subject, which is the reading this
+            // field exists to prevent.
+            return { ok: false, error: `riskFloors["${pattern}"].riskClasses must name at least one risk class` };
+        }
+        for (const riskClass of entry.riskClasses) {
+            if (!RISK_CLASSES.includes(riskClass as RiskClass)) {
+                return { ok: false, error: `riskFloors["${pattern}"].riskClasses names an unknown class: ${String(riskClass)}` };
+            }
         }
     }
     if (!isRecord(value.riskFloorAudit) || typeof value.riskFloorAudit.changesRequireReview !== 'boolean') {
@@ -317,7 +372,9 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
         return { ok: false, error: 'deadline.emitFirstRecordByToolCall must be a number or "auto"' };
     }
 
-    const policy = value as unknown as Policy;
+    // A named assertion at the end of the validation above, not an escape: every field it reads has been checked, and the
+    // type says which shape the checks established.
+    const policy = value as Policy;
     const declared = new Set(policyKeyPaths(policy));
     const known = new Set(Object.keys(POLICY_CONSUMERS));
     for (const key of declared) {

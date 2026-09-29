@@ -65,11 +65,19 @@ export interface RenderOptions {
     human?: (result: Record<string, unknown>) => string;
 }
 
-export function outputResult(result: Record<string, unknown>, options: RenderOptions = {}): void {
+/**
+ * Write a command's answer.
+ *
+ * `result` is `object` rather than `Record<string, unknown>`, because that type cannot accept a *typed* result: an
+ * interface has no implicit index signature, so every branch that had a precise type cast itself to the loose one to get
+ * through here — measured twice in `cli/wiki.ts` as `as unknown as Record<string, unknown>`. The function only
+ * serialises, so the honest parameter is the one that accepts what callers actually produce.
+ */
+export function outputResult(result: object, options: RenderOptions = {}): void {
     const output = activeOutput;
     if (output.quiet) return;
     if (output.format === 'human' && options.human) {
-        output.stdout.write(options.human(result));
+        output.stdout.write(options.human(result as Record<string, unknown>));
         return;
     }
     output.stdout.write(JSON.stringify(result) + '\n');

@@ -258,6 +258,18 @@ export type ReviewRoundsRead =
  * file looking shorter than it is. An absent file is an empty history — a change under its first repair has no rounds
  * yet — and that is the only case that reads as nothing was ever recorded.
  */
+/**
+ * Whether a parsed line is a review round.
+ *
+ * The fields the reader uses, and their types: a bare number, an array, or an object without `at` and `blockingIds` is not
+ * a round, and reading one as a round is how a corrupt file becomes a history with rounds in it.
+ */
+function isRoundRecord(value: unknown): value is { at: string; blockingIds: unknown[]; blockingCount?: unknown } {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.at === 'string' && Array.isArray(record.blockingIds);
+}
+
 export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
     let raw: string;
     try {
@@ -268,18 +280,29 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
     }
     const rounds: ReviewRound[] = [];
     let malformedLine: number | undefined;
-    for (const line of raw.split('\n')) {
-        if (line.trim() === '') continue;
+    const lines = raw.split('\n').filter((line) => line.trim() !== '');
+    for (const line of lines) {
         try {
-            const parsed = JSON.parse(line) as Partial<ReviewRound>;
+            const parsed = JSON.parse(line) as unknown;
+            // **A record that parses but is not a round is malformed, not a round.** `JSON.parse` answers for `42`, `{}`
+            // and `[]` alike, and the previous version pushed all three as rounds — so a file of numbers read as a
+            // history of unmeasured rounds and the loop's escalation counted rounds it never had. Shape and parse are two
+            // facts, and only the first is about the record.
+            if (!isRoundRecord(parsed)) {
+                // **Counted as damage, not as a round.** This used to push a placeholder, so a file with one damaged line
+                // reported one more round than it had — and `navigation` feeds these rounds to `reviewProgress` whatever
+                // the kind says, so the loop's escalation counted rounds nobody recorded. The parseable prefix stays, for
+                // diagnosis; the count does not grow for a line that is not a round.
+                malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;
+                continue;
+            }
             rounds.push({
-                at: typeof parsed.at === 'string' ? parsed.at : '',
-                blockingIds: Array.isArray(parsed.blockingIds) ? parsed.blockingIds.filter((id): id is string => typeof id === 'string') : [],
+                at: parsed.at,
+                blockingIds: parsed.blockingIds.filter((id): id is string => typeof id === 'string'),
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
             });
         } catch {
-            malformedLine ??= rounds.length + 1;
-            rounds.push({ at: '', blockingIds: [], blockingCount: null });
+            malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;
         }
     }
     if (malformedLine !== undefined) {

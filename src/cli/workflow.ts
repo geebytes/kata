@@ -15,6 +15,7 @@ import {
 } from '../core/workflow-profile.js';
 import {
     approveUserChoiceGate,
+    boundaryCreatedBy,
     consumeUserChoiceGate,
     createUserChoiceGate,
     requireUserChoiceGate,
@@ -139,12 +140,10 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         return { command, taskId: change, phase: 'intake', success: false, error: `Task ID mismatch: requested ${change} but result returned ${result.taskId}.` };
     }
     if (boundary && result.success) await consumeUserChoiceGate({ root, taskId: change, boundary });
+    // **One table, read in this direction too.** The chain that used to live here was the only statement of which command
+    // creates which gate, so the refusal that tells an operator how to rebuild one had nothing to read from.
     const nextBoundary = result.success
-        ? result.phase === 'plan' ? 'implementation_gate'
-            : result.phase === 'hardVerify' && command === 'verify' ? 'review_gate'
-                : result.phase === 'review' && command === 'review' && argv.includes('--approve') ? 'judge_gate'
-                    : result.phase === 'judge' && command === 'judge' ? 'archive_gate'
-                        : null
+        ? boundaryCreatedBy(result.phase, command, argv.includes('--approve'))
         : null;
     if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
     if (result.success && workflowProfile?.isolationMode === 'git_flow') {

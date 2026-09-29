@@ -76,33 +76,145 @@ const READS_TASK_STATE = [
  * authority*, not the act of writing.
  */
 const REVISION_ARTEFACT = /current-revision\.json|currentRevisionPath\s*\(/;
-const FABRICATED_IDENTITY = /['"`]revision-[a-z0-9]|\bid:\s*['"`]|\bid:\s*[a-zA-Z]|manifestHash\s*[:=]/;
-/**
- * A staged defect: the artefact is deliberately unreadable, which no command can produce and which a reader must refuse.
- *
- * It is not only `{}`. The unreadable-state cases stage whatever a truncated or corrupted artefact looks like — `'{}'`,
- * `'not json\\n'`, a bare string — and the guard has to allow the whole class, because a corrupt artefact is exactly what
- * a fixture cannot obtain any other way. What it must not allow is a *well-formed* record, which is what the identity
- * check below rejects.
- */
-const STAGED_DEFECT = /(['"`]\{\}['"`]|\{\}\s*\n|JSON\.stringify\(\{\}\)|not json|not-json|malformed|corrupt)/i;
+/** The markers of a *revision record*: an id in the revision namespace, or a manifest/hash field being set. */
+const REVISION_ISH = /revision-[a-z0-9]|manifestHash\s*[:=]|pathDigests\s*[:=]|contentDigests\s*[:=]/;
+/** The calls that produce a revision identity: a write whose payload comes from one of these is the engine's, not a fixture's. */
+const ENGINE_PRODUCES = /createTaskRevisionIfChanged|currentRevisionIdentity|readCurrentTaskRevision|readTaskRevision|sealRevision/;
+/** A write to the artefact, spelled any way. */
+const WRITE_CALL = /write|seed|persist|save|create/i;
 
-/** One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed. */
+/** Comments blanked, names intact — the view in which the artefact **is named**, which string-blanking would erase. */
+function withoutComments(text: string): string {
+    return text
+        .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, ' '))
+        .replace(/^[ \t]*\/\/.*$/gm, (line) => ' '.repeat(line.length));
+}
+
+/**
+ * The `n`th argument of the call that names the artefact, as text — read by balance, not by a regex that stops at the
+ * first comma.
+ *
+ * **A line is not a statement, and that was the blocking finding.** The previous version required the artefact's name and a
+ * write call on the *same line*, so a live hand-written revision record laid out over three lines
+ * (`review-artefact-read-state.test.ts`: path on one line, payload on the next) was invisible — measured: the guard
+ * reported nothing for a file containing an instance of exactly the class it exists for, while the same record written on
+ * one line was reported. A payload can be a multi-line object literal, so the span is found by parenthesis balance.
+ */
+/**
+ * Names that hold the artefact's own filename, so a statement that writes through one is still a statement about it.
+ *
+ * Measured by an independent reading: `const REVISION_FILE = 'current-revision.json'; await writeFile(join(…, REVISION_FILE), …)`
+ * was invisible, because every pattern here looked for the filename itself. The class is "a write to this artefact", and a
+ * constant holding its name does not change what is being written.
+ */
+function artefactNameHolders(text: string): string[] {
+    const holders = new Set<string>();
+    // **The value has to be the filename, not merely mention it.** The first version of this collected any assignment
+    // whose right-hand side contained the filename, so `const sealed = JSON.parse(await readFile(… current-revision.json
+    // …))` made `sealed` a "holder" — and every later statement that wrote `sealed.id` into a fixture was reported. That is
+    // a read of the engine's own record, which is exactly what a fixture *should* do; measured as a false positive on
+    // `tests/unit/summary-carries-its-read.test.ts:52`.
+    const quoted = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"`])[^;]*?current-revision\.json[^;]*?\2/g;
+    for (const match of withoutComments(text).matchAll(quoted)) {
+        if (match[1]) holders.add(match[1]);
+    }
+    return [...holders];
+}
+
+/**
+ * The top-level arguments of the call whose opening parenthesis is `callOpen`, as text.
+ *
+ * **Every argument, not the one after the path.** The earlier version read the argument *following* the artefact path,
+ * which assumed the path comes first — and `await writeJson(forged, join(…, 'current-revision.json'))` writes the same
+ * record with the arguments the other way round, so it was invisible. Reading all of them and asking which are revision
+ * records is both simpler and strictly wider; the cost of the wider reading is that a staged defect has to be recognised
+ * in the argument that carries it, which the payload check below does.
+ */
+function callArguments(statement: string, callOpen: number): string[] {
+    const out: string[] = [];
+    let depth = 0;
+    let start = callOpen + 1;
+    for (let index = callOpen; index < statement.length; index += 1) {
+        const char = statement[index] ?? '';
+        if (char === '(' || char === '{' || char === '[') depth += 1;
+        else if (char === ')' || char === '}' || char === ']') {
+            depth -= 1;
+            if (depth === 0) {
+                out.push(statement.slice(start, index).trim());
+                return out;
+            }
+        } else if (char === ',' && depth === 1) {
+            out.push(statement.slice(start, index).trim());
+            start = index + 1;
+        }
+    }
+    out.push(statement.slice(start).replace(/\)\s*;?\s*$/, '').trim());
+    return out;
+}
+
+/** Resolve an argument to the text it actually carries: a literal as-is, an identifier through its assignment. */
+function payloadOf(argument: string, window: string): string {
+    if (!/^[A-Za-z_$][\w$]*$/.test(argument)) return argument;
+    const assigned = new RegExp(`(?:const|let|var)\\s+${argument}\\s*=\\s*([\\s\\S]*?);`).exec(window);
+    return assigned?.[1]?.trim() ?? argument;
+}
+
+/** A staged defect: a literal that looks like JSON and does not parse is a corruption no command can produce. */
+function isStagedDefect(payload: string): boolean {
+    const literal = /^['"`]([\s\S]*)['"`]$/.exec(payload)?.[1];
+    if (literal === undefined) return false;
+    if (!/^[{[]/.test(literal.trim())) return false;
+    try {
+        JSON.parse(literal);
+        return false;
+    } catch {
+        return true;
+    }
+}
+
+/**
+ * One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed.
+ *
+ * The rule, in four lines: find a statement that names the revision artefact (by literal, by `currentRevisionPath(`, or by
+ * a constant holding its filename) and calls a write; ignore it when the identity comes from an engine call; report it
+ * when **any** of the call's arguments is a revision record. Comments and strings are blanked before the rule looks — a
+ * sentence about corruption, and a *string* about it, both used to whitelist a fabricated record — and a payload literal
+ * that looks like JSON and does not parse is the one thing allowed through, because a corrupt artefact is what a fixture
+ * cannot obtain from a command.
+ */
 function closureDrivenWriteOffenders(text: string, file: string): string[] {
-    const lines = text.split('\n');
+    const lines = withoutComments(text).split('\n');
+    const holders = artefactNameHolders(text);
+    const namesArtefact = (line: string): boolean =>
+        /current-revision\.json|currentRevisionPath\s*\(/.test(line) || holders.some((holder) => new RegExp(`\\b${holder}\\b`).test(line));
     const offenders: string[] = [];
     for (const [index, line] of lines.entries()) {
-        if (!REVISION_ARTEFACT.test(line)) continue;
-        // **Prose is not code.** The first version of this guard counted its own doc comment in `revision-delta.test.ts`,
-        // where the file is named in a sentence explaining why the fixture no longer writes it — and this suite's sibling
-        // guard had to exclude itself for the very same reason. A line that is entirely a comment cannot write anything.
-        const trimmed = line.trim();
-        if (trimmed.startsWith('*') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
-        // A *write*, spelled any way: the artefact has to be produced by this line or by a call it makes.
-        if (!/write|seed|persist|save|create/i.test(line)) continue;
-        const window = lines.slice(Math.max(0, index - 14), index + 4).join('\n');
-        if (!FABRICATED_IDENTITY.test(window)) continue;
-        if (STAGED_DEFECT.test(window)) continue;
+        if (!namesArtefact(line)) continue;
+        // The statement: from the previous statement boundary through the line that closes this call.
+        const from = (() => {
+            for (let cursor = index - 1; cursor >= 0 && index - cursor <= 16; cursor -= 1) {
+                if (/;\s*$/.test(lines[cursor] ?? '') || /\{\s*$/.test(lines[cursor] ?? '')) return cursor + 1;
+            }
+            return Math.max(0, index - 4);
+        })();
+        let depth = 0;
+        let to = index;
+        for (let cursor = index; cursor < Math.min(lines.length, index + 24); cursor += 1) {
+            const current = lines[cursor] ?? '';
+            depth += (current.match(/\(/g) ?? []).length - (current.match(/\)/g) ?? []).length;
+            to = cursor;
+            if (depth <= 0 && /;\s*$/.test(current)) break;
+        }
+        const statement = lines.slice(from, to + 1).join('\n');
+        if (!WRITE_CALL.test(statement)) continue;
+        if (ENGINE_PRODUCES.test(statement)) continue;
+        const window = lines.slice(Math.max(0, from - 4), Math.min(lines.length, to + 12)).join('\n');
+        const callOpen = statement.indexOf('(', statement.search(/write|seed|persist|save|create/i));
+        if (callOpen < 0) continue;
+        const records = callArguments(statement, callOpen)
+            .map((argument) => payloadOf(argument, window))
+            .filter((payload) => !isStagedDefect(payload) && REVISION_ISH.test(payload));
+        if (records.length === 0) continue;
         offenders.push(`${file}:${index + 1}`);
     }
     return offenders;
@@ -137,11 +249,52 @@ describe('a fixture does not fabricate the revision identity', () => {
             // writing its name as a literal. It is the shape this suite already used once while the guard reported nothing.
             ['the path helper instead of a literal', "await writeFile(currentRevisionPath(root, 'delta-task'), record, 'utf8');\nconst record = { id: 'revision-from-helper', manifestHash: 'd'.repeat(64) };", true],
             ['a malformed payload that is not {}', "await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'not json\\n');", false],
+            // **A truncated payload is staged on purpose**, and it is recognised by asking whether the literal parses —
+            // not by a keyword. `review-approval-refuses-open-findings.test.ts` writes exactly this shape.
+            ['a truncated JSON payload', "await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{\"id\": \"rev-1\", \"manif');", false],
+            // **The defect this rule was rebuilt for.** A comment about corruption used to whitelist a fabricated record,
+            // because the staged-defect test ran over prose: the window is read as code now, so this must be flagged.
+            // **The two forms the second independent reading found invisible**, neither of which was in the declared
+            // limits below: the filename held in a constant, and a write whose payload comes *first*.
+            ['the filename held in a constant', "const REVISION_FILE = 'current-revision.json';\nawait writeFile(join(root, '.kata', 'tasks', taskId, REVISION_FILE), `${JSON.stringify({ id: 'revision-from-constant', manifestHash: 'h'.repeat(64) })}`);", true],
+            ['the payload before the path', "await writeJson(`${JSON.stringify({ id: 'revision-payload-first', manifestHash: 'i'.repeat(64) })}`, join(root, '.kata', 'tasks', taskId, 'current-revision.json'));", true],
+            // The false positive the holder rule produced before it required a quoted filename: reading the engine's own
+            // record and using it in a fixture is what a fixture is *supposed* to do.
+            ['reading the engine record and using it', "const sealed = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'utf8'));\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), JSON.stringify({ revisionId: sealed.id, manifestHash: sealed.manifestHash }));", false],
+            // **The form an independent review measured as invisible, and the one that sat live in this suite**: the
+            // artefact named inside a `join(…)`, the write on the line above it, the payload on the line below.
+            ['the record laid out over three lines', "await writeFile(\n    join(root, '.kata', 'tasks', taskId, 'current-revision.json'),\n    `${JSON.stringify({ id: 'revision-laid-out', manifestHash: 'f'.repeat(64) })}\\n`,\n);", true],
+            // A *string* that names a corruption must not whitelist code, which is the second half of the same finding.
+            ['a string about corruption in the same statement', "const note = 'this fixture is the corrupt one';\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), `${JSON.stringify({ id: 'revision-seeded', manifestHash: 'g'.repeat(64) })}`, 'utf8');", true],
+            // An identity the engine produces is nobody's fixture: the same write, with the payload from the seal.
+            ['an identity the engine produced', "const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/a.ts'], checkIds: [] });\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), JSON.stringify(sealed.revision), 'utf8');", false],
+            ['a comment about corruption beside a real record', "// this file is deliberately corrupt in the other case\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), record, 'utf8');\nconst record = { id: 'revision-seeded', manifestHash: 'e'.repeat(64) };", true],
         ];
 
         for (const [name, source, shouldFlag] of samples) {
             const flagged = closureDrivenWriteOffenders(source, name).length > 0;
             expect([name, flagged]).toEqual([name, shouldFlag]);
+        }
+    });
+
+    /**
+     * **The guard's blind spots, asserted as negatives rather than left to be discovered.**
+     *
+     * Each of these fabricates an identity and this rule does not see it. They are written down because a guard whose
+     * limits are unstated reads as a guard with none — the mistake this suite made twice, including the earlier version
+     * that claimed "any write call" while recognising three spellings. What the rule covers is a record written near its
+     * own path; what it cannot cover is a record assembled somewhere else entirely.
+     */
+    it('names the shapes it cannot see, so its reach is stated rather than assumed', () => {
+        const unseen: Array<[string, string]> = [
+            ['the record assembled in another module', "import { seedRevision } from './helpers/seed.js';\nawait writeFile(currentRevisionPath(root, taskId), seedRevision(), 'utf8');"],
+            ['the path computed at runtime', "const file = ['current-revision', 'json'].join('.');\nawait writeFile(join(root, file), { id: 'revision-x', manifestHash: 'y' }, 'utf8');"],
+            ['the identity field named something else', "await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), { revision: 'abc', frozen: 'def' }, 'utf8');"],
+            ['a factory that writes on its own', "await seedFrozenRevision(root, taskId, { id: 'revision-abc', manifestHash: 'z' });"],
+        ];
+        for (const [name, source] of unseen) {
+            // The assertion is the *absence* of a report: these are the limits, kept honest by being written down.
+            expect([name, closureDrivenWriteOffenders(source, name).length > 0]).toEqual([name, false]);
         }
     });
 });

@@ -6,6 +6,43 @@ import { userChoiceGatePath, taskDir } from '../core/layout.js';
 import { bindsToRevision, currentRevisionIdentity, type RevisionIdentity } from './verdict-binding.js';
 
 export type UserChoiceBoundary = 'implementation_gate' | 'review_gate' | 'judge_gate' | 'archive_gate';
+
+/**
+ * **The command whose success creates each boundary's gate — one table, read in both directions.**
+ *
+ * `cli/workflow.ts` uses it to decide which gate a finished command should create, and the refusal below uses it to tell
+ * an operator whose gate no longer speaks for the content how to rebuild one. The two used to be independent knowledge:
+ * the creation rule was an inline chain, and the remedy appeared nowhere, so a refused gate said only that it was "not
+ * bound" — which is true, and leaves the reader to discover the fixing command from experience.
+ */
+export const GATE_CREATED_BY: Record<UserChoiceBoundary, { command: string; phase: string }> = {
+    // `design` moves a task into `plan`, and that is where the implementation gate is created.
+    implementation_gate: { command: 'design', phase: 'plan' },
+    // A passing `verify` in `hardVerify` creates the review gate; re-running it is also what rebuilds one.
+    review_gate: { command: 'verify', phase: 'hardVerify' },
+    // An approving `review` creates the judge gate.
+    judge_gate: { command: 'review', phase: 'review' },
+    // A `judge` that returns creates the archive gate.
+    archive_gate: { command: 'judge', phase: 'judge' },
+};
+
+/** The boundary a finished command creates, or nothing when that command concludes no boundary. */
+export function boundaryCreatedBy(phase: string, command: string, approving = false): UserChoiceBoundary | null {
+    for (const [boundary, entry] of Object.entries(GATE_CREATED_BY) as Array<[UserChoiceBoundary, { command: string; phase: string }]>) {
+        if (entry.phase !== phase || entry.command !== command) continue;
+        // The judge gate is created only by an approving review: a review that records findings opens a repair, not a gate.
+        if (boundary === 'judge_gate' && !approving) continue;
+        return boundary;
+    }
+    return null;
+}
+
+/** How an operator rebuilds a gate that no longer speaks for the current content. */
+export function gateRebuildInstruction(boundary: UserChoiceBoundary): string {
+    const entry = GATE_CREATED_BY[boundary];
+    const command = boundary === 'judge_gate' ? 'kata-cli review --approve' : `kata-cli ${entry.command}`;
+    return `Run \`${command}\` — a successful ${command} recreates this boundary's gate against the current content — then approve it again.`;
+}
 export type UserChoice = 'continue_current' | 'switched' | 'delegated';
 
 /**
@@ -172,7 +209,13 @@ function assertRevision(gate: UserChoiceGate, callerRevisionId: string | undefin
     && gate.revisionId === (callerRevisionId ?? identity.revisionId);
   const contentMatches = Boolean(gate.manifestHash) && gate.manifestHash === identity.manifestHash;
   if (idMatches || contentMatches) return;
-  throw new Error(`User choice gate ${gate.boundary} is not bound to the current revision or its content.`);
+  // **The refusal carries the next step.** It said only that the gate "is not bound to the current revision or its
+  // content", which is a true statement about the state and no statement at all about the remedy — and the remedy is not
+  // guessable: the gate has to be *recreated*, by the command whose success creates this boundary's gate.
+  throw new Error(
+    `User choice gate ${gate.boundary} is not bound to the current revision or its content. `
+    + `${gateRebuildInstruction(gate.boundary)}`,
+  );
 }
 
 function pathFor(root: string, taskId: string, boundary: UserChoiceBoundary): string {

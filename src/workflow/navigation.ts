@@ -57,6 +57,14 @@ export type UpstreamSummary = {
    * cannot say what it counted is a sentence, not a state.
    */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[]; unmeasurable?: boolean };
+  /**
+   * The round history could not be read whole.
+   *
+   * Reported **beside** `reviewEscalation`, never instead of it: a damaged line in an otherwise measurable history is a fact
+   * about the record, and the loop's terminal state is a fact about the measurements. One answering for the other is how a
+   * progressing loop came to stop for a person.
+   */
+  reviewHistoryUnreadable?: boolean;
   /** Why the recorded review could not be read, when it could not be. Absent when it could. */
   reviewRecordUnreadable?: string;
   /** Why the current revision could not be read, when it could not be. Absent when it could — or when it is simply unwritten. */
@@ -86,7 +94,6 @@ export type UpstreamSummary = {
    * not, so a typed reader could not see it and only a JSON dump showed it. A producer whose output is not declared is one
    * half of the same defect as a declaration nothing reads — the field exists, and no reader can ask for it.
    */
-  ledgerClosure?: { mayClose: boolean; unsupportedClaims: string[]; reason: string };
 };
 
 /**
@@ -216,7 +223,16 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The blocking question, asked once, of the reader every other consumer asks.** The status this file returns is what
   // the router and the surfaces read, and it used to assemble its own inputs — one of three call sites that did, which is
   // how the approval and the archive gate came to answer the same question differently.
-  const blockingRead = await readBlockingProblems(root, taskId);
+  // **Handed the read taken above.** Asking for the pointer again is how a failing second read came to be reported as an
+  // unreadable *review record* — a different reason, a different route, and one that bypasses the branch written for this
+  // very state.
+  // **The ledger is read once for this summary.** `ledgerVerdict` and `openLedgerProblems` each opened ten ledger files,
+  // so one decision read them twice — the same defect the pointer's read was fixed for, left on the ledger. The read is
+  // taken here (dynamically, because `store/ledger` reaches `core/state` which reaches the distill gate that calls this
+  // module) and handed to both.
+  const { readLedger } = await import('../store/ledger.js');
+  const ledgerInHand = await readLedger(root, taskId);
+  const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
@@ -236,7 +252,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
   // ladder and the operator cannot see two different answers to the same question — the defect this repository keeps
   // finding, and the reason this is a call rather than a second assembly.
-  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId });
+  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId, ledger: ledgerInHand });
   const ledger = ledgerDecision.kind === 'decided'
     ? {
         state: 'decided' as const,
@@ -252,6 +268,9 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         reason: ledgerDecision.detail,
         deficits: [] as string[],
       };
+  // Nothing readable at all: the file exists but holds no parseable round, so there is no measurement to decide with.
+  const historyHasNothingToMeasure = reviewRounds.kind === 'unreadable' && reviewProgressOfChange.rounds === 0;
+
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
     reviewFindings: openProblems.length,
@@ -270,61 +289,43 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     failedVerifyAcceptance: failedVerifyAcceptance.length,
     // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
     // the trailing run that changed nothing is what stops the next one from being dispatched.
-    ...((reviewRounds.kind === 'unreadable' || reviewProgressOfChange.escalating)
+    //
+    // **A damaged line is not the same fact as unmeasurable progress, and only the second stops the loop.** Both used to set
+    // `unmeasurable` and the terminal state fired on either, so a history that measurably went 3 → 1 stopped for a person
+    // because one line in it was damaged — measured by an independent reading, from the very field R-7 introduced. The
+    // measured progress decides; the unreadable history is reported beside it, as its own fact, because a reader has to be
+    // able to see both without one answering for the other.
+    ...((reviewProgressOfChange.escalating || historyHasNothingToMeasure)
         ? {
             reviewEscalation: {
                 rounds: reviewProgressOfChange.rounds,
                 noProgressRounds: reviewProgressOfChange.noProgressRounds,
                 blockingIds: reviewProgressOfChange.blockingIds,
-                ...(reviewRounds.kind === 'unreadable' || reviewProgressOfChange.unmeasurable ? { unmeasurable: true } : {}),
+                ...(reviewProgressOfChange.unmeasurable || historyHasNothingToMeasure ? { unmeasurable: true } : {}),
             },
         }
         : {}),
+    ...(reviewRounds.kind === 'unreadable' ? { reviewHistoryUnreadable: true } : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
+    // **A history that recorded nothing readable is a state, and it is not the same state as a damaged line in an
+    // otherwise readable history.** The first has no measurement at all and stops the loop; the second has measurements,
+    // and they decide — with the damage reported beside them (`reviewHistoryUnreadable`). The two used to be one flag, so a
+    // loop that measurably went 3 → 1 stopped for a person because a line was damaged.
     wikiClosureValid: wikiClosure.valid,
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
     ledger,
     evidenceFiles,
     failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
-    // **May this round close?** — asked of the ledger rather than of a findings table.
+    // **The closure question is answered by the ledger branch in `navigation`, not by a field here.**
     //
-    // This used to compute a closure verdict from `readTrackedFindings`, the falsifier ledger and the class table: three
-    // readers of the round-shaped route's records, on the one surface that decides what happens next. With the ledger as
-    // the route, the same question has a simpler answer — how many claims are not supported — and the risk classes the
-    // tier requires but no claim covers are the class-level half of it, which is what the termination condition is about:
-    // "every class an open finding names has a check" became "every class the tier requires has a claim".
-    ...(await (async () => {
-        // The decision boundary already distinguishes absent, decided and unreadable.
-        // Do not reopen raw ledger files here: a malformed claim list must refuse
-        // closure, never escape as a `.map` exception or masquerade as zero claims.
-        if (ledgerDecision.kind === 'unreadable') {
-            return {
-                ledgerClosure: {
-                    mayClose: false,
-                    unsupportedClaims: [],
-                    reason: `the evidence ledger cannot be read: ${ledgerDecision.detail}`,
-                },
-            };
-        }
-        // `kind !== 'decided'` already covers the zero-claim case: `ledgerVerdict` answers `absent` for a ledger with no
-        // claims, so the extra conjunct was a condition that could not change the outcome — the shape this file argues
-        // against two hundred lines below.
-        if (ledgerDecision.kind !== 'decided') return {};
-        const { readLedger } = await import('../store/ledger.js');
-        const { unsupportedClaims } = await import('../store/verdict.js');
-        const ledgerState = await readLedger(root, taskId);
-        const unsupportedIds = new Set(unsupportedClaims(ledgerState).map((decision) => decision.claimId));
-        const unsupported = ledgerState.claims.filter((claim) => unsupportedIds.has(claim.id));
-        if (unsupported.length === 0) return {};
-        return {
-            ledgerClosure: {
-                mayClose: false,
-                unsupportedClaims: unsupported.map((claim) => claim.id),
-                reason: `${unsupported.length} claim(s) are not supported, so the ledger does not yet decide a pass`,
-            },
-        };
-    })()),
+    // This used to publish a `roundClosure`/`ledgerClosure` verdict — `mayClose`, the unsupported claim ids and a reason —
+    // and a route read it. The route was replaced by the ledger branch (`satisfy_ledger_deficits`, which asks the ledger's
+    // own verdict and carries its deficits), and the field was kept as a report with nobody to report to: declared here,
+    // written by two branches, read by no production code. Measured by grep, and by history — at the commit that replaced
+    // the route the old field's reader was deleted in the same diff, which is how a field acquires a writer and loses its
+    // reason to exist. The information survives where it is decided: `ledger.verdict` for the question, `ledger.deficits`
+    // for what is missing, and `openLedgerProblems` for the claim ids.
     // The matrix-less fact, asked through the predicate that names it: `isLegacyTask` is `!matrix`, and deriving it here
     // as a second expression is how one fact gets two spellings.
     ...(task && isLegacyTask(task.acceptanceMatrix as AcceptanceMatrix | undefined) ? { missingAcceptanceMatrix: true } : {}),
@@ -403,9 +404,11 @@ export function phaseFallbackAction(phase: Phase): { nextSkill: string; role: st
 }
 
 export function suggestCandidateAction(phase: string, upstream: UpstreamSummary): SuggestedAction {
+  // Nothing routes out of archive: the change is being distilled, and the wiki/archive commands are the operator's.
   if (phase === 'archive') {
     return phaseFallbackAction('archive');
   }
+  // A loop that has stopped reducing its blocking count is not sent back for another round; it stops for a person.
   if (phase === 'review' && upstream.reviewEscalation) {
     return {
       nextSkill: '/kata-review',
@@ -418,6 +421,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2200,
     };
   }
+  // Evidence from more than one revision cannot be judged together, so the seal that produced it is redone first.
   if (upstream.mixedRevisionEvidence) {
     return {
       nextSkill: '/kata-build',
@@ -426,20 +430,10 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2100,
     };
   }
-  // **The obligation gate is gone, and the ledger answers the question it asked.** It read "is there a recorded failure
-  // that has not been answered yet", which a judge FAIL used to satisfy by writing an obligation —
-  // and judge can no longer be reached without a ledger, so nothing creates one for a governed change any more
-  // (measured: the only writer of an approved review refuses ledger-less changes, and judge refuses unapproved reviews).
-  //
-  // The failure is not lost: it lives where the failing criterion lives. That criterion is a claim, its evaluation is a
-  // verdict, and an unsupported claim is what `satisfy_ledger_deficits` below routes on. Legacy acceptance matrices keep
-  // their own branch, because "the matrix was never declared" is a property of the task rather than of an obligation.
-  // When the latest verify failed in review phase, the verify repair reason
-  // (rebuild_stale_evidence / rebuild_superseded_revision) must take priority
-  // over blocking or major review findings so --seal is attached to the build
-  // command and stale evidence is refreshed alongside any finding repairs.
-  // **The terminal state is evaluated first, and that word is load-bearing.** A loop that has stopped making progress is
-  // not sent back to build for another round: it stops, names what is still open, and waits for a person.
+  // **This branch's own note: an unreadable pointer outranks the ledger routes.** Both statements describe something
+  // wrong; this one is about the artefact every other statement is derived from, and dispatching a repair that cannot
+  // run is worse than naming the artefact to repair. It sits above the ledger branches for the reason the escalation
+  // terminal does — the state that stops everything is reported before the states that describe what is left.
   if (phase === 'review' && upstream.currentRevisionUnreadable) {
     return {
       nextSkill: '/kata-build',
@@ -451,7 +445,16 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
   // verdicts, open counterexamples and the discovery floor in one place, where the branches below count findings — and
   // counting findings is the part this replaces. It sits below the two state gates above it (mixed-revision evidence,
-  // unresolved obligations), because those make every piece of evidence meaningless rather than merely insufficient.
+  // an unreadable current revision), because those make every piece of evidence meaningless rather than merely
+  // insufficient.
+  //
+  // **The obligation gate is gone, and this branch answers the question it asked.** That gate read "is there a recorded
+  // failure not yet answered", which a judge FAIL used to satisfy by writing an obligation — and judge can no longer be
+  // reached without a ledger, so nothing creates one for a governed change any more (measured: the only writer of an
+  // approved review refuses ledger-less changes, and judge refuses unapproved reviews). The failure is not lost: it
+  // lives where the failing criterion lives, as a claim whose evaluation is a verdict, and an unsupported claim is what
+  // this branch routes on. Legacy acceptance matrices keep their own branch below, because "the matrix was never
+  // declared" is a property of the task rather than of an obligation.
   if (upstream.ledger && upstream.ledger.state === 'decided' && upstream.ledger.verdict !== 'pass') {
     return {
       nextSkill: '/kata-build',
@@ -460,6 +463,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1990 + upstream.ledger.deficits.length,
     };
   }
+  // A ledger that exists and cannot be read is a refusal, not an absence: falling through would let the round-shaped
+  // branches decide as if nothing were wrong.
   if (upstream.ledger && upstream.ledger.state === 'unreadable') {
     // A ledger that exists and cannot be read decides nothing, and that is not the same fact as one that was never
     // written — so it refuses here rather than falling through to the round-shaped branches as if nothing were wrong.
@@ -483,6 +488,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1985,
     };
   }
+  // A failed verify is repaired before review findings are read: the findings were formed against content that no longer stands.
   if (phase === 'review' && upstream.verifyResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -496,6 +502,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a
   // refusal, and the step it refuses towards is a re-read of the review, not a judgement of the change.
 
+  // A recorded review that cannot be read decides nothing, so it is re-read rather than worked around.
   if (phase === 'review' && upstream.reviewRecordUnreadable) {
     return {
       nextSkill: '/kata-review',
@@ -510,6 +517,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const hardestSeverity = blockingSeverities[0];
+  // An open problem at the tier's bar is repaired, not argued with.
   if (phase === 'review' && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -518,6 +526,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1000 + upstream.blockingFindings,
     };
   }
+  // `strict` blocks on major findings too; a weaker tier reports them without opening a repair, which is why the list is asked for rather than assumed.
   if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFindings > 0) {
     return {
       nextSkill: '/kata-build',
@@ -526,6 +535,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 980 + upstream.majorFindings,
     };
   }
+  // An approval with no review evidence is not an approval: the record says a judgement was made and nothing says what on.
   if (phase === 'review' && upstream.invalidReviewApproval) {
     return {
       nextSkill: '/kata-review',
@@ -547,6 +557,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 970,
     };
   }
+  // A judge FAIL whose failed criteria are repairable goes back to implementation rather than to another judge.
   if (phase === 'judge' && upstream.judgeResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -555,6 +566,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 900 + upstream.failedAcceptance,
     };
   }
+  // A check that exited non-zero is evidence against the change, whatever the verdict files say.
   if (upstream.failingEvidence > 0) {
     return {
       nextSkill: '/kata-build',
@@ -573,7 +585,12 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 770,
     };
   }
+  // A verify FAIL repairs the acceptance criteria it named, once the uniform-scope case above did not apply.
   if (phase === 'hardVerify' && upstream.verifyResult === 'FAIL') {
+    // A verify that failed because its evidence predates the content is not repaired by arguing with the verdict: the
+    // evidence is re-read against what is on disk now, which is what `--seal` does. The note that used to stand here said
+    // "in review phase" and described a priority over review findings — a branch that no longer exists, in a phase this
+    // one is not.
     if (uniformScopeReason(upstream.verifyRepairScopes) === 'rebuild_stale_evidence') {
       return {
         nextSkill: '/kata-build',
@@ -590,24 +607,30 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 750 + upstream.failedVerifyAcceptance,
     };
   }
+  // A passing verify is what makes a review possible, so the next step is the review.
   if (phase === 'hardVerify' && upstream.verifyResult === 'PASS') {
     return { nextSkill: '/kata-review', role: 'reviewer', reason: 'review_fresh_implementation', priority: 740 };
   }
+  // A hardVerify change with no recorded verdict has not been verified yet.
   if (phase === 'hardVerify') {
     return phaseFallbackAction('hardVerify');
   }
+  // In review, a readable record with no open problem is ready for its conclusion.
   if (phase === 'review') {
     return phaseFallbackAction('review');
   }
+  // Past the judge, the remaining work is the operator's: inspect and archive.
   if (phase === 'judge' || phase === 'distill') {
     return phaseFallbackAction('judge');
   }
+  // Before the first seal there is nothing to inspect but the task's own declaration.
   if (phase === 'plan' || phase === 'implement' || phase === 'intake') {
     return phaseFallbackAction(phase);
   }
-  if (phase === 'review') {
-    return phaseFallbackAction('review');
-  }
+  // **The duplicate of this branch was deleted, not left as documentation.** It sat below the `plan`/`implement`/`intake`
+  // branch, which cannot reach it (`phase === 'review'` is caught two branches above), and it carried a copy of the note
+  // that explains the earlier one — so a scan for "every branch says why it returns" counted it as documented while it
+  // could never return. An independent reading measured exactly that; dead code with a comment reads as a live branch.
   return { nextSkill: '/kata', role: 'dispatcher', reason: 'inspect_task', priority: 0 };
 }
 

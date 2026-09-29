@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
-import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.js';
-import { readCurrentTaskRevisionState } from './revision.js';
+import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
+import { readCurrentTaskRevisionState, type CurrentRevisionRead } from './revision.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
+// Type-only, so the cycle the note below is about is not created by this import.
+import type { Ledger } from '../store/ledger.js';
 import { mergeBlockingProblems, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import type { LedgerProblemsRead } from '../store/verdict.js';
 
@@ -62,7 +64,19 @@ export type ReviewRecordRead =
     }
     | { ok: false; why: string };
 
-export async function readReviewRecord(root: string, taskId: string): Promise<ReviewRecordRead> {
+export async function readReviewRecord(
+    root: string,
+    taskId: string,
+    /**
+     * The caller's own read of the pointer, when it has one.
+     *
+     * **Required in spirit even though it is optional in type.** The pointer is written non-atomically, so a reader that
+     * goes back to the file can answer differently from the caller that already asked — measured: with the second read
+     * failing, the router reported `unreadable_review_record`, bypassing the branch that exists for the pointer itself.
+     * A caller holding a read hands it over; a caller that does not must accept that it is taking a second look.
+     */
+    sealedRead?: CurrentRevisionRead,
+): Promise<ReviewRecordRead> {
     let record: ({ findings?: unknown } & Record<string, unknown>) | null;
     try {
         record = await readValidatedOptional<{ findings?: unknown } & Record<string, unknown>>('review', layoutReviewPath(root, taskId));
@@ -81,7 +95,7 @@ export async function readReviewRecord(root: string, taskId: string): Promise<Re
     // corruption — so the refusal below was written against a distinction the reader could not make, and the same
     // corruption became `null` (i.e. "not bound") at the nine sites whose `.catch(() => null)` swallowed it. Asking the
     // three-state reader puts the distinction back where the decision is.
-    const revisionRead = await readCurrentTaskRevisionState(root, taskId);
+    const revisionRead = sealedRead ?? await readCurrentTaskRevisionState(root, taskId);
     if (revisionRead.kind === 'unreadable') {
         return {
             ok: false,
@@ -90,7 +104,17 @@ export async function readReviewRecord(root: string, taskId: string): Promise<Re
     }
     // **Derived from the read above, not read again.** The pointer is written non-atomically, so asking the same question
     // twice could throw out of a gate that has already answered it.
-    const bound = bindsToRevision(record as never, await currentRevisionIdentityFrom(revisionRead, root, taskId));
+    // **The binding is read off the record's own fields, not asserted onto it.** `record as never` said the whole parsed
+    // document was a `VerdictBinding`, which is not true of a record whose `revisionId` is a number or whose
+    // `manifestHash` is an object — and a cast turns that into a comparison that silently answers "not bound" for the
+    // wrong reason. Only string fields count, and the reader says so.
+    const binding: VerdictBinding = {
+        ...(typeof record.revisionId === 'string' ? { revisionId: record.revisionId } : {}),
+        ...(typeof record.manifestHash === 'string' ? { manifestHash: record.manifestHash } : {}),
+        ...(typeof record.codeManifestHash === 'string' ? { codeManifestHash: record.codeManifestHash } : {}),
+        ...(typeof record.governanceManifestHash === 'string' ? { governanceManifestHash: record.governanceManifestHash } : {}),
+    };
+    const bound = bindsToRevision(binding, await currentRevisionIdentityFrom(revisionRead, root, taskId));
     return {
         ok: true,
         findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>,
@@ -128,9 +152,15 @@ export type BlockingProblemsRead =
     }
     | { ok: false; why: string };
 
-export async function readBlockingProblems(root: string, taskId: string): Promise<BlockingProblemsRead> {
+export async function readBlockingProblems(
+    root: string,
+    taskId: string,
+    sealedRead?: CurrentRevisionRead,
+    /** The caller's own read of the ledger, so one decision does not open it twice. */
+    ledgerInHand?: Ledger,
+): Promise<BlockingProblemsRead> {
     const mode = await readReviewMode(root, taskId);
-    const record = await readReviewRecord(root, taskId);
+    const record = await readReviewRecord(root, taskId, sealedRead);
     if (!record.ok) return { ok: false, why: record.why };
     // **Imported here rather than at the top, deliberately.** `store/verdict` reaches `store/ledger`, which imports
     // `core/state`, which imports the distill gate — so a static edge from this module to the store closes a cycle that
@@ -139,7 +169,7 @@ export async function readBlockingProblems(root: string, taskId: string): Promis
     let ledgerProblems: LedgerProblemsRead;
     try {
         const { openLedgerProblems } = await import('../store/verdict.js');
-        ledgerProblems = await openLedgerProblems(root, taskId);
+        ledgerProblems = await openLedgerProblems(root, taskId, ledgerInHand);
     } catch (error) {
         return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${(error as Error).message})` };
     }

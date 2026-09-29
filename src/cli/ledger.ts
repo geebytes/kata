@@ -147,9 +147,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 fail({ command: 'ledger policy', error: loaded.error });
                 return;
             }
-            // **A change to the floor table is itself a change.** Every moved floor becomes a claim of class `privilege`,
-            // so the table that decides how deep a review goes cannot be quietly widened to make a gate easier — without
-            // this, setting a sensitive directory to `low` would be a back door around the deep tier.
+            // **A change to the floor table is itself a change, and the same guard covers the risk classes the table
+            // carries.** Every moved floor — and every added, removed or altered risk class on a pattern — becomes a claim
+            // of class `privilege`, so the table that decides how deep a review goes cannot be widened, nor a pattern
+            // quietly re-described as being about less, to make a gate easier.
             const floorClaims = policyFloorChangeClaims({
                 previous: ledger.policy.riskFloors,
                 next: loaded.policy.riskFloors,
@@ -593,10 +594,13 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         const current = computed.subject;
-        const changed = ledger.subject === null
+        const subject = ledger.subject;
+        const changed = subject === null
             ? Object.keys(current.pathDigests)
             : (() => {
-                const diff = diffSubjects(ledger.subject as never, current as never);
+                // Both sides are `Subject` here: the branch above is what makes the left one non-null, and `current` comes
+                // from the frozen computation. `as never` hid that the comparison was even type-checked.
+                const diff = diffSubjects(subject, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });
@@ -662,7 +666,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const { scoreWithKernel } = await import('../eval/kernel-verifier.js');
         const { kernelCaseBuilders } = await import('../eval/kernel-case-builders.js');
         const { builders, notExpressible, retired } = kernelCaseBuilders();
-        const score = scoreWithKernel({ builders: builders as never, notExpressible: [...notExpressible], retired: [...retired] });
+        const score = scoreWithKernel({ builders, notExpressible: [...notExpressible], retired: [...retired] });
         outputResult({ ok: score.falsePasses.length === 0, command: 'ledger verifier', ...score });
         if (score.falsePasses.length > 0) process.exitCode = 1;
         return;

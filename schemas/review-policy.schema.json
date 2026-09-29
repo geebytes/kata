@@ -234,12 +234,41 @@
     },
     "riskFloors": {
       "type": "object",
+      "description": "Per path pattern: the floor it raises a change to, and the risk classes reaching it makes the change about. One entry carries both so a pattern cannot be floored without saying what it is about.",
       "additionalProperties": {
-        "enum": [
-          "low",
-          "medium",
-          "high"
-        ]
+        "type": "object",
+        "required": [
+          "floor",
+          "riskClasses"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "floor": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "riskClasses": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "enum": [
+                "assumption",
+                "boundary",
+                "state_transition",
+                "privilege",
+                "failure_mode",
+                "rollback",
+                "concurrency",
+                "provenance",
+                "dependency",
+                "consistency"
+              ]
+            }
+          }
+        }
       }
     },
     "riskFloorAudit": {

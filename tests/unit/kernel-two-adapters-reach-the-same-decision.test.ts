@@ -28,6 +28,7 @@ function decidedFrom(verdicts: Parameters<typeof decide>[0]['verdicts']) {
         policy: makePolicy(),
         tier: 'strict',
         declaredRiskClasses: ['consistency'],
+        touchedRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
         discovery: { independentChallenges: 1, verifiedChallenges: 1 },

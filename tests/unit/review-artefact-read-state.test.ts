@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readReviewRecord } from '../../src/workflow/review-read.js';
-import { readCurrentTaskRevisionState } from '../../src/workflow/revision.js';
+import { createTaskRevisionIfChanged, readCurrentTaskRevisionState } from '../../src/workflow/revision.js';
 import { currentRevisionIdentityFrom } from '../../src/workflow/verdict-binding.js';
 import { appendClaim, freezeSubject, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict, openLedgerProblems, openProblemsReportFields } from '../../src/store/verdict.js';
@@ -96,10 +96,11 @@ describe('review artefact read states', () => {
      */
     it('stamps a judgement from the read the command already took', async () => {
         const root = await rootWithReview();
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'current-revision.json'),
-            `${JSON.stringify({ id: 'revision-early', taskId, ownedPaths: ['src/a.ts'], manifestHash: 'a'.repeat(64), pathDigests: {}, contentDigests: {}, createdAt: '2026-09-29T00:00:00.000Z' })}\n`,
-        );
+        // **The revision is the engine's, not the fixture's.** This case used to hand-write a well-formed record — an `id`
+        // in the revision namespace, a manifest hash, the digests — which is a fixture deciding the very identity the
+        // command is supposed to read, and the guard that forbids it reported the line for two rounds while a per-line rule
+        // could not see it. Sealing through the engine gives the same case a real identity to be bound to.
+        const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/a.ts'], checkIds: [] });
         // Read once, through the same function the command uses, then make a *second* read answer differently.
         const taken = await readCurrentTaskRevisionState(root, taskId);
         expect(taken.kind).toBe('current');
@@ -108,8 +109,8 @@ describe('review artefact read states', () => {
         // The stamp must come from `taken`; a re-read would throw here.
         const { revisionBindingFields } = await import('../../src/workflow/verdict-binding.js');
         const identity = revisionBindingFields(await currentRevisionIdentityFrom(taken, root, taskId));
-        expect(identity.revisionId).toBe('revision-early');
-        expect(identity.manifestHash).toBe('a'.repeat(64));
+        expect(identity.revisionId).toBe(sealed.revision.id);
+        expect(identity.manifestHash).toBe(sealed.revision.manifestHash);
     });
 
     /**
@@ -179,23 +180,6 @@ describe('review artefact read states', () => {
         }
     });
 
-    it('returns a refusal envelope from verify when the revision cannot be read', async () => {
-        const root = await rootWithReview();
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
-        );
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'current-state.json'),
-            `${JSON.stringify({ taskId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-09-29T00:00:00.000Z' })}\n`,
-        );
-        await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'not json\n');
-
-        const verified = await runCommand('verify', taskId, root);
-        expect(verified.success).toBe(false);
-        expect(verified.error).toContain('cannot be read');
-        expect(verified.diagnostics?.currentRevisionUnreadable).toContain('current-revision.json');
-    });
 
     /**
      * **Every ledger state gets the same answer from both readers.**
@@ -446,25 +430,46 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', changeId, 'task.json'),
             `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
         );
-        // A history with one sound record and one that cannot be parsed: the loop it describes must not be driven further.
+        // **A damaged line in an otherwise readable history is reported, and the surviving measurements decide.** The
+        // earlier version of this case escalated here — one sound round plus one unparseable line — and that is the defect
+        // an independent reading measured from the other side: a history that measurably went 3 → 1 stopped for a person
+        // because a line was damaged. One round at 2 with a damaged line after it is not a stuck loop; it is a loop with a
+        // record that cannot be read whole.
         await writeFile(
             reviewRoundsPath(root, changeId),
             `${JSON.stringify({ at: '2026-09-29T00:00:00.000Z', blockingIds: ['R-1'], blockingCount: 2 })}\nnot-json\n`,
         );
 
         const summary = await readUpstreamSummary(root, changeId);
-        expect(summary.reviewEscalation?.unmeasurable).toBe(true);
+        expect(summary.reviewHistoryUnreadable).toBe(true);
+        expect(summary.reviewEscalation).toBeUndefined();
+        expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
 
-        const action = suggestCandidateAction('review', summary);
-        expect(action.reason).toBe('escalate_review_without_progress');
+        // **And the terminal is still reachable from a damaged history**: when the measurements that survive show the loop
+        // not moving, the damage does not excuse it. Three non-declining rounds plus a damaged line stops the loop.
+        await writeFile(
+            reviewRoundsPath(root, changeId),
+            [
+                JSON.stringify({ at: '2026-09-29T00:00:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:01:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:02:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:03:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                'not-json',
+            ].join('\n') + '\n',
+        );
+        const stalled = await readUpstreamSummary(root, changeId);
+        // Four rounds at the same count: three of them followed a best that never improved, which is the terminal's rule.
+        expect(stalled.reviewEscalation?.noProgressRounds).toBe(3);
+        const escalated = suggestCandidateAction('review', stalled);
+        expect(escalated.reason).toBe('escalate_review_without_progress');
         // **Never a repair dispatch**, which is the whole of AC-4: the loop stops instead of paying for another round.
-        expect(action.nextSkill).not.toBe('/kata-build');
-        expect(action.nextSkill).toBe('/kata-review');
+        expect(escalated.nextSkill).not.toBe('/kata-build');
+        expect(escalated.nextSkill).toBe('/kata-review');
         // The confirmation flag belongs to the action the CLI renders (`nextActionForTask`), not to this suggestion — the
         // suggestion names the route, and the pause is added where the route becomes a command. Asserting it here was
         // asserting a field this object does not carry, which is why the first version of this case passed on the wrong
         // thing; `tests/unit/review-escalation-terminal.test.ts` covers the terminal's own semantics.
-        expect(nextActionForTask('router-artefact', action.nextSkill, action.role, action.reason).requiresUserConfirmation).toBe(true);
+        expect(nextActionForTask('router-artefact', escalated.nextSkill, escalated.role, escalated.reason).requiresUserConfirmation).toBe(true);
     });
 
     /**

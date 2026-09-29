@@ -90,8 +90,11 @@ describe('one derivation of "is this claim supported"', () => {
             const problems = read.problems.map((problem) => problem.id).sort();
             expect(problems).toEqual(fromReader);
 
+            // **The published closure verdict is gone, and this is where its property lives now.** It was a third surface
+            // for the same fact — the reader's list, the problem list, and a field the router had stopped reading — so the
+            // assertion is the two that decide something: the problems an operator is handed, and the verdict.
             const upstream = await readUpstreamSummary(root, 'one-derivation');
-            expect(upstream.ledgerClosure?.unsupportedClaims?.slice().sort()).toEqual(fromReader);
+            expect(upstream.ledger?.deficits.length ?? 0).toBeGreaterThan(0);
 
             // And the decision agrees with the reader, which is the property the whole class is about.
             expect(upstream.ledger?.verdict).not.toBe('pass');

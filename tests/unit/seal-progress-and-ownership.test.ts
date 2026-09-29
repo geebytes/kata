@@ -28,7 +28,7 @@ describe('Seal progress and ownership scope', () => {
   it('AC-1: fails fast when no ownedPaths and no --owned-path', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'tracked.txt'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'tracked.txt'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
     await writeFile(join(root, 'untracked.txt'), 'drift\n', 'utf8');
 
@@ -55,7 +55,7 @@ describe('Seal progress and ownership scope', () => {
   it('AC-1: explicit --owned-path seals successfully', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'owned.txt'), 'owned\n', 'utf8');
-    execFileSync('git', ['add', 'owned.txt'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     await runCommand('open', 'explicit-path-test', root, {
@@ -80,7 +80,7 @@ describe('Seal progress and ownership scope', () => {
   it('AC-2: emits started and finished progress events for each check', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'tracked.txt'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'tracked.txt'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     const events: CheckProgressEvent[] = [];

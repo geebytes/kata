@@ -5,7 +5,7 @@
  * calling a sensitive path low risk is a way around the gate. The floor table therefore has its own audit rule: changing a
  * floor produces a claim of class `privilege`, which goes through the same review it gates.
  */
-import type { Claim, TierName } from './types.js';
+import type { Claim, RiskClass, TierName } from './types.js';
 import type { Floor, Policy } from './policy.js';
 
 export const FLOOR_TIER: Record<Floor, TierName> = { low: 'standard', medium: 'strict', high: 'security' };
@@ -33,6 +33,16 @@ export type RiskClassification = {
     tier: TierName;
     floor: Floor;
     matched: Array<{ pattern: string; path: string; floor: Floor }>;
+    /**
+     * The risk classes this change reaches, from the same walk that produced the floor.
+     *
+     * The tier's `requiredRiskClasses` used to be demanded in full whatever the change touched, so a consistency-only
+     * repair had to carry a `failure_mode` claim or sit permanently `insufficient` — and the refusal listed no deficit to
+     * close. This field is what makes the demand proportional: `required ∩ riskClasses` is the set that must be claimed.
+     */
+    riskClasses: RiskClass[];
+    /** Which pattern produced which class, so a refusal can name the path that made it necessary. */
+    riskClassSources: Array<{ pattern: string; classes: RiskClass[] }>;
     wideChange: boolean;
     /** Reported so an operator can see the classification was decided, not guessed. */
     reason: string;
@@ -65,14 +75,21 @@ export function classifyRisk(input: {
     wideChangeThreshold?: number;
 }): RiskClassification {
     const matched: Array<{ pattern: string; path: string; floor: Floor }> = [];
+    /** Which class each matched pattern made the change about, kept with the pattern so the refusal can name it. */
+    const byPattern = new Map<string, RiskClass[]>();
     let highest: Floor = 'low';
     for (const path of input.paths) {
-        for (const [pattern, floor] of Object.entries(input.policy.riskFloors)) {
+        for (const [pattern, entry] of Object.entries(input.policy.riskFloors)) {
             if (!floorMatches(pattern, path)) continue;
-            matched.push({ pattern, path, floor });
-            if (floorRank(floor) > floorRank(highest)) highest = floor;
+            matched.push({ pattern, path, floor: entry.floor });
+            byPattern.set(pattern, entry.riskClasses);
+            if (floorRank(entry.floor) > floorRank(highest)) highest = entry.floor;
         }
     }
+    // **The classes the change reaches, read off the same walk as the floor.** One pass over one table, so a pattern
+    // cannot raise a floor without also saying what it is about.
+    const riskClasses = [...new Set([...byPattern.values()].flat())].sort() as RiskClass[];
+    const riskClassSources = [...byPattern.entries()].map(([pattern, classes]) => ({ pattern, classes }));
     const threshold = input.wideChangeThreshold ?? 25;
     const wideChange = input.paths.length >= threshold;
     if (highest === 'low' && wideChange) {
@@ -80,6 +97,8 @@ export function classifyRisk(input: {
             tier: FLOOR_TIER.medium,
             floor: 'medium',
             matched,
+            riskClasses,
+            riskClassSources,
             wideChange,
             reason: `no floor matched and the change touches ${input.paths.length} paths (>= ${threshold})`,
         };
@@ -88,6 +107,8 @@ export function classifyRisk(input: {
         tier: FLOOR_TIER[highest],
         floor: highest,
         matched,
+        riskClasses,
+        riskClassSources,
         wideChange,
         reason: matched.length > 0
             ? `floor ${highest} from ${matched.length} matched path(s)`
@@ -100,8 +121,8 @@ export function classifyRisk(input: {
  * `privilege`, so the table cannot be quietly widened to make a gate easier.
  */
 export function policyFloorChangeClaims(input: {
-    previous: Record<string, Floor>;
-    next: Record<string, Floor>;
+    previous: Record<string, { floor: Floor; riskClasses: readonly RiskClass[] }>;
+    next: Record<string, { floor: Floor; riskClasses: readonly RiskClass[] }>;
     at: string;
     requireReview: boolean;
 }): Claim[] {
@@ -111,12 +132,26 @@ export function policyFloorChangeClaims(input: {
     for (const pattern of [...patterns].sort()) {
         const before = input.previous[pattern];
         const after = input.next[pattern];
-        if (before === after) continue;
+        // **By value, because the entries are objects.** The guard used to compare the floors themselves, where identity
+        // and equality were the same question; a freshly parsed policy builds new objects, so a reference comparison would
+        // claim every pattern changed on every write — a guard that fires always is read as noise and then ignored.
+        const sameFloor = before?.floor === after?.floor;
+        const sameClasses = JSON.stringify([...(before?.riskClasses ?? [])].sort()) === JSON.stringify([...(after?.riskClasses ?? [])].sort());
+        if (before !== undefined && after !== undefined && sameFloor && sameClasses) continue;
+        // The statement names which of the two answers moved, because the remedies differ: a floor is about how deep the
+        // review goes, a class is about what the change is asserted to be about.
+        const describe = (entry: { floor: Floor; riskClasses: readonly RiskClass[] } | undefined): string =>
+            entry === undefined ? 'nothing' : `${entry.floor} / [${[...entry.riskClasses].sort().join(', ')}]`;
+        const moved = before !== undefined && after !== undefined && !sameFloor && !sameClasses
+            ? 'floor and risk classes'
+            : before !== undefined && after !== undefined && !sameFloor
+                ? 'floor'
+                : 'risk classes';
         const statement = before === undefined
-            ? `risk floor added for ${pattern}: ${String(after)}`
+            ? `risk floor added for ${pattern}: ${describe(after)}`
             : after === undefined
-                ? `risk floor removed for ${pattern} (was ${before})`
-                : `risk floor for ${pattern} moved from ${before} to ${after}`;
+                ? `risk floor removed for ${pattern} (was ${describe(before)})`
+                : `risk ${moved} for ${pattern} moved from ${describe(before)} to ${describe(after)}`;
         claims.push({
             id: `policy-floor:${pattern}`,
             statement,

@@ -77,6 +77,226 @@
 
 ## 6. 交付判据
 
-- 8 条 AC 各有会红的用例；AC-1／AC-3／AC-4／AC-6／AC-7 另需**变异验证**（把机制短路后必须变红）。
+- 15 条 AC 各有会红的用例（§3 的 8 条 + 上一轮结束时登记的 7 条残余）；AC-1／AC-2／AC-3／AC-6／AC-7／AC-11 另有**变异验证**（把机制短路后必须变红，实测记录见各测试文件的 docblock）。
 - 本 change 结束后：`ledger decide` 对**本 change 自己**给出 pass（这是 §2 顺序落地后的自证）。
 - 三份 follow-up 设计稿在归档时标注为**已被本 change 覆盖**（或保留各自未覆盖的条目）。
+
+**实施结果**：15 条 AC 全部落地，187 文件 / 1180 用例通过，`tsc --noEmit` 干净；封存为 `revision-4d9e2c9a9657d9da`（17 项证据）。§2 的自指顺序成立——AC-6 的机制先落地、再改 `src/kernel/**`，全程未被自己要修的那条判定挡住。
+
+**实施中的两个自身缺陷**（记录以免重复）：
+
+1. **AC-13 的守卫自己有行号 bug**：`codeOnly` 删块注释时一并删掉了其中的换行，于是 `slice(index-14, index+4)` 取到的是**十八行之外**的区域——一个就在写入行上的截断 payload 因此没被识别。改为"置空注释内容但保留换行"。
+2. **AC-4 的检查当场抓住了作者**：26 个改动文件未声明，正是该 AC 描述的缺陷类；详见 §7.1 的用法修正。
+
+## 7. 工具语义只在源码里（实施记录）
+
+本轮实现中撞上三处**只存在于源码、任何输出都没有说明**的工具语义。它们不是缺陷报告，而是"下一个操作者会重复踩"的事实，因此记在这里而不是留在会话里。
+
+### 7.1 `scope apply` 只应用**最后一条**记录
+
+`kata-cli scope change --add <one>` 每次写一条记录，而 `kata-cli scope apply`（不带 `--id`）**只应用最后一条**该记录的 `scope`。而每条记录的 `scope` 是**记录时刻**的 `task.ownedPaths ∪ additions`——所以逐条 add、逐条 apply 时，每条记录的 scope 都是"旧的 34 + 这 1 条 = 35"，最后 apply 只让声明面从 34 涨到 35。
+
+**实测**：连续 26 次 `scope change --add <单个路径>` 全部成功（exit 0），`scope-changes.json` 里 26 条记录各自的 `scope` 都是 35，最终 `ownedPaths` 仍是 35。
+
+**正确用法**：**一条记录里重复 `--add`**（`valuesAfter(rest, '--add')` 收集所有出现），再一次 `scope apply`。实测一条记录带 25 个 `--add` 后，`ownedPaths` 从 35 涨到 60。
+
+### 7.2 `--add` 不按逗号拆分，且会产生**无法被应用**的记录
+
+`--add "a.ts,b.ts"` 被当作**一个**路径字符串记录（`added: ['a.ts,b.ts']`，`scope` 为空数组）。这条记录**不会**造成损害：`normalizeScopePaths([])` 以 `A scope change must leave at least one owned path: the task schema requires one, and a task with none cannot be read by any command, including the one that would add it back.` **构造性拒绝**——空 scope 记录在结构上无法被应用。
+
+但记录本身留在 `scope-changes.json` 里（write-once），所以它是一段**只有读了源码才知道是惰性的**历史：`applied: false` 不会出现，因为没有人会去 apply 它。
+
+### 7.3 声明面变化会**令 handoff 收据失效**，而封存**自己**也会改任务
+
+`build --seal` 在有 handoff 收据的前提下被拒绝：`Cannot use invalid handoff packet: branch_mismatch`。原因是**上一次失败的 seal 本身改动了任务**（写入了 `change-record-*.json` 与 revision），而收据描述的是任务**当时**的样子，于是它被自己的封存动作作废。
+
+**实测序列**：`scope apply`（改任务）→ `handoff create`+`acknowledge` → `build --seal`（失败，改任务）→ 再 seal 时收据已失效 → 重新 `handoff create`+`acknowledge` → seal 成功。
+
+也就是说：**"改任务 → 重新签收据 → 封存"是一个必须紧邻的三步**，中间不能插入任何会写 `.kata/` 的命令，包括一次失败的 seal。
+
+### 7.4 由本节引出的结论
+
+这三处都不影响 gate 的正确性（没有任何一条让"应通过"变成"不通过"，也没有让"不通过"变成"通过"），但它们符合本 change 一直在修的那个形状：**一个事实只有一个可见入口**。§7.1 与 §7.3 都是"工具知道、操作者只能靠经验知道"的语义；§7.2 是"存在一条惰性记录，没有任何输出指出它"。
+
+因此它们**不进入本 change 的验收面**（AC 文本在 `open` 时冻结，且这属于 CLI 表面而非 gate 输入完整性），而是作为**下一轮候选**记录在此。
+
+## 8. 独立审查（第十轮）与修复批
+
+第一次独立审查对 15 条 AC 的判决是**未通过**：9 条 finding，其中 6 条 blocking/major。**每一条都由我独立复现过**（探针在 `tmp/probe/`），并且它们的共同形状比单条缺陷更重要。
+
+### 8.1 判决
+
+| id | 级别 | AC | 事实 |
+|---|---|---|---|
+| R-1 | **blocking** | AC-13 | fixture 守卫只认"文件名与写动作同一行"。`tests/unit/review-artefact-read-state.test.ts:100` 躺着一条**活的**手工 revision（路径在 `join(…)` 一行、写入在上一行、载荷在下一行）→ 守卫报零；同一记录写成一行则被报。**守卫漏掉了它存在的理由那一类，实例就在本 change 自己的测试文件里。** |
+| R-2 | major | AC-13 | 白名单仍读文本：`const note = 'the corrupt fixture';` 一句字符串即可给伪造记录开白名单（我堵了注释，没堵字符串）。 |
+| R-3 | major | AC-12 | `ledgerClosure` 有声明（:96）与两处写入（:313/:330），**生产代码零读者**。历史诊断更清楚：`becfbf7` 用 ledger 分支替换了唯一读它的分支（`if (phase === 'review' && upstream.roundClosure)`），**并在同一个 diff 里删掉了读者**，只留下字段与一段"仍在报告"的注释。**处置：删除**——它的问题已由 ledger 分支与 `ledger.deficits` 回答，而它是同一事实的第三个面。 |
+| R-4 | major | AC-8 | 五处活的拒绝是"`reasons` 非空 + `deficits: []`"且不指名路径：`discovery_floor`、`discovery_unverified`、`quorum_disputed`、`quorum_undiversified`、`quorum_missing`。实测 `reasons ["discovery_floor"] deficits 0`。 |
+| R-5 | major | AC-15 | 前半句（"每个分支都记录自己的理由"）**既没实现也没检查**：函数内 26 个分支只有 6 个有注释，且 `/^\s{2}if \(/` 看不见嵌套分支。我的用例只断言了否定方向。 |
+| R-6 | major | AC-9 | 逃逸扫描漏掉 `x as never as T`（条款点名的形态）与裸 `as unknown`。 |
+| R-7 | minor | AC-11 | 畸形 round **仍被计入**（push 占位），而 `navigation` 无论 kind 都把它喂给 `reviewProgress`。用例自己写着长度 3（含一行 `{}`）。 |
+| R-8 | minor | AC-4→AC-6 | 已**提交**的未声明改动两个面都看不见（`committed: []`）。AC-4 措辞是"working tree"，故不算伪造；连锁后果是 AC-6：已提交未声明路径的风险类永不被要求。 |
+| R-9 | minor | AC-5 | 用例在 `if (!command) return;` **静默跳过**两条路由，报"通过"而只覆盖 5/7 skill。 |
+
+审查**试过但未能伪造**：AC-1（`readLedger` 把坏文件收进 `malformedFiles` 而不抛，"一边抛一边返回 unreadable"不可达）、AC-7、AC-10（用 vitest JSON 报告取真值：同文件重名标题 0）、AC-14。AC-2/AC-3 只能有 mock 证据——pointer 只有一个入口，无 double 时无法构造"第二次读失败"。这是证据强度的诚实上限。
+
+### 8.2 共同形状：**守卫比它宣称的窄**
+
+R-1／R-2／R-5／R-6／R-9 是同一件事的五次出现：**用一个"我恰好想得到的写法"的正则，去证明一条全称条款**。行窗口（R-1）、注释 vs 字符串（R-2）、两级缩进（R-5）、正则的字面边界（R-6）、缺项的映射表（R-9）——每一条都让"通过"只覆盖作者想到的那一半。
+
+判据（写入本 change 的教训）：**一条全称条款的守卫，必须把它看不见的写法写成断言**，否则它通过时说不出自己覆盖了什么。
+
+### 8.3 修复批（一次收口）
+
+- **R-1**：守卫改为按**语句**判定——用括号配平找出写入语句的跨度，写动作测试施加于整条语句，载荷用 `argumentAfterPath` 按平衡提取（不再被第一个逗号截断），标识符载荷在其赋值窗口内解析。同时**修掉活实例**：`review-artefact-read-state.test.ts` 改为用 `createTaskRevisionIfChanged` 让引擎产生身份。控制用例新增三种形态（三行布局／同语句里的 corruption 字符串／引擎产出的身份）。
+- **R-2**：分类只看**载荷**；注释与字符串在扫描视图里被置空（保留换行）。代码不再能给代码开白名单。
+- **R-3**：删除 `ledgerClosure`（声明、两处写入、描述它的注释），并把 `one-derivation-of-claim-support` 的断言移到真正决定事情的两个面（问题列表与 ledger verdict）。
+- **R-4**：五处各带一条可执行 deficit；AC-8 的用例改为**遍历内核词汇**，并把实测触达的 10 个 reason 写成断言（我原本"不可达"的三个判断被这次运行推翻）。
+- **R-5**：补齐 18 条分支注释；扫描改为**断言存在**（任意缩进），并单独用例证明嵌套分支会被看见。
+- **R-6**：模式放宽到任意位置的 `as never` 与 `as unknown as T`；字符串同样置空。**裸 `as unknown` 有意不禁**——全仓 13 处都是 `JSON.parse(…) as unknown`，那是在**移除** `any`；禁掉它会把作者推向"断言到一个没人校验的类型"，比它替换掉的 `any` 更糟。判据写进了测试的 docblock。
+- **R-7**：畸形行**只计为损坏**，不再 push 占位 round；用例的计数期望从 3 改为 2。
+- **R-8**：`undeclaredChanges` 接受上一 revision 的 `pathDigests`，封存前把**已提交**的未声明路径一并点名。
+- **R-9**：skill→命令的映射表补全，并断言"未映射的 skill 会失败而不是被跳过"；两条不属于 `runCommand` 的路由（wiki closure、archive）改用各自宣称的命令单独驱动。
+
+### 8.4 修复中另发现的两处（本 AC 之外，记录不修）
+
+1. `kata-cli wiki orient` 在 wiki store 不存在时抛 `ENOENT … .llmwiki/SCHEMA.md`，而不是回答"还没有 wiki"。该路由**宣称**的命令是 `wiki closure …`（它结构化回答），`orient` 是同一族的另一个动词，前置条件是 `wiki init`——所以 AC-5 成立，但这是同族的一处毛边。
+2. `runCommand('archive', <不存在的 task>)` 抛裸 `ENOENT`（`current-state.json`）。路由永远不会指名一个不存在的任务，所以不在 AC-5 之内；但"命令用值拒绝、不用异常拒绝"这条纪律在若干命令上仍只覆盖到已有的任务。
+
+## 9. 批准阶段发现的两件事（修复批之后）
+
+把 change 推到 `review --approve` 时，两道关卡各暴露了一件事。**第二件由本次变更自己引入，且只有"真的把流程跑一遍"才会看见。**
+
+### 9.1 CLI 解析到的是**主检出的 `dist/`**，不是本 worktree 的源码
+
+```
+which kata-cli → /home/work/.nvm/.../bin/kata-cli → /data/work/ahaeureka/k2skills/kata/dist/cli.js
+```
+
+也就是说：这一路以来的 `verify`/`review`/`seal`/`ledger` 行为来自**主检出 `master` 的构建产物**，而本 change 的代码在 `.kata/worktrees/gate-input-integrity/src/**`，只被**测试**驱动。对本 change 尤其重要——它改的正是 CLI 自己的输入面（封存、路由、账本），所以：
+
+- **验收面（15 条 AC）由测试证明**，那些断言驱动的是 worktree 的源码；
+- **治理流程的行为仍滞后于源码**，直到有人重建 `dist/`；
+- 由此还得到一个诊断上的好处：**9.2 是被这次"工具与产物版本不一致"照出来的**。
+
+**处置**：我把重建 `dist/` 视为需要用户授权的环境动作（重建会改变**这台机器上所有工作流**所用的 CLI），所以不自行执行，只记录并提交给用户决定。
+
+### 9.2 存储策略的 `riskFloors` 形状不兼容（本次变更引入，已修）
+
+**实测**：流程用已安装的 CLI 写出 `policy.json`，其中
+
+```json
+{ "src/quality/**": "medium" }
+```
+
+而本 change 之后的 `loadPolicy` 拒绝它：
+
+```
+riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
+```
+
+**后果**：**现存的每一份 `policy.json`（都是旧形状）都会变成不可读** → 账本 `unreadable` → review 批准、distill 门、修复入口全部拒绝。这是"一个改动弄坏了它自己要治理的状态"，比之前任何一条 finding 都严重。
+
+**根因**：AC-6/AC-7 把两种答案合并进一个条目（`{floor, riskClasses}`），却只改了写入侧，没有给读取侧留迁移。独立审查没有抓到——它的靶子是 AC 的条款，而条款只描述新形状；我的套件也没有"读一份旧策略"的用例。
+
+**修法**（与该项目既有的"读者填补它之前就存在的部分并报告"同一模式）：`loadPolicy` 遇到字符串 floor 时，从默认表取该模式的类；默认表不认识的模式则填**所有 tier 的必需类**（保守方向，需求至少和当初一样宽）；并把 `riskFloors` 记入 `policyFilled`，使替换可见而不是静默。用例落在 AC-6 的证据文件里：整份默认文档降级为旧形状后必须仍可读、`filled` 必须包含 `riskFloors`、且默认表不认识的模式拿到多于一个类。
+
+**教训**：改了**存储形状**就等于改了**已存记录**的可读性；写入侧的测试全绿说明不了任何事。
+
+## 10. 批准阶段的账本墙：四个原因，两个来自改动的**旧**代码
+
+把 change 推到 `review --approve` 需要账本 pass。账本已按要求建好（6 claim / 6 executable falsifier，`evidence verify` 全部 `supported`），但 `decide` 返回 `insufficient`，四条原因：
+
+| 原因 | 来源 | 是否可解 |
+|---|---|---|
+| `assurance_below_tier`：`observed` 低于 security 的 `sandboxed` | 本 change 触及 `src/kernel/policy.ts`／`decide.ts`（floor `high`）→ 自身档位是 **`security`** | **本机不可解**：内联适配器记录 `observed`，沙箱化运行是宿主能力缺口（父设计已登记的 `#722`／`#728`） |
+| `uncovered_risk_class`：`no claim covers: failure_mode` | **`dist/` 里 master 的 `decide`**，用 `required` 全量判定 —— 而本 change 的改动正是把它改成 `required ∩ touched` | **本 change 自己修的就是它**（重建 `dist/` 后即消失）。实测：本 change 的 `touched = [consistency, privilege, state_transition]`，`required ∩ touched` 已被 C-1／C-4 覆盖 |
+| `discovery_floor`：没有独立 challenge | master 的判定（security 档要求） | 可解：跑一次独立审查并记录 |
+| `quorum_missing`：security 要 2 名独立 reviewer，现有 1 | 同上 | 可解：第二位独立审查者 |
+
+`deficits: []` 而 `reasons` 非空 —— 这**不是**本 change 的缺陷：那四条可执行 deficit 就在 worktree 源码里（§8.3 R-4），而运行的是 master 的 `dist/`（§9.1）。**这条输出本身就是 §9.1 那条漂移的第三个证据。**
+
+### 10.1 结论
+
+- **档位是被动抬升的**：改内核策略文件 → `security` → 该档要求 2 名 reviewer 与沙箱保证。其中沙箱保证在本机无法提供，因此**本 change 无法由账本自己 pass**，只能由人放行——与上一轮 §21 同类，但原因不同（上一轮是风险类判定，这一轮是**过程保证**）。
+- **同族第四次出现**：一条在全量判定下必然为真的要求，作用在一个无法满足它的主体上。上一轮记的是 `strict` 的 `failure_mode`，这一轮记的是 `security` 的 `sandboxed`。差别值得写清楚：前者是**代码可修的**（AC-6 已修），后者是**宿主能力**，只能靠适配器或换执行环境。
+- **`failure_mode` 那条不是缺陷而是证据**：它恰好证明了本 change 的 AC-6 在旧代码下会拒绝一个它应该接受的变更——也就是本 change 存在的理由。
+
+### 10.2 交给用户的三条路
+
+1. **重建 `dist/` 后重跑流程**（推荐）：只有这样才能让流程的判定来自本 change 的**自己的代码**，也才能端到端验证它（§9.2 的 R-10 正是"真的跑一遍"才发现的）。重建会改变**这台机器上所有工作流**使用的 CLI，因此需要授权。重建后仍需人工放行 `assurance_below_tier`（本机无沙箱），但 `uncovered_risk_class` 会消失，`discovery_floor`／`quorum_missing` 可由一次独立审查补齐。
+2. **不重建，直接人工放行**（与上一轮 §21 同形）：账本 `insufficient` 与四条原因如实记录，审批准予人为判断，缺口登记为 follow-up。
+3. **补一条 `failure_mode` claim**：能把 master 判定下的类要求补上，但 `assurance_below_tier` 仍然拒绝，所以仍需人工放行——修的是症状而非墙。
+
+## 11. 第二次独立审查与修复（重建 `dist/` 之后）
+
+重建 `dist/` 后流程跑的是本 change **自己的代码**，第二次独立审查随即在**同一份交付**上跑出三条**站立的**反例（`challenge check` 退出非零 = 反例成立）。三条都否证了**我上一轮写下的 disposition**，而不是否证我的代码是否存在。
+
+### 11.1 三条反例
+
+| 反例 | 级别 | 事实 | 根因 |
+|---|---|---|---|
+| **X1** | **blocking** | `budget_exhausted`／`assurance_below_tier`／`same_actor`／`challenge_open` 仍返回 `reasons` 非空 + `deficits: []` | **我的用例谓词判的是整个 decision 的 `deficits.length`**，于是没有自己 deficit 的 reason 靠兄弟的蒙过；且 9 个状态里 3 个从未到达它们命名的代码（我写的 `usage: { spentTokens }` 根本不是 `BudgetUsage` 的字段） |
+| **X2** | major | 已提交的未声明改动在生产里看不见 | `pathDigests` 的键**恒等于**声明面（实测 61/61），所以"上一 revision 的 digests"读不出已提交的未声明路径；它实际能抓的是**声明缩水**——实证：`revision-7bbcc5845a8b47c7` 多出的那个键正是我从声明里删掉的路径。**我的 R-8 disposition 说过头了。** |
+| **X3** | major | 守卫仍漏两种伪造：文件名放在常量里、payload 前置的 helper | 同族第三次：判据仍绑定在"文件名与写动作同一行/相邻参数"的写法上 |
+
+另有三条 minor（分支扫描证明"有注释"而非"属于本分支"、`readUpstreamSummary` 把整个账本读两次、`unmeasurable` 覆盖实测得出的历史）与一条 nit（`archive` 路由不在"未映射即失败"表里）。
+
+### 11.2 修复
+
+- **X1**：四处拒绝各带自己的 deficit（`budget:exhausted`、`assurance:tier`、`quorum:same_actor`、`challenge:<id>`），`quorum_disputed` 改为**逐 claim** 产生 reason 并携带该 claim id；用例改为**逐 reason 判它自己的答案**，并把"没有任何答案"的 reason 判为失败（`ANSWER_FOR` 表 = 响应契约），同时把 `usage` 改成真实字段、把实测触达的 12 个 reason 写成断言。变异证明：删掉 assurance 的 deficit → 用例红。
+- **X2**：`undeclaredChanges` 的注释改成它真能证明的事，用例改为**调用方真能构造的状态**（真封存 → 声明缩水 → 点名被丢掉的路径 → 声明不变则无输出），并保留"已提交的未声明改动抓不到"这一**如实声明**（那需要 revision delta，已登记为 follow-up）。
+- **X3**：守卫改为读**语句的全部实参**（不再假定路径在前），并解析**持有文件名常量**的标识符；`else if` 也算分支。控制用例新增三种（常量文件名、payload 前置、以及一条**读引擎记录再使用**的假阳性对照），盲点清单按实测更新。
+- **minor**：`navigation.ts` 的无条件重复分支**删除**（不可达 + 抄了上一条的注释，所以扫描把它当"已记录"）；分支扫描接受 `} else if (`；`readUpstreamSummary` **读一次账本**并把该读交给 `ledgerVerdict` 与 `openLedgerProblems`（两者新增"调用方已读"参数），新增用例断言"交给它的账本才是答案的来源"；`unmeasurable` 只由**实测进度**决定（无可测记录的历史才停止循环），损坏的历史作为**并列事实**报告（`reviewHistoryUnreadable`），两个用例分列两侧；`archive` 阶段与其 `/kata` 路由进入用例表与映射表，并把测试里那份**过期的本地 `Phase` 副本**换成真类型（`archive` 早已存在于 `orderedPhases`）。
+
+**判据（本轮新增）**：`deficits` 的归属必须**逐 reason** 可查——一个"整份决定有 deficit"的断言，等于让没有答案的 reason 靠兄弟过关。
+
+### 11.3 两条机制墙（登记，不修）
+
+1. **`assurance_below_tier`**：改内核策略文件 → 自身档位被动抬到 `security` → 要 `sandboxed`，本机无法提供（内联适配器记录 `observed`）。
+2. **`quorum_missing` 结构上不可满足**：`recordVerdicts`（`src/store/ledger.ts:505`）按 `evidenceId` **替换**判决，于是每个 evidence 只有一条判决，`groupByProducer` 永远只见一个 run → `security.reviewers: 2` 无法达成。实测：记录第二次独立读数（`--adapter file --actor independent-review-2`，6 条全 `supported`）后 `decide` 仍报 "1 submitted"。这与 `kernel/quorum.ts` 自己的注释同族第五次出现——**修了聚合，没修存储**。
+
+### 11.4 声明的缺口：已提交但未声明的改动
+
+**明确声明：一次已提交但落在声明面之外的改动，本 change 的两条读都看不见。**
+
+- **工作树这一读**（`git status --porcelain`）只报告未提交的改动；
+- **上一 revision 的 digests 这一读**只能知道"它曾经 hash 过哪些路径"，而这些键**恒等于声明面本身**（实测当前 revision 61/61 集合相等），所以它能证明的只有一件事：**声明把一个曾经被覆盖的路径丢掉了**（声明缩水）。
+
+因此 C-3 的措辞在第二轮被改成它真能证明的事，并**把这个缺口写在这里**，而不是让它作为一句暗示留在代码注释里。要真正覆盖"已提交的未声明改动"，需要的是 **revision delta**（上一 revision 的 `pathDigests` 键集与当前工作树/当前 revision 的差异并集），那是另一条 change 的工作，已登记为 follow-up。
+
+## 12. 放行记录（人工决定）
+
+### 12.1 账本说什么
+
+`kata-cli ledger decide` 对本 change 返回 `insufficient`，原因恰好两条，且**两条都在本 change 的表面之外**：
+
+| 原因 | 性质 | 为什么不在本 change 里修 |
+|---|---|---|
+| `assurance_below_tier`：`observed` 低于 `security` 档的 `sandboxed` | **宿主能力** | 内联适配器记录 `observed`；沙箱化需要另一类执行器（父设计登记的 #722／#728） |
+| `quorum_missing`：`security` 要 2 名独立 reviewer | **判决存储的结构缺陷** | `recordVerdicts` 按 `evidenceId` 替换，`groupByProducer` 永远只见一个 run（§11.3 第 2 条）——修它在 `src/store/ledger.ts` 与 quorum 的取数点，**不在本 change 的声明面** |
+
+其余证据是齐的：**6/6 evidence `supported`**（每条都用真实变异验证过会变红），**3/3 challenge `withdrawn`**（第二轮独立审查提出的三条反例，在修复后由它们自己的 falsifier 判定为不再成立），`challenge_open` 与 `discovery_floor` 均已消失。两条原因各自带着可执行的 deficit。
+
+### 12.2 这个放行是**人的判断**，不是账本 pass
+
+- 它**不是**"门被放松"：本 change 没有为了让账本 pass 而动任何判据、任何档位数字、任何 evidence 的强度措辞；
+- 它**不是**"账本通过了"：账本仍是 `insufficient`，且两条原因如实留在这里；
+- 它**是**：一个已通过 15 条验收标准、两轮独立对抗审查共 10 条 finding 全部收口、verify PASS、drift 为空、可执行反例全部站不住了的交付，被一个人判断为可以合入，同时**把两条无法由它自己解决的墙登记为独立的 follow-up**。
+
+### 12.3 登记的三条 follow-up
+
+1. **判决读数按 run 保存**（`docs/design/2026-09-29-verdict-readings-per-run.md`，已在 master 上提交）：让 `reviewers: 2` **可达**。它同时是 §11.3 第 2 条的修复。
+2. **assurance 档位与宿主能力**：`security` 的 `sandboxed` 地板在本机不可满足时，谁在何种条件下代签这条例外——需要一个**执行器能力**概念，而不是把地板降下来。
+3. **已提交但未声明的改动**（§11.4 声明的缺口）：需要 revision delta（上一 revision 的 `pathDigests` 与当前树的差异并集）而不是 `git status`。
+
+### 12.4 收尾时发现的一个记录问题（一并登记）
+
+把本 change 推到批准时，`review.json` 里上一轮记录的 **9 条 finding 被流命令替换掉，只剩 1 条**（`R-10`），尽管 10 条都有 disposition。我已按会话中的原始记录把 9 条复原（每条带 `id`／`severity`／`acceptanceId`／`path`／`message`／`disposition`／`dispositionReason`），并在本文档 §8／§11 保留完整历史——**但这件事本身是一条机制观察**：一个承载"本轮发现了什么、后来怎么处置"的记录，可以被某个正常命令**静默替换成更窄的一份**，而没有任何输出提示。它与本 change 修的那一族（"有写者无读者"／"一个事实两个答案"）同源，因此登记为第 4 条 follow-up：**review 记录需要写侧保护或版本化**，否则"处置记录"本身会随命令消失。
+
+### 12.5 留下的状态
+
+- `review.json`：`status: pending`（**未批准**），10 条 finding 齐备且全部 `fixed`；
+- 相位：`hardVerify`（`revision-90316ce44be03162`，verify PASS，drift `[]`）；
+- judge 不可达（账本不 pass），所以本 change **不是 `approved`，而是 `human-waived with a recorded gap`**；
+- 分支 `kata/gate-input-integrity` 合入 `master` 是**人**的决定，与账本无关。
