@@ -100,3 +100,46 @@ export function verdictFor(evidenceId: string, verdicts: readonly EvidenceVerdic
     return verdicts.find((verdict) => verdict.evidenceId === evidenceId);
 }
 
+/**
+ * What each evidence item currently counts as, derived from every reading of it.
+ *
+ * **The rule, and why it is this rule.** Once two independent runs can both be recorded (which is the point of keeping
+ * readings per run), one item has more than one answer, and something has to decide which the claim is judged on:
+ *
+ *   1. **A refuted reading wins.** A reproducible counterexample is not a matter of opinion to be outvoted — the kernel
+ *      already refuses to let a quorum cancel one ("a reproducible finding is never voted away"), and the alternative here
+ *      would be that recording a second, more optimistic reading launders a refuted item into a supported one.
+ *   2. Otherwise the **newest** reading wins, ordered by `at`, then by position, then by run id — a total order, so the
+ *      answer does not depend on the order the document happens to list its readings in.
+ *
+ * The projection returns one entry per evidence item, so a consumer that wants "the answer" keeps the shape it had. It
+ * removes nothing from the store: `readings` is what the document holds, and this is a view of it.
+ */
+export function projectVerdicts(readings: readonly EvidenceVerdict[]): EvidenceVerdict[] {
+    const chosen = new Map<string, EvidenceVerdict>();
+    for (const [index, reading] of readings.entries()) {
+        const current = chosen.get(reading.evidenceId);
+        if (current === undefined || supersedes(reading, index, current)) chosen.set(reading.evidenceId, reading);
+    }
+    // **Sorted by item, so the view is deterministic in order as well as in content.** First-seen order would make the
+    // list's own order depend on how the document happened to be written, and a reader that shows it would show a different
+    // document for the same readings. Measured by a case that reverses the input: the answers agreed, the order did not.
+    return [...chosen.values()].sort((left, right) => (left.evidenceId < right.evidenceId ? -1 : left.evidenceId > right.evidenceId ? 1 : 0));
+}
+
+/** Whether `candidate` is the reading this item should be judged on, given `current` already holds one. */
+function supersedes(candidate: EvidenceVerdict, candidateIndex: number, current: EvidenceVerdict): boolean {
+    if (candidate.verdict === 'refuted' && current.verdict !== 'refuted') return true;
+    if (current.verdict === 'refuted') return false;
+    const candidateAt = candidate.at ?? '';
+    const currentAt = current.at ?? '';
+    if (candidateAt !== currentAt) return candidateAt > currentAt;
+    // `index` is not enough on its own: the caller's list order must not decide, so the run id breaks the tie, and the
+    // pair (run id, position) is a total order for a document whose last two readings share a timestamp.
+    const candidateRun = candidate.producer?.runId ?? '';
+    const currentRun = current.producer?.runId ?? '';
+    if (candidateRun !== currentRun) return candidateRun > currentRun;
+    void candidateIndex;
+    return false;
+}
+

@@ -248,7 +248,10 @@ export async function ledgerVerdict(input: {
     // **Old verdicts are one reading, not one each.** A ledger written before `producer` existed groups every verdict under
     // one unattributed run: counting them individually would make a single run's readings look like a quorum, and the
     // count is reported so a shortfall caused by missing provenance is distinguishable from one caused by one reviewer.
-    const { records, unattributed } = groupByProducer(ledger.verdicts);
+    // **Every reading, not the projection.** The quorum counts independent runs, and the projection is one entry per item
+    // — so reading it here is exactly how a second reviewer became invisible. This is the one call site that wants
+    // `readings`; everything else wants the projection and takes `verdicts`.
+    const { records, unattributed } = groupByProducer(ledger.readings);
     const quorum: QuorumReport | undefined = chainQuorum({
         records,
         unattributed,

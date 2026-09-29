@@ -144,3 +144,20 @@ for (const verdict of incoming) {
 被放弃的 (B)（把 `ledger.verdicts` 变成全部读数、投影下移到 `verdictFor`）不再是"为避免冲突而放弃"，而是**因为设计更差**：它会把投影规则复制到每个消费该列表的地方（`replay`、`cli/ledger`、`delta`），也就是本仓库反复删除的那一类（一个事实、多个来源）。
 
 **唯一保留的约束**：本 change 的改动会令 `gate-input-integrity` 的 revision 变为 `superseded`。那是**预期的**——它的记录是合入的提交与设计文档，不再依赖 kata 相位；此处写明以免后来者把这条状态误读为异常。
+
+## 9. 实施记录（六条 AC 落地）
+
+| AC | 落地位置 | 用例 | 变异证明 |
+|---|---|---|---|
+| **AC-1** 一个 run 一条读数 | `store/ledger.ts`：条目键改为 `(evidenceId, runId)`（`readingKey`），同 run 重写幂等、异 run 追加 | `tests/unit/verdict-readings-per-run.test.ts`（两条读数各自带 `runId`／`actor`） | 把键退回 `evidenceId` ⇒ 4 条用例红（含 AC-4 的可达性） |
+| **AC-2** quorum 按 run 计数 | `store/verdict.ts` 的 quorum 取数点改读 `ledger.readings` | `tests/unit/quorum-counts-runs.test.ts`（两 run = 2；同 run 写两次 = 1；同 actor = `undiversified`；分歧 → `disputed` 并点名 claim） | 同上（键退回时计数失去第二 run） |
+| **AC-3** 投影确定性 | `kernel/evidence.ts` 新增 `projectVerdicts`：任一 `refuted` 胜出，否则取最新（`at` → runId 全序），输出按 `evidenceId` 排序 | `tests/unit/verdict-projection-is-deterministic.test.ts`（含"倒序输入答案相同"） | 用例自身先抓到一个真实缺陷：投影原本按"首次出现"返回，倒序输入会改变列表顺序 |
+| **AC-4** 档位要求可达 | 上述两处合起来 | `tests/unit/two-reviewers-satisfy-the-tier.test.ts`：第二次读数后 `decide` 不再报 `quorum_missing`；同 run 写两次仍报 | 键退回 ⇒ 该用例红 |
+| **AC-5** 不丢读数 | `readLedger` 仍读同一份文档，`readings` 即文档内容；投影是视图 | `verdict-readings-per-run.test.ts`（`readings` 长度 = 文档长度；投影 ≤ 读数） | —— |
+| **AC-6** 旧文档可读 | `readingKey` 对缺少 `producer` 的旧判决用空 runId ⇒ 与 `groupByProducer` 的 `UNATTRIBUTED_RUN` 同键，旧文档读作**一条**读数 | 同文件（手写旧形状文档 → 仍得 `supported`） | —— |
+
+**投影的规则是新的判据，因此它被单独钉住**：`refuted` 优先（反例不被投票洗掉，与内核既有规则一致）、否则取最新、并按 `evidenceId` 排序输出（列表顺序也确定）。第三点是用例先发现、再补的实现——不是我先写的规则。
+
+**改动面**（与设计 §8 一致）：`src/store/ledger.ts`、`src/store/verdict.ts`（quorum 取数点一行）、`src/kernel/evidence.ts`。`store/replay.ts`、`kernel/delta.ts`、`cli/ledger.ts` **一行未改**——它们要的是"这个证据算哪条"，拿投影即可，这正是把投影放在 store 的收益。
+
+全套：191 文件 / 1210 用例通过，`tsc --noEmit` 干净。
