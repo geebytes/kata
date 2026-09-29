@@ -6,7 +6,7 @@ import { initLayout } from '../../src/core/layout.js';
 import {
     NO_PROGRESS_ROUNDS,
     appendReviewRound,
-    readReviewRounds,
+    readReviewRoundsState,
     reviewProgress,
     type ReviewRound,
 } from '../../src/quality/repair.js';
@@ -30,6 +30,35 @@ describe('the review loop has a terminal state', () => {
         at: '2026-09-28T00:00:00.000Z',
         blockingIds: ids,
         blockingCount,
+    });
+
+    // Shared by the routing cases below: the router reads the ledger beside the loop history, so a fixture that omits
+    // the ledger cannot see which of the two branches is evaluated first.
+    type LedgerSummary = NonNullable<UpstreamSummary['ledger']>;
+    const ledger = (state: LedgerSummary['state'], verdict: LedgerSummary['verdict'] = null): LedgerSummary => ({
+        state,
+        verdict,
+        claims: state === 'decided' ? 3 : 0,
+        reason: state,
+        deficits: state === 'decided' ? ['C-1: needs evidence'] : [],
+    });
+    const upstream = (
+        escalation?: UpstreamSummary['reviewEscalation'],
+        ledgerState?: LedgerSummary,
+    ): UpstreamSummary => ({
+        reviewFindings: 5,
+        blockingFindings: 5,
+        majorFindings: 0,
+        reviewMode: 'strict',
+        failedAcceptance: 0,
+        failedVerifyAcceptance: 0,
+        repairScopes: [],
+        verifyRepairScopes: [],
+        wikiClosureValid: true,
+        evidenceFiles: [],
+        failingEvidence: 0,
+        ...(escalation ? { reviewEscalation: escalation } : {}),
+        ...(ledgerState ? { ledger: ledgerState } : {}),
     });
 
     it(`escalates after ${NO_PROGRESS_ROUNDS} rounds that did not reduce the blocking count`, () => {
@@ -112,37 +141,69 @@ describe('the review loop has a terminal state', () => {
 
         await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T01:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1 });
         await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T02:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1 });
-        const rounds = await readReviewRounds(root, 'rounds-task');
+        const rounds = (await readReviewRoundsState(root, 'rounds-task')).rounds;
         expect(rounds.map((entry) => entry.blockingCount)).toEqual([1, 1]);
 
         // An absent file is an empty history, not a failure: a change under its first repair has no rounds yet.
-        expect(await readReviewRounds(root, 'some-other-task')).toEqual([]);
+        expect(await readReviewRoundsState(root, 'some-other-task')).toEqual({ kind: 'absent', rounds: [] });
     });
 
     it('sends a stuck loop to a human instead of back to build', () => {
-        const upstream = (escalation?: UpstreamSummary['reviewEscalation']): UpstreamSummary => ({
-            reviewFindings: 5,
-            blockingFindings: 5,
-            majorFindings: 0,
-            reviewMode: 'strict',
-            failedAcceptance: 0,
-            failedVerifyAcceptance: 0,
-            repairScopes: [],
-            verifyRepairScopes: [],
-            wikiClosureValid: true,
-            evidenceFiles: [],
-            failingEvidence: 0,
-            ...(escalation ? { reviewEscalation: escalation } : {}),
-        });
 
         const stuck = suggestCandidateAction('review', upstream({ rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] }));
         expect(stuck?.reason).toBe('escalate_review_without_progress');
         expect(stuck?.nextSkill).not.toBe('/kata-build');
+        // **And it outranks every repair route in the list an operator reads.** The branch returns first, but `priority`
+        // is not decoration: `cli/tasks.ts` sorts candidates by it descending, so a terminal below the repair routes would
+        // be presented under them. Measured before this assertion: reverting the number to 1200 left every case green.
+        // The routes below it are mixed evidence (2100) and the two ledger routes (1995, 1990+deficits).
+        expect(stuck.priority).toBeGreaterThan(2100);
 
         // A loop that is still moving carries no escalation at all — the reader only sets the field when the trailing run
         // reached the threshold — and keeps the repair route it always had.
         const moving = suggestCandidateAction('review', upstream());
         expect(moving?.reason).toBe('repair_blocking_review_findings');
+    });
+
+    /**
+     * The terminal state has to outrank the repair routes, or it is not terminal.
+     *
+     * **Measured: it did not.** The escalation branch was written below the ledger branches, and its own comment claimed
+     * the opposite order ("The terminal state, and it comes first"), so on any change whose ledger was also unreadable
+     * the router still dispatched `/kata-build` — the exact dispatch AC-4 says must stop. A looping repair is precisely
+     * the state in which the ledger is likely to be broken too, so the case the terminal exists for was the one it missed.
+     *
+     * The first test above never caught it because its fixture carried no ledger at all: the ledger branches were
+     * skipped and the escalation was reached by default. A test that omits the competing branch cannot see the ordering
+     * between them — which is the same shape this change keeps finding, one level up.
+     */
+    it('keeps the terminal state ahead of every ledger repair route', () => {
+        const stuck = { rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] };
+        // The evaluation order is what a reader has to see; the field list is the fixture that proves it.
+        const competingLedgers: Array<[string, LedgerSummary]> = [
+            ['unreadable', ledger('unreadable')],
+            ['decided/insufficient', ledger('decided', 'insufficient')],
+            ['decided/fail', ledger('decided', 'fail')],
+        ];
+
+        for (const [name, state] of competingLedgers) {
+            const action = suggestCandidateAction('review', upstream(stuck, state));
+            expect([name, action.reason]).toEqual([name, 'escalate_review_without_progress']);
+            expect(action.nextSkill).not.toBe('/kata-build');
+        }
+
+        // **And the mixed-evidence gate is behind it too.** It was left in front of the terminal once, on the argument
+        // that mixing evidence "is a fact about the evidence rather than a route out of a stuck loop" — and the same
+        // counterexample applies: an escalated loop whose evidence names two revisions was dispatched to `/kata-build`,
+        // which is the one route AC-4 forbids. Measured with both fields set: `repair_mixed_revision_evidence`.
+        const mixed = suggestCandidateAction('review', { ...upstream(stuck, ledger('unreadable')), mixedRevisionEvidence: true });
+        expect(mixed.reason).toBe('escalate_review_without_progress');
+        expect(mixed.nextSkill).not.toBe('/kata-build');
+
+        // **And the escalation is still not a repair dispatch when nothing else is wrong**, so the reordering did not
+        // merely swap one unconditional branch for another: a healthy ledger keeps its own route.
+        const healthy = suggestCandidateAction('review', upstream(undefined, ledger('decided', 'fail')));
+        expect(healthy.reason).toBe('satisfy_ledger_deficits');
     });
 
     const roots: string[] = [];

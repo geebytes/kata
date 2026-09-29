@@ -244,6 +244,11 @@ export async function appendReviewRound(root: string, taskId: string, round: Rev
     });
 }
 
+export type ReviewRoundsRead =
+    | { kind: 'absent'; rounds: ReviewRound[] }
+    | { kind: 'readable'; rounds: ReviewRound[] }
+    | { kind: 'unreadable'; rounds: ReviewRound[]; detail: string };
+
 /**
  * Read the recorded rounds, oldest first.
  *
@@ -253,14 +258,16 @@ export async function appendReviewRound(root: string, taskId: string, round: Rev
  * file looking shorter than it is. An absent file is an empty history — a change under its first repair has no rounds
  * yet — and that is the only case that reads as nothing was ever recorded.
  */
-export async function readReviewRounds(root: string, taskId: string): Promise<ReviewRound[]> {
+export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
     let raw: string;
     try {
         raw = await readFile(reviewRoundsPath(root, taskId), 'utf8');
-    } catch {
-        return [];
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent', rounds: [] };
+        return { kind: 'unreadable', rounds: [], detail: (error as Error).message };
     }
     const rounds: ReviewRound[] = [];
+    let malformedLine: number | undefined;
     for (const line of raw.split('\n')) {
         if (line.trim() === '') continue;
         try {
@@ -271,8 +278,17 @@ export async function readReviewRounds(root: string, taskId: string): Promise<Re
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
             });
         } catch {
+            malformedLine ??= rounds.length + 1;
             rounds.push({ at: '', blockingIds: [], blockingCount: null });
         }
     }
-    return rounds;
+    if (malformedLine !== undefined) {
+        return { kind: 'unreadable', rounds, detail: `review-rounds history has malformed JSONL at record ${malformedLine}` };
+    }
+    return { kind: 'readable', rounds };
 }
+
+// **The deprecated wrapper is gone, not kept.** It existed for callers that only wanted the list, and once the router
+// moved to `readReviewRoundsState` that left it with test-only consumers — the single unreferenced export in `src/`, which
+// this repository's own wiring check reports. A reader whose `kind` is dropped at the call site is the defect this change
+// exists to remove, so the convenience wrapper that dropped it is not a convenience.

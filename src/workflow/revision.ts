@@ -1,6 +1,6 @@
 import { readTask } from '../core/task.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { isIgnoredRepositoryPath, maxTreeHashFileBytes, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
+import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -9,6 +9,7 @@ import { resolveTerminalTask } from '../core/relations.js';
 import { createContentHasher } from '../core/hash.js';
 import { revisionsDir, currentRevisionPath, revisionPath, tasksDir } from '../core/layout.js';
 
+import { readValidatedOptional } from '../core/schema.js';
 export interface TaskRevision {
   id: string;
   taskId: string;
@@ -99,13 +100,11 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   // every existing binding keeps its meaning — but a revision *exists* for a change outside the declaration, which the
   // own  the owned-path hash alone could not express.
   const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? [], contentSnapshotHash(contentDigests));
-
   const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
   if (existing) {
     // Identical content: the same revision, with any newly acknowledged conflicts folded in.
     const revision: TaskRevision = {
       ...existing,
-      // A revision sealed before the field existed gains it here, without being renumbered.
       ...(existing.pathDigests ? {} : { pathDigests }),
       ...(existing.contentDigests ? {} : { contentDigests }),
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
@@ -114,6 +113,32 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     await writeFile(currentRevisionPath(input.root, input.taskId), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
     return { revision, reused: true };
   }
+
+  // **There is no legacy fallback, and removing it is the decision this comment records.**
+  //
+  // The branch existed to keep a pre-snapshot revision's historic id alive for the change already on it. Six versions of
+  // it were measured, and the three possible rules each fail one of the two states involved:
+  //
+  //   • probing the historic derivation with no condition — a change whose pointer named its historic record reused that
+  //     id for every later content state (three seals, one id, one revision file): the defect this whole change removes;
+  //   • demanding the pointer name the record — the same reuse survived, because a snapshot-less record cannot answer
+  //     "is this the same content?" and the gate read that silence as *yes*;
+  //   • also demanding the record be the content-bound identity — the branch became unsatisfiable, since `legacyId !== id`
+  //     is what admitted the probe in the first place, and the state it was written for lost its reuse entirely.
+  //
+  // The geometry is the reason, and it is worth stating plainly: **that state asks a record with no snapshot to answer a
+  // question about content.** No condition on such a record can answer it, because the fact needed is not in the record.
+  // The only rule that is true in both states is the one that does not ask: identity is the content-bound derivation and
+  // nothing else.
+  //
+  // What the change pays for this, measured on the repository's own store: two of 122 recorded revisions are pre-snapshot
+  // *and* current (`check-log-artifact-missing`, `worktree-no-commit-message`), so their next seal mints a content-bound id
+  // where it would previously have kept the historic one. Both already report `superseded` — their owned content has moved
+  // since they were minted — so the seal was going to renumber them under the old rule too. Their revision *files* are
+  // untouched and stay readable: what stops is their use as the current identity, not their existence.
+  //
+  // What R-3 actually asked for is preserved: **the same content never mints a second id**, which is what `existing` above
+  // guarantees. It was never a request to keep a stale id answering on behalf of content nobody recorded.
 
   const revision: TaskRevision = {
     id,
@@ -126,6 +151,9 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
     ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
   };
+  // A revision for this content-bound id did not exist, so this seal is what creates it. The write is unconditional: a
+  // corrupt file sitting at that id is replaced rather than refused, which is the right answer for an artefact whose
+  // identity *is* its content and which the reader above would have refused to parse.
   const directory = revisionsDir(input.root, input.taskId);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
@@ -148,17 +176,12 @@ export interface CreateTaskRevisionInput {
 }
 
 /**
- * The content-derived revision id: same task, same content, same check set, same revision.
+ * The revision id for a content-bound identity: task, owned-manifest hash, resolved check set and the content snapshot.
  *
- * `contentDigestHash` is the declaration-independent half, and it is what makes a revision exist for a change the
- * declaration does not cover. Without it, a round that edited a path outside its owned set and committed produced **the
- * same revision id** as the round before it — so the change was not merely invisible, it was not a revision at all.
- * Measured: editing and committing `src/outside.ts` with `src/owned.ts` owned returned the existing id, and the change
- * surface answered `unchanged`.
- *
- * Optional so a caller with no snapshot (a pre-existing revision being read back, a test that names an id directly)
- * keeps the historical derivation and therefore the historical id — the transition must not renumber revisions that
- * nothing has re-sealed.
+ * The snapshot argument is optional **because a caller that does not pass one is naming an identity rather than deriving
+ * one** — the historical derivation has no `contentDigestHash` term, and fixtures in `revision-delta.test.ts` use it to
+ * name a pre-snapshot id explicitly. Since the legacy fallback was removed (design §14) no `src/` caller omits it: the
+ * seal always supplies the snapshot, and nothing reads a historical id back into the current identity any more.
  */
 export function revisionIdFor(taskId: string, manifestHash: string, checkIds: string[], contentDigestHash?: string): string {
   const digest = hashContent(JSON.stringify({
@@ -180,14 +203,48 @@ export async function readTaskRevision(root: string, taskId: string, revisionId:
   return JSON.parse(await readFile(revisionPath(root, taskId, revisionId), 'utf8')) as TaskRevision;
 }
 
-export async function readCurrentTaskRevision(root: string, taskId: string): Promise<TaskRevision | null> {
+/** What a reader knows about the current revision: three facts, and no fourth. */
+export type CurrentRevisionRead =
+    | { kind: 'absent' }
+    | { kind: 'current'; revision: TaskRevision }
+    | { kind: 'unreadable'; detail: string };
+
+/**
+ * The current revision, with **"never written" and "cannot be read" kept apart**.
+ *
+ * The reader this replaces answered `null` for absence and *threw* for drift, and its twelve call sites split roughly in
+ * half between the two readings — seven awaiting it bare, five wrapping it in `.catch(() => null)`. So the same corrupted
+ * `current-revision.json` crashed the router (`readUpstreamSummary`), refused at the seal, and silently became "no
+ * revision" everywhere a caller had caught the throw. That is one fact with three answers, in the module the change that
+ * introduced the artefact owns.
+ *
+ * `readValidatedOptional` already distinguishes the two — ENOENT is `null`, anything else rethrows — so the three states
+ * were always available; they were just not the *return type*. They are now, and every consumer decides.
+ */
+export async function readCurrentTaskRevisionState(root: string, taskId: string): Promise<CurrentRevisionRead> {
   try {
-    return JSON.parse(await readFile(currentRevisionPath(root, taskId), 'utf8')) as TaskRevision;
+    const revision = await readValidatedOptional<TaskRevision>('revision', currentRevisionPath(root, taskId));
+    return revision === null ? { kind: 'absent' } : { kind: 'current', revision };
   } catch (error) {
-    if (isMissingFile(error)) return null;
-    throw error;
+    return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * The revision, or `null` when it is absent — **and `null` when it cannot be read, which is why callers with a decision to
+ * make ask `readCurrentTaskRevisionState` instead.**
+ *
+ * This used to throw on drift, and the result was one fact with three answers across its twelve call sites: the router
+ * refused, the seal threw where the reader did not, and every `.catch(() => null)` turned corruption into "no revision".
+ * Removing the throw makes the collapse explicit in the name of the function rather than implicit in a catch, and the
+ * three states stay reachable for anyone who needs them — `readCurrentTaskRevisionState` is the reader to reach for when
+ * "I could not tell" has to be a refusal, which is what the choice gate, the review record and the router now do.
+ */
+export async function readCurrentTaskRevision(root: string, taskId: string): Promise<TaskRevision | null> {
+  const read = await readCurrentTaskRevisionState(root, taskId);
+  return read.kind === 'current' ? read.revision : null;
+}
+
 
 export async function revisionStatus(root: string, revision: TaskRevision, taskId?: string): Promise<RevisionStatus> {
   // Freshness remains scoped to the declared manifest. `contentDigests` names
@@ -329,10 +386,11 @@ export async function computeContentDigests(root: string): Promise<Record<string
   // committing `src/outside.ts` returned the base id and the content snapshot still listed only `src/owned.ts`. A
   // snapshot that depends on when the author happened to commit is not a content identity.
   //
-  // The walk is bounded by the same ignore policy and size cap as the tree hash, so this is a fingerprint over the
-  // repository rather than a read of every model file for the sake of bookkeeping.
+  // This is the revision's content identity, not the cheap tree fingerprint. It must
+  // include every non-ignored file; otherwise an oversized unowned change could reuse
+  // the preceding identity.
   const digests: Record<string, string> = {};
-  for await (const file of walkRepositoryEntries(root, { maxFileBytes: maxTreeHashFileBytes })) {
+  for await (const file of walkRepositoryEntries(root)) {
     digests[file.path] = hashContent(file.content);
   }
   return digests;
@@ -475,8 +533,4 @@ export function normalizeOwnedPaths(root: string, paths: string[]): string[] {
     }
     return normalized;
   }))].sort();
-}
-
-function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }

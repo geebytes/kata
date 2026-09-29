@@ -265,11 +265,66 @@ export async function ledgerVerdict(input: {
  * that owns the decision is the one that can promise every reader gets the same answer. It used to live in
  * `workflow/navigation.ts`, which meant the review gate and the repair entry imported a *router* to read the ledger — a
  * quality gate depending on the thing that decides where to go next. One derivation, in the module that derives it.
+ *
+ * **An unreadable ledger is a refusal, not a crash** (`kind: 'unreadable'`). It used to throw, and two call sites —
+ * `cmdVerify` and `cmdJudge` — call it bare, so a malformed `claims.json` turned those commands into stack traces while
+ * the same call behind `review-read.ts` was already being wrapped and reported. A reader whose two callers disagree about
+ * how to fail is the defect this change exists to remove, so the failure is a value here too and every caller decides
+ * with it.
  */
-export async function openLedgerProblems(
-    root: string,
-    changeId: string,
-): Promise<Array<{ id: string; severity: string; statement: string }>> {
+export type LedgerProblemsRead =
+    | { kind: 'read'; problems: Array<{ id: string; severity: string; statement: string }> }
+    | { kind: 'unreadable'; detail: string };
+
+// **The projection with no consumer is gone.** `openProblemsForReport` mapped the read to a `{problems, unreadable}`
+// pair that only its own test used, while the envelope shape both commands publish comes from `openProblemsReportFields`
+// below. Two producers for one shape is how the surfaces drift, and this file deletes that pattern everywhere else.
+/**
+ * The fields a command envelope publishes for the ledger read: the count, or the reason there is no count.
+ *
+ * **Spread from one function, because it was copied onto two surfaces and only one copy was asserted.** Measured:
+ * restoring an unconditional `openProblems` on the judge path left the whole suite green, so the two report surfaces could
+ * disagree about whether a `0` means "no problems" or "nobody looked" without any case noticing. The invariant is one
+ * line of shape — *`openProblems` and `openProblemsUnreadable` are never both present* — and it is now produced in one
+ * place, so the two commands cannot drift.
+ */
+export function openProblemsReportFields(read: LedgerProblemsRead): { openProblems?: number; openProblemsUnreadable?: string } {
+    return read.kind === 'read' ? { openProblems: read.problems.length } : { openProblemsUnreadable: read.detail };
+}
+
+/**
+ * The problems a ledger holds, **or the verdict's own reason for refusing it.**
+ *
+ * **This used to re-derive the readability predicate, and the two answers had already diverged.** The reader tested
+ * `malformedFiles.length > 0 || policyRejected !== null`; `ledgerVerdict` tests the same two facts *and* a third — a
+ * ledger that holds claims but no frozen subject decides nothing either. Measured on one fixture with `subject.json`
+ * removed: this reader answered `read` (and published the claims as problems) while `ledgerVerdict` answered `unreadable`
+ * — so `navigation.ts` refused the closure and routed to a repair while `readBlockingProblems`, which the approval, the
+ * archive gate and the repair entry all share, published the counts. One file, two answers, in the module whose own
+ * heading says "One derivation, in the module that derives it".
+ *
+ * So the predicate is not restated here: `unreadable` and `absent` are the verdict's answers, and this reader asks for
+ * them. The only thing it owns is the mapping from "the ledger decides nothing" to the problems list.
+ */
+export async function openLedgerProblems(root: string, changeId: string): Promise<LedgerProblemsRead> {
+    // **The verdict answers this question, and this reader asks it rather than restating it.**
+    //
+    // Two earlier versions of this fix restated the predicate locally, and each disagreed with the verdict in a state the
+    // other had not thought of: first `malformedFiles || policyRejected` (missing `!subject`), then the same three
+    // conditions re-derived *and* asked `nothingRecorded` as a fourth — which turned "the ledger holds evidence but no
+    // claims", a state the verdict calls `absent`, into a refusal. Measured: a change with `evidence.json` and no claims
+    // was refused at its own repair entry (`authorized: false`) where HEAD allowed it, so the second version introduced a
+    // false refusal. The sentence was borrowed correctly both times; the *decision* is what has to be borrowed, because
+    // anything short of that is a second derivation waiting to differ.
+    const verdict = await ledgerVerdict({ root, changeId });
+    if (verdict.kind === 'unreadable') {
+        return { kind: 'unreadable', detail: verdict.detail };
+    }
+    // Readable by the verdict's account: the problems are what the ledger records as unsupported. The ledger is read here
+    // rather than in the verdict because the verdict returns a decision, not the claims it read.
     const ledger = await readLedger(root, changeId);
-    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement }));
+    return {
+        kind: 'read',
+        problems: unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement })),
+    };
 }

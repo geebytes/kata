@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
-import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.js';
+import { readCurrentTaskRevisionState } from './revision.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
 import { mergeBlockingProblems, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
+import type { LedgerProblemsRead } from '../store/verdict.js';
 
 /**
  * The recorded review artefact: status, revision binding, the approval's evidence summary and the findings. It lives
@@ -74,19 +76,21 @@ export async function readReviewRecord(root: string, taskId: string): Promise<Re
     if (record.findings !== undefined && !Array.isArray(record.findings)) {
         return { ok: false, why: 'the recorded review carries a `findings` field that is not a list' };
     }
-    // **Inside the guard, because a gate input must not throw.** `currentRevisionIdentity` rethrows anything that is not
-    // ENOENT, so a `current-revision.json` that is unreadable or is not JSON made this reader throw — and with it the
-    // gate, the approval and the repair entry. The revision read is part of reading the record, so it belongs in the same
-    // guard as the record read.
-    let bound = false;
-    try {
-        bound = bindsToRevision(record as never, await currentRevisionIdentity(root, taskId));
-    } catch (error) {
+    // **The revision read is part of reading the record, so it is asked explicitly rather than caught.** This used to be
+    // a try/catch around `currentRevisionIdentity`, which threw on drift and answered `null` for both absence and
+    // corruption — so the refusal below was written against a distinction the reader could not make, and the same
+    // corruption became `null` (i.e. "not bound") at the nine sites whose `.catch(() => null)` swallowed it. Asking the
+    // three-state reader puts the distinction back where the decision is.
+    const revisionRead = await readCurrentTaskRevisionState(root, taskId);
+    if (revisionRead.kind === 'unreadable') {
         return {
             ok: false,
-            why: `the revision this change is bound to cannot be read, so nothing can be said about which content the review is about (${(error as Error).message})`,
+            why: `the revision this change is bound to cannot be read, so nothing can be said about which content the review is about (${revisionRead.detail})`,
         };
     }
+    // **Derived from the read above, not read again.** The pointer is written non-atomically, so asking the same question
+    // twice could throw out of a gate that has already answered it.
+    const bound = bindsToRevision(record as never, await currentRevisionIdentityFrom(revisionRead, root, taskId));
     return {
         ok: true,
         findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>,
@@ -132,8 +136,17 @@ export async function readBlockingProblems(root: string, taskId: string): Promis
     // `core/state`, which imports the distill gate — so a static edge from this module to the store closes a cycle that
     // runs back through the gate that calls it. `openLedgerProblems` used to live behind exactly this dynamic import for
     // exactly this reason; the edge is the same, the home is better.
-    const { openLedgerProblems } = await import('../store/verdict.js');
-    const claims = await openLedgerProblems(root, taskId);
+    let ledgerProblems: LedgerProblemsRead;
+    try {
+        const { openLedgerProblems } = await import('../store/verdict.js');
+        ledgerProblems = await openLedgerProblems(root, taskId);
+    } catch (error) {
+        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${(error as Error).message})` };
+    }
+    if (ledgerProblems.kind === 'unreadable') {
+        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${ledgerProblems.detail})` };
+    }
+    const claims = ledgerProblems.problems;
     // A record that does not describe the current content contributes no findings — those were about other content.
     const findings = record.boundToCurrentRevision ? record.findings : [];
     return {

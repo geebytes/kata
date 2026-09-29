@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { authorizeJudgeRepair, authorizeRepair, authorizeReviewRepair, authorizeVerifyRepair } from '../../src/workflow/repair-entry.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 
 /**
  * One table per gate over (entry phase × artefact outcome × drift state).
@@ -30,12 +31,26 @@ describe('repair authorisation', () => {
         await writeFile(join(root, relative), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
     }
 
-    /** A sealed revision whose manifest hash no longer matches the workspace: the drift the two copies disagreed on. */
+    /**
+     * A revision whose manifest hash no longer matches the workspace — the drift the two copies disagreed on.
+     *
+     * **Sealed through the engine, not hand-written.** This helper used to write a well-formed `current-revision.json`
+     * with a fabricated `manifestHash`, which is the one artefact a fixture may not decide for itself: the value under test
+     * is the *identity*, so a case that invents it is measuring its own arithmetic. It is also why this file was the live
+     * instance the fixture guard found while the guard's first version reported none. The seal below is real, and the drift
+     * is produced the way drift happens — by changing the owned file afterwards.
+     */
     async function seedSupersededRevision(root: string): Promise<{ id: string; manifestHash: string }> {
+        await writeFile(join(root, 'subject.ts'), 'export const version = 1;\n', 'utf8');
+        await writeJson(root, `.kata/tasks/${taskId}/task.json`, {
+            id: taskId, title: 'Repair entry', phase: 'review', acceptance: [{ id: 'AC-1', statement: 'x' }],
+            ownedPaths: ['subject.ts'],
+            createdAt: '2026-09-17T00:00:00.000Z', updatedAt: '2026-09-17T00:00:00.000Z',
+        });
+        const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: ['test'] });
+        // Drift: the owned file moves after the seal, so `revisionStatus` reports `superseded` for the real reason it does.
         await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n', 'utf8');
-        const revision = { id: 'revision-superseded', taskId, ownedPaths: ['subject.ts'], manifestHash: 'a'.repeat(64), createdAt: '2026-09-17T00:00:00.000Z' };
-        await writeJson(root, `.kata/tasks/${taskId}/current-revision.json`, revision);
-        return revision;
+        return { id: sealed.revision.id, manifestHash: sealed.revision.manifestHash };
     }
 
     describe('hardVerify', () => {

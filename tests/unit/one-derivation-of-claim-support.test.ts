@@ -85,7 +85,9 @@ describe('one derivation of "is this claim supported"', () => {
 
             // Every other reader names the same claim: the ladder's problem list and its closure verdict are the two that
             // decide what the operator is told to do next.
-            const problems = (await openLedgerProblems(root, 'one-derivation')).map((problem) => problem.id).sort();
+            const read = await openLedgerProblems(root, 'one-derivation');
+            if (read.kind !== 'read') throw new Error(`expected a readable ledger, got ${read.detail}`);
+            const problems = read.problems.map((problem) => problem.id).sort();
             expect(problems).toEqual(fromReader);
 
             const upstream = await readUpstreamSummary(root, 'one-derivation');

@@ -123,16 +123,12 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     const reviewMode = blockingRead.mode;
     const findings = [...blockingRead.findings];
     const blockingProblems = blockingRead.problems;
-    // **After the reader, and guarded.** The baseline revision is named in the repair record, so it is read only once the
-    // entry has decided to authorise — and a revision file that cannot be read refuses here rather than throwing out of a
-    // gate. The reader above has already established that the review itself is readable, which is what a corrupt
-    // revision file would otherwise have prevented anyone from discovering.
-    let revision = null;
-    try {
-        revision = await readCurrentTaskRevision(root, taskId);
-    } catch (error) {
-        return denial(entryPhase, `Build cannot run from review because the sealed revision cannot be read (${(error as Error).message}).`);
-    }
+    // **After the reader, and unguarded — because the guard here could not fire.** This was a `try/catch` written when the
+    // revision reader threw on drift; once it answered `null` instead, the catch became unreachable and the comment beside
+    // it claimed a refusal that happened somewhere else entirely (the reader above refuses an unreadable revision, since
+    // the review's binding cannot be established without it). Measured: no input reaches this catch. What is honest is the
+    // plain read, with the refusal left where it actually is.
+    const revision = await readCurrentTaskRevision(root, taskId);
     if (!blockingRead.exists) {
         return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
     }

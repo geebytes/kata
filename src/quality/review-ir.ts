@@ -253,12 +253,26 @@ export function currentCandidateFreezeHash(
  * Exposed so a record writer stamps the same identity the gate will later recompute — one derivation, two consumers, so
  * the two cannot disagree about what the pass answered.
  */
-export async function candidateFreezeHashFor(root: string, taskId: string, node: AdversarialNode): Promise<string | undefined> {
+export async function candidateFreezeHashFor(
+    root: string,
+    taskId: string,
+    node: AdversarialNode,
+    /** A revision the caller has already read, so the identity is not assembled from two file states. */
+    revisionRead?: { kind: 'absent' } | { kind: 'current'; revision: { id: string } } | { kind: 'unreadable'; detail: string },
+): Promise<string | undefined> {
     const { readTask } = await import('../core/task.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
     const task = await readTask(root, taskId).catch(() => null);
     if (!task) return undefined;
-    const revision = await readCurrentTaskRevision(root, taskId).catch(() => null);
+    // **One file, one read.** When a caller has already established what the revision is, asking again can answer
+    // differently (the pointer is written non-atomically) and silently assemble an identity out of two states — measured:
+    // a single `verify` run read `current-revision.json` four times, and the freeze hash came from a *different* read than
+    // the revision id it was paired with. An `unreadable` answer is propagated as "no freeze hash" only because the callers
+    // that reach here have already refused on it.
+    if (revisionRead) {
+        return currentCandidateFreezeHash(task, revisionRead.kind === 'current' ? (revisionRead.revision as never) : null, node);
+    }
+    const revision = await readCurrentTaskRevision(root, taskId);
     return currentCandidateFreezeHash(task, revision, node);
 }
 

@@ -6,7 +6,7 @@ import { buildContextManifest } from '../core/context.js';
 import { createHandoff, readAcknowledgedHashes, type Role } from './handoff.js';
 import { existsSync } from 'node:fs';
 import type { WorkflowProfile } from '../core/workflow-profile.js';
-import { computeManifestHash, readCurrentTaskRevision } from './revision.js';
+import { computeManifestHash, readCurrentTaskRevisionState } from './revision.js';
 import { readValidated, readValidatedOptional } from '../core/schema.js';
 import { hashContent } from '../core/hash.js';
 import { currentGitBranch, currentGitHead } from '../core/git.js';
@@ -210,7 +210,15 @@ export async function verifyContextPacket(input: {
   return { valid: true };
 }
 async function anchor(root: string, taskId: string): Promise<HandoffPacket['repository']> {
-  const revision = await readCurrentTaskRevision(root, taskId);
+  // **The downgrade must be a decision, not an accident.** The scope falls back to `task_context` when there is no
+  // revision — and once the reader stopped throwing, an unreadable pointer produced that same fallback silently, handing
+  // the next platform a packet whose scope was not the sealed content. The states are read apart so the fallback keeps
+  // meaning "nothing was sealed".
+  const revisionRead = await readCurrentTaskRevisionState(root, taskId);
+  if (revisionRead.kind === 'unreadable') {
+    throw new Error(`The handoff cannot name the sealed content: the current revision cannot be read (${revisionRead.detail}).`);
+  }
+  const revision = revisionRead.kind === 'current' ? revisionRead.revision : null;
   const scope = revision
     ? { kind: 'revision' as const, revisionId: revision.id, paths: revision.ownedPaths, hash: await computeManifestHash(root, revision.ownedPaths) }
     : { kind: 'task_context' as const, paths: taskContextPaths(root, taskId), hash: await computeManifestHash(root, taskContextPaths(root, taskId)) };
