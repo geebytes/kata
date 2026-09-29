@@ -7,8 +7,8 @@ import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
 import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
-import { mergeBlockingProblems, mergeBlockingSeverities, readReviewMode, reviewTierFor } from './review-read.js';
-import { openLedgerProblems } from './navigation.js';
+import { readBlockingProblems } from './review-read.js';
+import { mergeBlockingSeverities, reviewTierFor } from '../quality/review-ladder.js';
 
 /**
  * Whether a task may leave a gate and re-enter implementation, and what that entry is recorded as.
@@ -132,13 +132,13 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // `severity === 'blocking'` plus an `isStrict` literal — two copies of the ladder that navigation had already
     // stopped reading, because that record's findings field has no producer on the current route. The ledger's open
     // problems are where a problem is recorded now, so both are asked once here.
-    const reviewMode = await readReviewMode(root, taskId);
+    const blockingRead = await readBlockingProblems(root, taskId);
+    if (!blockingRead.ok) {
+        return denial(entryPhase, `Build cannot run from review because the recorded review cannot be read as one: ${blockingRead.why}`);
+    }
+    const reviewMode = blockingRead.mode;
     const findings = review.findings ?? [];
-    const blockingProblems = mergeBlockingProblems({
-        mode: reviewMode,
-        findings,
-        claims: await openLedgerProblems(root, taskId),
-    });
+    const blockingProblems = blockingRead.problems;
     const severityAuthorized = blockingProblems.length > 0;
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates

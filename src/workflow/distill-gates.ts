@@ -6,8 +6,7 @@ import { readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
-import { mergeBlockingProblems, readReviewMode } from './review-read.js';
-import { openLedgerProblems } from './navigation.js';
+import { readBlockingProblems, readReviewRecord } from './review-read.js';
 
 /**
  * Whether a task may enter distill.
@@ -60,7 +59,9 @@ export interface ReviewClearance {
      * the ledger and a hole for one approved *on* it, and this is the fact that tells the two apart.
      */
     restsOn: 'ledger' | 'adversarial' | 'unstated';
-    reason?: 'not_approved' | 'no_review_evidence' | 'blocking_findings' | 'stale_review';
+    reason?: 'not_approved' | 'no_review_evidence' | 'blocking_findings' | 'stale_review' | 'unreadable_review';
+    /** Why a `unreadable_review` refusal happened: the reader's own sentence, not a re-description of it. */
+    detail?: string;
 }
 
 /** Reviewer clearance: an approved review, backed by evidence, without blocking findings, for the sealed revision. */
@@ -69,36 +70,37 @@ export async function evaluateReviewClearance(
     taskId: string,
     revisionId?: string,
 ): Promise<ReviewClearance> {
-    const review = await readValidatedOptional<{
-        findings?: Array<{ severity?: string }>;
+    // **One read, through the reader every other surface uses.** This gate used a validating reader of its own and let
+    // its error escape, so a record that did not match its schema produced an *exception* out of a gate — the one thing a
+    // gate must never do. It now refuses, and names the reason as the reader's own sentence.
+    const read = await readReviewRecord(root, taskId);
+    if (!read.ok) return { cleared: false, restsOn: 'unstated', reason: 'unreadable_review', detail: read.why };
+    const review = read.record as {
         revisionId?: string;
         manifestHash?: string;
         status?: string;
         reviewEvidence?: string;
         reviewRoute?: string;
-    }>('review', reviewPath(root, taskId));
+    };
     // The route travels with the refusal as well as the clearance: a caller that only learns "not cleared" cannot tell an
     // absent record from a record whose basis is gone.
     const restsOn: ReviewClearance['restsOn'] =
         review?.reviewRoute === 'ledger' ? 'ledger' : review?.reviewRoute === 'adversarial' ? 'adversarial' : 'unstated';
-    if (!review) return { cleared: false, restsOn: 'unstated', reason: 'not_approved' };
+    if (Object.keys(review).length === 0) return { cleared: false, restsOn: 'unstated', reason: 'not_approved' };
     if (review.status !== 'approved') return { cleared: false, restsOn, reason: 'not_approved' };
     if (!review.reviewEvidence?.trim()) return { cleared: false, restsOn, reason: 'no_review_evidence' };
-    // A record whose `findings` is present but not a list is refused before anything reads it: the malformed field is
-    // not an empty one, and the previous spelling got this one right.
-    if (review.findings !== undefined && !Array.isArray(review.findings)) {
-        return { cleared: false, restsOn, reason: 'blocking_findings' };
+    // **The blocking question, asked of the one reader.** This gate used to answer it with a bare
+    // `severity === 'blocking'` that never read the mode, so under `strict` a `major` problem cleared distill while the
+    // ladder routing repairs sent the same change back to build — one question, two answers, and the archive resting on
+    // the weaker one. It now asks `readBlockingProblems`, which the approval, the repair entry and the router ask too, so
+    // there is no call site left that can assemble a different version of the question.
+    const blockingRead = await readBlockingProblems(root, taskId);
+    if (!blockingRead.ok) {
+        // A record that cannot be read is refused, and *named as that* rather than as a blocking finding: the two need
+        // different repairs, and the reader used to propagate a schema error out of a gate instead of denying here.
+        return { cleared: false, restsOn, reason: 'unreadable_review', detail: blockingRead.why };
     }
-    // **The blocking question, asked once, of the one ladder, over both sources that can carry a problem.** This gate
-    // used to answer it with a bare `severity === 'blocking'` that never read the mode, so under `strict` a `major`
-    // problem cleared distill while the ladder routing repairs sent the same change back to build — one question, two
-    // answers, and the archive resting on the weaker one.
-    const blockingProblems = mergeBlockingProblems({
-        mode: await readReviewMode(root, taskId),
-        findings: review.findings ?? [],
-        claims: await openLedgerProblems(root, taskId),
-    });
-    if (blockingProblems.length > 0) {
+    if (blockingRead.problems.length > 0) {
         return { cleared: false, restsOn, reason: 'blocking_findings' };
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and

@@ -3,7 +3,7 @@ import {
     isMergeBlocking,
     mergeBlockingSeverities,
     reviewTierFor,
-} from '../../src/workflow/review-read.js';
+} from '../../src/quality/review-ladder.js';
 
 /**
  * The mode's ladder is monotone, and `security` is not weaker than `strict`.
@@ -51,6 +51,23 @@ describe('the severity ladder is monotone across modes', () => {
         // An absent profile is a legacy task, and legacy tasks were held to the std ladder; a mode nobody can name does
         // not silently become the strictest one, because that would newly refuse work no rule ever refused.
         expect(reviewTierFor(undefined)).toBe('standard');
+    });
+
+
+    it('normalizes the mode it is given, and fails closed on one it cannot name', () => {
+        // The spelling is not the caller's problem: a profile that says `Security` names the security tier.
+        expect(reviewTierFor('Security')).toBe('security');
+        expect(reviewTierFor('security ')).toBe('security');
+        expect(reviewTierFor('STRICT')).toBe('strict');
+        expect(reviewTierFor('std')).toBe('standard');
+        expect(reviewTierFor('standard')).toBe('standard');
+        // Absent means a task opened before the profile existed, and those were held to std.
+        expect(reviewTierFor(undefined)).toBe('standard');
+        expect(reviewTierFor('')).toBe('standard');
+        // A present mode nobody can name is not silently the weakest ladder: fail closed is the strictest.
+        expect(reviewTierFor('securty')).toBe('security');
+        expect(reviewTierFor('whatever')).toBe('security');
+        expect(mergeBlockingSeverities('whatever')).toEqual(['blocking', 'major']);
     });
 
 });

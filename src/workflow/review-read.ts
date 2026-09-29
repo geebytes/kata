@@ -1,11 +1,19 @@
 import { readFile } from 'node:fs/promises';
+import { readValidatedOptional } from '../core/schema.js';
+import { openLedgerProblems } from '../store/verdict.js';
+import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
+import { isMergeBlocking, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
 
 /**
  * The recorded review artefact: status, revision binding, the approval's evidence summary and the findings. It lives
- * here rather than in the orchestrator because the adversarial brief and the gate also read it, and a quality module
- * importing the workflow orchestrator would invert the layering.
+ * here rather than in the orchestrator because the gate and the router also read it, and a quality module importing the
+ * workflow orchestrator would invert the layering.
+ *
+ * **Its failures are silent on purpose, and that is why the gates do not use it.** `readReview` answers "what does the
+ * record say", which for a record that cannot be parsed is the same as for one that says nothing. A surface that has to
+ * *decide* asks `readReviewRecord` instead, which refuses rather than guessing.
  */
 export async function readReview(root: string, taskId: string): Promise<{ revisionId?: string; status?: string; reviewEvidence?: string; findings: ReviewFinding[] }> {
     try {
@@ -17,123 +25,6 @@ export async function readReview(root: string, taskId: string): Promise<{ revisi
     }
 }
 
-/**
- * The severity ladder — which severities refuse approval under which review mode — and nothing else.
- *
- * It used to be written out three times (`repair-entry.authorizeReviewRepair`, `navigation.suggestCandidateAction`,
- * `distill-gates.evaluateReviewClearance`), and the three copies already disagreed: `distill-gates` compared a severity
- * without reading the mode, and all three tested the mode against the literal `'strict'`, so the `security` tier — the
- * one whose kernel policy asks for two reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less*
- * than `strict`. One exported answer is what makes them unable to drift: a new copy is a failing test
- * (`tests/unit/review-severity-policy.test.ts`), not a review finding three rounds later.
- *
- * **The ladder names what blocks.** A severity outside it — `minor`, `note`, `nit`, or a value from a record this
- * repository cannot name — is not silently promoted to blocking. That is deliberate: promoting an unrecognised string
- * would refuse approvals no declared rule ever refused, and a severity vocabulary is a schema question, not a policy
- * question.
- */
-export type MergeBlockingProblem = {
-    source: 'finding' | 'claim';
-    id: string;
-    severity: string;
-    message: string;
-};
-
-/**
- * The kernel's name for a workflow review mode.
- *
- * `workflowProfile.reviewMode` says `std`, the kernel's tier table says `standard`. Two spellings of one concept, and
- * until this mapping existed nobody owned the translation. An absent mode is a task opened before the profile existed;
- * those were held to the std ladder, and a mode nobody can name is not quietly made the strictest one, because that
- * would newly refuse work no rule ever refused.
- */
-export function reviewTierFor(mode: string | undefined): 'standard' | 'strict' | 'security' {
-    return mode === 'strict' || mode === 'security' ? mode : 'standard';
-}
-
-/**
- * The severities a mode refuses approval for — **ordered hardest first**. The one home.
- *
- * The order is part of the contract, not an accident of how the array was typed: a reader that wants to tell "this
- * problem blocks everywhere" from "this problem blocks only above std" reads position 0, so the ordering cannot drift
- * without the ladder saying so.
- */
-export function mergeBlockingSeverities(mode: string | undefined): readonly string[] {
-    return reviewTierFor(mode) === 'standard' ? ['blocking'] : ['blocking', 'major'];
-}
-
-export function isMergeBlocking(mode: string | undefined, severity: string | undefined): boolean {
-    return severity !== undefined && mergeBlockingSeverities(mode).includes(severity);
-}
-
-/**
- * The open problems that refuse approval, from every source that can carry one.
- *
- * Two sources, asked once. `findings` is the review record's own list — it has no producer on the current route, but a
- * record written before that route was retired may still carry them, and the approval round-trips what it reads.
- * `claims` is the ledger's open problems, which is where a problem is recorded now. A reader that asked only one of
- * them would be the same defect in a new place: `distill-gates` refused on findings while the approval rested on the
- * ledger, so the two surfaces answered different questions about the same change.
- */
-export function mergeBlockingProblems(input: {
-    mode: string | undefined;
-    findings?: ReadonlyArray<{ id?: string; severity?: string; message?: string }>;
-    claims?: ReadonlyArray<{ id: string; severity: string; statement: string }>;
-}): MergeBlockingProblem[] {
-    const problems: MergeBlockingProblem[] = [];
-    for (const finding of input.findings ?? []) {
-        if (!isMergeBlocking(input.mode, finding.severity)) continue;
-        problems.push({ source: 'finding', id: finding.id ?? '(unnamed finding)', severity: finding.severity ?? '', message: finding.message ?? '' });
-    }
-    for (const claim of input.claims ?? []) {
-        if (!isMergeBlocking(input.mode, claim.severity)) continue;
-        problems.push({ source: 'claim', id: claim.id, severity: claim.severity, message: claim.statement });
-    }
-    return problems;
-}
-
-/**
- * How many findings carry each of the two severities a mode can block on.
- *
- * A **report**, not a decision: the fields exist so `status` can say what the recorded review holds, and they are
- * named after severities rather than after "blocking", so the names are intrinsic here and the ladder stays the only
- * place a blocking question is answered.
- */
-export function countFindingsBySeverity(problems: ReadonlyArray<{ severity: string }>): { blocking: number; major: number } {
-    const counts = { blocking: 0, major: 0 };
-    for (const problem of problems) {
-        if (problem.severity === 'blocking') counts.blocking += 1;
-        else if (problem.severity === 'major') counts.major += 1;
-    }
-    return counts;
-}
-
-/**
- * The review mode the task declared, read once.
- *
- * The mode is the ladder's input, and it was being read inline in the gate, in the repair entry and in the
- * orchestrator — three reads of one fact, each free to miss a rename. The reader is not placed in `core/task.ts`
- * because the task record's own reader returns the whole record; this is the one field the ladder needs.
- *
- * A missing or unreadable task is reported as `undefined` rather than thrown: the ladder treats that as the std
- * ladder, which is what a task opened before the profile existed was held to.
- */
-/**
- * The refusal sentence for the problems a mode blocks on, or an empty string when there are none.
- *
- * **Why this is a function and not a line of prose in the caller.** The approval used to refuse with the ledger's reason
- * codes alone, which say *that* the ledger does not pass and leave the reader to reconstruct which of those reasons the
- * current mode's bar is about — the mode's severity rule lived nowhere a person could read it. The sentence names each
- * problem by id and severity and states the bar it was measured against, and it is derived from the same ladder the three
- * routers read, so the refusal and the routing cannot disagree about what blocks.
- */
-export function describeBlockingProblems(mode: string | undefined, problems: readonly MergeBlockingProblem[]): string {
-    if (problems.length === 0) return '';
-    const issues = problems.map((problem) => `${problem.id} (${problem.severity}): ${problem.message}`);
-    return `At the ${reviewTierFor(mode)} bar (${mergeBlockingSeverities(mode).join(', ')}), `
-        + `${problems.length} problem(s) are open: ${issues.join(' | ')}`;
-}
-
 export async function readReviewMode(root: string, taskId: string): Promise<string | undefined> {
     try {
         const raw = await readFile(taskPath(root, taskId), 'utf8');
@@ -142,4 +33,86 @@ export async function readReviewMode(root: string, taskId: string): Promise<stri
     } catch {
         return undefined;
     }
+}
+
+/**
+ * The recorded review, read the way a gate has to read it: absent, usable, or **refused**.
+ *
+ * The two readers that existed here each decided this differently. `readReview` swallowed every failure and returned an
+ * empty findings list, so a record that could not be parsed was indistinguishable from one that said nothing — which is
+ * how "the file is unreadable" came to look exactly like "nothing was found". `readValidatedOptional`, used directly by
+ * the gate, throws instead, so a malformed record turned a *denial* into an exception escaping the command. A gate must
+ * answer; it must not crash and it must not guess.
+ */
+export type ReviewRecordRead =
+    | {
+        ok: true;
+        findings: ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string }>;
+        /**
+         * Whether the record describes the change as it stands.
+         *
+         * A record written against other content is not evidence about this one, so its findings do not count — the rule
+         * the router already applied (`onlyCurrentRevision`) and that the first version of this reader dropped, which made
+         * a stale record's findings refuse a gate.
+         */
+        boundToCurrentRevision: boolean;
+        /** The parsed record, for the fields this reader does not name: status, evidence, route, binding. */
+        record: Record<string, unknown>;
+    }
+    | { ok: false; why: string };
+
+export async function readReviewRecord(root: string, taskId: string): Promise<ReviewRecordRead> {
+    let record: ({ findings?: unknown } & Record<string, unknown>) | null;
+    try {
+        record = await readValidatedOptional<{ findings?: unknown } & Record<string, unknown>>('review', layoutReviewPath(root, taskId));
+    } catch (error) {
+        return {
+            ok: false,
+            why: `the recorded review is not the shape its schema declares, so nothing can be decided from it (${(error as Error).message})`,
+        };
+    }
+    if (!record) return { ok: true, findings: [], boundToCurrentRevision: true, record: {} };
+    if (record.findings !== undefined && !Array.isArray(record.findings)) {
+        return { ok: false, why: 'the recorded review carries a `findings` field that is not a list' };
+    }
+    const identity = await currentRevisionIdentity(root, taskId);
+    return {
+        ok: true,
+        findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string }>,
+        boundToCurrentRevision: bindsToRevision(record as never, identity),
+        record: record as Record<string, unknown>,
+    };
+}
+
+/**
+ * **The blocking question, asked once.** Every consumer that refuses, routes or authorises calls this and none of them
+ * assembles the inputs itself.
+ *
+ * That is the fix for the defect an independent review measured: the approval passed `{mode, claims}` while the distill
+ * gate passed `{mode, findings, claims}`, so one change could be *approved*, routed to the judge, and *authorised for
+ * repair* while the gate that guards the archive refused it (`tmp/repro-c3c4.mts`). Three answers to one question, and the
+ * cause was not the ladder — it was that each caller built the question its own way. A reader that owns the inputs makes
+ * that unrepresentable: there is no call site left to get them wrong.
+ */
+export type BlockingProblemsRead =
+    | {
+        ok: true;
+        mode: string | undefined;
+        /** Every open problem, whatever its severity: what a *report* counts. */
+        openProblems: MergeBlockingProblem[];
+        /** The subset at this mode's bar: what a *decision* refuses on. */
+        problems: MergeBlockingProblem[];
+    }
+    | { ok: false; why: string };
+
+export async function readBlockingProblems(root: string, taskId: string): Promise<BlockingProblemsRead> {
+    const mode = await readReviewMode(root, taskId);
+    const record = await readReviewRecord(root, taskId);
+    if (!record.ok) return { ok: false, why: record.why };
+    const claims = await openLedgerProblems(root, taskId);
+    // One read, two readings: the report counts every open problem, the decision refuses on the ones this mode's ladder
+    // names. A record that does not describe the current content contributes no findings — those were about other content.
+    const findings = record.boundToCurrentRevision ? record.findings : [];
+    const openProblems = openProblemsOf({ findings, claims });
+    return { ok: true, mode, openProblems, problems: openProblems.filter((problem) => isMergeBlocking(mode, problem.severity)) };
 }

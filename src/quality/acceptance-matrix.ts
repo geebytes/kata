@@ -52,6 +52,20 @@ export interface Waiver {
   createdAt: string;
 }
 
+/**
+ * Whether a task must have declared an acceptance matrix.
+ *
+ * **Known inversion, recorded rather than papered over.** The rule names `strict` as a literal, so `security` — the tier
+ * whose policy asks for two reviewers, always-on quorum and a sandboxed assurance floor — requires *less* declaration than
+ * the tier below it. An independent review found it while looking for the same inversion in the severity ladder.
+ *
+ * It is not fixed here because the honest fix is not a wider literal. Whether a change carries an acceptance contract is a
+ * property of the **route**, not of the review tier: a tweak or a hotfix may legitimately be opened with `--review
+ * security` and has no contract to declare, which is why every tier at or above strict was *not* made to require one —
+ * measured, that change makes `kata-cli tweak … --review security` refuse design and then fail with "Build cannot run from
+ * intake". Resolving it means deciding, in the profile, whether a task is a contract-carrying change or a bounded edit,
+ * and that is a separate change with its own blast radius.
+ */
 export function requiresMatrix(workflowProfile?: { strictClosure?: boolean; reviewMode?: string }): boolean {
   return workflowProfile?.strictClosure === true || workflowProfile?.reviewMode === 'strict';
 }
@@ -331,8 +345,11 @@ export interface MatrixDeclarationGap {
     detail: string;
 }
 
-export function findMatrixDeclarationGaps(matrix: AcceptanceMatrix | undefined, strict: boolean): MatrixDeclarationGap[] {
-    if (!matrix || !strict) return [];
+export function findMatrixDeclarationGaps(matrix: AcceptanceMatrix | undefined, atOrAboveStrict: boolean): MatrixDeclarationGap[] {
+    // The parameter is named for the rule it is: every tier at or above strict requires declared check ids, so the caller
+    // asks the ladder rather than comparing the mode with a literal. It used to be called `strict`, which invited exactly
+    // the comparison that left `security` asking for less than the tier below it.
+    if (!matrix || !atOrAboveStrict) return [];
     const gaps: MatrixDeclarationGap[] = [];
     for (const row of matrix.rows) {
         row.evidence.forEach((declaration, evidenceIndex) => {

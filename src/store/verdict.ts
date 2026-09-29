@@ -257,3 +257,19 @@ export async function ledgerVerdict(input: {
         decision,
     };
 }
+
+/**
+ * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
+ *
+ * **It lives beside `unsupportedClaims` because that is what it is**: a projection of the same decision, and the module
+ * that owns the decision is the one that can promise every reader gets the same answer. It used to live in
+ * `workflow/navigation.ts`, which meant the review gate and the repair entry imported a *router* to read the ledger — a
+ * quality gate depending on the thing that decides where to go next. One derivation, in the module that derives it.
+ */
+export async function openLedgerProblems(
+    root: string,
+    changeId: string,
+): Promise<Array<{ id: string; severity: string; statement: string }>> {
+    const ledger = await readLedger(root, changeId);
+    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement }));
+}

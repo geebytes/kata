@@ -7,7 +7,8 @@ import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { appendClaim, readLedger } from '../../src/store/ledger.js';
 import { claimDecisions, unsupportedClaims } from '../../src/store/verdict.js';
-import { openLedgerProblems, readUpstreamSummary } from '../../src/workflow/navigation.js';
+import { openLedgerProblems } from '../../src/store/verdict.js';
+import { readUpstreamSummary } from '../../src/workflow/navigation.js';
 import { seedLedger } from '../helpers/ledger.js';
 
 /**

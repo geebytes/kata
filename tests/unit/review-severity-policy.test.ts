@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -7,9 +7,15 @@ import {
     mergeBlockingProblems,
     mergeBlockingSeverities,
     reviewTierFor,
-} from '../../src/workflow/review-read.js';
+} from '../../src/quality/review-ladder.js';
 import { suggestCandidateAction, type UpstreamSummary } from '../../src/workflow/navigation.js';
 import type { ReviewFinding } from '../../src/quality/reviewer.js';
+
+/**
+ * The spellings a second copy of the ladder can take. Deliberately broad: a narrowing pattern is a guard that lets the
+ * next copy through, and the check below proves each alternative still matches something it is meant to.
+ */
+const SEVERITY_OR_TIER_LITERAL = /(severity|severities|blockingSeverities)\s*(===|!==|\.includes\()\s*'(blocking|major)'|case\s+'(blocking|major)'\s*:|(reviewMode|reviewTier)\s*===\s*'(strict|security|std|standard)'/u;
 
 /**
  * The severity ladder had three homes and no producer.
@@ -80,25 +86,71 @@ describe('the severity ladder has one home', () => {
  *
  * A behavioural test can pass while a fourth copy of the rule sits in a branch nobody exercised. This one reads the
  * sources, so a new copy is a failing test rather than a review finding three rounds later.
+ *
+ * **It scans both `src/workflow/` and `src/quality/`, and it knows more than one spelling.** The first version scanned
+ * four named files for `severity === 'blocking'` and an independent review walked straight past it: a copy written as
+ * `case 'blocking':`, or `severities.includes('major')`, or a mode compared with `=== 'strict'` to gate a tier decision,
+ * would have passed. The files are enumerated rather than listed, so a new module is covered the day it is added.
  */
-describe('no module under src/workflow re-derives the ladder', () => {
-    const readers = ['repair-entry.ts', 'distill-gates.ts', 'navigation.ts', 'orchestrator.ts'];
+describe('no module outside the ladder re-derives it', () => {
+    /** The one module allowed to compare a severity or a tier: it is where the rule lives. */
+    const ladderModule = 'src/quality/review-ladder.ts';
+    /**
+     * Files that may still compare a *tier* with a literal, each with the reason it is not the ladder.
+     *
+     * A guard with an exception list is only honest if the exceptions are named, reasoned and few. There is one, its reason
+     * is the same sentence that appears beside the rule in the source, and it is a decision to fix elsewhere rather than a
+     * thing the check forgot about.
+     */
+    const knownDeviations = new Map([
+        ['src/quality/acceptance-matrix.ts', 'requiresMatrix asks whether a *route* carries an acceptance contract and names the tier instead; every tier at or above strict was measured to break the tweak lifecycle, so the asymmetry is recorded in that function and is a separate change'],
+    ]);
 
-    it('keeps every severity comparison inside review-read.ts', async () => {
+    it('keeps every severity and tier comparison inside the ladder module', async () => {
         const offenders: string[] = [];
-        for (const name of readers) {
-            const path = join(process.cwd(), 'src/workflow', name);
-            const source = await readFile(path, 'utf8');
-            for (const [index, line] of source.split('\n').entries()) {
-                // Comments are skipped on purpose: a comment that quotes the comparison it replaced cannot refuse an
-                // approval, and refusing to explain a removal would push the explanation somewhere worse.
-                const code = line.trim();
-                if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) continue;
-                if (/severity\s*(===|!==)\s*'(blocking|major)'/u.test(line)) {
-                    offenders.push(`src/workflow/${name}:${index + 1}: ${line.trim()}`);
+        for (const directory of ['src/workflow', 'src/quality']) {
+            for (const entry of await readdir(join(process.cwd(), directory))) {
+                if (!entry.endsWith('.ts')) continue;
+                const relative = `${directory}/${entry}`;
+                if (relative === ladderModule) continue;
+                if (knownDeviations.has(relative)) continue;
+                const source = await readFile(join(process.cwd(), relative), 'utf8');
+                for (const [index, line] of source.split('\n').entries()) {
+                    // Comments are skipped on purpose: a comment that quotes the comparison it replaced cannot refuse an
+                    // approval, and refusing to explain a removal would push the explanation somewhere worse.
+                    const code = line.trim();
+                    if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) continue;
+                    if (SEVERITY_OR_TIER_LITERAL.test(line)) {
+                        offenders.push(`${relative}:${index + 1}: ${line.trim()}`);
+                    }
                 }
             }
         }
         expect(offenders).toEqual([]);
+    });
+
+    it('names a reason for every file it lets past, and keeps the list short', () => {
+        for (const [path, reason] of knownDeviations) {
+            expect(reason.trim().length, path).toBeGreaterThan(40);
+        }
+        expect(knownDeviations.size).toBeLessThanOrEqual(1);
+    });
+
+    it('finds the patterns it claims to, so the guard is not one that cannot fail', () => {
+        // A guard whose pattern matches nothing passes for the wrong reason, and this repository has removed more of
+        // those than any other class. Each spelling below is one an independent review actually used to walk past the
+        // previous version of this check.
+        for (const line of [
+            "const blocking = findings.filter((finding) => finding.severity === 'blocking');",
+            "if (severity !== 'major') continue;",
+            "switch (finding.severity) { case 'blocking': return true; }",
+            "if (blockingSeverities.includes('major')) return true;",
+            "if (task.workflowProfile?.reviewMode === 'strict' && upstream.majorFindings > 0) {",
+            "const isStrict = task?.workflowProfile?.reviewMode === 'strict';",
+        ]) {
+            expect(SEVERITY_OR_TIER_LITERAL.test(line), line).toBe(true);
+        }
+        // And it does not fire on the ladder module's own implementation lines being discussed in prose.
+        expect(SEVERITY_OR_TIER_LITERAL.test("    if (named === 'strict') return 'strict';")).toBe(false);
     });
 });

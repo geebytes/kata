@@ -16,25 +16,10 @@ import { readCurrentTaskRevision } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
-import { countFindingsBySeverity, mergeBlockingSeverities } from './review-read.js';
+import { readBlockingProblems } from './review-read.js';
+import { countFindingsBySeverity, mergeBlockingSeverities } from '../quality/review-ladder.js';
 import { readReviewRounds, reviewProgress } from '../quality/repair.js';
 
-/**
- * The ledger's open problems: claims that are neither supported nor waived, with the severity the tier contract gave them.
- *
- * Exported because the ladder and the archive gate must not disagree about which problems are open — the defect this file's
- * history is largely made of — and because a second derivation is exactly what a shared reader prevents.
- */
-export async function openLedgerProblems(
-    root: string,
-    taskId: string,
-): Promise<Array<{ id: string; severity: string; statement: string }>> {
-    const { readLedger } = await import('../store/ledger.js');
-    const { unsupportedClaims } = await import('../store/verdict.js');
-    const ledger = await readLedger(root, taskId);
-    // The decision, not a second derivation of it: `unsupportedClaims` assembles the input once for every consumer.
-    return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement }));
-}
 
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -61,6 +46,8 @@ export type UpstreamSummary = {
    * cannot say what it counted is a sentence, not a state.
    */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[] };
+  /** Why the recorded review could not be read, when it could not be. Absent when it could. */
+  reviewRecordUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
   /**
@@ -194,18 +181,22 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const sealed = await readCurrentTaskRevision(root, taskId);
   const binding = { revisionId: currentRevisionId ?? '', manifestHash: sealed?.manifestHash ?? null };
   const review = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)), binding)
-    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string; findings?: Array<{ severity?: string }> }>(reviewPath(root, taskId)) : null;
+    // The shape this file reads is status and evidence: the findings on the record are read by `readBlockingProblems`,
+    // through the reader that binds them to the current revision. Declaring them here too was a second reader waiting to
+    // disagree, and it now reads nothing.
+    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)), binding)
+    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)) : null;
   // **The severity the ladder routes on comes from the ledger, not from a findings table.**
   //
   // This is the sixth consumer of one question — "which problems are open and severe enough to block" — and it read
   // `review.json`'s raw findings, then the tracked view, and each repair taught another copy the same lesson. The ledger
   // holds the answer in its own vocabulary: an unsupported claim is a problem, its `severity` is the field the tier
   // contract already requires, and a waiver is the author's decision not to fix it.
-  const openProblems: Array<{ id: string; severity: string; statement: string }> = await openLedgerProblems(root, taskId);
-  // Counted by name, judged by the ladder: `countFindingsBySeverity` only reports how many carry each name, and
-  // **which** of them blocks is `mergeBlockingSeverities`' answer, so this file holds neither a severity literal nor
-  // a second copy of the rule.
+  // **The blocking question, asked once, of the reader every other consumer asks.** The status this file returns is what
+  // the router and the surfaces read, and it used to assemble its own inputs — one of three call sites that did, which is
+  // how the approval and the archive gate came to answer the same question differently.
+  const blockingRead = await readBlockingProblems(root, taskId);
+  const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewProgressOfChange = reviewProgress(await readReviewRounds(root, taskId));
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
@@ -245,6 +236,8 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     blockingFindings: problemCounts.blocking,
     majorFindings: problemCounts.major,
     ...(reviewMode ? { reviewMode } : {}),
+    // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it.
+    ...(!blockingRead.ok ? { reviewRecordUnreadable: blockingRead.why } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),

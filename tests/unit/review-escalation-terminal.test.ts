@@ -55,11 +55,35 @@ describe('the review loop has a terminal state', () => {
         expect(reviewProgress([round(2), round(3), round(4), round(5)]).escalating).toBe(true);
     });
 
-    it('needs more than one round before it will call a loop stuck', () => {
+    it('defines NO_PROGRESS_ROUNDS as consecutive rounds, so the first escalation needs one round more', () => {
         expect(reviewProgress([]).escalating).toBe(false);
         expect(reviewProgress([round(7)]).escalating).toBe(false);
         expect(reviewProgress([round(7), round(7)]).escalating).toBe(false);
+        // The constant counts **rounds that did not reduce**, so a flat history escalates on the round after those —
+        // and the doc comment has to say which, because an off-by-one between the sentence and the loop is a defect
+        // that hides in the gap between two readings of 'three rounds'.
+        expect(NO_PROGRESS_ROUNDS).toBe(3);
+        expect(reviewProgress([round(7), round(7), round(7)]).noProgressRounds).toBe(2);
         expect(reviewProgress([round(7), round(7), round(7)]).escalating).toBe(false);
+        expect(reviewProgress([round(7), round(7), round(7), round(7)]).noProgressRounds).toBe(3);
+        expect(reviewProgress([round(7), round(7), round(7), round(7)]).escalating).toBe(true);
+    });
+
+    it('escalates an oscillating loop, which never progressed but never repeated itself either', () => {
+        // 5 → 4 → 5 → 4 → … reads as progress at every step when each round is compared with the one before it, and
+        // the loop is plainly stuck: measured against the best count reached so far, it has not moved since round 2.
+        const oscillating = reviewProgress([round(5), round(4), round(5), round(4), round(5), round(4), round(5)]);
+        expect(oscillating.escalating).toBe(true);
+        // Five: the last new low was round 2, and rounds 3–7 did not reach one. The run reports how long the loop has
+        // been stuck, not how far past the threshold it is.
+        expect(oscillating.noProgressRounds).toBe(5);
+        // The same for a loop that only ever gets worse.
+        expect(reviewProgress([round(1), round(2), round(3), round(4)]).escalating).toBe(true);
+    });
+
+    it('does not escalate while the count is still reaching new lows', () => {
+        expect(reviewProgress([round(6), round(5), round(5), round(5), round(4)]).escalating).toBe(false);
+        expect(reviewProgress([round(9), round(7), round(3), round(2), round(1)]).escalating).toBe(false);
     });
 
     it('records an unmeasured round as null rather than as zero', () => {

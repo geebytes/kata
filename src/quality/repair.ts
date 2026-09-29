@@ -149,6 +149,11 @@ export interface ReviewRound {
 /**
  * How many consecutive rounds without a reduction of the blocking count stop the loop.
  *
+ * **Counted in rounds that did not reduce**, so a flat history escalates on the round after these: four recorded rounds
+ * for the first escalation, not three. The sentence and the loop have to agree on that, because an off-by-one between two
+ * readings of "three rounds" is a defect that hides in the gap between them — `reviewProgress` returns the trailing run so
+ * a caller can see which reading it got.
+ *
  * A judgement, not a measurement, so it is a named constant the escalation reports rather than a number buried in a
  * comparison: the caller can disagree with it, and a reader can see what was assumed.
  */
@@ -177,19 +182,36 @@ export function reviewRoundsPath(root: string, taskId: string): string {
  * measured nothing can neither be progress nor be read as one.
  */
 export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
-    const measured = rounds.filter((entry): entry is ReviewRound & { blockingCount: number } => entry.blockingCount !== null);
-    let streak = 0;
-    for (let index = measured.length - 1; index >= 1; index -= 1) {
-        if (measured[index]!.blockingCount >= measured[index - 1]!.blockingCount) streak += 1;
-        else break;
+    // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
+    // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is
+    // plainly stuck: it has not reached a new low since round 2. A loop that only ever gets worse is the same fact with
+    // the sign flipped, and both must escalate.
+    let best: number | null = null;
+    let noProgressRounds = 0;
+    let unmeasuredRounds = 0;
+    let newestMeasuredIds: string[] = [];
+    for (const round of rounds) {
+        if (round.blockingCount === null) {
+            // **Neutral, and counted.** A round that measured nothing is neither progress nor a failure to progress, so it
+            // neither resets the run nor extends it; `unmeasuredRounds` reports it, because a history that could not be
+            // measured at all must not read as a healthy loop.
+            unmeasuredRounds += 1;
+            continue;
+        }
+        newestMeasuredIds = [...round.blockingIds];
+        if (best === null || round.blockingCount < best) {
+            best = round.blockingCount;
+            noProgressRounds = 0;
+        } else {
+            noProgressRounds += 1;
+        }
     }
-    const newestMeasured = measured[measured.length - 1];
     return {
         rounds: rounds.length,
-        noProgressRounds: streak,
-        escalating: streak >= NO_PROGRESS_ROUNDS,
-        blockingIds: [...(newestMeasured?.blockingIds ?? [])],
-        unmeasuredRounds: rounds.length - measured.length,
+        noProgressRounds,
+        escalating: noProgressRounds >= NO_PROGRESS_ROUNDS,
+        blockingIds: newestMeasuredIds,
+        unmeasuredRounds,
     };
 }
 
@@ -213,10 +235,11 @@ export async function appendReviewRound(root: string, taskId: string, round: Rev
 /**
  * Read the recorded rounds, oldest first.
  *
- * A line that cannot be parsed becomes an **unmeasured round** rather than being dropped: dropping it would shorten
- * the trailing run and read a damaged history as a loop that is still moving, which is the fail-open direction for a
- * heuristic whose whole job is to stop something. An absent file is an empty history — a change under its first repair
- * has no rounds yet — and that is the only case that reads as nothing was ever recorded.
+ * A line that cannot be parsed becomes an **unmeasured round** rather than being dropped. Both readings leave
+ * `reviewProgress`'s trailing run identical — an unmeasured round is neutral there — so the difference is what the
+ * history *says about itself*: `rounds` and `unmeasuredRounds` count a damaged line, and a dropped one would leave the
+ * file looking shorter than it is. An absent file is an empty history — a change under its first repair has no rounds
+ * yet — and that is the only case that reads as nothing was ever recorded.
  */
 export async function readReviewRounds(root: string, taskId: string): Promise<ReviewRound[]> {
     let raw: string;

@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendClaim, freezeSubject, writeSubject } from '../../src/store/ledger.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
-import { describeBlockingProblems, type MergeBlockingProblem } from '../../src/workflow/review-read.js';
+import { evaluateReviewClearance } from '../../src/workflow/distill-gates.js';
+import { authorizeReviewRepair } from '../../src/workflow/repair-entry.js';
+import { reviewPath } from '../../src/core/layout.js';
+import { describeBlockingProblems, type MergeBlockingProblem } from '../../src/quality/review-ladder.js';
 import { makeClaim } from '../helpers/review.js';
 
 /**
@@ -114,5 +117,97 @@ describe('the refusal names the problems at the mode\'s bar', () => {
         expect(std.error).not.toContain('At the standard bar');
         expect(std.error).not.toContain('At the strict bar');
         expect(std.diagnostics?.blockingProblems).toEqual([]);
+    });
+});
+
+/**
+ * The three surfaces that ask "does this block" now ask one reader, and these tests are the counterexamples an
+ * independent review reproduced against the version that had each caller assemble the question itself.
+ *
+ * Measured then (`tmp/repro-c3c4.mts`): with a ledger that passes and an open `blocking` finding in the record, the
+ * approval was **granted**, the change was **routed to the judge**, and a repair was **authorised** — while the distill
+ * gate refused the very same change. One question, three answers, and the archive resting on none of them.
+ */
+describe('a recorded finding is not a thing some consumers may ignore', () => {
+    async function writeRecord(body: Record<string, unknown>): Promise<void> {
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review.json'), `${JSON.stringify(body, null, 2)}\n`);
+    }
+
+    const finding = (extra: Record<string, unknown> = {}) => ({
+        id: 'F-1', taskId: changeId, severity: 'blocking', message: 'still open', ...extra,
+    });
+
+    it('refuses the approval, refuses the clearance, and authorises the repair — one answer each', async () => {
+        await writeRecord({ status: 'approved', reviewEvidence: 'the round concluded so', findings: [finding()] });
+
+        const approval = await runCommand('review', changeId, root, {
+            approve: true,
+            reviewEvidence: 'this approval must not be recorded while F-1 is open',
+            confirmHostModel: true,
+        });
+        expect(approval.success).toBe(false);
+        expect(approval.error).toContain('F-1 (blocking)');
+        expect(approval.error).toContain('At the strict bar');
+        expect(approval.diagnostics?.blockingProblems).toHaveLength(1);
+
+        const clearance = await evaluateReviewClearance(root, changeId);
+        expect(clearance.cleared).toBe(false);
+        expect(clearance.reason).toBe('blocking_findings');
+
+        // The repair entry is the one surface that *acts* on it, so it authorises — and it names the same problem.
+        const repair = await authorizeReviewRepair(root, changeId);
+        expect(repair.authorized).toBe(true);
+        expect(repair.repair?.reason).toBe('review_findings');
+        expect(repair.repair?.findings?.map((entry) => entry.message)).toContain('still open');
+    });
+
+    it('ignores findings recorded against other content', async () => {
+        await writeRecord({
+            status: 'approved',
+            reviewEvidence: 'a round about a revision this change no longer is',
+            revisionId: 'revision-that-moved-on',
+            manifestHash: 'a-hash-that-moved-on',
+            findings: [finding()],
+        });
+
+        const approval = await runCommand('review', changeId, root, {
+            approve: true,
+            reviewEvidence: 'a stale finding is not a finding about this change',
+            confirmHostModel: true,
+        });
+        expect(approval.success).toBe(false);
+        // Refused for the ledger's own reasons, not by a finding the record no longer speaks for.
+        expect(approval.error).not.toContain('F-1');
+    });
+
+    it('does not refuse on a finding that was disposed of', async () => {
+        await writeRecord({ status: 'approved', reviewEvidence: 'disposed', findings: [finding({ disposition: 'fixed' })] });
+
+        const approval = await runCommand('review', changeId, root, {
+            approve: true,
+            reviewEvidence: 'a fixed problem is not an open one',
+            confirmHostModel: true,
+        });
+        expect(approval.success).toBe(false);
+        expect(approval.error).not.toContain('F-1');
+    });
+
+    it('refuses a record that is not its schema\'s shape, rather than throwing out of the gate', async () => {
+        // `taskId` is required on a finding; a record without it is not a record this repository can decide from.
+        await writeRecord({ status: 'approved', reviewEvidence: 'malformed', findings: [{ id: 'F-1', severity: 'blocking', message: 'x' }] });
+
+        const approval = await runCommand('review', changeId, root, {
+            approve: true,
+            reviewEvidence: 'a malformed record decides nothing',
+            confirmHostModel: true,
+        });
+        expect(approval.success).toBe(false);
+        expect(approval.error).toContain('cannot be decided');
+
+        // The gate used to let the schema error escape and become an exception; a gate answers, it does not crash.
+        const clearance = await evaluateReviewClearance(root, changeId);
+        expect(clearance.cleared).toBe(false);
+        expect(clearance.reason).toBe('unreadable_review');
+        expect(clearance.detail).toBeTruthy();
     });
 });

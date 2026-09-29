@@ -6,6 +6,7 @@ import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
 import { findMatrixDeclarationGaps } from '../quality/acceptance-matrix.js';
+import { reviewTierFor } from '../quality/review-ladder.js';
 import { readChangeRecord } from '../quality/change-record.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
@@ -21,7 +22,7 @@ import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, 
 import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type WorkflowProfile } from '../core/workflow-profile.js';
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
-import { openLedgerProblems, nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
+import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
 import { computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
@@ -29,7 +30,9 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { describeBlockingProblems, mergeBlockingProblems, readReview, readReviewMode } from './review-read.js';
+import { readBlockingProblems, readReview, readReviewMode } from './review-read.js';
+import { describeBlockingProblems } from '../quality/review-ladder.js';
+import { openLedgerProblems } from '../store/verdict.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -1282,7 +1285,7 @@ async function cmdVerify(
     const reviewMode = task.workflowProfile?.reviewMode;
     // A strict matrix declaration gap is reported, not blocked: a task sealed before strict rows required declared check
     // ids must keep verifying, or the rule would retroactively invalidate every binding it holds.
-    const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewMode === 'strict');
+    const matrixGaps = findMatrixDeclarationGaps(task.acceptanceMatrix, reviewTierFor(reviewMode) !== 'standard');
 
     return {
         command: 'verify',
@@ -1358,14 +1361,50 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires non-empty review evidence.',
                 };
             }
+            // **The bar, asked of the one reader, before anything is written.** The branch that read `review.json`'s
+            // findings here was deleted once on the argument that the ledger route "reads the ledger, and only the
+            // ledger" — and an independent review then measured what that left behind: with an open `blocking` finding in
+            // the record and a ledger that passes, the approval was granted, the change was routed to the judge, and the
+            // repair entry was authorised, while the distill gate refused the very same change (`tmp/repro-c3c4.mts`).
+            // Removing the branch did not remove the second answer; it moved it one surface over.
+            //
+            // The repair is not to add a branch back, it is to stop each caller assembling the question: the refusal now
+            // asks `readBlockingProblems`, the same reader the gate, the repair entry and the router ask. A record that
+            // cannot be read refuses here too, rather than escaping as an exception.
+            const { ledgerVerdict: readLedgerVerdict } = await import('../store/verdict.js');
+            // Read once and used by both refusals below: the bar sentence says which problems are open, and the
+            // kernel's reasons say why the ledger does not pass. An operator needs both, and one message that
+            // carried only one of them would send them looking for the other.
+            const ledger = await readLedgerVerdict({ root, changeId: taskId });
+            const approvalBar = await readBlockingProblems(root, taskId);
+            if (!approvalBar.ok) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval cannot be decided: ${approvalBar.why}.`,
+                };
+            }
+            if (approvalBar.problems.length > 0) {
+                const ledgerReasons = ledger.kind === 'decided' && ledger.decision.verdict !== 'pass'
+                    ? `. The evidence ledger does not pass (${ledger.decision.verdict}): ${ledger.decision.reasons
+                        .map((reason) => `${reason.code}${reason.claimId ? ` (${reason.claimId})` : ''}: ${reason.detail}`)
+                        .join(' | ')}`
+                    : '';
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval requires every problem at the mode's bar to be disposed of. ${describeBlockingProblems(approvalBar.mode, approvalBar.problems)}${ledgerReasons}`,
+                    diagnostics: {
+                        blockingProblems: approvalBar.problems,
+                        ...(ledger.kind === 'decided' ? { ledger: { state: 'decided' as const, verdict: ledger.decision.verdict, reasons: ledger.decision.reasons } } : {}),
+                        nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'repair_blocking_review_findings'),
+                    },
+                };
+            }
             // **Two routes to an approval, and the ledger's is the stronger one.** A change whose claims and evidence
             // are recorded in a ledger is decided by the kernel over content kata verified itself, so what holds the
             // approval is the evidence rather than a round-shaped pass about it. A change with no ledger keeps the route
             // it had, and that absence is a fact the caller can see — which is what lets the old route be retired change
             // by change instead of all at once.
-            const { ledgerVerdict: readLedgerVerdict } = await import('../store/verdict.js');
             const { ledgerDrift } = await import('../store/ledger.js');
-            const ledger = await readLedgerVerdict({ root, changeId: taskId });
             let ledgerApproval: { subjectRevision: string; tier: string; assurance: string; claims: number; limits: string[] } | null = null;
             if (ledger.kind === 'unreadable') {
                 // A ledger that exists and cannot be read decides nothing, and it must not fall through to the other route
@@ -1404,9 +1443,14 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // reasons are the kernel's vocabulary and the caller had to reconstruct the mode's severity rule from
                     // them; naming the problems is the same ladder the routers read, so the refusal and the routing cannot
                     // disagree about what blocks. A mode whose bar no open problem reaches adds nothing to the sentence.
-                    const reviewMode = await readReviewMode(root, taskId);
-                    const blockingProblems = mergeBlockingProblems({ mode: reviewMode, claims: await openLedgerProblems(root, taskId) });
-                    const bar = describeBlockingProblems(reviewMode, blockingProblems);
+                    const blockingRead = await readBlockingProblems(root, taskId);
+                    // **The bar sentence names the problems at the bar, and only those.** Naming every open problem would
+                    // claim the mode refuses something it does not — a `major` problem is open under `std` and is not at
+                    // std's bar, so a sentence that listed it would be a declaration claiming more than its reality.
+                    const blockingProblems = blockingRead.ok ? blockingRead.problems : [];
+                    const bar = blockingRead.ok
+                        ? describeBlockingProblems(blockingRead.mode, blockingProblems)
+                        : blockingRead.why;
                     return {
                         command: 'review', taskId, phase: 'review', success: false,
                         error: `The evidence ledger does not pass (${ledger.decision.verdict}): ${reasons.join(' | ')}${bar === '' ? '' : `. ${bar}`}`,
@@ -1526,16 +1570,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: 'Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence. Re-run /kata-review before approving.',
                 };
             }
-            // **The severity refusal over `review.json`'s findings is deleted, and this is the class-closing repair its own
-            // comment asked for.** It read the round-shaped findings table, whose only remaining producer is the eval
-            // harness — for a governed change the table is empty, so the branch could not fire on the route it guards,
-            // while eval-fixture data could make it fire on a finding the ledger route never sees.
+            // **The severity refusal over `review.json`'s findings was deleted here once, and that deletion is what an
+            // independent review falsified.** The argument was that the ledger route answers severity by itself — a claim's
+            // severity decides the evidence strength it requires, `decide` applies it — and that the findings table is empty
+            // for a governed change, so the branch could not fire. The second half was wrong: the table is not empty when a
+            // record carries findings, and the distill gate reads them, so deleting the branch here did not end the class,
+            // it moved the second answer to the surface that *does* read them.
             //
-            // Severity has one home now, and it is not here: a claim's severity decides the evidence strength it requires
-            // (`MIN_STRENGTH_BY_SEVERITY`, `policy.evidenceStrength`, reproducibility for `blocking`), `decide` applies it,
-            // and `ledger claim waive --reason` is how the author decides to live with one. The comment this replaces said
-            // the repair that ends the class is the removal of the second copy rather than a seventh patch; this is that
-            // removal, and the second copy is gone.
+            // What is fixed is the cause rather than the branch: the question is asked by `readBlockingProblems` and by
+            // nothing else, so a caller cannot assemble a different version of it. The refusal above is that reader's
+            // answer, and it fires on exactly what the gate fires on.
             // F5: the reviewer may state which paths they read; absent, the review is read as covering the whole revision
             // (the conservative direction). When none was stated, the matrix's suggestion is *offered* in the result
             // rather than written behind the reviewer's back — the design's F5 rests on their honesty, not on kata's.
