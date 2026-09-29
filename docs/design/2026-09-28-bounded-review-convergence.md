@@ -148,3 +148,29 @@ AC-3 的末句“低于门槛的 finding 仍然批准”在 ledger 路线**没�
 
 - 本 revision 尚未 seal：四条 AC 的测试证据已经齐备，但 5.1 说明的那个子句需要你在验收层明确接受，或改由新的 change 处理；
 - 父设计中与平台无关的 Skill 化 reviewer 路线（`.agents/skills/kata-review` 之外的部分）不在本 slice。
+
+## 7. 独立审查推翻了什么（一轮真实的反例）
+
+一个干净上下文的独立 agent 被派去**证伪**四条 claim，而不是确认它们。它在 `tmp/` 写了 8 个探针脚本、用 `vite-node` 跑真实代码，并确认没有改动受治理的工作区。结论：**C-3 被证伪**，另外四处缺陷。
+
+### 7.1 C-3 被证伪（blocking）
+
+`src/workflow/orchestrator.ts` 的批准路径只传 `{mode, claims}`，闸门传 `{mode, findings, claims}`。于是同一份内容：**批准通过、送去 judge、授权修复，而 distill 拒收**（`tmp/repro-c3c4.mts`）。我此前把那处 findings 分支的删除当成正确决定引用了两次，理由是“这条路线只读 ledger”。那条理由错在“表是空的”这半句：只要记录里有 findings，表就不空，而 distill 一直在读它们。
+
+**修法不是把分支加回来**，而是让**没有人能各自组装这个问题**：`readBlockingProblems` 成为唯一的读者，批准、闸门、修复入口、路由都问它。一条反例（X-1）在 ledger 里复现过并已被修好。
+
+### 7.2 另外四处
+
+| # | 缺陷 | 反例 | 修法 |
+|---|---|---|---|
+| ① | 记录读不出来时，闸门**抛异常**而不是拒绝（`readValidatedOptional` 的 schema 错误逃出 gate） | 一个缺 `taskId` 的 finding 让 `evaluateReviewClearance` 抛出 | 闸门走同一个读者，返回 `unreadable_review` 并带上读者的原句 |
+| ② | `mergeBlockingProblems` 不看 `disposition`，已 `fixed` 的问题仍拒绝闸门、仍授权修复、仍被点名 | `tmp/repro-disposed.mts` | `isOpenFinding` 一处表达 schema 的规则（“absent means open”） |
+| ③ | 循环用**相邻两轮**比较，振荡循环永不升级 | `[5,4,5,4,5,4,5]` → 不升级 | 与**历史最小值**比较；`[5,4,5,4,5,4,5]` 现升级，`noProgressRounds` 报 5 |
+| ④ | `NO_PROGRESS_ROUNDS = 3` 的文档与代码差一轮 | `[5,5,5]` 不升级，但注释说“连续 3 轮” | 常量语义写死并加测试：`[5,5,5]` 为 2、`[5,5,5,5]` 升级为 3 |
+
+### 7.3 一并修掉的与记录的
+
+- **阶梯搬到 `src/quality/review-ladder.ts`。** 它原来在 `workflow/review-read.ts`，于是 quality 侧的消费者必须**向上** import——这正是闸门后来依赖 `navigation.ts`（一个路由模块）的原因。搬完后 `openLedgerProblems` 也回到 `store/verdict.ts`，紧挨着它投影的 `unsupportedClaims`。
+- **`one home` 守卫加宽**：原来只扫四个具名文件的 `severity === 'blocking'`，`case 'blocking':`、`includes('major')`、`reviewMode === 'strict'` 都能溜过去；现在枚举两个目录、认多种拼写，并有一条用例证明这些拼写真的会被抓到（守卫自身不能是“恒真检查”）。
+- **未知模式 fail closed**：`reviewTierFor` 现在做大小写与空白归一，`undefined`/`''` 视为遗留任务（standard），而**写着但无法识别**的模式取最严的一档，而不是悄悄降为最弱；`'std'` 与 `'standard'` 两种拼写都在这里翻译。
+- **记录一处已知倒挂、不在本 change 修**：`requiresMatrix` 以字面量 `strict` 判断，所以 `security` 要求的声明**少于**低一档。修它要回答的是“这个 change 的**路线**是否携带验收契约”，而不是“它的审查档位有多严”——实测把 `security` 也纳入会让 `kata-cli tweak … --review security` 拒绝 design 并以 “Build cannot run from intake” 失败。因此保留现状、把理由写在函数上，并由守门的例外清单具名放行（只有一条，且有理由）。
