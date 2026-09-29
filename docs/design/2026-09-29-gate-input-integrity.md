@@ -77,6 +77,45 @@
 
 ## 6. 交付判据
 
-- 8 条 AC 各有会红的用例；AC-1／AC-3／AC-4／AC-6／AC-7 另需**变异验证**（把机制短路后必须变红）。
+- 15 条 AC 各有会红的用例（§3 的 8 条 + 上一轮结束时登记的 7 条残余）；AC-1／AC-2／AC-3／AC-6／AC-7／AC-11 另有**变异验证**（把机制短路后必须变红，实测记录见各测试文件的 docblock）。
 - 本 change 结束后：`ledger decide` 对**本 change 自己**给出 pass（这是 §2 顺序落地后的自证）。
 - 三份 follow-up 设计稿在归档时标注为**已被本 change 覆盖**（或保留各自未覆盖的条目）。
+
+**实施结果**：15 条 AC 全部落地，187 文件 / 1180 用例通过，`tsc --noEmit` 干净；封存为 `revision-4d9e2c9a9657d9da`（17 项证据）。§2 的自指顺序成立——AC-6 的机制先落地、再改 `src/kernel/**`，全程未被自己要修的那条判定挡住。
+
+**实施中的两个自身缺陷**（记录以免重复）：
+
+1. **AC-13 的守卫自己有行号 bug**：`codeOnly` 删块注释时一并删掉了其中的换行，于是 `slice(index-14, index+4)` 取到的是**十八行之外**的区域——一个就在写入行上的截断 payload 因此没被识别。改为"置空注释内容但保留换行"。
+2. **AC-4 的检查当场抓住了作者**：26 个改动文件未声明，正是该 AC 描述的缺陷类；详见 §7.1 的用法修正。
+
+## 7. 工具语义只在源码里（实施记录）
+
+本轮实现中撞上三处**只存在于源码、任何输出都没有说明**的工具语义。它们不是缺陷报告，而是"下一个操作者会重复踩"的事实，因此记在这里而不是留在会话里。
+
+### 7.1 `scope apply` 只应用**最后一条**记录
+
+`kata-cli scope change --add <one>` 每次写一条记录，而 `kata-cli scope apply`（不带 `--id`）**只应用最后一条**该记录的 `scope`。而每条记录的 `scope` 是**记录时刻**的 `task.ownedPaths ∪ additions`——所以逐条 add、逐条 apply 时，每条记录的 scope 都是"旧的 34 + 这 1 条 = 35"，最后 apply 只让声明面从 34 涨到 35。
+
+**实测**：连续 26 次 `scope change --add <单个路径>` 全部成功（exit 0），`scope-changes.json` 里 26 条记录各自的 `scope` 都是 35，最终 `ownedPaths` 仍是 35。
+
+**正确用法**：**一条记录里重复 `--add`**（`valuesAfter(rest, '--add')` 收集所有出现），再一次 `scope apply`。实测一条记录带 25 个 `--add` 后，`ownedPaths` 从 35 涨到 60。
+
+### 7.2 `--add` 不按逗号拆分，且会产生**无法被应用**的记录
+
+`--add "a.ts,b.ts"` 被当作**一个**路径字符串记录（`added: ['a.ts,b.ts']`，`scope` 为空数组）。这条记录**不会**造成损害：`normalizeScopePaths([])` 以 `A scope change must leave at least one owned path: the task schema requires one, and a task with none cannot be read by any command, including the one that would add it back.` **构造性拒绝**——空 scope 记录在结构上无法被应用。
+
+但记录本身留在 `scope-changes.json` 里（write-once），所以它是一段**只有读了源码才知道是惰性的**历史：`applied: false` 不会出现，因为没有人会去 apply 它。
+
+### 7.3 声明面变化会**令 handoff 收据失效**，而封存**自己**也会改任务
+
+`build --seal` 在有 handoff 收据的前提下被拒绝：`Cannot use invalid handoff packet: branch_mismatch`。原因是**上一次失败的 seal 本身改动了任务**（写入了 `change-record-*.json` 与 revision），而收据描述的是任务**当时**的样子，于是它被自己的封存动作作废。
+
+**实测序列**：`scope apply`（改任务）→ `handoff create`+`acknowledge` → `build --seal`（失败，改任务）→ 再 seal 时收据已失效 → 重新 `handoff create`+`acknowledge` → seal 成功。
+
+也就是说：**"改任务 → 重新签收据 → 封存"是一个必须紧邻的三步**，中间不能插入任何会写 `.kata/` 的命令，包括一次失败的 seal。
+
+### 7.4 由本节引出的结论
+
+这三处都不影响 gate 的正确性（没有任何一条让"应通过"变成"不通过"，也没有让"不通过"变成"通过"），但它们符合本 change 一直在修的那个形状：**一个事实只有一个可见入口**。§7.1 与 §7.3 都是"工具知道、操作者只能靠经验知道"的语义；§7.2 是"存在一条惰性记录，没有任何输出指出它"。
+
+因此它们**不进入本 change 的验收面**（AC 文本在 `open` 时冻结，且这属于 CLI 表面而非 gate 输入完整性），而是作为**下一轮候选**记录在此。
