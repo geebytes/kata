@@ -450,16 +450,33 @@ async function cmdBuild(
         await guardTransition(options.guard, 'check', taskId, 'implement');
         await transition(taskId, 'implement', actorFor(defaultActor, options.platform), { root });
         await guardTransition(options.guard, 'apply', taskId, 'implement');
-    } else if (current.phase === 'hardVerify') {
-        await reenterImplementForRepairEntry('hardVerify', taskId, root, actorFor(defaultActor, options.platform));
-    } else if (current.phase === 'review') {
-        await reenterImplementForRepairEntry('review', taskId, root, actorFor(defaultActor, options.platform));
-        enteredRepairAwaitingSeal = true;
-    } else if (current.phase === 'judge') {
-        await reenterImplementForRepairEntry('judge', taskId, root, actorFor(defaultActor, options.platform));
-        enteredRepairAwaitingSeal = true;
+    } else if (current.phase === 'hardVerify' || current.phase === 'review' || current.phase === 'judge') {
+        // **A refusal is a value here, not an exception.** The router can return `repair_unreadable_current_revision`,
+        // `repair_failed_judge` and their siblings, all naming `/kata-build` — and this call used to throw the denial,
+        // so the command the dispatcher had just recommended died with a stack trace: no envelope, no `command`, no
+        // diagnostics, nothing upstream able to report it. Measured by dispatching the route for a corrupted pointer.
+        const entry = await reenterImplementForRepairEntry(current.phase, taskId, root, actorFor(defaultActor, options.platform));
+        if (!entry.authorized) {
+            return {
+                command: 'build',
+                taskId,
+                phase: current.phase,
+                success: false,
+                error: entry.denial ?? `Build cannot run from ${current.phase}`,
+                diagnostics: { repairEntry: { entryPhase: current.phase, denial: entry.denial ?? null } },
+            };
+        }
+        enteredRepairAwaitingSeal = current.phase !== 'hardVerify';
     } else if (current.phase !== 'implement') {
-        throw new Error(`Build cannot run from ${current.phase}`);
+        return {
+            command: 'build',
+            taskId,
+            phase: current.phase,
+            success: false,
+            error: `Build cannot run from ${current.phase}. A build starts implementation or repairs an authorised entry `
+                + `(hardVerify, review, judge); from ${current.phase} there is nothing for it to do.`,
+            diagnostics: { buildRefusedFrom: current.phase },
+        };
     }
 
     if (enteredRepairAwaitingSeal) {
@@ -1114,12 +1131,15 @@ async function reenterImplementForRepairEntry(
     taskId: string,
     root: string,
     actor: Actor,
-): Promise<void> {
+): Promise<{ authorized: boolean; denial?: string }> {
     const authorization = await authorizeRepair(entryPhase, root, taskId);
     if (!authorization.authorized) {
-        throw new Error(authorization.denial ?? `Build cannot re-enter implementation from ${entryPhase}`);
+        // Returned, not thrown: the caller answers with an envelope, and the operator gets the reason the authoriser
+        // wrote rather than a stack trace with the same words inside it.
+        return { authorized: false, denial: authorization.denial ?? `Build cannot re-enter implementation from ${entryPhase}` };
     }
     await transitionForRepair({ taskId, actor, entryPhase, repair: authorization.repair, root });
+    return { authorized: true };
 }
 
 

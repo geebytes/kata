@@ -1016,10 +1016,10 @@ describe('Workflow resume and lifecycle', () => {
             `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-minor-only-review', severity: 'minor', message: 'Advisory only' }] }, null, 2)}\n`,
         );
 
-        await expect(runCommand('build', taskId, root)).rejects.toThrow(
-            // The bar is the mode's, not a literal: strict blocks on blocking and major, and the sentence names it.
-            'Build cannot run from review without a problem the strict ladder blocks on (blocking, major)',
-        );
+        const refused = await runCommand('build', taskId, root);
+            // A refusal is a value the operator can read, not a rejection: that is what changed here.
+            expect(refused.success).toBe(false);
+            expect(refused.error).toContain('Build cannot run from review without a problem the strict ladder blocks on (blocking, major)');
         const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
         expect(state.phase).toBe('review');
     });
@@ -1082,9 +1082,10 @@ describe('Workflow resume and lifecycle', () => {
         await runCommand('review', taskId, root, { approve: true, reviewEvidence: 'Reviewed judge-phase guard fixture.' });
         await runCommand('judge', taskId, root, { confirmHostModel: true });
 
-        await expect(runCommand('build', taskId, root)).rejects.toThrow(
-            'Build cannot run from judge without a repairable judge FAIL result',
-        );
+        const refused = await runCommand('build', taskId, root);
+            // A refusal is a value the operator can read, not a rejection: that is what changed here.
+            expect(refused.success).toBe(false);
+            expect(refused.error).toContain('Build cannot run from judge without a repairable judge FAIL result');
         const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
         expect(state.phase).toBe('judge');
     });
@@ -1117,10 +1118,10 @@ describe('Workflow resume and lifecycle', () => {
             `${JSON.stringify({ ...review, findings: [{ id: 'finding-1', taskId: 'wf-standard-major-review', severity: 'major', message: 'Does not require standard repair' }] }, null, 2)}\n`,
         );
 
-        await expect(runCommand('build', taskId, root)).rejects.toThrow(
-            // Standard blocks on blocking alone, so a major finding is reported and does not authorise repair here.
-            'Build cannot run from review without a problem the standard ladder blocks on (blocking)',
-        );
+        const refused = await runCommand('build', taskId, root);
+            // A refusal is a value the operator can read, not a rejection: that is what changed here.
+            expect(refused.success).toBe(false);
+            expect(refused.error).toContain('Build cannot run from review without a problem the standard ladder blocks on (blocking)');
         const state = JSON.parse(await readFile(join(root, `.kata/tasks/${taskId}/current-state.json`), 'utf8')) as { phase: string };
         expect(state.phase).toBe('review');
     });

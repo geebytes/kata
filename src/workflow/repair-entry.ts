@@ -51,14 +51,40 @@ async function revisionNoLongerDescribes(root: string, taskId: string): Promise<
     return revisionIsCurrent(status) ? null : revision;
 }
 
+/**
+ * Read a recorded artefact, and turn "it does not match its schema" into a denial.
+ *
+ * `readValidatedOptional` throws on a mismatch, which is right for a reader and wrong on this path: it let a corrupted
+ * `judge.json` travel out of the authoriser, out of `build`, and out of the command as a stack trace — measured, by
+ * driving the route the dispatcher returns for a judge FAIL. The caller asked whether a repair is authorized; "the
+ * artefact cannot be read" is an answer, and a command that refuses by throwing leaves nothing upstream able to report it.
+ */
+async function readArtefactOrDenial<T>(
+    entryPhase: RepairEntryPhase,
+    kind: string,
+    path: string,
+): Promise<{ ok: true; value: T | null } | { ok: false; denial: RepairAuthorization }> {
+    try {
+        return { ok: true, value: await readValidatedOptional<T>(kind, path) };
+    } catch (error) {
+        return {
+            ok: false,
+            denial: denial(entryPhase, `Build cannot run: the recorded ${kind} cannot be read (${(error as Error).message}). Repair or remove the artefact and run the command that writes it.`),
+        };
+    }
+}
+
 /** hardVerify: a verify FAIL whose failed acceptance scopes are all repairable, or a re-seal of a stale verdict. */
 export async function authorizeVerifyRepair(root: string, taskId: string): Promise<RepairAuthorization> {
     const entryPhase: RepairEntryPhase = 'hardVerify';
     // An absent verdict means there is nothing to repair against; a drifted one is an error, not an absence.
-    const verify = await readValidatedOptional<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
+    const verifyRead = await readArtefactOrDenial<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
+        entryPhase,
         'verify-result',
         verifyPath(root, taskId),
     );
+    if (!verifyRead.ok) return verifyRead.denial;
+    const verify = verifyRead.value;
     if (!verify) {
         // No verify verdict to repair against: the entry is recorded by the state transition alone.
         return { authorized: true, entryPhase, repair: null };
@@ -191,10 +217,13 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
 /** judge: a judge FAIL with repairable scopes, or a superseded sealed revision. */
 export async function authorizeJudgeRepair(root: string, taskId: string): Promise<RepairAuthorization> {
     const entryPhase: RepairEntryPhase = 'judge';
-    const judge = await readValidatedOptional<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
+    const judgeRead = await readArtefactOrDenial<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
+        entryPhase,
         'judge-result',
         judgePath(root, taskId),
     );
+    if (!judgeRead.ok) return judgeRead.denial;
+    const judge = judgeRead.value;
     if (!judge) {
         return denial(entryPhase, 'Build cannot run from judge without a recorded judge result. Run /kata-judge first.');
     }
