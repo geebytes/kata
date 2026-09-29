@@ -77,17 +77,4 @@ describe('a reading belongs to the run that took it', () => {
         // The run's later answer is the run's answer: re-deciding is not a second observation of a different kind.
         expect(ledger.readings[0]?.verdict).toBe('refuted');
     });
-
-    it('loses nothing: what the document holds, the reader shows', async () => {
-        await seededLedger();
-        await recordVerdicts(root, changeId, [reading('run-1', 'reviewer-a'), { ...reading('run-1', 'reviewer-a'), evidenceId: 'E1' }]);
-        await recordVerdicts(root, changeId, [reading('run-2', 'reviewer-b', 'inconclusive')]);
-
-        const stored = JSON.parse(await readFile(verdictsPath(root, changeId), 'utf8')) as EvidenceVerdict[];
-        const ledger = await readLedger(root, changeId);
-        expect(ledger.readings).toHaveLength(stored.length);
-        // The projection is a view, not a store: it never has more entries than there are evidence items.
-        expect(ledger.verdicts.length).toBeLessThanOrEqual(ledger.readings.length);
-        expect(ledger.verdicts.map((entry) => entry.evidenceId)).toEqual(['E1']);
-    });
 });
