@@ -161,3 +161,11 @@ for (const verdict of incoming) {
 **改动面**（与设计 §8 一致）：`src/store/ledger.ts`、`src/store/verdict.ts`（quorum 取数点一行）、`src/kernel/evidence.ts`。`store/replay.ts`、`kernel/delta.ts`、`cli/ledger.ts` **一行未改**——它们要的是"这个证据算哪条"，拿投影即可，这正是把投影放在 store 的收益。
 
 全套：191 文件 / 1210 用例通过，`tsc --noEmit` 干净。
+
+## 10. 流程本身上发现的三件事（都在本 change 里踩到）
+
+1. **`testSelector` 只能喂一个验收标准——这是本仓库第二次踩到。** AC-5 与 AC-1 共用 `tests/unit/verdict-readings-per-run.test.ts`，封存按 selector 生成 evidence，于是 AC-1 拿到它、**AC-5 一条都没有**：`verify` 报 `AC-5 FAIL` + `repairScope: insufficient_evidence_level`，而实现是对的、用例也是绿的。症状极具误导性（看起来像"这条标准没实现"）。修法：AC-5 独立成文件（`tests/unit/nothing-is-lost-from-the-store.test.ts`）+ `tasks declare` 重声明该行。
+2. **矩阵声明了不存在的文件会让封存直接失败**（"Evidence sealing failed; fix the failing checks"），因为 check 命令会去跑它。第一次封存即因此失败：AC-6 的行指向 `tests/unit/legacy-verdict-list-still-reads.test.ts`，而用例当时写在共享文件里。修法：把 AC-6 的用例搬进它自己声明的文件。
+3. **三条命令必须相邻**：`tasks declare` / `scope change` 会改变任务的声明面 ⇒ implementer 收据失效 ⇒ 先 `handoff create` + `handoff acknowledge`，再 `--seal`；而**失败的封存同样消耗收据**。此外 `scope change` 的 `--add` 是**逐条**的（逗号不分词），且新矩阵行引用的测试文件必须在 ownedPaths 里，否则封存报 "Owned path coverage incomplete"。
+
+**一条状态报告**：本 change 触及 `src/kernel/evidence.ts` 等内核路径 ⇒ 自身档位为 `security` ⇒ 若记录账本，`assurance_below_tier`（本机无沙箱执行器）仍会令 `decide` 返回 `insufficient`。本 change **未记录账本**：其六条验收标准各有可执行用例、每条都用变异证明会变红，而账本在本仓当前状态下对本 change 无法 pass（原因不在本 change 表面，见 `gate-input-integrity` 设计文档 §12）。这条选择在此写明，而不是留给读者去猜。
