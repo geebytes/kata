@@ -132,6 +132,50 @@ export type LedgerVerdict =
     | { kind: 'unreadable'; detail: string }
     | { kind: 'decided'; tier: TierName; claims: number; assurance: AssuranceLevel; subjectRevision: string; decision: Decision };
 
+/**
+ * **Can this ledger be read as a decision?** — a pure question about a ledger, so the two surfaces that ask it cannot
+ * answer differently.
+ *
+ * It was answered in two places: this one, and a re-derivation inside `openLedgerProblems` that tested
+ * `malformedFiles || policyRejected` and stopped there — missing "claims without a frozen subject", which decides nothing
+ * either. Measured with `subject.json` removed: the problems reader said `read` and published the claims while the verdict
+ * said `unreadable`, so `navigation.ts` refused the closure while the approval, the archive gate and the repair entry all
+ * read a count. Owning the predicate here means both surfaces ask one function of the ledger in their hand.
+ *
+ * `null` means readable. `absent` is reported separately because it is not a fault: a ledger nobody wrote is a normal
+ * state, while a ledger that cannot be read is somebody's mistake, and only the first may be treated as "nothing to
+ * decide".
+ */
+export function ledgerReadability(ledger: {
+    malformedFiles: readonly string[];
+    policyRejected: string | null;
+    claims: readonly unknown[];
+    subject: unknown;
+    recordedFiles: readonly string[];
+}): { kind: 'unreadable'; detail: string } | { kind: 'absent'; detail: string } | null {
+    if (ledger.malformedFiles.length > 0) {
+        // A file that exists and cannot be parsed decides nothing, and it must not read as "nothing recorded": the two are
+        // different facts, and only one of them is somebody's mistake.
+        return { kind: 'unreadable', detail: `the ledger holds ${ledger.malformedFiles.join(', ')}, which cannot be parsed, so it decides nothing` };
+    }
+    if (ledger.policyRejected !== null) {
+        // The rule that would have been applied is not the one on disk, so the decision would be about a policy nobody wrote.
+        return { kind: 'unreadable', detail: `the stored policy was refused (${ledger.policyRejected}), so nothing here decides` };
+    }
+    if (ledger.claims.length === 0) {
+        return {
+            kind: 'absent',
+            detail: ledger.recordedFiles.length === 0
+                ? 'no ledger has been recorded for this change, so nothing here decides it'
+                : `the ledger holds ${ledger.recordedFiles.join(', ')} but no claims, so there is nothing to decide`,
+        };
+    }
+    if (!ledger.subject) {
+        return { kind: 'unreadable', detail: 'the ledger holds claims but no frozen subject, so no verdict can be about anything' };
+    }
+    return null;
+}
+
 export async function ledgerVerdict(input: {
     root: string;
     changeId: string;
@@ -157,29 +201,13 @@ export async function ledgerVerdict(input: {
         return { kind: 'unreadable', detail: `the ledger could not be read: ${(error as Error).message}` };
     }
 
-    if (ledger.malformedFiles.length > 0) {
-        // A file that exists and cannot be parsed decides nothing, and it must not read as "nothing recorded": the two are
-        // different facts, and only one of them is somebody's mistake.
-        return {
-            kind: 'unreadable',
-            detail: `the ledger holds ${ledger.malformedFiles.join(', ')}, which cannot be parsed, so it decides nothing`,
-        };
-    }
-    if (ledger.policyRejected !== null) {
-        // The rule that would have been applied is not the one on disk, so the decision would be about a policy nobody
-        // wrote.
-        return { kind: 'unreadable', detail: `the stored policy was refused (${ledger.policyRejected}), so nothing here decides` };
-    }
-    if (ledger.claims.length === 0) {
-        return {
-            kind: 'absent',
-            detail: ledger.recordedFiles.length === 0
-                ? 'no ledger has been recorded for this change, so nothing here decides it'
-                : `the ledger holds ${ledger.recordedFiles.join(', ')} but no claims, so there is nothing to decide`,
-        };
-    }
+    const readability = ledgerReadability(ledger);
+    if (readability !== null) return readability;
     if (!ledger.subject) {
-        return { kind: 'unreadable', detail: 'the ledger holds claims but no frozen subject, so no verdict can be about anything' };
+        // **Unreachable by construction, and asserted rather than assumed.** `ledgerReadability` refuses exactly this
+        // state, so reaching here means the predicate and this narrowing disagree — which is the split this file removed.
+        // Failing loudly is how the next edit that drops the condition is caught here instead of reading `undefined`.
+        throw new Error('the ledger passed readability without a frozen subject, which is the state readability refuses');
     }
 
     // The quorum is assembled from the runs, compared over evidence rather than counted as votes; a single producer is not
@@ -310,22 +338,18 @@ export function openProblemsReportFields(read: LedgerProblemsRead): { openProble
  * them. The only thing it owns is the mapping from "the ledger decides nothing" to the problems list.
  */
 export async function openLedgerProblems(root: string, changeId: string): Promise<LedgerProblemsRead> {
-    // **The verdict answers this question, and this reader asks it rather than restating it.**
+    // **One read, and the readability answer asked of that same ledger.**
     //
-    // Two earlier versions of this fix restated the predicate locally, and each disagreed with the verdict in a state the
-    // other had not thought of: first `malformedFiles || policyRejected` (missing `!subject`), then the same three
-    // conditions re-derived *and* asked `nothingRecorded` as a fourth — which turned "the ledger holds evidence but no
-    // claims", a state the verdict calls `absent`, into a refusal. Measured: a change with `evidence.json` and no claims
-    // was refused at its own repair entry (`authorized: false`) where HEAD allowed it, so the second version introduced a
-    // false refusal. The sentence was borrowed correctly both times; the *decision* is what has to be borrowed, because
-    // anything short of that is a second derivation waiting to differ.
-    const verdict = await ledgerVerdict({ root, changeId });
-    if (verdict.kind === 'unreadable') {
-        return { kind: 'unreadable', detail: verdict.detail };
-    }
-    // Readable by the verdict's account: the problems are what the ledger records as unsupported. The ledger is read here
-    // rather than in the verdict because the verdict returns a decision, not the claims it read.
+    // Three versions of this function got it wrong in three different ways, and the third is the one that matters: after
+    // delegating the *decision* to the verdict, it still asked the verdict first (one read) and then read the ledger again
+    // to count — so when the second read failed, this surface published `openProblems: 0` for a ledger the verdict had
+    // just refused, which is the `0` meaning "no problems" that this whole family of fixes exists to remove. Measured: two
+    // reads per call. Asking one pure function of a ledger already in hand makes the two answers agree by construction and
+    // the count come from the same bytes the refusal was computed from.
     const ledger = await readLedger(root, changeId);
+    const readability = ledgerReadability(ledger);
+    if (readability?.kind === 'unreadable') return { kind: 'unreadable', detail: readability.detail };
+    // `absent` is readable: a ledger nobody wrote lists no problems, and that is a fact rather than a refusal.
     return {
         kind: 'read',
         problems: unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, statement: claim.statement })),
