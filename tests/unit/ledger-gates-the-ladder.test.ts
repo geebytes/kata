@@ -99,15 +99,25 @@ describe('the ledger gates the ladder', () => {
         expect(await ladderReason()).not.toBe('satisfy_ledger_deficits');
     });
 
-    it('refuses a change whose claims do not cover the tier\'s risk space, which is what makes coverage failable', async () => {
-        // The defect this pins: when the required classes are derived from the claims themselves, coverage is true by
-        // construction and the check can never fail. Here the tier is strict (a `src/quality/**` path), the tier requires
-        // consistency, boundary and failure_mode, and the ledger holds one consistency claim.
+    /**
+     * **Coverage is still failable, and it is now proportional to what the change reaches.**
+     *
+     * This case used to assert the opposite: a change touching only `src/quality/**`, carrying one consistency claim, was
+     * refused for a missing `boundary` and `failure_mode` claim — because the tier's list was demanded in full whatever
+     * the change did. Measured on a real consistency-only repair, that made the change unpassable except by declaring a
+     * claim about a failure mode it does not have, and the refusal listed no deficit to close.
+     *
+     * The defect it originally pinned still holds: coverage must be able to fail. So both halves are asserted here — the
+     * unreached classes are no longer demanded, and a class the change *does* reach still is, by name.
+     */
+    it('demands the classes a change reaches and not the ones it does not', async () => {
         await mkdir(join(root, 'src', 'quality'), { recursive: true });
+        await mkdir(join(root, 'src', 'cli'), { recursive: true });
         await writeFile(join(root, 'src', 'quality', 'x.ts'), 'export const x = 1;\n');
+        await writeFile(join(root, 'src', 'cli', 'y.ts'), 'export const y = 1;\n');
         await writeFile(
             join(root, '.kata', 'tasks', changeId, 'task.json'),
-            `${JSON.stringify({ id: changeId, ownedPaths: ['src/quality/x.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+            `${JSON.stringify({ id: changeId, ownedPaths: ['src/quality/x.ts', 'src/cli/y.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
         );
         const subject = await freezeSubject({ root, paths: ['src/quality/x.ts'] });
         if (!subject.ok) return;
@@ -123,8 +133,12 @@ describe('the ledger gates the ladder', () => {
         expect(verdict.tier).toBe('strict');
         expect(verdict.decision.verdict).toBe('insufficient');
         const uncovered = verdict.decision.reasons.find((reason) => reason.code === 'uncovered_risk_class');
+        // `src/cli/**` is about the boundary, and nothing claims it. `failure_mode` is not reached by either path, so it
+        // is not demanded — that is the whole point of the rule.
         expect(uncovered?.detail).toContain('boundary');
-        expect(uncovered?.detail).toContain('failure_mode');
+        expect(uncovered?.detail).not.toContain('failure_mode');
+        // And the refusal carries the deficit an author acts on, rather than nothing.
+        expect(verdict.decision.deficits.map((deficit) => deficit.claimId)).toContain('risk_coverage:boundary');
     });
 
     it('refuses an unreadable ledger instead of reading it as one that was never written', async () => {

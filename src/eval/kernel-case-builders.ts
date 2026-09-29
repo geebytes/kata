@@ -100,6 +100,9 @@ function base(overrides: Partial<DecideInput> = {}): DecideInput {
         policy,
         tier: overrides.tier ?? 'strict',
         declaredRiskClasses: overrides.declaredRiskClasses ?? (['consistency', 'boundary', 'failure_mode'] satisfies RiskClass[]),
+        // A case that says nothing about what it touches is judged as touching everything it declares: the conservative
+        // direction, and the behaviour every recorded case was written against.
+        touchedRiskClasses: overrides.touchedRiskClasses ?? overrides.declaredRiskClasses ?? (['consistency', 'boundary', 'failure_mode'] satisfies RiskClass[]),
         assurance: overrides.assurance ?? 'observed',
         usage: overrides.usage ?? {},
         c0Tokens: null,

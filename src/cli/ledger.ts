@@ -147,9 +147,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 fail({ command: 'ledger policy', error: loaded.error });
                 return;
             }
-            // **A change to the floor table is itself a change.** Every moved floor becomes a claim of class `privilege`,
-            // so the table that decides how deep a review goes cannot be quietly widened to make a gate easier — without
-            // this, setting a sensitive directory to `low` would be a back door around the deep tier.
+            // **A change to the floor table is itself a change, and the same guard covers the risk classes the table
+            // carries.** Every moved floor — and every added, removed or altered risk class on a pattern — becomes a claim
+            // of class `privilege`, so the table that decides how deep a review goes cannot be widened, nor a pattern
+            // quietly re-described as being about less, to make a gate easier.
             const floorClaims = policyFloorChangeClaims({
                 previous: ledger.policy.riskFloors,
                 next: loaded.policy.riskFloors,

@@ -224,8 +224,11 @@ export async function ledgerVerdict(input: {
         policy: ledger.policy,
         tier,
         // The tier's contract, not the union of what the claims happen to say: a set derived from the claims makes the
-        // coverage check unfailable, which is the one thing a gate must never be.
+        // coverage check unfailable, which is the one thing a gate must never be. The touched set comes from the path
+        // table for the same reason — it is what the change reaches, not what its author asserted about it.
         declaredRiskClasses: ledger.policy.tiers[tier].requiredRiskClasses,
+        touchedRiskClasses: classification.riskClasses,
+        riskClassSources: classification.riskClassSources,
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,

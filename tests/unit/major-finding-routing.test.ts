@@ -100,6 +100,8 @@ describe('the severity gate is one rule, applied by the kernel', () => {
             policy: ledger.policy,
             tier: 'strict',
             declaredRiskClasses: [],
+        // Declaring nothing means demanding nothing, which is the state this case is about.
+        touchedRiskClasses: [],
             assurance: 'observed',
             usage: { toolCalls: 0, wallMs: 0, tokens: 0 },
             discovery: { independentChallenges: 0, verifiedChallenges: 0 },

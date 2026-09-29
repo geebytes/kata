@@ -68,6 +68,7 @@ describe('the kernel is pure and platform-neutral', () => {
             policy: makePolicy(),
             tier: 'strict' as const,
             declaredRiskClasses: ['consistency' as const],
+            touchedRiskClasses: ['consistency' as const],
             assurance: 'observed' as const,
             usage: { tokens: 10, wallMs: 10, toolCalls: 1 },
             discovery: { independentChallenges: 1, verifiedChallenges: 1 },

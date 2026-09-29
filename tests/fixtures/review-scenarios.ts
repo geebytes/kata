@@ -37,6 +37,7 @@ function base(overrides: Partial<DecideInput> = {}): DecideInput {
         policy: makePolicy(),
         tier: 'strict',
         declaredRiskClasses: ['consistency'],
+        touchedRiskClasses: ['consistency'],
         assurance: 'observed',
         usage: {},
         discovery: { independentChallenges: 1, verifiedChallenges: 1 },
@@ -226,7 +227,7 @@ export const reviewScenarios: ReviewScenario[] = [
         id: 'uncovered-risk-class',
         mode: 'coverage',
         why: 'Coverage is over the finite risk space, not over every path: a declared class no claim touches is a hole.',
-        build: () => base({ declaredRiskClasses: ['consistency', 'rollback'] }),
+        build: () => base({ declaredRiskClasses: ['consistency', 'rollback'], touchedRiskClasses: ['consistency', 'rollback'] }),
         expect: { verdict: 'insufficient', reasons: ['uncovered_risk_class'] },
     },
     {

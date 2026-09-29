@@ -48,8 +48,25 @@ export type DecideInput = {
     challenges: readonly Challenge[];
     policy: Policy;
     tier: TierName;
-    /** The risk classes this change's review space declares. Every one of them must be claimed by some claim. */
+    /** The risk classes this change's review space declares. One of them must be claimed by some claim when it is reached. */
     declaredRiskClasses: readonly RiskClass[];
+    /**
+     * The classes the change actually reaches, from the paths it touches.
+     *
+     * Required rather than optional: without it the demand falls back to the tier's whole list, which is the behaviour
+     * that made a consistency-only repair unpassable. A caller with the paths in hand can answer this through
+     * `classifyRisk`; a caller without them must say so by passing an empty list and will then be asked for the full
+     * tier list, which is the conservative direction.
+     */
+    touchedRiskClasses: readonly RiskClass[];
+    /**
+     * Which path pattern produced which reached class, when the caller has it.
+     *
+     * Recorded so the refusal can say *what made this necessary* rather than only that something is missing: the same
+     * classes reached through a different pattern are a different repair, and an operator reading `no claim covers:
+     * failure_mode` has no way to know which file to look at.
+     */
+    riskClassSources?: ReadonlyArray<{ pattern: string; classes: readonly RiskClass[] }>;
     assurance: AssuranceLevel;
     usage: BudgetUsage;
     c0Tokens?: number | null;
@@ -270,11 +287,36 @@ export function decide(input: DecideInput): Decision {
         }
     }
 
-    // 5. Coverage is over the finite risk space, not over every path.
+    // 5. Coverage is over the finite risk space, not over every path, **and over the part of it this change reaches**.
+    //
+    // The tier's list used to be demanded in full: a change that touches `src/quality/**` was asked for `failure_mode`
+    // whatever it did, so a consistency-only repair could only pass by declaring a claim about a failure mode it does not
+    // have — a gate satisfied by prose — and the refusal listed no deficit to close. The demand is now the intersection of
+    // what the tier requires and what the change touches, which still cannot be satisfied by construction: the touched set
+    // comes from the path table, not from the claims.
     const claimed = new Set(input.claims.map((claim) => claim.riskClass));
-    const uncovered = input.declaredRiskClasses.filter((riskClass) => !claimed.has(riskClass));
+    const reached = input.touchedRiskClasses.length > 0
+        ? input.declaredRiskClasses.filter((riskClass) => input.touchedRiskClasses.includes(riskClass))
+        : input.declaredRiskClasses;
+    const uncovered = reached.filter((riskClass) => !claimed.has(riskClass));
     if (uncovered.length > 0) {
-        reasons.push(reason('uncovered_risk_class', `no claim covers: ${uncovered.join(', ')}`));
+        const because = uncovered.map((riskClass) => {
+            const sources = (input.riskClassSources ?? []).filter((source) => (source.classes as readonly RiskClass[]).includes(riskClass));
+            return sources.length > 0 ? `${riskClass} (reached via ${sources.map((source) => source.pattern).join(', ')})` : riskClass;
+        });
+        reasons.push(reason(
+            'uncovered_risk_class',
+            `no claim covers: ${because.join('; ')} — required at this tier and reached by this change, so each needs a claim `
+            + 'of that risk class',
+        ));
+        // **The deficit that used to be missing.** This reason refused a change while listing nothing to do about it, so the
+        // only readable remedy was the one the message did not describe. Each class becomes a deficit naming the claim.
+        for (const riskClass of uncovered) {
+            deficits.push({
+                claimId: `risk_coverage:${riskClass}`,
+                need: `a claim whose riskClass is ${riskClass}, covering what the change does about it`,
+            });
+        }
     }
 
     // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge — and the challenge

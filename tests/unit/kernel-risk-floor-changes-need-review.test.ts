@@ -40,8 +40,13 @@ describe('risk classification and its floor table', () => {
     });
 
     it('turns a floor change into a privilege claim when the audit rule is on', () => {
-        const previous = { 'src/quality/**': 'medium' as const };
-        const next = { 'src/quality/**': 'low' as const, 'src/new/**': 'high' as const };
+        // The entry carries both answers now, so a floor move and a re-description of what a pattern is about are the
+        // same kind of change — and the guard fires on either.
+        const previous = { 'src/quality/**': { floor: 'medium' as const, riskClasses: ['consistency' as const] } };
+        const next = {
+            'src/quality/**': { floor: 'low' as const, riskClasses: ['consistency' as const] },
+            'src/new/**': { floor: 'high' as const, riskClasses: ['boundary' as const] },
+        };
         const claims = floors({ previous, next, at: '2026-09-27T00:00:00.000Z', requireReview: true });
         expect(claims.map((claim) => claim.id).sort()).toEqual(['policy-floor:src/new/**', 'policy-floor:src/quality/**']);
         for (const claim of claims) {
@@ -49,7 +54,8 @@ describe('risk classification and its floor table', () => {
             expect(claim.severity).toBe('major');
             expect(claim.status).toBe('open');
         }
-        expect(claims.find((claim) => claim.id === 'policy-floor:src/quality/**')?.statement).toContain('medium to low');
+        expect(claims.find((claim) => claim.id === 'policy-floor:src/quality/**')?.statement).toContain('medium');
+        expect(claims.find((claim) => claim.id === 'policy-floor:src/quality/**')?.statement).toContain('low');
         // With the audit rule off there is nothing to review, and that is a policy decision rather than a silent skip.
         expect(policyFloorChangeClaims({ previous, next, at: '2026-09-27T00:00:00.000Z', requireReview: false })).toEqual([]);
     });

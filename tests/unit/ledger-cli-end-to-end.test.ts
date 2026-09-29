@@ -248,10 +248,14 @@ describe('the ledger verbs', () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);
         const stored = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'policy.json'), 'utf8')) as {
-            riskFloors: Record<string, string>;
+            riskFloors: Record<string, { floor: string; riskClasses: string[] }>;
         };
         const wanted = join(root, 'policy-widened.json');
-        await writeFile(wanted, `${JSON.stringify({ ...stored, riskFloors: { ...stored.riskFloors, 'src/**': 'low' } }, null, 2)}\n`);
+        // The entry carries the classes too, so a widened floor and a re-described pattern are the same kind of change.
+        await writeFile(
+            wanted,
+            `${JSON.stringify({ ...stored, riskFloors: { ...stored.riskFloors, 'src/**': { floor: 'low', riskClasses: ['consistency'] } } }, null, 2)}\n`,
+        );
 
         const applied = await ledger(['policy', '--set-file', wanted]);
         expect(applied.floorClaims).toEqual(['policy-floor:src/**']);
