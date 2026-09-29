@@ -264,3 +264,39 @@ riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
 - **上一 revision 的 digests 这一读**只能知道"它曾经 hash 过哪些路径"，而这些键**恒等于声明面本身**（实测当前 revision 61/61 集合相等），所以它能证明的只有一件事：**声明把一个曾经被覆盖的路径丢掉了**（声明缩水）。
 
 因此 C-3 的措辞在第二轮被改成它真能证明的事，并**把这个缺口写在这里**，而不是让它作为一句暗示留在代码注释里。要真正覆盖"已提交的未声明改动"，需要的是 **revision delta**（上一 revision 的 `pathDigests` 键集与当前工作树/当前 revision 的差异并集），那是另一条 change 的工作，已登记为 follow-up。
+
+## 12. 放行记录（人工决定）
+
+### 12.1 账本说什么
+
+`kata-cli ledger decide` 对本 change 返回 `insufficient`，原因恰好两条，且**两条都在本 change 的表面之外**：
+
+| 原因 | 性质 | 为什么不在本 change 里修 |
+|---|---|---|
+| `assurance_below_tier`：`observed` 低于 `security` 档的 `sandboxed` | **宿主能力** | 内联适配器记录 `observed`；沙箱化需要另一类执行器（父设计登记的 #722／#728） |
+| `quorum_missing`：`security` 要 2 名独立 reviewer | **判决存储的结构缺陷** | `recordVerdicts` 按 `evidenceId` 替换，`groupByProducer` 永远只见一个 run（§11.3 第 2 条）——修它在 `src/store/ledger.ts` 与 quorum 的取数点，**不在本 change 的声明面** |
+
+其余证据是齐的：**6/6 evidence `supported`**（每条都用真实变异验证过会变红），**3/3 challenge `withdrawn`**（第二轮独立审查提出的三条反例，在修复后由它们自己的 falsifier 判定为不再成立），`challenge_open` 与 `discovery_floor` 均已消失。两条原因各自带着可执行的 deficit。
+
+### 12.2 这个放行是**人的判断**，不是账本 pass
+
+- 它**不是**"门被放松"：本 change 没有为了让账本 pass 而动任何判据、任何档位数字、任何 evidence 的强度措辞；
+- 它**不是**"账本通过了"：账本仍是 `insufficient`，且两条原因如实留在这里；
+- 它**是**：一个已通过 15 条验收标准、两轮独立对抗审查共 10 条 finding 全部收口、verify PASS、drift 为空、可执行反例全部站不住了的交付，被一个人判断为可以合入，同时**把两条无法由它自己解决的墙登记为独立的 follow-up**。
+
+### 12.3 登记的三条 follow-up
+
+1. **判决读数按 run 保存**（`docs/design/2026-09-29-verdict-readings-per-run.md`，已在 master 上提交）：让 `reviewers: 2` **可达**。它同时是 §11.3 第 2 条的修复。
+2. **assurance 档位与宿主能力**：`security` 的 `sandboxed` 地板在本机不可满足时，谁在何种条件下代签这条例外——需要一个**执行器能力**概念，而不是把地板降下来。
+3. **已提交但未声明的改动**（§11.4 声明的缺口）：需要 revision delta（上一 revision 的 `pathDigests` 与当前树的差异并集）而不是 `git status`。
+
+### 12.4 收尾时发现的一个记录问题（一并登记）
+
+把本 change 推到批准时，`review.json` 里上一轮记录的 **9 条 finding 被流命令替换掉，只剩 1 条**（`R-10`），尽管 10 条都有 disposition。我已按会话中的原始记录把 9 条复原（每条带 `id`／`severity`／`acceptanceId`／`path`／`message`／`disposition`／`dispositionReason`），并在本文档 §8／§11 保留完整历史——**但这件事本身是一条机制观察**：一个承载"本轮发现了什么、后来怎么处置"的记录，可以被某个正常命令**静默替换成更窄的一份**，而没有任何输出提示。它与本 change 修的那一族（"有写者无读者"／"一个事实两个答案"）同源，因此登记为第 4 条 follow-up：**review 记录需要写侧保护或版本化**，否则"处置记录"本身会随命令消失。
+
+### 12.5 留下的状态
+
+- `review.json`：`status: pending`（**未批准**），10 条 finding 齐备且全部 `fixed`；
+- 相位：`hardVerify`（`revision-90316ce44be03162`，verify PASS，drift `[]`）；
+- judge 不可达（账本不 pass），所以本 change **不是 `approved`，而是 `human-waived with a recorded gap`**；
+- 分支 `kata/gate-input-integrity` 合入 `master` 是**人**的决定，与账本无关。
