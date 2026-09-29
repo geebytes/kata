@@ -39,6 +39,10 @@ interface State {
     judge?: { result: string };
     corruptPointer?: boolean;
     noPointer?: boolean;
+    /** Move the content after the seal, so the sealed revision no longer describes the tree and a repair is authorised. */
+    drifted?: boolean;
+    /** A recorded verify FAIL whose failed criteria are repairable, which is what authorises a repair entry. */
+    verify?: { result: string; acceptance: Array<{ id: string; result: string; repairScope?: string }> };
 }
 
 async function construct(state: State): Promise<{ root: string; taskId: string }> {
@@ -73,6 +77,19 @@ async function construct(state: State): Promise<{ root: string; taskId: string }
     }
     if (state.noPointer) {
         await rm(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), { force: true });
+    }
+    if (state.drifted) {
+        // A repair entry that is **authorised** is the state where the defect this case exists for shows up: the entry
+        // returns a value, and a build that throws there is a route that cannot be taken. Without a state that reaches the
+        // authorised path the case only ever exercised the denials.
+        await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n');
+        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
+    }
+    if (state.verify) {
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'verify.json'),
+            `${JSON.stringify({ taskId, revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash, result: state.verify.result, acceptance: state.verify.acceptance })}\n`,
+        );
     }
     if (state.review) {
         await writeFile(
@@ -116,6 +133,12 @@ describe('every route the dispatcher can return names a command that runs', () =
         { name: 'implement', phase: 'implement' },
         { name: 'hardVerify with a healthy pointer', phase: 'hardVerify' },
         { name: 'hardVerify with a corrupted pointer', phase: 'hardVerify', corruptPointer: true },
+        { name: 'hardVerify whose revision the tree has moved past', phase: 'hardVerify', drifted: true },
+        {
+            name: 'hardVerify with a repairable verify FAIL',
+            phase: 'hardVerify',
+            verify: { result: 'FAIL', acceptance: [{ id: 'AC-1', result: 'FAIL', repairScope: 'insufficient_evidence_level' }] },
+        },
         { name: 'review with no review recorded', phase: 'review' },
         { name: 'review with a pending review', phase: 'review', review: { status: 'pending' } },
         { name: 'review with an approved review', phase: 'review', review: { status: 'approved', reviewEvidence: 'reviewed' } },
