@@ -6,8 +6,9 @@ import { appendClaim, freezeSubject, writeSubject } from '../../src/store/ledger
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { evaluateReviewClearance } from '../../src/workflow/distill-gates.js';
 import { authorizeReviewRepair } from '../../src/workflow/repair-entry.js';
-import { reviewPath } from '../../src/core/layout.js';
-import { describeBlockingProblems, type MergeBlockingProblem } from '../../src/quality/review-ladder.js';
+import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
+import { appendReviewRound, reviewProgress } from '../../src/quality/repair.js';
+import { describeBlockingProblems, isOpenFinding, type MergeBlockingProblem } from '../../src/quality/review-ladder.js';
 import { makeClaim } from '../helpers/review.js';
 
 /**
@@ -209,5 +210,94 @@ describe('a recorded finding is not a thing some consumers may ignore', () => {
         expect(clearance.cleared).toBe(false);
         expect(clearance.reason).toBe('unreadable_review');
         expect(clearance.detail).toBeTruthy();
+    });
+});
+
+/**
+ * The two surfaces the previous round of tests never drove: the **router** and the **repair entry**.
+ *
+ * An independent review found the fixes incomplete in exactly those two places, and the reason is visible in the tests
+ * that were there: every unreadable-record case was driven through the approval and the gate only. A reader can be right
+ * and still be ignored — the router *reported* an unreadable record and read it nowhere, and the repair entry opened the
+ * file with a validating read of its own before asking the reader, so it threw where the gate refused.
+ */
+describe('an unreadable record is refused by every surface, including the ones that route', () => {
+    const malformed = { status: 'approved', reviewEvidence: 'malformed', findings: [{ id: 'F-1', severity: 'blocking', message: 'x' }] };
+
+    async function writeMalformed(): Promise<void> {
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review.json'), `${JSON.stringify(malformed, null, 2)}\n`);
+    }
+
+    it('routes back to the review rather than to the judge', async () => {
+        await writeMalformed();
+
+        const upstream = await readUpstreamSummary(root, changeId);
+        expect(upstream.reviewRecordUnreadable).toBeTruthy();
+        const action = suggestCandidateAction('review', upstream);
+        expect(action?.reason).toBe('unreadable_review_record');
+        expect(action?.nextSkill).toBe('/kata-review');
+        expect(action?.nextSkill).not.toBe('/kata-judge');
+    });
+
+    it('refuses the repair entry instead of throwing out of it', async () => {
+        await writeMalformed();
+        const repair = await authorizeReviewRepair(root, changeId);
+        expect(repair.authorized).toBe(false);
+        expect(repair.denial).toContain('cannot be read as one');
+    });
+
+    it('refuses when the revision the record binds to cannot be read', async () => {
+        // A revision file that is not JSON: the record itself is fine, and the binding cannot be established.
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review.json'), `${JSON.stringify({ status: 'approved', reviewEvidence: 'fine' })}\n`);
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{"id": "rev-1", "manif');
+
+        // The gate must answer, not crash: this file used to reach `currentRevisionIdentity` outside a guard.
+        const clearance = await evaluateReviewClearance(root, changeId);
+        expect(clearance.cleared).toBe(false);
+        expect(clearance.reason).toBe('unreadable_review');
+        const repair = await authorizeReviewRepair(root, changeId);
+        expect(repair.authorized).toBe(false);
+        const approval = await runCommand('review', changeId, root, {
+            approve: true,
+            reviewEvidence: 'cannot be recorded while the binding is unreadable',
+            confirmHostModel: true,
+        });
+        expect(approval.success).toBe(false);
+        expect(approval.error).toContain('cannot be decided');
+    });
+
+    it('closes a finding only when it was fixed, not when it was deferred, accepted or routed', async () => {
+        const cases: Array<[string, boolean]> = [
+            ['fixed', true],
+            ['deferred', false],
+            ['accepted', false],
+            ['routed', false],
+            ['open', false],
+        ];
+        for (const [disposition, cleared] of cases) {
+            await writeFile(join(root, '.kata', 'tasks', changeId, 'review.json'), `${JSON.stringify({
+                status: 'approved',
+                reviewEvidence: 'the round concluded so',
+                findings: [{ id: 'F-1', taskId: changeId, severity: 'blocking', message: 'x', disposition }],
+            })}\n`);
+            const clearance = await evaluateReviewClearance(root, changeId);
+            expect(clearance.cleared, `${disposition} must ${cleared ? 'clear' : 'refuse'}`).toBe(cleared);
+            // The record's own reader agrees with the gate that decides on it: `change-record` calls everything but
+            // `fixed` an open finding, and so does the ladder now.
+            expect(isOpenFinding({ disposition })).toBe(!cleared);
+        }
+    });
+
+    it('stops dispatching repairs when the loop history cannot be measured at all', async () => {
+        await appendReviewRound(root, changeId, { at: '2026-09-28T00:00:00.000Z', blockingIds: [], blockingCount: null });
+        await appendReviewRound(root, changeId, { at: '2026-09-28T01:00:00.000Z', blockingIds: [], blockingCount: null });
+
+        const progress = reviewProgress([{ at: '', blockingIds: [], blockingCount: null }, { at: '', blockingIds: [], blockingCount: null }]);
+        expect(progress.unmeasurable).toBe(true);
+        expect(progress.escalating).toBe(true);
+
+        const upstream = await readUpstreamSummary(root, changeId);
+        expect(upstream.reviewEscalation?.unmeasurable).toBe(true);
+        expect(suggestCandidateAction('review', upstream)?.reason).toBe('escalate_review_without_progress');
     });
 });

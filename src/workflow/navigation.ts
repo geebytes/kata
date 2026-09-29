@@ -45,7 +45,7 @@ export type UpstreamSummary = {
    * The count and the ids come from the recorded rounds (`review-rounds.jsonl`), never from prose: an escalation that
    * cannot say what it counted is a sentence, not a state.
    */
-  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[] };
+  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[]; unmeasurable?: boolean };
   /** Why the recorded review could not be read, when it could not be. Absent when it could. */
   reviewRecordUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
@@ -91,6 +91,7 @@ export const nextActionReasons = [
   'continue_implementation',
   'design_intake_task',
   'escalate_review_without_progress',
+  'unreadable_review_record',
   'git_flow_confirmation_required',
   'inspect_task',
   'invalid_review_approval',
@@ -247,7 +248,14 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
     // the trailing run that changed nothing is what stops the next one from being dispatched.
     ...(reviewProgressOfChange.escalating
-        ? { reviewEscalation: { rounds: reviewProgressOfChange.rounds, noProgressRounds: reviewProgressOfChange.noProgressRounds, blockingIds: reviewProgressOfChange.blockingIds } }
+        ? {
+            reviewEscalation: {
+                rounds: reviewProgressOfChange.rounds,
+                noProgressRounds: reviewProgressOfChange.noProgressRounds,
+                blockingIds: reviewProgressOfChange.blockingIds,
+                ...(reviewProgressOfChange.unmeasurable ? { unmeasurable: true } : {}),
+            },
+        }
         : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
@@ -428,6 +436,18 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 1020 + upstream.failedVerifyAcceptance,
     };
   }
+  // **A record nobody can read is not a record that found nothing.** This used to be *reported* on the summary
+  // (`reviewRecordUnreadable`) and read by nobody, while the problems list fell back to empty — so a change whose review
+  // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a
+  // refusal, and the step it refuses towards is a re-read of the review, not a judgement of the change.
+  if (phase === 'review' && upstream.reviewRecordUnreadable) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'unreadable_review_record',
+      priority: 1150,
+    };
+  }
   // **The terminal state, and it comes first.** A loop that has stopped making progress is not sent back to build for
   // another round: it stops, names what is still open, and waits for a person. Ordering matters — the branches below
   // would otherwise re-dispatch the repair this one exists to refuse.
@@ -445,7 +465,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const hardestSeverity = blockingSeverities[0];
-  if (phase === 'review' && hardestSeverity !== undefined && upstream.blockingFindings > 0) {
+  if (phase === 'review' && upstream.blockingFindings > 0) {
     return {
       nextSkill: '/kata-build',
       role: 'implementer',
@@ -611,6 +631,8 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   satisfy_ledger_deficits: null,
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
+  // Also a decision about the change rather than about which platform runs: the record has to be read again.
+  unreadable_review_record: null,
   review_fresh_implementation: 'review_gate',
   judge_reviewed_change: 'judge_gate',
   archive_judged_change: 'archive_gate',

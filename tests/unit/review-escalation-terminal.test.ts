@@ -92,10 +92,17 @@ describe('the review loop has a terminal state', () => {
         // The unmeasured round is reported, not silently dropped, and it is never read as a reduction to nothing.
         expect(progress.unmeasuredRounds).toBe(1);
         expect(progress.blockingIds).toEqual([]);
+        // **A history nobody can measure is not a healthy loop.** With every round unmeasurable, `noProgressRounds` is 0,
+        // which is the same reading as a change whose first round went perfectly — so the state is named, and it escalates:
+        // the alternative is to keep dispatching repairs on the strength of a record no reader can judge.
         const onlyUnmeasured = reviewProgress([round(null), round(null), round(null), round(null)]);
-        expect(onlyUnmeasured.escalating).toBe(false);
+        expect(onlyUnmeasured.unmeasurable).toBe(true);
+        expect(onlyUnmeasured.escalating).toBe(true);
         expect(onlyUnmeasured.noProgressRounds).toBe(0);
         expect(onlyUnmeasured.unmeasuredRounds).toBe(4);
+        // And a history with nothing recorded at all is not that case: there is no loop yet.
+        expect(reviewProgress([]).unmeasurable).toBe(false);
+        expect(reviewProgress([]).escalating).toBe(false);
     });
 
     it('round-trips the rounds through the task directory', async () => {

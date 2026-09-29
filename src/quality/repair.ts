@@ -169,6 +169,15 @@ export interface ReviewProgress {
     blockingIds: string[];
     /** Rounds that recorded no count, reported rather than dropped: an unmeasured round is not an improvement. */
     unmeasuredRounds: number;
+    /**
+     * True when the history exists but **nothing** in it could be measured.
+     *
+     * A loop that cannot be judged must not read as a loop that is fine: with every line unmeasurable, `noProgressRounds`
+     * is 0, which is indistinguishable from a change whose first round went perfectly. The state is named so the escalation
+     * can say which of the two it is, and it escalates, because the alternative is to keep dispatching repairs on the
+     * strength of a history nobody can read.
+     */
+    unmeasurable: boolean;
 }
 
 export function reviewRoundsPath(root: string, taskId: string): string {
@@ -206,12 +215,15 @@ export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
             noProgressRounds += 1;
         }
     }
+    const measurable = rounds.length - unmeasuredRounds;
+    const unmeasurable = rounds.length > 0 && measurable === 0;
     return {
         rounds: rounds.length,
         noProgressRounds,
-        escalating: noProgressRounds >= NO_PROGRESS_ROUNDS,
+        escalating: noProgressRounds >= NO_PROGRESS_ROUNDS || unmeasurable,
         blockingIds: newestMeasuredIds,
         unmeasuredRounds,
+        unmeasurable,
     };
 }
 

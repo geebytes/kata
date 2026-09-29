@@ -1,10 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
-import { openLedgerProblems } from '../store/verdict.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
-import { isMergeBlocking, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
+import { mergeBlockingProblems, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
 
 /**
  * The recorded review artefact: status, revision binding, the approval's evidence summary and the findings. It lives
@@ -47,7 +46,7 @@ export async function readReviewMode(root: string, taskId: string): Promise<stri
 export type ReviewRecordRead =
     | {
         ok: true;
-        findings: ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string }>;
+        findings: ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>;
         /**
          * Whether the record describes the change as it stands.
          *
@@ -75,11 +74,23 @@ export async function readReviewRecord(root: string, taskId: string): Promise<Re
     if (record.findings !== undefined && !Array.isArray(record.findings)) {
         return { ok: false, why: 'the recorded review carries a `findings` field that is not a list' };
     }
-    const identity = await currentRevisionIdentity(root, taskId);
+    // **Inside the guard, because a gate input must not throw.** `currentRevisionIdentity` rethrows anything that is not
+    // ENOENT, so a `current-revision.json` that is unreadable or is not JSON made this reader throw — and with it the
+    // gate, the approval and the repair entry. The revision read is part of reading the record, so it belongs in the same
+    // guard as the record read.
+    let bound = false;
+    try {
+        bound = bindsToRevision(record as never, await currentRevisionIdentity(root, taskId));
+    } catch (error) {
+        return {
+            ok: false,
+            why: `the revision this change is bound to cannot be read, so nothing can be said about which content the review is about (${(error as Error).message})`,
+        };
+    }
     return {
         ok: true,
-        findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string }>,
-        boundToCurrentRevision: bindsToRevision(record as never, identity),
+        findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>,
+        boundToCurrentRevision: bound,
         record: record as Record<string, unknown>,
     };
 }
@@ -102,6 +113,14 @@ export type BlockingProblemsRead =
         openProblems: MergeBlockingProblem[];
         /** The subset at this mode's bar: what a *decision* refuses on. */
         problems: MergeBlockingProblem[];
+        /** Whether a record exists at all. A missing record and an unreadable one need different repairs. */
+        exists: boolean;
+        /** Whether the record describes the content in hand: a consumer that acts on the record needs this. */
+        boundToCurrentRevision: boolean;
+        /** The record's own findings, already filtered by the binding above. */
+        findings: ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>;
+        /** The parsed record, for the fields this reader does not name. */
+        record: Record<string, unknown>;
     }
     | { ok: false; why: string };
 
@@ -109,10 +128,22 @@ export async function readBlockingProblems(root: string, taskId: string): Promis
     const mode = await readReviewMode(root, taskId);
     const record = await readReviewRecord(root, taskId);
     if (!record.ok) return { ok: false, why: record.why };
+    // **Imported here rather than at the top, deliberately.** `store/verdict` reaches `store/ledger`, which imports
+    // `core/state`, which imports the distill gate — so a static edge from this module to the store closes a cycle that
+    // runs back through the gate that calls it. `openLedgerProblems` used to live behind exactly this dynamic import for
+    // exactly this reason; the edge is the same, the home is better.
+    const { openLedgerProblems } = await import('../store/verdict.js');
     const claims = await openLedgerProblems(root, taskId);
-    // One read, two readings: the report counts every open problem, the decision refuses on the ones this mode's ladder
-    // names. A record that does not describe the current content contributes no findings — those were about other content.
+    // A record that does not describe the current content contributes no findings — those were about other content.
     const findings = record.boundToCurrentRevision ? record.findings : [];
-    const openProblems = openProblemsOf({ findings, claims });
-    return { ok: true, mode, openProblems, problems: openProblems.filter((problem) => isMergeBlocking(mode, problem.severity)) };
+    return {
+        ok: true,
+        mode,
+        openProblems: openProblemsOf({ findings, claims }),
+        problems: mergeBlockingProblems({ mode, findings, claims }),
+        exists: Object.keys(record.record).length > 0,
+        boundToCurrentRevision: record.boundToCurrentRevision,
+        findings,
+        record: record.record,
+    };
 }

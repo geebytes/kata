@@ -28,6 +28,12 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: '代码在上次证据封存后发生变化；无需重做已完成实现，先执行 /kata-build <task> --seal 重新运行检查并封存新证据。',
         en: 'The code changed after the last seal. Nothing needs re-implementing: run /kata-build <task> --seal to re-run the checks and seal fresh evidence.',
     },
+    unreadable_review_record: {
+        // Named rather than folded into "invalid approval": the record may be perfectly approved and simply unreadable,
+        // and the repair is to re-read or re-record it, not to re-review a change nobody has looked at.
+        zh: 'review.json 读不出来（不是 schema 的形态，或它绑定的 revision 读不出来），因此没有任何东西可以据此判定。请重新执行 /kata-review 读取或重建这条记录。',
+        en: 'The review record cannot be read — it is not the shape its schema declares, or the revision it binds to cannot be read — so nothing can be decided from it. Re-run /kata-review to read or rebuild the record.',
+    },
     escalate_review_without_progress: {
         // **The terminal state has to have a voice of its own.** Without this entry the lookup fell through to the
         // generic line, "Recommended: run /kata-review as reviewer" — advice that contradicts the state it is

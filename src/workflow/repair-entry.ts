@@ -111,34 +111,38 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
 /** review: blocking findings (or strict-mode major ones), or a superseded sealed revision. */
 export async function authorizeReviewRepair(root: string, taskId: string): Promise<RepairAuthorization> {
     const entryPhase: RepairEntryPhase = 'review';
-    const review = await readValidatedOptional<{
-        revisionId?: string;
-        findings?: Array<{ id?: string; acceptanceId?: string; severity?: string; message?: string; path?: string }>;
-    }>('review', reviewPath(root, taskId));
-    if (!review) {
+    // **The record is read once, by the reader, and this entry adds no read of its own.** It used to open `review.json`
+    // with a validating read *before* asking the reader, so a record that did not match its schema threw out of the repair
+    // entry while the gate refused the same record — one malformed file, two behaviours, and the crash was the one an
+    // operator would see. The reader's answer carries everything this entry needs: the mode, the problems, whether the
+    // record describes the current content, and the findings themselves.
+    const blockingRead = await readBlockingProblems(root, taskId);
+    if (!blockingRead.ok) {
+        return denial(entryPhase, `Build cannot run from review because the recorded review cannot be read as one: ${blockingRead.why}`);
+    }
+    const reviewMode = blockingRead.mode;
+    const findings = [...blockingRead.findings];
+    const blockingProblems = blockingRead.problems;
+    // **After the reader, and guarded.** The baseline revision is named in the repair record, so it is read only once the
+    // entry has decided to authorise — and a revision file that cannot be read refuses here rather than throwing out of a
+    // gate. The reader above has already established that the review itself is readable, which is what a corrupt
+    // revision file would otherwise have prevented anyone from discovering.
+    let revision = null;
+    try {
+        revision = await readCurrentTaskRevision(root, taskId);
+    } catch (error) {
+        return denial(entryPhase, `Build cannot run from review because the sealed revision cannot be read (${(error as Error).message}).`);
+    }
+    if (!blockingRead.exists) {
         return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
     }
-    const revision = await readCurrentTaskRevision(root, taskId);
-    const identity = await currentRevisionIdentity(root, taskId);
-    if (!bindsToRevision(review, identity)) {
+    if (!blockingRead.boundToCurrentRevision) {
         return denial(
             entryPhase,
             'Build cannot run from review because its findings are not bound to the current sealed revision (or to the same '
             + 'content under a new revision). Re-run /kata-review.',
         );
     }
-
-    // **One ladder, asked over both sources.** This entry used to filter `review.json`'s findings with a bare
-    // `severity === 'blocking'` plus an `isStrict` literal — two copies of the ladder that navigation had already
-    // stopped reading, because that record's findings field has no producer on the current route. The ledger's open
-    // problems are where a problem is recorded now, so both are asked once here.
-    const blockingRead = await readBlockingProblems(root, taskId);
-    if (!blockingRead.ok) {
-        return denial(entryPhase, `Build cannot run from review because the recorded review cannot be read as one: ${blockingRead.why}`);
-    }
-    const reviewMode = blockingRead.mode;
-    const findings = review.findings ?? [];
-    const blockingProblems = blockingRead.problems;
     const severityAuthorized = blockingProblems.length > 0;
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates

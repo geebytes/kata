@@ -23,7 +23,12 @@
  * readers, the class this module exists to remove.
  */
 export function isOpenFinding(finding: { disposition?: string }): boolean {
-    return finding.disposition === undefined || finding.disposition === 'open';
+    // **Only `fixed` closes a finding.** `deferred`, `accepted` and `routed` all mean "this problem is still here": it
+    // was not repaired in this change. The first version of this predicate closed all three, which made the gate *weaker*
+    // than the code it replaced and than `change-record.ts`, whose `openFindings` filter is `disposition !== 'fixed'` and
+    // whose test says so in as many words ("a routed one still is — it left this change, it was not repaired here"). One
+    // lifecycle field, two readers, two opposite readings is the class this work exists to remove.
+    return finding.disposition !== 'fixed';
 }
 
 export type MergeBlockingProblem = {
