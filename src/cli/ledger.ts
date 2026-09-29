@@ -707,12 +707,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');
         const assuranceFlag = argValue(argv, '--assurance');
+        // **The party asking is passed, so the independence check can fire.** It could not before: `decide` takes an
+        // `actor` and no caller supplied one, so `same_actor` was unreachable from every command while the operations guide
+        // described it as live. Measured by an independent review. Same resolution as a reading's producer, so an operator
+        // who names themselves once is named consistently.
+        const decidingActor = argValue(argv, '--actor') ?? process.env.KATA_ACTOR?.trim();
         const verdict = await ledgerVerdict({
             root: options.root,
             changeId,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
             ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
             ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as AssuranceLevel }),
+            ...(decidingActor === undefined || decidingActor === '' ? {} : { actor: decidingActor }),
         });
         if (verdict.kind !== 'decided') {
             // Neither state may look like a pass: a ledger nobody wrote and a ledger that cannot be read are both refusals,

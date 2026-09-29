@@ -207,6 +207,28 @@ describe('the ledger verbs', () => {
         expect(process.exitCode).toBe(1);
     });
 
+    it('refuses a decision asked for by a party that produced a reading, which the verb now passes', async () => {
+        // **The check was unreachable from every command.** `decide` takes an `actor`, and no caller supplied one, so
+        // `same_actor` could never fire while the operations guide described it as live — measured by an independent review.
+        // The verb resolves it the same way a reading's producer is resolved, so the two name one identity.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify', '--actor', 'the-author']);
+
+        const asAuthor = await ledger(['decide', '--actor', 'the-author']);
+        expect((asAuthor.reasons as Array<{ code: string }>).map((reason) => reason.code)).toContain('same_actor');
+        // The remedy has to be true and executable: it names how many readings that party produced, not "every verdict".
+        const deficit = (asAuthor.deficits as Array<{ claimId: string; need: string }>).find((entry) => entry.claimId === 'quorum:same_actor');
+        expect(deficit?.need).toContain('the-author produced 1 of this');
+        expect(deficit?.need).toContain('kata-cli ledger decide');
+
+        // A decision taken by the operator, who produced nothing, is not refused for independence.
+        const asOperator = await ledger(['decide']);
+        expect((asOperator.reasons as Array<{ code: string }>).map((reason) => reason.code)).not.toContain('same_actor');
+    });
+
     it('blocks on an open counterexample and unblocks when the counterexample no longer reproduces', async () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);

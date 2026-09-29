@@ -230,8 +230,10 @@ for (const verdict of incoming) {
 
 ### 12.3 审查者**未能**证伪的
 
-- **区域规则两个方向**、`currentRevision: null` 与修复前一致、`{currentRevision}` 缺省时投影不丢项（含空 `evidenceId`）——"投影丢项"造不出来；
-- **fallback 可达且报 stale**：重新封存后、任何人重读前，投影回到最新的旧读数，`decide` 报 `evidence_stale_subject`（不是 `evidence_refuted`）；
+- **区域规则两个方向**、`currentRevision: null` 与修复前一致、`{currentRevision}` 缺省时投影不丢项（含空 `evidenceId`）。
+  **更正（第三轮推翻）**：这组负结果只在"全部过期"或"全部当前"的文档上测过，因此"投影丢项造不出来"是**错的**——见 §13.1：只要有一个条目被重读，其他只读过旧 revision 的条目就整条消失。**一个只在两种极端状态下验证过的全称否证，等于没有验证。**
+- **fallback 可达且报 stale**：重新封存后、任何人重读前，投影回到最新的旧读数。
+  **更正（第三轮推翻）**：当时测的是最新旧读数为 `inconclusive` 的情形；若最新的旧读数是 **`refuted`**，`decide` 报的是 `evidence_refuted`（硬失败、且不产生任何 deficit），因为 `evaluateClaim` 曾把 refuted 分支放在 staleness 之前。见 §13.3。
 - **缺 `subjectRevision` 的文档**在盘上被 reader 判为 malformed（`ledgerVerdict` 返回 `unreadable`），所以"缺字段洗白"到不了决策；
 - **消费者**：`src/` 中 `ledger.readings` 只有 quorum 一处、`projectVerdicts(` 只有一个调用点；其余取投影者逐个核对无错配；`--adapter file` 会拒绝 `subjectRevision` 不符的转发读数；
 - **真实数据**：7 份现存 `verdicts.json` 的投影逐字段等于原条目、键唯一、无一份改变答案；
@@ -240,3 +242,34 @@ for (const verdict of incoming) {
 ### 12.4 修复后的验证
 
 193 文件 / **1223 用例**通过，`tsc --noEmit` 干净；本轮三条新变异各自红在预期用例上（quorum 退回全量读数 → F-1 决策面用例红；去掉 `allReadings` → F-2 用例红；去掉排名默认值与 `verifier` 链 → F-3 两条用例红）。
+
+## 13. 第三次独立审查（`revision-3a5ea845b61ad902`）与修复批
+
+第三轮针对**第二轮修复**，判 `fail`，一条 blocking——而它同样是**修复自己引入的**。
+
+### 13.1 blocking：区域规则被当成"文档级"问题，于是重读一个条目会隐藏另一个条目（F-1）
+
+- **测量**：两个条目（E1 未被改动、E2 的文件被改了），都曾在 rev A 上判 `supported`；重新封存为 rev B 后**只重读 E1**。
+  - 修复前的投影：`[E1@revB]`——**E2 整条消失**（`readingsOnDisk` 4 条，投影只剩 1 条）；
+  - 后果一：`decide` 对 E2 报 `evidence_missing`（"给它一个判决"）而不是 `evidence_stale_subject`（"重读它"），并且 `decide` 里专门为防这种误读而写的 `onlyStale` 分支被绕过；
+  - 后果二（更要紧）：`replay` 的记录**由投影构建**（`store/replay.ts` → `byId`），于是 release gate 看到的是 `{replayed: 1, agrees: 1, disagreements: []}` → **gate 通过**；把区域改回**文档级**的变异让 gate 变红（`disagreements: ["E2: recorded supported, replayed refuted"]`, rate 0.5）。也就是说：**这一轮修复削弱了一道发布门**——"没有判决被推翻"之所以通过，是因为**被推翻的那条被丢掉了**。
+- **修法**：区域问题**按条目**问（先按 `evidenceId` 分组，再在该条目的读数上取区域；条目没有当前 revision 读数时用它自己的读数，于是 `decide` 能报 `stale`）。比较器因此不再需要区域判据（池已经在一侧之内），死分支消失。
+
+### 13.2 同一轮的其余发现
+
+| id | 级别 | 事实 | 修法 |
+|---|---|---|---|
+| F-2 | major | 与 F-1 同源：投影丢项还改变了 `cli/ledger.ts`（`verdict: null`）、`store/ledger.ts` 的 `automaticReopens`／`reReviewClaims` 计数，且**没有任何用例覆盖混合文档**（AC-3 的用例只测单条目，那里"逐条目"与"文档级"给出相同答案） | 见 13.1；新增**混合文档**用例（两个条目、只重读一个 ⇒ 两个条目都必须在投影里） |
+| F-3 | major | 第二轮 §12.3 写的两条负结果是**错的**（见上面的更正） | 文档就地更正；并把 `decide` 的 staleness 判据提到 refuted 之前（见 13.3） |
+| F-4 | major | `same_actor` 的 deficit 文本说"本账本每一条判决都由 X 产出"（三条 actor 时是假话），且它开的补救"再找一个人读"**清不掉**这个拒绝；更根本的是：**没有任何命令把 actor 传给 `decide`**，所以该检查在生产里不可达，而 `docs/operations.md` 把它描述为生效 | deficit 改为真话（"X 产出了 N/M 条读数"）并给出可执行的两条出路；`cli/ledger.ts` 的 `decide` 现在传 `--actor`／`KATA_ACTOR`，用例驱动**动词**（把这一步改回 `undefined` ⇒ 用例红） |
+| F-5 | nit | 注释宣称投影与 quorum"永不就哪些读数在场产生分歧"（而投影当时会回退到全部读数）；且 `supersedes` 的区域分支在按条目取池之后不可达；另有一条用例断言 schema `enum` 禁止的 verdict 值 | 注释改为"同一个规则、两个不同的问题"；死分支删除；那条用例保留但已在注释里说明它是**防御性守卫**（这样的文档会被 reader 判 malformed） |
+
+### 13.3 修复批里的一条 `decide` 顺序修正（F-3 的根因）
+
+`evaluateClaim` 原先在 staleness 之前判 refuted／inconclusive，于是"唯一读数是对**已死内容**的证伪"这一状态报出 `evidence_refuted`——**硬失败且不产生任何 deficit**（于是没有可执行下一步），而真相是该条目**过期**、补救是重读。现在**先问"这条读数是关于哪个 revision 的"**，再问它说了什么：关于另一个 revision 的读数**无论其值为何**都不是对当前内容的陈述。用例：`refuted@rev:dead` 单独存在 ⇒ 报 `evidence_stale_subject`、不报 `evidence_refuted`、也不报 `evidence_missing`。
+
+**至此第三次同族出现**：两次修复都引入了 blocking 缺陷，两次都是"把一条规则应用到比它该管的范围更大或更小的对象上"（第一轮跨 revision 用 refuted 优先；第二轮把逐条目的区域当成文档级）。第三轮的教训写在这里：**一条新判据的"作用对象"本身就是判据的一部分**，必须用覆盖边界的用例钉住（混合文档、过期+当前共存），而不是用两个极端状态。
+
+### 13.4 修复后的验证
+
+193 文件 / **1226 用例**通过，`tsc --noEmit` 干净；本轮四条新变异各自红在预期用例上（区域改回文档级 ⇒ 混合文档用例红；`decide` 顺序改回 ⇒ 过期证伪用例红；CLI 停止传 actor ⇒ 动词用例红；比较器去掉 `verifier` 链与排名默认值 ⇒ 两条 AC-3 用例红）。

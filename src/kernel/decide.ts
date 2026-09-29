@@ -179,17 +179,10 @@ export function evaluateClaim(
             problems.add('missing');
             continue;
         }
-        if (verdict.verdict === 'refuted') {
-            reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
-            problems.add('refuted');
-            continue;
-        }
-        if (verdict.verdict === 'inconclusive') {
-            reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
-            problems.add('inconclusive');
-            continue;
-        }
-        // A verdict about another revision carries over only when the delta says the claim's dependencies are identical.
+        // **Which revision the reading is about comes first, before what it says.** The refuted branch used to run before
+        // this one, so an item whose only reading refuted content that no longer exists produced `evidence_refuted` — a hard
+        // fail that names no remedy — instead of `evidence_stale_subject`, whose remedy is to re-read. A verdict about
+        // another revision is not a statement about this one, whatever its value; measured by an independent review.
         if (verdict.subjectRevision !== input.subjectRevision && !input.reusedEvidence.has(item.id)) {
             reasons.push(reason(
                 'evidence_stale_subject',
@@ -198,6 +191,16 @@ export function evaluateClaim(
             ));
             problems.add('stale');
             staleEvidenceIds.push(item.id);
+            continue;
+        }
+        if (verdict.verdict === 'refuted') {
+            reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('refuted');
+            continue;
+        }
+        if (verdict.verdict === 'inconclusive') {
+            reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('inconclusive');
             continue;
         }
         supportedStrengths.push(strengthOf(item.type));
@@ -356,9 +359,11 @@ export function decide(input: DecideInput): Decision {
             ));
             deficits.push({
                 claimId: 'quorum:same_actor',
-                need: `every verdict in this ledger was produced by ${input.actor}, and that is also who asked for the decision: `
-                    + 'a second actor has to read the evidence (`kata-cli ledger evidence verify --actor <name>`), because an '
-                    + 'approval cannot be independent of its own claims',
+                need: `${input.actor} produced ${pool.filter((verdict) => verdict.producer?.actor === input.actor).length} of this `
+                    + `ledger's ${pool.length} reading(s) and is also who asked for the decision: an approval has to come from `
+                    + 'someone who took no part in the evidence, so have another party read it or decide it '
+                    + '(`kata-cli ledger evidence verify --actor <name>` for the reading, `kata-cli ledger decide` without '
+                    + '`--actor` for a decision taken by the operator rather than by a participant)',
             });
         }
     }

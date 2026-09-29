@@ -52,6 +52,26 @@ describe('a reading about another revision does not decide this one', () => {
         expect(projected.map((entry) => entry.verdict)).toEqual(['refuted']);
     });
 
+    it('decides each item from its own readings, so one re-read item does not hide another', () => {
+        // **Measured by an independent review, and a defect this repair introduced.** The region was applied to the whole
+        // document: as soon as one item had been re-read against the current revision, every item read only against an older
+        // one vanished from the projection. What that broke was not cosmetic — `replay` builds its record from this
+        // projection, so a contradicted verdict stopped being contradicted and the release gate passed; and `decide`
+        // reported `evidence_missing` ("give this evidence a verdict") where the truth was `evidence_stale_subject`
+        // ("re-read it").
+        const projected = projectVerdicts(
+            [
+                reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-28T00:00:00.000Z', subjectRevision: OLD }),
+                reading({ evidenceId: 'E2', verdict: 'supported', at: '2026-09-28T00:00:00.000Z', subjectRevision: OLD }),
+                reading({ evidenceId: 'E1', verdict: 'supported', at: '2026-09-29T12:00:00.000Z', subjectRevision: CURRENT }),
+            ],
+            { currentRevision: CURRENT },
+        );
+        // Both items answer: E1 from its current reading, E2 from the newest reading it has — which is what lets the
+        // decision name E2 as stale rather than as unread.
+        expect(projected.map((entry) => `${entry.evidenceId}@${entry.subjectRevision}`)).toEqual([`E1@${CURRENT}`, `E2@${OLD}`]);
+    });
+
     it('falls back to the newest reading when nothing was read against this revision, so the item is reported stale', () => {
         // The state a re-seal creates before anyone re-reads: no reading is about the new revision, and the kernel's answer
         // is staleness for the item — not silence, and not a stale reading pretending to be current.

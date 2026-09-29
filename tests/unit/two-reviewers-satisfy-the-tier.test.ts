@@ -76,6 +76,21 @@ describe('two independent readings satisfy the tier that asks for them', () => {
         expect(await reasonCodes()).not.toContain('quorum_missing');
     });
 
+    it('reports a refutation of a dead revision as stale rather than as a failure of this one', async () => {
+        // The other half of the same rule, and pre-existing in `decide`: the refuted branch ran before the staleness branch,
+        // so an item whose only reading refuted content that no longer exists produced `evidence_refuted` — a hard fail with
+        // no deficit, so no remedy — instead of naming the re-read. Measured by an independent review.
+        await recordVerdicts(root, changeId, [
+            { ...reading('run-1', 'reviewer-a', { verdict: 'refuted', at: '2026-09-28T00:00:00.000Z' }), subjectRevision: 'rev:dead' },
+        ]);
+        const codes = await reasonCodes();
+        expect(codes).toContain('evidence_stale_subject');
+        expect(codes).not.toContain('evidence_refuted');
+        // And not "never read": the item has a reading, it is simply not about this content — which is a different remedy,
+        // and the projection's per-item region is what keeps it visible to the decision at all.
+        expect(codes).not.toContain('evidence_missing');
+    });
+
     it('does not count a run that only read the previous revision, so the tier needs two runs on THIS content', async () => {
         // **Measured by an independent review on a real flow.** Re-sealing is what makes old readings stale, and the ledger
         // says so in its own reasons — yet the quorum was still counting the old run, so the two-reviewer requirement could

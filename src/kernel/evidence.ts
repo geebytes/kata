@@ -134,9 +134,10 @@ export type ProjectionOptions = {
  *
  * **The rule, in the order it is applied**, so that a reader can predict the answer without reading the code:
  *
- *   1. **A reading about the current revision outranks a reading about another one.** A refutation of content that no
- *      longer exists cannot veto the content that does; and a stale reading can still be reported as stale when it is the
- *      only thing there is.
+ *   1. **A reading about the current revision outranks a reading about another one, item by item.** A refutation of
+ *      content that no longer exists cannot veto the content that does; an item with no current reading answers from the
+ *      readings it has (which is how the decision reports it stale rather than unread); and one item's re-read never
+ *      removes another item from this view.
  *   2. Among readings on the same side of that line, **a refutation wins.** A reproducible counterexample is not a matter
  *      of opinion to be outvoted — the kernel refuses to let a quorum cancel one — and the alternative would be that
  *      recording a second, more optimistic reading launders a refuted item into a supported one.
@@ -151,19 +152,26 @@ export type ProjectionOptions = {
  */
 export function projectVerdicts(readings: readonly EvidenceVerdict[], options: ProjectionOptions = {}): EvidenceVerdict[] {
     const currentRevision = options.currentRevision ?? null;
-    // **The same region rule the quorum gets, from the same function.** When nothing was read against the current revision
-    // the whole list is considered, which is how an item is reported stale rather than silently dropped.
-    const region = readingsForRevision(readings, currentRevision);
-    const pool = region.length > 0 ? region : readings;
-    const chosen = new Map<string, EvidenceVerdict>();
-    for (const reading of pool.entries()) {
-        const held = chosen.get(reading[1].evidenceId);
-        if (held === undefined || supersedes(reading[1], held, currentRevision)) chosen.set(reading[1].evidenceId, reading[1]);
+    // **The region question is asked of one item at a time.** Asking it of the whole document meant that as soon as one item
+    // had been re-read, every item read only against an older revision disappeared from this view — which emptied `replay`'s
+    // record (so a contradicted verdict stopped being contradicted and the release gate passed) and made the decision report
+    // `evidence_missing` for an item that is merely stale. Measured by an independent review, and the defect the previous
+    // version of this function introduced.
+    const byItem = new Map<string, EvidenceVerdict[]>();
+    for (const reading of readings) byItem.set(reading.evidenceId, [...(byItem.get(reading.evidenceId) ?? []), reading]);
+    const answers: EvidenceVerdict[] = [];
+    for (const itemReadings of byItem.values()) {
+        // An item answers from the readings taken against the current revision when it has any, and from its own readings
+        // otherwise — which is what keeps it visible to the decision, so the decision can say "stale, re-read it" rather
+        // than "no verdict yet".
+        const region = readingsForRevision(itemReadings, currentRevision);
+        const pool = region.length > 0 ? region : itemReadings;
+        answers.push(pool.reduce((best, reading) => (supersedes(reading, best) ? reading : best)));
     }
     // **Sorted by item, so the view is deterministic in order as well as in content.** First-seen order would make the
     // list's own order depend on how the document happened to be written, and a reader that shows it would show a different
     // document for the same readings. Measured by a case that reverses the input: the answers agreed, the order did not.
-    return [...chosen.values()].sort((left, right) => (left.evidenceId < right.evidenceId ? -1 : left.evidenceId > right.evidenceId ? 1 : 0));
+    return answers.sort((left, right) => (left.evidenceId < right.evidenceId ? -1 : left.evidenceId > right.evidenceId ? 1 : 0));
 }
 
 /**
@@ -175,21 +183,23 @@ export function projectVerdicts(readings: readonly EvidenceVerdict[], options: P
  * reading the ledger itself called `stale` count as one of the two reviewers the `security` tier asks for, so the tier
  * passed on a reading nothing else in the kernel would decide on.
  *
- * A ledger with no frozen subject has no region, and then every reading is a candidate — the same answer the projection
- * gives, so the two never disagree about which readings are in play.
+ * **The two consumers ask it different questions, and both are the rule.** The quorum asks it of the whole document — how
+ * many independent runs read *this revision* — and the projection asks it of one item's readings, because an item with no
+ * current reading still has an answer to give (its newest, so the decision reports it stale). Asking the second question of
+ * the whole document is the defect the projection's own case pins: one item's re-read hid another item entirely.
  */
 export function readingsForRevision(readings: readonly EvidenceVerdict[], currentRevision: string | null): EvidenceVerdict[] {
     if (currentRevision === null) return [...readings];
     return readings.filter((reading) => reading.subjectRevision === currentRevision);
 }
 
-/** Whether `candidate` is the reading this item should be judged on, given `held` already holds one. */
-function supersedes(candidate: EvidenceVerdict, held: EvidenceVerdict, currentRevision: string | null): boolean {
-    if (currentRevision !== null) {
-        const candidateIsCurrent = candidate.subjectRevision === currentRevision;
-        const heldIsCurrent = held.subjectRevision === currentRevision;
-        if (candidateIsCurrent !== heldIsCurrent) return candidateIsCurrent;
-    }
+/**
+ * Whether `candidate` is the reading this item should be judged on, given `held` already holds one.
+ *
+ * Both are readings of one item, and both are already inside that item's region — the pool decided which readings are in
+ * play — so this comparison never has to weigh a reading against one the region excluded.
+ */
+function supersedes(candidate: EvidenceVerdict, held: EvidenceVerdict): boolean {
     const candidateRefuted = candidate.verdict === 'refuted';
     const heldRefuted = held.verdict === 'refuted';
     if (candidateRefuted !== heldRefuted) return candidateRefuted;
@@ -203,9 +213,6 @@ function supersedes(candidate: EvidenceVerdict, held: EvidenceVerdict, currentRe
     const heldRank = VERDICT_RANK[held.verdict] ?? 0;
     if (candidateRank !== heldRank) return candidateRank > heldRank;
     if ((candidate.observed ?? '') !== (held.observed ?? '')) return (candidate.observed ?? '') > (held.observed ?? '');
-    // Two more fields a reader can see, so that only readings that agree on everything this rule reads are left to the
-    // document's order — measured by an independent review, which found 32 of 4000 random documents reporting a different
-    // *instance* per order (the verdict was stable) because these two were not in the chain.
     if (candidate.verifier !== held.verifier) return candidate.verifier > held.verifier;
     return candidate.evidenceType > held.evidenceType;
 }
