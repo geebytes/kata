@@ -205,3 +205,38 @@ for (const verdict of incoming) {
 全套 193 文件 / **1217 用例**通过，`tsc --noEmit` 干净；三条新变异各自红在预期用例上（忽略 revision 区域 → R-1 用例红；忽略 refuted → 4 条红含 R-6 的用例；读路径过滤读数 → AC-6 用例红）。
 
 **一条环境事实**：`kata-cli` 运行的是**主检出的 `dist/`**（本次未重建），所以 `ledger status` 的新字段要等 `dist/` 重建后才由 CLI 显示；改动与用例都在源码里（用例直接驱动 `cli/ledger.ts` 的路径）。
+
+## 12. 第二次独立审查（`revision-c248ccacb97a453d`）与修复批
+
+第二轮独立审查针对**修复本身**，判 `fail`——一条 blocking 加三条 minor/nit。
+
+### 12.1 关键发现：区域规则只落在投影上，quorum 没有（F-1，blocking）
+
+- **测量（真实流程）**：`policy init → freeze(rev A) → claim/evidence → 两次 challenge → assurance → evidence verify --run-id run-1 --actor reviewer-1` → 改源码 → `freeze(rev B)` → `verify --run-id run-2 --actor reviewer-2`：
+  - reviewer-2 之前：`insufficient` + 5×`evidence_stale_subject` + `quorum_missing`（账本自己说没有任何读数是关于当前 revision 的）；
+  - reviewer-2 **只读了 rev B** 之后：**`pass`**——因为 reviewer-1 那条**账本自己判为 stale** 的读数仍被算作第二位审阅者；
+  - 把 store 换成改动前的形状（只有 rev B 的读数）⇒ 又回到 `quorum_missing`。
+- **同根第二面**：`refuted@revA` + `supported@revB` ⇒ 投影取 `supported@revB`（无 `evidence_refuted`），但 reasons 含 `quorum_disputed`——**投影与 quorum 对同一对读数给出相反结论**。
+- **修法**：把区域规则抽成**一个导出的导出函数** `readingsForRevision(readings, currentRevision)`（`src/kernel/evidence.ts`），投影与 quorum 都向它问同一个问题：**只让关于当前 revision 的读数参与**（投影在"没有任何当前 revision 读数"时回退到全局最新，以便 `decide` 报 `stale`）。语义因此确定为：**两审要求是"两个独立的 run 读过当前内容"**，而不是"曾经有人读过"。
+- **这是"一个事实、两个答案"的又一面**，且断言它必须落在**决策面**上：kernel 助手层的用例在 store 停止过滤时仍然全绿（我第一版就是这样写的，靠"改 store 让它红"的实测才发现），所以该断言在 `two-reviewers-satisfy-the-tier.test.ts` 里**驱动 `ledgerVerdict`**：把 quorum 改回 `ledger.readings` ⇒ 该用例红。
+
+### 12.2 同一轮的其他发现
+
+| id | 级别 | 事实（我已复跑/确认） | 修法 |
+|---|---|---|---|
+| F-2 | minor | `same_actor`（独立性检查）读的是**投影**，所以作者那条已被顶掉的读数不再被计——作者可以批准一个它自己参与过的决定 | `DecideInput` 增加 `allReadings`（缺省即投影，老调用者行为不变），caller 传 `ledger.readings`：**"谁参与过"是身份问题，"哪条读数还活着"是时效问题**。用例驱动 `ledgerVerdict({actor})`，删掉该字段 ⇒ 用例红 |
+| F-3 | nit | 全平局格仍由位置决定（`VERDICT_RANK[未知 verdict]` 为 `undefined`，两个方向都 false）；且 `verifier` 不在比较链里，随机文档中 32/4000 的**被报告对象**随顺序变化 | 排名查表补 `?? 0`；比较链延伸到 `verifier`、`evidenceType`，使"仅在读者可见字段上相同的两条"也确定 |
+| F-4 | nit | 文档计数措辞（忽略 `evidenceId` 键实际红 5 条而非 4 条；读路径变异还红 AC-5）与 `store/ledger.ts` 上一段仍称 `verdicts.json` 是"投影" | 计数按实测改正；注释改为当前形状（每 `(evidence, run)` 一条，读取时投影） |
+
+### 12.3 审查者**未能**证伪的
+
+- **区域规则两个方向**、`currentRevision: null` 与修复前一致、`{currentRevision}` 缺省时投影不丢项（含空 `evidenceId`）——"投影丢项"造不出来；
+- **fallback 可达且报 stale**：重新封存后、任何人重读前，投影回到最新的旧读数，`decide` 报 `evidence_stale_subject`（不是 `evidence_refuted`）；
+- **缺 `subjectRevision` 的文档**在盘上被 reader 判为 malformed（`ledgerVerdict` 返回 `unreadable`），所以"缺字段洗白"到不了决策；
+- **消费者**：`src/` 中 `ledger.readings` 只有 quorum 一处、`projectVerdicts(` 只有一个调用点；其余取投影者逐个核对无错配；`--adapter file` 会拒绝 `subjectRevision` 不符的转发读数；
+- **真实数据**：7 份现存 `verdicts.json` 的投影逐字段等于原条目、键唯一、无一份改变答案；
+- **本 change 未破坏全套**：193 文件 / 1219 用例通过，`tsc` 干净（审查者自己也跑了一遍）。
+
+### 12.4 修复后的验证
+
+193 文件 / **1223 用例**通过，`tsc --noEmit` 干净；本轮三条新变异各自红在预期用例上（quorum 退回全量读数 → F-1 决策面用例红；去掉 `allReadings` → F-2 用例红；去掉排名默认值与 `verifier` 链 → F-3 两条用例红）。

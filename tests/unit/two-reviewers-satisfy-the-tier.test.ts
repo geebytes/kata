@@ -35,6 +35,7 @@ beforeEach(async () => {
     if (!frozen.ok) throw new Error(frozen.error);
     await writeSubject(root, changeId, frozen.subject);
     subjectRevision = frozen.subject.revision;
+    frozenAt = frozen.subject.revision;
     await ensureAssurance(root, changeId, 'observed');
     await appendClaim(root, changeId, makeClaim({ id: 'C1', severity: 'major', riskClass: 'consistency', evidenceIds: ['E1'], dependsOn: ['path:src/kernel.ts'] }));
     await appendEvidence(root, changeId, makeEvidence({ id: 'E1', type: 'executable_falsifier', command: 'true' }));
@@ -46,6 +47,8 @@ afterEach(async () => {
 
 /** A reading of this ledger's own subject: the projection's revision region only applies to readings that name it. */
 let subjectRevision = '';
+/** The revision the fixture froze first, so a case that re-freezes can prove the subject actually moved. */
+let frozenAt = '';
 
 function reading(runId: string, actor: string, overrides: Partial<EvidenceVerdict> = {}): EvidenceVerdict {
     return {
@@ -56,8 +59,8 @@ function reading(runId: string, actor: string, overrides: Partial<EvidenceVerdic
     };
 }
 
-async function reasonCodes(): Promise<string[]> {
-    const verdict = await ledgerVerdict({ root, changeId, tier: 'security' });
+async function reasonCodes(actor?: string): Promise<string[]> {
+    const verdict = await ledgerVerdict({ root, changeId, tier: 'security', ...(actor === undefined ? {} : { actor }) });
     if (verdict.kind !== 'decided') throw new Error(`expected a decided ledger, got ${verdict.kind}${'detail' in verdict ? `: ${verdict.detail}` : ''}`);
     return verdict.decision.reasons.map((reason) => reason.code);
 }
@@ -70,6 +73,30 @@ describe('two independent readings satisfy the tier that asks for them', () => {
         expect(await reasonCodes()).toContain('quorum_missing');
 
         await recordVerdicts(root, changeId, [reading('run-2', 'reviewer-b')]);
+        expect(await reasonCodes()).not.toContain('quorum_missing');
+    });
+
+    it('does not count a run that only read the previous revision, so the tier needs two runs on THIS content', async () => {
+        // **Measured by an independent review on a real flow.** Re-sealing is what makes old readings stale, and the ledger
+        // says so in its own reasons — yet the quorum was still counting the old run, so the two-reviewer requirement could
+        // be satisfied by a reading nothing else in the kernel would decide on. The case drives `ledgerVerdict`, which is
+        // the surface that answers; a case that only exercised the kernel helper stayed green when the store stopped
+        // filtering, which is why this one goes through the real path.
+        await recordVerdicts(root, changeId, [reading('run-1', 'reviewer-a')]);
+        // The content moves, and the subject is frozen again: every reading so far is about a revision that no longer exists.
+        await writeFile(join(root, 'src', 'kernel.ts'), 'export const policy = 2;\n');
+        const refrozen = await freezeSubject({ root, paths: ['src/kernel.ts'] });
+        if (!refrozen.ok) throw new Error(refrozen.error);
+        await writeSubject(root, changeId, refrozen.subject);
+        subjectRevision = refrozen.subject.revision;
+        expect(refrozen.subject.revision).not.toBe(frozenAt);
+
+        // One run has read the new content; the other only read the old one, so the requirement is still unmet.
+        await recordVerdicts(root, changeId, [reading('run-2', 'reviewer-b')]);
+        expect(await reasonCodes()).toContain('quorum_missing');
+
+        // A third run reading the same new content is the second independent reviewer of *this* revision.
+        await recordVerdicts(root, changeId, [reading('run-3', 'reviewer-c')]);
         expect(await reasonCodes()).not.toContain('quorum_missing');
     });
 
@@ -98,6 +125,25 @@ describe('two independent readings satisfy the tier that asks for them', () => {
         // a supported item into a refuted one (or the reverse), which is what a projection that averaged would do.
         expect(after).not.toContain('evidence_refuted');
         expect(before).not.toContain('evidence_refuted');
+    });
+
+    it('refuses an approval by an actor who produced a reading, even one the projection no longer holds', async () => {
+        // **The independence check asks about the actors, not about the surviving reading.** Measured by an independent
+        // review: the check read the projection, so an author whose reading had been displaced (here by a re-seal making it
+        // stale) could approve a decision its own reading had been part of. Which reading survives is a freshness question;
+        // who took part is an identity question, and this check is about identity.
+        await recordVerdicts(root, changeId, [reading('run-1', 'the-author')]);
+        await writeFile(join(root, 'src', 'kernel.ts'), 'export const policy = 3;\n');
+        const refrozen = await freezeSubject({ root, paths: ['src/kernel.ts'] });
+        if (!refrozen.ok) throw new Error(refrozen.error);
+        await writeSubject(root, changeId, refrozen.subject);
+        subjectRevision = refrozen.subject.revision;
+        await recordVerdicts(root, changeId, [reading('run-2', 'reviewer-b')]);
+
+        const codes = await reasonCodes('the-author');
+        expect(codes).toContain('same_actor');
+        // And a party that produced nothing can still approve, so the refusal is about participation rather than noise.
+        expect(await reasonCodes('a-later-maintainer')).not.toContain('same_actor');
     });
 
     it('a second run that refutes the evidence makes the item refuted rather than outvoted', async () => {

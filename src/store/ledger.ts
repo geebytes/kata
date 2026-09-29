@@ -32,8 +32,9 @@ const FILES = {
     /**
      * Append-only: every verdict ever recorded, with the producer that decided it and what it superseded.
      *
-     * `verdicts.json` is a projection of this; the history is the record. A reversal used to be unobservable — the
-     * projection was overwritten in place — which made the most interesting fact about a verdict the one fact the ledger
+     * `verdicts.json` holds one entry per (evidence item, run), and the per-claim answer is projected from it when the
+     * ledger is read; this history is the record of what each recording superseded. A reversal used to be unobservable —
+     * the document was overwritten in place — which made the most interesting fact about a verdict the one fact the ledger
      * could not show.
      */
     verdictHistory: 'verdict-history.jsonl',

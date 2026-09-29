@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readingsForRevision } from '../../src/kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../../src/kernel/quorum.js';
 import type { EvidenceVerdict } from '../../src/kernel/types.js';
 
@@ -25,9 +26,15 @@ function reading(runId: string, actor: string, evidenceId: string, verdict: Evid
 
 const evidenceToClaim: Record<string, string> = { E1: 'C1', E2: 'C1' };
 
-/** What `ledgerVerdict` feeds the quorum: the readings, grouped by the run that produced them. */
-function reviewersFrom(readings: EvidenceVerdict[]): { reviewers: number; undiversified: boolean } {
-    const { records, unattributed } = groupByProducer(readings);
+/**
+ * What `ledgerVerdict` feeds the quorum: the readings that speak for the revision being decided, grouped by their run.
+ *
+ * Measured by an independent review: handing it *every* reading let a reading the ledger itself judges `stale` count as
+ * one of the two independent reviewers, so the tier passed on the strength of a reading the rest of the kernel refuses to
+ * use — the same fact (which readings are about this revision) answered two ways in two places.
+ */
+function reviewersFrom(readings: EvidenceVerdict[], currentRevision: string | null = null): { reviewers: number; undiversified: boolean } {
+    const { records, unattributed } = groupByProducer(readingsForRevision(readings, currentRevision));
     return aggregateQuorum({ records, unattributed, evidenceToClaim, requiredReviewers: 2, demandDiversity: true });
 }
 
@@ -70,6 +77,33 @@ describe('the quorum counts runs rather than entries', () => {
         const count = aggregateQuorum({ records, unattributed, evidenceToClaim, requiredReviewers: 2, demandDiversity: true });
         expect(count.disputedEvidenceIds).toEqual(['E1']);
         expect(count.disputedClaimIds).toEqual(['C1']);
+    });
+
+    it('does not count a reading about another revision as a reviewer of this one', () => {
+        // **Measured by an independent review, on a real flow.** After a re-seal, one run had read the new revision and
+        // another had only read the old one; the ledger called the old reading `stale` in its own reasons and still counted
+        // it, so the two-reviewer requirement was satisfied by a reading nothing else would decide on.
+        const readings = [
+            reading('run-1', 'reviewer-a', 'E1', 'supported'),
+            reading('run-1', 'reviewer-a', 'E2', 'supported'),
+            { ...reading('run-2', 'reviewer-b', 'E1', 'supported'), subjectRevision: 'rev:previous' },
+            { ...reading('run-2', 'reviewer-b', 'E2', 'supported'), subjectRevision: 'rev:previous' },
+        ].map((entry) => ({ ...entry, subjectRevision: entry.subjectRevision === 'rev:previous' ? 'rev:previous' : 'rev:current' }));
+        expect(reviewersFrom(readings, 'rev:current').reviewers).toBe(1);
+        expect(reviewersFrom(readings, null).reviewers).toBe(2);
+    });
+
+    it('does not read a disagreement across revisions as a dispute about this revision', () => {
+        // The other face of the same defect: one run refuted the old content and another supports the current content, so
+        // the two readings disagree about different things. The projection takes the current reading; the quorum used to
+        // report a dispute over the pair, which is the projection and the quorum answering the same question differently.
+        const readings = [
+            { ...reading('run-1', 'reviewer-a', 'E1', 'refuted'), subjectRevision: 'rev:previous' },
+            { ...reading('run-2', 'reviewer-b', 'E1', 'supported'), subjectRevision: 'rev:current' },
+        ];
+        const { records, unattributed } = groupByProducer(readingsForRevision(readings, 'rev:current'));
+        const count = aggregateQuorum({ records, unattributed, evidenceToClaim, requiredReviewers: 2, demandDiversity: true });
+        expect(count.disputedEvidenceIds).toEqual([]);
     });
 
     it('groups a reading with no producer under one unattributed run, so an old ledger reads as one reading', () => {

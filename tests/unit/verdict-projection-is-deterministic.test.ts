@@ -142,6 +142,23 @@ describe('what a claim is judged on when an item has several readings', () => {
         expect(projectVerdicts([junkB, junkA]).map((entry) => entry.verdict)).toEqual(['supported']);
     });
 
+    it('orders readings that differ only in who verified them, so the reported instance does not depend on the document', () => {
+        // Measured by an independent review over random documents: the verdict was always stable, but *which* reading was
+        // reported moved with the order for 32 of 4000, because `verifier` was not in the chain.
+        const left = reading({ evidenceId: 'E1', verifier: 'producers/verifiers#static-witness', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        const right = reading({ evidenceId: 'E1', verifier: 'producers/verifiers#executable', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        expect(projectVerdicts([left, right]).map((entry) => entry.verifier)).toEqual(projectVerdicts([right, left]).map((entry) => entry.verifier));
+    });
+
+    it('orders a verdict the table does not know, rather than leaving it to the document', () => {
+        // The rank lookup used to return `undefined` for an unknown verdict, making both comparisons false and handing the
+        // answer to the array's order. The reader rejects such a document as malformed, so this is a guard rather than a
+        // reachable state — asserted because a table lookup that is total is cheaper than a comment claiming it is.
+        const known = reading({ evidenceId: 'E1', verdict: 'inconclusive', at: '2026-09-29T00:00:00.000Z', producer: { runId: 'run-1', actor: 'a' } });
+        const unknown = JSON.parse(JSON.stringify({ ...known, verdict: 'endorsed' })) as EvidenceVerdict;
+        expect(projectVerdicts([known, unknown]).map((entry) => entry.verdict)).toEqual(projectVerdicts([unknown, known]).map((entry) => entry.verdict));
+    });
+
     it('breaks a tie on the run id rather than on the position, so a document edited by hand cannot reorder the answer', () => {
         const sameMoment = (runId: string): EvidenceVerdict =>
             reading({ evidenceId: 'E1', verdict: runId === 'run-b' ? 'supported' : 'inconclusive', at: '2026-09-29T00:00:00.000Z', producer: { runId, actor: 'a' } });

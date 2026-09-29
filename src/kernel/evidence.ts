@@ -151,8 +151,12 @@ export type ProjectionOptions = {
  */
 export function projectVerdicts(readings: readonly EvidenceVerdict[], options: ProjectionOptions = {}): EvidenceVerdict[] {
     const currentRevision = options.currentRevision ?? null;
+    // **The same region rule the quorum gets, from the same function.** When nothing was read against the current revision
+    // the whole list is considered, which is how an item is reported stale rather than silently dropped.
+    const region = readingsForRevision(readings, currentRevision);
+    const pool = region.length > 0 ? region : readings;
     const chosen = new Map<string, EvidenceVerdict>();
-    for (const reading of readings.entries()) {
+    for (const reading of pool.entries()) {
         const held = chosen.get(reading[1].evidenceId);
         if (held === undefined || supersedes(reading[1], held, currentRevision)) chosen.set(reading[1].evidenceId, reading[1]);
     }
@@ -160,6 +164,23 @@ export function projectVerdicts(readings: readonly EvidenceVerdict[], options: P
     // list's own order depend on how the document happened to be written, and a reader that shows it would show a different
     // document for the same readings. Measured by a case that reverses the input: the answers agreed, the order did not.
     return [...chosen.values()].sort((left, right) => (left.evidenceId < right.evidenceId ? -1 : left.evidenceId > right.evidenceId ? 1 : 0));
+}
+
+/**
+ * The readings that speak for the revision being decided: the ones taken against it.
+ *
+ * **One derivation, two consumers, because two consumers were answering it differently and the difference was a defect.**
+ * The projection needs it to know which readings can decide an item (the quorum's face of the same rule is below), and the
+ * quorum needs it to count independent runs — measured by an independent review: handing the quorum *every* reading let a
+ * reading the ledger itself called `stale` count as one of the two reviewers the `security` tier asks for, so the tier
+ * passed on a reading nothing else in the kernel would decide on.
+ *
+ * A ledger with no frozen subject has no region, and then every reading is a candidate — the same answer the projection
+ * gives, so the two never disagree about which readings are in play.
+ */
+export function readingsForRevision(readings: readonly EvidenceVerdict[], currentRevision: string | null): EvidenceVerdict[] {
+    if (currentRevision === null) return [...readings];
+    return readings.filter((reading) => reading.subjectRevision === currentRevision);
 }
 
 /** Whether `candidate` is the reading this item should be judged on, given `held` already holds one. */
@@ -178,8 +199,15 @@ function supersedes(candidate: EvidenceVerdict, held: EvidenceVerdict, currentRe
     const candidateRun = candidate.producer?.runId ?? '';
     const heldRun = held.producer?.runId ?? '';
     if (candidateRun !== heldRun) return candidateRun > heldRun;
-    if (VERDICT_RANK[candidate.verdict] !== VERDICT_RANK[held.verdict]) return VERDICT_RANK[candidate.verdict] > VERDICT_RANK[held.verdict];
-    return (candidate.observed ?? '') > (held.observed ?? '');
+    const candidateRank = VERDICT_RANK[candidate.verdict] ?? 0;
+    const heldRank = VERDICT_RANK[held.verdict] ?? 0;
+    if (candidateRank !== heldRank) return candidateRank > heldRank;
+    if ((candidate.observed ?? '') !== (held.observed ?? '')) return (candidate.observed ?? '') > (held.observed ?? '');
+    // Two more fields a reader can see, so that only readings that agree on everything this rule reads are left to the
+    // document's order — measured by an independent review, which found 32 of 4000 random documents reporting a different
+    // *instance* per order (the verdict was stable) because these two were not in the chain.
+    if (candidate.verifier !== held.verifier) return candidate.verifier > held.verifier;
+    return candidate.evidenceType > held.evidenceType;
 }
 
 /** When a reading was taken, as a number — and `-Infinity` for a timestamp that does not parse, so junk orders last. */
