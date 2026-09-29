@@ -330,3 +330,43 @@ for (const verdict of incoming) {
 - 本 change 的判据现在有：六条 AC 各有独立文件与变异证明、16 条 finding 全部收口、**四次独立审查**（其中三次否定、一次干净）、1226 用例绿、`tsc` 干净；
 - 第三轮阻塞的 `assurance_below_tier` 与账本层面的限制属于**宿主能力**与**判决存储之外**（见 §10、`gate-input-integrity` §12），不由本 change 引入，也不在本 change 的表面；
 - 因此本 change 可以进入 review 结论文档与 judge，而不是第五轮。
+
+## 16. 本 change 自己的账本：审阅批准现在需要它，而它停在一道宿主能力墙上
+
+### 16.1 为什么必须记账本，以及为什么要重建 `dist/`
+
+- `review --approve` 在我们**停止**旧路线之后只认账本：拒绝原文是 "Review approval requires an evidence ledger"。所以批准本 change 的前置是：**它自己的账本能 pass**。
+- 记账本必须用**本 change 的代码**跑 `kata-cli`（账本写入的形状正是本 change 改的那个形状）。`kata-cli` 解析的是主检出的 `dist/`。第一次尝试用旧 `dist/` 跑，结果**当场演示了本 change 修的缺陷**：两次 `evidence verify` 之后 `verdicts.json` 里只剩 **6 条读数**（第二次把第一次覆盖了），`decide` 报 `quorum_missing: 1 submitted`。重建 `dist/`（本 worktree 的源码）之后同一流程得到 **17 条读数 / 3 个 run / 2 个 actor**，`quorum_missing` 消失。
+- 备份：`tmp/dist-backup-gateinput-0026.tgz`（上一次重建）、`tmp/dist-backup-master-2038.tgz`（master 原始）。要回到 master，在主检出跑 `npm run build`。
+
+### 16.2 账本的实测结果（`decide`）
+
+```
+verdict: insufficient | tier security
+  assurance_below_tier: assurance observed is below the security floor of sandboxed
+  deficit assurance:tier: … run the round on an executor whose adapter can provide it, or have a person record the
+                         tier exception (`kata-cli ledger decide --tier <tier>` names the decision rather than leaving it implicit)
+```
+
+**只剩这一条原因。** 其余全部达成，而且是本 change 自己让它们达成的：
+
+| 原因 | 状态 | 靠什么达成 |
+|---|---|---|
+| `quorum_missing`（security 要 2 名独立审阅者） | **消失** | 本 change 的存储改动——两次独立读数现在**共存**（这是该要求第一次在一个真实 change 上可达） |
+| `discovery_floor`（需要独立反例） | **消失** | 三个挑战，每个都按"**先让缺陷在场跑出复现**、再在修复后的代码上跑成 cleared"记录（`reproduced: true` + `withdrawn`） |
+| `uncovered_risk_class` | **消失** | 6 条 claim 覆盖了本 change 触及的四类（`boundary`／`consistency`／`privilege`／`provenance`） |
+| `challenge_open` | 无 | 三个反例在修复后的代码上都不再复现 |
+| **`assurance_below_tier`** | **唯一残留** | **宿主机能力**：`security` 档要求 `sandboxed`；仓库只有 `inline`（`observed`）与 `file`（`relayed`）两个适配器，**没有任何适配器能提供 `sandboxed`** |
+
+### 16.3 这道墙的后果比上一轮更硬
+
+上一轮（`gate-input-integrity`）里，账本不 pass 仍可由人放行后合入。现在**批准路线只剩账本**，于是：
+
+- 一个触及 `src/kernel/**`（floor `high` ⇒ 档位 `security`）的 change，可以 verify PASS、可以完成四轮独立审查，**但无法通过 `review --approve`**，因为批准要求账本 pass，而账本要求本机给不出的执行器保证。judge 与 archive 都在批准之下。
+- 这不是本 change 引入的，也不是它表面上的东西：`security.assuranceFloor: 'sandboxed'` 与"只有两个适配器"都是既有事实（父设计登记的 #722／#728）。但**上一轮把它记录为"缺口"，这一轮它变成了"阻塞"**，因为批准路线收窄了。
+
+### 16.4 三条出路（需要你的决定，我不自行选择）
+
+1. **为这个 change 记录一次档位例外**（`policy.json` 的 `tiers.security.assuranceFloor`，或 `decide --tier strict` 并写明理由）。诚实的说法是：**这是把门降到本机能达到的高度**，必须带理由／记录人／影响面，并且**不能**说成"账本 pass"。它会同时说明这个 change 是在 `strict` 而非 `security` 的保证下被评审的。
+2. **补一个能提供 `sandboxed` 的执行器**（例如容器化执行适配器）——**根因修法**，但是一个独立 change（父设计的 #722／#728），本 change 等它。
+3. **走人工放行**（与上一轮同形）：账本 `insufficient` + 那一条原因如实记录，合入由人决定，`review.json` 保持 `pending`、judge 不可达——并把"批准路线只剩账本、而内核类 change 无法达到其保证地板"作为一条**机制 follow-up** 登记。
