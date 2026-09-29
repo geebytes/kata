@@ -174,3 +174,28 @@ AC-3 的末句“低于门槛的 finding 仍然批准”在 ledger 路线**没�
 - **`one home` 守卫加宽**：原来只扫四个具名文件的 `severity === 'blocking'`，`case 'blocking':`、`includes('major')`、`reviewMode === 'strict'` 都能溜过去；现在枚举两个目录、认多种拼写，并有一条用例证明这些拼写真的会被抓到（守卫自身不能是“恒真检查”）。
 - **未知模式 fail closed**：`reviewTierFor` 现在做大小写与空白归一，`undefined`/`''` 视为遗留任务（standard），而**写着但无法识别**的模式取最严的一档，而不是悄悄降为最弱；`'std'` 与 `'standard'` 两种拼写都在这里翻译。
 - **记录一处已知倒挂、不在本 change 修**：`requiresMatrix` 以字面量 `strict` 判断，所以 `security` 要求的声明**少于**低一档。修它要回答的是“这个 change 的**路线**是否携带验收契约”，而不是“它的审查档位有多严”——实测把 `security` 也纳入会让 `kata-cli tweak … --review security` 拒绝 design 并以 “Build cannot run from intake” 失败。因此保留现状、把理由写在函数上，并由守门的例外清单具名放行（只有一条，且有理由）。
+
+## 8. 第二轮：修复本身被证伪（focused re-review）
+
+修复提交后又派了一个干净上下文的独立 agent，只做一件事：**验证这批修复是真的还是像真的**。它逐条攻击 6 项，结论：**第 1、2 项被证伪，第 3 项部分证伪并新引入一处 fail-open，第 4、5 项成立，第 6 项部分成立（引入一条新环）**。
+
+它的诊断很好，值得原样记下：**那批修复的测试从未驱动 router 与 repair entry** —— 每一项“读不出来的记录”都只经由 approval 与 gate 走了一遍。于是：
+
+| # | 缺陷 | 实测 | 修法 |
+|---|---|---|---|
+| ① | router **只报告不消费** `reviewRecordUnreadable`，同时把问题列表退化成空 | 畸形记录下 router 仍然 `judge_reviewed_change`，与“审查干净”完全同形 | 新增路由理由 `unreadable_review_record`（→ `/kata-review`），并把它接进 `UpstreamSummary` 的消费 |
+| ② | gate 与 repair entry **仍会抛异常** | (a) `currentRevisionIdentity` 在 try/catch 之外，且对非 ENOENT 一律 rethrow，所以损坏的 `current-revision.json` 让 reader 与 gate 一起抛；(b) repair entry 在问 reader 之前自己 `readValidatedOptional` 打开同一个文件 | (a) 绑定读取移进 guard；(b) repair entry 只用 reader 的答案，baseline revision 改到决定之后再读且加 guard |
+| ③ | `isOpenFinding` 把 `deferred`/`accepted`/`routed` 也判为已关闭 | 三类以前都拒绝 gate，改后放行；而 `change-record.ts` 的过滤器是 `disposition !== 'fixed'`，且有一条用例明确断言 `routed` **仍然 open** | 谓词改为 `!== 'fixed'`：同一 lifecycle 字段不能有两个相反读数 |
+| ④ | 整份轮次历史无法测量时读起来像健康循环 | 全 `null` → `noProgressRounds: 0, escalating: false`，与“第一轮就完美”同形 | 新增 `unmeasurable` 并升级；空的（从未记录）历史仍不算卡住 |
+| ⑤ | `mergeBlockingProblems` 在 `src/` 无调用者（reader 内联重写了同一表达式）；`hardestSeverity !== undefined` 恒真 | — | reader 改为调用它；删掉恒真判断 |
+| ⑥ | 新增一条 import 环：`core/state → workflow/distill-gates → workflow/review-read → store/verdict → store/ledger → core/state` | 静态图 4 环 → 5 环 | reader 的 store 读取改回动态 import（同一处原先就是这么做的），静态环消失 |
+
+复审同时确认第 4、5 项的算术与文档/循环一致（表格逐格攻击：振荡、只降后停、降到 0、仅有未测量、仅有变差），且分层方向没有被破坏（`quality/ → workflow/` 边数不变）。
+
+### 8.1 一条反复出现的形状
+
+两轮下来真正的教训不是“哪些行写错了”，而是：
+
+> **一个读者可以是对的，却仍然被忽略。**
+
+第一轮是“问题有多个来源”（approval 与 gate 各自组装），第二轮是“结论有生产者但没有消费者”（`reviewRecordUnreadable` 被写上却没人读；`exists` 与“空记录”本来同形）。两次都不是算术错误，而是**事实与决定之间的那条边断了**。因此新增的用例一律**直接驱动决定面**（router、repair entry、gate），而不是只驱动读者。
