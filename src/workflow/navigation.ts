@@ -57,6 +57,14 @@ export type UpstreamSummary = {
    * cannot say what it counted is a sentence, not a state.
    */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[]; unmeasurable?: boolean };
+  /**
+   * The round history could not be read whole.
+   *
+   * Reported **beside** `reviewEscalation`, never instead of it: a damaged line in an otherwise measurable history is a fact
+   * about the record, and the loop's terminal state is a fact about the measurements. One answering for the other is how a
+   * progressing loop came to stop for a person.
+   */
+  reviewHistoryUnreadable?: boolean;
   /** Why the recorded review could not be read, when it could not be. Absent when it could. */
   reviewRecordUnreadable?: string;
   /** Why the current revision could not be read, when it could not be. Absent when it could — or when it is simply unwritten. */
@@ -218,7 +226,13 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **Handed the read taken above.** Asking for the pointer again is how a failing second read came to be reported as an
   // unreadable *review record* — a different reason, a different route, and one that bypasses the branch written for this
   // very state.
-  const blockingRead = await readBlockingProblems(root, taskId, sealedRead);
+  // **The ledger is read once for this summary.** `ledgerVerdict` and `openLedgerProblems` each opened ten ledger files,
+  // so one decision read them twice — the same defect the pointer's read was fixed for, left on the ledger. The read is
+  // taken here (dynamically, because `store/ledger` reaches `core/state` which reaches the distill gate that calls this
+  // module) and handed to both.
+  const { readLedger } = await import('../store/ledger.js');
+  const ledgerInHand = await readLedger(root, taskId);
+  const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
@@ -238,7 +252,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
   // ladder and the operator cannot see two different answers to the same question — the defect this repository keeps
   // finding, and the reason this is a call rather than a second assembly.
-  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId });
+  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId, ledger: ledgerInHand });
   const ledger = ledgerDecision.kind === 'decided'
     ? {
         state: 'decided' as const,
@@ -254,6 +268,9 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         reason: ledgerDecision.detail,
         deficits: [] as string[],
       };
+  // Nothing readable at all: the file exists but holds no parseable round, so there is no measurement to decide with.
+  const historyHasNothingToMeasure = reviewRounds.kind === 'unreadable' && reviewProgressOfChange.rounds === 0;
+
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
     reviewFindings: openProblems.length,
@@ -272,18 +289,29 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     failedVerifyAcceptance: failedVerifyAcceptance.length,
     // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
     // the trailing run that changed nothing is what stops the next one from being dispatched.
-    ...((reviewRounds.kind === 'unreadable' || reviewProgressOfChange.escalating)
+    //
+    // **A damaged line is not the same fact as unmeasurable progress, and only the second stops the loop.** Both used to set
+    // `unmeasurable` and the terminal state fired on either, so a history that measurably went 3 → 1 stopped for a person
+    // because one line in it was damaged — measured by an independent reading, from the very field R-7 introduced. The
+    // measured progress decides; the unreadable history is reported beside it, as its own fact, because a reader has to be
+    // able to see both without one answering for the other.
+    ...((reviewProgressOfChange.escalating || historyHasNothingToMeasure)
         ? {
             reviewEscalation: {
                 rounds: reviewProgressOfChange.rounds,
                 noProgressRounds: reviewProgressOfChange.noProgressRounds,
                 blockingIds: reviewProgressOfChange.blockingIds,
-                ...(reviewRounds.kind === 'unreadable' || reviewProgressOfChange.unmeasurable ? { unmeasurable: true } : {}),
+                ...(reviewProgressOfChange.unmeasurable || historyHasNothingToMeasure ? { unmeasurable: true } : {}),
             },
         }
         : {}),
+    ...(reviewRounds.kind === 'unreadable' ? { reviewHistoryUnreadable: true } : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
+    // **A history that recorded nothing readable is a state, and it is not the same state as a damaged line in an
+    // otherwise readable history.** The first has no measurement at all and stops the loop; the second has measurements,
+    // and they decide — with the damage reported beside them (`reviewHistoryUnreadable`). The two used to be one flag, so a
+    // loop that measurably went 3 → 1 stopped for a person because a line was damaged.
     wikiClosureValid: wikiClosure.valid,
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
     ledger,
@@ -599,10 +627,10 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   if (phase === 'plan' || phase === 'implement' || phase === 'intake') {
     return phaseFallbackAction(phase);
   }
-  // In review, a readable record with no open problem is ready for its conclusion.
-  if (phase === 'review') {
-    return phaseFallbackAction('review');
-  }
+  // **The duplicate of this branch was deleted, not left as documentation.** It sat below the `plan`/`implement`/`intake`
+  // branch, which cannot reach it (`phase === 'review'` is caught two branches above), and it carried a copy of the note
+  // that explains the earlier one — so a scan for "every branch says why it returns" counted it as documented while it
+  // could never return. An independent reading measured exactly that; dead code with a comment reads as a live branch.
   return { nextSkill: '/kata', role: 'dispatcher', reason: 'inspect_task', priority: 0 };
 }
 

@@ -100,42 +100,96 @@ function withoutComments(text: string): string {
  * reported nothing for a file containing an instance of exactly the class it exists for, while the same record written on
  * one line was reported. A payload can be a multi-line object literal, so the span is found by parenthesis balance.
  */
-function argumentAfterPath(statement: string): string | null {
-    const path = /current-revision\.json['"`]|currentRevisionPath\s*\([^)]*\)/.exec(statement);
-    if (!path) return null;
-    // Walk forward from the path to the separator that ends it, then to the separator that ends the argument after it.
-    // Depth starts at zero *outside* the call that produced the path, so the comma after a nested `join(…)` or
-    // `currentRevisionPath(…)` counts — which is what makes one rule cover both spellings, including a payload on its own
-    // line.
+/**
+ * Names that hold the artefact's own filename, so a statement that writes through one is still a statement about it.
+ *
+ * Measured by an independent reading: `const REVISION_FILE = 'current-revision.json'; await writeFile(join(…, REVISION_FILE), …)`
+ * was invisible, because every pattern here looked for the filename itself. The class is "a write to this artefact", and a
+ * constant holding its name does not change what is being written.
+ */
+function artefactNameHolders(text: string): string[] {
+    const holders = new Set<string>();
+    // **The value has to be the filename, not merely mention it.** The first version of this collected any assignment
+    // whose right-hand side contained the filename, so `const sealed = JSON.parse(await readFile(… current-revision.json
+    // …))` made `sealed` a "holder" — and every later statement that wrote `sealed.id` into a fixture was reported. That is
+    // a read of the engine's own record, which is exactly what a fixture *should* do; measured as a false positive on
+    // `tests/unit/summary-carries-its-read.test.ts:52`.
+    const quoted = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"`])[^;]*?current-revision\.json[^;]*?\2/g;
+    for (const match of withoutComments(text).matchAll(quoted)) {
+        if (match[1]) holders.add(match[1]);
+    }
+    return [...holders];
+}
+
+/**
+ * The top-level arguments of the call whose opening parenthesis is `callOpen`, as text.
+ *
+ * **Every argument, not the one after the path.** The earlier version read the argument *following* the artefact path,
+ * which assumed the path comes first — and `await writeJson(forged, join(…, 'current-revision.json'))` writes the same
+ * record with the arguments the other way round, so it was invisible. Reading all of them and asking which are revision
+ * records is both simpler and strictly wider; the cost of the wider reading is that a staged defect has to be recognised
+ * in the argument that carries it, which the payload check below does.
+ */
+function callArguments(statement: string, callOpen: number): string[] {
+    const out: string[] = [];
     let depth = 0;
-    let argumentStart = -1;
-    for (let index = path.index + path[0].length; index < statement.length; index += 1) {
+    let start = callOpen + 1;
+    for (let index = callOpen; index < statement.length; index += 1) {
         const char = statement[index] ?? '';
         if (char === '(' || char === '{' || char === '[') depth += 1;
-        else if (char === ')' || char === '}' || char === ']') depth -= 1;
-        else if (char === ',' && depth <= 0) {
-            if (argumentStart === -1) argumentStart = index + 1;
-            else return statement.slice(argumentStart, index).trim();
+        else if (char === ')' || char === '}' || char === ']') {
+            depth -= 1;
+            if (depth === 0) {
+                out.push(statement.slice(start, index).trim());
+                return out;
+            }
+        } else if (char === ',' && depth === 1) {
+            out.push(statement.slice(start, index).trim());
+            start = index + 1;
         }
     }
-    if (argumentStart === -1) return null;
-    return statement.slice(argumentStart).replace(/\)\s*;?\s*$/, '').trim();
+    out.push(statement.slice(start).replace(/\)\s*;?\s*$/, '').trim());
+    return out;
+}
+
+/** Resolve an argument to the text it actually carries: a literal as-is, an identifier through its assignment. */
+function payloadOf(argument: string, window: string): string {
+    if (!/^[A-Za-z_$][\w$]*$/.test(argument)) return argument;
+    const assigned = new RegExp(`(?:const|let|var)\\s+${argument}\\s*=\\s*([\\s\\S]*?);`).exec(window);
+    return assigned?.[1]?.trim() ?? argument;
+}
+
+/** A staged defect: a literal that looks like JSON and does not parse is a corruption no command can produce. */
+function isStagedDefect(payload: string): boolean {
+    const literal = /^['"`]([\s\S]*)['"`]$/.exec(payload)?.[1];
+    if (literal === undefined) return false;
+    if (!/^[{[]/.test(literal.trim())) return false;
+    try {
+        JSON.parse(literal);
+        return false;
+    } catch {
+        return true;
+    }
 }
 
 /**
  * One pass of the guard's own rule over a source text, so its reach can be asserted rather than assumed.
  *
- * The rule, in three lines: find a statement that writes the revision artefact; ignore it when the identity comes from an
- * engine call; report it when **the payload it writes** is a revision record. Comments are blanked before the rule looks,
- * and only the payload is classified — so neither a sentence nor a neighbouring string can whitelist a fabricated record
- * (measured: `const note = 'the corrupt fixture';` used to do exactly that). A payload literal that *looks* like JSON and
- * does not parse is the one thing allowed through: a corrupt artefact is what a fixture cannot obtain from a command.
+ * The rule, in four lines: find a statement that names the revision artefact (by literal, by `currentRevisionPath(`, or by
+ * a constant holding its filename) and calls a write; ignore it when the identity comes from an engine call; report it
+ * when **any** of the call's arguments is a revision record. Comments and strings are blanked before the rule looks — a
+ * sentence about corruption, and a *string* about it, both used to whitelist a fabricated record — and a payload literal
+ * that looks like JSON and does not parse is the one thing allowed through, because a corrupt artefact is what a fixture
+ * cannot obtain from a command.
  */
 function closureDrivenWriteOffenders(text: string, file: string): string[] {
     const lines = withoutComments(text).split('\n');
+    const holders = artefactNameHolders(text);
+    const namesArtefact = (line: string): boolean =>
+        /current-revision\.json|currentRevisionPath\s*\(/.test(line) || holders.some((holder) => new RegExp(`\\b${holder}\\b`).test(line));
     const offenders: string[] = [];
     for (const [index, line] of lines.entries()) {
-        if (!REVISION_ARTEFACT.test(line)) continue;
+        if (!namesArtefact(line)) continue;
         // The statement: from the previous statement boundary through the line that closes this call.
         const from = (() => {
             for (let cursor = index - 1; cursor >= 0 && index - cursor <= 16; cursor -= 1) {
@@ -151,36 +205,16 @@ function closureDrivenWriteOffenders(text: string, file: string): string[] {
             to = cursor;
             if (depth <= 0 && /;\s*$/.test(current)) break;
         }
-        // The statement, plus the window in which its payload may have been *assembled* — above it, or on the line after
-        // it, which is how these fixtures are usually written (`const revision = {…}` under the write that uses it).
-        const window = lines.slice(Math.max(0, from - 4), Math.min(lines.length, to + 12)).join('\n');
         const statement = lines.slice(from, to + 1).join('\n');
-        // **The write test belongs to the statement, not to the line that happens to name the artefact.** Measured: the
-        // live instance this round found has the name inside a `join(…)` on one line and `await writeFile(` on the line
-        // above it, so a per-line test reported nothing for a file that fabricates an identity — the third time this rule
-        // was narrowed by its own spelling.
         if (!WRITE_CALL.test(statement)) continue;
         if (ENGINE_PRODUCES.test(statement)) continue;
-        let payload = argumentAfterPath(statement);
-        if (payload === null || payload === '') continue;
-        // An identifier payload: what it was assigned is what gets written, and the assignment may sit outside the
-        // statement itself. Without this, one spelling of the same fixture (the record declared on the next line) was
-        // invisible while the other (declared in the same call) was caught.
-        if (/^[A-Za-z_$][\w$]*$/.test(payload)) {
-            const assigned = new RegExp(`(?:const|let|var)\\s+${payload}\\s*=\\s*([\\s\\S]*?);`).exec(window);
-            if (assigned?.[1]) payload = assigned[1];
-        }
-        // A staged defect: a brace- or bracket-initial literal that does not parse. Plain junk (`'not json'`) is not a
-        // record either and is not reported, because nothing about it claims an identity.
-        const literal = /^['"`]([\s\S]*)['"`]$/.exec(payload)?.[1];
-        if (literal !== undefined && /^[{[]/.test(literal.trim())) {
-            try {
-                JSON.parse(literal);
-            } catch {
-                continue;
-            }
-        }
-        if (!REVISION_ISH.test(payload)) continue;
+        const window = lines.slice(Math.max(0, from - 4), Math.min(lines.length, to + 12)).join('\n');
+        const callOpen = statement.indexOf('(', statement.search(/write|seed|persist|save|create/i));
+        if (callOpen < 0) continue;
+        const records = callArguments(statement, callOpen)
+            .map((argument) => payloadOf(argument, window))
+            .filter((payload) => !isStagedDefect(payload) && REVISION_ISH.test(payload));
+        if (records.length === 0) continue;
         offenders.push(`${file}:${index + 1}`);
     }
     return offenders;
@@ -220,6 +254,13 @@ describe('a fixture does not fabricate the revision identity', () => {
             ['a truncated JSON payload', "await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{\"id\": \"rev-1\", \"manif');", false],
             // **The defect this rule was rebuilt for.** A comment about corruption used to whitelist a fabricated record,
             // because the staged-defect test ran over prose: the window is read as code now, so this must be flagged.
+            // **The two forms the second independent reading found invisible**, neither of which was in the declared
+            // limits below: the filename held in a constant, and a write whose payload comes *first*.
+            ['the filename held in a constant', "const REVISION_FILE = 'current-revision.json';\nawait writeFile(join(root, '.kata', 'tasks', taskId, REVISION_FILE), `${JSON.stringify({ id: 'revision-from-constant', manifestHash: 'h'.repeat(64) })}`);", true],
+            ['the payload before the path', "await writeJson(`${JSON.stringify({ id: 'revision-payload-first', manifestHash: 'i'.repeat(64) })}`, join(root, '.kata', 'tasks', taskId, 'current-revision.json'));", true],
+            // The false positive the holder rule produced before it required a quoted filename: reading the engine's own
+            // record and using it in a fixture is what a fixture is *supposed* to do.
+            ['reading the engine record and using it', "const sealed = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'utf8'));\nawait writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), JSON.stringify({ revisionId: sealed.id, manifestHash: sealed.manifestHash }));", false],
             // **The form an independent review measured as invisible, and the one that sat live in this suite**: the
             // artefact named inside a `join(…)`, the write on the line above it, the payload on the line below.
             ['the record laid out over three lines', "await writeFile(\n    join(root, '.kata', 'tasks', taskId, 'current-revision.json'),\n    `${JSON.stringify({ id: 'revision-laid-out', manifestHash: 'f'.repeat(64) })}\\n`,\n);", true],

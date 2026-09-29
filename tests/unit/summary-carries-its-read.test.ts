@@ -2,6 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendClaim, freezeSubject, readLedger, writeSubject } from '../../src/store/ledger.js';
+import { ledgerVerdict, openLedgerProblems } from '../../src/store/verdict.js';
+import { makeClaim } from '../helpers/review.js';
 
 /**
  * **The summary's read is the read, and the router's answer cannot depend on which read failed.**
@@ -86,5 +89,48 @@ describe('the summary carries its own read into the review reader', () => {
 
         expect(second.reason).toBe(clean.reason);
         expect(second.reason).not.toBe('unreadable_review_record');
+    });
+});
+
+describe('the summary hands its ledger read to every reader that needs one', () => {
+    it('uses the ledger it was given rather than opening the files again', async () => {
+        // **The mechanism, asserted where it can be observed.** An independent reading measured the count directly (by
+        // wrapping `readFile`: ten ledger files, each opened twice per summary, so `claims.json:2 evidence.json:2 …`). A
+        // count is not reproducible here without mocking a core module, so this asserts the property the count stands for:
+        // a reader handed a ledger answers from **that** ledger. A reader that re-opened the files would answer from disk,
+        // and the two differ in this fixture.
+        // The outer `beforeEach` already made a fresh temp root for this case; reuse it rather than adding a second
+        // cleanup path.
+        const changeId = 'handed-ledger';
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await mkdir(join(root, 'src'), { recursive: true });
+        await writeFile(join(root, 'src', 'a.ts'), 'holds\n', 'utf8');
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'task.json'),
+            `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+        );
+        const subject = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!subject.ok) throw new Error(subject.error);
+        await writeSubject(root, changeId, subject.subject);
+        // On disk: one claim, with no evidence, so the ledger decides `insufficient` over one claim.
+        await appendClaim(root, changeId, makeClaim({ id: 'ON-DISK', severity: 'major', evidenceIds: [], dependsOn: ['path:src/a.ts'] }));
+
+        const onDisk = await readLedger(root, changeId);
+        const handed: typeof onDisk = {
+            ...onDisk,
+            claims: [makeClaim({ id: 'HANDED', severity: 'major', evidenceIds: [], dependsOn: ['path:src/a.ts'] })],
+        };
+
+        const verdict = await ledgerVerdict({ root, changeId, ledger: handed });
+        expect(verdict.kind).toBe('decided');
+        if (verdict.kind !== 'decided') return;
+        // The claim the decision is about is the one that came in the handed read, which is the whole point.
+        expect(verdict.decision.deficits.map((deficit) => deficit.claimId)).toContain('HANDED');
+        expect(verdict.decision.deficits.map((deficit) => deficit.claimId)).not.toContain('ON-DISK');
+
+        const problems = await openLedgerProblems(root, changeId, handed);
+        expect(problems.kind).toBe('read');
+        if (problems.kind !== 'read') return;
+        expect(problems.problems.map((problem) => problem.id)).toEqual(['HANDED']);
     });
 });

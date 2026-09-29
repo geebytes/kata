@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { undeclaredChanges } from '../../src/quality/undeclared-changes.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+
+const NOW = '2026-09-29T00:00:00.000Z';
 
 /**
  * **The seal's confidence surface is `ownedPaths`; the working tree is what verify looks at. Nothing owned the gap.**
@@ -90,15 +93,37 @@ describe('a changed path outside the declared surface is named before the seal f
         expect(await repo(['src/declared.ts'])).toEqual([]);
     });
 
-    it('sees a committed change outside the declaration, which git status alone cannot report', async () => {
-        // `git status` is clean here, and the file is still not declared: the previous revision's digests are the second
-        // reading of the same question, and without them a committed undeclared path was invisible — which matters because
-        // the declaration is where the risk classes come from.
-        await writeFile(join(root, 'src', 'committed.ts'), 'export const committed = 1;\n');
-        git('add', '-A');
-        git('commit', '-qm', 'a change the declaration does not cover');
-        expect(await repo(['src/declared.ts'])).toEqual([]);
-        expect(await repo(['src/declared.ts'], ['src/declared.ts', 'src/committed.ts'])).toEqual(['src/committed.ts']);
+    it('names a path the declaration dropped, which is the one thing the previous revision can tell it', async () => {
+        // **What the second reading can see, measured — and it is not "a committed change".** A revision's `pathDigests`
+        // are the paths it hashed, which is the declaration itself, so a digest key the declaration no longer covers means
+        // the declaration *lost* a path it used to carry. The previous version of this case supplied a digest key for a
+        // path that was never declared (a value no caller can produce) and an independent reading falsified the claim it
+        // was standing for: on real state, `revision-7bbcc5845a8b47c7`'s extra key was a path dropped from the
+        // declaration. This case builds that state the way a caller does.
+        const taskId = 'dropped-path';
+        await writeFile(join(root, 'src', 'also-declared.ts'), 'export const alsoDeclared = 1;\n');
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'task.json'),
+            `${JSON.stringify({ id: taskId, title: 'T', phase: 'implement', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/declared.ts', 'src/also-declared.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
+        );
+        const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/declared.ts', 'src/also-declared.ts'], checkIds: [] });
+        expect(Object.keys(sealed.revision.pathDigests ?? {}).sort()).toEqual(['src/also-declared.ts', 'src/declared.ts']);
+        // The declaration shrinks: the second path is removed, and the revision that hashed it is still the current one.
+        const shrunk = await undeclaredChanges({
+            root,
+            declaredPaths: ['src/declared.ts'],
+            previousPathDigests: Object.keys(sealed.revision.pathDigests ?? {}),
+        });
+        expect(shrunk.paths).toEqual(['src/also-declared.ts']);
+        // And with nothing removed from the declaration there is nothing to report, so the reading is about the shrink and
+        // not about the revision existing.
+        const unchanged = await undeclaredChanges({
+            root,
+            declaredPaths: ['src/declared.ts', 'src/also-declared.ts'],
+            previousPathDigests: Object.keys(sealed.revision.pathDigests ?? {}),
+        });
+        expect(unchanged.paths).toEqual([]);
     });
 
     it('compares against the declaration after the same normalization the declaration gets', async () => {

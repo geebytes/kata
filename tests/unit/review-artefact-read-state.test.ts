@@ -430,25 +430,46 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', changeId, 'task.json'),
             `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
         );
-        // A history with one sound record and one that cannot be parsed: the loop it describes must not be driven further.
+        // **A damaged line in an otherwise readable history is reported, and the surviving measurements decide.** The
+        // earlier version of this case escalated here — one sound round plus one unparseable line — and that is the defect
+        // an independent reading measured from the other side: a history that measurably went 3 → 1 stopped for a person
+        // because a line was damaged. One round at 2 with a damaged line after it is not a stuck loop; it is a loop with a
+        // record that cannot be read whole.
         await writeFile(
             reviewRoundsPath(root, changeId),
             `${JSON.stringify({ at: '2026-09-29T00:00:00.000Z', blockingIds: ['R-1'], blockingCount: 2 })}\nnot-json\n`,
         );
 
         const summary = await readUpstreamSummary(root, changeId);
-        expect(summary.reviewEscalation?.unmeasurable).toBe(true);
+        expect(summary.reviewHistoryUnreadable).toBe(true);
+        expect(summary.reviewEscalation).toBeUndefined();
+        expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
 
-        const action = suggestCandidateAction('review', summary);
-        expect(action.reason).toBe('escalate_review_without_progress');
+        // **And the terminal is still reachable from a damaged history**: when the measurements that survive show the loop
+        // not moving, the damage does not excuse it. Three non-declining rounds plus a damaged line stops the loop.
+        await writeFile(
+            reviewRoundsPath(root, changeId),
+            [
+                JSON.stringify({ at: '2026-09-29T00:00:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:01:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:02:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                JSON.stringify({ at: '2026-09-29T00:03:00.000Z', blockingIds: ['R-1', 'R-2'], blockingCount: 2 }),
+                'not-json',
+            ].join('\n') + '\n',
+        );
+        const stalled = await readUpstreamSummary(root, changeId);
+        // Four rounds at the same count: three of them followed a best that never improved, which is the terminal's rule.
+        expect(stalled.reviewEscalation?.noProgressRounds).toBe(3);
+        const escalated = suggestCandidateAction('review', stalled);
+        expect(escalated.reason).toBe('escalate_review_without_progress');
         // **Never a repair dispatch**, which is the whole of AC-4: the loop stops instead of paying for another round.
-        expect(action.nextSkill).not.toBe('/kata-build');
-        expect(action.nextSkill).toBe('/kata-review');
+        expect(escalated.nextSkill).not.toBe('/kata-build');
+        expect(escalated.nextSkill).toBe('/kata-review');
         // The confirmation flag belongs to the action the CLI renders (`nextActionForTask`), not to this suggestion — the
         // suggestion names the route, and the pause is added where the route becomes a command. Asserting it here was
         // asserting a field this object does not carry, which is why the first version of this case passed on the wrong
         // thing; `tests/unit/review-escalation-terminal.test.ts` covers the terminal's own semantics.
-        expect(nextActionForTask('router-artefact', action.nextSkill, action.role, action.reason).requiresUserConfirmation).toBe(true);
+        expect(nextActionForTask('router-artefact', escalated.nextSkill, escalated.role, escalated.reason).requiresUserConfirmation).toBe(true);
     });
 
     /**

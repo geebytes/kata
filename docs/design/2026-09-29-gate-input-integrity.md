@@ -227,3 +227,31 @@ riskFloors["src/quality/**"] must be an object carrying floor and riskClasses
 1. **重建 `dist/` 后重跑流程**（推荐）：只有这样才能让流程的判定来自本 change 的**自己的代码**，也才能端到端验证它（§9.2 的 R-10 正是"真的跑一遍"才发现的）。重建会改变**这台机器上所有工作流**使用的 CLI，因此需要授权。重建后仍需人工放行 `assurance_below_tier`（本机无沙箱），但 `uncovered_risk_class` 会消失，`discovery_floor`／`quorum_missing` 可由一次独立审查补齐。
 2. **不重建，直接人工放行**（与上一轮 §21 同形）：账本 `insufficient` 与四条原因如实记录，审批准予人为判断，缺口登记为 follow-up。
 3. **补一条 `failure_mode` claim**：能把 master 判定下的类要求补上，但 `assurance_below_tier` 仍然拒绝，所以仍需人工放行——修的是症状而非墙。
+
+## 11. 第二次独立审查与修复（重建 `dist/` 之后）
+
+重建 `dist/` 后流程跑的是本 change **自己的代码**，第二次独立审查随即在**同一份交付**上跑出三条**站立的**反例（`challenge check` 退出非零 = 反例成立）。三条都否证了**我上一轮写下的 disposition**，而不是否证我的代码是否存在。
+
+### 11.1 三条反例
+
+| 反例 | 级别 | 事实 | 根因 |
+|---|---|---|---|
+| **X1** | **blocking** | `budget_exhausted`／`assurance_below_tier`／`same_actor`／`challenge_open` 仍返回 `reasons` 非空 + `deficits: []` | **我的用例谓词判的是整个 decision 的 `deficits.length`**，于是没有自己 deficit 的 reason 靠兄弟的蒙过；且 9 个状态里 3 个从未到达它们命名的代码（我写的 `usage: { spentTokens }` 根本不是 `BudgetUsage` 的字段） |
+| **X2** | major | 已提交的未声明改动在生产里看不见 | `pathDigests` 的键**恒等于**声明面（实测 61/61），所以"上一 revision 的 digests"读不出已提交的未声明路径；它实际能抓的是**声明缩水**——实证：`revision-7bbcc5845a8b47c7` 多出的那个键正是我从声明里删掉的路径。**我的 R-8 disposition 说过头了。** |
+| **X3** | major | 守卫仍漏两种伪造：文件名放在常量里、payload 前置的 helper | 同族第三次：判据仍绑定在"文件名与写动作同一行/相邻参数"的写法上 |
+
+另有三条 minor（分支扫描证明"有注释"而非"属于本分支"、`readUpstreamSummary` 把整个账本读两次、`unmeasurable` 覆盖实测得出的历史）与一条 nit（`archive` 路由不在"未映射即失败"表里）。
+
+### 11.2 修复
+
+- **X1**：四处拒绝各带自己的 deficit（`budget:exhausted`、`assurance:tier`、`quorum:same_actor`、`challenge:<id>`），`quorum_disputed` 改为**逐 claim** 产生 reason 并携带该 claim id；用例改为**逐 reason 判它自己的答案**，并把"没有任何答案"的 reason 判为失败（`ANSWER_FOR` 表 = 响应契约），同时把 `usage` 改成真实字段、把实测触达的 12 个 reason 写成断言。变异证明：删掉 assurance 的 deficit → 用例红。
+- **X2**：`undeclaredChanges` 的注释改成它真能证明的事，用例改为**调用方真能构造的状态**（真封存 → 声明缩水 → 点名被丢掉的路径 → 声明不变则无输出），并保留"已提交的未声明改动抓不到"这一**如实声明**（那需要 revision delta，已登记为 follow-up）。
+- **X3**：守卫改为读**语句的全部实参**（不再假定路径在前），并解析**持有文件名常量**的标识符；`else if` 也算分支。控制用例新增三种（常量文件名、payload 前置、以及一条**读引擎记录再使用**的假阳性对照），盲点清单按实测更新。
+- **minor**：`navigation.ts` 的无条件重复分支**删除**（不可达 + 抄了上一条的注释，所以扫描把它当"已记录"）；分支扫描接受 `} else if (`；`readUpstreamSummary` **读一次账本**并把该读交给 `ledgerVerdict` 与 `openLedgerProblems`（两者新增"调用方已读"参数），新增用例断言"交给它的账本才是答案的来源"；`unmeasurable` 只由**实测进度**决定（无可测记录的历史才停止循环），损坏的历史作为**并列事实**报告（`reviewHistoryUnreadable`），两个用例分列两侧；`archive` 阶段与其 `/kata` 路由进入用例表与映射表，并把测试里那份**过期的本地 `Phase` 副本**换成真类型（`archive` 早已存在于 `orderedPhases`）。
+
+**判据（本轮新增）**：`deficits` 的归属必须**逐 reason** 可查——一个"整份决定有 deficit"的断言，等于让没有答案的 reason 靠兄弟过关。
+
+### 11.3 两条机制墙（登记，不修）
+
+1. **`assurance_below_tier`**：改内核策略文件 → 自身档位被动抬到 `security` → 要 `sandboxed`，本机无法提供（内联适配器记录 `observed`）。
+2. **`quorum_missing` 结构上不可满足**：`recordVerdicts`（`src/store/ledger.ts:505`）按 `evidenceId` **替换**判决，于是每个 evidence 只有一条判决，`groupByProducer` 永远只见一个 run → `security.reviewers: 2` 无法达成。实测：记录第二次独立读数（`--adapter file --actor independent-review-2`，6 条全 `supported`）后 `decide` 仍报 "1 submitted"。这与 `kernel/quorum.ts` 自己的注释同族第五次出现——**修了聚合，没修存储**。

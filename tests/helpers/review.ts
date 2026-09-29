@@ -8,7 +8,7 @@
 import type { VerifyContext } from '../../src/producers/port.js';
 import { defaultPolicy, type Policy } from '../../src/kernel/policy.js';
 import { subjectOf } from '../../src/kernel/subject.js';
-import type { Claim, Evidence, EvidenceVerdict, Subject } from '../../src/kernel/types.js';
+import type { Challenge, Claim, Evidence, EvidenceVerdict, Subject } from '../../src/kernel/types.js';
 
 export function makeSubject(files: Record<string, string>): Subject {
     const digests: Record<string, string> = {};
@@ -81,6 +81,19 @@ export function makeEvidence(overrides: Partial<Evidence> = {}): Evidence {
     };
     const type = (overrides.type ?? 'static_witness') as Evidence['type'];
     return { ...byType[type], ...overrides } as Evidence;
+}
+
+/** A counterexample aimed at a claim; `state: 'open'` means it still fails, which is what the kernel reports. */
+export function makeChallenge(overrides: Partial<Challenge> = {}): Challenge {
+    return {
+        id: 'X1',
+        claimId: 'C1',
+        command: 'false',
+        failsOn: 'rev:test',
+        state: 'open',
+        at: '2026-01-01T00:00:00.000Z',
+        ...overrides,
+    };
 }
 
 export function makeVerdict(overrides: Partial<EvidenceVerdict> = {}): EvidenceVerdict {

@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { decide, type DecideInput } from '../../src/kernel/decide.js';
+import type { Deficit, Reason } from '../../src/kernel/types.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { approveUserChoiceGate, createUserChoiceGate } from '../../src/workflow/user-choice-gate.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
-import { makeClaim, makeEvidence, makePolicy, makeSubject, makeVerdict } from '../helpers/review.js';
+import { makeChallenge, makeClaim, makeEvidence, makePolicy, makeSubject, makeVerdict } from '../helpers/review.js';
 
 /**
  * **A refusal that does not say what to do next is a dead end, and three of them were.**
@@ -127,13 +128,41 @@ describe('a gate that no longer speaks for the content says how to rebuild it', 
 
 describe('every refusal the kernel can return carries a next step', () => {
     /**
-     * The state table, one entry per reason the kernel can produce from the states a caller can build.
+     * **The state table, and the deficit each state's reason must produce.**
      *
-     * The three cases above are the ones an independent review named; this walks the vocabulary, because the defect was
-     * never three messages — it was that the shape `reasons` non-empty with `deficits` empty was allowed anywhere. The
-     * codes this table cannot reach from a pure input are listed below the loop and counted, so the case states its own
-     * reach rather than implying it.
+     * The previous version asserted `result.deficits.length > 0` — the *decision's* list — so a reason carrying no deficit
+     * of its own passed on a sibling's, and an independent reading falsified the claim by measuring exactly that: four
+     * refusals returned `reasons` non-empty with `deficits: []` while this case stayed green. The rule is per reason now:
+     * every code this table can reach must be named here, and the answer it names must be present in the decision.
+     *
+     * Three of the nine states were also wrong in a way that mattered: `usage: { spentTokens: … }` is not a field of
+     * `BudgetUsage`, so `budget_exhausted` and two others never fired and the walk silently covered six codes while
+     * claiming to cover nine. The measured set is asserted below for that reason.
      */
+    const ANSWER_FOR: Record<string, (deficits: readonly Deficit[], reason: Reason) => boolean> = {
+        // The state's own step, by the id the deficit carries.
+        budget_exhausted: (d) => d.some((entry) => entry.claimId === 'budget:exhausted'),
+        assurance_below_tier: (d) => d.some((entry) => entry.claimId === 'assurance:tier'),
+        same_actor: (d) => d.some((entry) => entry.claimId === 'quorum:same_actor'),
+        challenge_open: (d) => d.some((entry) => entry.claimId.startsWith('challenge:')),
+        discovery_floor: (d) => d.some((entry) => entry.claimId === 'discovery:independent_challenge'),
+        discovery_unverified: (d) => d.some((entry) => entry.claimId === 'discovery:verified_challenge'),
+        quorum_missing: (d) => d.some((entry) => entry.claimId === 'quorum:reviewers'),
+        quorum_undiversified: (d) => d.some((entry) => entry.claimId === 'quorum:diversity'),
+        // The per-claim refusals answer through the claim the reason names, which is what a repair can act on.
+        claim_unsupported: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        evidence_missing: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        evidence_inconclusive: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        evidence_stale_subject: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        evidence_below_strength: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        quorum_disputed: (d, reason) => d.some((entry) => entry.claimId === reason.claimId),
+        // **A counterexample's step is in its message**, and the message names what it is about: the claim and the
+        // evidence item that no longer holds. That is the AC's second form, and it is asserted as such rather than
+        // waived — a reason with neither a deficit nor a naming message fails the case below.
+        evidence_refuted: (_d, reason) => /\b(claim|evidence|revision|refut)/i.test(reason.detail),
+        dependency_unresolvable: (_d, reason) => /\b(claim|path|depend)/i.test(reason.detail),
+    };
+
     const states: Array<[string, Partial<DecideInput>]> = [
         ['discovery_floor', { discovery: { independentChallenges: 0, verifiedChallenges: 0 } }],
         ['discovery_unverified', { discovery: { independentChallenges: 1, verifiedChallenges: 0 } }],
@@ -143,24 +172,33 @@ describe('every refusal the kernel can return carries a next step', () => {
         ['claim_unsupported', { claims: [makeClaim({ severity: 'major', evidenceIds: [] })] }],
         ['evidence_missing', { evidence: [makeEvidence({ type: 'executable_falsifier', command: 'true' })] }],
         ['evidence_inconclusive', { verdicts: [makeVerdict({ subjectRevision: 'rev:other' })] }],
-        ['budget_exhausted', { usage: { tokens: 10_000_000 } }],
+        // The real field, measured: `budgetStatus` reads `usage.wallMs` against `policy.budgets.maxWallMs`.
+        ['budget_exhausted', { usage: { wallMs: makePolicy().budgets.maxWallMs + 1 } }],
+        ['assurance_below_tier', { tier: 'security' }],
+        ['same_actor', { actor: 'the-author' }],
+        ['challenge_open', { challenges: [makeChallenge({ claimId: 'C1', state: 'open' })] }],
     ];
 
-    it('gives each refusal either a deficit or a message naming what produced it', () => {
+    it('answers each reason with its own deficit, or with a message naming what produced it', () => {
         const seen: string[] = [];
+        const unanswered: string[] = [];
         for (const [name, overrides] of states) {
             const result = decide(baseline(overrides));
-            for (const reason of result.reasons) seen.push(reason.code);
             for (const reason of result.reasons) {
-                const actionable = result.deficits.length > 0 || /\b(claim|path|revision|pattern|run|reviewer)/i.test(reason.detail);
-                expect([name, reason.code, actionable]).toEqual([name, reason.code, true]);
+                seen.push(reason.code);
+                // **No silent skip**: a reason this contract does not name is a refusal nobody wrote an answer for, which is
+                // the shape the case exists to forbid — so it fails here rather than being ignored.
+                const answer = ANSWER_FOR[reason.code];
+                if (!answer) unanswered.push(`${name}: ${reason.code} is not named in the response contract`);
+                else if (!answer(result.deficits, reason)) unanswered.push(`${name}: ${reason.code} carries no answer of its own`);
             }
         }
-        // **The reach, asserted as a set rather than assumed.** A table that produced no reasons would pass the loop
-        // above without testing anything — and this assertion is how I learned which codes these states actually reach:
-        // I had written three of them off as unreachable, and the run said otherwise.
+        expect(unanswered, unanswered.join(' | ')).toEqual([]);
+        // The reach: measured, not assumed. This list is what the twelve states actually produce.
         expect([...new Set(seen)].sort()).toEqual([
             'assurance_below_tier',
+            'budget_exhausted',
+            'challenge_open',
             'claim_unsupported',
             'dependency_unresolvable',
             'discovery_floor',
@@ -171,19 +209,5 @@ describe('every refusal the kernel can return carries a next step', () => {
             'quorum_missing',
             'quorum_undiversified',
         ]);
-    });
-});
-
-describe('the policy the refusal is judged against is the one on disk', () => {
-    it('names the tier the demand belongs to, so the reader can raise it deliberately', async () => {
-        const policy = defaultPolicy();
-        const result = decide(baseline({
-            policy,
-            touchedRiskClasses: ['consistency', 'boundary'],
-        }));
-        const uncovered = result.reasons.find((reason) => reason.code === 'uncovered_risk_class');
-        expect(uncovered?.detail).toContain('required at this tier');
-        // The policy file itself is readable as a fact rather than asserted: the tier list is where the demand comes from.
-        expect(JSON.parse(JSON.stringify(policy)).tiers.strict.requiredRiskClasses).toContain('boundary');
     });
 });

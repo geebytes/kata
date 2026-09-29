@@ -240,6 +240,15 @@ export function evaluateClaim(
             `${openChallenges.length} open counterexample(s): ${openChallenges.map((challenge) => challenge.id).join(', ')}`,
             claim.id,
         ));
+        // A standing counterexample is a claim that was tested and broke, so the step is per challenge: reproduce it, or
+        // repair the claim. Without this the refusal named a challenge id and no command.
+        for (const challenge of openChallenges) {
+            deficits.push({
+                claimId: `challenge:${challenge.id}`,
+                need: `counterexample ${challenge.id} still fails (\`${challenge.command}\`): repair \`${claim.id}\` until that `
+                    + 'command exits 0, or record why it is not a counterexample',
+            });
+        }
         problems.add('challenged');
     }
 
@@ -256,14 +265,36 @@ export function decide(input: DecideInput): Decision {
 
     // 1. Budget first: a spent budget can only ever be `insufficient`.
     const budget = budgetStatus({ policy: input.policy, usage: input.usage, c0Tokens: input.c0Tokens ?? null });
-    if (budget.exhausted) reasons.push(reason('budget_exhausted', budgetDetail(budget)));
+    if (budget.exhausted) {
+        reasons.push(reason('budget_exhausted', budgetDetail(budget)));
+        // **The step, not only the state.** Four refusals were `reasons` non-empty with `deficits: []` and a message that
+        // named no path, pattern or remedy — the shape this criterion exists to remove — and an independent reading found
+        // them by checking each reason against its *own* deficit instead of the decision's list. Whose step it is matters
+        // too: a spent budget is the policy owner's to answer, not the author's.
+        deficits.push({
+            claimId: 'budget:exhausted',
+            need: `the round spent its budget (${budgetDetail(budget)}) before the ledger reached a supported state: raise the `
+                + 'budget for this change (`kata-cli ledger policy --init` then edit `budgets`), or reduce the evidence set '
+                + 'to what the tier actually requires — a spent budget is never a pass',
+        });
+    }
 
     // 2. Process assurance is a separate axis, judged against the tier's threat model.
     if (!meetsAssuranceFloor(input.policy, input.tier, input.assurance)) {
+        const floor = tierPolicy(input.policy, input.tier).assuranceFloor;
         reasons.push(reason(
             'assurance_below_tier',
-            `assurance ${input.assurance} is below the ${input.tier} floor of ${tierPolicy(input.policy, input.tier).assuranceFloor}`,
+            `assurance ${input.assurance} is below the ${input.tier} floor of ${floor}`,
         ));
+        // **A capability gap says so.** The next step for a missing executor is not "try harder": either the round runs on
+        // an executor that can provide the floor, or a person records the exception. Naming neither is how this refusal
+        // came to be a dead end that a kernel edit reaches automatically.
+        deficits.push({
+            claimId: 'assurance:tier',
+            need: `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: run the round `
+                + 'on an executor whose adapter can provide it, or have a person record the tier exception '
+                + '(`kata-cli ledger decide --tier <tier>` names the decision rather than leaving it implicit)',
+        });
     }
 
     // 3. What the change forces back open, and which verdicts survive it.
@@ -310,6 +341,12 @@ export function decide(input: DecideInput): Decision {
                 'same_actor',
                 `the decision was asked for by ${input.actor}, who also produced ${input.verdicts.filter((verdict) => verdict.producer?.actor === input.actor).length} of its verdict(s)`,
             ));
+            deficits.push({
+                claimId: 'quorum:same_actor',
+                need: `every verdict in this ledger was produced by ${input.actor}, and that is also who asked for the decision: `
+                    + 'a second actor has to read the evidence (`kata-cli ledger evidence verify --actor <name>`), because an '
+                    + 'approval cannot be independent of its own claims',
+            });
         }
     }
 
@@ -377,12 +414,15 @@ export function decide(input: DecideInput): Decision {
     //    already produced `fail`; the quorum cannot cancel it).
     const quorum = input.quorum;
     if (quorum && quorum.disputedClaimIds.length > 0) {
-        reasons.push(reason('quorum_disputed', `disputed: ${quorum.disputedClaimIds.join(', ')}`));
-        // One deficit per disputed claim, so the list is actionable per claim rather than as a sentence.
+        // **A dispute is about a claim, so the refusal names it.** One reason per disputed claim, carrying the claim id: a
+        // single sentence listing ids left `reason.claimId` empty, so the reason could not be matched to its own deficit and
+        // a reader had to parse a comma-separated string to find which claim a repair belonged to.
         for (const claimId of quorum.disputedClaimIds) {
+            reasons.push(reason('quorum_disputed', `disputed: ${claimId}`, claimId));
             deficits.push({
                 claimId,
-                need: 'the reviewers disagree about this claim: settle it with evidence, or record the disagreement as a decision',
+                need: `the reviewers disagree about ${claimId}: settle it with evidence, or record the disagreement as a `
+                    + 'decision with a named owner',
             });
         }
     }

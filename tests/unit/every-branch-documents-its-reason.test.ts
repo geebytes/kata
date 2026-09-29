@@ -37,7 +37,9 @@ function routerBody(lines: string[]): string[] {
 function branches(lines: string[]): Array<{ line: number; text: string; condition: string }> {
     const out: Array<{ line: number; text: string; condition: string }> = [];
     for (const [index, line] of lines.entries()) {
-        const match = /^(\s*)if \((.*)$/.exec(line);
+        // `} else if (` is a branch too: the first version matched `if (` at line start only, so an else-if arm was never
+        // examined — and one of them is what an unreachable duplicate looked like in this router.
+        const match = /^(\s*)(?:\}\s*)?(?:else\s+)?if \((.*)$/.exec(line);
         if (!match) continue;
         const collected: string[] = [];
         for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
@@ -84,6 +86,9 @@ describe('every route branch documents its own reason', () => {
         const body = ['export function suggestCandidateAction() {', '  if (a) {', '    // its own note', '    if (b) {', '      return 1;', '    }', '  }', '}'];
         const found = branches(body);
         expect(found.map((branch) => branch.line)).toEqual([2, 4]);
+        // And an else-if arm is a branch: same rule, no exception for how it is spelled.
+        const chain = ['if (a) {', '  return 1;', '} else if (b) {', '  return 2;', '}'];
+        expect(branches(chain).map((branch) => branch.condition)).toEqual(['a) {', 'b) {']);
         // And the nested one is *reported* when it carries no note, which is the point of seeing it.
         expect(found.filter((branch) => branch.text.trim() === '').map((branch) => branch.condition)).toEqual(['a) {']);
     });

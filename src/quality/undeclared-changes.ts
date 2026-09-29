@@ -52,11 +52,17 @@ export async function undeclaredChanges(input: {
     /**
      * The paths the previous revision hashed, when the caller has them.
      *
-     * **`git status` only reports uncommitted work**, so a change that was committed outside the declaration was invisible
-     * to this check — measured: `committed: []` where the uncommitted form reports the path. AC-4's wording is "the
-     * working tree", so the criterion was met and the *consequence* was not: the declared surface is what the risk
-     * classes are derived from, so a committed undeclared path's risk classes were never demanded. The previous
-     * revision's digests are the second, complementary reading of the same question.
+     * **What this second reading can and cannot see, measured.** `git status` reports uncommitted work only, so an
+     * independent reading asked whether "already committed" was covered — it is not, and it cannot be from here: the
+     * digests a revision records are the paths it *hashed*, which is the declared surface itself (measured on this
+     * change's own revisions: `pathDigests` keys are set-equal to `ownedPaths`, 61/61). So a digest key that the
+     * declaration does not cover means exactly one thing — **the declaration lost a path it used to carry** — and that is
+     * the fact this reading reports: a shrinking declaration, named by path, which is how a change escapes the surface its
+     * risk classes are derived from.
+     *
+     * A committed change *outside* the declaration is therefore not caught here, and claiming otherwise was a defect in
+     * this change's own prose rather than in this check. What closes that gap is the working-tree reading on the next
+     * seal, and a revision delta; both are recorded as follow-ups rather than implied by this parameter.
      */
     previousPathDigests?: readonly string[];
 }): Promise<UndeclaredChanges> {

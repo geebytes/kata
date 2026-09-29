@@ -193,12 +193,26 @@ export async function ledgerVerdict(input: {
      * that the same actor wrote the claim, verified it, and approved it.
      */
     actor?: string;
+    /**
+     * The caller's own read of this ledger, when it already has one.
+     *
+     * **One decision, one read.** `readUpstreamSummary` asks this and `openLedgerProblems` for the same change, and each
+     * opened ten ledger files — measured by an independent reading that wrapped `readFile` and counted two reads of
+     * `claims.json`, `evidence.json`, `verdicts.json` and the rest per summary. The pointer got a handed-down read in an
+     * earlier round; the ledger did not. A caller that has read the ledger passes it here, and the answer is computed from
+     * those bytes.
+     */
+    ledger?: Ledger;
 }): Promise<LedgerVerdict> {
     let ledger;
-    try {
-        ledger = await readLedger(input.root, input.changeId);
-    } catch (error) {
-        return { kind: 'unreadable', detail: `the ledger could not be read: ${(error as Error).message}` };
+    if (input.ledger !== undefined) {
+        ledger = input.ledger;
+    } else {
+        try {
+            ledger = await readLedger(input.root, input.changeId);
+        } catch (error) {
+            return { kind: 'unreadable', detail: `the ledger could not be read: ${(error as Error).message}` };
+        }
     }
 
     const readability = ledgerReadability(ledger);
@@ -337,7 +351,7 @@ export function openProblemsReportFields(read: LedgerProblemsRead): { openProble
  * So the predicate is not restated here: `unreadable` and `absent` are the verdict's answers, and this reader asks for
  * them. The only thing it owns is the mapping from "the ledger decides nothing" to the problems list.
  */
-export async function openLedgerProblems(root: string, changeId: string): Promise<LedgerProblemsRead> {
+export async function openLedgerProblems(root: string, changeId: string, ledgerInHand?: Ledger): Promise<LedgerProblemsRead> {
     // **One read, and the readability answer asked of that same ledger.**
     //
     // Three versions of this function got it wrong in three different ways, and the third is the one that matters: after
@@ -346,7 +360,7 @@ export async function openLedgerProblems(root: string, changeId: string): Promis
     // just refused, which is the `0` meaning "no problems" that this whole family of fixes exists to remove. Measured: two
     // reads per call. Asking one pure function of a ledger already in hand makes the two answers agree by construction and
     // the count come from the same bytes the refusal was computed from.
-    const ledger = await readLedger(root, changeId);
+    const ledger = ledgerInHand ?? (await readLedger(root, changeId));
     const readability = ledgerReadability(ledger);
     if (readability?.kind === 'unreadable') return { kind: 'unreadable', detail: readability.detail };
     // `absent` is readable: a ledger nobody wrote lists no problems, and that is a fact rather than a refusal.

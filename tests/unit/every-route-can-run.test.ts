@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { Phase } from '../../src/core/state.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
@@ -28,7 +29,9 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-type Phase = 'intake' | 'plan' | 'implement' | 'hardVerify' | 'review' | 'judge' | 'distill';
+// **The real `Phase`, not a copy of it.** The local union was written before `archive` existed and never grew with it,
+// so adding an `archive` state here failed to typecheck while the router's own `Phase` accepted it — a second spelling of
+// one fact, which is the class this change exists to remove.
 
 interface State {
     name: string;
@@ -121,10 +124,15 @@ const COMMAND_FOR_SKILL: Record<string, 'design' | 'build' | 'verify' | 'review'
     // `kata-cli archive`, and both are covered below rather than left out of the map silently.
     '/kata-wiki-enrich': null,
     '/kata-archive': null,
+    // **The `archive` phase's own fallback**, which an independent reading found missing from this map: the state table
+    // had no `phase: 'archive'` entry, so the one route the dispatcher returns for an archived task was never dispatched
+    // and the "no silent skip" assertion below could not see it either. Its verb is local (`kata-cli status`), which is
+    // why it is `null` here and driven by the case below.
+    '/kata': null,
 };
 
 /** The skills that name a command outside `runCommand`'s surface, each with the case that covers it instead. */
-const OUTSIDE_THE_WORKFLOW_COMMANDS = new Set(['/kata-wiki-enrich', '/kata-archive']);
+const OUTSIDE_THE_WORKFLOW_COMMANDS = new Set(['/kata-wiki-enrich', '/kata-archive', '/kata']);
 
 describe('every route the dispatcher can return names a command that runs', () => {
     const states: State[] = [
@@ -146,6 +154,7 @@ describe('every route the dispatcher can return names a command that runs', () =
         { name: 'judge with a fail recorded', phase: 'judge', judge: { result: 'FAIL' } },
         { name: 'review with a corrupted pointer', phase: 'review', corruptPointer: true },
         { name: 'distill', phase: 'distill' },
+        { name: 'archive', phase: 'archive' },
     ];
 
     for (const state of states) {
@@ -213,5 +222,12 @@ describe('the two routes that are not workflow commands answer too', () => {
         });
         expect(typeof archive.success).toBe('boolean');
         expect(archive.command).toBe('archive');
+        // `/kata` (the archive phase's fallback) advertises `kata-cli status`, which is local rather than a workflow
+        // command — so it is dispatched through the function the verb calls, on the task that route is about.
+        const { runLocalStatusCommand } = await import('../../src/cli/tasks.js');
+        const status = await runLocalStatusCommand(taskId, { taskId, source: 'active' }, root, { withContext: false }).catch((error: Error) => {
+            throw new Error(`the status route dispatched a command that threw: ${error.message}`);
+        });
+        expect(typeof status).toBe('object');
     });
 });

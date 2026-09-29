@@ -4,6 +4,8 @@ import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } fro
 import { readCurrentTaskRevisionState, type CurrentRevisionRead } from './revision.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
+// Type-only, so the cycle the note below is about is not created by this import.
+import type { Ledger } from '../store/ledger.js';
 import { mergeBlockingProblems, openProblemsOf, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import type { LedgerProblemsRead } from '../store/verdict.js';
 
@@ -150,7 +152,13 @@ export type BlockingProblemsRead =
     }
     | { ok: false; why: string };
 
-export async function readBlockingProblems(root: string, taskId: string, sealedRead?: CurrentRevisionRead): Promise<BlockingProblemsRead> {
+export async function readBlockingProblems(
+    root: string,
+    taskId: string,
+    sealedRead?: CurrentRevisionRead,
+    /** The caller's own read of the ledger, so one decision does not open it twice. */
+    ledgerInHand?: Ledger,
+): Promise<BlockingProblemsRead> {
     const mode = await readReviewMode(root, taskId);
     const record = await readReviewRecord(root, taskId, sealedRead);
     if (!record.ok) return { ok: false, why: record.why };
@@ -161,7 +169,7 @@ export async function readBlockingProblems(root: string, taskId: string, sealedR
     let ledgerProblems: LedgerProblemsRead;
     try {
         const { openLedgerProblems } = await import('../store/verdict.js');
-        ledgerProblems = await openLedgerProblems(root, taskId);
+        ledgerProblems = await openLedgerProblems(root, taskId, ledgerInHand);
     } catch (error) {
         return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${(error as Error).message})` };
     }

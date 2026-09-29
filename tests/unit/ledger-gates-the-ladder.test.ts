@@ -58,7 +58,12 @@ describe('the ledger gates the ladder', () => {
         expect(verdict.kind).toBe('decided');
         if (verdict.kind === 'decided') {
             expect(verdict.decision.verdict).toBe('insufficient');
-            expect(verdict.decision.deficits[0]?.claimId).toBe('C1');
+            // **Membership, not first place.** The list is ordered by the checks (budget, assurance, claims, coverage,
+            // discovery, quorum), so `assurance:tier` legitimately precedes a per-claim deficit once the assurance floor is
+            // unmet — and after the four silent refusals gained their own deficits there is almost always one ahead of it.
+            // Asserting `[0]` made this case about list order; the property is that the claim's own deficit reaches the
+            // repair.
+            expect(verdict.decision.deficits.map((deficit) => deficit.claimId)).toContain('C1');
         }
         expect(await ladderReason()).toBe('satisfy_ledger_deficits');
     });
