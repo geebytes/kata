@@ -156,6 +156,12 @@ export function evaluateClaim(
     }
 
     const supportedStrengths: number[] = [];
+
+    // Which items were skipped because they belong to another revision: the difference between "no evidence" and
+
+    // "evidence about other content", which the strength message used to conflate.
+
+    const staleEvidenceIds: string[] = [];
     const problems = new Set<ClaimState>();
     for (const item of items) {
         const verdict = verdictFor(item.id, input.verdicts);
@@ -183,6 +189,7 @@ export function evaluateClaim(
                 claim.id,
             ));
             problems.add('stale');
+            staleEvidenceIds.push(item.id);
             continue;
         }
         supportedStrengths.push(strengthOf(item.type));
@@ -195,15 +202,34 @@ export function evaluateClaim(
     const allowedSatisfied = allowed === undefined
         || items.some((item) => allowed.has(item.type) && supportedStrengths.some((strength) => strength === strengthOf(item.type)));
     if (strongestSupported < required || !allowedSatisfied) {
-        reasons.push(reason(
-            'evidence_below_strength',
-            `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
-            claim.id,
-        ));
-        deficits.push({
-            claimId: claim.id,
-            need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
-        });
+        // **A stale verdict is not a weak one.** Every item this claim rests on was decided against another revision, so
+        // `strongestSupported` is 0 for a reason that has nothing to do with strength — and the message named the strength
+        // anyway ("major requires strength 3 … strongest supported is 0"), which sends an author to write a stronger check
+        // when the remedy is to re-read the evidence against the current content. Measured on a real change: that misreading
+        // is exactly what happened.
+        const onlyStale = supportedStrengths.length === 0 && staleEvidenceIds.length === items.length && items.length > 0;
+        if (onlyStale) {
+            reasons.push(reason(
+                'evidence_below_strength',
+                `${claim.severity} has no verdict about this revision: every item (${staleEvidenceIds.join(', ')}) was decided `
+                + 'against an earlier one, so nothing here is a statement about a strength that could be raised',
+                claim.id,
+            ));
+            deficits.push({
+                claimId: claim.id,
+                need: `re-read ${staleEvidenceIds.join(', ')} against the current subject — the evidence stands, its verdict is out of date`,
+            });
+        } else {
+            reasons.push(reason(
+                'evidence_below_strength',
+                `${claim.severity} requires strength ${required}${allowed === undefined ? '' : ` and one of ${[...allowed].join(', ')}`}; strongest supported is ${strongestSupported}`,
+                claim.id,
+            ));
+            deficits.push({
+                claimId: claim.id,
+                need: `evidence of strength >= ${required}${allowed === undefined ? '' : ` from ${[...allowed].join('|')}`}`,
+            });
+        }
         problems.add('below_strength');
     }
 
