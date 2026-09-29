@@ -129,3 +129,18 @@ for (const verdict of incoming) {
 **结论**：本 change 与 `gate-input-integrity` 不能同时 `current`。要么 gate-input 先出清（放行记录 + 合入），要么本 change 先做而 gate-input 的 revision 因这四处声明路径而 `superseded`（届时它需要重新封存、重新 verify、重新冻结账本、重新走审查批准）。
 
 按 `#689` 记录的机制，后者不是"多跑几个命令"：一个 change 的 revision 一旦 supersede，它的 `freshPassingTestEvidence` 就不再包含它，distill/archive 门会拒绝——所以**顺序上"先出清再做"是唯一不产生返工的顺序**。
+
+## 8. 约束解除后的设计选择（§5 的推导已被历史取代）
+
+`gate-input-integrity` 已按放行记录合入 `master`（其设计文档 §12），所以 §5 那条"必须与其声明面不相交"的约束**不再存在**：本 change 现在可以按**最好的设计**来做，而不是按"能避开谁"来做。
+
+因此 §3.2 的选择确定为 **(A)**：
+
+- `readLedger` 返回 **`verdicts`（投影：一条证据一个答案）** 与 **`readings`（全部读数）**；
+- 需要"这个证据现在算哪条"的消费者拿 `verdicts`，**不多写一行**；
+- 需要"每个 run 各读了什么"的 quorum 改从 `readings` 取（`src/store/verdict.ts` 的 quorum 取数点一处改动）；
+- 投影**只在 store 里算一次**，所以不存在"三个消费者各自投影、必须彼此一致"的第二事实源。
+
+被放弃的 (B)（把 `ledger.verdicts` 变成全部读数、投影下移到 `verdictFor`）不再是"为避免冲突而放弃"，而是**因为设计更差**：它会把投影规则复制到每个消费该列表的地方（`replay`、`cli/ledger`、`delta`），也就是本仓库反复删除的那一类（一个事实、多个来源）。
+
+**唯一保留的约束**：本 change 的改动会令 `gate-input-integrity` 的 revision 变为 `superseded`。那是**预期的**——它的记录是合入的提交与设计文档，不再依赖 kata 相位；此处写明以免后来者把这条状态误读为异常。
