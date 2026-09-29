@@ -14,6 +14,7 @@ import {
     type Waiver,
 } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
+import { undeclaredChanges } from '../quality/undeclared-changes.js';
 import { computeManifestHash } from './revision.js';
 import { readActiveRepair, readActiveReviewRepairBaseline } from './seal-reads.js';
 import { findOwnershipConflicts, inferOwnedPathsFromWorkspace } from './revision.js';
@@ -159,6 +160,24 @@ export async function collectSealPreflight(input: {
         // Nothing creates an obligation for a governed change any more (a judge FAIL is carried by the ledger, and the
         // round route that recorded findings is deleted), so the step is deleted rather than taught a third input.
 
+        // 6. **The tree against the declaration.** Collected with the other reads rather than as an early return, because
+        //    this file's contract is to report independent blockers together: a task with two unrelated problems hears
+        //    about both in one run. The difference it names is the one nothing owned — the seal walks `ownedPaths` while
+        //    `verify` reads the working tree — and it has to be closed *before* the freeze, because afterwards the same
+        //    fact is only a drift report on a revision that already exists.
+        async () => {
+            if (ownedPaths.length === 0) return;
+            const undeclared = await undeclaredChanges({ root, declaredPaths: ownedPaths });
+            if (undeclared.paths.length === 0) return;
+            deny(
+                'undeclaredChanges',
+                `The working tree holds ${undeclared.paths.length} change(s) the declared surface does not cover, so a revision frozen `
+                + `now would not be about them: ${undeclared.paths.join(', ')}. `
+                + `Declare them (\`kata-cli scope change --change ${taskId} --add <path>\`, then \`kata-cli scope apply\`), or revert `
+                + 'them, and seal again.',
+                { undeclaredChanges: undeclared.paths },
+            );
+        },
     ];
     await runWithConcurrency(independent, preflightConcurrency, () => 1, async (step) => { await step(); });
 

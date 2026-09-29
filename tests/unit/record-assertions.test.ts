@@ -32,7 +32,9 @@ describe('governed record assertions', () => {
         execFileSync('git', ['config', 'user.name', 'Kata Test'], { cwd: root });
         await mkdir(join(root, 'src'), { recursive: true });
         await writeFile(join(root, 'src/real.ts'), 'export const real = 1;\n', 'utf8');
-        execFileSync('git', ['add', '.'], { cwd: root });
+        // The project's configuration belongs to the baseline: it is what the change runs *under*, not what the change is
+        // about, and leaving it untracked made it an undeclared change the seal now refuses.
+        execFileSync('git', ['add', '-A'], { cwd: root });
         execFileSync('git', ['commit', '--quiet', '-m', 'base'], { cwd: root });
         return root;
     }
@@ -40,9 +42,7 @@ describe('governed record assertions', () => {
     it('turns a false record row into a seal failure naming the row, and shows the claim id', async () => {
         const root = await tempRoot();
         // The row says a file exists. It does not. Nothing else about the task is wrong.
-        await writeFile(join(root, '.kata-config.json'), `${JSON.stringify({
-            checks: [{ name: 'typecheck', command: 'true' }],
-        })}\n`, 'utf8');
+        // The configuration the run happens under comes from `tempRoot`'s baseline, so nothing here is an undeclared change.
 
         await runCommand('open', 'legend-task', root, {
             title: 'Ledger claim',
@@ -77,7 +77,6 @@ describe('governed record assertions', () => {
 
     it('names the row that was refused when the row declares no outcome to check', async () => {
         const root = await tempRoot();
-        await writeFile(join(root, '.kata-config.json'), `${JSON.stringify({ checks: [{ name: 'typecheck', command: 'true' }] })}\n`, 'utf8');
         await runCommand('open', 'legend-refused', root, {
             title: 'Decorative row',
             acceptance: [

@@ -29,7 +29,11 @@ describe('seal preflight blockers', () => {
 
     /** Strict closure asks CodeGraph which tests are affected; a fake that reports none keeps the test self-contained. */
     async function stubCodeGraph(root: string): Promise<void> {
-        const binary = join(root, 'fake-codegraph');
+        // Under `tmp/`, which this project's rules reserve for working files — and which the seal does not treat as part
+        // of the change surface. Written at the repository root it became an undeclared change, which is exactly the state
+        // the preflight now refuses.
+        await mkdir(join(root, 'tmp'), { recursive: true });
+        const binary = join(root, 'tmp', 'fake-codegraph');
         await writeFile(binary, '#!/bin/sh\nprintf "No affected test files found.\n"\n', 'utf8');
         await chmod(binary, 0o755);
         previousCodeGraphBin = process.env.STRATA_CODEGRAPH_BIN;

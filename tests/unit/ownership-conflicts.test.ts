@@ -73,7 +73,9 @@ describe('Task ownership conflict warnings', () => {
     await addOtherTask(root, 'other-task', ['shared.ts']);
     await writeFile(join(root, 'shared.ts'), 'content\n', 'utf8');
     await writeFile(join(root, 'main.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'shared.ts', 'main.ts'], { cwd: root });
+    // `-A` rather than a named file: `initLayout` writes the repository's `.gitignore`, which belongs to the baseline rather
+    // than to the change being sealed — and a named add left it undeclared, which the seal now refuses.
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     await runCommand('open', 'build-task', root, {
@@ -100,7 +102,7 @@ describe('Task ownership conflict warnings', () => {
     const root = await tempRoot();
     await addOtherTask(root, 'other-task', ['other.ts']);
     await writeFile(join(root, 'main.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'main.ts'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     await runCommand('open', 'clean-build', root, {
@@ -120,7 +122,7 @@ describe('Task ownership conflict warnings', () => {
     const root = await tempRoot();
     await addOtherTask(root, 'other-task', ['shared.ts']);
     await writeFile(join(root, 'shared.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'shared.ts'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     const taskId = 'seal-conflict-reject';
@@ -150,7 +152,7 @@ describe('Task ownership conflict warnings', () => {
     const root = await tempRoot();
     await addOtherTask(root, 'other-task', ['shared.ts']);
     await writeFile(join(root, 'shared.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'shared.ts'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     const taskId = 'seal-conflict-allow';
@@ -181,7 +183,7 @@ describe('Task ownership conflict warnings', () => {
     const root = await tempRoot();
     await addOtherTask(root, 'other-task', ['shared.ts']);
     await writeFile(join(root, 'shared.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'shared.ts'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     const taskId = 'persist-conflict';
@@ -217,7 +219,7 @@ describe('Task ownership conflict warnings', () => {
   it('AC-3: clean revision without conflicts has no acknowledgment marker', async () => {
     const root = await tempRoot();
     await writeFile(join(root, 'main.ts'), 'content\n', 'utf8');
-    execFileSync('git', ['add', 'main.ts'], { cwd: root });
+    execFileSync('git', ['add', '-A'], { cwd: root });
     execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
 
     const taskId = 'clean-revision';
