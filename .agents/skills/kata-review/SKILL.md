@@ -77,6 +77,24 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes** — from `kata-verify` — `kata-cli ledger run --change <id> --out <path>`
+- **what the ledger already decides, and what it cannot** — from `kata-verify` — `kata-cli ledger status --cost --change <id>`
+
+**Outputs**
+
+- **the findings, each bound to the revision that reported it** — `.kata/tasks/<id>/review.json`
+- **the decision derived from the evidence** — `kata-cli ledger decide --change <id>`
+
+**Interaction**
+
+- **the judge's model is chosen on the host platform, and kata records only which choice was made** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
 ## Independent review, on the evidence ledger
 
 Both nodes below must answer to a **different context than the one that wrote the change**. The same context that

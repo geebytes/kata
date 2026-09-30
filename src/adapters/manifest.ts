@@ -285,6 +285,168 @@ export const commandManifest = skillCommands.map((command) => ({
     summary: command.summary,
 }));
 
+/**
+ * **What a node consumes, produces, and asks.** A node that does not say these three cannot be connected to anything:
+ * measured on a real change, the review node was handed a brief the author improvised instead of the deterministic
+ * output of the previous node, so its input existed as prose in one session rather than as an artefact the next node
+ * could be pointed at.
+ */
+export type NodeInput = {
+    /** What the node reads. */
+    what: string;
+    /** The node whose output it is, or `null` for something no node produces (a user's intent, the repository itself). */
+    from: string | null;
+    /** Where a reader can find it: a command that emits it, or a path an artefact lives at. */
+    source: string;
+};
+
+export type NodeOutput = { what: string; artefact: string };
+
+export type NodeQuestion = {
+    /** Why the node stops. */
+    why: string;
+    /** The answers the gate accepts — the same set the CLI accepts, because an option it does not know cannot be completed. */
+    choices: string[];
+};
+
+export type NodeContract = {
+    inputs: NodeInput[];
+    outputs: NodeOutput[];
+    /** Empty for a node that stops for nothing: an interaction the operator cannot act on is not one. */
+    interaction: NodeQuestion[];
+};
+
+const NODE_CONTRACTS: Record<string, NodeContract> = {
+    'kata': {
+        inputs: [{ what: 'the repository state and the task records', from: null, source: 'kata-cli status' }],
+        outputs: [{ what: 'the phase and the one next action', artefact: 'status output' }],
+        interaction: [],
+    },
+    'kata-open': {
+        inputs: [{ what: 'what the user wants changed', from: null, source: 'the user' }],
+        outputs: [
+            { what: 'frozen acceptance criteria, the declared surface and the workflow profile', artefact: '.kata/tasks/<id>/task.json' },
+        ],
+        interaction: [{ why: 'the profile decides how much process the change pays for', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-design': {
+        inputs: [
+            { what: 'the frozen acceptance criteria and the declared surface', from: 'kata-open', source: '.kata/tasks/<id>/task.json' },
+            { what: 'what the code already does along the paths the change touches', from: null, source: 'the repository, via kata-cli codegraph' },
+        ],
+        outputs: [{ what: 'the design and the acceptance matrix', artefact: 'the design doc named by the acceptance matrix' }],
+        interaction: [{ why: 'the execution mode for the build is the operator\'s to choose', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-build': {
+        inputs: [{ what: 'the design and the acceptance matrix', from: 'kata-design', source: 'the paths the matrix declares' }],
+        outputs: [{ what: 'a sealed revision and one passing evidence item per acceptance criterion', artefact: '.kata/tasks/<id>/current-revision.json' }],
+        interaction: [],
+    },
+    'kata-hotfix': {
+        inputs: [{ what: 'the reported failure and a way to reproduce it', from: null, source: 'the user and the repository' }],
+        outputs: [{ what: 'a bounded repair with regression evidence', artefact: '.kata/tasks/<id>/current-revision.json' }],
+        interaction: [{ why: 'the profile decides how much process the repair pays for', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-tweak': {
+        inputs: [{ what: 'the bounded local adjustment', from: null, source: 'the user' }],
+        outputs: [{ what: 'the adjustment with proportional verification', artefact: '.kata/tasks/<id>/current-revision.json' }],
+        interaction: [{ why: 'the profile decides how much process the adjustment pays for', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-verify': {
+        inputs: [
+            { what: 'the sealed revision', from: 'kata-build', source: '.kata/tasks/<id>/current-revision.json' },
+            { what: 'the evidence recorded for it', from: 'kata-build', source: '.kata/tasks/<id>/evidence/' },
+        ],
+        outputs: [{ what: 'the verification result and any workspace drift', artefact: '.kata/tasks/<id>/verify.json' }],
+        interaction: [{ why: 'the reviewer\'s model is chosen on the host platform, and kata records only which choice was made', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-review': {
+        inputs: [
+            { what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes', from: 'kata-verify', source: 'kata-cli ledger run --change <id> --out <path>' },
+            { what: 'what the ledger already decides, and what it cannot', from: 'kata-verify', source: 'kata-cli ledger status --cost --change <id>' },
+        ],
+        outputs: [
+            { what: 'the findings, each bound to the revision that reported it', artefact: '.kata/tasks/<id>/review.json' },
+            { what: 'the decision derived from the evidence', artefact: 'kata-cli ledger decide --change <id>' },
+        ],
+        interaction: [{ why: 'the judge\'s model is chosen on the host platform, and kata records only which choice was made', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-judge': {
+        inputs: [
+            { what: 'the review findings and the approved revision', from: 'kata-review', source: '.kata/tasks/<id>/review.json' },
+            { what: 'the decision derived from the evidence', from: 'kata-review', source: 'kata-cli ledger decide --change <id>' },
+        ],
+        outputs: [{ what: 'the judge result for the current revision', artefact: '.kata/tasks/<id>/judge.json' }],
+        interaction: [{ why: 'the archive decision after a judge result is the operator\'s', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-archive': {
+        inputs: [
+            { what: 'the judge result for the current revision', from: 'kata-judge', source: '.kata/tasks/<id>/judge.json' },
+            { what: 'the knowledge closure decision and its reason', from: 'kata-verify', source: 'kata-cli verify --change <id>' },
+        ],
+        outputs: [{ what: 'the archived task record and the distilled wiki pages', artefact: '.kata/tasks/<id>/' }],
+        interaction: [{ why: 'archiving is the operator\'s decision, and it is the last one the change gets', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+    'kata-wiki-enrich': {
+        inputs: [{ what: 'the raw project sources under the wiki store\'s raw tree', from: null, source: '.llmwiki/raw/' }],
+        outputs: [{ what: 'synthesised wiki pages, linted and registered', artefact: '.llmwiki/concepts/' }],
+        interaction: [],
+    },
+    'kata-collect': {
+        inputs: [{ what: 'what the other platform returned: branch, revision and evidence', from: null, source: 'kata-cli collect' }],
+        outputs: [{ what: 'the reconciled task state and a scoped repair when one is needed', artefact: 'kata-cli status' }],
+        interaction: [{ why: 'which platform ran the work is the operator\'s to state, because kata does not infer it', choices: ['continue_current', 'switched', 'delegated'] }],
+    },
+};
+
+/** The declared contract for a node, or `null` for a skill that carries a standing procedure rather than a phase. */
+export function nodeContractFor(id: string): NodeContract | null {
+    return NODE_CONTRACTS[id] ?? null;
+}
+
+function renderNodeContract(command: SkillCommand): string {
+    const contract = nodeContractFor(command.id);
+    if (contract === null || !command.phase) return '';
+    const inputs = contract.inputs
+        .map((input) => `- **${input.what}**${input.from === null ? '' : ` — from \`${input.from}\``} — \`${input.source}\``)
+        .join('\n');
+    const outputs = contract.outputs.map((output) => `- **${output.what}** — \`${output.artefact}\``).join('\n');
+    const interaction = contract.interaction.length === 0
+        ? '- Nothing: this node does not stop for an operator decision.'
+        : contract.interaction
+            .map((question) => `- **${question.why}** — \`kata-cli gate approve --task <id> --boundary <boundary> --choice <${question.choices.join('|')}>\``)
+            .join('\n');
+    return `## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+${inputs}
+
+**Outputs**
+
+${outputs}
+
+**Interaction**
+
+${interaction}
+`;
+}
+
+/**
+ * The manifest as a value a verifier can read: it carries the node contract, so the connections a rendered skill
+ * describes can be checked without parsing prose — an input that names a node, an output that names an artefact, and the
+ * answers a gate takes.
+ */
+export type ManifestEntry = (typeof commandManifest)[number] & { contract?: NodeContract | null };
+
+export const manifestWithContracts: ManifestEntry[] = commandManifest.map((entry) => ({
+    ...entry,
+    ...(nodeContractFor(entry.id) === null ? {} : { contract: nodeContractFor(entry.id) }),
+}));
+
 export const platformCapabilities: Record<Platform, PlatformCapabilities> = {
     codex: { skills: true, hooks: false, subAgents: true, modelSelection: true },
     'claude-code': { skills: true, hooks: true, subAgents: true, modelSelection: true },
@@ -338,6 +500,8 @@ ${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null,
     // Verify and review are exactly the nodes where the context that produced the change is the worst available
     // judge of it, so both carry the independent adversarial step.
     const reviewGuidance = ledgerReviewGuidanceFor(command);
+
+    const nodeContractContent = renderNodeContract(command);
 
     const automationContent = automationGuidanceFor(command, platform);
 
@@ -416,7 +580,7 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
-${reviewGuidance}${automationContent}
+${nodeContractContent}${reviewGuidance}${automationContent}
 
 \`\`\`json kata-command-manifest
 ${JSON.stringify(commandManifest.find((entry) => entry.id === command.id), null, 2)}

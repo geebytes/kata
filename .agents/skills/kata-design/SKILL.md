@@ -77,6 +77,23 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the frozen acceptance criteria and the declared surface** — from `kata-open` — `.kata/tasks/<id>/task.json`
+- **what the code already does along the paths the change touches** — `the repository, via kata-cli codegraph`
+
+**Outputs**
+
+- **the design and the acceptance matrix** — `the design doc named by the acceptance matrix`
+
+**Interaction**
+
+- **the execution mode for the build is the operator's to choose** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
 
 
 ```json kata-command-manifest

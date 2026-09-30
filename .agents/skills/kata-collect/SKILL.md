@@ -77,6 +77,22 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **what the other platform returned: branch, revision and evidence** — `kata-cli collect`
+
+**Outputs**
+
+- **the reconciled task state and a scoped repair when one is needed** — `kata-cli status`
+
+**Interaction**
+
+- **which platform ran the work is the operator's to state, because kata does not infer it** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
 
 
 ```json kata-command-manifest

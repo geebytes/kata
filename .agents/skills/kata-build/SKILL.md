@@ -77,6 +77,22 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the design and the acceptance matrix** — from `kata-design` — `the paths the matrix declares`
+
+**Outputs**
+
+- **a sealed revision and one passing evidence item per acceptance criterion** — `.kata/tasks/<id>/current-revision.json`
+
+**Interaction**
+
+- Nothing: this node does not stop for an operator decision.
 ## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.

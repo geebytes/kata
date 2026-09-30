@@ -15,7 +15,7 @@ import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
-import { assuranceAtLeast, isCurrentAssuranceLevel } from '../kernel/types.js';
+import { isCurrentAssuranceLevel } from '../kernel/types.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
@@ -648,11 +648,12 @@ export async function resolveChallenge(
 }
 
 /**
- * Record the assurance a round actually achieved, and only upwards.
+ * Record the assurance the round that just ran actually achieved.
  *
  * The adapter reports Kata's observation — `observed` when Kata ran the checks itself, `relayed` when
  * they arrive as a recorded result. Host-platform isolation is outside this vocabulary. Two rules make the
- * write trustworthy: it is recorded rather than merely printed, and it never lowers historical assurance.
+ * write trustworthy: it is recorded rather than merely printed, and a value that can no longer be produced
+ * stops deciding the gate — a retired one is moved to `assuranceHistory` instead of outranking its successor.
  */
 export async function ensureAssurance(root: string, changeId: string, achieved: CurrentAssuranceLevel): Promise<AssuranceLevel> {
     if (!isCurrentAssuranceLevel(achieved)) {
@@ -660,12 +661,23 @@ export async function ensureAssurance(root: string, changeId: string, achieved: 
     }
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
-        const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(path)) ?? { usage: {}, assurance: 'none' as AssuranceLevel };
-        const strongest = assuranceAtLeast(achieved, current.assurance) ? achieved : current.assurance;
-        if (strongest !== current.assurance) {
-            await writeJson(root, changeId, FILES.usage, { ...current, assurance: strongest });
-        }
-        return strongest;
+        const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: Array<{ replaced: AssuranceLevel; at: string; why: string }> }>(path))
+            ?? { usage: {}, assurance: 'none' as AssuranceLevel };
+        if (achieved === current.assurance) return achieved;
+        // **A recorded round replaces a recorded round, including a retired value.** Keeping the stronger of the two
+        // meant a `sandboxed` value written before the vocabulary retired it outranked every later `observed`, and that
+        // state could never become approvable: the approval refused it and dispatched "re-run the verification", while
+        // re-running returned the same value byte for byte. History stays readable where it is history — the ledger
+        // keeps every reading, and a retired *floor* keeps an old policy auditable — but the current assurance has to
+        // describe the round that just ran, or a value nobody can produce again decides the gate.
+        await writeJson(root, changeId, FILES.usage, {
+            ...current,
+            assurance: achieved,
+            ...(isCurrentAssuranceLevel(current.assurance)
+                ? {}
+                : { assuranceHistory: [...(current.assuranceHistory ?? []), { replaced: current.assurance, at: nowIso(), why: 'a later round was observed; the retired value is kept as history rather than as the current assurance' }] }),
+        });
+        return achieved;
     });
 }
 
