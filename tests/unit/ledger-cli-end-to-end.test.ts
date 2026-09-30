@@ -124,6 +124,26 @@ describe('the ledger verbs', () => {
         expect(String(result.note)).toContain('nothing has been recorded');
     });
 
+    it('reports every reading beside the projection, so a lost reading would be visible', async () => {
+        // **The number that makes "no reading is lost" observable.** With one entry per evidence item the two counts always
+        // agreed, so an operator had no way to see that a second independent reading had been recorded — an independent
+        // review found `readings` observable only through the quorum's verdict.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        const once = await ledger(['status']);
+        expect(once.readings).toBe(once.verdicts);
+
+        // A second run deciding the same evidence: the projection still holds one answer per item, and the readings count
+        // moves — which is the fact that says the second reader exists.
+        await ledger(['evidence', 'verify', '--run-id', 'run-2', '--actor', 'reviewer-b']);
+        const twice = await ledger(['status']);
+        expect(twice.verdicts).toBe(once.verdicts);
+        expect(twice.readings).toBe(2);
+    });
+
     it('reads its own --change flag, so a subcommand is not mistaken for an id', async () => {
         // The regression this pins: `ledger status --change x` read `status` as the change id, because the entry point's
         // positional guesser cannot tell a subcommand from an id.
@@ -185,6 +205,28 @@ describe('the ledger verbs', () => {
         // The refusal above set the exit code; a pass leaves it as it is, because a passing command must not clear an
         // earlier failure in the same process.
         expect(process.exitCode).toBe(1);
+    });
+
+    it('refuses a decision asked for by a party that produced a reading, which the verb now passes', async () => {
+        // **The check was unreachable from every command.** `decide` takes an `actor`, and no caller supplied one, so
+        // `same_actor` could never fire while the operations guide described it as live — measured by an independent review.
+        // The verb resolves it the same way a reading's producer is resolved, so the two name one identity.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify', '--actor', 'the-author']);
+
+        const asAuthor = await ledger(['decide', '--actor', 'the-author']);
+        expect((asAuthor.reasons as Array<{ code: string }>).map((reason) => reason.code)).toContain('same_actor');
+        // The remedy has to be true and executable: it names how many readings that party produced, not "every verdict".
+        const deficit = (asAuthor.deficits as Array<{ claimId: string; need: string }>).find((entry) => entry.claimId === 'quorum:same_actor');
+        expect(deficit?.need).toContain('the-author produced 1 of this');
+        expect(deficit?.need).toContain('kata-cli ledger decide');
+
+        // A decision taken by the operator, who produced nothing, is not refused for independence.
+        const asOperator = await ledger(['decide']);
+        expect((asOperator.reasons as Array<{ code: string }>).map((reason) => reason.code)).not.toContain('same_actor');
     });
 
     it('blocks on an open counterexample and unblocks when the counterexample no longer reproduces', async () => {

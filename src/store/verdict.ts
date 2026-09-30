@@ -12,6 +12,7 @@
  */
 import { readLedger, declaredPaths, readProbeAnswers, type Ledger } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
+import { readingsForRevision } from '../kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
 import { classifyRisk, resolveTier } from '../kernel/risk.js';
 import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } from '../kernel/types.js';
@@ -248,7 +249,12 @@ export async function ledgerVerdict(input: {
     // **Old verdicts are one reading, not one each.** A ledger written before `producer` existed groups every verdict under
     // one unattributed run: counting them individually would make a single run's readings look like a quorum, and the
     // count is reported so a shortfall caused by missing provenance is distinguishable from one caused by one reviewer.
-    const { records, unattributed } = groupByProducer(ledger.verdicts);
+    // **Every reading, not the projection** — and only the readings that speak for the revision being decided. The
+    // projection is one entry per item, so reading it here is how a second reviewer became invisible; handing over *every*
+    // reading is how a reading this ledger calls `stale` became a reviewer, measured by an independent review on a real
+    // flow. `readingsForRevision` is the kernel's one derivation of that region, so the quorum and the projection cannot
+    // answer "which readings are about this revision" differently.
+    const { records, unattributed } = groupByProducer(readingsForRevision(ledger.readings, ledger.subject?.revision ?? null));
     const quorum: QuorumReport | undefined = chainQuorum({
         records,
         unattributed,
@@ -262,6 +268,9 @@ export async function ledgerVerdict(input: {
         claims: ledger.claims,
         evidence: ledger.evidence,
         verdicts: ledger.verdicts,
+        // **The identity question is asked of every reading.** Which reading survives is freshness; who took part is not,
+        // and a displaced reading is still a reading its actor produced.
+        allReadings: ledger.readings,
         challenges: ledger.challenges,
         policy: ledger.policy,
         tier,

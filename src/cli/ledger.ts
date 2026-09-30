@@ -28,7 +28,7 @@ import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
-import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -102,7 +102,16 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             subject: ledger.subject?.revision ?? null,
             claims: ledger.claims.length,
             evidence: ledger.evidence.length,
+            /** The projection: one answer per evidence item. */
             verdicts: ledger.verdicts.length,
+            /**
+             * **Every reading the document holds**, which is what the quorum counts runs from.
+             *
+             * Reported because it is the one number that says "no reading was lost": with one entry per item these two
+             * agreed, and an operator had no way to see that a second independent reading had been recorded — measured by
+             * an independent review, which found `readings` observable only through the quorum.
+             */
+            readings: ledger.readings.length,
             challenges: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
             runs: ledger.runs.length,
             assurance: ledger.assurance,
@@ -710,12 +719,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             });
             return;
         }
+        // **The party asking is passed, so the independence check can fire.** It could not before: `decide` takes an
+        // `actor` and no caller supplied one, so `same_actor` was unreachable from every command while the operations guide
+        // described it as live. Measured by an independent review. Same resolution as a reading's producer, so an operator
+        // who names themselves once is named consistently.
+        const decidingActor = argValue(argv, '--actor') ?? process.env.KATA_ACTOR?.trim();
         const verdict = await ledgerVerdict({
             root: options.root,
             changeId,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
             ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
-            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag }),
+            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as CurrentAssuranceLevel }),
+            ...(decidingActor === undefined || decidingActor === '' ? {} : { actor: decidingActor }),
         });
         if (verdict.kind !== 'decided') {
             // Neither state may look like a pass: a ledger nobody wrote and a ledger that cannot be read are both refusals,
