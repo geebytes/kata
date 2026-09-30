@@ -29,9 +29,11 @@ describe('sandboxed retirement on the current write surface', () => {
 
         const reviewSchema = await readFile(join(root, 'schemas', 'review.schema.json'), 'utf8');
         expect(reviewSchema).toContain('"sandboxed"'); // legacy review artefacts remain readable
+        // The approval route needs no special case for a retired value: a later round replaces it (see
+        // `legacy-assurance-vocabulary.test.ts`), so the state a guard would have refused cannot be reached by an
+        // operator who re-runs. What the write surface must not offer is the value itself.
         const approval = await readFile(join(root, 'src', 'workflow', 'orchestrator.ts'), 'utf8');
-        expect(approval).toContain('isCurrentAssuranceLevel(ledger.assurance)');
-        expect(approval).toContain('historical assurance cannot authorize a current review');
+        expect(approval).not.toContain("fabricated for a retired value");
 
         const previousExitCode = process.exitCode;
         process.exitCode = 0;

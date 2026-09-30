@@ -128,7 +128,6 @@ export const nextActionReasons = [
   'repair_strict_major_findings',
   'repair_unresolved_obligations',
   'satisfy_ledger_deficits',
-  'refresh_legacy_assurance',
   'resolve_repair_obligations',
   'resolve_wiki_closure',
   'review_fresh_implementation',
@@ -698,8 +697,6 @@ export function statusActionPrompts(
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
   satisfy_ledger_deficits: null,
-  // A retired assurance value cannot hold a current approval; the repair is to record a current observation again.
-  refresh_legacy_assurance: null,
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
   // Also a decision about the change rather than about which platform runs: the record has to be read again.

@@ -441,7 +441,7 @@ gate mutation kill       =100%
 | **多个 LLM reviewer 产生相关错误** | 中高 | 高 | **高** | provider/model/prompt 多样性；比较 evidence 而非单纯投票；critical 冲突人工 |
 | **Risk scorer 把高风险 change 判低** | 中 | 严重 | **高** | security/auth/gate 等敏感路径设不可学习的最低 risk floor；随机高档抽检 |
 | **Delta dependency cone 漏依赖** | 中 | 高 | **高** | 静态依赖 + 声明路径 + runtime evidence；无法证明时 fallback full review |
-| **Artifact-only 误当成过程安全证明** | 中 | 严重 | **高** | quality 与 `executionAssurance` 两轴；宿主平台负责 sandbox/egress controls |
+| **Artifact-only 误当成过程安全证明** | 中 | 严重 | **高** | quality 与 `executionAssurance` 两轴；宿主平台负责运行隔离与 egress controls，Kata 的 `observed` 不作此声明 |
 | **成本目标诱导“少看即通过”** | 中 | 高 | **高** | budget exhaustion = escalate/defer，永不 PASS |
 | **Evidence schema/adapter 演化分裂** | 中 | 中 | 中 | schema version；contract tests；向后兼容窗口；单一 canonical model |
 | **事件驱动引入重复/乱序** | 中 | 中 | 中 | idempotency key = subject/evidence digest；明确 state machine；event replay test |
@@ -515,8 +515,8 @@ Ports & Adapters 的目的正是让 domain 通过技术无关接口与外界通�
 ```text
                  ┌─────────────────────────────┐
                  │ Assurance Overlay            │
-                 │ sandbox / identity / signing │
-                 │ audit / external provenance  │
+                 │ identity / signing / audit   │
+                 │ external provenance          │
                  └──────────────┬──────────────┘
                                 │ optional by risk
                  ┌──────────────▼──────────────┐

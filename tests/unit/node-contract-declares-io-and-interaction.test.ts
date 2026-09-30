@@ -17,7 +17,7 @@ describe('every workflow node declares its input, output and interaction', () =>
         const missing: string[] = [];
         for (const command of skillCommands) {
             if (!('phase' in command) || !command.phase) continue;
-            const contract = nodeContractFor(command.id);
+            const contract = nodeContractFor(command.id as Parameters<typeof nodeContractFor>[0]);
             if (contract === null) {
                 missing.push(`${command.id}: no contract`);
                 continue;
@@ -32,14 +32,16 @@ describe('every workflow node declares its input, output and interaction', () =>
     });
 
     it('names an upstream node for every input that has one, and only real nodes', () => {
-        const ids = new Set(skillCommands.map((command) => command.id));
+        const ids = new Set<string>(skillCommands.map((command) => command.id));
         const offenders: string[] = [];
         for (const command of skillCommands) {
-            const contract = nodeContractFor(command.id);
+            const contract = nodeContractFor(command.id as Parameters<typeof nodeContractFor>[0]);
             if (contract === null) continue;
             for (const input of contract.inputs) {
-                if (input.from !== null && !ids.has(input.from)) {
-                    offenders.push(`${command.id}: input from "${input.from}", which is not a node`);
+                // An input that names a predecessor which is not a node is prose, not a connection: the id has to name
+                // something this repository renders.
+                if (input.from !== null && !ids.has(String(input.from))) {
+                    offenders.push(`${command.id}: input from "${String(input.from)}", which is not a node`);
                 }
             }
         }
@@ -52,7 +54,7 @@ describe('every workflow node declares its input, output and interaction', () =>
         const accepted = new Set(['continue_current', 'switched', 'delegated']);
         const offenders: string[] = [];
         for (const command of skillCommands) {
-            const contract = nodeContractFor(command.id);
+            const contract = nodeContractFor(command.id as Parameters<typeof nodeContractFor>[0]);
             if (contract === null) continue;
             for (const question of contract.interaction) {
                 for (const choice of question.choices) {
