@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { manifestWithContracts, nodeContractFor, skillCommands, type Platform, renderSkill } from '../../src/adapters/manifest.js';
 import { isDispatchedCommand, isDispatchedSubcommand } from '../helpers/dispatcher-vocabulary.js';
+import { USER_CHOICES } from '../../src/workflow/user-choice-gate.js';
 
 /**
  * **A node that does not say what it consumes and produces cannot be connected to anything.**
@@ -49,9 +50,10 @@ describe('every workflow node declares its input, output and interaction', () =>
     });
 
     it('asks only choices the CLI accepts', () => {
-        // A gate answer that the CLI does not know is an interaction the operator cannot complete: the declared options
-        // and the accepted values have to be the same set, and the CLI is where that set lives.
-        const accepted = new Set(['continue_current', 'switched', 'delegated']);
+        // A gate answer that the CLI does not know is an interaction the operator cannot complete. The set is read from
+        // the value the gate itself uses rather than restated here: a hand-kept copy is what let this guard look at a
+        // vocabulary it had frozen while the CLI's own moved.
+        const accepted = new Set<string>(USER_CHOICES);
         const offenders: string[] = [];
         for (const command of skillCommands) {
             const contract = nodeContractFor(command.id as Parameters<typeof nodeContractFor>[0]);
@@ -63,6 +65,16 @@ describe('every workflow node declares its input, output and interaction', () =>
             }
         }
         expect(offenders).toEqual([]);
+    });
+
+    it('renders every answer the gate accepts into the interaction it declares', () => {
+        // The other direction of the same fact: a gate answer the CLI accepts but no rendered contract mentions is an
+        // option an operator has to discover. One node is enough to carry the set — they all render the same table.
+        const rendered = skillCommands
+            .map((command) => nodeContractFor(command.id as Parameters<typeof nodeContractFor>[0]))
+            .filter((contract): contract is NonNullable<typeof contract> => contract !== null)
+            .flatMap((contract) => contract.interaction.flatMap((question) => question.choices));
+        expect([...new Set(rendered)].sort()).toEqual([...USER_CHOICES].sort());
     });
 
     it('renders the contract into every platform copy, and names only dispatched commands', () => {

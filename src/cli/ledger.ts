@@ -80,6 +80,12 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 
+/** The verbs `runLedgerCommand` dispatches. Kept beside the dispatcher so the refusal cannot list a different set. */
+export const LEDGER_VERBS = [
+    'answer', 'ask', 'baseline', 'challenge', 'claim', 'corpus', 'decide', 'detectability', 'evidence', 'focus',
+    'freeze', 'plan', 'policy', 'replay', 'request-check', 'run', 'status', 'usage', 'verifier',
+] as const;
+
 export async function runLedgerCommand(argv: string[], options: LedgerCommandOptions): Promise<void> {
     // The family reads its own `--change`, because the entry point's positional guesser cannot tell a subcommand from an id:
     // `ledger status --change x` would otherwise read `status` as the change id, which it did until this line existed.
@@ -881,5 +887,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
-    fail({ command: 'ledger', error: `unknown verb "${sub}"`, verbs: ['status', 'freeze', 'policy', 'claim', 'evidence', 'challenge', 'plan', 'decide', 'focus'] });
+    // **The list is the dispatcher's, not a hand-kept subset.** It named nine of the nineteen verbs, so an operator who
+    // mistyped `ledger run` was told the verb does not exist while `ledger run` is exactly what the review node's own
+    // contract hands them. Derived from the handlers' `sub` literals so a rename cannot leave this behind.
+    fail({
+        command: 'ledger',
+        error: `unknown verb "${sub}"`,
+        verbs: [...new Set([...LEDGER_VERBS])].sort(),
+    });
 }

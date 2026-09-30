@@ -84,8 +84,8 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 
 **Inputs**
 
-- **the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes** — from `kata-verify` — `kata-cli ledger run --change <id> --out <path>`
-- **what the ledger already decides, and what it cannot** — from `kata-verify` — `kata-cli ledger status --cost --change <id>`
+- **the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes** — `kata-cli ledger run --change <id> --out <path>`
+- **what the ledger already decides, and what it cannot** — `kata-cli ledger status --cost --change <id>`
 
 **Outputs**
 

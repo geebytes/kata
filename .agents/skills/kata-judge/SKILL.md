@@ -85,7 +85,7 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 **Inputs**
 
 - **the review findings and the approved revision** — from `kata-review` — `.kata/tasks/<id>/review.json`
-- **the decision derived from the evidence** — from `kata-review` — `kata-cli ledger decide --change <id>`
+- **the decision derived from the evidence** — `kata-cli ledger decide --change <id>`
 
 **Outputs**
 

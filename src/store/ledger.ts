@@ -290,16 +290,27 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             policyFilled = loaded.filled;
             // Checked here rather than in the raw scan: what every consumer sees is the filled policy, and the fill is
             // reported in `policyFilled`. A document that predates a field is not a corrupt document.
-            // Current schemas deliberately reject retired writer vocabulary, but historical
-            // policies retain it for audit. loadPolicy already validates their full shape.
-            const hasHistoricalFloor = Object.values(policy.tiers).some((tier) => !isCurrentAssuranceLevel(tier.assuranceFloor));
-            if (!hasHistoricalFloor) {
-                try {
-                    validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, policy);
-                } catch (error) {
-                    malformedFiles.push('policy.json');
-                    malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates: ${(error as Error).message}`);
-                }
+            // **The exemption is for the retired field, not for the document.** Skipping validation whenever *any* tier
+            // carried a historical floor meant one legitimately-old value let every other violation through: measured,
+            // a reviewer count of `1.5` beside a retired floor was accepted, while the same count beside a current floor
+            // was reported unreadable. The retired floor is substituted for the check and named in `policyFilled`, so
+            // what is validated is the document minus the one value that is allowed to be old.
+            const substituted = {
+                ...policy,
+                tiers: Object.fromEntries(
+                    Object.entries(policy.tiers).map(([name, tier]) => [
+                        name,
+                        isCurrentAssuranceLevel(tier.assuranceFloor)
+                            ? tier
+                            : { ...tier, assuranceFloor: defaultPolicy().tiers[name as keyof typeof policy.tiers].assuranceFloor },
+                    ]),
+                ) as typeof policy.tiers,
+            };
+            try {
+                validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, substituted);
+            } catch (error) {
+                malformedFiles.push('policy.json');
+                malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates and substituted \`sandboxed\` for the check: ${(error as Error).message}`);
             }
         } else policyRejected = loaded.error;
     }

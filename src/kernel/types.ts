@@ -43,10 +43,10 @@ export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
  * Kata's current assurance vocabulary describes what Kata itself records about a round.
  * Execution isolation belongs to the host platform; it is not a Kata-provided rank.
  */
-export const ASSURANCE_LEVELS = ['none', 'relayed', 'observed', 'signed'] as const;
+export const ASSURANCE_LEVELS = ['none', 'relayed', 'observed'] as const;
 export type CurrentAssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
 /** A retired value accepted only while reading historical ledger artefacts. */
-export const LEGACY_ASSURANCE_LEVELS = ['sandboxed'] as const;
+export const LEGACY_ASSURANCE_LEVELS = ['sandboxed', 'signed'] as const;
 export type LegacyAssuranceLevel = (typeof LEGACY_ASSURANCE_LEVELS)[number];
 /** All vocabulary a reader accepts. Writers use ASSURANCE_LEVELS only. */
 export const READABLE_ASSURANCE_LEVELS = [...ASSURANCE_LEVELS, ...LEGACY_ASSURANCE_LEVELS] as const;

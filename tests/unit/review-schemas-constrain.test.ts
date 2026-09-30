@@ -133,6 +133,8 @@ describe('the review schemas constrain their documents', () => {
         const policySchema = load('review-policy.schema.json') as {
             properties: { tiers: { properties: Record<string, { properties: { assuranceFloor: { enum: string[] } } }> } };
         };
+        // The floor enum is the **write** vocabulary: a historical floor stays readable in the documents that carry it
+        // (see `READABLE_ASSURANCE_LEVELS`) but no current schema offers it as a value to write.
         expect(policySchema.properties.tiers.properties.standard?.properties.assuranceFloor.enum.sort())
             .toEqual([...ASSURANCE_LEVELS].sort());
     });

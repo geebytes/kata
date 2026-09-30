@@ -1524,11 +1524,24 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     };
                 }
 
-                // **No separate refusal for a historical assurance value.** It used to return one, and it was a dead
-                // end: the message dispatched "re-run the verification so Kata records current observed assurance",
-                // while `ensureAssurance` kept the stronger of the two values, so re-running returned the same one byte
-                // for byte and the state could never become approvable. A recorded round now replaces a recorded round,
-                // so an operator who re-runs simply gets a current value and this route needs no second answer.
+                // **A retired assurance value is refused here, and the repair now exists.** The earlier refusal was a
+                // dead end (it dispatched "re-run the verification" while `ensureAssurance` kept the stronger value, so
+                // re-running returned the same one), and deleting it was over-correction: measured with a *passing*
+                // ledger carrying `sandboxed`, the approval returned `success: true` and wrote that value into a fresh
+                // review record. A recorded round now replaces a recorded round **and** the decision surface refuses a
+                // value no current writer can produce, so the refusal names a repair that works.
+                if (!isCurrentAssuranceLevel(ledger.assurance)) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `Review approval refused: historical assurance cannot authorize a current review (${ledger.assurance}). `
+                            + `Run \`kata-cli ledger evidence verify --change ${taskId}\` — a later round replaces this value rather than `
+                            + 'outranking it — then approve.',
+                        diagnostics: {
+                            ledger: { state: 'decided', assurance: ledger.assurance, legacyAssurance: true },
+                            nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),
+                        },
+                    };
+                }
                 // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer a request — the claim's own
                 // reading set, the evidence types its tier requires, the deadline, the probes it must answer — and
                 // `ledger request-check` compares what arrived against what was asked. Nothing consumed that check: it was

@@ -85,11 +85,12 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 **Inputs**
 
 - **the sealed revision** — from `kata-build` — `.kata/tasks/<id>/current-revision.json`
-- **the evidence recorded for it** — from `kata-build` — `.kata/tasks/<id>/evidence/`
+- **the evidence recorded for it** — from `kata-build` — `.kata/evidence/<id>-*.json`
 
 **Outputs**
 
 - **the verification result and any workspace drift** — `.kata/tasks/<id>/verify.json`
+- **one evidence item per acceptance criterion, which the review node reads** — `.kata/evidence/<id>-*.json`
 
 **Interaction**
 

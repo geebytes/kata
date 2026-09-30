@@ -13,6 +13,7 @@ import { budgetDetail, budgetStatus, type BudgetUsage } from './budget.js';
 import { computeDelta } from './delta.js';
 import { MIN_STRENGTH_BY_SEVERITY, strengthOf, verdictFor } from './evidence.js';
 import { meetsAssuranceFloor, tierPolicy, type Policy } from './policy.js';
+import { ASSURANCE_LEVELS as PRODUCIBLE_ASSURANCE } from './types.js';
 import {
     REASON_MESSAGES,
     type AssuranceLevel,
@@ -300,11 +301,20 @@ export function decide(input: DecideInput): Decision {
         // **A capability gap says so.** The next step for a missing executor is not "try harder": either the round runs on
         // an executor that can provide the floor, or a person records the exception. Naming neither is how this refusal
         // came to be a dead end that a kernel edit reaches automatically.
+        // **The remedy has to be one that exists.** This refusal used to name an "executor whose adapter can provide it"
+        // and a "tier exception" recorded by a person; neither is a command, so an operator had no way to act on the
+        // sentence. A retired floor is a different case again — it cannot be satisfied by any round, because the value
+        // is not producible — and its repair is to state the floor the change actually runs under.
+        const reachable = (PRODUCIBLE_ASSURANCE as readonly string[]).includes(floor);
         deficits.push({
             claimId: 'assurance:tier',
-            need: `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: run the round `
-                + 'on an executor whose adapter can provide it, or have a person record the tier exception '
-                + '(`kata-cli ledger decide --tier <tier>` names the decision rather than leaving it implicit)',
+            need: reachable
+                ? `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: re-run the `
+                    + `evidence so Kata records it (\`kata-cli ledger evidence verify --change <id>\`), or state the tier this `
+                    + 'change is decided under with `kata-cli ledger policy --init`'
+                : `the ${input.tier} floor is ${floor}, which no current adapter can produce, so this change cannot satisfy it: `
+                    + 'state the floor this change actually runs under with `kata-cli ledger policy --init` and record the '
+                    + 'reason in the design document',
         });
     }
 

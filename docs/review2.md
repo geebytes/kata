@@ -8,7 +8,7 @@
 
 因此，我不建议简单在当前方案上继续强化 receipt、executor、agent identity 或事件流，也不建议直接把系统“大拆微服务”。**推荐目标架构是“证据内核 + 风险自适应评审网格”**：
 
-> **把稳定、平台无关的“评审语义”缩成一个很小的确定性 Evidence/Policy Kernel；把 LLM、人、静态分析、变异测试、不同平台 agent 都视为可替换的 evidence producer；用风险路由决定何时单评审、何时 quorum、何时人工升级；用 delta certification 复用未变化内容的证据；把执行过程证明、沙箱、签名和外部审计降为独立的 assurance overlay，而不是所有质量判定的硬前置条件。**
+> **把稳定、平台无关的“评审语义”缩成一个很小的确定性 Evidence/Policy Kernel；把 LLM、人、静态分析、变异测试、不同平台 agent 都视为可替换的 evidence producer；用风险路由决定何时单评审、何时 quorum、何时人工升级；用 delta certification 复用未变化内容的证据；把执行过程证明、身份、签名和外部审计降为独立的 assurance overlay（运行隔离由宿主平台承担，Kata 不作本地沙箱声明），而不是所有质量判定的硬前置条件。**
 
 这一方向与附件提出的“执行者是不可信提案者、确定性裁判读取产物”一致，但需要三处关键修正。
 

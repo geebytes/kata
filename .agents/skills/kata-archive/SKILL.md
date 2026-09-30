@@ -85,7 +85,7 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 **Inputs**
 
 - **the judge result for the current revision** — from `kata-judge` — `.kata/tasks/<id>/judge.json`
-- **the knowledge closure decision and its reason** — from `kata-verify` — `kata-cli verify --change <id>`
+- **the knowledge closure decision and its reason** — `.kata/tasks/<id>/wiki-closure.json`
 
 **Outputs**
 

@@ -355,15 +355,18 @@ const NODE_CONTRACTS: Record<string, NodeContract> = {
     'kata-verify': {
         inputs: [
             { what: 'the sealed revision', from: 'kata-build', source: '.kata/tasks/<id>/current-revision.json' },
-            { what: 'the evidence recorded for it', from: 'kata-build', source: '.kata/tasks/<id>/evidence/' },
+            { what: 'the evidence recorded for it', from: 'kata-build', source: '.kata/evidence/<id>-*.json' },
         ],
-        outputs: [{ what: 'the verification result and any workspace drift', artefact: '.kata/tasks/<id>/verify.json' }],
+        outputs: [
+            { what: 'the verification result and any workspace drift', artefact: '.kata/tasks/<id>/verify.json' },
+            { what: 'one evidence item per acceptance criterion, which the review node reads', artefact: '.kata/evidence/<id>-*.json' },
+        ],
         interaction: [{ why: 'the reviewer\'s model is chosen on the host platform, and kata records only which choice was made', choices: ['continue_current', 'switched', 'delegated'] }],
     },
     'kata-review': {
         inputs: [
-            { what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes', from: 'kata-verify', source: 'kata-cli ledger run --change <id> --out <path>' },
-            { what: 'what the ledger already decides, and what it cannot', from: 'kata-verify', source: 'kata-cli ledger status --cost --change <id>' },
+            { what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes', from: null, source: 'kata-cli ledger run --change <id> --out <path>' },
+            { what: 'what the ledger already decides, and what it cannot', from: null, source: 'kata-cli ledger status --cost --change <id>' },
         ],
         outputs: [
             { what: 'the findings, each bound to the revision that reported it', artefact: '.kata/tasks/<id>/review.json' },
@@ -374,7 +377,7 @@ const NODE_CONTRACTS: Record<string, NodeContract> = {
     'kata-judge': {
         inputs: [
             { what: 'the review findings and the approved revision', from: 'kata-review', source: '.kata/tasks/<id>/review.json' },
-            { what: 'the decision derived from the evidence', from: 'kata-review', source: 'kata-cli ledger decide --change <id>' },
+            { what: 'the decision derived from the evidence', from: null, source: 'kata-cli ledger decide --change <id>' },
         ],
         outputs: [{ what: 'the judge result for the current revision', artefact: '.kata/tasks/<id>/judge.json' }],
         interaction: [{ why: 'the archive decision after a judge result is the operator\'s', choices: ['continue_current', 'switched', 'delegated'] }],
@@ -382,7 +385,7 @@ const NODE_CONTRACTS: Record<string, NodeContract> = {
     'kata-archive': {
         inputs: [
             { what: 'the judge result for the current revision', from: 'kata-judge', source: '.kata/tasks/<id>/judge.json' },
-            { what: 'the knowledge closure decision and its reason', from: 'kata-verify', source: 'kata-cli verify --change <id>' },
+            { what: 'the knowledge closure decision and its reason', from: null, source: '.kata/tasks/<id>/wiki-closure.json' },
         ],
         outputs: [{ what: 'the archived task record and the distilled wiki pages', artefact: '.kata/tasks/<id>/' }],
         interaction: [{ why: 'archiving is the operator\'s decision, and it is the last one the change gets', choices: ['continue_current', 'switched', 'delegated'] }],

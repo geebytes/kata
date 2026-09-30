@@ -53,7 +53,9 @@ describe('the policy is data with no dead fields', () => {
         expect(tierPolicy(policy, 'security').assuranceFloor).toBe('observed');
         expect(meetsAssuranceFloor(policy, 'standard', 'observed')).toBe(true);
         expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(true);
-        expect(meetsAssuranceFloor(policy, 'security', 'signed')).toBe(true);
+        // `signed` has no adapter that can produce it, so it is a readable historical value rather than a satisfiable
+        // floor: the rank comparison alone would accept it, which is what a value nobody can write must not do.
+        expect(meetsAssuranceFloor(policy, 'security', 'signed')).toBe(false);
 
         // The tier's risk contract is data too, and it is what makes the coverage check failable: a class the tier requires
         // and no claim covers is a hole rather than something derived from the claims themselves.

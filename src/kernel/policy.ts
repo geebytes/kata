@@ -10,6 +10,7 @@ import type { RiskClass } from './types.js';
 import {
     READABLE_ASSURANCE_LEVELS,
     assuranceAtLeast,
+    isCurrentAssuranceLevel,
     EVIDENCE_TYPES,
     RISK_CLASSES,
     SEVERITIES,
@@ -387,7 +388,15 @@ export function tierPolicy(policy: Policy, tier: TierName): TierPolicy {
     return policy.tiers[tier];
 }
 
-/** A recorded assurance satisfies a tier when it is at least as strong as the tier's floor. */
+/**
+ * A recorded assurance satisfies a tier when it is at least as strong as the tier's floor **and is still producible**.
+ *
+ * Both halves are needed. The rank comparison alone let a retired value authorise a decision: `sandboxed` outranks
+ * `observed` because historical records have to stay comparable, so a ledger written before the vocabulary changed
+ * satisfied a floor no current adapter can reach — measured, it approved a change and wrote the retired value into a
+ * fresh review record. A value nobody can produce again may be *read and reported*; it may not decide.
+ */
 export function meetsAssuranceFloor(policy: Policy, tier: TierName, assurance: AssuranceLevel): boolean {
+    if (!isCurrentAssuranceLevel(assurance)) return false;
     return assuranceAtLeast(assurance, tierPolicy(policy, tier).assuranceFloor);
 }

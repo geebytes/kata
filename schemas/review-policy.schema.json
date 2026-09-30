@@ -71,8 +71,7 @@
               "enum": [
                 "none",
                 "relayed",
-                "observed",
-                "signed"
+                "observed"
               ]
             },
             "requiredRiskClasses": {
@@ -137,8 +136,7 @@
               "enum": [
                 "none",
                 "relayed",
-                "observed",
-                "signed"
+                "observed"
               ]
             },
             "requiredRiskClasses": {
@@ -203,8 +201,7 @@
               "enum": [
                 "none",
                 "relayed",
-                "observed",
-                "signed"
+                "observed"
               ]
             },
             "requiredRiskClasses": {
