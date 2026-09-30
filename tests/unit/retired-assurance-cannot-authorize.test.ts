@@ -6,6 +6,7 @@ import { initLayout, reviewPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { meetsAssuranceFloor } from '../../src/kernel/policy.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { appendChallenge, appendClaim, appendEvidence, freezeSubject, readLedger, recordVerdicts, reviewDir, writePlan, writeSubject } from '../../src/store/ledger.js';
@@ -58,6 +59,8 @@ describe('a retired assurance value cannot authorise a decision', () => {
         expect(subject.ok).toBe(true);
         if (!subject.ok) return root;
         await writeSubject(root, id, subject.subject);
+        // The request has to speak for a sealed revision, so the fixture seals before it plans.
+        await createTaskRevisionIfChanged({ root, taskId: id, ownedPaths: [subjectPath], checkIds: [] });
         // **The historical value, written the way history wrote it.** `ensureAssurance` now refuses a retired value, so
         // the fixture puts the bytes there directly — which is exactly the state a change sealed before the retirement
         // is in, and the state the guard has to answer.

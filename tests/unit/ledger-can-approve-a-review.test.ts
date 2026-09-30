@@ -6,6 +6,7 @@ import { initLayout, reviewPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import {
     appendChallenge,
     appendClaim,
@@ -79,6 +80,9 @@ describe('the evidence ledger can hold a review approval', () => {
         if (!subject.ok) return;
         await writeSubject(root, id, subject.subject);
         await ensureAssurance(root, id, options.assurance ?? 'observed');
+        // **Sealed, because the request now has to speak for the sealed revision.** Without it the approval is
+        // refused before the assertions this fixture exists for — the seal is a precondition of the route, not of them.
+        await createTaskRevisionIfChanged({ root, taskId: id, ownedPaths: [path], checkIds: [] });
         const classes = ['consistency', 'boundary', 'failure_mode'] as const;
         const verdicts = [];
         for (const [index, riskClass] of classes.entries()) {

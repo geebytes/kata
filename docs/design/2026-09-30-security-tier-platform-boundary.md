@@ -131,3 +131,22 @@ read-only subagent 只接收该 request 文件，并返回 `{ "findings": [...] 
 
 1. **`policy.ledgerTierCeiling: 'strict'` 使第 9 节下游的退役值守卫不可达**：ledger 路径永不判到 `strict` 以下，而 `--tier` 覆盖只存在于 `ledger decide`，不在 `review --approve`。所以退役值总被更早的 `assurance_below_tier` 拦下，守卫是防御性代码而非承载结论的代码。`retired-assurance-cannot-authorize.test.ts` 把这两件事分开断言，未来若下调 ceiling 或扩展覆盖，该用例会变红并让守卫获得所有者。
 2. **`sandboxed` 的排位必须保留**：历史记录仍要按 `ASSURANCE_RANK` 比较，而正是这个排位让一个无人能产生的值满足过 tier 的 floor。所以修复落在 `meetsAssuranceFloor` 的"必须是当前 write set 的值"，而不是改排位。
+
+## 11. 第三轮独立审查 G-1…G-7 修复
+
+这一轮的价值在于：审查的第一条**直接否证了第 10 节的修复**，而且是死锁。
+
+| 发现 | 严重度 | 修复 | 可失败的证据 |
+|---|---|---|---|
+| G-1 enter-review 写下的占位记录阻断了所有后续 `--result-file` | blocking | 占位记录（无 `reviewRoute`）不再算"已记录结果"；同时把占位记录本身绑定到 revision（见下） | `review-cli-io.test.ts`；把守卫改回"任何记录都阻断"即变红。**这条用例第一次是假绿的**：fixture 没 seal，占位记录不绑定，守卫根本不会触发——变异验证抓到了 |
+| G-2 悬挂符号链接可穿透围栏 | major | 围栏逐段 `lstat`，**不跟随符号链接**（`existsSync` 会跟随，对悬挂链接返回 false） | 删除 `isSymbolicLink` 判定即变红 |
+| G-3 `declaredCoverage` 既不校验也不落盘 | major | 必须命名 ledger 中真实存在的 claim id，并写入 review.json；review schema 增加该字段（有写者必须有读者） | 去掉校验/落盘即变红 |
+| G-4 请求指向的不是受审内容 | major | `buildReviewRequest` 用**当前内容**重算 subject 并比对，不一致就拒绝并具名；再由 seal 是否可读兜底 | 去掉漂移检查即变红 |
+| G-5 `--result-file=path` 拼写被当作缺省 | minor | `flagValue`/`flagPresent` 同时接受 `--flag value` 与 `--flag=value` | 断言两种拼写等价 |
+| G-6 被拒的策略写入已改动 claims.json | minor | 先 `writePolicy`（并把 store 的拒绝转成结构化 `ok:false`），成功后才写 floor claims | 恢复原顺序即变红 |
+| G-7 "绑定到本 revision" 只有字符串匹配 | note | 增加断言：记录文档必须在 sealed revision 的 `ownedPaths` 内 | 从声明里移除该文档即变红 |
+
+**两次量到的同一类事实，记在此处。**
+
+1. **G-1 的根因比表面深一层。** 我最初的修复是在守卫处加"占位/结果"区分；变异验证显示它恒绿——因为 enter-review 写下的记录**完全没有绑定字段**（探针实测：`{"findings": [], "status": "pending"}`，无 `revisionId`/`manifestHash`），所以它本来就不绑定、守卫本来就不会命中。真正缺的是：占位记录也应当绑定，否则"为某个 revision 进入 review"在内容变更后仍是 `pending` 且未绑定——正是绑定要抓的那个状态。现在的修复同时做了两件事，并有用例断言 fixture 自身的前置条件（占位确实绑定），避免再次出现"用例绿在一条永不触发的路径上"。
+2. **`freezeSubject` 的 `rev:` 与 seal 的 `revision-` 是两个派生**，`contentDigests` 只记录"封存时变动的路径"。所以"subject 与 sealed revision 是否一致"只能靠**当前内容**重算来回答 —— 这与 `ledger plan` / `ledger status` 已有的漂移测量是同一条，三处因此不会给出不同答案。

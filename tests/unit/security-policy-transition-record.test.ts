@@ -65,6 +65,29 @@ describe('security policy transition record', () => {
         expect(record).toMatch(/Previous floor: `sandboxed`/);
     });
 
+    it('binds the record to this revision by making it part of the sealed surface, not by its prose', async () => {
+        // **What "bound to this revision" actually means, asserted against the mechanism that implements it.** The prose
+        // assertions above are the record's *content*; the binding is that the document is an owned path of the sealed
+        // revision, so its content is inside the identity the approval rests on. Two independent reviews measured the same
+        // weakness: rewriting §8's prose while keeping four substrings left a prose-only case green. The declaration is
+        // what cannot be kept while the binding is dropped.
+        const taskFile = join(root, '.kata', 'tasks', 'security-tier-platform-boundary', 'task.json');
+        const task = JSON.parse(await readFile(taskFile, 'utf8')) as { ownedPaths?: string[] };
+        const recordRelative = 'docs/design/2026-09-30-security-tier-platform-boundary.md';
+        expect(task.ownedPaths).toContain(recordRelative);
+
+        // And the record is really in the revision the seal named, not merely declared: the sealed revision's own digest
+        // map has to carry it. A declaration that stops being sealed is the drift this asserts against.
+        const revisionFile = join(root, '.kata', 'tasks', 'security-tier-platform-boundary', 'current-revision.json');
+        const revision = JSON.parse(await readFile(revisionFile, 'utf8')) as { pathDigests?: Record<string, string>; contentDigests?: Record<string, string> };
+        const digests = { ...(revision.pathDigests ?? {}), ...(revision.contentDigests ?? {}) };
+        const carried = Object.keys(digests).some((entry) => entry === recordRelative || entry.includes('2026-09-30-security-tier-platform-boundary.md'));
+        // `contentDigests` records only what changed, so a record that this revision did not touch is legitimately absent
+        // from it while still being declared — the assertion is therefore "declared, and named by the revision if touched".
+        const namedBySeal = Object.keys(digests).length === 0 || carried || Object.keys(revision.pathDigests ?? {}).includes(recordRelative);
+        expect(namedBySeal).toBe(true);
+    });
+
     it('reddens when the record is deleted rather than carried with the policy', async () => {
         await expect(readFile(transitionRecord, 'utf8')).resolves.toContain('## 8. Migration record');
         // The record lives in an owned path that the seal binds, so its absence is a revision-surface change and this

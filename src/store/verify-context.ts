@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
@@ -52,24 +52,36 @@ function containedLexicalPath(root: string, relativePath: string): string | null
  * `tmp` really is, which is the fact a lexical fence cannot see.
  */
 function realContainedPath(root: string, absolute: string): boolean {
-    let probe = absolute;
-    const missing: string[] = [];
-    for (;;) {
-        if (existsSync(probe)) break;
-        const parent = dirname(probe);
-        if (parent === probe) return false;
-        missing.push(basename(probe));
-        probe = parent;
+    // **A link is refused before its target is consulted, because a dangling one has no target to consult.** The first
+    // version walked up to the nearest existing ancestor with `existsSync` — which follows symlinks — so a link whose
+    // target did not exist yet read as "the path is absent", the fence rebuilt it under the ancestor's realpath (inside
+    // the workspace), and the write then followed the link and created the file outside it. Per-segment `lstat` is what
+    // sees the link itself; `existsSync` is what cannot.
+    const segments = relative(root, absolute).replaceAll('\\', '/').split('/').filter((entry) => entry !== '');
+    let probe = resolve(root);
+    for (const [index, segment] of segments.entries()) {
+        probe = resolve(probe, segment);
+        const last = index === segments.length - 1;
+        let stats;
+        try {
+            stats = lstatSync(probe);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                // Absent from here down: nothing below the first missing segment exists, so the rest cannot be a link.
+                // The directory the write will land in is the last segment that did exist, and it was checked above.
+                // Every segment that exists was checked for links; the rest does not exist yet, and a path that does
+                // not exist cannot leave the workspace. The write lands in the directory just verified.
+                return true;
+            }
+            return false;
+        }
+        // Any symlink on the path — including the final segment, and including a dangling one — is refused rather than
+        // resolved: the fence's job is to say "this spelling stays inside", and a link is a second spelling.
+        if (stats.isSymbolicLink()) return false;
+        if (!last && !stats.isDirectory()) return false;
     }
-    let real: string;
-    try {
-        real = realpathSync(probe);
-    } catch {
-        return false;
-    }
-    const target = resolve(real, ...missing.reverse());
     const realRoot = realpathSync(root);
-    const inside = relative(realRoot, target).replaceAll('\\', '/');
+    const inside = relative(realRoot, probe).replaceAll('\\', '/');
     return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
 }
 

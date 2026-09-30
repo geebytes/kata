@@ -32,6 +32,7 @@ import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReview, readReviewMode, readReviewRecord } from './review-read.js';
+import { readLedger } from '../store/ledger.js';
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
@@ -1427,6 +1428,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 return { command: 'review', taskId, phase: 'review', success: false, error: `--result-file must stay inside the workspace: ${reviewResultFile}` };
             }
             let findings: ReviewFinding[];
+            let declaredCoverage: string[] | null = null;
             try {
                 const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
@@ -1440,6 +1442,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
                         throw new Error('an empty findings array is only a result when the object also declares coverage: add declaredCoverage with the claim ids that were read and found sound');
                     }
+                    // **The declaration has to name claims this ledger actually holds, and it has to be kept.** The first
+                    // version accepted any non-empty string array and wrote nothing, so `declaredCoverage: ['not-a-claim']`
+                    // was accepted and a reader could not tell which claims the round claimed to have read — the empty
+                    // result stayed indistinguishable from "nothing was read", which is the defect it was added to fix.
+                    const known = new Set((await readLedger(root, taskId)).claims.map((claim) => claim.id));
+                    const unknown = (coverage as string[]).filter((claimId) => !known.has(claimId));
+                    if (unknown.length > 0) {
+                        throw new Error(`declaredCoverage names ${unknown.join(', ')}, which this ledger does not hold; the declaration must name the claims that were read`);
+                    }
+                    declaredCoverage = coverage as string[];
                 }
             } catch (error) {
                 return {
@@ -1452,9 +1464,14 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             if (!existing.ok) {
                 return { command: 'review', taskId, phase: 'review', success: false, error: `Cannot record a review result: ${existing.why}` };
             }
-            // **Any record for this revision blocks a second recording — including an empty one.** The first version
-            // asked `existing.findings.length > 0`, so a record with no findings read as "nothing recorded yet" and a
-            // second write replaced it: the empty result was both accepted and invisible.
+            // **A recorded result blocks a second recording; the enter-review placeholder does not.** Two facts were being
+            // asked as one. The first version asked `existing.findings.length > 0`, so an empty *result* read as "nothing
+            // recorded yet" and a second write replaced it — the empty result was both accepted and invisible. Tightening
+            // it to "any record" fixed that and created the opposite defect, measured by an independent review: entering
+            // review writes a placeholder bound to the revision with no findings, so from then on every `--result-file`
+            // was refused and the command the design and the rendered skill both promise was unreachable — "re-enter
+            // review" could only produce another placeholder. The two are told apart by *what wrote the record*: a
+            // placeholder carries no `reviewRoute`, and a recorded round always does.
             // **The record's own binding, field by field.** A record that names a revision is a record for this revision
             // only when the two bindings agree — and the binding set includes the frozen candidate, not just the id.
             // Reading only `revisionId`/`manifestHash` made "already recorded" answer false for a record the seal had
@@ -1467,7 +1484,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 ...(typeof existing.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: existing.record.instrumentManifestHash } : {}),
                 ...(typeof existing.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: existing.record.candidateFreezeSha256 } : {}),
             };
-            if (Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
+            const existingFindings = existing.record.findings as unknown[] | undefined;
+            const placeholder = existing.record.reviewRoute === undefined
+                && (existingFindings ?? []).length === 0
+                && existing.record.declaredCoverage === undefined;
+            if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
                     error: 'A review result is already recorded for this revision. Re-enter review before recording a replacement.',
@@ -1479,7 +1500,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 root,
                 taskId,
                 recordPath,
-                async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
             );
             return {
                 command: 'review',
@@ -1799,6 +1820,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         await guardTransition(options.guard, 'apply', taskId, 'review');
         const reviewRecordPath = layoutReviewPath(root, taskId);
         const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+        // **The placeholder is bound, because that is what makes it invalidatable.** Measured with a probe: this branch
+        // wrote `{ findings: [], status: 'pending' }` with no binding fields, so a review entered for a revision stayed
+        // `pending` and unbound across a later content change — the one state the binding exists to catch. The write below
+        // carries the same binding fields the result path writes, through one derivation.
+        const entryBinding = await currentRevisionIdentity(root, taskId);
         try {
             const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
                 revisionId?: string;
@@ -1817,12 +1843,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     }) + '\n';
                     await appendFile(historyPath, historyEntry, 'utf8');
                 }
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`);
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             } else if ((previous.findings ?? []).length === 0) {
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             }
         } catch {
-            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
+            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }

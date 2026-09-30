@@ -173,8 +173,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 at: nowIso(),
                 requireReview: loaded.policy.riskFloorAudit.changesRequireReview,
             });
+            // **The policy write decides first, and the claims follow it.** Measured by an independent review: the claims
+            // were appended before `writePolicy` ran, so a policy the store refuses for a retired floor left the change's
+            // `claims.json` modified — a rejected write with a side effect, while the refusal says nothing was written.
+            // The store's refusal is reported like every other refusal rather than escaping as a thrown error: a caller
+            // reading the envelope has to be able to tell it from a crash.
+            try {
+                await writePolicy(options.root, changeId, loaded.policy);
+            } catch (error) {
+                fail({ command: 'ledger policy', error: (error as Error).message });
+                return;
+            }
             for (const claim of floorClaims) await appendClaim(options.root, changeId, claim);
-            await writePolicy(options.root, changeId, loaded.policy);
             outputResult({ ok: true, command: 'ledger policy', wrote: 'policy.json', floorClaims: floorClaims.map((claim) => claim.id) });
             return;
         }
@@ -787,7 +797,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger run', error: built.why });
             return;
         }
-        const outRequested = argv.includes('--out');
+        const outRequested = argv.includes('--out') || argv.some((entry) => entry.startsWith('--out='));
         const out = argValue(argv, '--out');
         if (outRequested && !out) {
             fail({ command: 'ledger run', error: '--out requires a workspace-relative file path' });

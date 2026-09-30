@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
 import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeEvidence, makeVerdict } from '../helpers/review.js';
 import type { Claim } from '../../src/kernel/types.js';
@@ -47,9 +48,14 @@ const claim = (): Claim => ({
 async function planned(): Promise<{ subjectRevision: string }> {
     const dir = await scratch();
     await writePolicy(dir, changeId, defaultPolicy());
+    // **Sealed, because a request now speaks for the sealed revision.** An unsealed fixture would be refused before the
+    // assertions this file exists for — the binding is a precondition of handing a brief over, not part of those claims.
     const frozen = await freezeSubject({ root: dir, paths: ['src/a.ts'] });
     if (!frozen.ok) throw new Error(frozen.error);
     await writeSubject(dir, changeId, frozen.subject);
+    // **Sealed after the freeze**, so the two describe the same content: a seal fixes the revision identity, and the
+    // subject's own revision must match it or the request is refused as stale.
+    await createTaskRevisionIfChanged({ root: dir, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
     await ensureAssurance(dir, changeId, 'observed');
     await appendClaim(dir, changeId, claim());
     const { readLedger } = await import('../../src/store/ledger.js');

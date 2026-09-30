@@ -388,17 +388,36 @@ export function reviewResultFileArg(argv: string[]): string | undefined {
     return value?.trim() || undefined;
 }
 
-/** True when the invocation asked for result recording at all, however malformed the value is. */
+/** True when the invocation asked for result recording at all, however malformed the value is — either spelling. */
 export function resultFileRequested(argv: string[]): boolean {
-    return argv.includes('--result-file');
+    return flagPresent(argv, '--result-file');
 }
 
 /** The value of a `--flag`, or undefined when the flag is absent or its next token is another flag. */
+/**
+ * The value a flag was given, in either spelling.
+ *
+ * **`--flag value` and `--flag=value` are the same flag and were not.** Measured by an independent review: the
+ * `--result-file=result.json` spelling was not recognised, so the flag was treated as absent, the command fell into the
+ * plain review route and returned success — silently, which is exactly what the malformed-shape refusal above exists to
+ * prevent. Both spellings resolve here, and a spelling with no value at all returns `undefined` so the caller can refuse
+ * by name instead of degrading.
+ */
 function flagValue(argv: string[], flag: string): string | undefined {
+    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
+    if (inline !== undefined) {
+        const value = inline.slice(flag.length + 1);
+        return value.trim() === '' ? undefined : value;
+    }
     const index = argv.indexOf(flag);
     if (index < 0) return undefined;
     const value = argv[index + 1];
     return value === undefined || value.startsWith('--') ? undefined : value;
+}
+
+/** Whether a flag was given at all, in either spelling — what tells "absent" from "present with a bad value". */
+function flagPresent(argv: string[], flag: string): boolean {
+    return argv.includes(flag) || argv.some((entry) => entry.startsWith(`${flag}=`));
 }
 
 
