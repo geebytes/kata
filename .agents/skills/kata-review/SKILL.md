@@ -125,12 +125,13 @@ Do this:
    Do not launch a separate process or use a process fallback — but **do check that the subagent can start at all**, because
    a fresh context is a fresh process and it does not inherit everything this one has:
 
-   - **A model provider registered by an extension of this session is not visible to the subagent.** On a host where the
-     default model comes from such an extension, a dispatch fails with a message like `Model "<provider>/<model>" not
-     found` — which reads like a typo and is not one. Dispatch with that extension attached to the subagent (the dispatch
-     surface takes an extension list; an empty tool list attaches it for provider registration only), or pick a model the
-     subagent can reach on its own. If neither is possible, say so and stop: a round that never started is not a round.
-   - **The same is true of anything else this session registered at startup** — skills, hooks, providers. A subagent's
+   - **A model provider that this session registered at startup is not visible to the new context.** Where the default
+     model comes from such a registration, a dispatch fails with a message like `Model "<provider>/<model>" not found` —
+     which reads like a typo and is not one. Give the new context the registration explicitly, or pick a model it can
+     resolve on its own. How a platform expresses that is that platform's business; what matters here is that the round
+     comes back, because **a round that never started is not a round**, and a finding that never arrived is not a pass.
+     If neither is possible, say so and stop rather than reporting the round as done.
+   - **The same is true of anything else this session registered at startup** — skills, hooks, providers. A new context's
      capabilities are the ones you hand it, not the ones you happen to have.
 
    Kata records none of this: the request carries no platform, session or model, and how the round was launched is

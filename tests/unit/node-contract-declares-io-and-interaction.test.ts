@@ -147,8 +147,11 @@ describe('every workflow node declares its input, output and interaction', () =>
             // The subagent-startup check is rendered from the generator, so every platform copy carries it: a fresh
             // context is a fresh process, and a provider this session's extensions registered is not visible to it —
             // `Model "<provider>/<model>" not found` reads like a typo and is not one.
-            expect(rendered).toContain('not visible to the subagent');
+            // The startup check is platform-neutral: it names the fact and the consequence, not this host's mechanism.
+            expect(rendered).toContain('is not visible to the new context');
             expect(rendered).toContain('a round that never started is not a round');
+            expect(rendered).not.toContain('extension list');
+            expect(rendered).not.toContain('empty tool list');
             expect(rendered).toContain('the request carries no platform, session or model');
         }
     });

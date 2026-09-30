@@ -142,6 +142,32 @@ describe('review CLI I/O', () => {
     });
 
 
+
+    it('names the declaration move as its own fact, not as a content change', async () => {
+        // F-2: the refusal has two branches and only `superseded` was asserted, so the `declaration-moved` half had no
+        // falsifier — corrupting `added`/`removed` or collapsing the message back to "content has changed" stayed green.
+        // Reachability proved with the real CLI by the reviewer: seal, then add an existing empty directory to the
+        // declaration, then re-freeze.
+        await prepareRequest();
+        await mkdir(join(root, 'src', 'empty'), { recursive: true });
+        const taskFile = join(root, '.kata', 'tasks', changeId, 'task.json');
+        const task = JSON.parse(await readFile(taskFile, 'utf8')) as { ownedPaths: string[] };
+        await writeFile(taskFile, `${JSON.stringify({ ...task, ownedPaths: [...task.ownedPaths, 'src/empty'] }, null, 2)}\n`);
+        const refrozen = await freezeSubject({ root, paths: [...task.ownedPaths, 'src/empty'] });
+        if (!refrozen.ok) throw new Error(refrozen.error);
+        await writeSubject(root, changeId, refrozen.subject);
+
+        const refusal = await ledger(['run', '--out', 'tmp/declaration-moved.json']);
+        expect(refusal.ok, JSON.stringify(refusal)).toBe(false);
+        const message = String(refusal.error);
+        expect(message).toContain('declaration-moved');
+        // The two facts are told apart in the message: this one names the added path, not "the content has changed".
+        expect(message).toContain('src/empty');
+        expect(message).toContain("the task's declaration has moved");
+        expect(message).not.toContain('content under its declared paths has changed');
+        expect(message).not.toContain('[object Object]');
+    });
+
     it('refuses a request once the content under the seal has moved, even if the subject was re-frozen', async () => {
         // F-2: "the subject matches the content" and "a seal exists" were checked as two independent facts, so
         // freeze(A) → seal(revA) → edit → freeze(revB) → run passed and named revB while a reviewer's result would bind
@@ -451,8 +477,87 @@ describe('review CLI I/O', () => {
         await writeFile(reviewPath(root, changeId), '{ this is not json');
         const refusal = await runCommand('review', changeId, root, { confirmHostModel: true });
         expect(refusal.success).toBe(false);
-        expect(String(refusal.error)).toContain('cannot be read');
+        // The refusal names the failure it saw (a JSON parse error here), not a cause it did not measure.
+        expect(String(refusal.error)).toContain('Review could not be entered:');
+        expect(String(refusal.error)).toMatch(/JSON|Unexpected|position/u);
         expect(await readFile(reviewPath(root, changeId), 'utf8')).toBe('{ this is not json');
+    });
+
+
+    it('does not let a value flag take the change-id slot, and both spellings resolve for every value flag', async () => {
+        // F-1: `VALUE_FLAGS` was missing `--review-evidence`, so `review --review-evidence hello --change t1` read `hello`
+        // as the *change id* and operated on a task named hello — the flag's value took the slot the change id wanted.
+        const { parseRootArg, parseChangeArg, argValue, VALUE_FLAGS } = await import('../../src/cli/invocation.js');
+        const { resultFileRequested, reviewEvidenceArg } = await import('../../src/cli/workflow.js');
+
+        expect(parseChangeArg(['review', '--review-evidence', 'hello', '--change', 't1'])).toBe('t1');
+        expect(parseChangeArg(['review', '--result-file', 'r.json', '--change', 't1'])).toBe('t1');
+        expect(parseChangeArg(['review', '--out', 'req.json', '--change', 't1'])).toBe('t1');
+
+        // F-4: the spaced form must not swallow the next flag as its value.
+        expect(parseRootArg(['--root', '--change=c1'])).toBeUndefined();
+        expect(parseChangeArg(['--change', '--root=/ws'])).toBeUndefined();
+
+        // The vocabulary is complete for the flags the code actually reads: every value flag is in the list.
+        for (const flag of ['--review-evidence', '--out', '--result-file', '--owned-path', '--waivers-file', '--requirements-file']) {
+            expect(VALUE_FLAGS).toContain(flag);
+            expect(argValue([`${flag}=v`], flag)).toBe('v');
+            expect(argValue([flag, 'v'], flag)).toBe('v');
+        }
+        expect(reviewEvidenceArg(['--review-evidence=ledger passed'])).toBe('ledger passed');
+        expect(resultFileRequested(['--result-file=r.json'])).toBe(true);
+    });
+
+
+    it('archives a recorded round that reported nothing before replacing it, and replaces a placeholder silently', async () => {
+        // F-3: `review-history.jsonl` had no reader and no case in the whole suite, so this branch — the one R5-7 changed —
+        // could be reverted to the old `findings.length` test without anything reddening. The two directions are asserted
+        // here: an empty-but-declared round is a recorded round and is archived; a placeholder is not and leaves no trace.
+        const historyPath = join(root, '.kata', 'tasks', changeId, 'review-history.jsonl');
+        const readHistory = async (): Promise<Array<{ findings?: unknown[]; revisionId?: string }>> =>
+            (await readFile(historyPath, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean)
+                .map((line) => JSON.parse(line) as { findings?: unknown[]; revisionId?: string });
+
+        await prepareRequest();
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' },
+            updatedAt: '2026-09-30T00:00:00.000Z',
+        });
+
+        // Enter review (a placeholder), record an empty-but-declared result, then move the content so the next entry sees
+        // a revision the record is no longer bound to.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        await writeFile(join(root, 'tmp', 'declared.json'), `${JSON.stringify({ findings: [], declaredCoverage: ['C-1'] })}\n`);
+        expect((await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' })).success).toBe(true);
+
+        // **The guard needs a revision id, and it comes from recorded evidence — valid evidence.** Measured twice while
+        // writing this: a hand-written envelope that fails the evidence schema makes `readRecordedEvidence` throw, the
+        // caller falls back to collecting nothing, `revisionIdForEvidence` answers `undefined`, and the archival branch
+        // short-circuits. A fixture that is not a record the engine can read cannot drive the branch that reads records.
+        const sealed = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')) as { id: string };
+        await mkdir(join(root, '.kata', 'evidence'), { recursive: true });
+        await writeFile(join(root, '.kata', 'evidence', `${changeId}-test.json`), `${JSON.stringify({
+            id: 'evidence-1', taskId: changeId, checkId: 'check-1', checkSource: 'configured', name: 'test',
+            kind: 'test', command: 'true', environment: 'test', exitCode: 0, passed: true,
+            checkInput: 'a'.repeat(64), coveredAcceptanceIds: [], startedAt: '2026-09-30T00:00:00.000Z',
+            finishedAt: '2026-09-30T00:00:01.000Z', diffHash: 'd'.repeat(64), log: '', logBytes: 0,
+            revisionId: sealed.id,
+        })}\n`);
+
+        // The recorded round survives re-entering review with the same revision: no archival, because nothing replaced it.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect(await readHistory()).toEqual([]);
+
+        // Now move the content and re-seal, so the record's revision is no longer the current one.
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+
+        const archived = await readHistory();
+        expect(archived).toHaveLength(1);
+        expect(archived[0]?.findings).toEqual([]);
+        expect(typeof archived[0]?.revisionId).toBe('string');
     });
 
     it('refuses a malformed --result-file shape by name instead of degrading to the plain review path', async () => {

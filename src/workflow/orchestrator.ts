@@ -1853,18 +1853,20 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             }
         } catch (error) {
-            // **No record yet is not an unreadable record.** The two were one branch, and separating them is the whole of
-            // R5-6: "nothing is here" is the ordinary first entry into review, while "something is here and cannot be read"
-            // used to be *silently replaced by a placeholder* — the round it described lost, under a message saying the
-            // review had been entered. Only the second refuses now.
+            // **No record yet is not a failed entry.** The two were one branch, and separating them is the whole of R5-6:
+            // "nothing is here" is the ordinary first entry into review, while a failure *inside* the try used to be
+            // silently replaced by a placeholder — the round it described lost, under a message saying the review had been
+            // entered. Only the failure refuses now, and the refusal has to say what failed: R6-F5 measured that it named
+            // "the existing review record cannot be read" for any non-ENOENT throw, including one raised while writing the
+            // archive or the placeholder — a reason it had not established.
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
                 return {
                     command: 'review',
                     taskId,
                     phase: state.phase,
                     success: false,
-                    error: `Review could not be entered because the existing review record cannot be read (${(error as Error).message}). `
-                        + `Repair or remove ${layoutReviewPath(root, taskId)} and retry.`,
+                    error: `Review could not be entered: ${(error as Error).message}. `
+                        + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
                 };
             }
             await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);

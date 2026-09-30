@@ -224,3 +224,24 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 **同时明确它不改变口径**：请求里依旧不带 platform/session/model，轮次怎么起属于组织流程而非被检查的判据；
 这条引导管的是"轮次是否存在"，不是"Kata 认为它是什么"。宿主的具体 provider 名**不写进生成器**——那正是
 `#1306`（只依赖 skill + subagent + kata-cli，不耦合平台接口）禁止的。
+
+## 15. 第六轮独立审查 F-1…F-6
+
+第六轮**没有一条行为缺陷**：C-1…C-6 全部成立，围栏安全性经 21 组拓扑确认无逃逸，四条点名 flag 的 `=` 拼写确实两种都认。它找到的全是**"我声称的比断言的多"**——写了两个事实只断言一个、写了分支没测、表没列全、文案宣称了没测量的原因。
+
+| 发现 | 严重度 | 修复 | 变异验证 |
+|---|---|---|---|
+| F-1 `VALUE_FLAGS` 未含 `--review-evidence`/`--out`/`--result-file` 等；`review --review-evidence hello --change t1` 把 `hello` 当 change id（**选中错误的 task**）；`--root=` 仍 fail-open | major | 列表按源码实际读取补全，并新增 `cli-flag-vocabulary.test.ts` **从源码推导**该表并断言不缺项——表不能再靠手工跟步 | 从表里删一个 flag → 变红 |
+| F-2 R5-2 的 `declaration-moved` 半句无可失败证据 | blocking | 补用例：声明加一个空目录 → freeze → run，断言 `declaration-moved` 且列出该路径、且**不含**"content changed" | 把文案塌成 content 措辞 → 变红 |
+| F-3 R5-7 的归档分支零覆盖 | blocking | 补用例：空 findings + declaredCoverage 的已记录轮次在 revision 变更时被归档；占位则不归档 | 把判据退回 `findings.length` → 变红 |
+| F-4 空格形式把下一个 flag 当值（`--root --change=c1` → `"--change=c1"`） | minor | 两个读取器的空格回退都加"下一 token 是 flag 则无值" | 断言两种畸形输入都返回 undefined |
+| F-5 R5-6 的拒绝宣称了它没测量的原因 | minor | 文案改为报告实际捕获的失败，并给出记录路径 | 断言含 JSON 解析错误本身 |
+| F-6 新增引导把宿主派发机制耦合进平台无关文本 | note | 改为只讲事实与后果（"此会话启动时注册的 provider 对新上下文不可见"、"没起起来的轮次不算轮次"），不含平台机制 | golden 断言不含 `extension list`/`empty tool list` |
+
+**F-3 的排查过程本身值得记下，它是本 change 第五次"测试写在引擎到不了的状态上"**：我写了三次 fixture——
+
+1. 无 evidence → `revisionIdForEvidence` 返回 `undefined`，守卫短路（分支永不进入）；
+2. 手写 evidence 信封但字段不全 → schema 拒绝 → `readRecordedEvidence` 抛错 → `readTaskEvidence` 回退到"收集为空" → **同样是 `undefined`**；
+3. 补齐 `log`（string）、`checkInput`/`diffHash`（64 hex）、`logBytes` 等字段后，分支才真正被走到并红了。
+
+教训与第 12 节同一条但换了介质：**测试的输入必须是一个引擎真能读进去的记录**。一个 schema 不合法的 fixture 与"没有记录"在调用者眼里完全一样，而这正是这个 change 反复在修的那类混淆。
