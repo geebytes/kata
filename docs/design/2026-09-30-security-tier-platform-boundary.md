@@ -292,3 +292,22 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 
 - 主检出的 `dist/` 现在是**含本 change 的重建**（备份 `tmp/dist-backup-*`）：这台机器上所有 workflow 共用这个 CLI。要回到 master 的构建，在主检出跑 `npm run build`。
 - 审查子代理在本机需要 attach 注册宿主默认模型的扩展（见 §14），否则 `Model "<provider>/<model>" not found`。
+
+## 18. 结算轮：第二条独立读数的 F-1…F-9 与 R5-5
+
+第二条独立读数判定 **PASS**（第一次没有 blocking 也没有 major），并列出 9 条 minor/note。按"修复所有已知问题"的要求，这 9 条 + 记录已久的 R5-5 全部收口，每条都有可失败证据：
+
+| 项 | 严重度 | 修复 | 变异验证 |
+|---|---|---|---|
+| F-1 `decide --assurance signed` 的拒绝文案写死 `sandboxed`（点了操作者没输入的值） | minor | 文案改为点名实际输入值 | 把文案写回 `sandboxed` → 红 |
+| F-2 `assuranceHistory` 有写者、生产读取者只有测试 | minor | 挂在 `Ledger` 上（`assuranceHistory`），并由 `ledger status --cost` 与 `ledgerReport` 两个面发布 | 从 `Ledger` 或从报告里去掉 → 红 |
+| F-3 flag 守卫漏 `arg === '--x'` 形状（8 个 flag 不可见） | minor | 守卫补两种比较形状，词汇补全；新增断言**直接驱动守卫**（成员表可以手工修对，而守卫仍然看不见） | 去掉这两种形状 → 红 |
+| F-4 手写解析器不认 `--flag=value`（`relations add --from=task:a` 报 Unknown option） | note | 新增 `splitFlag` 并接入 `relations`，断言走**真实命令** | 退回整 token 比较 → 红 |
+| F-5 AC-6 的冻结措辞仍写 "binds to this revision" | note | `ledger claim restate` 新增动词（保留 id 与证据、stamp 一次 reopen），C-6 claim 已改述；**AC 正文不可改** → 记入 §17.1 | 动词驱动用例 |
+| F-6 `review.schema.json` 的 assurance enum 含退役值 | note | **试过收窄并回退**：收窄会让历史 review 校验失败，违反 C-4。结论是两个半句分别断言——schema 是**读**词汇，写侧由审批守卫与 `ledger decide --assurance` 拒绝，并把这一区分写进 enum 的 description | 收窄 enum → `sandboxed-retirement` 的读用例红 |
+| F-7 fixture 仍用 `sandboxed` 构造 security 场景 | note | 两个种子改用 `observed`，并加断言禁止 fixture 从退役值构造场景 | 放回去 → 红 |
+| F-8 渲染文案只提 strict 档的 floor，没提 security | note | 改为"`observed` 在 `strict` **和** `security` 下都是 floor；平台负责执行隔离；`security` 仍要两名独立审阅者、always quorum 与 privilege/provenance" | 去掉该句 → 红 |
+| F-9 `policyFilled` 未记录退役 floor 的替换（注释却声称已具名） | note | 替换移进 reader 的填充分支并具名；**同时**发现写侧副作用：`--set-file` 经 reader 会把退役值洗成当前值 → 新增按**原始文档**判定的写侧守卫 | 去掉具名 → 红；去掉写侧守卫 → `policy-write-is-atomic` 红 |
+| R5-5 相对悬挂链接被一律拒绝 | note | 悬挂链接按 `readlink` 的目标判定：目标在区内则接受，指向区外或不可定位仍拒绝 | 退回"一律拒绝" → 红 |
+
+**F-9 是这一轮唯一的意外收获**：把替换移进 reader 之后，`ledger policy --set-file` 会把退役 floor 洗成当前值 —— **reader 的宽容变成了 writer 的洗白**。修法是写侧读**原始文档**判定退役值，而不是读 reader 填充后的策略。这与本 change 反复出现的"读与写必须分开"是同一条规则的又一次现身。
