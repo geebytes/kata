@@ -37,6 +37,10 @@ export type QuorumOutcome = {
     disputedClaimIds: string[];
     /** True when the reviewers were not diverse enough for the count to mean independence. */
     undiversified: boolean;
+    /** Whether this change reached a risk class no earlier change did. Absent from a producer means not known to hold. */
+    reachedNewRiskClass: boolean;
+    /** Whether the classifier could not place this change at all, likewise not known to hold when unreported. */
+    unclassifiedTier: boolean;
     /** Every verdict, with refutations preserved regardless of how many reviewers disagreed. */
     merged: EvidenceVerdict[];
     /** Plain-language statement of the rule actually applied, so a reader can see it was applied. */
@@ -58,6 +62,95 @@ export type QuorumOutcome = {
  * away: a `refuted` verdict from any reviewer stays in the merged set, so a majority cannot silence a counterexample.
  * Disagreement is *reported*, and the decision refuses on it.
  */
+/**
+ * **Which conditions actually demand the tier's reviewer count.**
+ *
+ * `tiers.<tier>.quorumOn` is the tier's own statement of when a second independent reading is required, and it has to be
+ * read by something or it is a declaration dressed as a rule — measured: the field carried a consumer entry, and the only
+ * thing that decided the demand was `diversity.requiredOn`, so `quorumOn: ['always']` on the `security` tier enforced
+ * nothing of its own.
+ *
+ * The vocabulary is the conditions a decision can already observe, and an unrecognised entry is **refused rather than
+ * ignored**: a condition nobody can evaluate would silently read as "not demanded", which is the failure this replaces.
+ */
+export const QUORUM_CONDITIONS = [
+    // Unconditional, which is what the `security` tier means: a gate-changing change always wants two readings.
+    'always',
+    // The round produced a disagreement. A dispute is the strongest reason to want another reading.
+    'disagreement',
+    // The runs recorded so far are not independent enough to count (one producer, or one unattributed batch).
+    'undiversified',
+    // Someone refuted something and the refutation stands: a counterexample invites a second look.
+    'refutation',
+    // The evidence is weaker than the claim's severity asked for: more readings, or better evidence.
+    'weak_evidence',
+    // A change that reaches a risk class no earlier change in this repository reached.
+    'new_class',
+    // A change whose tier could not be classified confidently (no pattern matched its paths).
+    'uncertainty',
+    // A change at or above the policy's elevated-risk floor.
+    'high_risk',
+] as const;
+export type QuorumCondition = (typeof QUORUM_CONDITIONS)[number];
+
+export function unknownQuorumCondition(conditions: readonly string[]): string | null {
+    return conditions.find((condition) => !(QUORUM_CONDITIONS as readonly string[]).includes(condition)) ?? null;
+}
+
+
+/**
+ * The two conditions a pure decision cannot observe for itself, supplied by the producer that computed them.
+ *
+ * They arrive on the quorum report rather than being guessed inside `decide`: whether this change reached a risk class no
+ * earlier change reached is a fact about the repository's history, and whether the classifier could place the change at
+ * all is a fact about the path table. Absent means **not known to hold**, which leaves the condition unsatisfied instead of
+ * quietly satisfied — the same direction every other unmeasurable quantity in this repository takes.
+ */
+export type QuorumObservation = {
+    disputedClaims: number;
+    undiversified: boolean;
+    refutedEvidence: boolean;
+    belowStrengthEvidence: boolean;
+    reachedNewRiskClass: boolean;
+    unclassifiedTier: boolean;
+    highRisk: boolean;
+};
+
+export function quorumOnHolds(conditions: readonly string[], observed: QuorumObservation): boolean {
+    for (const condition of conditions) {
+        switch (condition) {
+            case 'always':
+                return true;
+            case 'disagreement':
+                if (observed.disputedClaims > 0) return true;
+                break;
+            case 'undiversified':
+                if (observed.undiversified) return true;
+                break;
+            case 'refutation':
+                if (observed.refutedEvidence) return true;
+                break;
+            case 'weak_evidence':
+                if (observed.belowStrengthEvidence) return true;
+                break;
+            case 'new_class':
+                if (observed.reachedNewRiskClass) return true;
+                break;
+            case 'uncertainty':
+                if (observed.unclassifiedTier) return true;
+                break;
+            case 'high_risk':
+                if (observed.highRisk) return true;
+                break;
+            default:
+                // Unreachable through `loadPolicy` (which refuses an unknown entry by name); reaching it means a policy
+                // was constructed in code without validation, and counting it as "not demanded" is how a gate quietens.
+                throw new Error(`unknown quorumOn condition: ${condition}`);
+        }
+    }
+    return false;
+}
+
 export function aggregateQuorum(input: {
     records: readonly QuorumRecord[];
     evidenceToClaim: Record<string, string>;
@@ -67,6 +160,12 @@ export function aggregateQuorum(input: {
     demandDiversity: boolean;
     /** How many verdicts carried no producer. Counted as one reading; passed through so the report can say so. */
     unattributed?: number;
+    /**
+     * The two conditions `decide` cannot observe, when a producer computed them.
+     *
+     * Absent means not known to hold, so the condition stays unsatisfied rather than being silently treated as true.
+     */
+    observation?: Pick<QuorumObservation, 'reachedNewRiskClass' | 'unclassifiedTier'>;
 }): QuorumOutcome {
     const merged: EvidenceVerdict[] = [];
     const byEvidence = new Map<string, Set<EvidenceVerdict['verdict']>>();
@@ -108,6 +207,8 @@ export function aggregateQuorum(input: {
         merged,
         rule: parts.join('; '),
         unattributed: input.unattributed ?? 0,
+        reachedNewRiskClass: input.observation?.reachedNewRiskClass ?? false,
+        unclassifiedTier: input.observation?.unclassifiedTier ?? false,
     };
 }
 

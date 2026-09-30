@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { manifestWithContracts, nodeContractFor, skillCommands, type Platform, renderSkill } from '../../src/adapters/manifest.js';
 import { isDispatchedCommand, isDispatchedSubcommand } from '../helpers/dispatcher-vocabulary.js';
-import { USER_CHOICES } from '../../src/workflow/user-choice-gate.js';
+import { GATE_CREATED_BY, USER_CHOICES } from '../../src/workflow/user-choice-gate.js';
 
 /**
  * **A node that does not say what it consumes and produces cannot be connected to anything.**
@@ -75,6 +75,23 @@ describe('every workflow node declares its input, output and interaction', () =>
             .filter((contract): contract is NonNullable<typeof contract> => contract !== null)
             .flatMap((contract) => contract.interaction.flatMap((question) => question.choices));
         expect([...new Set(rendered)].sort()).toEqual([...USER_CHOICES].sort());
+    });
+
+    it('names the boundaries the gate accepts, not a placeholder, in every rendered interaction', () => {
+        // Measured by an independent review: the interaction line was rendered as `--boundary <boundary>`, so the text
+        // an operator copies contains a placeholder the CLI does not accept. The boundaries come from the table that
+        // creates the gates, so a boundary added there appears here and one removed here cannot be offered.
+        const offenders: string[] = [];
+        for (const command of skillCommands) {
+            if (!command.phase) continue;
+            const rendered = renderSkill(command, 'pi', { language: 'en' });
+            if (!rendered.includes('--boundary')) continue;
+            for (const boundary of Object.keys(GATE_CREATED_BY)) {
+                if (!rendered.includes(boundary)) offenders.push(`${command.id}: does not name boundary ${boundary}`);
+            }
+            if (rendered.includes('--boundary <boundary>')) offenders.push(`${command.id}: renders the placeholder --boundary <boundary>`);
+        }
+        expect(offenders).toEqual([]);
     });
 
     it('renders the contract into every platform copy, and names only dispatched commands', () => {

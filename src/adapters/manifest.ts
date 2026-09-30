@@ -1,5 +1,9 @@
 import { renderRepairScopeGuide } from '../quality/repair-scope-guide.js';
 import { ledgerReviewGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from './phase-guidance.js';
+import { GATE_CREATED_BY } from '../workflow/user-choice-gate.js';
+
+/** The boundaries the CLI accepts, read from the table that creates them rather than restated here. */
+const GATE_KEYS = Object.keys(GATE_CREATED_BY);
 
 export type Platform =
     | 'codex'
@@ -353,13 +357,18 @@ const NODE_CONTRACTS: Record<string, NodeContract> = {
         interaction: [{ why: 'the profile decides how much process the adjustment pays for', choices: ['continue_current', 'switched', 'delegated'] }],
     },
     'kata-verify': {
+        // **The command that produces each input, named rather than assumed.** F-8: the review request this node hands on
+        // is produced by `ledger run`, and the ledger guidance appended to this same skill speaks in commands while the
+        // contract spoke in artefact paths — two I/O descriptions for one node, which is what invites the hand-written
+        // brief the design forbids. A path is still given, with the command that puts content at it.
         inputs: [
             { what: 'the sealed revision', from: 'kata-build', source: '.kata/tasks/<id>/current-revision.json' },
-            { what: 'the evidence recorded for it', from: 'kata-build', source: '.kata/evidence/<id>-*.json' },
+            { what: 'the evidence recorded for it', from: 'kata-build', source: 'kata-cli build --change <id> --seal → .kata/evidence/<id>-*.json' },
+            { what: 'the frozen plan the review request is derived from', from: 'kata-build', source: 'kata-cli ledger plan --change <id> → .kata/tasks/<id>/review/plan.json' },
         ],
         outputs: [
-            { what: 'the verification result and any workspace drift', artefact: '.kata/tasks/<id>/verify.json' },
-            { what: 'one evidence item per acceptance criterion, which the review node reads', artefact: '.kata/evidence/<id>-*.json' },
+            { what: 'the verification result and any workspace drift', artefact: 'kata-cli verify --change <id> → .kata/tasks/<id>/verify.json' },
+            { what: 'the review request handed to the review node: each claim, its reading set, the evidence its tier requires, the deadline and the probes', artefact: 'kata-cli ledger run --change <id> --out <path>' },
         ],
         interaction: [{ why: 'the reviewer\'s model is chosen on the host platform, and kata records only which choice was made', choices: ['continue_current', 'switched', 'delegated'] }],
     },
@@ -416,7 +425,7 @@ function renderNodeContract(command: SkillCommand): string {
     const interaction = contract.interaction.length === 0
         ? '- Nothing: this node does not stop for an operator decision.'
         : contract.interaction
-            .map((question) => `- **${question.why}** — \`kata-cli gate approve --task <id> --boundary <boundary> --choice <${question.choices.join('|')}>\``)
+            .map((question) => `- **${question.why}** — \`kata-cli gate approve --task <id> --boundary <${GATE_KEYS.join('|')}> --choice <${question.choices.join('|')}>\``)
             .join('\n');
     return `## Node contract
 

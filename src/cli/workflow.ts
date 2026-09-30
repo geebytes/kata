@@ -115,7 +115,9 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
-        ...(command === 'review' && argv.includes('--result-file') ? { reviewResultFile: reviewResultFileArg(argv) ?? '' } : {}),
+        // The flag's presence is what selects the result path: a malformed value must fail by name in the
+        // orchestrator rather than silently degrade into the plain review route (F-5).
+        ...(command === 'review' && resultFileRequested(argv) ? { reviewResultFile: reviewResultFileArg(argv) ?? '' } : {}),
         // F5: the review may state which paths it read. Repeated `--reviewed-path` flags; absent means "the whole
         // revision", which is the conservative reading and the behaviour that existed before the field did.
         ...(command === 'review' ? { reviewedPaths: repeatedValues(argv, '--reviewed-path') } : {}),
@@ -374,10 +376,29 @@ export async function requireWorkflowReceipt(root: string, taskId: string, role:
     );
 }
 
+/**
+ * Read the review result file path from argv.
+ *
+ * A flag whose value is missing or is another flag is a malformed invocation, not an absent flag: returning
+ * `undefined` here would send the caller down the plain review path, where a reviewer cannot tell a typo from a
+ * review that recorded nothing. The caller distinguishes the two with `resultFileRequested(argv)`.
+ */
 export function reviewResultFileArg(argv: string[]): string | undefined {
-    const index = argv.indexOf('--result-file');
-    const value = index >= 0 ? argv[index + 1] : undefined;
+    const value = flagValue(argv, '--result-file');
     return value?.trim() || undefined;
+}
+
+/** True when the invocation asked for result recording at all, however malformed the value is. */
+export function resultFileRequested(argv: string[]): boolean {
+    return argv.includes('--result-file');
+}
+
+/** The value of a `--flag`, or undefined when the flag is absent or its next token is another flag. */
+function flagValue(argv: string[], flag: string): string | undefined {
+    const index = argv.indexOf(flag);
+    if (index < 0) return undefined;
+    const value = argv[index + 1];
+    return value === undefined || value.startsWith('--') ? undefined : value;
 }
 
 

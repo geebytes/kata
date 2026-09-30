@@ -93,7 +93,7 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 
 **Interaction**
 
-- **the archive decision after a judge result is the operator's** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
+- **the archive decision after a judge result is the operator's** — `kata-cli gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>`
 ## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.

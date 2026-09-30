@@ -1,5 +1,6 @@
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
 import type { VerifyContext } from '../producers/port.js';
 import type { Subject, VerdictProducer } from '../kernel/types.js';
@@ -26,11 +27,50 @@ import type { Subject, VerdictProducer } from '../kernel/types.js';
  * derivations, and only one of them would be enforced.
  */
 export function containedPath(root: string, relativePath: string): string | null {
+    const lexical = containedLexicalPath(root, relativePath);
+    if (!lexical) return null;
+    // **Resolved, not just spelled.** A lexical fence accepts `tmp/link/req.json` while `tmp/link` is a symlink to
+    // a directory outside the workspace, so the write (or the read) leaves the repository without the path ever
+    // looking like it does. The real location decides; a path that does not exist yet is resolved through its
+    // nearest existing ancestor, which is the directory the write will actually land in.
+    return realContainedPath(root, lexical) ? lexical : null;
+}
+
+/** The lexical half of containment, kept separate so the realpath check can reuse the same spelling rules. */
+function containedLexicalPath(root: string, relativePath: string): string | null {
     if (relativePath.trim() === '' || isAbsolute(relativePath)) return null;
     const absolute = resolve(root, relativePath);
     const inside = relative(root, absolute).replaceAll('\\', '/');
     if (inside === '' || inside.startsWith('..') || isAbsolute(inside)) return null;
     return absolute;
+}
+
+/**
+ * Whether an already-resolved path is really inside the workspace, following symlinks.
+ *
+ * A path that does not exist resolves through its nearest existing ancestor: `tmp/new.json` is judged by where
+ * `tmp` really is, which is the fact a lexical fence cannot see.
+ */
+function realContainedPath(root: string, absolute: string): boolean {
+    let probe = absolute;
+    const missing: string[] = [];
+    for (;;) {
+        if (existsSync(probe)) break;
+        const parent = dirname(probe);
+        if (parent === probe) return false;
+        missing.push(basename(probe));
+        probe = parent;
+    }
+    let real: string;
+    try {
+        real = realpathSync(probe);
+    } catch {
+        return false;
+    }
+    const target = resolve(real, ...missing.reverse());
+    const realRoot = realpathSync(root);
+    const inside = relative(realRoot, target).replaceAll('\\', '/');
+    return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
 }
 
 export function buildContext(

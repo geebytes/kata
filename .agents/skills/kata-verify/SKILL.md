@@ -85,16 +85,17 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 **Inputs**
 
 - **the sealed revision** — from `kata-build` — `.kata/tasks/<id>/current-revision.json`
-- **the evidence recorded for it** — from `kata-build` — `.kata/evidence/<id>-*.json`
+- **the evidence recorded for it** — from `kata-build` — `kata-cli build --change <id> --seal → .kata/evidence/<id>-*.json`
+- **the frozen plan the review request is derived from** — from `kata-build` — `kata-cli ledger plan --change <id> → .kata/tasks/<id>/review/plan.json`
 
 **Outputs**
 
-- **the verification result and any workspace drift** — `.kata/tasks/<id>/verify.json`
-- **one evidence item per acceptance criterion, which the review node reads** — `.kata/evidence/<id>-*.json`
+- **the verification result and any workspace drift** — `kata-cli verify --change <id> → .kata/tasks/<id>/verify.json`
+- **the review request handed to the review node: each claim, its reading set, the evidence its tier requires, the deadline and the probes** — `kata-cli ledger run --change <id> --out <path>`
 
 **Interaction**
 
-- **the reviewer's model is chosen on the host platform, and kata records only which choice was made** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
+- **the reviewer's model is chosen on the host platform, and kata records only which choice was made** — `kata-cli gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>`
 ## Independent review, on the evidence ledger
 
 Both nodes below must answer to a **different context than the one that wrote the change**. The same context that
@@ -133,7 +134,7 @@ Do this:
 5. **Record what you found as evidence, not as a claim about yourself.** A counterexample is a challenge the author has to
    answer, and it is recorded as one; it is withdrawn only when the ledger can see that it does not reproduce:
    ```bash
-   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --expect "<what should happen>"
+   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --fails-on <revision>
    kata-cli ledger challenge check --change <task-id>
    ```
 6. **Never write the code under review.** A review that repairs what it reviews has replaced the judgement rather than

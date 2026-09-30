@@ -110,3 +110,24 @@ CLI/ledger 的用户可见文本必须说明：`observed` 表示 Kata 在宿主�
 read-only subagent 只接收该 request 文件，并返回 `{ "findings": [...] }` 的结构化结果。调用 skill 通过 `kata-cli review --result-file <path>` 记录结果：CLI 校验每个 finding 的 schema、把结果绑定到当前 revision，并以 `pending` 写入 `review.json`。结果记录与 `--approve` 是两个步骤，不能在同一调用中混合。
 
 这一链路不记录或依赖平台、session、model、工具集，也没有 standalone `pi -p`、`nohup`、`setsid` 的 fallback。无法产出 request 或结果文件时，审阅拒绝而非退化为作者 brief 或手写审计状态。
+
+## 10. 独立审查 F-1…F-9 修复
+
+独立审查否证了第 9 节的修复：它加了"记录路径"，却没让记录能区分"审阅无发现"和"子代理没产出"；另外两条 AC 的证据只断言了源码文本。
+
+| 发现 | 严重度 | 修复 | 可失败的证据 |
+|---|---|---|---|
+| F-1 迁移记录无自己的可失败证据 | blocking | 改为写盘再读回策略，并断言 floor 与 `meetsAssuranceFloor` 的判定 | `security-policy-transition-record.test.ts`；把 security floor 改回 `sandboxed` 时本文件变红 |
+| F-2 两条 AC 只断言源码字符串 | major | `retired-assurance-cannot-authorize` 改为驱动审批面；`sandboxed-retirement` 改为用一个历史 `sandboxed` artefact 走 `validateArtefact` | 删除守卫分支变红；收窄 review schema 的 enum 变红 |
+| F-3 不可解析的 `usage.json` 被默认值覆盖 | major | 三态读 `absent｜unreadable｜usable`，仅 ENOENT 算缺失，损坏则拒绝并具名 | `unreadable-usage-record.test.ts`；恢复"不可解析即默认"变红 |
+| F-4 空 `findings: []` 被当作已记录结果 | major | 空集只有显式 `declaredCoverage` 才接受；任何同 revision 记录都阻断第二次记录 | `review-cli-io.test.ts`；去掉空集守卫变红 |
+| F-5 `--result-file` 畸形值静默退化 | minor | 取值为另一 flag 或缺失时按畸形处理并具名失败 | 同上；恢复 `argValue` 的旧行为变红 |
+| F-6 `quorumOn` 有声明无消费者 | note | 抽出 `quorumOnHolds` 与条件词汇表，`decide` 真正求值，未知条件在 `loadPolicy` 阶段具名拒绝 | `quorum-conditions-decide.test.ts`；让该函数恒真变红 |
+| F-7 围栏只做字符串判断 | minor | `containedPath` 增加 realpath 级校验（不存在的路径经最近存在的祖先解析）；`ledger run --out` 与 `review --result-file` 共用同一条 | `review-cli-io.test.ts` 的符号链接用例；退回字符串围栏变红 |
+| F-8 `kata-verify` 契约与自身 inputs/outputs 讲两套 I/O | note | 契约改为"命令 → 产物"的形式，并补上 `ledger run` 作为输出 | `node-contract-declares-io-and-interaction.test.ts` |
+| F-9 渲染文本给出无消费者的 `--expect`；interaction 渲染成 `<boundary>` 占位 | note | `--expect` 改为真实读取的 `--fails-on`；interaction 的 boundary 从 `GATE_CREATED_BY` 读取真实取值 | 新用例断言渲染文本含全部四个 boundary 且不含占位符；退回占位符变红 |
+
+**F-2 顺带量到两件事，都记在此处。**
+
+1. **`policy.ledgerTierCeiling: 'strict'` 使第 9 节下游的退役值守卫不可达**：ledger 路径永不判到 `strict` 以下，而 `--tier` 覆盖只存在于 `ledger decide`，不在 `review --approve`。所以退役值总被更早的 `assurance_below_tier` 拦下，守卫是防御性代码而非承载结论的代码。`retired-assurance-cannot-authorize.test.ts` 把这两件事分开断言，未来若下调 ceiling 或扩展覆盖，该用例会变红并让守卫获得所有者。
+2. **`sandboxed` 的排位必须保留**：历史记录仍要按 `ASSURANCE_RANK` 比较，而正是这个排位让一个无人能产生的值满足过 tier 的 floor。所以修复落在 `meetsAssuranceFloor` 的"必须是当前 write set 的值"，而不是改排位。

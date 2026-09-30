@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -60,13 +60,22 @@ async function prepareRequest(): Promise<string> {
     return frozen.subject.revision;
 }
 
-async function ledger(argv: string[]): Promise<void> {
-    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+/** Run a ledger command and return what it printed, so a refusal is asserted rather than swallowed. */
+async function ledger(argv: string[]): Promise<{ ok?: boolean; error?: string }> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
     try {
         await runLedgerCommand(argv, { root, changeId });
     } finally {
         stdout.mockRestore();
     }
+    process.exitCode = previousExitCode;
+    const line = chunks.join('').trim().split('\n').filter((entry) => entry.trim().startsWith('{')).at(-1);
+    return line ? (JSON.parse(line) as { ok?: boolean; error?: string }) : {};
 }
 
 describe('review CLI I/O', () => {
@@ -124,5 +133,60 @@ describe('review CLI I/O', () => {
         };
         expect(record.status).toBe('pending');
         expect(record.findings).toEqual([{ id: 'R-1', taskId: changeId, severity: 'blocking', message: 'the requested input was not produced', reproduction: { findingId: 'R-1', ranChecks: [], missingTest: true } }]);
+    });
+
+    it('refuses an empty finding set unless the result explicitly declares full coverage', async () => {
+        await writeCurrentState(root, {
+            taskId: changeId,
+            phase: 'review',
+            actor: { id: 'kata-reviewer', role: 'reviewer' },
+            updatedAt: '2026-09-30T00:00:00.000Z',
+        });
+        // A four-byte artefact must not be indistinguishable from "the subagent produced nothing".
+        await writeFile(join(root, 'tmp', 'empty.json'), `${JSON.stringify({ findings: [] })}\n`);
+        const empty = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/empty.json' });
+        expect(empty.success).toBe(false);
+        expect(empty.error).toContain('declares coverage');
+        await expect(readFile(reviewPath(root, changeId), 'utf8')).rejects.toThrow();
+
+        // An explicit declaration of what was covered is the only way an empty set is a result.
+        await writeFile(join(root, 'tmp', 'declared.json'), `${JSON.stringify({ findings: [], declaredCoverage: ['C-1'] })}\n`);
+        const declared = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' });
+        expect(declared.success).toBe(true);
+
+        // Any record for this revision blocks a second recording, empty or not.
+        const repeat = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' });
+        expect(repeat.success).toBe(false);
+        expect(repeat.error).toContain('already recorded');
+    });
+
+    it('refuses a malformed --result-file shape by name instead of degrading to the plain review path', async () => {
+        expect(reviewResultFileArg(['review', '--result-file', '--approve'])).toBeUndefined();
+        expect(reviewResultFileArg(['review', '--result-file'])).toBeUndefined();
+        expect(reviewResultFileArg(['review', '--result-file'])).toBeUndefined();
+    });
+
+    it('refuses a symlinked path that leaves the workspace, for both the request and the result', async () => {
+        const outside = await mkdtemp(join(tmpdir(), 'kata-review-outside-'));
+        try {
+            await prepareRequest();
+            await symlink(outside, join(root, 'tmp', 'escape'));
+            const escapedRequest = await ledger(['run', '--out', 'tmp/escape/request.json']);
+            expect(escapedRequest.error).toContain('inside the workspace');
+            expect(await readdir(outside)).toEqual([]);
+
+            await writeCurrentState(root, {
+                taskId: changeId,
+                phase: 'review',
+                actor: { id: 'kata-reviewer', role: 'reviewer' },
+                updatedAt: '2026-09-30T00:00:00.000Z',
+            });
+            await writeFile(join(outside, 'result.json'), `${JSON.stringify({ findings: [{ id: 'R-1', taskId: changeId, severity: 'minor', message: 'x' }] })}\n`);
+            const escaped = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/escape/result.json' });
+            expect(escaped.success).toBe(false);
+            expect(escaped.error).toContain('inside the workspace');
+        } finally {
+            await rm(outside, { recursive: true, force: true });
+        }
     });
 });

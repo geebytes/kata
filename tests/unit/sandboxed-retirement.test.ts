@@ -5,6 +5,7 @@ import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { writePolicy } from '../../src/store/ledger.js';
 import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, READABLE_ASSURANCE_LEVELS } from '../../src/kernel/types.js';
+import { validateArtefact } from '../../src/core/schema.js';
 
 const root = join(import.meta.dirname, '..', '..');
 
@@ -23,17 +24,23 @@ describe('sandboxed retirement on the current write surface', () => {
             tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: 'sandboxed' } },
         } as never)).rejects.toThrow('retired assurance floor');
 
-        const source = await readFile(join(root, 'src', 'cli', 'ledger.ts'), 'utf8');
-        expect(source).toContain('isCurrentAssuranceLevel');
-        expect(source).toContain('sandboxed is historical');
-
-        const reviewSchema = await readFile(join(root, 'schemas', 'review.schema.json'), 'utf8');
-        expect(reviewSchema).toContain('"sandboxed"'); // legacy review artefacts remain readable
-        // The approval route needs no special case for a retired value: a later round replaces it (see
-        // `legacy-assurance-vocabulary.test.ts`), so the state a guard would have refused cannot be reached by an
-        // operator who re-runs. What the write surface must not offer is the value itself.
-        const approval = await readFile(join(root, 'src', 'workflow', 'orchestrator.ts'), 'utf8');
-        expect(approval).not.toContain("fabricated for a retired value");
+        // **The read side, asserted as a read rather than as a word in a file.** The schema must still accept a
+        // historical artefact, and the way to say that is to validate one — a `toContain('"sandboxed"')` on the schema
+        // text stays green if the enum is later narrowed to a different member that happens to be spelled the same way
+        // in a comment.
+        const legacy = {
+            revisionId: 'revision-0000000000000000',
+            status: 'approved',
+            findings: [],
+            ledgerReview: {
+                subjectRevision: 'rev:0000000000000000',
+                tier: 'security',
+                assurance: 'sandboxed',
+                claims: 1,
+                limits: ['this route does not establish who wrote the claims'],
+            },
+        };
+        expect(() => validateArtefact('review', legacy)).not.toThrow();
 
         const previousExitCode = process.exitCode;
         process.exitCode = 0;

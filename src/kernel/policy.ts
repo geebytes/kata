@@ -20,6 +20,7 @@ import {
     type Severity,
     type TierName,
 } from './types.js';
+import { QUORUM_CONDITIONS, unknownQuorumCondition } from './quorum.js';
 
 export type Floor = 'low' | 'medium' | 'high';
 
@@ -311,6 +312,12 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
             return { ok: false, error: `tiers.${tier}.humanBudgetMin must be a non-negative number` };
         }
         if (!Array.isArray(entry.quorumOn)) return { ok: false, error: `tiers.${tier}.quorumOn must be a list` };
+        // **A condition nobody can evaluate would read as "not demanded".** The vocabulary is the decision's own, so an
+        // entry outside it is refused by name here rather than silently making the gate quieter.
+        const unknownCondition = unknownQuorumCondition(entry.quorumOn);
+        if (unknownCondition !== null) {
+            return { ok: false, error: `tiers.${tier}.quorumOn has no condition named ${unknownCondition}; known: ${QUORUM_CONDITIONS.join(', ')}` };
+        }
     }
 
     if (!isRecord(value.riskFloors)) return { ok: false, error: 'riskFloors is required' };

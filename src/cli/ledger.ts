@@ -794,9 +794,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             return;
         }
         if (out) {
-            const outputPath = resolve(options.root, out);
-            const outputRelative = relative(options.root, outputPath);
-            if (isAbsolute(outputRelative) || outputRelative === '..' || outputRelative.startsWith('../')) {
+            // **The same containment the result path uses**, so a symlinked directory cannot send the request outside
+            // the workspace while the path still looks relative. A second copy of this rule is the defect this
+            // repository removes most often, and only one of the two copies would get fixed.
+            const outputPath = containedPath(options.root, out);
+            if (!outputPath) {
                 fail({ command: 'ledger run', error: `--out must stay inside the workspace: ${out}` });
                 return;
             }

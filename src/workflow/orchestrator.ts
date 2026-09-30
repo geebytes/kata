@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { containedPath } from '../store/verify-context.js';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
@@ -30,7 +31,8 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { readBlockingProblems, readReview, readReviewMode } from './review-read.js';
+import { readBlockingProblems, readReview, readReviewMode, readReviewRecord } from './review-read.js';
+import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
 import { isCurrentAssuranceLevel } from '../kernel/types.js';
@@ -1420,18 +1422,25 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: `Review result recording requires review phase; current phase is ${current.phase}.`,
                 };
             }
-            const resultPath = resolve(root, reviewResultFile);
-            const resultRelative = relative(root, resultPath);
-            if (isAbsolute(resultRelative) || resultRelative === '..' || resultRelative.startsWith('../')) {
+            const resultPath = containedPath(root, reviewResultFile);
+            if (!resultPath) {
                 return { command: 'review', taskId, phase: 'review', success: false, error: `--result-file must stay inside the workspace: ${reviewResultFile}` };
             }
             let findings: ReviewFinding[];
             try {
-                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown };
+                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
                 findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
                 const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
                 if (foreignFinding) throw new Error(`finding ${foreignFinding.id} names task ${foreignFinding.taskId}, not ${taskId}`);
+                // An empty set is only a result when the reviewer says what it covered. Without that, a four-byte
+                // artefact is indistinguishable from a subagent that produced nothing at all.
+                if (findings.length === 0) {
+                    const coverage = result.declaredCoverage;
+                    if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
+                        throw new Error('an empty findings array is only a result when the object also declares coverage: add declaredCoverage with the claim ids that were read and found sound');
+                    }
+                }
             } catch (error) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
@@ -1439,8 +1448,26 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 };
             }
             const binding = await currentRevisionIdentity(root, taskId);
-            const existing = await readReview(root, taskId);
-            if (existing.findings.length > 0 && bindsToRevision(existing, binding)) {
+            const existing = await readReviewRecord(root, taskId);
+            if (!existing.ok) {
+                return { command: 'review', taskId, phase: 'review', success: false, error: `Cannot record a review result: ${existing.why}` };
+            }
+            // **Any record for this revision blocks a second recording — including an empty one.** The first version
+            // asked `existing.findings.length > 0`, so a record with no findings read as "nothing recorded yet" and a
+            // second write replaced it: the empty result was both accepted and invisible.
+            // **The record's own binding, field by field.** A record that names a revision is a record for this revision
+            // only when the two bindings agree — and the binding set includes the frozen candidate, not just the id.
+            // Reading only `revisionId`/`manifestHash` made "already recorded" answer false for a record the seal had
+            // bound by content, which is the case the empty-result defect rode in on.
+            const existingRecord: VerdictBinding = {
+                ...(typeof existing.record.revisionId === 'string' ? { revisionId: existing.record.revisionId } : {}),
+                ...(typeof existing.record.manifestHash === 'string' ? { manifestHash: existing.record.manifestHash } : {}),
+                ...(typeof existing.record.codeManifestHash === 'string' ? { codeManifestHash: existing.record.codeManifestHash } : {}),
+                ...(typeof existing.record.governanceManifestHash === 'string' ? { governanceManifestHash: existing.record.governanceManifestHash } : {}),
+                ...(typeof existing.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: existing.record.instrumentManifestHash } : {}),
+                ...(typeof existing.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: existing.record.candidateFreezeSha256 } : {}),
+            };
+            if (Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
                     error: 'A review result is already recorded for this revision. Re-enter review before recording a replacement.',

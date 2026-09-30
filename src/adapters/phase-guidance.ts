@@ -542,7 +542,7 @@ Do this:
 5. **Record what you found as evidence, not as a claim about yourself.** A counterexample is a challenge the author has to
    answer, and it is recorded as one; it is withdrawn only when the ledger can see that it does not reproduce:
    \`\`\`bash
-   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --expect "<what should happen>"
+   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --fails-on <revision>
    kata-cli ledger challenge check --change <task-id>
    \`\`\`
 6. **Never write the code under review.** A review that repairs what it reviews has replaced the judgement rather than

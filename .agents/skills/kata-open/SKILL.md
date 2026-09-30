@@ -92,7 +92,7 @@ not a summary of it: hand a reader the artefact itself, so the next node can be 
 
 **Interaction**
 
-- **the profile decides how much process the change pays for** — `kata-cli gate approve --task <id> --boundary <boundary> --choice <continue_current|switched|delegated>`
+- **the profile decides how much process the change pays for** — `kata-cli gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>`
 
 
 ```json kata-command-manifest
