@@ -318,7 +318,14 @@ export /** Every value a repeated flag carries, in order. */
 function repeatedValues(argv: string[], flag: string): string[] {
     const values: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
-        if (argv[index] !== flag) continue;
+        const token = argv[index];
+        // Both spellings: the spaced form takes the next token, the `=` form carries its own value.
+        if (token?.startsWith(`${flag}=`)) {
+            const inline = token.slice(flag.length + 1);
+            if (inline.trim() !== '') values.push(inline);
+            continue;
+        }
+        if (token !== flag) continue;
         const value = argv[index + 1];
         if (value && !value.startsWith('--')) values.push(value);
     }
@@ -384,14 +391,33 @@ export async function requireWorkflowReceipt(root: string, taskId: string, role:
  * review that recorded nothing. The caller distinguishes the two with `resultFileRequested(argv)`.
  */
 export function reviewResultFileArg(argv: string[]): string | undefined {
-    const value = flagValue(argv, '--result-file');
+    const value = argValue(argv, '--result-file');
     return value?.trim() || undefined;
+}
+
+/**
+ * Whether a flag was given at all, in either spelling — what tells "absent" from "present with a bad value".
+ *
+ * **The reader is shared, not copied.** R5-8: this change added a second, character-for-character copy of the `=`
+ * handling beside `argValue`, so the rule lived in two places and only one of them would be updated next time — the
+ * defect this repository removes most often, added by the fix for it.
+ */
+export function flagPresent(argv: string[], flag: string): boolean {
+    return argv.includes(flag) || argv.some((entry) => entry.startsWith(`${flag}=`));
 }
 
 /** True when the invocation asked for result recording at all, however malformed the value is — either spelling. */
 export function resultFileRequested(argv: string[]): boolean {
     return flagPresent(argv, '--result-file');
 }
+
+/**
+ * Whether a flag was given at all, in either spelling — what tells "absent" from "present with a bad value".
+ *
+ * **The reader is shared, not copied.** R5-8: this change added a second, character-for-character copy of the `=`
+ * handling beside `argValue`, so the rule lived in two places and only one of them would be updated next time — the
+ * defect this repository removes most often, added by the fix for it.
+ */
 
 /** The value of a `--flag`, or undefined when the flag is absent or its next token is another flag. */
 /**
@@ -403,28 +429,10 @@ export function resultFileRequested(argv: string[]): boolean {
  * prevent. Both spellings resolve here, and a spelling with no value at all returns `undefined` so the caller can refuse
  * by name instead of degrading.
  */
-function flagValue(argv: string[], flag: string): string | undefined {
-    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
-    if (inline !== undefined) {
-        const value = inline.slice(flag.length + 1);
-        return value.trim() === '' ? undefined : value;
-    }
-    const index = argv.indexOf(flag);
-    if (index < 0) return undefined;
-    const value = argv[index + 1];
-    return value === undefined || value.startsWith('--') ? undefined : value;
-}
-
-/** Whether a flag was given at all, in either spelling — what tells "absent" from "present with a bad value". */
-function flagPresent(argv: string[], flag: string): boolean {
-    return argv.includes(flag) || argv.some((entry) => entry.startsWith(`${flag}=`));
-}
 
 
 export function reviewEvidenceArg(argv: string[]): string | undefined {
-    const index = argv.indexOf('--review-evidence');
-    const value = index >= 0 ? argv[index + 1] : undefined;
-    return value?.trim() || undefined;
+    return argValue(argv, '--review-evidence');
 }
 
 export function roleForCompletedCommand(command: KataCommand): HandoffRole | null {

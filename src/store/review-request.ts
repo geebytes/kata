@@ -107,11 +107,20 @@ export async function buildReviewRequest(input: { root: string; changeId: string
     // whether what it hashed is still what is on disk.
     const sealedStatus = await revisionStatus(input.root, sealed.revision, input.changeId);
     if (!revisionIsCurrent(sealedStatus)) {
+        // **The refusal names the state it measured, and the two states are different facts.** R5: the status is an object,
+        // so interpolating it printed `[object Object]` — the refusal hid what it had just measured — and the wording
+        // hard-coded "content has changed" for a `declaration-moved` revision, which `revision.ts` is explicit is a
+        // different fact (the manifest hash cannot see it, because that hash is taken over the old declaration).
+        // Narrowed structurally rather than asserted away: the two non-current states carry different facts, and
+        // reading them off the union's own discriminant is what keeps the message honest about which one was measured.
+        const because = sealedStatus.status === 'declaration-moved'
+            ? `the task's declaration has moved since it was sealed (added: ${sealedStatus.added.join(', ') || 'none'}; removed: ${sealedStatus.removed.join(', ') || 'none'})`
+            : 'the content under its declared paths has changed since it was sealed';
         return {
             ok: false,
-            why: `the sealed revision ${sealed.revision.id} is ${sealedStatus}: the content under it has changed since it was sealed, `
-                + 'so a request derived now would name content the reviewer could not bind a result to. Change the content and re-seal '
-                + '(`kata-cli build --change <id> --seal`), or restore it',
+            why: `the sealed revision ${sealed.revision.id} is ${sealedStatus.status}: ${because}, `
+                + 'so a request derived now would name content the reviewer could not bind a result to. Re-seal '
+                + '(`kata-cli build --change <id> --seal`) after the content or the declaration is settled',
         };
     }
     const readingById = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set.paths]));

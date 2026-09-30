@@ -95,10 +95,17 @@ function realContainedPath(root: string, absolute: string): boolean {
     return insideWorkspace(realRoot, probe);
 }
 
-/** One spelling of the comparison, so a resolved location and the resolved root are always measured the same way. */
+/**
+ * One spelling of the comparison, so a resolved location and the resolved root are always measured the same way.
+ *
+ * **The root itself is inside the root.** `relative(realRoot, realRoot)` is the empty string, and reading emptiness as
+ * "outside" refused a link whose resolved target is the workspace root — a position that resolves perfectly, refused on
+ * the grounds of spelling, which is the opposite of what §12.1 says the fence does. Only a path that escapes upwards or
+ * becomes absolute is outside.
+ */
 function insideWorkspace(realRoot: string, resolved: string): boolean {
     const inside = relative(realRoot, resolved).replaceAll('\\', '/');
-    return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
+    return (inside === '' || (!inside.startsWith('..') && !isAbsolute(inside)));
 }
 
 export function buildContext(

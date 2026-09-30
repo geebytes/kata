@@ -155,7 +155,10 @@ describe('review CLI I/O', () => {
 
         const refusal = await ledger(['run', '--out', 'tmp/after-edit.json']);
         expect(refusal.ok, JSON.stringify(refusal)).toBe(false);
-        expect(String(refusal.error)).toContain('has changed since it was sealed');
+        // R5-2: the refusal has to name the state it measured. It is an object, so interpolating it printed
+        // `[object Object]` — the message hid the very fact it had just read, under a case that only matched a suffix.
+        expect(String(refusal.error)).toContain('superseded');
+        expect(String(refusal.error)).not.toContain('[object Object]');
     });
 
     it('refuses a request when nothing is sealed, naming the seal rather than briefing anyway', async () => {
@@ -412,6 +415,46 @@ describe('review CLI I/O', () => {
         expect(record.declaredCoverage).toEqual(['C-1']);
     });
 
+
+    it('resolves the = spelling for every flag reader, not just the one that was fixed first', async () => {
+        // R5-3: §12.4 claimed the rule was resolved "once, for every flag", but it only reached `argValue`, so
+        // `--root=/ws` fell back to workspace discovery and quietly used the wrong root — the fail-open direction.
+        const { parseRootArg, parseChangeArg, argValue } = await import('../../src/cli/invocation.js');
+        const { reviewEvidenceArg, flagPresent } = await import('../../src/cli/workflow.js');
+
+        expect(parseRootArg(['--root=/ws'])).toBe('/ws');
+        expect(parseRootArg(['--root', '/ws'])).toBe('/ws');
+        expect(parseChangeArg(['--change=c1'])).toBe('c1');
+        expect(parseChangeArg(['--change', 'c1'])).toBe('c1');
+        expect(parseChangeArg(['--root=/ws', '--change=c1'])).toBe('c1');
+        expect(argValue(['--out=tmp/x'], '--out')).toBe('tmp/x');
+        expect(reviewEvidenceArg(['--review-evidence=ledger passed'])).toBe('ledger passed');
+        expect(flagPresent(['--reviewed-path=src/a.ts'], '--reviewed-path')).toBe(true);
+    });
+
+
+    it('refuses to enter review when the existing record is corrupt, rather than overwriting the round it describes', async () => {
+        // R5-6: the catch around this step replaced the record with a placeholder for *any* failure, so a `review.json`
+        // that does not parse was silently overwritten and the round it described was lost — under a message saying the
+        // review had been entered. "Nothing here yet" is the ordinary case and must still work; "here and unreadable" must not.
+        await prepareRequest();
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' },
+            updatedAt: '2026-09-30T00:00:00.000Z',
+        });
+
+        // First entry with no record at all: ordinary, and it succeeds.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+
+        // Now corrupt it, and try again. The corrupt bytes must survive and be reported, not be replaced.
+        await writeFile(reviewPath(root, changeId), '{ this is not json');
+        const refusal = await runCommand('review', changeId, root, { confirmHostModel: true });
+        expect(refusal.success).toBe(false);
+        expect(String(refusal.error)).toContain('cannot be read');
+        expect(await readFile(reviewPath(root, changeId), 'utf8')).toBe('{ this is not json');
+    });
+
     it('refuses a malformed --result-file shape by name instead of degrading to the plain review path', async () => {
         expect(reviewResultFileArg(['review', '--result-file', '--approve'])).toBeUndefined();
         expect(reviewResultFileArg(['review', '--result-file'])).toBeUndefined();
@@ -449,6 +492,21 @@ describe('review CLI I/O', () => {
         // And the same invocation a second time, over the file it just wrote, still succeeds.
         const again = await ledgerViaWorkspaceLink(['run', '--out', 'tmp/existing.json'], viaLink);
         expect(again.ok, JSON.stringify(again)).toBe(true);
+    });
+
+
+    it('accepts a link whose target is the workspace root, not only links that point below it', async () => {
+        // R5-1: the resolved-destination fence (this round's own semantics) refused a link whose target *is* the workspace
+        // root, because `relative(realRoot, realRoot)` is the empty string and the emptiness test read that as "outside".
+        // §12.1 says only a position that cannot be resolved is refused on spelling, and this one resolves to the root.
+        await prepareRequest();
+        await mkdir(join(root, 'src', 'docs'), { recursive: true });
+        await writeFile(join(root, 'src', 'docs', 'x.md'), 'CONTENT\n');
+        await symlink(root, join(root, 'tmp', 'at-root'));
+
+        const inside = await ledger(['run', '--out', 'tmp/at-root/src/docs/via-root.json']);
+        expect(inside.ok, JSON.stringify(inside)).toBe(true);
+        await expect(readFile(join(root, 'src', 'docs', 'via-root.json'), 'utf8')).resolves.toContain(changeId);
     });
 
     it('refuses a symlinked path that leaves the workspace, for both the request and the result', async () => {

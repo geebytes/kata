@@ -94,6 +94,25 @@ describe('security policy transition record', () => {
         expect(historical).toMatch(/LEGACY_ASSURANCE_LEVELS\s*=\s*\[[^\]]*'sandboxed'/);
     });
 
+    it('carries the binding through a surface the seal actually copies, so removing it reddens here', async () => {
+        // R5-4: the "bound to this revision" half had no falsifier. Deleting the record from the *task declaration* left all
+        // four cases green — and the seal evaluates this suite in a copy made from the tracked files, which does not carry
+        // `.kata/`, so a declaration-only assertion could never hold where it is read. Measured with the copier itself:
+        // `.kata/` is absent from the copy and this document is present.
+        //
+        // The binding therefore has to be asserted on a surface the copy carries: the change's declaration is mirrored in
+        // the record's own §8, and the repository's own record of which paths the change owns is the tracked list below.
+        const { listRepositoryFiles } = await import('../../src/core/repository-identity.js');
+        const carried = await listRepositoryFiles(root);
+        const recordRelative = 'docs/design/2026-09-30-security-tier-platform-boundary.md';
+        expect(carried).toContain(recordRelative);
+
+        // The declaration is written twice — once on the task (a checkout only) and once in the record's own §8 — and the
+        // tracked copy is the one the seal can see. Removing the document, or dropping it from that list, reddens here.
+        const record = await readFile(transitionRecord, 'utf8');
+        expect(record).toContain('Binding: this document is an owned path and is sealed with the policy change');
+    });
+
     it('reddens when the record is deleted rather than carried with the policy', async () => {
         await expect(readFile(transitionRecord, 'utf8')).resolves.toContain('## 8. Migration record');
         // The record lives in an owned path that the seal binds, so its absence is a revision-surface change and this

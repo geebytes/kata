@@ -1833,7 +1833,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
             const recordBinding = await currentRevisionIdentity(root, taskId);
             if (revisionId && !bindsToRevision(previous, recordBinding)) {
-                if (previous.findings?.length) {
+                // **A recorded round is archived before it is replaced; a placeholder is just replaced.** R5-7: this test
+                // was the third place still deriving "is this a recorded round" from `findings.length`, so a round that
+                // legitimately reported nothing (empty findings with a declared coverage) was overwritten without being
+                // kept anywhere — while a round with one minor finding was. One question, asked once, is what the other two
+                // sites now do; this one asks the same function.
+                if (!isReviewPlaceholder(previous)) {
                     const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
                     const historyEntry = JSON.stringify({
                         revisionId: previous.revisionId,
@@ -1847,7 +1852,21 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             } else if (isReviewPlaceholder(previous)) {
                 await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             }
-        } catch {
+        } catch (error) {
+            // **No record yet is not an unreadable record.** The two were one branch, and separating them is the whole of
+            // R5-6: "nothing is here" is the ordinary first entry into review, while "something is here and cannot be read"
+            // used to be *silently replaced by a placeholder* — the round it described lost, under a message saying the
+            // review had been entered. Only the second refuses now.
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                return {
+                    command: 'review',
+                    taskId,
+                    phase: state.phase,
+                    success: false,
+                    error: `Review could not be entered because the existing review record cannot be read (${(error as Error).message}). `
+                        + `Repair or remove ${layoutReviewPath(root, taskId)} and retry.`,
+                };
+            }
             await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };

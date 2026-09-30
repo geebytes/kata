@@ -7,32 +7,41 @@
  * a new option means updating this list too. Each family that grows its own typed parser can stop using it.
  */
 
+/**
+ * **One rule for every flag reader, and this is where it lives.** §12.4 claimed `--flag=value` was resolved "once, for
+ * every flag", but the rule went into `argValue` alone: `parseRootArg`/`parseChangeArg` and the repeated-value readers
+ * still saw only the spaced form, so `kata-cli --root=/ws …` fell back to workspace discovery and quietly used the wrong
+ * root — the fail-open direction of a spelling gap. Every reader below asks this one predicate.
+ */
+function inlineValue(argv: string[], flag: string): string | undefined {
+    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
+    if (inline === undefined) return undefined;
+    const value = inline.slice(flag.length + 1);
+    return value.trim() === '' ? undefined : value;
+}
+
+/** The tokens that consume the next argv entry, so the positional guesser does not mistake a value for a change id. */
+const VALUE_FLAGS: readonly string[] = [
+    '--platform', '--root', '--role', '--task-kind', '--mode', '--routing-mode', '--failures', '--failure-count',
+    '--isolation', '--isolation-mode', '--development', '--development-mode', '--review', '--review-mode',
+];
+
 export function parseRootArg(argv: string[]): string | undefined {
+    const inline = inlineValue(argv, '--root');
+    if (inline !== undefined) return inline;
     const index = argv.indexOf('--root');
     return index >= 0 ? argv[index + 1] : undefined;
 }
 
 export function parseChangeArg(argv: string[]): string | undefined {
+    const inline = inlineValue(argv, '--change');
+    if (inline !== undefined) return inline;
     for (let index = 0; index < argv.length; index += 1) {
         const value = argv[index];
         if (value === '--change') return argv[index + 1];
-        if (
-            value === '--platform'
-            || value === '--root'
-            || value === '--role'
-            || value === '--task-kind'
-            || value === '--mode'
-            || value === '--routing-mode'
-            || value === '--failures'
-            || value === '--failure-count'
-            || value === '--isolation'
-            || value === '--isolation-mode'
-            || value === '--development'
-            || value === '--development-mode'
-            || value === '--review'
-            || value === '--review-mode'
-        ) {
-            index += 1;
+        if (VALUE_FLAGS.some((flag) => value === flag || value.startsWith(`${flag}=`))) {
+            // A spaced form consumes the next token; an `=` form carries its own value and consumes nothing.
+            if (!value.includes('=')) index += 1;
             continue;
         }
         if (value?.startsWith('--')) continue;
