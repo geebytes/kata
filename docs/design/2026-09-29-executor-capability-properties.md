@@ -1,8 +1,16 @@
-# 执行者能力与性质：让 `sandboxed` 可以从任何平台取得（设计稿）
+# 执行者能力与性质：已停止的方案记录
 
-> 状态：设计稿（本文件是 governed change `executor-capability-properties` 的上游输入）
+> 状态：已停止（2026-09-30）；不再作为 governed change `executor-capability-properties` 的实施输入。
 > 日期：2026-09-29
 > 上游：`docs/design/2026-09-29-verdict-readings-per-run.md` §16（本 change 的账本停在这条地板上）、`docs/review2.md`（"artifact-only 不能证明全部执行过程安全"）、`docs/design/2026-09-27-clean-refactor-plan.md`（`high` 地板与 `security` 档的设计意图）
+
+> ## 停止决定（2026-09-30）
+>
+> 已确认：Kata 不再实现或要求本地 `sandboxed` 执行器。证据命令的运行隔离由宿主 Agent 平台负责；Kata 只负责代码、证据、审阅独立性与决策记录的可验证性。
+>
+> 保留 `security` 档的双独立审阅、always quorum、`privilege`/`provenance` 风险覆盖与高风险路径分级；后续策略 change 将把其 assurance floor 改为 `observed`，并移除 `sandboxed` 词汇、地板及本方案所列执行器实现。
+>
+> 本文保留为被否决方案的测量记录：它正确识别了本地执行命令的风险，却把风险控制重复放进 Kata，造成 OS/容器耦合和一个不可达的批准门。
 
 ## 1. 问题（实测）
 
