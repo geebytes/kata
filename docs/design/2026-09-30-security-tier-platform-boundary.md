@@ -311,3 +311,34 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 | R5-5 相对悬挂链接被一律拒绝 | note | 悬挂链接按 `readlink` 的目标判定：目标在区内则接受，指向区外或不可定位仍拒绝 | 退回"一律拒绝" → 红 |
 
 **F-9 是这一轮唯一的意外收获**：把替换移进 reader 之后，`ledger policy --set-file` 会把退役 floor 洗成当前值 —— **reader 的宽容变成了 writer 的洗白**。修法是写侧读**原始文档**判定退役值，而不是读 reader 填充后的策略。这与本 change 反复出现的"读与写必须分开"是同一条规则的又一次现身。
+
+## 19. 我误覆盖证据账本，以及恢复（附一条 follow-up）
+
+### 19.1 事故
+
+为新 revision 建账本时 `ledger evidence verify` 判 **E-4 `refuted`**：`{"before":0,"mutated":0,"after":0} — the check did not redden under its own defect`。实测确认是**真问题**——E-4 的变异是清空 `LEGACY_ASSURANCE_LEVELS`，而它点名的两个文件（`legacy-assurance-vocabulary`、`historical-floor-exemption`）在结算轮之后**已不依赖这个集合**（策略 reader 改判 `READABLE_ASSURANCE_LEVELS`、写侧守卫改判 `isCurrentAssuranceLevel`）。E-4 是一条**变异点已消失的读数**，正是 ledger 自己定义的"不再是证据"。
+
+**然后我犯了操作错误**：`ledger evidence replace` 的提交语义是**整组定义**，而我读到的 `evidence.json` 当时只剩 `E-6`（此前几轮的 replace 已逐步把集合收窄），于是我用只含一条的集合提交，**把 E-1…E-5 的覆盖掉了**。
+
+### 19.2 恢复（已实测完成）
+
+六条定义按 `acceptanceMatrix` 的六个 `testSelector` 与**逐条实测**重建：
+
+| 定义 | 命令 | 变异 | 实测 |
+|---|---|---|---|
+| E-1 | `security-assurance-floor.test.ts` | `policy.ts` security floor `observed → relayed` | RED |
+| E-2 | `security-tier-invariants.test.ts` | `policy.ts` `reviewers: 2 → 1` | RED |
+| E-3 | `sandboxed-retirement.test.ts` | `ASSURANCE_LEVELS` 加回 `sandboxed` | RED |
+| E-4 | 三个确实会红的文件 | 清空 `LEGACY_ASSURANCE_LEVELS` | RED |
+| E-5 | `platform-boundary-assurance-copy.test.ts` | `assuranceScope` 文案把隔离归给 Kata | RED |
+| E-6 | `security-policy-transition-record.test.ts` | 记录里的 `New floor` 改回 `sandboxed` | RED |
+
+恢复过程中又抓到两条**变异点已漂移**的定义：E-1 原来打在 `strict` 档的 floor 上（测试读的是 `security` 档），E-5 原来打在 `docs/review2.md`（测试读的是 CLI 的 `assuranceScope` 文案与文档里的中文字符串）。**六条里有三条的变异点在几轮修复中漂移过**，这不是巧合：每次改动都会让"当初那条能红的路径"换位置，而只有重测才看得出来。
+
+`ledger freeze` → `rev:0cf686ba9fe38221`（59 paths），`evidence verify` → **6/6 `supported`**，`decide` 只剩 `quorum_undiversified`（第二条独立读数在同名证据上）。208 files / 1289 tests 全绿，工作树干净。
+
+### 19.3 follow-up：`evidence replace` 的整组语义
+
+这次事故的面是**一个叫 `replace` 的操作实际是整组写入**：我读到的集合已被先前轮次收窄，而提交只含一条，于是"替换一条"变成"删掉五条"。这与本 change 反复修的形态同源（宽敞的语义 + 收窄的调用方）。
+
+建议的修法（未在本 change 实现，建议作为 follow-up）：`replace` 只改**点名的** id，未点名的保持不动；若提交集合比现有集合小，**拒绝并列出会丢失的 id**，而不是静默删除。
