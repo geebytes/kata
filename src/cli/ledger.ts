@@ -28,7 +28,7 @@ import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
-import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -106,6 +106,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             challenges: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
             runs: ledger.runs.length,
             assurance: ledger.assurance,
+            assuranceScope: 'observed means Kata executed evidence in the host-provided runtime; the host platform owns network, filesystem, process and credential isolation',
             usage: ledger.usage,
             note: ledger.recordedFiles.length === 0
                 ? 'nothing has been recorded for this change yet; that is a state, not an empty review'
@@ -413,7 +414,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             // **Recorded, not merely reported.** The adapter's assurance is a measured fact about the round that just ran,
             // and gating the write on a flag is how a change whose checks kata itself observed came to be judged as having
             // no provenance at all: the value appeared in the result and nothing stored it.
-            const assurance = await ensureAssurance(options.root, changeId, adapter.assurance as AssuranceLevel);
+            const assurance = await ensureAssurance(options.root, changeId, adapter.assurance);
             outputResult({
                 ok: true,
                 command: 'ledger evidence verify',
@@ -698,12 +699,23 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');
         const assuranceFlag = argValue(argv, '--assurance');
+        if (assuranceFlag !== undefined && !isCurrentAssuranceLevel(assuranceFlag)) {
+            fail({
+                command: 'ledger decide',
+                // The retired value is named rather than compared: a reader of this refusal sees the whole
+                // vocabulary, not a third spelling of the one value that is gone.
+                error: (LEGACY_ASSURANCE_LEVELS as readonly string[]).includes(assuranceFlag)
+                    ? 'sandboxed is historical assurance, not a current Kata override; execution isolation is owned by the host platform'
+                    : `--assurance must be one of ${ASSURANCE_LEVELS.join(', ')}`,
+            });
+            return;
+        }
         const verdict = await ledgerVerdict({
             root: options.root,
             changeId,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
             ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
-            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as AssuranceLevel }),
+            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag }),
         });
         if (verdict.kind !== 'decided') {
             // Neither state may look like a pass: a ledger nobody wrote and a ledger that cannot be read are both refusals,

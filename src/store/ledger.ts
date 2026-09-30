@@ -15,11 +15,11 @@ import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
-import { assuranceAtLeast } from '../kernel/types.js';
+import { assuranceAtLeast, isCurrentAssuranceLevel } from '../kernel/types.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
-import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
 const FILES = {
     subject: 'subject.json',
@@ -267,11 +267,16 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             policyFilled = loaded.filled;
             // Checked here rather than in the raw scan: what every consumer sees is the filled policy, and the fill is
             // reported in `policyFilled`. A document that predates a field is not a corrupt document.
-            try {
-                validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, policy);
-            } catch (error) {
-                malformedFiles.push('policy.json');
-                malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates: ${(error as Error).message}`);
+            // Current schemas deliberately reject retired writer vocabulary, but historical
+            // policies retain it for audit. loadPolicy already validates their full shape.
+            const hasHistoricalFloor = Object.values(policy.tiers).some((tier) => !isCurrentAssuranceLevel(tier.assuranceFloor));
+            if (!hasHistoricalFloor) {
+                try {
+                    validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, policy);
+                } catch (error) {
+                    malformedFiles.push('policy.json');
+                    malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates: ${(error as Error).message}`);
+                }
             }
         } else policyRejected = loaded.error;
     }
@@ -393,6 +398,12 @@ export async function writeSubject(root: string, changeId: string, subject: Subj
 }
 
 export async function writePolicy(root: string, changeId: string, policy: Policy): Promise<void> {
+    const retiredFloors = Object.entries(policy.tiers)
+        .filter(([, tier]) => !isCurrentAssuranceLevel(tier.assuranceFloor))
+        .map(([name, tier]) => `${name}:${tier.assuranceFloor}`);
+    if (retiredFloors.length > 0) {
+        throw new Error(`cannot write retired assurance floor(s): ${retiredFloors.join(', ')}; sandboxed is historical only`);
+    }
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.policy, policy));
 }
 
@@ -639,12 +650,14 @@ export async function resolveChallenge(
 /**
  * Record the assurance a round actually achieved, and only upwards.
  *
- * The adapter reports what its own isolation gave the round — `observed` when kata ran the checks itself, `relayed` when
- * they arrive as a recorded result — and that is a measured fact about the round that just happened. Two rules make it
- * trustworthy: it is written rather than merely reported (a value printed in a result and never stored decides nothing),
- * and it never lowers what is recorded, so a later weaker adapter cannot quietly demote an observed ledger.
+ * The adapter reports Kata's observation — `observed` when Kata ran the checks itself, `relayed` when
+ * they arrive as a recorded result. Host-platform isolation is outside this vocabulary. Two rules make the
+ * write trustworthy: it is recorded rather than merely printed, and it never lowers historical assurance.
  */
-export async function ensureAssurance(root: string, changeId: string, achieved: AssuranceLevel): Promise<AssuranceLevel> {
+export async function ensureAssurance(root: string, changeId: string, achieved: CurrentAssuranceLevel): Promise<AssuranceLevel> {
+    if (!isCurrentAssuranceLevel(achieved)) {
+        throw new Error(`cannot write retired assurance ${String(achieved)}`);
+    }
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
         const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(path)) ?? { usage: {}, assurance: 'none' as AssuranceLevel };

@@ -48,9 +48,11 @@ describe('the policy is data with no dead fields', () => {
         // Strict requires that kata observed the evidence: on the ledger route the approval is held by the evidence,
         // and an evidence set nobody watched being produced is not enough for it.
         expect(tierPolicy(policy, 'strict').assuranceFloor).toBe('observed');
-        expect(tierPolicy(policy, 'security').assuranceFloor).toBe('sandboxed');
+        // Security retains its stronger review, quorum and risk coverage contract. Its
+        // assurance is observed because the host platform, not Kata, owns command isolation.
+        expect(tierPolicy(policy, 'security').assuranceFloor).toBe('observed');
         expect(meetsAssuranceFloor(policy, 'standard', 'observed')).toBe(true);
-        expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(false);
+        expect(meetsAssuranceFloor(policy, 'security', 'observed')).toBe(true);
         expect(meetsAssuranceFloor(policy, 'security', 'signed')).toBe(true);
 
         // The tier's risk contract is data too, and it is what makes the coverage check failable: a class the tier requires

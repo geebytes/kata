@@ -88,6 +88,17 @@ CLI/ledger 的用户可见文本必须说明：`observed` 表示 Kata 在宿主�
 
 初步：`src/kernel/policy.ts`、`src/kernel/types.ts`、policy/review schema、ledger/CLI assurance 输出与对应单元测试、`docs/review2.md`、本设计文档。实际 ownedPaths 由开 change 后的 CodeGraph/测试定位确定。
 
+
 ## 7. 验证策略
 
 每个 AC 各有独立 selector。重点负向变异：把 security floor 还原为 `sandboxed`、把 `high` 映射降为 `strict`、删去任一 security 附加要求、让旧 artefact 被 schema 拒绝、以及删除平台边界文案。全套测试与 `tsc --noEmit` 是最终证据；本次迁移的人工政策记录不能被测试冒充为 ledger pass。
+
+## 8. Migration record
+
+- Change: `security-tier-platform-boundary`
+- Decision: user authorization
+- Previous floor: `sandboxed`
+- New floor: `observed`
+- Scope: Kata retires its local execution-isolation claim; the host platform owns network, filesystem, process and credential isolation.
+- Binding: this document is an owned path and is sealed with the policy change; deleting this record changes the revision surface.
+- Limit: this authorization does not authorize any later change. Later `security` changes must satisfy the new `observed` floor plus the retained two-reader, always-quorum and risk-coverage requirements.

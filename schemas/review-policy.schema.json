@@ -72,7 +72,6 @@
                 "none",
                 "relayed",
                 "observed",
-                "sandboxed",
                 "signed"
               ]
             },
@@ -139,7 +138,6 @@
                 "none",
                 "relayed",
                 "observed",
-                "sandboxed",
                 "signed"
               ]
             },
@@ -206,7 +204,6 @@
                 "none",
                 "relayed",
                 "observed",
-                "sandboxed",
                 "signed"
               ]
             },

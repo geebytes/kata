@@ -33,6 +33,7 @@ import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReview, readReviewMode } from './review-read.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
+import { isCurrentAssuranceLevel } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
@@ -1523,6 +1524,19 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     };
                 }
 
+                // A legacy ledger remains readable and reportable, but a current approval must be supported by
+                // assurance Kata can currently record. Otherwise this writer would turn the retired historical value
+                // into a fresh review artifact and make it look like an obtainable local assurance again.
+                if (!isCurrentAssuranceLevel(ledger.assurance)) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `Review approval refused: historical assurance cannot authorize a current review (${ledger.assurance}). Re-run the evidence verification under the host-provided runtime so Kata records current observed assurance, then approve.`,
+                        diagnostics: {
+                            ledger: { state: 'decided', assurance: ledger.assurance, legacyAssurance: true },
+                            nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'refresh_legacy_assurance'),
+                        },
+                    };
+                }
                 // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer a request — the claim's own
                 // reading set, the evidence types its tier requires, the deadline, the probes it must answer — and
                 // `ledger request-check` compares what arrived against what was asked. Nothing consumed that check: it was

@@ -128,6 +128,7 @@ export const nextActionReasons = [
   'repair_strict_major_findings',
   'repair_unresolved_obligations',
   'satisfy_ledger_deficits',
+  'refresh_legacy_assurance',
   'resolve_repair_obligations',
   'resolve_wiki_closure',
   'review_fresh_implementation',
@@ -514,7 +515,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
   // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
   // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
-  // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
+  // reviewers and always-on quorum — blocked on *less* than the tier below it.
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const hardestSeverity = blockingSeverities[0];
   // An open problem at the tier's bar is repaired, not argued with.
@@ -697,6 +698,8 @@ export function statusActionPrompts(
 const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   choose_execution_mode: 'implementation_gate',
   satisfy_ledger_deficits: null,
+  // A retired assurance value cannot hold a current approval; the repair is to record a current observation again.
+  refresh_legacy_assurance: null,
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
   // Also a decision about the change rather than about which platform runs: the record has to be read again.

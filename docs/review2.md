@@ -132,9 +132,9 @@ Quality confidence  ：benchmark / shadow / quorum 统计上达到该档风险�
 | 轴 | 回答什么 | 典型字段 |
 |---|---|---|
 | `qualityEvidence` | finding 是否成立、coverage 是否闭合、决策是否合理 | findings, evidence, coverage, subject digests |
-| `executionAssurance` | 谁/什么环境运行、能否写、是否有网络、是否可审计 | `none / relayed / observed / sandboxed / signed` |
+| `executionAssurance` | Kata 是否实际观察到运行结果；宿主平台承担网络、文件系统、进程与凭据隔离 | `none / relayed / observed / signed` |
 
-standard 可以允许 `relayed`；strict 根据实际风险选择 `observed`；security 在涉及秘密、恶意代码、供应链攻击时可以要求 `sandboxed`。跨组织证明则再要求 `signed`。**不是“strict 永远需要 receipt”，也不是“strict 永远不需要过程证明”，而是过程 assurance 必须由 threat model 驱动。**
+standard 可以允许 `relayed`；strict 与 security 要求 Kata 已 `observed` 证据。执行隔离由宿主 Agent 平台的运行政策提供，不作为 Kata 的本地 adapter 或 gate 声明；跨组织证明可要求 `signed`。**不是“strict 永远需要 receipt”，也不是“strict 永远不需要过程证明”，而是过程 assurance 必须由 threat model 驱动。**
 
 SLSA 的设计说明了这种分层价值：provenance 的可信程度与 build platform 的信任边界有关，不是仅靠最终 artifact 自证。citeturn13search2turn13search7 相反，in-toto 的 Attestation Framework适合表达“关于软件供应链的一项声明”，并不替代声明内容本身的质量判断。citeturn13search0
 
@@ -441,7 +441,7 @@ gate mutation kill       =100%
 | **多个 LLM reviewer 产生相关错误** | 中高 | 高 | **高** | provider/model/prompt 多样性；比较 evidence 而非单纯投票；critical 冲突人工 |
 | **Risk scorer 把高风险 change 判低** | 中 | 严重 | **高** | security/auth/gate 等敏感路径设不可学习的最低 risk floor；随机高档抽检 |
 | **Delta dependency cone 漏依赖** | 中 | 高 | **高** | 静态依赖 + 声明路径 + runtime evidence；无法证明时 fallback full review |
-| **Artifact-only 误当成过程安全证明** | 中 | 严重 | **高** | quality 与 `executionAssurance` 两轴；security 使用 sandbox/egress controls |
+| **Artifact-only 误当成过程安全证明** | 中 | 严重 | **高** | quality 与 `executionAssurance` 两轴；宿主平台负责 sandbox/egress controls |
 | **成本目标诱导“少看即通过”** | 中 | 高 | **高** | budget exhaustion = escalate/defer，永不 PASS |
 | **Evidence schema/adapter 演化分裂** | 中 | 中 | 中 | schema version；contract tests；向后兼容窗口；单一 canonical model |
 | **事件驱动引入重复/乱序** | 中 | 中 | 中 | idempotency key = subject/evidence digest；明确 state machine；event replay test |
@@ -450,7 +450,7 @@ gate mutation kill       =100%
 | **组织继续把 minor/nit 当 blocking 修** | 高 | 中 | 高 | severity policy 由 gate 强制，不靠习惯；dashboard 展示“因低严重度造成的成本” |
 | **“已签名”被误解为“质量正确”** | 中 | 高 | 高 | attestation 和 quality decision schema/仪表盘彻底分离 |
 
-其中“artifact-only 不能证明全部执行过程安全”尤其需要强调。举例而言，一个 agent 可以临时将敏感内容发送到外部网络，然后把 workspace 恢复成完全相同的 digest；最终内容未漂移并不能证明“从未发生数据泄漏”。因此附件提出“无痕写入对下游无影响”仅能支持**代码内容一致性**，不能支持**保密性或所有副作用安全性**。这也是为何 security 档应保留可选 sandbox/observed assurance，而不是让 receipt 问题重新绑架整个 semantic review。
+其中“artifact-only 不能证明全部执行过程安全”尤其需要强调。举例而言，一个 agent 可以临时将敏感内容发送到外部网络，然后把 workspace 恢复成完全相同的 digest；最终内容未漂移并不能证明“从未发生数据泄漏”。因此附件提出“无痕写入对下游无影响”仅能支持**代码内容一致性**，不能支持**保密性或所有副作用安全性**。Kata 的 `observed` 仅表示它执行并记录了证据命令，不声明网络、文件系统、进程或凭据隔离；这些执行隔离由宿主 Agent 平台的运行政策负责。security 档仍以双审阅、always quorum 与风险覆盖约束 semantic review。
 
 ## 决策建议与 KPI
 
@@ -506,7 +506,7 @@ Ports & Adapters 的目的正是让 domain 通过技术无关接口与外界通�
 |---|---|---|---|---|---|
 | **standard** | 必须 | 0–1，自适应 | 通常无 | 异常时 | `none/relayed` 可接受 |
 | **strict** | 必须 + 增强 mutation/invariant | ≥1 | 分歧/高风险时 2–3 | critical 冲突 | `relayed/observed` 由 threat model 决定 |
-| **security** | 必须 + security checks | ≥2 或异构 reviewer | 默认自适应 quorum | 高影响争议必须 | 需要时 `sandboxed`，跨边界可 `signed` |
+| **security** | 必须 + security checks | ≥2 或异构 reviewer | 默认自适应 quorum | 高影响争议必须 | Kata 要求 `observed`；运行隔离由宿主平台政策承担，跨边界可 `signed` |
 
 这一结构也更符合 NIST 强调的风险容忍度、风险分级、TEVV 和 human oversight：不同风险场景采用不同控制，而不是把同一过程约束硬套到所有情况。citeturn15search9turn15search5
 
