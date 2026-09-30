@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { writePolicy } from '../../src/store/ledger.js';
-import { ASSURANCE_LEVELS } from '../../src/kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, READABLE_ASSURANCE_LEVELS } from '../../src/kernel/types.js';
 
 const root = join(import.meta.dirname, '..', '..');
 
@@ -43,5 +43,21 @@ describe('sandboxed retirement on the current write surface', () => {
         } finally {
             process.exitCode = previousExitCode;
         }
+    });
+});
+
+/**
+ * **The write vocabulary itself, not only the call sites that read it.**
+ *
+ * `sandboxed` was removed from the write set before this round, and `signed` joined it afterwards: neither has an
+ * adapter that can produce it, so neither may be offered as a floor. The guard for that is the vocabulary value, and
+ * the mutation that has to redden is widening it again — an assertion about a call site stays green while the set is
+ * the thing that actually moved.
+ */
+describe('the writable assurance vocabulary', () => {
+    it('offers only values a current adapter can produce', () => {
+        expect([...ASSURANCE_LEVELS]).toEqual(['none', 'relayed', 'observed']);
+        expect([...LEGACY_ASSURANCE_LEVELS].sort()).toEqual(['sandboxed', 'signed']);
+        expect([...READABLE_ASSURANCE_LEVELS].sort()).toEqual(['none', 'observed', 'relayed', 'sandboxed', 'signed']);
     });
 });
