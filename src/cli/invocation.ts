@@ -23,23 +23,26 @@ function inlineValue(argv: string[], flag: string): string | undefined {
 /**
  * The flags that take a value, so the positional guesser does not mistake a value for a change id.
  *
- * **This list was incomplete and it selected the wrong task, measured by an independent review.** `--review-evidence` was
- * missing, so `kata-cli review --review-evidence hello --change t1` read `hello` as the *change id* and silently operated on
- * a task named `hello` — the flag's value took the slot the change id wanted. A list that has to be kept in step with every
- * flag is a second derivation of the command line, so it is not maintained by hand: `VALUE_FLAGS` is derived from the same
- * table the readers below use, and `tests/unit/cli-flag-vocabulary.test.ts` fails when a flag a command reads is missing
- * from it.
+ * **This list was incomplete twice, and each time a flag's value took the change-id slot.** First `--review-evidence`
+ * (`review --review-evidence hello --change t1` operated on a task named `hello`), then seven more an independent review
+ * found: `--branch feature/x` read `feature/x` as the change id, and `--base main` became a branch named `kata/main`.
+ *
+ * **It is a hand-kept list that a test checks, not a derived table — and the comment used to claim otherwise.** Measured:
+ * `tests/unit/cli-flag-vocabulary.test.ts` scans `src/cli/**` for the shapes flags are read in, and a reader outside those
+ * shapes (a flag reached through a variable, or read outside `src/cli/`) is invisible to it. That is the honest
+ * description: a strong approximation with a known blind spot, caught by a case rather than by construction, so a reader
+ * that introduces a new shape has to extend the scan.
  */
 export const VALUE_FLAGS: readonly string[] = [
-    '--actor', '--adapter', '--assurance', '--bootstrap-file', '--boundary', '--change', '--choice', '--claim',
-    '--command', '--depends-on', '--development', '--development-mode', '--diversity', '--evidence', '--excludes',
-    '--failure-count', '--failures', '--fails-on', '--file', '--findings-carried-to', '--for-task', '--from',
-    '--id', '--instrument', '--isolation', '--isolation-mode', '--judgement', '--kind', '--language', '--mode',
-    '--observed', '--out', '--owned-path', '--paths', '--per-claim', '--persist', '--platform', '--probe',
-    '--producer', '--reason', '--requirements-file', '--result-file', '--results-dir', '--review',
-    '--review-evidence', '--review-mode', '--reviewed-path', '--risk-class', '--role', '--root', '--routing-mode',
-    '--run-id', '--seed', '--set-file', '--severity', '--statement', '--task', '--task-kind', '--tier', '--title',
-    '--waivers-file',
+    '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
+    '--change', '--choice', '--claim', '--command', '--depends-on', '--development', '--development-mode',
+    '--diversity', '--evidence', '--excludes', '--failure-count', '--failures', '--fails-on', '--file',
+    '--findings-carried-to', '--for-task', '--from', '--id', '--instrument', '--isolation', '--isolation-mode',
+    '--judgement', '--kind', '--language', '--mode', '--observed', '--out', '--owned-path', '--path', '--paths',
+    '--per-claim', '--persist', '--platform', '--probe', '--producer', '--reason', '--record',
+    '--requirements-file', '--result-file', '--results-dir', '--review', '--review-evidence', '--review-mode',
+    '--reviewed-path', '--risk-class', '--role', '--root', '--routing-mode', '--run-id', '--seed', '--set-file',
+    '--severity', '--since', '--statement', '--task', '--task-kind', '--tier', '--title', '--waivers-file',
 ];
 
 export function parseRootArg(argv: string[]): string | undefined {

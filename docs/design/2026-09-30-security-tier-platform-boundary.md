@@ -100,7 +100,7 @@ CLI/ledger 的用户可见文本必须说明：`observed` 表示 Kata 在宿主�
 - Previous floor: `sandboxed`
 - New floor: `observed`
 - Scope: Kata retires its local execution-isolation claim; the host platform owns network, filesystem, process and credential isolation.
-- Binding: this document is an owned path and is sealed with the policy change; deleting this record changes the revision surface.
+- Provable: this document states the floor decision, and the same run enforces it — the retired value is refused by the store, the decision layer and the CLI. What is asserted here is that pair, not a claim about being "bound" that no assertion could carry across every environment.
 - Limit: this authorization does not authorize any later change. Later `security` changes must satisfy the new `observed` floor plus the retained two-reader, always-quorum and risk-coverage requirements.
 
 ## 9. 审阅节点 I/O 修复（R-3/R-4）
@@ -245,3 +245,22 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 3. 补齐 `log`（string）、`checkInput`/`diffHash`（64 hex）、`logBytes` 等字段后，分支才真正被走到并红了。
 
 教训与第 12 节同一条但换了介质：**测试的输入必须是一个引擎真能读进去的记录**。一个 schema 不合法的 fixture 与"没有记录"在调用者眼里完全一样，而这正是这个 change 反复在修的那类混淆。
+
+## 16. 第七轮独立审查 F-1…F-6（收口轮）
+
+第七轮**同样没有行为缺陷**：C-1…C-6 全部成立，而且 F-2/F-3 这次被审查者**专门在 seal 沙箱副本里验证过可红**（用 `git archive HEAD` 造不含 `.kata/` 的副本）。它找到的三条仍然全是"断言比宣称窄"：
+
+| 发现 | 严重度 | 修复 | 变异验证 |
+|---|---|---|---|
+| F-1 flag 守卫只匹配 `(argValue\|inlineValue)(argv, '--flag')`，看不见 `argValue(rest, '--flag')`；**7 个真实 flag 缺失**：`--branch`/`--base`/`--path`/`--by`/`--since`/`--record`/`--c0`。后果：`worktree create --branch feature/x` 把分支名当 change id（`Invalid task id: feature/x`），`--base main` 变成建分支 `kata/main` | major | 词汇表按实际读取补全（新增 7 个 + `--path`），守卫扩到三种形状，并**改掉那句假注释**——它现在写"这是手写表 + 用例把关的强近似，有已知盲点"，不再声称"由同一张表派生" | 删掉那 7 个 → 两条用例都红 |
+| F-5 文案断言可被**编造的像样错误**骗过：把 `error.message` 换成固定句 `the record is not valid JSON (unexpected position)` 仍然通过 | minor | 断言改为对照**同一次运行里 `JSON.parse` 自己的报错串**（含精确位置）与记录路径，替代那句任何含 `JSON/Unexpected/position` 都过关的正则 | 换成编造句 → 变红 |
+| F-6 C-6 的"绑定到本 revision"半句**第三次**仍无证据：唯一断言是 `listRepositoryFiles(root).toContain(recordRelative)`，而它返回**所有受跟踪文件**——把它换成 `'package.json'` 五条用例全绿 | major | **换措辞而不是第四次找断言方式**：断言改成"记录陈述一个 floor 判决，且同一 run 的执行面正好执行该判决"（store 拒绝退役值、`meetsAssuranceFloor` 判定、`LEGACY/ASSURANCE_LEVELS` 的实际取值、以及记录陈述的授权边界），并把文档 §8 的 `Binding:` 行改写为 `Provable:`，说明什么能被证明、什么不能 | 还原 floor → 红；改写 `New floor` 行 → 红；删记录 → 红 |
+
+**第七轮的元教训（这是本 change 的收口判据）**：F-6 我修了三次（常量比较 → 恒真的 digest 断言 → 全量文件清单），每次都以为找到了能"绑定 revision"的断言，每次都被证伪。第四次不是再试一次，而是**承认这句话不可断言、换成可检验的陈述**。同理 F-1 的注释我写下了"由同一张表派生"这种从未为真的话。
+
+七轮的收敛轨迹本身是结论：
+- 第 3–4 轮：我引入的 blocking/major 回归（死锁、两侧打架的围栏）；
+- 第 5 轮：过严 + 覆盖面（首次无回归）；
+- 第 6–7 轮：**零行为缺陷**，全部是"断言/文案比实现窄"。
+
+也就是说，**围栏语义（§12.1）、占位判定、请求绑定、C-1…C-6 的执行面都已经收敛并被独立确认**；剩下的是我在写证据与注释时的诚实度，本轮按"换成能证明的"收口。

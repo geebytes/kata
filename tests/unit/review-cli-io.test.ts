@@ -477,9 +477,26 @@ describe('review CLI I/O', () => {
         await writeFile(reviewPath(root, changeId), '{ this is not json');
         const refusal = await runCommand('review', changeId, root, { confirmHostModel: true });
         expect(refusal.success).toBe(false);
-        // The refusal names the failure it saw (a JSON parse error here), not a cause it did not measure.
-        expect(String(refusal.error)).toContain('Review could not be entered:');
-        expect(String(refusal.error)).toMatch(/JSON|Unexpected|position/u);
+        // **The assertion has to distinguish the measured error from a plausible invented one.** R7-F5: asserting only
+        // `toContain('Review could not be entered:')` plus `/JSON|Unexpected|position/` passed a hand-written sentence
+        // (`the record is not valid JSON (unexpected position)`) substituted for the real error — the case claimed to
+        // check that the refusal reports what it saw, and could not tell a real error from a convincing fake one. The
+        // measured message is the parser's own, so the assertion is against the parser's own words for *this* input.
+        const refusalText = String(refusal.error);
+        expect(refusalText).toContain('Review could not be entered:');
+        // The real message comes from `JSON.parse` and names the position it failed at; a substitute sentence cannot
+        // produce the exact offset for this input.
+        const parseError = ((): string => {
+            try {
+                JSON.parse('{ this is not json');
+                return 'parsed';
+            } catch (error) {
+                return (error as Error).message;
+            }
+        })();
+        expect(parseError).not.toBe('parsed');
+        expect(refusalText).toContain(parseError);
+        expect(refusalText).toContain(reviewPath(root, changeId));
         expect(await readFile(reviewPath(root, changeId), 'utf8')).toBe('{ this is not json');
     });
 
