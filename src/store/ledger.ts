@@ -16,6 +16,7 @@ import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
 import { assuranceAtLeast } from '../kernel/types.js';
+import { projectVerdicts } from '../kernel/evidence.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
@@ -31,8 +32,9 @@ const FILES = {
     /**
      * Append-only: every verdict ever recorded, with the producer that decided it and what it superseded.
      *
-     * `verdicts.json` is a projection of this; the history is the record. A reversal used to be unobservable — the
-     * projection was overwritten in place — which made the most interesting fact about a verdict the one fact the ledger
+     * `verdicts.json` holds one entry per (evidence item, run), and the per-claim answer is projected from it when the
+     * ledger is read; this history is the record of what each recording superseded. A reversal used to be unobservable —
+     * the document was overwritten in place — which made the most interesting fact about a verdict the one fact the ledger
      * could not show.
      */
     verdictHistory: 'verdict-history.jsonl',
@@ -148,6 +150,22 @@ export type Ledger = {
     policy: Policy;
     claims: Claim[];
     evidence: Evidence[];
+    /**
+     * **Every reading the document holds, one entry per (evidence item, run).**
+     *
+     * This is the store's fact, and it is what the quorum counts independent runs from. It used to be a single list keyed
+     * by evidence id — `recordVerdicts` replaced on that key — so a second run's reading overwrote the first and
+     * `groupByProducer` could only ever see one run. Measured on a real change: the `security` tier's two-reviewer
+     * requirement was unreachable, and a second independent reading, recorded in full, left the ledger reporting one.
+     */
+    readings: EvidenceVerdict[];
+    /**
+     * The projection: what each evidence item currently counts as, derived from `readings`.
+     *
+     * Consumers that want "the answer for this item" — the per-claim evaluation, the report, the replay, the delta — take
+     * this one, so the projection is computed in exactly one place instead of in each of them. Consumers that want "what
+     * each run read" take `readings`.
+     */
     verdicts: EvidenceVerdict[];
     challenges: Challenge[];
     usage: BudgetUsage;
@@ -175,6 +193,11 @@ export type Ledger = {
     /** Sections of the stored policy this reader filled because the document predates them. */
     policyFilled: string[];
 };
+
+/** Where a change's verdict document lives — the readings list, for a caller that has to seed or inspect one. */
+export function verdictsPath(root: string, changeId: string): string {
+    return join(reviewDir(root, changeId), FILES.verdicts);
+}
 
 export function reviewDir(root: string, changeId: string): string {
     return join(taskDir(root, changeId), 'review');
@@ -276,14 +299,23 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         } else policyRejected = loaded.error;
     }
     const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
+    const verdictsRaw = (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [];
+    // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
+    // about another one, and it is the same value the caller receives as `subject`.
+    const subjectForProjection = await readJson<Subject>(join(dir, FILES.subject));
     return {
         changeId,
         dir,
-        subject: await readJson<Subject>(join(dir, FILES.subject)),
+        subject: subjectForProjection,
         policy,
         claims: (await readJson<Claim[]>(join(dir, FILES.claims))) ?? [],
         evidence: (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? [],
-        verdicts: (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [],
+        // **One read, two views.** The document is read once; the projection is derived from those bytes, so a caller
+        // cannot see a projection computed from different content than the readings it is compared against.
+        ...(() => {
+            const readings = verdictsRaw;
+            return { readings, verdicts: projectVerdicts(readings, { currentRevision: subjectForProjection?.revision ?? null }) };
+        })(),
         challenges: (await readJson<Challenge[]>(join(dir, FILES.challenges))) ?? [],
         usage: usage?.usage ?? {},
         assurance: usage?.assurance ?? 'none',
@@ -506,22 +538,35 @@ export async function recordVerdicts(root: string, changeId: string, incoming: r
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.verdicts);
         const verdicts = (await readJson<EvidenceVerdict[]>(path)) ?? [];
-        const prior = new Map(verdicts.map((verdict) => [verdict.evidenceId, verdict]));
+        const prior = new Map(verdicts.map((verdict) => [readingKey(verdict), verdict]));
         for (const verdict of incoming) {
-            const index = verdicts.findIndex((entry) => entry.evidenceId === verdict.evidenceId);
+            // **Keyed by the run, not by the evidence.** A run that decides the same item twice is the same observation
+            // corrected; a *different* run deciding it is a second observation, and replacing on the evidence id is what
+            // erased it — measured: an independent reading recorded in full, and a ledger still reporting one reviewer.
+            const index = verdicts.findIndex((entry) => readingKey(entry) === readingKey(verdict));
             if (index >= 0) verdicts[index] = verdict;
             else verdicts.push(verdict);
         }
         await writeJson(root, changeId, FILES.verdicts, verdicts);
         // Appended after the projection is durable, so the history never names a reading the reader cannot see.
         const historyPath = join(reviewDir(root, changeId), FILES.verdictHistory);
-        const lines = incoming.map((verdict) => JSON.stringify({ ...verdict, superseded: supersededBy(prior.get(verdict.evidenceId), verdict) }));
+        const lines = incoming.map((verdict) => JSON.stringify({ ...verdict, superseded: supersededBy(prior.get(readingKey(verdict)), verdict) }));
         if (lines.length > 0) {
             await mkdir(reviewDir(root, changeId), { recursive: true });
             await appendFile(historyPath, `${lines.join('\n')}\n`, 'utf8');
         }
         return incoming.length;
     });
+}
+
+/**
+ * What makes two readings the same entry: the evidence item **and** the run that decided it.
+ *
+ * A verdict recorded before the producer was stamped has no run id; those all share the unattributed key, which is the same
+ * grouping `groupByProducer` uses — so an old ledger reads as one reading rather than as one per item.
+ */
+function readingKey(verdict: EvidenceVerdict): string {
+    return `${verdict.evidenceId}\u0000${verdict.producer?.runId ?? ''}`;
 }
 
 /** The reading a new verdict replaced, or `null` when it was the first or when the two agreed. */

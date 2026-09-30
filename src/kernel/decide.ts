@@ -44,7 +44,15 @@ export type DecideInput = {
     subject: Subject;
     claims: readonly Claim[];
     evidence: readonly Evidence[];
+    /** The projection: what each evidence item currently counts as. Claim evaluation reads this. */
     verdicts: readonly EvidenceVerdict[];
+    /**
+     * Every reading the ledger holds, when the caller has them — the independence check reads these.
+     *
+     * Defaults to `verdicts`, so a caller that holds only the projection still gets the check it always got; a caller that
+     * holds the readings asks the identity question about all of them.
+     */
+    allReadings?: readonly EvidenceVerdict[];
     challenges: readonly Challenge[];
     policy: Policy;
     tier: TierName;
@@ -171,17 +179,10 @@ export function evaluateClaim(
             problems.add('missing');
             continue;
         }
-        if (verdict.verdict === 'refuted') {
-            reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
-            problems.add('refuted');
-            continue;
-        }
-        if (verdict.verdict === 'inconclusive') {
-            reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
-            problems.add('inconclusive');
-            continue;
-        }
-        // A verdict about another revision carries over only when the delta says the claim's dependencies are identical.
+        // **Which revision the reading is about comes first, before what it says.** The refuted branch used to run before
+        // this one, so an item whose only reading refuted content that no longer exists produced `evidence_refuted` — a hard
+        // fail that names no remedy — instead of `evidence_stale_subject`, whose remedy is to re-read. A verdict about
+        // another revision is not a statement about this one, whatever its value; measured by an independent review.
         if (verdict.subjectRevision !== input.subjectRevision && !input.reusedEvidence.has(item.id)) {
             reasons.push(reason(
                 'evidence_stale_subject',
@@ -190,6 +191,16 @@ export function evaluateClaim(
             ));
             problems.add('stale');
             staleEvidenceIds.push(item.id);
+            continue;
+        }
+        if (verdict.verdict === 'refuted') {
+            reasons.push(reason('evidence_refuted', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('refuted');
+            continue;
+        }
+        if (verdict.verdict === 'inconclusive') {
+            reasons.push(reason('evidence_inconclusive', `${item.id}: ${verdict.observed}`, claim.id));
+            problems.add('inconclusive');
             continue;
         }
         supportedStrengths.push(strengthOf(item.type));
@@ -335,17 +346,24 @@ export function decide(input: DecideInput): Decision {
     // the one combination a single-actor workflow actually creates, and refusing more would need identities this
     // platform does not issue.
     if (input.actor !== undefined && input.actor.trim() !== '') {
-        const producers = new Set(input.verdicts.map((verdict) => verdict.producer?.actor).filter((actor): actor is string => Boolean(actor)));
+        // **Participation is an identity question, so it is asked of every reading.** This read the projection, which holds
+        // one reading per item — so an actor whose reading had been displaced (a re-seal making it stale, a later run
+        // replacing it) could approve a decision its own reading had been part of. Which reading survives is a freshness
+        // question; who took part is not.
+        const pool = input.allReadings ?? input.verdicts;
+        const producers = new Set(pool.map((verdict) => verdict.producer?.actor).filter((actor): actor is string => Boolean(actor)));
         if (producers.has(input.actor)) {
             reasons.push(reason(
                 'same_actor',
-                `the decision was asked for by ${input.actor}, who also produced ${input.verdicts.filter((verdict) => verdict.producer?.actor === input.actor).length} of its verdict(s)`,
+                `the decision was asked for by ${input.actor}, who also produced ${pool.filter((verdict) => verdict.producer?.actor === input.actor).length} of its verdict(s)`,
             ));
             deficits.push({
                 claimId: 'quorum:same_actor',
-                need: `every verdict in this ledger was produced by ${input.actor}, and that is also who asked for the decision: `
-                    + 'a second actor has to read the evidence (`kata-cli ledger evidence verify --actor <name>`), because an '
-                    + 'approval cannot be independent of its own claims',
+                need: `${input.actor} produced ${pool.filter((verdict) => verdict.producer?.actor === input.actor).length} of this `
+                    + `ledger's ${pool.length} reading(s) and is also who asked for the decision: an approval has to come from `
+                    + 'someone who took no part in the evidence, so have another party read it or decide it '
+                    + '(`kata-cli ledger evidence verify --actor <name>` for the reading, `kata-cli ledger decide` without '
+                    + '`--actor` for a decision taken by the operator rather than by a participant)',
             });
         }
     }
