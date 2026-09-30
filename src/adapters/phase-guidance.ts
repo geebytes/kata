@@ -532,7 +532,20 @@ Do this:
    \`\`\`bash
    kata-cli review --change <task-id> --result-file result.json
    \`\`\`
-   Do not launch a separate process or use a process fallback.
+   Do not launch a separate process or use a process fallback — but **do check that the subagent can start at all**, because
+   a fresh context is a fresh process and it does not inherit everything this one has:
+
+   - **A model provider registered by an extension of this session is not visible to the subagent.** On a host where the
+     default model comes from such an extension, a dispatch fails with a message like \`Model "<provider>/<model>" not
+     found\` — which reads like a typo and is not one. Dispatch with that extension attached to the subagent (the dispatch
+     surface takes an extension list; an empty tool list attaches it for provider registration only), or pick a model the
+     subagent can reach on its own. If neither is possible, say so and stop: a round that never started is not a round.
+   - **The same is true of anything else this session registered at startup** — skills, hooks, providers. A subagent's
+     capabilities are the ones you hand it, not the ones you happen to have.
+
+   Kata records none of this: the request carries no platform, session or model, and how the round was launched is
+   organizational process rather than a checked criterion. The check above is about the round existing, not about what
+   kata believes about it.
 4. **A probe is not a quiz.** \`ledger answer\` records the command that was run and what it printed, and a probe is answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
    the only way to get them right:
    \`\`\`bash

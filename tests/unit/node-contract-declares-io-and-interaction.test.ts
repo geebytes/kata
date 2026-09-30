@@ -67,6 +67,7 @@ describe('every workflow node declares its input, output and interaction', () =>
         expect(offenders).toEqual([]);
     });
 
+
     it('renders every answer the gate accepts into the interaction it declares', () => {
         // The other direction of the same fact: a gate answer the CLI accepts but no rendered contract mentions is an
         // option an operator has to discover. One node is enough to carry the set — they all render the same table.
@@ -143,6 +144,12 @@ describe('every workflow node declares its input, output and interaction', () =>
             expect(rendered).toContain('kata-cli review --change <task-id> --result-file result.json');
             expect(rendered).not.toMatch(/\bpi\s+-p\b|--no-session|\bnohup\b|\bsetsid\b/u);
             expect(rendered).not.toContain('where the platform can launch one');
+            // The subagent-startup check is rendered from the generator, so every platform copy carries it: a fresh
+            // context is a fresh process, and a provider this session's extensions registered is not visible to it —
+            // `Model "<provider>/<model>" not found` reads like a typo and is not one.
+            expect(rendered).toContain('not visible to the subagent');
+            expect(rendered).toContain('a round that never started is not a round');
+            expect(rendered).toContain('the request carries no platform, session or model');
         }
     });
 });
