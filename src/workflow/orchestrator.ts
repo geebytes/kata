@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
@@ -36,7 +36,7 @@ import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.j
 import { isCurrentAssuranceLevel } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
-import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
+import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { readTask } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
@@ -68,6 +68,7 @@ export interface CommandOptions {
     seal?: boolean;
     approve?: boolean;
     reviewEvidence?: string;
+    reviewResultFile?: string;
     confirmHostModel?: boolean;
     allowOwnershipConflicts?: boolean;
     allowOutOfScopeRepair?: boolean;
@@ -1401,6 +1402,72 @@ async function cmdVerify(
 async function cmdReview(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     try {
         const isApprove = options.approve === true;
+        const reviewResultFile = options.reviewResultFile?.trim();
+        if (options.reviewResultFile !== undefined) {
+            if (!reviewResultFile) {
+                return { command: 'review', taskId, phase: (await readCurrentState(root, taskId)).phase, success: false, error: '--result-file requires a workspace-relative JSON file path' };
+            }
+            if (options.approve) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: 'Review result recording and approval are separate steps: record the subagent result first, then approve it after its findings are disposed of.',
+                };
+            }
+            const current = await readCurrentState(root, taskId);
+            if (current.phase !== 'review') {
+                return {
+                    command: 'review', taskId, phase: current.phase, success: false,
+                    error: `Review result recording requires review phase; current phase is ${current.phase}.`,
+                };
+            }
+            const resultPath = resolve(root, reviewResultFile);
+            const resultRelative = relative(root, resultPath);
+            if (isAbsolute(resultRelative) || resultRelative === '..' || resultRelative.startsWith('../')) {
+                return { command: 'review', taskId, phase: 'review', success: false, error: `--result-file must stay inside the workspace: ${reviewResultFile}` };
+            }
+            let findings: ReviewFinding[];
+            try {
+                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown };
+                if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
+                findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
+                const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
+                if (foreignFinding) throw new Error(`finding ${foreignFinding.id} names task ${foreignFinding.taskId}, not ${taskId}`);
+            } catch (error) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Cannot record review result from ${reviewResultFile}: ${(error as Error).message}`,
+                };
+            }
+            const binding = await currentRevisionIdentity(root, taskId);
+            const existing = await readReview(root, taskId);
+            if (existing.findings.length > 0 && bindsToRevision(existing, binding)) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: 'A review result is already recorded for this revision. Re-enter review before recording a replacement.',
+                };
+            }
+            const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+            const recordPath = layoutReviewPath(root, taskId);
+            await mutateTaskArtefact(
+                root,
+                taskId,
+                recordPath,
+                async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+            );
+            return {
+                command: 'review',
+                taskId,
+                phase: 'review',
+                success: true,
+                diagnostics: {
+                    role: 'reviewer',
+                    resultFile: reviewResultFile,
+                    findings: findings.length,
+                    ...(revisionId ? { revisionId } : {}),
+                },
+            };
+        }
+
         if (isApprove) {
             const current = await readCurrentState(root, taskId);
             if (current.phase !== 'review') {

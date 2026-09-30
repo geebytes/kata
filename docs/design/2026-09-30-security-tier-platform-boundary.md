@@ -102,3 +102,11 @@ CLI/ledger 的用户可见文本必须说明：`observed` 表示 Kata 在宿主�
 - Scope: Kata retires its local execution-isolation claim; the host platform owns network, filesystem, process and credential isolation.
 - Binding: this document is an owned path and is sealed with the policy change; deleting this record changes the revision surface.
 - Limit: this authorization does not authorize any later change. Later `security` changes must satisfy the new `observed` floor plus the retained two-reader, always-quorum and risk-coverage requirements.
+
+## 9. 审阅节点 I/O 修复（R-3/R-4）
+
+`security-tier-platform-boundary` 的审阅修复确认：节点契约不能只渲染为 skill 文案，必须由 CLI 的真实读写面兑现。`kata-cli ledger run --out <path>` 将冻结计划派生出的 `ReviewRequest` 写入工作区内的指定路径；路径逃离工作区时拒绝。
+
+read-only subagent 只接收该 request 文件，并返回 `{ "findings": [...] }` 的结构化结果。调用 skill 通过 `kata-cli review --result-file <path>` 记录结果：CLI 校验每个 finding 的 schema、把结果绑定到当前 revision，并以 `pending` 写入 `review.json`。结果记录与 `--approve` 是两个步骤，不能在同一调用中混合。
+
+这一链路不记录或依赖平台、session、model、工具集，也没有 standalone `pi -p`、`nohup`、`setsid` 的 fallback。无法产出 request 或结果文件时，审阅拒绝而非退化为作者 brief 或手写审计状态。

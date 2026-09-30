@@ -787,7 +787,27 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger run', error: built.why });
             return;
         }
-        outputResult({ ok: true, command: 'ledger run', request: built.request });
+        const outRequested = argv.includes('--out');
+        const out = argValue(argv, '--out');
+        if (outRequested && !out) {
+            fail({ command: 'ledger run', error: '--out requires a workspace-relative file path' });
+            return;
+        }
+        if (out) {
+            const outputPath = resolve(options.root, out);
+            const outputRelative = relative(options.root, outputPath);
+            if (isAbsolute(outputRelative) || outputRelative === '..' || outputRelative.startsWith('../')) {
+                fail({ command: 'ledger run', error: `--out must stay inside the workspace: ${out}` });
+                return;
+            }
+            try {
+                await writeFile(outputPath, `${JSON.stringify(built.request, null, 2)}\n`, 'utf8');
+            } catch (error) {
+                fail({ command: 'ledger run', error: `cannot write ReviewRequest to ${out}: ${(error as Error).message}` });
+                return;
+            }
+        }
+        outputResult({ ok: true, command: 'ledger run', request: built.request, ...(out ? { out } : {}) });
         return;
     }
 

@@ -105,4 +105,27 @@ describe('every workflow node declares its input, output and interaction', () =>
         expect(withContract.length).toBeGreaterThanOrEqual(5);
         expect(withContract.map((entry) => entry.id)).toContain('kata-review');
     });
+
+    it('hands the ReviewRequest only to a subagent and forbids an independent Pi-process fallback', () => {
+        const review = nodeContractFor('kata-review');
+        expect(review?.inputs).toEqual([
+            {
+                what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes',
+                from: 'kata-verify',
+                source: 'kata-cli ledger run --change <id> --out <path>',
+            },
+        ]);
+        expect(review?.outputs).toContainEqual({
+            what: 'the structured review result returned by the subagent and recorded by the invoking Skill',
+            artefact: 'kata-cli review --change <id> --result-file <path> → .kata/tasks/<id>/review.json',
+        });
+
+        for (const platform of ['codex', 'opencode', 'pi'] as Platform[]) {
+            const rendered = renderSkill(skillCommands.find((command) => command.id === 'kata-review')!, platform, { language: 'en' });
+            expect(rendered).toContain('Dispatch exactly one subagent with the ReviewRequest as its only payload.');
+            expect(rendered).toContain('kata-cli review --change <task-id> --result-file result.json');
+            expect(rendered).not.toMatch(/\bpi\s+-p\b|--no-session|\bnohup\b|\bsetsid\b/u);
+            expect(rendered).not.toContain('where the platform can launch one');
+        }
+    });
 });

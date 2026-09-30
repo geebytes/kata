@@ -528,11 +528,12 @@ Do this:
    \`\`\`bash
    kata-cli ledger run --change <task-id> --out request.json
    \`\`\`
-3. **Answer it in a clean context.** Hand the request to a session that has read nothing of this one. Where the platform
-   can launch one, that is what the request is for; where it cannot, say which session answered rather than implying a
-   separation the platform did not provide.
-4. **A probe is not a quiz.** \`ledger answer\` records the command that was run and what it printed, and a probe is
-   answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
+3. **Dispatch exactly one subagent with the ReviewRequest as its only payload.** The subagent receives the request file, reads no author-written brief, stays read-only on the code under review, and returns a structured result to this Skill. The Skill writes that result through the only result path:
+   \`\`\`bash
+   kata-cli review --change <task-id> --result-file result.json
+   \`\`\`
+   Do not launch a separate process or use a process fallback.
+4. **A probe is not a quiz.** \`ledger answer\` records the command that was run and what it printed, and a probe is answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
    the only way to get them right:
    \`\`\`bash
    kata-cli ledger ask --change <task-id>              # the probes this ledger asks, derived from its own claims

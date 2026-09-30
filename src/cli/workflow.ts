@@ -115,6 +115,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
         ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
+        ...(command === 'review' && argv.includes('--result-file') ? { reviewResultFile: reviewResultFileArg(argv) ?? '' } : {}),
         // F5: the review may state which paths it read. Repeated `--reviewed-path` flags; absent means "the whole
         // revision", which is the conservative reading and the behaviour that existed before the field did.
         ...(command === 'review' ? { reviewedPaths: repeatedValues(argv, '--reviewed-path') } : {}),
@@ -372,6 +373,13 @@ export async function requireWorkflowReceipt(root: string, taskId: string, role:
         + `Re-acknowledge after the change: \`kata-cli handoff create --task ${taskId} --from <role> --to ${role}\` then \`kata-cli handoff acknowledge --task ${taskId} --id <handoff-id> --platform <name> --role ${role}\`.`,
     );
 }
+
+export function reviewResultFileArg(argv: string[]): string | undefined {
+    const index = argv.indexOf('--result-file');
+    const value = index >= 0 ? argv[index + 1] : undefined;
+    return value?.trim() || undefined;
+}
+
 
 export function reviewEvidenceArg(argv: string[]): string | undefined {
     const index = argv.indexOf('--review-evidence');

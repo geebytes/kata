@@ -365,11 +365,10 @@ const NODE_CONTRACTS: Record<string, NodeContract> = {
     },
     'kata-review': {
         inputs: [
-            { what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes', from: null, source: 'kata-cli ledger run --change <id> --out <path>' },
-            { what: 'what the ledger already decides, and what it cannot', from: null, source: 'kata-cli ledger status --cost --change <id>' },
+            { what: 'the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes', from: 'kata-verify', source: 'kata-cli ledger run --change <id> --out <path>' },
         ],
         outputs: [
-            { what: 'the findings, each bound to the revision that reported it', artefact: '.kata/tasks/<id>/review.json' },
+            { what: 'the structured review result returned by the subagent and recorded by the invoking Skill', artefact: 'kata-cli review --change <id> --result-file <path> → .kata/tasks/<id>/review.json' },
             { what: 'the decision derived from the evidence', artefact: 'kata-cli ledger decide --change <id>' },
         ],
         interaction: [{ why: 'the judge\'s model is chosen on the host platform, and kata records only which choice was made', choices: ['continue_current', 'switched', 'delegated'] }],
