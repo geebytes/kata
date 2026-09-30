@@ -132,6 +132,29 @@ describe('a recorded round replaces a recorded round', () => {
             const report = await ledgerReport(historyRoot, historyChange);
             expect(report.assurance).toBe('observed');
             expect(report.assuranceHistory.map((entry) => entry.replaced)).toEqual(['sandboxed']);
+
+            // **The plain `ledger status` envelope, asserted on its own.** R9-F3: this change said the history was published
+            // by "`ledger status --cost` and `ledgerReport`" — which is *one* surface, since `--cost` calls `ledgerReport`.
+            // Deleting the line from the plain status envelope left 1289 cases green, so the second surface had no
+            // falsifier and the count was wrong. A surface a reader can reach has to be asserted where it is reached.
+            const { runLedgerCommand } = await import('../../src/cli/ledger.js');
+            const { vi } = await import('vitest');
+            const chunks: string[] = [];
+            const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => {
+                chunks.push(String(chunk));
+                return true;
+            }) as never);
+            try {
+                await runLedgerCommand(['status'], { root: historyRoot, changeId: historyChange });
+            } finally {
+                spy.mockRestore();
+            }
+            const envelope = JSON.parse(chunks.join('').split('\n').filter((line) => line.trim().startsWith('{')).pop() ?? '{}') as {
+                assurance?: string;
+                assuranceHistory?: Array<{ replaced: string }>;
+            };
+            expect(envelope.assurance).toBe('observed');
+            expect(envelope.assuranceHistory?.map((entry) => entry.replaced)).toEqual(['sandboxed']);
         } finally {
             await rm(historyRoot, { recursive: true, force: true });
         }

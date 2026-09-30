@@ -342,3 +342,19 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 这次事故的面是**一个叫 `replace` 的操作实际是整组写入**：我读到的集合已被先前轮次收窄，而提交只含一条，于是"替换一条"变成"删掉五条"。这与本 change 反复修的形态同源（宽敞的语义 + 收窄的调用方）。
 
 建议的修法（未在本 change 实现，建议作为 follow-up）：`replace` 只改**点名的** id，未点名的保持不动；若提交集合比现有集合小，**拒绝并列出会丢失的 id**，而不是静默删除。
+
+## 20. 第二条读数的 F-1…F-5 收口
+
+第二条独立读数判定 **PASS**（并独立复跑全部六条变异、重算 59 条 pathDigest），给出 5 条 minor/note。全部收口：
+
+| 项 | 严重度 | 修复 | 变异验证 |
+|---|---|---|---|
+| **F-2** `workflow.ts` 的三个取值 reader 仍只认空格：`--owned-path=x` 产出**零个** ownedPaths（会建出无声明面的 task）、`--waivers-file=x` / `--requirements-file=x` 被**静默忽略**（fail-open） | minor（真缺陷） | 三个 reader 都走共享读取器；"缺失"与"给了空值"仍是两个事实（后者报错） | 退回空格-only → 红 |
+| **F-1** `splitFlag` 只接进 relations；`install --platform=pi` 仍报 Unknown option，而**我的文档块点名了它** | minor | installer 的手写循环接 `splitFlag` | 退回整 token → 红 |
+| **F-3** 我说 `assuranceHistory` 有"两个发布面"，但 `--cost` 直接调 `ledgerReport`，**是同一个面**；真正的第二面（纯 `ledger status`）没有可失败证据 | note | 给纯 `ledger status` 的信封加独立断言 | 删掉那行 → 红 |
+| **F-4** policy reader 的填充条件是 `!isCurrentAssuranceLevel`，于是**任意未知字符串** floor（`bogus_value`）被静默改写成档位默认值，而 `42` 被拒 | note | 条件收窄为"确实在 `LEGACY_ASSURANCE_LEVELS` 内"；未知值交给 schema 拒绝 | 放回宽条件 → 红 |
+| **F-5** `resolvedLiteral` 计算后立即 `void`（死代码，落在安全边界那段） | note | 删除 | — |
+
+**F-2 是真缺陷**：静默 fail-open 落在**声明面**上——正是 seal 的信任所依赖的那个面。它和第 19.3 节记录的 `evidence replace` 是同一个形态：**一个规则在收口时只覆盖了它被点名的那个调用方**。这一轮之后，"两种拼写等价"在所有取值 reader 上都成立（含手写循环），并且每个 reader 都有可失败证据。
+
+1292 用例 / 208 文件全绿，`tsc --noEmit` 干净。

@@ -578,6 +578,41 @@ describe('review CLI I/O', () => {
     });
 
 
+
+    it('accepts either spelling for the flags that declare a change surface, not only for --result-file', async () => {
+        // R9-F2: `--owned-path=src/a.ts` produced *no owned paths at all* (the declaration the seal binds), and
+        // `--waivers-file=` / `--requirements-file=` were silently ignored — a supplied waiver set that did not apply,
+        // with the command reporting success. Silent fail-open on the declaration surface is the one place it must not
+        // happen: the task would be built with a surface nobody declared.
+        const { ownedPaths, readWaiversFile, readRequirementsFile } = await import('../../src/cli/workflow.js');
+        expect(ownedPaths(['--owned-path', 'src/a.ts', '--owned-path=src/b.ts'])).toEqual(['src/a.ts', 'src/b.ts']);
+        expect(ownedPaths(['--owned-path=src/a.ts'])).toEqual(['src/a.ts']);
+        // Absent stays absent; present-but-empty is malformed rather than ignored.
+        expect(ownedPaths(['--owned-path'])).toEqual([]);
+        expect(ownedPaths(['--owned-path='])).toEqual([]);
+
+        await expect(readWaiversFile(['--waivers-file'])).rejects.toThrow(/requires a path/u);
+        await expect(readWaiversFile(['--waivers-file='])).rejects.toThrow(/requires a path/u);
+        await expect(readRequirementsFile(['--requirements-file'])).rejects.toThrow(/requires a path/u);
+        await expect(readRequirementsFile(['--requirements-file='])).rejects.toThrow(/requires a path/u);
+
+        // And the `=` spelling resolves the same file the spaced form does.
+        await writeFile(join(root, 'tmp', 'waivers.json'), JSON.stringify({ waivers: [] }));
+        await writeFile(join(root, 'tmp', 'requirements.json'), JSON.stringify({ requirements: [{ id: 'AC-1', statement: 'x' }] }));
+        expect(await readWaiversFile([`--waivers-file=${join(root, 'tmp', 'waivers.json')}`])).toEqual([]);
+        expect(await readRequirementsFile([`--requirements-file=${join(root, 'tmp', 'requirements.json')}`])).toHaveLength(1);
+    });
+
+    it("accepts the inline spelling in the installer flag loop", async () => {
+        // R9-F1: the same rule, in the hand-written loop the docblock beside `splitFlag` named as covered.
+        const { parseInstallerArgs } = await import('../../src/cli/installer.js');
+        const spaced = parseInstallerArgs(['--platform', 'pi', '--scope', 'project']);
+        const inline = parseInstallerArgs(['--platform=pi', '--scope=project']);
+        expect(inline.platform).toBe(spaced.platform);
+        expect(inline.scope).toBe(spaced.scope);
+        expect(() => parseInstallerArgs(['--platform='])).toThrow();
+    });
+
     it('resolves the = spelling for hand-written flag parsers too, not only the shared readers', async () => {
         // R8-F4: `--flag=value` was fixed in the shared readers and left the hand-written `arg === '--x'` loops alone, so
         // `relations add --from=task:a --to=task:b` was refused with `Unknown relations option: --from=task:a`.

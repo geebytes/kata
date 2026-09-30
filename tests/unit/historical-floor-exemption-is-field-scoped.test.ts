@@ -39,6 +39,35 @@ describe('a historical floor exempts the floor field only', () => {
         expect(ledger.malformedFiles).toContain('policy.json');
     });
 
+
+    it('refuses a floor value it does not recognise instead of rewriting it', async () => {
+        // R9-F4: the fill condition was `!isCurrentAssuranceLevel(floor)`, so any unknown string was silently rewritten to
+        // the tier default — `bogus_value` read back as `observed` with `policyFilled` naming it — while `42` at the same
+        // position was refused by the schema. A reader may be lenient about *history* (the retired set); rewriting a value
+        // nobody ever wrote is inventing policy, and it is the silent direction.
+        const policy = defaultPolicy();
+        const unknown = await ledgerWithPolicy({
+            ...policy,
+            tiers: { ...policy.tiers, strict: { ...policy.tiers.strict, assuranceFloor: 'bogus_value' } },
+        });
+        expect(unknown.policyRejected ?? unknown.malformedReasons['policy.json']).toBeTruthy();
+
+        // The non-string case, which was already refused, stays refused.
+        const notAString = await ledgerWithPolicy({
+            ...policy,
+            tiers: { ...policy.tiers, strict: { ...policy.tiers.strict, assuranceFloor: 42 } },
+        });
+        expect(notAString.policyRejected ?? notAString.malformedReasons['policy.json']).toBeTruthy();
+
+        // And the genuinely retired value is still filled, with its fill named.
+        const retired = await ledgerWithPolicy({
+            ...policy,
+            tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: 'sandboxed' } },
+        });
+        expect(retired.malformedFiles).toEqual([]);
+        expect(retired.policyFilled).toContain('tiers.security.assuranceFloor');
+    });
+
     it('accepts a document that is valid apart from the retired floor', async () => {
         const policy = defaultPolicy();
         const retiredFloorOnly = {

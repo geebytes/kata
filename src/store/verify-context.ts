@@ -91,8 +91,6 @@ function realContainedPath(root: string, absolute: string): boolean {
                     return false;
                 }
                 const literal = isAbsolute(raw) ? raw : resolve(dirname(next), raw);
-                const resolvedLiteral = segments.reduce<string | null>((current, _segment, index) => current, dirname(next));
-                void resolvedLiteral;
                 if (!insideWorkspace(realRoot, literal) && !insideWorkspace(realRoot, dirname(literal))) {
                     return false;
                 }

@@ -479,13 +479,34 @@ export function workflowNextReason(phase: Phase): NextActionReason {
 }
 
 export function ownedPaths(argv: string[]): string[] {
-    return argv.flatMap((value, index) => value === '--owned-path' && argv[index + 1] ? [argv[index + 1]!] : []);
+    // **Both spellings, through the shared reader.** R9-F2: this kept the spaced form while the same file learned the `=`
+    // form for `--result-file`, so `open --owned-path=src/a.ts` built a task with *no owned paths at all* and nothing
+    // complained — a silent fail-open on the declaration surface, which is the one surface a change's trust rests on.
+    const values: string[] = [];
+    for (let index = 0; index < argv.length; index += 1) {
+        const token = argv[index]!;
+        if (token === '--owned-path') {
+            const next = argv[index + 1];
+            if (next !== undefined && !next.startsWith('--')) {
+                values.push(next);
+                index += 1;
+            }
+            continue;
+        }
+        if (token.startsWith('--owned-path=')) {
+            const value = token.slice('--owned-path='.length);
+            if (value.trim() !== '') values.push(value);
+        }
+    }
+    return values;
 }
 
 export async function readWaiversFile(argv: string[]): Promise<Waiver[] | undefined> {
-    const index = argv.indexOf('--waivers-file');
-    if (index === -1) return undefined;
-    const path = argv[index + 1];
+    // R9-F2: with the spaced form alone, `--waivers-file=x` was *silently ignored* — a waiver set the operator supplied
+    // did not apply and nothing said so. Absent and malformed stay different facts (absent returns `undefined`, a
+    // present-but-empty value throws), and the `=` spelling is no longer a third one.
+    if (!flagPresent(argv, '--waivers-file')) return undefined;
+    const path = argValue(argv, '--waivers-file');
     if (!path) throw new Error('Invalid waivers file: --waivers-file requires a path.');
 
     let parsed: unknown;
@@ -505,9 +526,10 @@ export async function readWaiversFile(argv: string[]): Promise<Waiver[] | undefi
 }
 
 export async function readRequirementsFile(argv: string[]): Promise<Array<{ id?: string; statement: string; source?: string }> | undefined> {
-    const index = argv.indexOf('--requirements-file');
-    if (index === -1) return undefined;
-    const path = argv[index + 1];
+    // Same rule as the waivers reader, and for the same reason: a requirements file that was supplied but silently
+    // ignored would make the acceptance contract invisible while the command reports success.
+    if (!flagPresent(argv, '--requirements-file')) return undefined;
+    const path = argValue(argv, '--requirements-file');
     if (!path) throw new Error('Invalid requirements file: --requirements-file requires a path.');
 
     let parsed: unknown;

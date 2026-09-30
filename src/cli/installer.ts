@@ -1,3 +1,4 @@
+import { splitFlag } from './invocation.js';
 import { platformDefinitionById } from '../adapters/platforms.js';
 import { doctor } from '../adapters/doctor.js';
 import { discoverPlatforms, isManagedPlatformSurfacePresent, listManagedPlatforms, update } from '../adapters/discovery.js';
@@ -286,30 +287,33 @@ export function parseInstallerArgs(
     let yes = false;
 
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
+        // **Hand-written parsing, both spellings.** R9-F1: `install --platform=pi` was refused as an unknown option while
+        // the docblock beside `splitFlag` — added in this same change — named exactly that shape as one it fixed. The
+        // comparison is on the flag name and the inline value is taken from the token, so an `=` form consumes nothing.
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
         if (arg === '--platform' && value !== undefined) {
             platform = parsePlatform(value);
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--scope' && value !== undefined) {
             scope = parseScope(value);
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--root' && value !== undefined) {
             options.root = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--home' && value !== undefined) {
             options.home = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--language' && value !== undefined) {
             options.language = parseLanguage(value);
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--dry-run') {
             options.dryRun = true;
         } else if (arg === '--force') {
             options.force = true;
         } else if (arg === '--wiki-from' && value !== undefined) {
             options.wikiFrom = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--no-wiki') {
             options.noWiki = true;
         } else if (settings.allowWizard && arg === '--yes') {
@@ -317,7 +321,7 @@ export function parseInstallerArgs(
         } else if (arg === '--refresh' || arg === '--no-refresh') {
             // Consumed by `refreshPolicyFromArgs`; accepted here so the parser does not reject it.
         } else if (arg !== undefined) {
-            throw new Error(`Unknown installer option: ${arg}`);
+            throw new Error(`Unknown installer option: ${argv[index]}`);
         }
     }
 

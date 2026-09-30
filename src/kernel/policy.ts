@@ -257,10 +257,14 @@ export function loadPolicy(value: unknown): PolicyLoad {
                 Object.entries(storedTiers).map(([name, tier]) => {
                     if (!isRecord(tier) || !('assuranceFloor' in tier)) return [name, tier];
                     const floor = tier.assuranceFloor;
-                    const current = typeof floor === 'string'
-                        && READABLE_ASSURANCE_LEVELS.includes(floor as AssuranceLevel)
-                        && !LEGACY_ASSURANCE_LEVELS.includes(floor as (typeof LEGACY_ASSURANCE_LEVELS)[number]);
-                    if (typeof floor !== 'string' || current) return [name, tier];
+                    // **Only a genuinely retired value is filled; anything else the enum does not know is left to the
+                    // schema, which refuses it.** R9-F4: the condition was `!isCurrentAssuranceLevel(floor)`, so *any*
+                    // unknown string — `bogus_value` — was silently rewritten to the tier default while `42` was refused.
+                    // A reader that rewrites a value it does not recognise is inventing policy: history is what the
+                    // retired set names, and nothing else is history.
+                    const retired = typeof floor === 'string'
+                        && LEGACY_ASSURANCE_LEVELS.includes(floor as (typeof LEGACY_ASSURANCE_LEVELS)[number]);
+                    if (!retired) return [name, tier];
                     const replacement = defaultTiers[name]?.assuranceFloor;
                     if (replacement === undefined) return [name, tier];
                     filled.push(`tiers.${name}.assuranceFloor`);
