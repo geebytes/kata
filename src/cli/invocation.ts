@@ -27,22 +27,24 @@ function inlineValue(argv: string[], flag: string): string | undefined {
  * (`review --review-evidence hello --change t1` operated on a task named `hello`), then seven more an independent review
  * found: `--branch feature/x` read `feature/x` as the change id, and `--base main` became a branch named `kata/main`.
  *
- * **It is a hand-kept list that a test checks, not a derived table — and the comment used to claim otherwise.** Measured:
- * `tests/unit/cli-flag-vocabulary.test.ts` scans `src/cli/**` for the shapes flags are read in, and a reader outside those
- * shapes (a flag reached through a variable, or read outside `src/cli/`) is invisible to it. That is the honest
- * description: a strong approximation with a known blind spot, caught by a case rather than by construction, so a reader
- * that introduces a new shape has to extend the scan.
+ * **It is a hand-kept list that a test checks, not a derived table — and the comment used to claim otherwise.** Measured
+ * twice: first three shapes were scanned and a flag read as `arg === '--x'` was invisible, then
+ * `tests/unit/cli-flag-vocabulary.test.ts` was extended to that shape as well. What remains invisible is a flag reached
+ * through a variable, a template-built flag name, or a reader outside `src/cli/`: the honest description is a strong
+ * approximation with a named blind spot, caught by a case rather than by construction, so a reader that introduces a new
+ * shape extends the scan.
  */
 export const VALUE_FLAGS: readonly string[] = [
-    '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
-    '--change', '--choice', '--claim', '--command', '--depends-on', '--development', '--development-mode',
-    '--diversity', '--evidence', '--excludes', '--failure-count', '--failures', '--fails-on', '--file',
-    '--findings-carried-to', '--for-task', '--from', '--id', '--instrument', '--isolation', '--isolation-mode',
-    '--judgement', '--kind', '--language', '--mode', '--observed', '--out', '--owned-path', '--path', '--paths',
-    '--per-claim', '--persist', '--platform', '--probe', '--producer', '--reason', '--record',
-    '--requirements-file', '--result-file', '--results-dir', '--review', '--review-evidence', '--review-mode',
-    '--reviewed-path', '--risk-class', '--role', '--root', '--routing-mode', '--run-id', '--seed', '--set-file',
-    '--severity', '--since', '--statement', '--task', '--task-kind', '--tier', '--title', '--waivers-file',
+    '--add', '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
+    '--candidate', '--change', '--choice', '--claim', '--command', '--covers', '--decision', '--depends-on',
+    '--development', '--development-mode', '--diversity', '--endpoint', '--evidence', '--excludes', '--failure-count',
+    '--failures', '--fails-on', '--field', '--file', '--findings-carried-to', '--for-task', '--from', '--home', '--id',
+    '--instrument', '--isolation', '--isolation-mode', '--judgement', '--kind', '--language', '--mode', '--observed',
+    '--out', '--owned-path', '--path', '--paths', '--per-claim', '--persist', '--platform', '--probe', '--producer',
+    '--q', '--query', '--reason', '--record', '--remove', '--requirements-file', '--result-file', '--results-dir',
+    '--review', '--review-evidence', '--review-mode', '--reviewed-path', '--risk-class', '--role', '--root',
+    '--routing-mode', '--run-id', '--scope', '--seed', '--set-file', '--severity', '--since', '--statement', '--task',
+    '--task-kind', '--tier', '--title', '--to', '--type', '--version', '--waivers-file', '--wiki', '--wiki-from',
 ];
 
 export function parseRootArg(argv: string[]): string | undefined {
@@ -77,6 +79,21 @@ export function parseChangeArg(argv: string[]): string | undefined {
         return value;
     }
     return undefined;
+}
+
+/**
+ * Split a hand-written literal-flag comparison into the flag and, when present, its inline value.
+ *
+ * **The `=` spelling has to resolve for hand-written parsers too, not only for the shared readers.** Measured by an
+ * independent review: `relations add --from=task:a --to=task:b` was refused with `Unknown relations option: --from=task:a`,
+ * and `install --platform=pi` likewise, because those loops compare whole tokens. Both spellings are the same flag on a
+ * command line, so the comparison is done on the name and the inline value is returned alongside it.
+ */
+export function splitFlag(token: string): { flag: string; inline?: string } {
+    if (!token.startsWith('--')) return { flag: token };
+    const equals = token.indexOf('=');
+    if (equals === -1) return { flag: token };
+    return { flag: token.slice(0, equals), inline: token.slice(equals + 1) };
 }
 
 /**

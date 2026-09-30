@@ -8,6 +8,7 @@
  */
 import type { RiskClass } from './types.js';
 import {
+    LEGACY_ASSURANCE_LEVELS,
     READABLE_ASSURANCE_LEVELS,
     assuranceAtLeast,
     isCurrentAssuranceLevel,
@@ -243,6 +244,30 @@ export function loadPolicy(value: unknown): PolicyLoad {
         // The classes an old entry is about come from the defaults for that pattern; a pattern the defaults do not name is
         // filled with every tier's required classes, which is the conservative direction — the demand stays at least as wide
         // as it was when the table was written — and the substitution is named in `filled`.
+        // **A retired assurance floor is filled, and the fill is named, exactly like every other fill here.** Measured by
+        // an independent review: this reader left a historical floor in place and `policy.json` merely tolerated it, so the
+        // document read back carrying a value no current writer can produce and `policyFilled` reported nothing — while
+        // the store's own comment said the substitution was "substituted for the check and named in `policyFilled`". The
+        // substitution now happens where every other fill does, so the reader returns a policy its consumers can decide
+        // with and the fact that it was substituted is visible.
+        const storedTiers = stored.tiers;
+        if (isRecord(storedTiers)) {
+            const defaultTiers = defaults.tiers as Record<string, { assuranceFloor: string }>;
+            stored.tiers = Object.fromEntries(
+                Object.entries(storedTiers).map(([name, tier]) => {
+                    if (!isRecord(tier) || !('assuranceFloor' in tier)) return [name, tier];
+                    const floor = tier.assuranceFloor;
+                    const current = typeof floor === 'string'
+                        && READABLE_ASSURANCE_LEVELS.includes(floor as AssuranceLevel)
+                        && !LEGACY_ASSURANCE_LEVELS.includes(floor as (typeof LEGACY_ASSURANCE_LEVELS)[number]);
+                    if (typeof floor !== 'string' || current) return [name, tier];
+                    const replacement = defaultTiers[name]?.assuranceFloor;
+                    if (replacement === undefined) return [name, tier];
+                    filled.push(`tiers.${name}.assuranceFloor`);
+                    return [name, { ...tier, assuranceFloor: replacement }];
+                }),
+            );
+        }
         const storedFloors = stored.riskFloors;
         if (isRecord(storedFloors)) {
             const defaultFloors = defaults.riskFloors as Record<string, { floor: string; riskClasses: string[] }>;

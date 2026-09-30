@@ -9,6 +9,23 @@ import { validateArtefact } from '../../src/core/schema.js';
 
 const root = join(import.meta.dirname, '..', '..');
 
+/** Run the ledger CLI and return its envelope, so a refusal can be asserted on its own words. */
+async function ledger(argv: string[]): Promise<{ ok?: boolean; error?: string }> {
+    const written: string[] = [];
+    const { vi } = await import('vitest');
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => {
+        written.push(String(chunk));
+        return true;
+    }) as never);
+    try {
+        await runLedgerCommand(argv, { root, changeId: 'retired-assurance' });
+    } finally {
+        spy.mockRestore();
+    }
+    const line = written.join('').split('\n').filter((entry) => entry.trim().startsWith('{')).pop();
+    return line ? (JSON.parse(line) as { ok?: boolean; error?: string }) : {};
+}
+
 /**
  * `sandboxed` is a retired Kata write-side value: the host platform, not Kata,
  * owns command isolation.  It remains in the historical read vocabulary only.
@@ -66,5 +83,16 @@ describe('the writable assurance vocabulary', () => {
         expect([...ASSURANCE_LEVELS]).toEqual(['none', 'relayed', 'observed']);
         expect([...LEGACY_ASSURANCE_LEVELS].sort()).toEqual(['sandboxed', 'signed']);
         expect([...READABLE_ASSURANCE_LEVELS].sort()).toEqual(['none', 'observed', 'relayed', 'sandboxed', 'signed']);
+    });
+
+    it('names the historical value the operator gave, not the one the branch was written for', async () => {
+        // R8-F1: the branch fires for every legacy level and its message was written for `sandboxed`, so
+        // `decide --assurance signed` was refused with a sentence about a value the operator had not typed.
+        for (const level of ['sandboxed', 'signed']) {
+            const refusal = await ledger(['decide', '--assurance', level]);
+            expect(refusal.ok).toBe(false);
+            expect(String(refusal.error)).toContain(level);
+            expect(String(refusal.error)).toContain('historical assurance level');
+        }
     });
 });

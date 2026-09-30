@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ensureAssurance, readLedger, reviewDir } from '../../src/store/ledger.js';
+import { ensureAssurance, ledgerReport, readLedger, reviewDir } from '../../src/store/ledger.js';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
@@ -39,7 +39,12 @@ describe('historical assurance vocabulary', () => {
         const ledger = await readLedger(root, changeId);
         expect(ledger.assurance).toBe('sandboxed');
         expect(ledger.malformedFiles).toEqual([]);
-        expect(ledger.policy.tiers.security.assuranceFloor).toBe('sandboxed');
+        // **The policy is read and the retired floor is substituted, visibly.** R8-F9 moved the substitution into the
+        // reader's fill step (it used to happen only for the schema check), so a historical policy comes back with the
+        // current default floor and the fact is named — the same rule every other fill in this reader follows. The *usage*
+        // record below is the one that must be preserved verbatim, and it is.
+        expect(ledger.policy.tiers.security.assuranceFloor).toBe('observed');
+        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
         expect(ledger.policyRejected).toBeNull();
 
         // **Reading is not deciding.** A reader preserves what the file says: the current assurance stays `sandboxed`
@@ -92,6 +97,43 @@ describe('a recorded round replaces a recorded round', () => {
             expect(written.assuranceHistory.map((entry) => entry.replaced)).toEqual(['sandboxed']);
         } finally {
             await rm(replaceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('publishes the retired value it moved past, so "kept as history" is a fact and not a file', async () => {
+        // R8-F2: `ensureAssurance` wrote `assuranceHistory` and only a test ever read it, so the record existed and the
+        // fact was unavailable — the write-only shape this repository removes everywhere else.
+        const historyRoot = await mkdtemp(join(tmpdir(), 'kata-assurance-history-'));
+        const historyChange = 'history-fixture';
+        try {
+            await initLayout(historyRoot);
+            await createTask({
+                root: historyRoot, id: historyChange, title: 'history fixture',
+                acceptance: [{ id: 'AC-1', statement: 'the retired value is published, not just recorded' }],
+                ownedPaths: ['src/store/ledger.ts'],
+                workflowProfile: {
+                    version: 1, isolationMode: 'current_worktree', developmentMode: 'tdd', reviewMode: 'strict',
+                    comet: { projectInit: 'not_requested', openStatus: 'acknowledged' },
+                },
+            });
+            await ensureAssurance(historyRoot, historyChange, 'observed');
+            await writeFile(
+                join(reviewDir(historyRoot, historyChange), 'usage.json'),
+                `${JSON.stringify({ usage: {}, assurance: 'sandboxed' })}\n`, 'utf8',
+            );
+            await ensureAssurance(historyRoot, historyChange, 'observed');
+
+            const ledger = await readLedger(historyRoot, historyChange);
+            expect(ledger.assurance).toBe('observed');
+            expect(ledger.assuranceHistory.map((entry) => entry.replaced)).toEqual(['sandboxed']);
+            expect(ledger.assuranceHistory[0]?.why).toContain('history');
+
+            // And the report envelope publishes it — the surface a reader actually inspects.
+            const report = await ledgerReport(historyRoot, historyChange);
+            expect(report.assurance).toBe('observed');
+            expect(report.assuranceHistory.map((entry) => entry.replaced)).toEqual(['sandboxed']);
+        } finally {
+            await rm(historyRoot, { recursive: true, force: true });
         }
     });
 });

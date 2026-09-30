@@ -1,3 +1,4 @@
+import { splitFlag } from './invocation.js';
 import { readFile } from 'node:fs/promises';
 import {
     addKataRelation,
@@ -115,28 +116,29 @@ function parseRelationsArgs(argv: string[]): {
 } {
     const args: { from?: string; to?: string; id?: string; type?: string; reason?: string; root?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
+        // Hand-written comparison, both spellings: `--from=task:a` and `--from task:a` are the same flag (R8-F4).
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
         if (arg === '--from' && value !== undefined) {
             args.from = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--to' && value !== undefined) {
             args.to = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if ((arg === '--id' || arg === '--endpoint') && value !== undefined) {
             args.id = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--type' && value !== undefined) {
             args.type = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--reason' && value !== undefined) {
             args.reason = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--root' && value !== undefined) {
             args.root = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else {
-            throw new Error(`Unknown relations option: ${arg}`);
+            throw new Error(`Unknown relations option: ${argv[index]}`);
         }
     }
     return args;

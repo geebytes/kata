@@ -20,7 +20,7 @@ import { projectVerdicts } from '../kernel/evidence.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
-import type { AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceHistoryEntry, AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
 const FILES = {
     subject: 'subject.json',
@@ -170,6 +170,14 @@ export type Ledger = {
     challenges: Challenge[];
     usage: BudgetUsage;
     assurance: AssuranceLevel;
+    /**
+     * The retired assurance values this ledger has moved past, most recent last.
+     *
+     * **It is on the read because a history nothing reads is not a history.** R8-F2: `ensureAssurance` recorded the value a
+     * later round replaced and only a test ever looked at the file, so the record existed and the fact was unavailable —
+     * "kept as history" was true of the file and false of the system.
+     */
+    assuranceHistory: AssuranceHistoryEntry[];
     runs: LedgerRun[];
     /** The files that exist. An empty list is the honest report of a review that recorded nothing. */
     recordedFiles: string[];
@@ -221,7 +229,7 @@ async function readJson<T>(path: string): Promise<T | null> {
 async function readUsageRecord(path: string): Promise<
     | { kind: 'absent' }
     | { kind: 'unreadable'; detail: string }
-    | { kind: 'usable'; value: { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: Array<{ replaced: AssuranceLevel; at: string; why: string }> } }
+    | { kind: 'usable'; value: { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } }
 > {
     let raw: string;
     try {
@@ -231,7 +239,7 @@ async function readUsageRecord(path: string): Promise<
         return { kind: 'unreadable', detail: (error as Error).message };
     }
     try {
-        return { kind: 'usable', value: JSON.parse(raw) as { usage: BudgetUsage; assurance: AssuranceLevel } };
+        return { kind: 'usable', value: JSON.parse(raw) as { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } };
     } catch (error) {
         return { kind: 'unreadable', detail: `not valid JSON (${(error as Error).message})` };
     }
@@ -321,17 +329,23 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             // a reviewer count of `1.5` beside a retired floor was accepted, while the same count beside a current floor
             // was reported unreadable. The retired floor is substituted for the check and named in `policyFilled`, so
             // what is validated is the document minus the one value that is allowed to be old.
-            const substituted = {
-                ...policy,
-                tiers: Object.fromEntries(
-                    Object.entries(policy.tiers).map(([name, tier]) => [
-                        name,
-                        isCurrentAssuranceLevel(tier.assuranceFloor)
-                            ? tier
-                            : { ...tier, assuranceFloor: defaultPolicy().tiers[name as keyof typeof policy.tiers].assuranceFloor },
-                    ]),
-                ) as typeof policy.tiers,
-            };
+            // **The substitution is named, like every other fill.** R8-F9: the comment claimed the retired floor was
+            // "substituted for the check and named in `policyFilled`" while only the schema check saw the substitute — a
+            // policy carrying the old floor reported an empty `policyFilled`, so the one rule this file states about fills
+            // (visible, never silent) did not hold on this path.
+            const substitutedTiers: Array<[string, typeof policy.tiers[keyof typeof policy.tiers]]> = [];
+            for (const [name, tier] of Object.entries(policy.tiers)) {
+                if (isCurrentAssuranceLevel(tier.assuranceFloor)) {
+                    substitutedTiers.push([name, tier]);
+                    continue;
+                }
+                substitutedTiers.push([
+                    name,
+                    { ...tier, assuranceFloor: defaultPolicy().tiers[name as keyof typeof policy.tiers].assuranceFloor },
+                ]);
+                policyFilled = [...policyFilled, `tiers.${name}.assuranceFloor`];
+            }
+            const substituted = { ...policy, tiers: Object.fromEntries(substitutedTiers) as typeof policy.tiers };
             try {
                 validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, substituted);
             } catch (error) {
@@ -340,7 +354,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             }
         } else policyRejected = loaded.error;
     }
-    const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
+    const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] }>(join(dir, FILES.usage))) ?? null;
     const verdictsRaw = (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [];
     // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
     // about another one, and it is the same value the caller receives as `subject`.
@@ -361,6 +375,10 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         challenges: (await readJson<Challenge[]>(join(dir, FILES.challenges))) ?? [],
         usage: usage?.usage ?? {},
         assurance: usage?.assurance ?? 'none',
+        // **The history has a reader, because a record nothing reads is not a record.** R8-F2: `ensureAssurance` moved a
+        // retired value here and only a test ever looked at it, so "kept as history" was true of the file and false of
+        // the system. It is carried on the ledger read, which is what every report surface already consumes.
+        assuranceHistory: usage?.assuranceHistory ?? [],
         runs: (await readJson<LedgerRun[]>(join(dir, FILES.runs))) ?? [],
         recordedFiles,
         malformedFiles,
@@ -464,6 +482,24 @@ async function walkFiles(absolute: string, prefix = '', depth = 0): Promise<stri
 
 export async function writeSubject(root: string, changeId: string, subject: Subject): Promise<void> {
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.subject, subject));
+}
+
+/**
+ * Replace a claim's statement, keeping its id, its evidence and its place in the ledger.
+ *
+ * The ledger is a store of record, so a correction is an operation rather than an edit: it stamps a reopen so the decision
+ * can see that the statement moved, and the claim's existing readings are re-checked against it by the same binding rules
+ * every other change follows.
+ */
+export async function restateClaim(root: string, changeId: string, claimId: string, statement: string): Promise<void> {
+    await mutate(root, changeId, async () => {
+        const path = join(reviewDir(root, changeId), FILES.claims);
+        const claims = (await readJson<Claim[]>(path)) ?? [];
+        const next = claims.map((claim) => (claim.id === claimId
+            ? { ...claim, statement, reopens: (claim.reopens ?? 0) + 1 }
+            : claim));
+        await writeJson(root, changeId, FILES.claims, next);
+    });
 }
 
 export async function writePolicy(root: string, changeId: string, policy: Policy): Promise<void> {
@@ -812,6 +848,9 @@ export async function declaredPaths(root: string, changeId: string): Promise<str
 export type LedgerReport = {
     changeId: string;
     recorded: boolean;
+    /** The current assurance, and the retired values this ledger moved past (see `Ledger.assuranceHistory`). */
+    assurance: AssuranceLevel;
+    assuranceHistory: AssuranceHistoryEntry[];
     claims: {
         total: number;
         byStatus: Record<ClaimStatus, number>;
@@ -990,6 +1029,11 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
     return {
         changeId,
         recorded: ledger.recordedFiles.length > 0,
+        // **The retired values this ledger moved past.** Reported here as well as on `ledger status`, because this is the
+        // envelope a reader inspects when asking what a ledger recorded — see `Ledger.assuranceHistory` for why it is
+        // carried at all (R8-F2: it was written and never read).
+        assurance: ledger.assurance,
+        assuranceHistory: ledger.assuranceHistory,
         claims: {
             total: ledger.claims.length,
             byStatus,

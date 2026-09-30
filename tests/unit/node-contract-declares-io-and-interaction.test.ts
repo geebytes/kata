@@ -153,6 +153,10 @@ describe('every workflow node declares its input, output and interaction', () =>
             expect(rendered).not.toContain('extension list');
             expect(rendered).not.toContain('empty tool list');
             expect(rendered).toContain('the request carries no platform, session or model');
+            // R8-F8: the operator text named only the strict tier's floor, leaving the tier this change is about unstated —
+            // and it is the tier whose floor moved, so a reader could not learn the new rule from the guidance.
+            expect(rendered).toContain('no tier asks Kata for a sandbox');
+            expect(rendered).toMatch(/assurance floor is `observed` under `strict` \*\*and\*\* under/);
         }
     });
 });

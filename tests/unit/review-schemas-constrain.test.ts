@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
+import { validateArtefact } from '../../src/core/schema.js';
 import { describe, expect, it } from 'vitest';
 import {
     ASSURANCE_LEVELS,
+    LEGACY_ASSURANCE_LEVELS,
+    READABLE_ASSURANCE_LEVELS,
     EVIDENCE_TYPES,
     REASON_MESSAGES,
     RISK_CLASSES,
@@ -137,5 +140,33 @@ describe('the review schemas constrain their documents', () => {
         // (see `READABLE_ASSURANCE_LEVELS`) but no current schema offers it as a value to write.
         expect(policySchema.properties.tiers.properties.standard?.properties.assuranceFloor.enum.sort())
             .toEqual([...ASSURANCE_LEVELS].sort());
+
+        // **`review.schema.json`'s assurance enum is the READ vocabulary, and that is deliberate.** R8-F6 noticed it still
+        // lists the retired values and called the write-side guarantee runtime-only. Narrowing it was tried and reverted in
+        // the same round: a narrowed enum makes a *historical* review fail validation, and C-4 requires historical
+        // artefacts stay readable — a document that cannot be read is a record destroyed (measured: narrowing it reddened
+        // `sandboxed-retirement`'s read case). One enum cannot say "readable here, unwritable there", so this asserts both
+        // halves: the schema is the readable set, and the write surface is where the retired values are refused.
+        const reviewSchema = load('review.schema.json') as {
+            properties: { ledgerReview: { properties: { assurance: { enum: string[] } } } };
+        };
+        expect(reviewSchema.properties.ledgerReview.properties.assurance.enum.sort())
+            .toEqual([...READABLE_ASSURANCE_LEVELS].sort());
+        // The other half, asserted where it lives rather than assumed: the write-side refusal is in the ledger CLI, and a
+        // historical value reaches a *decision* only through `ledger decide --assurance`, which refuses it by name.
+        const legacyReview = {
+            revisionId: 'revision-0000000000000000', status: 'approved', findings: [],
+            ledgerReview: { subjectRevision: 'rev:0000000000000000', tier: 'security', assurance: 'sandboxed', claims: 1, limits: ['x'] },
+        };
+        expect(() => validateArtefact('review', legacyReview)).not.toThrow();
+
+        // **No fixture may build a security scenario out of a retired value.** R8-F7: two seeds in
+        // `tests/fixtures/review-scenarios.ts` still constructed `assurance: 'sandboxed'`, so the retired value remained the
+        // way to *get* a security case — they also started tripping `assurance_below_tier` for a reason unrelated to what
+        // they assert. This reads the fixture source, because the point is which value the scenarios are built from.
+        const scenarios = readFileSync(join(import.meta.dirname, '..', 'fixtures', 'review-scenarios.ts'), 'utf8');
+        for (const retired of LEGACY_ASSURANCE_LEVELS) {
+            expect(scenarios, `a scenario is still built from the retired value ${retired}`).not.toContain(`assurance: '${retired}'`);
+        }
     });
 });

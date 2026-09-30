@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -35,6 +35,24 @@ export type LedgerCommandOptions = { root: string; changeId: string };
 function fail(payload: Record<string, unknown>): void {
     outputResult({ ok: false, ...payload });
     process.exitCode = 1;
+}
+
+/**
+ * The retired assurance floors a document *as offered* carries.
+ *
+ * It reads the raw value rather than the loaded policy, because the reader fills a retired floor with the current default
+ * (that is what keeps a historical document readable) — so a write checked after loading could never see one, and
+ * `--set-file` with a retired floor would silently store the substituted policy. A reader may substitute; a writer must not.
+ */
+function offeredRetiredFloors(parsed: unknown): string[] {
+    if (typeof parsed !== 'object' || parsed === null) return [];
+    const tiers = (parsed as { tiers?: unknown }).tiers;
+    if (typeof tiers !== 'object' || tiers === null) return [];
+    return Object.entries(tiers as Record<string, unknown>)
+        .filter(([, tier]) => typeof tier === 'object' && tier !== null
+            && !isCurrentAssuranceLevel((tier as { assuranceFloor?: unknown }).assuranceFloor)
+            && (tier as { assuranceFloor?: unknown }).assuranceFloor !== undefined)
+        .map(([name, tier]) => `${name}:${String((tier as { assuranceFloor?: unknown }).assuranceFloor)}`);
 }
 
 function nowIso(): string {
@@ -121,6 +139,8 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             challenges: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
             runs: ledger.runs.length,
             assurance: ledger.assurance,
+            // The retired values this ledger moved past, published where the current one is — see `Ledger.assuranceHistory`.
+            assuranceHistory: ledger.assuranceHistory,
             assuranceScope: 'observed means Kata executed evidence in the host-provided runtime; the host platform owns network, filesystem, process and credential isolation',
             usage: ledger.usage,
             note: ledger.recordedFiles.length === 0
@@ -158,6 +178,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const raw = argValue(argv, '--set-file');
         if (raw !== undefined) {
             const parsed = JSON.parse(await readFile(raw, 'utf8')) as unknown;
+            // **The write is judged on what the operator wrote, not on what the reader would fill.** R8-F9 made the policy
+            // *reader* substitute a retired floor (so a historical document stays readable and the substitution is named in
+            // `policyFilled`). This command writes a policy, and a write must not launder a retired value into a current one
+            // through the reader: the document as offered is checked for a retired floor first, and only then loaded.
+            const offeredRetired = offeredRetiredFloors(parsed);
+            if (offeredRetired.length > 0) {
+                fail({
+                    command: 'ledger policy',
+                    error: `cannot write retired assurance floor(s): ${offeredRetired.join(', ')}; sandboxed is historical only`,
+                });
+                return;
+            }
             const loaded = loadPolicy(parsed);
             if (!loaded.ok) {
                 fail({ command: 'ledger policy', error: loaded.error });
@@ -267,6 +299,38 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             const reopened = { ...rest, status: 'open' as const, reopens: (claim.reopens ?? 0) + 1 };
             await appendClaim(options.root, changeId, reopened);
             outputResult({ ok: true, command: 'ledger claim reopen', claim: claim.id, reopens: reopened.reopens });
+            return;
+        }
+        if (action === 'restate') {
+            // **A claim's statement can be corrected, and the correction is recorded as a reopen.** R8-F5: AC-6's statement
+            // said the record "is bound to this revision" while the record, the evidence and the test had all moved to what
+            // is provable — so the claim asserted more than its own evidence. Restating it by hand-editing `claims.json` is
+            // not available to an operator, and the ledger is a store of record: the correction goes through the CLI, keeps
+            // the same claim id and evidence, and stamps a reopen so the decision knows the statement changed.
+            const id = argValue(argv, '--id');
+            const statement = argValue(argv, '--statement');
+            if (id === undefined || statement === undefined) {
+                fail({ command: 'ledger claim restate', error: '--id and --statement are both required' });
+                return;
+            }
+            const target = ledger.claims.find((claim) => claim.id === id);
+            if (target === undefined) {
+                fail({ command: 'ledger claim restate', error: `no claim ${id} in this ledger` });
+                return;
+            }
+            if (target.statement === statement) {
+                outputResult({ ok: true, command: 'ledger claim restate', claim: id, changed: false });
+                return;
+            }
+            await restateClaim(options.root, changeId, id, statement);
+            outputResult({
+                ok: true,
+                command: 'ledger claim restate',
+                claim: id,
+                changed: true,
+                previous: target.statement,
+                note: 'the claim was restated; its existing readings are reviewed by their own binding, and the statement itself is re-read against its evidence',
+            });
             return;
         }
         if (action === 'add') {
@@ -729,8 +793,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 command: 'ledger decide',
                 // The retired value is named rather than compared: a reader of this refusal sees the whole
                 // vocabulary, not a third spelling of the one value that is gone.
+                // **The refusal names the value the operator actually gave.** R8-F1: the branch fires for *any* legacy
+                // level, and its message was written for one of them, so `decide --assurance signed` was refused with a
+                // sentence about `sandboxed` — a value nobody had typed. It names the input now, and then the vocabulary.
                 error: (LEGACY_ASSURANCE_LEVELS as readonly string[]).includes(assuranceFlag)
-                    ? 'sandboxed is historical assurance, not a current Kata override; execution isolation is owned by the host platform'
+                    ? `${assuranceFlag} is a historical assurance level, not a current Kata override; execution isolation is owned by the host platform`
                     : `--assurance must be one of ${ASSURANCE_LEVELS.join(', ')}`,
             });
             return;

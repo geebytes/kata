@@ -48,4 +48,18 @@ describe('a historical floor exempts the floor field only', () => {
         const ledger = await ledgerWithPolicy(retiredFloorOnly);
         expect(ledger.malformedFiles).toEqual([]);
     });
+
+    it('names the retired floor it substituted, instead of filling silently', async () => {
+        // R8-F9: the reader substitutes a retired floor before validating, and the comment said the substitution was
+        // "named in `policyFilled`" — it was not: only the schema check saw the substitute, so the policy read back with an
+        // empty `policyFilled` and the one rule this file states about fills did not hold on this path.
+        const policy = defaultPolicy();
+        const ledger = await ledgerWithPolicy({
+            ...policy,
+            tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: 'sandboxed' } },
+        });
+        expect(ledger.malformedFiles).toEqual([]);
+        expect(ledger.policy.tiers.security.assuranceFloor).toBe('observed');
+        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
+    });
 });

@@ -1,126 +1,127 @@
 {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://kata.dev/schemas/review.schema.json",
-    "title": "Kata review record",
-    "type": "object",
-    "required": [
-        "findings",
-        "status"
-    ],
-    "additionalProperties": false,
-    "properties": {
-        "taskId": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/review.schema.json",
+  "title": "Kata review record",
+  "type": "object",
+  "required": [
+    "findings",
+    "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revisionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifestHash": {
+      "type": "string"
+    },
+    "codeManifestHash": {
+      "description": "Content identity of the revision's code paths only (C2). Stamped beside manifestHash so a code-scoped verdict can outlive a governance-text edit; absent when the split cannot be derived, in which case a code-scoped binding refuses to match.",
+      "type": "string"
+    },
+    "governanceManifestHash": {
+      "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
+      "type": "string"
+    },
+    "instrumentManifestHash": {
+      "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
+      "type": "string"
+    },
+    "candidateFreezeSha256": {
+      "description": "The frozen candidate this verdict answered (§7.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved"
+      ]
+    },
+    "reviewEvidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewedPaths": {
+      "description": "The owned paths this review actually read (design §F5). Optional; when absent the review is treated as covering the whole revision, which is the conservative reading.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "approvedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "https://kata.dev/schemas/review-finding.schema.json"
+      }
+    },
+    "reviewRoute": {
+      "enum": [
+        "adversarial",
+        "ledger"
+      ]
+    },
+    "ledgerReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectRevision",
+        "tier",
+        "assurance",
+        "claims",
+        "limits"
+      ],
+      "properties": {
+        "subjectRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tier": {
+          "enum": [
+            "standard",
+            "strict",
+            "security"
+          ]
+        },
+        "assurance": {
+          "enum": [
+            "none",
+            "relayed",
+            "observed",
+            "sandboxed",
+            "signed"
+          ],
+          "description": "The read vocabulary, so a historical review stays readable (see READABLE_ASSURANCE_LEVELS). The retired values (sandboxed, signed) are refused on the write side by the approval guard and by `ledger decide --assurance`, because a schema cannot express 'readable here, unwritable there' in one enum."
+        },
+        "claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limits": {
+          "type": "array",
+          "items": {
             "type": "string",
             "minLength": 1
-        },
-        "revisionId": {
-            "type": "string",
-            "minLength": 1
-        },
-        "manifestHash": {
-            "type": "string"
-        },
-        "codeManifestHash": {
-            "description": "Content identity of the revision's code paths only (C2). Stamped beside manifestHash so a code-scoped verdict can outlive a governance-text edit; absent when the split cannot be derived, in which case a code-scoped binding refuses to match.",
-            "type": "string"
-        },
-        "governanceManifestHash": {
-            "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
-            "type": "string"
-        },
-        "instrumentManifestHash": {
-            "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
-            "type": "string"
-        },
-        "candidateFreezeSha256": {
-            "description": "The frozen candidate this verdict answered (§7.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
-            "type": "string"
-        },
-        "status": {
-            "type": "string",
-            "enum": [
-                "pending",
-                "approved"
-            ]
-        },
-        "reviewEvidence": {
-            "type": "string",
-            "minLength": 1
-        },
-        "reviewedPaths": {
-            "description": "The owned paths this review actually read (design §F5). Optional; when absent the review is treated as covering the whole revision, which is the conservative reading.",
-            "type": "array",
-            "items": {
-                "type": "string",
-                "minLength": 1
-            }
-        },
-        "approvedAt": {
-            "type": "string",
-            "minLength": 1
-        },
-        "findings": {
-            "type": "array",
-            "items": {
-                "$ref": "https://kata.dev/schemas/review-finding.schema.json"
-            }
-        },
-        "reviewRoute": {
-            "enum": [
-                "adversarial",
-                "ledger"
-            ]
-        },
-        "ledgerReview": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "subjectRevision",
-                "tier",
-                "assurance",
-                "claims",
-                "limits"
-            ],
-            "properties": {
-                "subjectRevision": {
-                    "type": "string",
-                    "minLength": 1
-                },
-                "tier": {
-                    "enum": [
-                        "standard",
-                        "strict",
-                        "security"
-                    ]
-                },
-                "assurance": {
-                    "enum": [
-                        "none",
-                        "relayed",
-                        "observed",
-                        "sandboxed",
-                        "signed"
-                    ]
-                },
-                "claims": {
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "limits": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                }
-            }
-        },
-        "declaredCoverage": {
-            "type": "array",
-            "description": "The claim ids the round declared it read and found sound. Written with an empty findings list, because an empty result and a result that read nothing are different facts and only this field tells them apart.",
-            "items": {
-                "type": "string"
-            }
+          }
         }
+      }
+    },
+    "declaredCoverage": {
+      "type": "array",
+      "description": "The claim ids the round declared it read and found sound. Written with an empty findings list, because an empty result and a result that read nothing are different facts and only this field tells them apart.",
+      "items": {
+        "type": "string"
+      }
     }
+  }
 }

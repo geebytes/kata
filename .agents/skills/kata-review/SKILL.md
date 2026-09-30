@@ -155,8 +155,10 @@ Do this:
 
 What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
 and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved
-after the decision refuses the approval and names it; and under the strict tier the assurance floor is `observed`, so
-evidence nothing re-executed cannot carry it.## Skill automation contract
+after the decision refuses the approval and names it; and the assurance floor is `observed` under `strict` **and** under
+`security` — the platform owns execution isolation, so no tier asks Kata for a sandbox — while `security` still asks
+for two independent reviewers, always-quorum and the privilege/provenance risk classes, so evidence nothing re-executed
+cannot carry either tier.## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
 

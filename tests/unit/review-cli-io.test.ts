@@ -577,6 +577,42 @@ describe('review CLI I/O', () => {
         expect(typeof archived[0]?.revisionId).toBe('string');
     });
 
+
+    it('resolves the = spelling for hand-written flag parsers too, not only the shared readers', async () => {
+        // R8-F4: `--flag=value` was fixed in the shared readers and left the hand-written `arg === '--x'` loops alone, so
+        // `relations add --from=task:a --to=task:b` was refused with `Unknown relations option: --from=task:a`.
+        const { splitFlag } = await import('../../src/cli/invocation.js');
+        expect(splitFlag('--from=task:a')).toEqual({ flag: '--from', inline: 'task:a' });
+        expect(splitFlag('--from')).toEqual({ flag: '--from' });
+        expect(splitFlag('task:a')).toEqual({ flag: 'task:a' });
+        expect(splitFlag('--from=')).toEqual({ flag: '--from', inline: '' });
+
+        // Driven through the real command: the inline spelling must not be refused as an unknown option. `add` with an
+        // inline `--from=`/`--to=`/`--type=` reaches the endpoint parser instead of the "Unknown relations option" throw,
+        // which is the difference this asserts.
+        const { runRelationsCommand } = await import('../../src/cli/relations.js');
+        const failure = await runRelationsCommand(['add', '--from=task:missing-a', '--to=task:missing-b', '--type=depends_on'])
+            .then(() => null, (error: unknown) => (error as Error).message);
+        expect(failure).not.toBeNull();
+        expect(failure).not.toContain('Unknown relations option');
+    });
+
+
+    it('judges a dangling link by where it points, and still refuses one that points out', async () => {
+        // R5-5: every dangling link used to be refused on the grounds of spelling, including a relative one whose target
+        // is inside the workspace — `ln -s not-yet.json a.json` — which `writeFile` creates in bounds. The target is
+        // readable from the link, so it can be judged; only an unlocatable target is refused. Read-side probe only: this
+        // asserts the fence's answer, not a write, because the fence is what both the request and the result paths share.
+        const { containedPath } = await import('../../src/store/verify-context.js');
+        await mkdir(join(root, 'src'), { recursive: true });
+        await symlink('not-yet.json', join(root, 'src', 'inside-dangling.json'));
+        await symlink('/tmp/kata-outside-target.json', join(root, 'src', 'outside-dangling.json'));
+        await symlink('../../outside/elsewhere.json', join(root, 'src', 'upward-dangling.json'));
+        expect(containedPath(root, 'src/inside-dangling.json')).not.toBeNull();
+        expect(containedPath(root, 'src/outside-dangling.json')).toBeNull();
+        expect(containedPath(root, 'src/upward-dangling.json')).toBeNull();
+    });
+
     it('refuses a malformed --result-file shape by name instead of degrading to the plain review path', async () => {
         expect(reviewResultFileArg(['review', '--result-file', '--approve'])).toBeUndefined();
         expect(reviewResultFileArg(['review', '--result-file'])).toBeUndefined();

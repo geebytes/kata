@@ -264,3 +264,31 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 - 第 6–7 轮：**零行为缺陷**，全部是"断言/文案比实现窄"。
 
 也就是说，**围栏语义（§12.1）、占位判定、请求绑定、C-1…C-6 的执行面都已经收敛并被独立确认**；剩下的是我在写证据与注释时的诚实度，本轮按"换成能证明的"收口。
+
+## 17. 已知未修项（放行时如实记录）
+
+### 17.1 AC-6 的冻结措辞比其证据宽
+
+`task.json` 的 AC-6 原文是「The one-time policy-transition record **binds to this revision**…」。这句话**不可断言**，已试过三次：
+
+1. 与代码常量比较（把 floor 改回去仍绿）；
+2. 断言 `listRepositoryFiles` 含该文档（那是**全部受跟踪文件**，换成 `package.json` 也绿）；
+3. 断言它在该 change 的 `ownedPaths` 内（`.kata/` 不在 seal 的沙箱副本里，在评估环境恒真）。
+
+第 7 轮把**记录本身**改成 `Provable:` 并断言"记录陈述判决 + 同一 run 执行面执行该判决"，并把 C-6 的 claim 通过 `kata-cli ledger claim restate` 改述为可证明的形式（保留 id 与证据，stamp 一次 reopen）。但 **AC 正文在 `open` 时冻结，`tasks declare` 只允许改 `acceptanceMatrix`/`upstreamCoverage`**，所以 AC-6 的原文仍是旧措辞。
+
+**结论**：AC-6 的实质（删记录会红、还原 floor 会红、记录陈述判决与授权边界）全部有可失败证据；"binds to this revision" 这半句由 **seal 的 `ownedPaths`/`pathDigests`** 承担，不由 AC-6 自己的证据承担。这是记录的偏差，不是未修的缺陷。
+
+### 17.2 本 change 之外的后续项（设计已写、未开 change）
+
+| 缺口 | 设计文档 | 状态 |
+|---|---|---|
+| 声明面完整性（seal 的 `ownedPaths` vs verify 的工作树视野，两者的差没有所有者） | `docs/design/2026-09-29-scope-surface-completeness.md` §3.4/§3.5 | 设计已写，未开 change |
+| 读状态语义（同一事实多处推导的六个面：读一次、把读状态传下去） | `docs/design/2026-09-29-read-state-semantics.md` | 设计已写，未开 change |
+| `requiredRiskClasses` 语义（无条件 vs 触碰即要求——本 change 已实现，剩余为迁移说明） | `docs/design/2026-09-29-required-risk-classes.md` | 已实现，设计保留 |
+| gate 重建路径（内容变更后 `gate approve` 无 CLI 动词恢复） | `docs/design/2026-09-28-bounded-review-convergence.md` §21 | 已记录，未修 |
+
+### 17.3 运行环境
+
+- 主检出的 `dist/` 现在是**含本 change 的重建**（备份 `tmp/dist-backup-*`）：这台机器上所有 workflow 共用这个 CLI。要回到 master 的构建，在主检出跑 `npm run build`。
+- 审查子代理在本机需要 attach 注册宿主默认模型的扩展（见 §14），否则 `Model "<provider>/<model>" not found`。

@@ -49,6 +49,19 @@ export type CurrentAssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
 export const LEGACY_ASSURANCE_LEVELS = ['sandboxed', 'signed'] as const;
 export type LegacyAssuranceLevel = (typeof LEGACY_ASSURANCE_LEVELS)[number];
 /** All vocabulary a reader accepts. Writers use ASSURANCE_LEVELS only. */
+/**
+ * One retired assurance value, kept beside the current one rather than outranking it.
+ *
+ * `ensureAssurance` records the round that replaced a historical value, and **the record has a reader**: it is carried on
+ * the ledger read (`Ledger.assuranceHistory`) and published by the report surfaces, because a history nothing reads is a
+ * write-only file wearing the word "history".
+ */
+export interface AssuranceHistoryEntry {
+    replaced: AssuranceLevel;
+    at: string;
+    why: string;
+}
+
 export const READABLE_ASSURANCE_LEVELS = [...ASSURANCE_LEVELS, ...LEGACY_ASSURANCE_LEVELS] as const;
 export type AssuranceLevel = (typeof READABLE_ASSURANCE_LEVELS)[number];
 

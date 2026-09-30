@@ -1,6 +1,6 @@
-import { lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
 import type { VerifyContext } from '../producers/port.js';
 import type { Subject, VerdictProducer } from '../kernel/types.js';
@@ -79,10 +79,27 @@ function realContainedPath(root: string, absolute: string): boolean {
             try {
                 target = realpathSync(next);
             } catch {
-                // **A dangling link is refused, and this is the only refusal made on the grounds of spelling.** The
-                // target does not exist, so nothing can prove it lands inside the workspace, while `writeFile` would
-                // follow the link and create the file outside it. Every other link is judged by where it points.
-                return false;
+                // **A dangling link is judged by its target, not by its spelling.** R5-5: this refused every dangling link,
+                // including one whose target is a *relative* path inside the workspace — `ln -s not-yet.json a.json` — which
+                // `writeFile` would create in bounds. The target is readable from the link itself (`readlink`), so it can be
+                // resolved against the link's own directory and judged; only a target that still cannot be located is
+                // refused, because then nothing can prove where the write lands.
+                let raw: string;
+                try {
+                    raw = readlinkSync(next);
+                } catch {
+                    return false;
+                }
+                const literal = isAbsolute(raw) ? raw : resolve(dirname(next), raw);
+                const resolvedLiteral = segments.reduce<string | null>((current, _segment, index) => current, dirname(next));
+                void resolvedLiteral;
+                if (!insideWorkspace(realRoot, literal) && !insideWorkspace(realRoot, dirname(literal))) {
+                    return false;
+                }
+                // The remainder of the path is appended to the link's target, exactly as the OS would, and judged there.
+                probe = dirname(literal);
+                if (!insideWorkspace(realRoot, probe)) return false;
+                continue;
             }
             // Resolved: the link is followed, and the destination decides. A link out of the workspace is refused here.
             if (!insideWorkspace(realRoot, target)) return false;

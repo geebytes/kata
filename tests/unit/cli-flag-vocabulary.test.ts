@@ -31,12 +31,28 @@ const READS = [
     /(?:argValue|inlineValue)\(\s*[^,()]+,\s*'(--[a-z][a-z-]*)'/gu,
     /indexOf\(\s*'(--[a-z][a-z-]*)'/gu,
     /startsWith\(\s*`\$\{(--[a-z][a-z-]*)/gu,
+    // **The shape that was missing, and it is the common one.** A hand-written `arg === '--x'` parser reads a value just as
+    // much as `argValue` does — `relations add --from <v>`, `installer --home <path>`, `handoff --to <role>` — and eight
+    // flags were reachable only through it while the vocabulary stayed green (R8-F3).
+    /===\s*'(--[a-z][a-z-]*)'/gu,
+    /'(--[a-z][a-z-]*)'\s*===/gu,
 ];
+
+/**
+ * Blank comments and string-literal *prose* before scanning, so a docblock that mentions a flag in an example is not read
+ * as a reader of it. Measured while writing this: a comment showing the comparison shape made `--flag` look like a flag the
+ * CLI reads, and the vocabulary case failed on a sentence.
+ */
+function codeOnly(text: string): string {
+    return text
+        .replace(/\/\*[\s\S]*?\*\//gu, (block) => block.replace(/[^\n]/gu, ' '))
+        .replace(/(^|[^:])\/\/[^\n]*/gu, (match, prefix: string) => prefix + ' '.repeat(match.length - prefix.length));
+}
 
 async function readFlags(): Promise<Set<string>> {
     const read = new Set<string>();
     for (const file of await sourceFiles()) {
-        const text = await readFile(file, 'utf8');
+        const text = codeOnly(await readFile(file, 'utf8'));
         for (const shape of READS) {
             for (const match of text.matchAll(shape)) {
                 const flag = match[1];
@@ -48,11 +64,40 @@ async function readFlags(): Promise<Set<string>> {
 }
 
 describe('the CLI value-flag vocabulary', () => {
+    /**
+     * Flags a `===` comparison touches that take **no** value: they are switches, so they belong in no vocabulary. Listed
+     * rather than filtered by a shape, because "is this flag a switch" is a judgement and a silent filter is how a real
+     * value flag would hide.
+     */
+    const SWITCHES = new Set([
+        '--all', '--approve', '--confirm', '--cost', '--create', '--discover-checks', '--dry-run', '--force', '--frozen',
+        '--help', '--init', '--json', '--list-checks', '--no-discover-checks', '--no-refresh', '--no-wiki', '--quiet',
+        '--refresh', '--version', '--x', '--yes',
+    ]);
+
     it('lists every flag a value is read for in the shapes the scan can see', async () => {
         const read = await readFlags();
         expect(read.size).toBeGreaterThan(30);
-        const missing = [...read].filter((flag) => !VALUE_FLAGS.includes(flag) && flag !== '--change');
+        const missing = [...read].filter((flag) => !VALUE_FLAGS.includes(flag) && !SWITCHES.has(flag) && flag !== '--change');
         expect(missing, `value flags missing from VALUE_FLAGS: ${missing.join(', ')}`).toEqual([]);
+    });
+
+    it('scans the hand-written comparison shape, not only the shared readers', async () => {
+        // R8-F3: the scan covered three shapes and a flag read as `arg === '--x'` was invisible — eight of them were, while
+        // the vocabulary reported itself complete. The assertion is on the *scan*, because a membership list can be kept
+        // right by hand while the guard that is supposed to keep it right stays blind.
+        const cli = join(import.meta.dirname, '..', '..', 'src', 'cli');
+        const sources = await Promise.all((await readdir(cli)).filter((name) => name.endsWith('.ts'))
+            .map((name) => readFile(join(cli, name), 'utf8')));
+        const comparedShape = sources.reduce((total, text) => total + [...text.matchAll(/===\s*'(--[a-z][a-z-]*)'/gu)].length, 0);
+        expect(comparedShape).toBeGreaterThan(20);
+
+        const read = await readFlags();
+        for (const flag of ['--to', '--type', '--field', '--endpoint', '--wiki', '--query', '--decision', '--scope']) {
+            expect(read.has(flag), `${flag} is read in a shape the scan must see`).toBe(true);
+            expect(VALUE_FLAGS).toContain(flag);
+            expect(parseChangeArg([flag, 'a-value'])).toBeUndefined();
+        }
     });
 
     it('keeps a value flag from taking the change-id slot for the flags that were actually missing', () => {
