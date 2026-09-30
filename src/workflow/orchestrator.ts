@@ -1437,15 +1437,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 if (foreignFinding) throw new Error(`finding ${foreignFinding.id} names task ${foreignFinding.taskId}, not ${taskId}`);
                 // An empty set is only a result when the reviewer says what it covered. Without that, a four-byte
                 // artefact is indistinguishable from a subagent that produced nothing at all.
-                if (findings.length === 0) {
-                    const coverage = result.declaredCoverage;
+                const coverage = result.declaredCoverage;
+                if (findings.length === 0 && coverage === undefined) {
+                    throw new Error('an empty findings array is only a result when the object also declares coverage: add declaredCoverage with the claim ids that were read and found sound');
+                }
+                // **A declaration is validated wherever it appears, and it is always kept.** The first version validated
+                // and persisted it only on the empty-findings path, so `{ findings: [...], declaredCoverage: ['C-9'] }` was
+                // accepted with an invented claim id and the field was dropped — a declaration with a validator on one
+                // path and no reader on the other.
+                if (coverage !== undefined) {
                     if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
-                        throw new Error('an empty findings array is only a result when the object also declares coverage: add declaredCoverage with the claim ids that were read and found sound');
+                        throw new Error('declaredCoverage must be a non-empty list of the claim ids that were read and found sound');
                     }
-                    // **The declaration has to name claims this ledger actually holds, and it has to be kept.** The first
-                    // version accepted any non-empty string array and wrote nothing, so `declaredCoverage: ['not-a-claim']`
-                    // was accepted and a reader could not tell which claims the round claimed to have read — the empty
-                    // result stayed indistinguishable from "nothing was read", which is the defect it was added to fix.
                     const known = new Set((await readLedger(root, taskId)).claims.map((claim) => claim.id));
                     const unknown = (coverage as string[]).filter((claimId) => !known.has(claimId));
                     if (unknown.length > 0) {
@@ -1484,10 +1487,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 ...(typeof existing.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: existing.record.instrumentManifestHash } : {}),
                 ...(typeof existing.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: existing.record.candidateFreezeSha256 } : {}),
             };
-            const existingFindings = existing.record.findings as unknown[] | undefined;
-            const placeholder = existing.record.reviewRoute === undefined
-                && (existingFindings ?? []).length === 0
-                && existing.record.declaredCoverage === undefined;
+            const placeholder = isReviewPlaceholder(existing.record);
             if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
@@ -1844,7 +1844,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     await appendFile(historyPath, historyEntry, 'utf8');
                 }
                 await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
-            } else if ((previous.findings ?? []).length === 0) {
+            } else if (isReviewPlaceholder(previous)) {
                 await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             }
         } catch {
@@ -1852,6 +1852,22 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
+}
+
+
+/**
+ * Whether a review record is the enter-review placeholder rather than a recorded round.
+ *
+ * **One derivation, because two of them disagreed.** F-1 tightened the *result* face to "a placeholder is not a result",
+ * so a second recording was no longer refused by the placeholder the enter-review step writes; but the *write* face kept
+ * the older test (`findings` is empty), so re-entering review over a recorded round that legitimately had no findings —
+ * `{ findings: [], declaredCoverage: ['C-1'], reviewRoute: 'adversarial' }` — rewrote it into a placeholder and the
+ * `--result-file` guard then let a second round through. The fact is one fact; it is asked here and both faces call it.
+ */
+function isReviewPlaceholder(record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown }): boolean {
+    return record.reviewRoute === undefined
+        && (Array.isArray(record.findings) ? record.findings.length : 0) === 0
+        && record.declaredCoverage === undefined;
 }
 
 async function cmdJudge(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {

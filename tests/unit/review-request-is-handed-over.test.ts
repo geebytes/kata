@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
 import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+import { createTask } from '../../src/core/task.js';
+import { initLayout } from '../../src/core/layout.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeEvidence, makeVerdict } from '../helpers/review.js';
 import type { Claim } from '../../src/kernel/types.js';
@@ -25,10 +27,18 @@ const changeId = 'request-fixture';
 
 async function scratch(): Promise<string> {
     root = await mkdtemp(join(tmpdir(), 'kata-request-'));
-    await mkdir(join(root, '.kata', 'tasks', changeId), { recursive: true });
+    await initLayout(root);
     await mkdir(join(root, 'src'), { recursive: true });
     await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
-    await writeFile(join(root, '.kata', 'tasks', changeId, 'task.json'), `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'] })}\n`);
+    // A real task record, not a hand-written stub: the request now reads the sealed revision's status, which validates
+    // the task, so a partial `task.json` fails the reader rather than being tolerated as "close enough".
+    await createTask({
+        root,
+        id: changeId,
+        title: 'Review request fixture',
+        acceptance: [{ id: 'AC-1', statement: 'the request speaks for the sealed revision' }],
+        ownedPaths: ['src/a.ts'],
+    });
     return root;
 }
 

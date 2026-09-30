@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
 import type { VerifyContext } from '../producers/port.js';
 import type { Subject, VerdictProducer } from '../kernel/types.js';
@@ -48,40 +48,56 @@ function containedLexicalPath(root: string, relativePath: string): string | null
 /**
  * Whether an already-resolved path is really inside the workspace, following symlinks.
  *
- * A path that does not exist resolves through its nearest existing ancestor: `tmp/new.json` is judged by where
- * `tmp` really is, which is the fact a lexical fence cannot see.
+ * A path that does not exist resolves through its nearest existing ancestor: `tmp/new.json` is judged by where `tmp`
+ * really is, which is the fact a lexical fence cannot see. A component that is a symlink is resolved too, and the
+ * destination decides — except when the link is dangling, where there is nothing to resolve and the spelling is refused.
  */
 function realContainedPath(root: string, absolute: string): boolean {
-    // **A link is refused before its target is consulted, because a dangling one has no target to consult.** The first
-    // version walked up to the nearest existing ancestor with `existsSync` — which follows symlinks — so a link whose
-    // target did not exist yet read as "the path is absent", the fence rebuilt it under the ancestor's realpath (inside
-    // the workspace), and the write then followed the link and created the file outside it. Per-segment `lstat` is what
-    // sees the link itself; `existsSync` is what cannot.
+    // **The fence answers "where does this land", not "is there a link".** Two defects came from answering the second
+    // question instead: refusing every symlink component also refused links whose target is inside the workspace (so
+    // reads failed silently and the mutation-restore write threw), and comparing an unresolved `probe` against a resolved
+    // root refused every existing path whenever the workspace root itself contained a symlinked component (a symlinked
+    // `$HOME`, macOS `/var → /private/var`) while accepting paths that did not exist yet — the verdict depended on whether
+    // the file was already there. Both are answered by resolving each segment and comparing like with like.
+    const realRoot = realpathSync(root);
     const segments = relative(root, absolute).replaceAll('\\', '/').split('/').filter((entry) => entry !== '');
-    let probe = resolve(root);
+    let probe = realRoot;
     for (const [index, segment] of segments.entries()) {
-        probe = resolve(probe, segment);
+        const next = resolve(probe, segment);
         const last = index === segments.length - 1;
         let stats;
         try {
-            stats = lstatSync(probe);
+            stats = lstatSync(next);
         } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-                // Absent from here down: nothing below the first missing segment exists, so the rest cannot be a link.
-                // The directory the write will land in is the last segment that did exist, and it was checked above.
-                // Every segment that exists was checked for links; the rest does not exist yet, and a path that does
-                // not exist cannot leave the workspace. The write lands in the directory just verified.
-                return true;
-            }
-            return false;
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+            // Absent from here down: the rest cannot exist, so the write lands in `probe`, which was resolved above.
+            // A path that does not exist cannot leave the workspace.
+            return true;
         }
-        // Any symlink on the path — including the final segment, and including a dangling one — is refused rather than
-        // resolved: the fence's job is to say "this spelling stays inside", and a link is a second spelling.
-        if (stats.isSymbolicLink()) return false;
+        if (stats.isSymbolicLink()) {
+            let target: string;
+            try {
+                target = realpathSync(next);
+            } catch {
+                // **A dangling link is refused, and this is the only refusal made on the grounds of spelling.** The
+                // target does not exist, so nothing can prove it lands inside the workspace, while `writeFile` would
+                // follow the link and create the file outside it. Every other link is judged by where it points.
+                return false;
+            }
+            // Resolved: the link is followed, and the destination decides. A link out of the workspace is refused here.
+            if (!insideWorkspace(realRoot, target)) return false;
+            probe = target;
+            continue;
+        }
         if (!last && !stats.isDirectory()) return false;
+        probe = next;
     }
-    const realRoot = realpathSync(root);
-    const inside = relative(realRoot, probe).replaceAll('\\', '/');
+    return insideWorkspace(realRoot, probe);
+}
+
+/** One spelling of the comparison, so a resolved location and the resolved root are always measured the same way. */
+function insideWorkspace(realRoot: string, resolved: string): boolean {
+    const inside = relative(realRoot, resolved).replaceAll('\\', '/');
     return inside !== '' && !inside.startsWith('..') && !isAbsolute(inside);
 }
 

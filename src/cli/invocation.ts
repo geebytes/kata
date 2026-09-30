@@ -54,7 +54,20 @@ export function parseChangeArg(argv: string[]): string | undefined {
  * value.** The alternative — accepting any token — cannot tell `--title --isolation` from `--title --some-title`, and a
  * flag silently swallowing the next flag is how a required option goes missing.
  */
+/**
+ * The value a flag was given, in either spelling.
+ *
+ * `--flag value` and `--flag=value` are the same flag on a command line, and this reader used to see only the first, so
+ * every caller inherited the gap: `ledger run --out=tmp/x.json` was recognised as "given" by one check and read as "not
+ * given" by this one, producing a refusal that asked for the path it had just been handed. Both spellings resolve here,
+ * once, for every flag — rather than per-flag in whichever module happened to notice.
+ */
 export function argValue(argv: string[], flag: string): string | undefined {
+    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
+    if (inline !== undefined) {
+        const value = inline.slice(flag.length + 1);
+        return value.trim() === '' ? undefined : value;
+    }
     const index = argv.indexOf(flag);
     if (index === -1) return undefined;
     const value = argv[index + 1];

@@ -65,32 +65,33 @@ describe('security policy transition record', () => {
         expect(record).toMatch(/Previous floor: `sandboxed`/);
     });
 
-    it('binds the record to this revision by making it part of the change surface, not by its prose', async () => {
-        // **What "bound to this revision" means, asserted against something the workspace really carries.** The prose
-        // assertions above are the record's *content*; the binding is that the document is one of this change's declared
-        // paths, so its content is inside the surface the seal hashes. Two independent reviews measured the same weakness:
-        // rewriting §8's prose while keeping four substrings left a prose-only case green.
+    it('binds the record to this revision by carrying the floor decision in the record itself', async () => {
+        // **The evidence has to hold where the seal evaluates it.** F-4, third attempt at this clause: the first version
+        // compared a code constant (reverting the floor left it green); the second asserted the record was among the
+        // sealed revision's `pathDigests` (always true, because the digests are derived from the declaration); the third
+        // asserted the task declaration carried the path — and the seal runs this suite in a sandbox copied from the
+        // tracked files, which does not carry `.kata/`, so that branch degenerated too.
         //
-        // The declaration is read from the change's own task file, and the case is written to find it wherever the suite
-        // runs: the seal copies the source tree into a fresh sandbox, which does not carry `.kata/`, so the assertions that
-        // must hold everywhere are the ones about the tracked file itself.
-        expect(await readFile(transitionRecord, 'utf8')).toContain('## 8. Migration record');
+        // What survives every environment is the record's own content bound to the decision: the record must state the
+        // floor that was retired and the floor that replaced it, and the policy a stored change is judged by must be the
+        // one the record describes. Mutating either side reddens here, in a checkout or in the sandbox alike.
+        const record = await readFile(transitionRecord, 'utf8');
+        expect(record).toMatch(/Previous floor: `sandboxed`/);
+        expect(record).toMatch(/New floor: `observed`/);
 
-        // The declaration that carries it lives on the change and is the fact a seal hashes. Read it when it is present
-        // (a developer's checkout) and skip only that half when the sandbox has no `.kata/`, rather than asserting
-        // something the sandbox cannot see — a case that fails for its environment teaches nothing about the binding.
-        const declared = await readFile(
-            join(root, '.kata', 'tasks', 'security-tier-platform-boundary', 'task.json'),
-            'utf8',
-        ).then((raw) => JSON.parse(raw) as { ownedPaths?: string[] }, () => null);
-        if (declared !== null) {
-            expect(declared.ownedPaths ?? []).toContain('docs/design/2026-09-30-security-tier-platform-boundary.md');
-        } else {
-            // No `.kata/` here: the document must at least be a tracked path of the repository the case runs in, which is
-            // the part of the binding that survives the sandbox copy.
-            const tracked = await readFile(join(root, '.gitignore'), 'utf8').catch(() => '');
-            expect(tracked).not.toContain('docs/design/2026-09-30-security-tier-platform-boundary.md');
-        }
+        // The decision the record describes, made real through the writer and the reader: this is what fails when the
+        // floor is reverted, because the store refuses to write a retired floor at all.
+        await writePolicy(temp, changeId, defaultPolicy());
+        const stored = await readLedger(temp, changeId);
+        expect(stored.policy.tiers.security.assuranceFloor).toBe('observed');
+        expect(meetsAssuranceFloor(stored.policy, 'security', 'observed')).toBe(true);
+        expect(meetsAssuranceFloor(stored.policy, 'security', 'sandboxed')).toBe(false);
+
+        // And the record's stated retirement is the one the policy enforces: the value the record calls retired is the
+        // value the decision layer refuses, in the same run. Coupling the two is what makes this a binding rather than
+        // two independent facts about the same subject.
+        const historical = await readFile(join(root, 'src', 'kernel', 'types.ts'), 'utf8');
+        expect(historical).toMatch(/LEGACY_ASSURANCE_LEVELS\s*=\s*\[[^\]]*'sandboxed'/);
     });
 
     it('reddens when the record is deleted rather than carried with the policy', async () => {

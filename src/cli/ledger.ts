@@ -797,7 +797,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger run', error: built.why });
             return;
         }
-        const outRequested = argv.includes('--out') || argv.some((entry) => entry.startsWith('--out='));
+        // Both spellings, resolved in one place: G-5 fixed `--result-file` only, so `--out=path` was recognised as
+        // "given" and then read as "not given" — a refusal that told the operator to supply the path it already supplied.
+        const outRequested = argv.some((entry) => entry === '--out' || entry.startsWith('--out='));
         const out = argValue(argv, '--out');
         if (outRequested && !out) {
             fail({ command: 'ledger run', error: '--out requires a workspace-relative file path' });

@@ -82,6 +82,25 @@ async function ledger(argv: string[]): Promise<{ ok?: boolean; error?: string }>
     return line ? (JSON.parse(line) as { ok?: boolean; error?: string }) : {};
 }
 
+
+/** Run a ledger command against the same workspace reached through a path that carries a symlinked component. */
+async function ledgerViaWorkspaceLink(argv: string[], linkedRoot: string): Promise<{ ok?: boolean; error?: string }> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
+    try {
+        await runLedgerCommand(argv, { root: linkedRoot, changeId });
+    } finally {
+        stdout.mockRestore();
+    }
+    process.exitCode = previousExitCode;
+    const line = chunks.join('').trim().split('\n').filter((entry) => entry.trim().startsWith('{')).at(-1);
+    return line ? (JSON.parse(line) as { ok?: boolean; error?: string }) : {};
+}
+
 describe('review CLI I/O', () => {
     it('materializes the deterministic ReviewRequest at --out and never silently writes outside the workspace', async () => {
         const revision = await prepareRequest();
@@ -95,6 +114,12 @@ describe('review CLI I/O', () => {
         expect(request.changeId).toBe(changeId);
         expect(request.claims[0]).toMatchObject({ claimId: 'C-1', readingSet: ['src/a.ts'] });
         expect(request.subjectRevision).toBe(revision);
+
+        // The `=` spelling is the same flag: G-5 fixed `--result-file` only, so `--out=path` was seen as given by one
+        // check and read as absent by the shared reader, refusing the path it had just been handed.
+        await ledger(['run', '--out=tmp/equals-request.json']);
+        const viaEquals = JSON.parse(await readFile(join(root, 'tmp', 'equals-request.json'), 'utf8')) as { changeId: string };
+        expect(viaEquals.changeId).toBe(changeId);
 
         await ledger(['run', '--out', '../escaped-request.json']);
         await expect(readFile(join(root, '..', 'escaped-request.json'), 'utf8')).rejects.toThrow();
@@ -114,6 +139,23 @@ describe('review CLI I/O', () => {
         expect(String(refusal.error)).toContain('has moved since it was frozen');
         expect(String(refusal.error)).toContain('src/a.ts');
         await expect(readFile(join(root, 'tmp', 'stale.json'), 'utf8')).rejects.toThrow();
+    });
+
+
+    it('refuses a request once the content under the seal has moved, even if the subject was re-frozen', async () => {
+        // F-2: "the subject matches the content" and "a seal exists" were checked as two independent facts, so
+        // freeze(A) → seal(revA) → edit → freeze(revB) → run passed and named revB while a reviewer's result would bind
+        // to revA. Request and result must speak for one revision.
+        await prepareRequest();
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        // Re-freeze: the subject now matches the current content, which is what the first check looks at.
+        const refrozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!refrozen.ok) throw new Error(refrozen.error);
+        await writeSubject(root, changeId, refrozen.subject);
+
+        const refusal = await ledger(['run', '--out', 'tmp/after-edit.json']);
+        expect(refusal.ok, JSON.stringify(refusal)).toBe(false);
+        expect(String(refusal.error)).toContain('has changed since it was sealed');
     });
 
     it('refuses a request when nothing is sealed, naming the seal rather than briefing anyway', async () => {
@@ -314,6 +356,62 @@ describe('review CLI I/O', () => {
         expect(record.declaredCoverage).toEqual(['C-1']);
     });
 
+
+    it('never rewrites a recorded empty round back into a placeholder when review is re-entered', async () => {
+        // F-3: two derivations of "is this a placeholder" disagreed. The result face was tightened, the write face kept
+        // "findings is empty", so re-entering review over a legitimately empty *result* silently replaced it with a
+        // placeholder — and the `--result-file` guard then allowed a second round over a record that was already recorded.
+        await prepareRequest();
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' },
+            updatedAt: '2026-09-30T00:00:00.000Z',
+        });
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+
+        await writeFile(join(root, 'tmp', 'declared.json'), `${JSON.stringify({ findings: [], declaredCoverage: ['C-1'] })}\n`);
+        expect((await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' })).success).toBe(true);
+
+        // Re-enter review. The recorded round must survive: a placeholder rewrite would erase the declaration.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        const after = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { declaredCoverage?: string[]; reviewRoute?: string };
+        expect(after.declaredCoverage).toEqual(['C-1']);
+        expect(after.reviewRoute).toBe('adversarial');
+
+        // And because the round is still recorded, a third round is refused rather than silently replacing it.
+        const third = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' });
+        expect(third.success).toBe(false);
+        expect(third.error).toContain('already recorded');
+    });
+
+
+    it('validates and keeps a coverage declaration even when the round did report findings', async () => {
+        // F-6: the validation and the write both sat inside the empty-findings branch, so a non-empty round could declare
+        // an invented claim id and the declaration was dropped — a validator on one path and no reader on the other.
+        await prepareRequest();
+        await writeCurrentState(root, {
+            taskId: changeId, phase: 'review', actor: { id: 'kata-reviewer', role: 'reviewer' },
+            updatedAt: '2026-09-30T00:00:00.000Z',
+        });
+        await writeFile(join(root, 'tmp', 'invented-plus-findings.json'), `${JSON.stringify({
+            findings: [{ id: 'R-1', taskId: changeId, severity: 'minor', message: 'something' }],
+            declaredCoverage: ['C-9'],
+        })}\n`);
+        const invented = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/invented-plus-findings.json' });
+        expect(invented.success).toBe(false);
+        expect(String(invented.error)).toContain('C-9');
+
+        await writeFile(join(root, 'tmp', 'real-plus-findings.json'), `${JSON.stringify({
+            findings: [{ id: 'R-1', taskId: changeId, severity: 'minor', message: 'something' }],
+            declaredCoverage: ['C-1'],
+        })}\n`);
+        const recorded = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/real-plus-findings.json' });
+        expect(recorded.success, JSON.stringify(recorded)).toBe(true);
+        const record = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { declaredCoverage?: string[]; findings: unknown[] };
+        expect(record.findings).toHaveLength(1);
+        expect(record.declaredCoverage).toEqual(['C-1']);
+    });
+
     it('refuses a malformed --result-file shape by name instead of degrading to the plain review path', async () => {
         expect(reviewResultFileArg(['review', '--result-file', '--approve'])).toBeUndefined();
         expect(reviewResultFileArg(['review', '--result-file'])).toBeUndefined();
@@ -322,6 +420,35 @@ describe('review CLI I/O', () => {
         expect(reviewResultFileArg(['review', '--result-file=tmp/result.json'])).toBe('tmp/result.json');
         expect(reviewResultFileArg(['review', '--result-file='])).toBeUndefined();
         expect(resultFileRequested(['review', '--result-file=tmp/result.json'])).toBe(true);
+    });
+
+
+    it('accepts a link whose target is inside the workspace, and refuses only the ones that leave it', async () => {
+        // F-7: refusing every symlink component also refused links that stay inside — reads failed silently and the
+        // mutation-restore write threw. The fence answers "where does this land", so an inside link is ordinary.
+        await prepareRequest();
+        await mkdir(join(root, 'src', 'nested'), { recursive: true });
+        await symlink(join(root, 'src'), join(root, 'tmp', 'inside-link'));
+
+        const accepted = await ledger(['run', '--out', 'tmp/inside-link/request.json']);
+        expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
+        const written = JSON.parse(await readFile(join(root, 'src', 'nested', '..', 'request.json'), 'utf8')) as { changeId: string };
+        // Written through the link, and it is in the workspace — which is the fact that decides.
+        expect(written.changeId).toBe(changeId);
+    });
+
+    it('accepts an existing path when the workspace root itself is reached through a link', async () => {
+        // F-1: comparing an unresolved probe against a resolved root refused every *existing* path when the root's own
+        // path carried a symlinked component (a symlinked $HOME, macOS /var). The verdict must not depend on whether the
+        // file is already there.
+        await prepareRequest();
+        const viaLink = join(root, 'tmp', 'root-link');
+        await symlink(root, viaLink);
+        const throughRootLink = await ledgerViaWorkspaceLink(['run', '--out', 'tmp/existing.json'], viaLink);
+        expect(throughRootLink.ok, JSON.stringify(throughRootLink)).toBe(true);
+        // And the same invocation a second time, over the file it just wrote, still succeeds.
+        const again = await ledgerViaWorkspaceLink(['run', '--out', 'tmp/existing.json'], viaLink);
+        expect(again.ok, JSON.stringify(again)).toBe(true);
     });
 
     it('refuses a symlinked path that leaves the workspace, for both the request and the result', async () => {

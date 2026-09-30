@@ -22,7 +22,7 @@
 import { declaredPaths, freezeSubject, readProbes, readProbeAnswers, readLedger, readPlan } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
-import { readCurrentTaskRevisionState } from '../workflow/revision.js';
+import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
 import type { EvidenceType } from '../kernel/types.js';
 
 export type ClaimRequest = {
@@ -99,6 +99,20 @@ export async function buildReviewRequest(input: { root: string; changeId: string
     }
     if (sealed.kind === 'absent') {
         return { ok: false, why: 'nothing is sealed for this change, so there is no revision the request can speak for: run `kata-cli build --seal` first' };
+    }
+    // **The seal's own content, compared too.** F-2: the two checks above were independent facts — "the subject matches the
+    // content" and "a seal exists" — so freeze(A) → seal(revA) → edit a file → freeze(revB) → run passed and produced
+    // `subjectRevision = revB` while the reviewer's result would bind to revA. The request and the result have to speak
+    // for one revision, so the sealed revision's contents are compared as well; `status` is the seal's own answer about
+    // whether what it hashed is still what is on disk.
+    const sealedStatus = await revisionStatus(input.root, sealed.revision, input.changeId);
+    if (!revisionIsCurrent(sealedStatus)) {
+        return {
+            ok: false,
+            why: `the sealed revision ${sealed.revision.id} is ${sealedStatus}: the content under it has changed since it was sealed, `
+                + 'so a request derived now would name content the reviewer could not bind a result to. Change the content and re-seal '
+                + '(`kata-cli build --change <id> --seal`), or restore it',
+        };
     }
     const readingById = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set.paths]));
     const requiredById = new Map((plan.requiredEvidence ?? []).map((entry) => [entry.claimId, entry]));
