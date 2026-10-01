@@ -8,7 +8,6 @@
  */
 import type { RiskClass } from './types.js';
 import {
-    ASSURANCE_RANK,
     LEGACY_ASSURANCE_LEVELS,
     READABLE_ASSURANCE_LEVELS,
     assuranceAtLeast,

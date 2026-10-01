@@ -186,7 +186,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             if (offeredRetired.length > 0) {
                 fail({
                     command: 'ledger policy',
-                    error: `cannot write retired assurance floor(s): ${offeredRetired.join(', ')}; sandboxed is historical only`,
+                    // The refusal names the level the operator offered (R15-F1: this site kept the old sentence, which
+                    // said `sandboxed is historical only` even for `signed` — the defect fixed on the store and `decide`
+                    // paths had not been carried to the third site).
+                    error: `cannot write retired assurance floor(s): ${offeredRetired.join(', ')}; these are historical only, not obtainable Kata assurance`,
                 });
                 return;
             }

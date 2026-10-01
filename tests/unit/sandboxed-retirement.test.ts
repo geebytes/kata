@@ -1,5 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
@@ -85,6 +86,38 @@ describe('the writable assurance vocabulary', () => {
         expect([...READABLE_ASSURANCE_LEVELS].sort()).toEqual(['none', 'observed', 'relayed', 'sandboxed', 'signed']);
     });
 
+
+    it('names the offered level at the CLI write site too, not the one the sentence was written for', async () => {
+        // R15-F1: `ledger policy --set-file` kept the old sentence, so offering `signed` was refused with a message about
+        // `sandboxed` — the value the operator had not written. Third site of one rule; the first two had cases, this one
+        // did not.
+        const { runLedgerCommand } = await import('../../src/cli/ledger.js');
+        const { vi } = await import('vitest');
+        const isolated = await mkdtemp(join(tmpdir(), 'kata-retired-cli-'));
+        const { initLayout } = await import('../../src/core/layout.js');
+        const { createTask } = await import('../../src/core/task.js');
+        await initLayout(isolated);
+        await createTask({ root: isolated, id: 'retired-assurance-fixture', title: 'Retired', acceptance: [{ id: 'AC-1', statement: 'retired value is refused' }], ownedPaths: [] });
+        await writeFile(
+            join(isolated, 'offered-policy.json'),
+            JSON.stringify({ ...defaultPolicy(), tiers: { ...defaultPolicy().tiers, security: { ...defaultPolicy().tiers.security, assuranceFloor: 'signed' } } }),
+        );
+        const chunks: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => {
+            chunks.push(String(chunk));
+            return true;
+        }) as never);
+        try {
+            await runLedgerCommand(['policy', '--set-file', join(isolated, 'offered-policy.json')], { root: isolated, changeId: 'retired-assurance-fixture' });
+        } finally {
+            spy.mockRestore();
+            await rm(isolated, { recursive: true, force: true });
+        }
+        const envelope = JSON.parse(chunks.join('').split('\n').filter((line) => line.trim().startsWith('{')).pop() ?? '{}') as { ok?: boolean; error?: string };
+        expect(envelope.ok).toBe(false);
+        expect(envelope.error).toContain('signed');
+        expect(envelope.error).not.toContain('sandboxed is historical');
+    });
 
     it('names the retired level the writer was given, not the one the sentence was written for', async () => {
         // R10-F4: the store's refusal said `sandboxed is historical only` for every retired level, so writing `signed` was

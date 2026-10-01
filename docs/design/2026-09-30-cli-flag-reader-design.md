@@ -14,7 +14,7 @@
 | 6 | 5（加谓词遍历） | 7（扩的那一档自身漏了 `.slice().some()`） |
 | 7 | 5 | 5（含活实例 + **11 种实测绕过**） |
 
-第 7 轮实测守卫看不见的写法：`argv.at(i+1)`、`argv.reduce`、`[...argv]` 别名、`for…of argv.entries()`、`argv.join().includes('--x')`、从 `VALUE_FLAGS[0]` 取 flag、`argv.flatMap`、`process.argv` 别名、`` `--${name}` `` 模板、**跨行的 `argv\n.indexOf('--x')`**、**跨行的 `argv.some(\n… === '--x')`**。
+第 7 轮实测守卫看不见的写法（**第 8 轮又补了 3 种**：`argv.slice(...)` 在前再接谓词遍历——第 7 轮在 `invocation.ts` 里找到的活实例就是这个；谓词遍历里的 flag 是**模板**（`` t => t === `${flag}=` ``）；局部数组上的 `rest.includes('--all')`）：`argv.at(i+1)`、`argv.reduce`、`[...argv]` 别名、`for…of argv.entries()`、`argv.join().includes('--x')`、从 `VALUE_FLAGS[0]` 取 flag、`argv.flatMap`、`process.argv` 别名、`` `--${name}` `` 模板、**跨行的 `argv\n.indexOf('--x')`**、**跨行的 `argv.some(\n… === '--x')`**。
 
 **这不是不够仔细，而是方法本身的性质**：文本扫描在**枚举写法**，而写法是无穷的。每扩一档，下一轮就读出"扩的那一档没写对"或"还有第 N+1 种"。
 

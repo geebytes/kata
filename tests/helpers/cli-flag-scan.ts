@@ -29,8 +29,11 @@ export type Offence = { line: number; text: string; why: string };
  * the scan stayed green while the code silently skipped the neighbour guard: `argv.at(i + 1)`, `argv.reduce`,
  * `[...argv]` under an alias, `for (const [i, t] of argv.entries())`, `argv.join().includes('--x')`, a flag taken from
  * `VALUE_FLAGS[0]`, `argv.flatMap`, an alias of `process.argv`, a `` `--${name}` `` template, `argv` and `.indexOf`
- * on **different lines**, and `argv\n.some(\n… === '--x')` across lines. It also does not scan outside
- * `src/cli.ts` + `src/cli/**` (`src/policy/guard-script.ts` carries the same shape).
+ * on **different lines**, `argv\n.some(\n… === '--x')` across lines, **`argv.slice(...)` before the predicate walk**
+ * (the shape that survived round 6's "coverage equals the claim" and was found live in `invocation.ts` by round 7), a
+ * predicate walk whose flag is a **template** (`` t => t === `${flag}=` ``), and `rest.includes('--all')` on an array
+ * held in a local. It also does not scan outside `src/cli.ts` + `src/cli/**` (`src/policy/guard-script.ts` carries the
+ * same shape).
  *
  * So this is a **strong approximation over a named surface**, not a rule that closes the class. The claim is written to
  * the coverage on purpose: three rounds running, the docblock promised "every hand-rolled lookup" while the shape beside
