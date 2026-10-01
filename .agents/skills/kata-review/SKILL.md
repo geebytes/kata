@@ -77,6 +77,23 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the review request: each claim, its reading set, the evidence its tier requires, the deadline and the probes** — from `kata-verify` — `kata-cli ledger run --change <id> --out <path>`
+
+**Outputs**
+
+- **the structured review result returned by the subagent and recorded by the invoking Skill** — `kata-cli review --change <id> --result-file <path> → .kata/tasks/<id>/review.json`
+- **the decision derived from the evidence** — `kata-cli ledger decide --change <id>`
+
+**Interaction**
+
+- **the judge's model is chosen on the host platform, and kata records only which choice was made** — `kata-cli gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>`
 ## Independent review, on the evidence ledger
 
 Both nodes below must answer to a **different context than the one that wrote the change**. The same context that
@@ -101,11 +118,26 @@ Do this:
    ```bash
    kata-cli ledger run --change <task-id> --out request.json
    ```
-3. **Answer it in a clean context.** Hand the request to a session that has read nothing of this one. Where the platform
-   can launch one, that is what the request is for; where it cannot, say which session answered rather than implying a
-   separation the platform did not provide.
-4. **A probe is not a quiz.** `ledger answer` records the command that was run and what it printed, and a probe is
-   answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
+3. **Dispatch exactly one subagent with the ReviewRequest as its only payload.** The subagent receives the request file, reads no author-written brief, stays read-only on the code under review, and returns a structured result to this Skill. The Skill writes that result through the only result path:
+   ```bash
+   kata-cli review --change <task-id> --result-file result.json
+   ```
+   Do not launch a separate process or use a process fallback — but **do check that the subagent can start at all**, because
+   a fresh context is a fresh process and it does not inherit everything this one has:
+
+   - **A model provider that this session registered at startup is not visible to the new context.** Where the default
+     model comes from such a registration, a dispatch fails with a message like `Model "<provider>/<model>" not found` —
+     which reads like a typo and is not one. Give the new context the registration explicitly, or pick a model it can
+     resolve on its own. How a platform expresses that is that platform's business; what matters here is that the round
+     comes back, because **a round that never started is not a round**, and a finding that never arrived is not a pass.
+     If neither is possible, say so and stop rather than reporting the round as done.
+   - **The same is true of anything else this session registered at startup** — skills, hooks, providers. A new context's
+     capabilities are the ones you hand it, not the ones you happen to have.
+
+   Kata records none of this: the request carries no platform, session or model, and how the round was launched is
+   organizational process rather than a checked criterion. The check above is about the round existing, not about what
+   kata believes about it.
+4. **A probe is not a quiz.** `ledger answer` records the command that was run and what it printed, and a probe is answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
    the only way to get them right:
    ```bash
    kata-cli ledger ask --change <task-id>              # the probes this ledger asks, derived from its own claims
@@ -114,7 +146,7 @@ Do this:
 5. **Record what you found as evidence, not as a claim about yourself.** A counterexample is a challenge the author has to
    answer, and it is recorded as one; it is withdrawn only when the ledger can see that it does not reproduce:
    ```bash
-   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --expect "<what should happen>"
+   kata-cli ledger challenge add --change <task-id> --claim <id> --command "<what reproduces it>" --fails-on <revision>
    kata-cli ledger challenge check --change <task-id>
    ```
 6. **Never write the code under review.** A review that repairs what it reviews has replaced the judgement rather than
@@ -123,8 +155,10 @@ Do this:
 
 What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
 and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved
-after the decision refuses the approval and names it; and under the strict tier the assurance floor is `observed`, so
-evidence nothing re-executed cannot carry it.## Skill automation contract
+after the decision refuses the approval and names it; and the assurance floor is `observed` under `strict` **and** under
+`security` — the platform owns execution isolation, so no tier asks Kata for a sandbox — while `security` still asks
+for two independent reviewers, always-quorum and the privilege/provenance risk classes, so evidence nothing re-executed
+cannot carry either tier.## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.
 

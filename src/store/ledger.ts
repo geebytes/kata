@@ -15,12 +15,12 @@ import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
 import { defaultPolicy, loadPolicy, type Policy } from '../kernel/policy.js';
 import { evaluateClaim, type ClaimState } from '../kernel/decide.js';
-import { assuranceAtLeast } from '../kernel/types.js';
+import { isCurrentAssuranceLevel } from '../kernel/types.js';
 import { projectVerdicts } from '../kernel/evidence.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
-import type { AssuranceLevel, Challenge, Claim, ClaimStatus, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceHistoryEntry, AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
 
 const FILES = {
     subject: 'subject.json',
@@ -170,6 +170,14 @@ export type Ledger = {
     challenges: Challenge[];
     usage: BudgetUsage;
     assurance: AssuranceLevel;
+    /**
+     * The retired assurance values this ledger has moved past, most recent last.
+     *
+     * **It is on the read because a history nothing reads is not a history.** R8-F2: `ensureAssurance` recorded the value a
+     * later round replaced and only a test ever looked at the file, so the record existed and the fact was unavailable —
+     * "kept as history" was true of the file and false of the system.
+     */
+    assuranceHistory: AssuranceHistoryEntry[];
     runs: LedgerRun[];
     /** The files that exist. An empty list is the honest report of a review that recorded nothing. */
     recordedFiles: string[];
@@ -208,6 +216,32 @@ async function readJson<T>(path: string): Promise<T | null> {
         return JSON.parse(await readFile(path, 'utf8')) as T;
     } catch {
         return null;
+    }
+}
+
+/**
+ * Read the usage document without confusing "absent" with "damaged".
+ *
+ * `readJson` answers `null` for both, and a caller that defaults `null` to `{ assurance: 'none' }` then writes that
+ * invented value back — so a damaged historical record came back as `none`, which is exactly the rewrite the read-side
+ * fidelity rule forbids. Only ENOENT is absence here; anything else that cannot be read or parsed is reported.
+ */
+async function readUsageRecord(path: string): Promise<
+    | { kind: 'absent' }
+    | { kind: 'unreadable'; detail: string }
+    | { kind: 'usable'; value: { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } }
+> {
+    let raw: string;
+    try {
+        raw = await readFile(path, 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
+        return { kind: 'unreadable', detail: (error as Error).message };
+    }
+    try {
+        return { kind: 'usable', value: JSON.parse(raw) as { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } };
+    } catch (error) {
+        return { kind: 'unreadable', detail: `not valid JSON (${(error as Error).message})` };
     }
 }
 
@@ -290,15 +324,40 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             policyFilled = loaded.filled;
             // Checked here rather than in the raw scan: what every consumer sees is the filled policy, and the fill is
             // reported in `policyFilled`. A document that predates a field is not a corrupt document.
+            // **The exemption is for the retired field, not for the document.** Skipping validation whenever *any* tier
+            // carried a historical floor meant one legitimately-old value let every other violation through: measured,
+            // a reviewer count of `1.5` beside a retired floor was accepted, while the same count beside a current floor
+            // was reported unreadable. The retired floor is substituted for the check and named in `policyFilled`, so
+            // what is validated is the document minus the one value that is allowed to be old.
+            // **The substitution is named, like every other fill.** R8-F9: the comment claimed the retired floor was
+            // "substituted for the check and named in `policyFilled`" while only the schema check saw the substitute — a
+            // policy carrying the old floor reported an empty `policyFilled`, so the one rule this file states about fills
+            // (visible, never silent) did not hold on this path.
+            const substitutedTiers: Array<[string, typeof policy.tiers[keyof typeof policy.tiers]]> = [];
+            for (const [name, tier] of Object.entries(policy.tiers)) {
+                if (isCurrentAssuranceLevel(tier.assuranceFloor)) {
+                    substitutedTiers.push([name, tier]);
+                    continue;
+                }
+                substitutedTiers.push([
+                    name,
+                    { ...tier, assuranceFloor: defaultPolicy().tiers[name as keyof typeof policy.tiers].assuranceFloor },
+                ]);
+                // **The substitution is for the schema check only — it is not a fill and must not be reported as one.**
+                // R12-F11: this named the field a second time, so a policy read back reported `policyFilled` twice for one
+                // field while the value delivered to consumers kept the historical floor: a report of a change that the
+                // reader did not make. `policy.ts` names the read-through, once, and that is the only entry.
+            }
+            const substituted = { ...policy, tiers: Object.fromEntries(substitutedTiers) as typeof policy.tiers };
             try {
-                validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, policy);
+                validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER['policy.json'] as string, substituted);
             } catch (error) {
                 malformedFiles.push('policy.json');
-                malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates: ${(error as Error).message}`);
+                malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates and substituted \`sandboxed\` for the check: ${(error as Error).message}`);
             }
         } else policyRejected = loaded.error;
     }
-    const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(join(dir, FILES.usage))) ?? null;
+    const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] }>(join(dir, FILES.usage))) ?? null;
     const verdictsRaw = (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [];
     // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
     // about another one, and it is the same value the caller receives as `subject`.
@@ -319,6 +378,10 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         challenges: (await readJson<Challenge[]>(join(dir, FILES.challenges))) ?? [],
         usage: usage?.usage ?? {},
         assurance: usage?.assurance ?? 'none',
+        // **The history has a reader, because a record nothing reads is not a record.** R8-F2: `ensureAssurance` moved a
+        // retired value here and only a test ever looked at it, so "kept as history" was true of the file and false of
+        // the system. It is carried on the ledger read, which is what every report surface already consumes.
+        assuranceHistory: usage?.assuranceHistory ?? [],
         runs: (await readJson<LedgerRun[]>(join(dir, FILES.runs))) ?? [],
         recordedFiles,
         malformedFiles,
@@ -424,7 +487,34 @@ export async function writeSubject(root: string, changeId: string, subject: Subj
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.subject, subject));
 }
 
+/**
+ * Replace a claim's statement, keeping its id, its evidence and its place in the ledger.
+ *
+ * The ledger is a store of record, so a correction is an operation rather than an edit: it stamps a reopen so the decision
+ * can see that the statement moved, and the claim's existing readings are re-checked against it by the same binding rules
+ * every other change follows.
+ */
+export async function restateClaim(root: string, changeId: string, claimId: string, statement: string): Promise<void> {
+    await mutate(root, changeId, async () => {
+        const path = join(reviewDir(root, changeId), FILES.claims);
+        const claims = (await readJson<Claim[]>(path)) ?? [];
+        const next = claims.map((claim) => (claim.id === claimId
+            ? { ...claim, statement, reopens: (claim.reopens ?? 0) + 1 }
+            : claim));
+        await writeJson(root, changeId, FILES.claims, next);
+    });
+}
+
 export async function writePolicy(root: string, changeId: string, policy: Policy): Promise<void> {
+    const retiredFloors = Object.entries(policy.tiers)
+        .filter(([, tier]) => !isCurrentAssuranceLevel(tier.assuranceFloor))
+        .map(([name, tier]) => `${name}:${tier.assuranceFloor}`);
+    if (retiredFloors.length > 0) {
+        // **The refusal names the value given.** R10-F4: it said `sandboxed is historical only` for every retired level, so
+        // `signed` was refused with a sentence about a value the operator had not typed — the same defect the CLI's
+        // `decide --assurance` path had already had fixed.
+        throw new Error(`cannot write retired assurance floor(s): ${retiredFloors.join(', ')}; these are historical only, not obtainable Kata assurance`);
+    }
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.policy, policy));
 }
 
@@ -682,29 +772,54 @@ export async function resolveChallenge(
 }
 
 /**
- * Record the assurance a round actually achieved, and only upwards.
+ * Record the assurance the round that just ran actually achieved.
  *
- * The adapter reports what its own isolation gave the round — `observed` when kata ran the checks itself, `relayed` when
- * they arrive as a recorded result — and that is a measured fact about the round that just happened. Two rules make it
- * trustworthy: it is written rather than merely reported (a value printed in a result and never stored decides nothing),
- * and it never lowers what is recorded, so a later weaker adapter cannot quietly demote an observed ledger.
+ * The adapter reports Kata's observation — `observed` when Kata ran the checks itself, `relayed` when
+ * they arrive as a recorded result. Host-platform isolation is outside this vocabulary. Two rules make the
+ * write trustworthy: it is recorded rather than merely printed, and a value that can no longer be produced
+ * stops deciding the gate — a retired one is moved to `assuranceHistory` instead of outranking its successor.
  */
-export async function ensureAssurance(root: string, changeId: string, achieved: AssuranceLevel): Promise<AssuranceLevel> {
+export async function ensureAssurance(root: string, changeId: string, achieved: CurrentAssuranceLevel): Promise<AssuranceLevel> {
+    if (!isCurrentAssuranceLevel(achieved)) {
+        throw new Error(`cannot write retired assurance ${String(achieved)}`);
+    }
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
-        const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(path)) ?? { usage: {}, assurance: 'none' as AssuranceLevel };
-        const strongest = assuranceAtLeast(achieved, current.assurance) ? achieved : current.assurance;
-        if (strongest !== current.assurance) {
-            await writeJson(root, changeId, FILES.usage, { ...current, assurance: strongest });
+        // **A damaged record refuses; only an absent one is defaulted.** `readJson` returned `null` for both, so a
+        // truncated `usage.json` was silently replaced by `{ `usage`: {}, assurance: 'none' }` — the read-side fidelity
+        // rule broken by the writer that follows it.
+        const read = await readUsageRecord(path);
+        if (read.kind === 'unreadable') {
+            throw new Error(`cannot record assurance: ${path} exists but cannot be read (${read.detail}); repair or remove it rather than overwriting a damaged record`);
         }
-        return strongest;
+        const current = read.kind === 'absent' ? { usage: {}, assurance: 'none' as AssuranceLevel } : read.value;
+        if (achieved === current.assurance) return achieved;
+        // **A recorded round replaces a recorded round, including a retired value.** Keeping the stronger of the two
+        // meant a `sandboxed` value written before the vocabulary retired it outranked every later `observed`, and that
+        // state could never become approvable: the approval refused it and dispatched "re-run the verification", while
+        // re-running returned the same value byte for byte. History stays readable where it is history — the ledger
+        // keeps every reading, and a retired *floor* keeps an old policy auditable — but the current assurance has to
+        // describe the round that just ran, or a value nobody can produce again decides the gate.
+        await writeJson(root, changeId, FILES.usage, {
+            ...current,
+            assurance: achieved,
+            ...(isCurrentAssuranceLevel(current.assurance)
+                ? {}
+                : { assuranceHistory: [...(current.assuranceHistory ?? []), { replaced: current.assurance, at: nowIso(), why: 'a later round was observed; the retired value is kept as history rather than as the current assurance' }] }),
+        });
+        return achieved;
     });
 }
 
 export async function setUsage(root: string, changeId: string, usage: BudgetUsage): Promise<void> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
-        const current = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel }>(path)) ?? { usage: {}, assurance: 'none' as AssuranceLevel };
+        // The same rule as `ensureAssurance`: a record that cannot be parsed is not an empty one.
+        const read = await readUsageRecord(path);
+        if (read.kind === 'unreadable') {
+            throw new Error(`cannot record usage: ${path} exists but cannot be read (${read.detail}); repair or remove it rather than overwriting a damaged record`);
+        }
+        const current = read.kind === 'absent' ? { usage: {}, assurance: 'none' as AssuranceLevel } : read.value;
         await writeJson(root, changeId, FILES.usage, { ...current, usage });
     });
 }
@@ -739,6 +854,9 @@ export async function declaredPaths(root: string, changeId: string): Promise<str
 export type LedgerReport = {
     changeId: string;
     recorded: boolean;
+    /** The current assurance, and the retired values this ledger moved past (see `Ledger.assuranceHistory`). */
+    assurance: AssuranceLevel;
+    assuranceHistory: AssuranceHistoryEntry[];
     claims: {
         total: number;
         byStatus: Record<ClaimStatus, number>;
@@ -917,6 +1035,11 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
     return {
         changeId,
         recorded: ledger.recordedFiles.length > 0,
+        // **The retired values this ledger moved past.** Reported here as well as on `ledger status`, because this is the
+        // envelope a reader inspects when asking what a ledger recorded — see `Ledger.assuranceHistory` for why it is
+        // carried at all (R8-F2: it was written and never read).
+        assurance: ledger.assurance,
+        assuranceHistory: ledger.assuranceHistory,
         claims: {
             total: ledger.claims.length,
             byStatus,

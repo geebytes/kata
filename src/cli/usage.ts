@@ -17,7 +17,7 @@ export const USAGE: Record<string, string> = {
     design: 'kata-cli design --change <task-id>',
     build: 'kata-cli build --change <task-id> [--seal] [--judgement <text>]',
     verify: 'kata-cli verify --change <task-id>',
-    review: 'kata-cli review --change <task-id> [--approve --review-evidence <text>]',
+    review: 'kata-cli review --change <task-id> [--result-file <subagent-result.json> | --approve --review-evidence <text>]',
     judge: 'kata-cli judge --change <task-id> --root <path>',
     archive: 'kata-cli archive --change <task-id>',
     hotfix: 'kata-cli hotfix --change <task-id> [--title <text>]',

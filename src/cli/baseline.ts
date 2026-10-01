@@ -1,3 +1,4 @@
+import { readFlag } from './invocation.js';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { renderSkill, skillCommands, type Platform } from '../adapters/manifest.js';
@@ -78,10 +79,9 @@ export function baselineReadPaths(change?: string): string[] {
 }
 
 export async function runBaselineCommand(argv: string[]): Promise<BaselineReport> {
-    const valueAfter = (flag: string): string | undefined => {
-        const index = argv.indexOf(flag);
-        return index >= 0 ? argv[index + 1] : undefined;
-    };
+    // R12-F3: this reader only knew the spaced spelling, so `--platform=codex --change=kata-x --root=<root>` measured the
+    // default platform and dropped the task scope entirely (`requiredReads` 7 → 5) with the command reporting success.
+    const valueAfter = (flag: string): string | undefined => readFlag(argv, flag).value;
     const platform = (valueAfter('--platform') ?? 'pi') as Platform;
     const language = valueAfter('--language') === 'en' ? 'en' : 'zh';
     const change = valueAfter('--change');

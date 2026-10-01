@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { containedPath } from '../store/verify-context.js';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
@@ -26,16 +27,19 @@ import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from '
 import { type TaskRevision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
-import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
+import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { readBlockingProblems, readReview, readReviewMode } from './review-read.js';
+import { readBlockingProblems, readReview, readReviewMode, readReviewRecord } from './review-read.js';
+import { readLedger } from '../store/ledger.js';
+import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
+import { isCurrentAssuranceLevel } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
-import { readValidated, readValidatedOptional, validate } from '../core/schema.js';
+import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
 import { readTask } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
@@ -67,6 +71,7 @@ export interface CommandOptions {
     seal?: boolean;
     approve?: boolean;
     reviewEvidence?: string;
+    reviewResultFile?: string;
     confirmHostModel?: boolean;
     allowOwnershipConflicts?: boolean;
     allowOutOfScopeRepair?: boolean;
@@ -1400,6 +1405,117 @@ async function cmdVerify(
 async function cmdReview(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     try {
         const isApprove = options.approve === true;
+        const reviewResultFile = options.reviewResultFile?.trim();
+        if (options.reviewResultFile !== undefined) {
+            if (!reviewResultFile) {
+                return { command: 'review', taskId, phase: (await readCurrentState(root, taskId)).phase, success: false, error: '--result-file requires a workspace-relative JSON file path' };
+            }
+            if (options.approve) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: 'Review result recording and approval are separate steps: record the subagent result first, then approve it after its findings are disposed of.',
+                };
+            }
+            const current = await readCurrentState(root, taskId);
+            if (current.phase !== 'review') {
+                return {
+                    command: 'review', taskId, phase: current.phase, success: false,
+                    error: `Review result recording requires review phase; current phase is ${current.phase}.`,
+                };
+            }
+            const resultPath = containedPath(root, reviewResultFile);
+            if (!resultPath) {
+                return { command: 'review', taskId, phase: 'review', success: false, error: `--result-file must stay inside the workspace: ${reviewResultFile}` };
+            }
+            let findings: ReviewFinding[];
+            let declaredCoverage: string[] | null = null;
+            try {
+                const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
+                if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
+                findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
+                const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
+                if (foreignFinding) throw new Error(`finding ${foreignFinding.id} names task ${foreignFinding.taskId}, not ${taskId}`);
+                // An empty set is only a result when the reviewer says what it covered. Without that, a four-byte
+                // artefact is indistinguishable from a subagent that produced nothing at all.
+                const coverage = result.declaredCoverage;
+                if (findings.length === 0 && coverage === undefined) {
+                    throw new Error('an empty findings array is only a result when the object also declares coverage: add declaredCoverage with the claim ids that were read and found sound');
+                }
+                // **A declaration is validated wherever it appears, and it is always kept.** The first version validated
+                // and persisted it only on the empty-findings path, so `{ findings: [...], declaredCoverage: ['C-9'] }` was
+                // accepted with an invented claim id and the field was dropped — a declaration with a validator on one
+                // path and no reader on the other.
+                if (coverage !== undefined) {
+                    if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
+                        throw new Error('declaredCoverage must be a non-empty list of the claim ids that were read and found sound');
+                    }
+                    const known = new Set((await readLedger(root, taskId)).claims.map((claim) => claim.id));
+                    const unknown = (coverage as string[]).filter((claimId) => !known.has(claimId));
+                    if (unknown.length > 0) {
+                        throw new Error(`declaredCoverage names ${unknown.join(', ')}, which this ledger does not hold; the declaration must name the claims that were read`);
+                    }
+                    declaredCoverage = coverage as string[];
+                }
+            } catch (error) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Cannot record review result from ${reviewResultFile}: ${(error as Error).message}`,
+                };
+            }
+            const binding = await currentRevisionIdentity(root, taskId);
+            const existing = await readReviewRecord(root, taskId);
+            if (!existing.ok) {
+                return { command: 'review', taskId, phase: 'review', success: false, error: `Cannot record a review result: ${existing.why}` };
+            }
+            // **A recorded result blocks a second recording; the enter-review placeholder does not.** Two facts were being
+            // asked as one. The first version asked `existing.findings.length > 0`, so an empty *result* read as "nothing
+            // recorded yet" and a second write replaced it — the empty result was both accepted and invisible. Tightening
+            // it to "any record" fixed that and created the opposite defect, measured by an independent review: entering
+            // review writes a placeholder bound to the revision with no findings, so from then on every `--result-file`
+            // was refused and the command the design and the rendered skill both promise was unreachable — "re-enter
+            // review" could only produce another placeholder. The two are told apart by *what wrote the record*: a
+            // placeholder carries no `reviewRoute`, and a recorded round always does.
+            // **The record's own binding, field by field.** A record that names a revision is a record for this revision
+            // only when the two bindings agree — and the binding set includes the frozen candidate, not just the id.
+            // Reading only `revisionId`/`manifestHash` made "already recorded" answer false for a record the seal had
+            // bound by content, which is the case the empty-result defect rode in on.
+            const existingRecord: VerdictBinding = {
+                ...(typeof existing.record.revisionId === 'string' ? { revisionId: existing.record.revisionId } : {}),
+                ...(typeof existing.record.manifestHash === 'string' ? { manifestHash: existing.record.manifestHash } : {}),
+                ...(typeof existing.record.codeManifestHash === 'string' ? { codeManifestHash: existing.record.codeManifestHash } : {}),
+                ...(typeof existing.record.governanceManifestHash === 'string' ? { governanceManifestHash: existing.record.governanceManifestHash } : {}),
+                ...(typeof existing.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: existing.record.instrumentManifestHash } : {}),
+                ...(typeof existing.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: existing.record.candidateFreezeSha256 } : {}),
+            };
+            const placeholder = isReviewPlaceholder(existing.record);
+            if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: 'A review result is already recorded for this revision. Re-enter review before recording a replacement.',
+                };
+            }
+            const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+            const recordPath = layoutReviewPath(root, taskId);
+            await mutateTaskArtefact(
+                root,
+                taskId,
+                recordPath,
+                async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+            );
+            return {
+                command: 'review',
+                taskId,
+                phase: 'review',
+                success: true,
+                diagnostics: {
+                    role: 'reviewer',
+                    resultFile: reviewResultFile,
+                    findings: findings.length,
+                    ...(revisionId ? { revisionId } : {}),
+                },
+            };
+        }
+
         if (isApprove) {
             const current = await readCurrentState(root, taskId);
             if (current.phase !== 'review') {
@@ -1523,6 +1639,24 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     };
                 }
 
+                // **A retired assurance value is refused here, and the repair now exists.** The earlier refusal was a
+                // dead end (it dispatched "re-run the verification" while `ensureAssurance` kept the stronger value, so
+                // re-running returned the same one), and deleting it was over-correction: measured with a *passing*
+                // ledger carrying `sandboxed`, the approval returned `success: true` and wrote that value into a fresh
+                // review record. A recorded round now replaces a recorded round **and** the decision surface refuses a
+                // value no current writer can produce, so the refusal names a repair that works.
+                if (!isCurrentAssuranceLevel(ledger.assurance)) {
+                    return {
+                        command: 'review', taskId, phase: 'review', success: false,
+                        error: `Review approval refused: historical assurance cannot authorize a current review (${ledger.assurance}). `
+                            + `Run \`kata-cli ledger evidence verify --change ${taskId}\` — a later round replaces this value rather than `
+                            + 'outranking it — then approve.',
+                        diagnostics: {
+                            ledger: { state: 'decided', assurance: ledger.assurance, legacyAssurance: true },
+                            nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),
+                        },
+                    };
+                }
                 // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer a request — the claim's own
                 // reading set, the evidence types its tier requires, the deadline, the probes it must answer — and
                 // `ledger request-check` compares what arrived against what was asked. Nothing consumed that check: it was
@@ -1649,6 +1783,15 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
             const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes);
+            // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
+            // repair was entered, so an approval recorded nothing and the escalation read a history whose blocking count
+            // rose (2 → 4 → 6) and never fell — firing on this change the moment its review passed with no findings. `0` and
+            // `null` are now two facts: cleared, and nothing to measure.
+            await appendReviewRound(root, taskId, {
+                at: new Date().toISOString(),
+                blockingIds: [],
+                blockingCount: 0,
+            });
             return {
                 command: 'review',
                 taskId,
@@ -1686,6 +1829,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         await guardTransition(options.guard, 'apply', taskId, 'review');
         const reviewRecordPath = layoutReviewPath(root, taskId);
         const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+        // **The placeholder is bound, because that is what makes it invalidatable.** Measured with a probe: this branch
+        // wrote `{ findings: [], status: 'pending' }` with no binding fields, so a review entered for a revision stayed
+        // `pending` and unbound across a later content change — the one state the binding exists to catch. The write below
+        // carries the same binding fields the result path writes, through one derivation.
+        const entryBinding = await currentRevisionIdentity(root, taskId);
         try {
             const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
                 revisionId?: string;
@@ -1694,7 +1842,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
             const recordBinding = await currentRevisionIdentity(root, taskId);
             if (revisionId && !bindsToRevision(previous, recordBinding)) {
-                if (previous.findings?.length) {
+                // **A recorded round is archived before it is replaced; a placeholder is just replaced.** R5-7: this test
+                // was the third place still deriving "is this a recorded round" from `findings.length`, so a round that
+                // legitimately reported nothing (empty findings with a declared coverage) was overwritten without being
+                // kept anywhere — while a round with one minor finding was. One question, asked once, is what the other two
+                // sites now do; this one asks the same function.
+                if (!isReviewPlaceholder(previous)) {
                     const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
                     const historyEntry = JSON.stringify({
                         revisionId: previous.revisionId,
@@ -1704,15 +1857,47 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     }) + '\n';
                     await appendFile(historyPath, historyEntry, 'utf8');
                 }
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ revisionId, findings: [], status: 'pending' }, null, 2)}\n`);
-            } else if ((previous.findings ?? []).length === 0) {
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
+            } else if (isReviewPlaceholder(previous)) {
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
             }
-        } catch {
-            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), findings: [], status: 'pending' }, null, 2)}\n`);
+        } catch (error) {
+            // **No record yet is not a failed entry.** The two were one branch, and separating them is the whole of R5-6:
+            // "nothing is here" is the ordinary first entry into review, while a failure *inside* the try used to be
+            // silently replaced by a placeholder — the round it described lost, under a message saying the review had been
+            // entered. Only the failure refuses now, and the refusal has to say what failed: R6-F5 measured that it named
+            // "the existing review record cannot be read" for any non-ENOENT throw, including one raised while writing the
+            // archive or the placeholder — a reason it had not established.
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                return {
+                    command: 'review',
+                    taskId,
+                    phase: state.phase,
+                    success: false,
+                    error: `Review could not be entered: ${(error as Error).message}. `
+                        + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
+                };
+            }
+            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
+}
+
+
+/**
+ * Whether a review record is the enter-review placeholder rather than a recorded round.
+ *
+ * **One derivation, because two of them disagreed.** F-1 tightened the *result* face to "a placeholder is not a result",
+ * so a second recording was no longer refused by the placeholder the enter-review step writes; but the *write* face kept
+ * the older test (`findings` is empty), so re-entering review over a recorded round that legitimately had no findings —
+ * `{ findings: [], declaredCoverage: ['C-1'], reviewRoute: 'adversarial' }` — rewrote it into a placeholder and the
+ * `--result-file` guard then let a second round through. The fact is one fact; it is asked here and both faces call it.
+ */
+function isReviewPlaceholder(record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown }): boolean {
+    return record.reviewRoute === undefined
+        && (Array.isArray(record.findings) ? record.findings.length : 0) === 0
+        && record.declaredCoverage === undefined;
 }
 
 async function cmdJudge(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {

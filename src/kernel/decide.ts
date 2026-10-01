@@ -11,8 +11,10 @@
  */
 import { budgetDetail, budgetStatus, type BudgetUsage } from './budget.js';
 import { computeDelta } from './delta.js';
+import { quorumOnHolds } from './quorum.js';
 import { MIN_STRENGTH_BY_SEVERITY, strengthOf, verdictFor } from './evidence.js';
 import { meetsAssuranceFloor, tierPolicy, type Policy } from './policy.js';
+import { ASSURANCE_LEVELS as PRODUCIBLE_ASSURANCE } from './types.js';
 import {
     REASON_MESSAGES,
     type AssuranceLevel,
@@ -38,6 +40,15 @@ export type QuorumReport = {
     requiredReviewers?: number;
     /** Verdicts that named no producer, counted as one reading. Reported so a provenance gap is not read as a shortfall. */
     unattributed?: number;
+    /**
+     * The two quorum conditions `decide` cannot observe for itself.
+     *
+     * Whether the change reached a risk class no earlier change did, and whether the classifier could place it at all, are
+     * facts about the repository's history and the path table. A producer that computed them reports them here; absent
+     * means **not known to hold**, so the condition stays unsatisfied rather than being read as satisfied.
+     */
+    reachedNewRiskClass?: boolean;
+    unclassifiedTier?: boolean;
 };
 
 export type DecideInput = {
@@ -300,11 +311,20 @@ export function decide(input: DecideInput): Decision {
         // **A capability gap says so.** The next step for a missing executor is not "try harder": either the round runs on
         // an executor that can provide the floor, or a person records the exception. Naming neither is how this refusal
         // came to be a dead end that a kernel edit reaches automatically.
+        // **The remedy has to be one that exists.** This refusal used to name an "executor whose adapter can provide it"
+        // and a "tier exception" recorded by a person; neither is a command, so an operator had no way to act on the
+        // sentence. A retired floor is a different case again — it cannot be satisfied by any round, because the value
+        // is not producible — and its repair is to state the floor the change actually runs under.
+        const reachable = (PRODUCIBLE_ASSURANCE as readonly string[]).includes(floor);
         deficits.push({
             claimId: 'assurance:tier',
-            need: `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: run the round `
-                + 'on an executor whose adapter can provide it, or have a person record the tier exception '
-                + '(`kata-cli ledger decide --tier <tier>` names the decision rather than leaving it implicit)',
+            need: reachable
+                ? `the ${input.tier} tier requires assurance ${floor} and this round recorded ${input.assurance}: re-run the `
+                    + `evidence so Kata records it (\`kata-cli ledger evidence verify --change <id>\`), or state the tier this `
+                    + 'change is decided under with `kata-cli ledger policy --init`'
+                : `the ${input.tier} floor is ${floor}, which no current adapter can produce, so this change cannot satisfy it: `
+                    + 'state the floor this change actually runs under with `kata-cli ledger policy --init` and record the '
+                    + 'reason in the design document',
         });
     }
 
@@ -456,8 +476,31 @@ export function decide(input: DecideInput): Decision {
     // states, and nothing compared it: a single producer reached `security`, whose contract asks for two independent
     // readings. The count is of *independent runs*, not of reviewer names, so replaying one reading twice does not form
     // a quorum. `requiredReviewers` travels on the report so this stays a pure function of its input.
-    const requiredReviewers = quorum?.requiredReviewers ?? tierPolicy(input.policy, input.tier).reviewers;
-    if (requiredReviewers > 1 && (quorum?.reviewers ?? 0) < requiredReviewers) {
+    //
+    // **And the tier says *when* that count is demanded, not only how many.** `tiers.<tier>.quorumOn` was declared with a
+    // consumer entry and read by no executing branch — measured by an independent review: `demandDiversity` was decided
+    // entirely by `diversity.requiredOn`, so `quorumOn: ['always']` was a declaration that looked like enforcement. The
+    // values it accepts are the conditions this function can already see, so the check is: does any named condition hold?
+    // `always` holds unconditionally, which is what the security tier means; a tier that names `disagreement` or
+    // `weak_evidence` demands the extra reading only when the round produced that fact.
+    const tierContract = tierPolicy(input.policy, input.tier);
+    const requiredReviewers = quorum?.requiredReviewers ?? tierContract.reviewers;
+    const quorumDemanded = quorumOnHolds(tierContract.quorumOn, {
+        disputedClaims: quorum?.disputedClaimIds.length ?? 0,
+        undiversified: quorum?.undiversified ?? false,
+        refutedEvidence: reasons.some((entry) => entry.code === 'evidence_refuted'),
+        belowStrengthEvidence: reasons.some((entry) => entry.code === 'evidence_below_strength'),
+        // A tier above `standard` is the repository's own statement that the change reached something riskier than
+        // ordinary work; `high_risk` reads that, rather than inventing a second classification here.
+        highRisk: input.tier !== 'standard',
+        // **The two conditions a pure decision cannot observe are answered by the caller, not guessed.** Whether a change
+        // reached a risk class no earlier change did, and whether the classifier could place it at all, are facts about
+        // the repository's history — `reachedNewRiskClass`/`unclassifiedTier` arrive on the quorum report when a producer
+        // computed them and stay `false` when nobody did, which is the honest reading of "not known to hold".
+        reachedNewRiskClass: quorum?.reachedNewRiskClass ?? false,
+        unclassifiedTier: quorum?.unclassifiedTier ?? false,
+    });
+    if (quorumDemanded && requiredReviewers > 1 && (quorum?.reviewers ?? 0) < requiredReviewers) {
         reasons.push(reason(
             'quorum_missing',
             `${requiredReviewers} independent reviewer(s) are required by the ${input.tier} contract and ${quorum?.reviewers ?? 0} submitted`

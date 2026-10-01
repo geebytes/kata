@@ -1,3 +1,4 @@
+import { paradeArgValue } from './invocation.js';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { argValue, parseChangeArg } from './invocation.js';
 import { readTask } from '../core/task.js';
@@ -155,12 +156,12 @@ export async function runScopeCommand(argv: string[], root: string = resolveWork
 }
 
 function valuesAfter(argv: string[], flag: string): string[] {
-    const values: string[] = [];
-    for (let index = 0; index < argv.length; index += 1) {
-        if (argv[index] === flag) {
-            const value = argv[index + 1];
-            if (value && !value.startsWith('--')) values.push(value);
-        }
+    // R12-F7: the repeated-value rule lives in `paradeArgValue` (`--flag a --flag=b`), and this sibling reader kept the
+    // spaced-only form — `scope boundary --covers=trust` wrote an empty `covers` list into `task.json` while
+    // `scope change --add=x` was refused as "nothing given".
+    const values = paradeArgValue(argv, flag);
+    if (argv.some((token) => token.startsWith(`${flag}=`)) && values.length === 0) {
+        throw new Error(`Invalid value: ${flag} requires a value.`);
     }
     return values;
 }

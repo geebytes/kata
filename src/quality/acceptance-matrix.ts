@@ -56,7 +56,7 @@ export interface Waiver {
  * Whether a task must have declared an acceptance matrix.
  *
  * **Known inversion, recorded rather than papered over.** The rule names `strict` as a literal, so `security` — the tier
- * whose policy asks for two reviewers, always-on quorum and a sandboxed assurance floor — requires *less* declaration than
+ * whose policy asks for two reviewers and always-on quorum — requires *less* declaration than
  * the tier below it. An independent review found it while looking for the same inversion in the severity ladder.
  *
  * It is not fixed here because the honest fix is not a wider literal. Whether a change carries an acceptance contract is a

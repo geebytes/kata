@@ -39,12 +39,41 @@ export const EVIDENCE_TYPES = [
 ] as const;
 export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
 
-/** Process assurance grades. `observed` and above can support confidentiality claims; the lower ones cannot. */
-export const ASSURANCE_LEVELS = ['none', 'relayed', 'observed', 'sandboxed', 'signed'] as const;
-export type AssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
+/**
+ * Kata's current assurance vocabulary describes what Kata itself records about a round.
+ * Execution isolation belongs to the host platform; it is not a Kata-provided rank.
+ */
+export const ASSURANCE_LEVELS = ['none', 'relayed', 'observed'] as const;
+export type CurrentAssuranceLevel = (typeof ASSURANCE_LEVELS)[number];
+/** A retired value accepted only while reading historical ledger artefacts. */
+export const LEGACY_ASSURANCE_LEVELS = ['sandboxed', 'signed'] as const;
+export type LegacyAssuranceLevel = (typeof LEGACY_ASSURANCE_LEVELS)[number];
+/** All vocabulary a reader accepts. Writers use ASSURANCE_LEVELS only. */
+/**
+ * One retired assurance value, kept beside the current one rather than outranking it.
+ *
+ * `ensureAssurance` records the round that replaced a historical value, and **the record has a reader**: it is carried on
+ * the ledger read (`Ledger.assuranceHistory`) and published by the report surfaces, because a history nothing reads is a
+ * write-only file wearing the word "history".
+ */
+export interface AssuranceHistoryEntry {
+    replaced: AssuranceLevel;
+    at: string;
+    why: string;
+}
 
-/** Assurance is an ordered ladder, not a set of allowed values: a round that is *better* observed than required passes. */
+export const READABLE_ASSURANCE_LEVELS = [...ASSURANCE_LEVELS, ...LEGACY_ASSURANCE_LEVELS] as const;
+export type AssuranceLevel = (typeof READABLE_ASSURANCE_LEVELS)[number];
+
+/**
+ * Historical ordering remains readable: a pre-migration sandboxed record is stronger
+ * than observed, while no current Kata writer can create it.
+ */
 export const ASSURANCE_RANK: Record<AssuranceLevel, number> = { none: 0, relayed: 1, observed: 2, sandboxed: 3, signed: 4 };
+
+export function isCurrentAssuranceLevel(value: unknown): value is CurrentAssuranceLevel {
+    return typeof value === 'string' && (ASSURANCE_LEVELS as readonly string[]).includes(value);
+}
 
 export function assuranceAtLeast(recorded: AssuranceLevel, floor: AssuranceLevel): boolean {
     return ASSURANCE_RANK[recorded] >= ASSURANCE_RANK[floor];

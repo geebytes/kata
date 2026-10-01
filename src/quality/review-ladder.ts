@@ -10,7 +10,7 @@
  * The history it replaces: `"blocking, plus major in strict"` was written out in `repair-entry.authorizeReviewRepair`, in
  * `navigation.suggestCandidateAction` and in `distill-gates.evaluateReviewClearance`, each comparing the mode against the
  * literal `'strict'`. The three had already drifted — the gate did not read the mode at all — and the literal made the
- * `security` tier, whose kernel policy asks for two reviewers, always-on quorum and a sandboxed assurance floor, block on
+ * `security` tier, whose kernel policy asks for two reviewers and always-on quorum, block on
  * *less* than the tier below it.
  */
 

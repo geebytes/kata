@@ -514,7 +514,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
   // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
   // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
-  // reviewers, always-on quorum and a sandboxed assurance floor — blocked on *less* than the tier below it.
+  // reviewers and always-on quorum — blocked on *less* than the tier below it.
   const blockingSeverities = mergeBlockingSeverities(upstream.reviewMode);
   const hardestSeverity = blockingSeverities[0];
   // An open problem at the tier's bar is repaired, not argued with.

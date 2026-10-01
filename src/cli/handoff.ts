@@ -1,3 +1,4 @@
+import { splitFlag } from './invocation.js';
 import { discoverPlatforms } from '../adapters/discovery.js';
 import { resolveWorkspaceRoot, resolveWorkspaceRootForTask } from '../core/layout.js';
 import { activateHookTask } from '../hooks/runtime.js';
@@ -127,27 +128,36 @@ export type DelegationArgs = { change?: string; to?: string; role?: string; from
 export function parseDelegationArgs(argv: string[]): DelegationArgs {
     const args: DelegationArgs = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const key = argv[index];
-        const value = argv[index + 1];
+        // R12-F13: both spellings, through `splitFlag`. This loop compared whole tokens, so `--change --role reviewer`
+        // silently took `--role` as the change id (the guard was "is the next token a flag", which this never asked).
+        const { flag: key, inline } = splitFlag(argv[index] ?? '');
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (key === '--change' || key === '--task') {
-            if (value === undefined) throw new Error(`${key} requires a value`);
-            args.change = value; index += 1; continue;
+            if (value === undefined || value.startsWith('--')) throw new Error(`${key} requires a value`);
+            args.change = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--to' || key === '--platform') {
-            if (value === undefined) throw new Error(`${key} requires a value`);
-            args.to = value; index += 1; continue;
+            if (value === undefined || value.startsWith('--')) throw new Error(`${key} requires a value`);
+            args.to = value; if (inline === undefined) index += 1; continue;
         }
+        // T6-1: three of the five value branches incremented unconditionally, so the inline form swallowed the flag that
+        // followed it — `--role=reviewer --task=t1` parsed as `{role}` with the task gone, and the caller then fell back to
+        // `recommendDelegationTask` and delegated to *a different task* while reporting success. The two branches above
+        // were already right, which is why the case that existed (inline flag last) passed.
         if (key === '--role') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.role = value; index += 1; continue;
+            args.role = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--from') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.from = value; index += 1; continue;
+            args.from = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--root') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.root = value; index += 1; continue;
+            args.root = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--create') {
             args.create = true; continue;
@@ -189,10 +199,15 @@ export function recommendPlatform(platforms: string[], role: string): string | u
 export function parseHandoffArgs(argv: string[]): { task?: string; id?: string; from?: string; to?: string; role?: string; platform?: string; root?: string } {
     const args: { task?: string; id?: string; from?: string; to?: string; role?: string; platform?: string; root?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const key = argv[index]; const value = argv[index + 1];
+        // Both spellings, and a flag is never the next flag's value (R12-F13).
+        const { flag: key, inline } = splitFlag(argv[index] ?? '');
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         const target = key === '--task' ? 'task' : key === '--id' ? 'id' : key === '--from' ? 'from' : key === '--to' ? 'to' : key === '--role' ? 'role' : key === '--platform' ? 'platform' : key === '--root' ? 'root' : undefined;
-        if (!target || value === undefined) throw new Error(`Unknown handoff option: ${key}`);
-        args[target] = value; index += 1;
+        if (!target || value === undefined || value.startsWith('--')) throw new Error(`Unknown handoff option: ${argv[index]}`);
+        args[target] = value; if (inline === undefined) index += 1;
     }
     return args;
 }

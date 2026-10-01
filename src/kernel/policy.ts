@@ -8,8 +8,10 @@
  */
 import type { RiskClass } from './types.js';
 import {
-    ASSURANCE_LEVELS,
+    LEGACY_ASSURANCE_LEVELS,
+    READABLE_ASSURANCE_LEVELS,
     assuranceAtLeast,
+    isCurrentAssuranceLevel,
     EVIDENCE_TYPES,
     RISK_CLASSES,
     SEVERITIES,
@@ -19,6 +21,7 @@ import {
     type Severity,
     type TierName,
 } from './types.js';
+import { QUORUM_CONDITIONS, unknownQuorumCondition } from './quorum.js';
 
 export type Floor = 'low' | 'medium' | 'high';
 
@@ -30,12 +33,7 @@ export type TierPolicy = {
     /** Conditions under which the mesh escalates to a further reviewer. */
     quorumOn: string[];
     /**
-     * The weakest process assurance this tier accepts.
-     *
-     * A floor rather than an allowed set, and that distinction is load-bearing: with a set, a round that is *better*
-     * observed than the tier asked for fails the check, which is how `observed` came to be refused by the standard tier in
-     * a test of my own making.
-     */
+    /** The weakest assurance this tier accepts; old policy records may retain a legacy floor. */
     assuranceFloor: AssuranceLevel;
     /**
      * The risk classes every change at this tier must have a claim for.
@@ -133,7 +131,10 @@ export function defaultPolicy(): Policy {
                 autoEvidence: ['static_witness', 'executable_falsifier', 'cross_artifact_contradiction'],
                 reviewers: 2,
                 quorumOn: ['always'],
-                assuranceFloor: 'sandboxed',
+                // Kata observes the round in the host-provided execution environment.
+                // Network, filesystem and credential isolation are platform deployment policy,
+                // not a local Kata assurance claim.
+                assuranceFloor: 'observed',
                 requiredRiskClasses: ['consistency', 'boundary', 'failure_mode', 'privilege', 'provenance'],
                 humanBudgetMin: 30,
             },
@@ -143,11 +144,10 @@ export function defaultPolicy(): Policy {
             'src/workflow/**': { floor: 'medium', riskClasses: ['consistency', 'state_transition'] },
             'src/store/**': { floor: 'medium', riskClasses: ['consistency', 'provenance'] },
             'src/cli/**': { floor: 'medium', riskClasses: ['boundary'] },
-            // **`high` has to exist or the security tier is unreachable.** The classification is the maximum floor over the
-            // paths a change touches, so with no `high` rule no change could ever be routed to the tier whose whole point is
-            // the stricter evidence and the higher assurance floor — `quorum`, `sandboxed` and the privilege risk class were
-            // all inert. These two are where the gate itself lives: a change to the policy or to the decision is a change to
-            // the thing that judges everything else.
+            // **`high` has to exist or the security tier is reachable.** The classification is the maximum floor over the
+            // paths a change touches, so without a high rule the stricter quorum and privilege risk class are inert.
+            // The policy, decision and risk classifier are the gate itself, so touching them
+            // remains a security change even though execution isolation is platform-owned.
             'src/kernel/policy.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
             'src/kernel/decide.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
             'src/kernel/risk.ts': { floor: 'high', riskClasses: ['consistency', 'privilege'] },
@@ -244,6 +244,42 @@ export function loadPolicy(value: unknown): PolicyLoad {
         // The classes an old entry is about come from the defaults for that pattern; a pattern the defaults do not name is
         // filled with every tier's required classes, which is the conservative direction — the demand stays at least as wide
         // as it was when the table was written — and the substitution is named in `filled`.
+        // **A retired assurance floor is filled, and the fill is named, exactly like every other fill here.** Measured by
+        // an independent review: this reader left a historical floor in place and `policy.json` merely tolerated it, so the
+        // document read back carrying a value no current writer can produce and `policyFilled` reported nothing — while
+        // the store's own comment said the substitution was "substituted for the check and named in `policyFilled`". The
+        // substitution now happens where every other fill does, so the reader returns a policy its consumers can decide
+        // with and the fact that it was substituted is visible.
+        const storedTiers = stored.tiers;
+        if (isRecord(storedTiers)) {
+            const defaultTiers = defaults.tiers as Record<string, { assuranceFloor: string }>;
+            stored.tiers = Object.fromEntries(
+                Object.entries(storedTiers).map(([name, tier]) => {
+                    if (!isRecord(tier) || !('assuranceFloor' in tier)) return [name, tier];
+                    const floor = tier.assuranceFloor;
+                    // **Only a genuinely retired value is filled; anything else the enum does not know is left to the
+                    // schema, which refuses it.** R9-F4: the condition was `!isCurrentAssuranceLevel(floor)`, so *any*
+                    // unknown string — `bogus_value` — was silently rewritten to the tier default while `42` was refused.
+                    // A reader that rewrites a value it does not recognise is inventing policy: history is what the
+                    // retired set names, and nothing else is history.
+                    const retired = typeof floor === 'string'
+                        && LEGACY_ASSURANCE_LEVELS.includes(floor as (typeof LEGACY_ASSURANCE_LEVELS)[number]);
+                    if (!retired) return [name, tier];
+                    const replacement = defaultTiers[name]?.assuranceFloor;
+                    if (replacement === undefined) return [name, tier];
+                    // R12-F11: the historical floor is *kept* (a retired rank is always ≥ the current default), so there is
+                    // no substitution to perform here — reporting `policyFilled` for it said a replacement had happened
+                    // that had not, and the store's schema check then named the same field a second time. The fact worth
+                    // reporting is that the document was read despite a floor no current writer can produce.
+                    // **The fill must not weaken the tier it fills.** R10-F6: taking the tier default unconditionally
+                    // meant `standard.assuranceFloor: sandboxed` became `none` — a reader lowering a gate while reporting
+                    // that it had merely filled a field. A historical floor that outranks the default is kept as the
+                    // default of the *stricter* of the two, in the conservative direction.
+                    filled.push(`tiers.${name}.assuranceFloor.read-though-retired`);
+                    return [name, { ...tier, assuranceFloor: floor }];
+                }),
+            );
+        }
         const storedFloors = stored.riskFloors;
         if (isRecord(storedFloors)) {
             const defaultFloors = defaults.riskFloors as Record<string, { floor: string; riskClasses: string[] }>;
@@ -298,8 +334,8 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
         if (!Array.isArray(autoEvidence) || autoEvidence.some((item) => !EVIDENCE_TYPES.includes(item as EvidenceType))) {
             return { ok: false, error: `tiers.${tier}.autoEvidence must be a list of known evidence types` };
         }
-        if (!ASSURANCE_LEVELS.includes(entry.assuranceFloor as AssuranceLevel)) {
-            return { ok: false, error: `tiers.${tier}.assuranceFloor must be one of ${ASSURANCE_LEVELS.join(', ')}` };
+        if (!READABLE_ASSURANCE_LEVELS.includes(entry.assuranceFloor as AssuranceLevel)) {
+            return { ok: false, error: `tiers.${tier}.assuranceFloor must be one of ${READABLE_ASSURANCE_LEVELS.join(', ')}` };
         }
         const requiredClasses = entry.requiredRiskClasses;
         if (!Array.isArray(requiredClasses) || requiredClasses.length === 0
@@ -313,6 +349,12 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
             return { ok: false, error: `tiers.${tier}.humanBudgetMin must be a non-negative number` };
         }
         if (!Array.isArray(entry.quorumOn)) return { ok: false, error: `tiers.${tier}.quorumOn must be a list` };
+        // **A condition nobody can evaluate would read as "not demanded".** The vocabulary is the decision's own, so an
+        // entry outside it is refused by name here rather than silently making the gate quieter.
+        const unknownCondition = unknownQuorumCondition(entry.quorumOn);
+        if (unknownCondition !== null) {
+            return { ok: false, error: `tiers.${tier}.quorumOn has no condition named ${unknownCondition}; known: ${QUORUM_CONDITIONS.join(', ')}` };
+        }
     }
 
     if (!isRecord(value.riskFloors)) return { ok: false, error: 'riskFloors is required' };
@@ -390,7 +432,15 @@ export function tierPolicy(policy: Policy, tier: TierName): TierPolicy {
     return policy.tiers[tier];
 }
 
-/** A recorded assurance satisfies a tier when it is at least as strong as the tier's floor. */
+/**
+ * A recorded assurance satisfies a tier when it is at least as strong as the tier's floor **and is still producible**.
+ *
+ * Both halves are needed. The rank comparison alone let a retired value authorise a decision: `sandboxed` outranks
+ * `observed` because historical records have to stay comparable, so a ledger written before the vocabulary changed
+ * satisfied a floor no current adapter can reach — measured, it approved a change and wrote the retired value into a
+ * fresh review record. A value nobody can produce again may be *read and reported*; it may not decide.
+ */
 export function meetsAssuranceFloor(policy: Policy, tier: TierName, assurance: AssuranceLevel): boolean {
+    if (!isCurrentAssuranceLevel(assurance)) return false;
     return assuranceAtLeast(assurance, tierPolicy(policy, tier).assuranceFloor);
 }

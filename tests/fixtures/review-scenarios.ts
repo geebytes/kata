@@ -183,7 +183,7 @@ export const reviewScenarios: ReviewScenario[] = [
         why: 'Two reviewers from one family share their blind spots, so the count is not independence.',
         build: () => base({
             tier: 'security',
-            assurance: 'sandboxed',
+            assurance: 'observed',
             quorum: { disputedClaimIds: [], undiversified: true, reviewers: 2 },
         }),
         expect: { verdict: 'insufficient', reasons: ['quorum_undiversified'] },
@@ -194,7 +194,7 @@ export const reviewScenarios: ReviewScenario[] = [
         why: 'A tier that asks for two independent reviewers must refuse one: the contract is a condition, not a comment, and a single reading is not a quorum however complete it looks.',
         build: () => base({
             tier: 'security',
-            assurance: 'sandboxed',
+            assurance: 'observed',
             quorum: { disputedClaimIds: [], undiversified: false, reviewers: 1, requiredReviewers: 2 },
         }),
         expect: { verdict: 'insufficient', reasons: ['quorum_missing'] },

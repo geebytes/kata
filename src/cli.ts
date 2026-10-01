@@ -1,3 +1,4 @@
+import { switchPresent } from './cli/invocation.js';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -88,7 +89,7 @@ import {
     runRuntimeRefresh,
 } from './cli/installer.js';
 import { runInitWizardCommand, shouldUseInitWizard } from './cli/wizard.js';
-import { argValue, parseChangeArg, parseRootArg } from './cli/invocation.js';
+import { argValue, flagPresent, parseChangeArg, parseRootArg, readFlag } from './cli/invocation.js';
 import { parseWikiArgs, runWikiCommand } from './cli/wiki.js';
 import {
     parseCometArgs,
@@ -177,7 +178,7 @@ async function runMain(argv: string[]): Promise<void> {
     //
     // The list is every family the dispatcher below answers, so a new command has to add itself here to be reachable —
     // and a command absent from this map is exactly the case a `--help` would silently mutate.
-    if ((argv.includes('--help') || argv.includes('-h')) && SELF_HANDLED_HELP[command] === undefined) {
+    if ((switchPresent(argv, '--help') || argv.includes('-h')) && SELF_HANDLED_HELP[command] === undefined) {
         outputResult({ command, usage: usageFor(command), readOnly: true });
         return;
     }
@@ -188,8 +189,11 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
-    if (command === 'init' && !process.stdin.isTTY && !argv.includes('--yes')
-        && (!argv.includes('--platform') || !argv.includes('--scope'))) {
+    // R12-F6: `init --platform=pi --scope=project` in a non-TTY threw "requires explicit choices" while the spaced form
+    // installed; `update --platform=pi` silently fell into the aggregate path and updated *every* platform. Both were the
+    // flag matched as a switch while the rest of the CLI had already learned the inline spelling.
+    if (command === 'init' && !process.stdin.isTTY && !flagPresent(argv, '--yes')
+        && (!flagPresent(argv, '--platform') || !flagPresent(argv, '--scope'))) {
         throw new Error('kata-cli init requires explicit --platform and --scope choices in non-interactive mode; use the installation Skill to collect user confirmation first.');
     }
 
@@ -207,7 +211,7 @@ async function runMain(argv: string[]): Promise<void> {
                 return;
             }
         }
-        if (command === 'update' && !argv.includes('--platform')) {
+        if (command === 'update' && !flagPresent(argv, '--platform')) {
             outputResult(await runAggregateUpdate(args.scope, args.options, refreshPolicyFromArgs(argv)), { human: renderUpdateSummary });
             return;
         }
@@ -388,7 +392,7 @@ async function runMain(argv: string[]): Promise<void> {
         // `--with-context` is the only way to ask for the context projection now; the default answers the dispatch
         // question without building it (L0-01). It is not a rendering mode, so `stripOutputModeArgs` leaves it alone.
         outputResult(await runLocalStatusCommand(change, resolved, workspaceRoot, {
-            withContext: argv.includes('--with-context'),
+            withContext: switchPresent(argv, '--with-context'),
         }));
         return;
     }
@@ -426,13 +430,16 @@ async function runMain(argv: string[]): Promise<void> {
 
 
 function stripOutputModeArgs(argv: string[]): string[] {
-    return argv.filter((arg) => arg !== '--quiet' && arg !== '--json');
+    // Both spellings of every switch this handles (T6-1/F-1: a predicate walk over a flag literal is the same
+    // whole-token lookup, written longer — the scan refuses it, and `switchPresent` already knows the rule).
+    return argv.filter((arg) => !switchPresent([arg], '--quiet') && !switchPresent([arg], '--json'));
 }
 
 
 function workflowPlatform(argv: string[]): string | undefined {
-    const index = argv.indexOf('--platform');
-    return index >= 0 ? argv[index + 1] : undefined;
+    // R12-F5: the last `indexOf` reader of its kind. Measured: `design <task> --platform=codex` recorded
+    // `actor.platform: null`, so the platform a run was executed on went missing from the audit record.
+    return readFlag(argv, '--platform').present ? readFlag(argv, '--platform').value : undefined;
 }
 
 

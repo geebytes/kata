@@ -1,3 +1,4 @@
+import { splitFlag, switchPresent } from './invocation.js';
 import { readFile } from 'node:fs/promises';
 import {
     addKataRelation,
@@ -39,7 +40,7 @@ export async function runGitFlowCommand(argv: string[], root: string): Promise<R
         throw new Error(`Task ${taskId} does not use Git Flow isolation`);
     }
     const inspected = inspectGitFlow(root, taskId, undefined, gitFlowBranchKindForProfile(task.workflowProfile));
-    if (inspected.status === 'pending_confirmation' && !argv.includes('--confirm')) {
+    if (inspected.status === 'pending_confirmation' && !switchPresent(argv, '--confirm')) {
         return {
             command: 'git-flow apply', taskId, workflowProfile: task.workflowProfile,
             nextAction: {
@@ -115,28 +116,32 @@ function parseRelationsArgs(argv: string[]): {
 } {
     const args: { from?: string; to?: string; id?: string; type?: string; reason?: string; root?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
+        // Hand-written comparison, both spellings: `--from=task:a` and `--from task:a` are the same flag (R8-F4).
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--from' && value !== undefined) {
             args.from = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--to' && value !== undefined) {
             args.to = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if ((arg === '--id' || arg === '--endpoint') && value !== undefined) {
             args.id = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--type' && value !== undefined) {
             args.type = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--reason' && value !== undefined) {
             args.reason = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--root' && value !== undefined) {
             args.root = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else {
-            throw new Error(`Unknown relations option: ${arg}`);
+            throw new Error(`Unknown relations option: ${argv[index]}`);
         }
     }
     return args;

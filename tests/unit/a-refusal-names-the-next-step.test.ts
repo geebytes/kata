@@ -163,6 +163,14 @@ describe('every refusal the kernel can return carries a next step', () => {
         dependency_unresolvable: (_d, reason) => /\b(claim|path|depend)/i.test(reason.detail),
     };
 
+
+    const legacySecurityPolicy: DecideInput['policy'] = {
+        ...makePolicy(),
+        tiers: {
+            ...makePolicy().tiers,
+            security: { ...makePolicy().tiers.security, assuranceFloor: 'sandboxed' },
+        },
+    };
     const states: Array<[string, Partial<DecideInput>]> = [
         ['discovery_floor', { discovery: { independentChallenges: 0, verifiedChallenges: 0 } }],
         ['discovery_unverified', { discovery: { independentChallenges: 1, verifiedChallenges: 0 } }],
@@ -174,7 +182,11 @@ describe('every refusal the kernel can return carries a next step', () => {
         ['evidence_inconclusive', { verdicts: [makeVerdict({ subjectRevision: 'rev:other' })] }],
         // The real field, measured: `budgetStatus` reads `usage.wallMs` against `policy.budgets.maxWallMs`.
         ['budget_exhausted', { usage: { wallMs: makePolicy().budgets.maxWallMs + 1 } }],
-        ['assurance_below_tier', { tier: 'security' }],
+        ['assurance_below_tier', {
+            tier: 'security',
+            // A legacy policy remains readable, so this historical refusal still has a repair answer.
+            policy: legacySecurityPolicy,
+        }],
         ['same_actor', { actor: 'the-author' }],
         ['challenge_open', { challenges: [makeChallenge({ claimId: 'C1', state: 'open' })] }],
     ];

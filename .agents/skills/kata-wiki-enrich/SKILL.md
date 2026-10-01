@@ -77,6 +77,22 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the raw project sources under the wiki store's raw tree** — `.llmwiki/raw/`
+
+**Outputs**
+
+- **synthesised wiki pages, linted and registered** — `.llmwiki/concepts/`
+
+**Interaction**
+
+- Nothing: this node does not stop for an operator decision.
 
 
 ```json kata-command-manifest

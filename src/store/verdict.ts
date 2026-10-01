@@ -104,6 +104,9 @@ function chainQuorum(input: {
         reviewers: outcome.reviewers,
         requiredReviewers: input.requiredReviewers,
         unattributed: outcome.unattributed,
+        // Passed through rather than invented here: the caller computed them from the repository's own state.
+        reachedNewRiskClass: outcome.reachedNewRiskClass,
+        unclassifiedTier: outcome.unclassifiedTier,
     };
 }
 

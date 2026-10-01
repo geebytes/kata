@@ -9,10 +9,10 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { argValue } from './invocation.js';
+import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -28,13 +28,31 @@ import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
-import { RISK_CLASSES, SEVERITIES, type AssuranceLevel, type Challenge, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
 function fail(payload: Record<string, unknown>): void {
     outputResult({ ok: false, ...payload });
     process.exitCode = 1;
+}
+
+/**
+ * The retired assurance floors a document *as offered* carries.
+ *
+ * It reads the raw value rather than the loaded policy, because the reader fills a retired floor with the current default
+ * (that is what keeps a historical document readable) — so a write checked after loading could never see one, and
+ * `--set-file` with a retired floor would silently store the substituted policy. A reader may substitute; a writer must not.
+ */
+function offeredRetiredFloors(parsed: unknown): string[] {
+    if (typeof parsed !== 'object' || parsed === null) return [];
+    const tiers = (parsed as { tiers?: unknown }).tiers;
+    if (typeof tiers !== 'object' || tiers === null) return [];
+    return Object.entries(tiers as Record<string, unknown>)
+        .filter(([, tier]) => typeof tier === 'object' && tier !== null
+            && !isCurrentAssuranceLevel((tier as { assuranceFloor?: unknown }).assuranceFloor)
+            && (tier as { assuranceFloor?: unknown }).assuranceFloor !== undefined)
+        .map(([name, tier]) => `${name}:${String((tier as { assuranceFloor?: unknown }).assuranceFloor)}`);
 }
 
 function nowIso(): string {
@@ -80,6 +98,12 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 
+/** The verbs `runLedgerCommand` dispatches. Kept beside the dispatcher so the refusal cannot list a different set. */
+export const LEDGER_VERBS = [
+    'answer', 'ask', 'baseline', 'challenge', 'claim', 'corpus', 'decide', 'detectability', 'evidence', 'focus',
+    'freeze', 'plan', 'policy', 'replay', 'request-check', 'run', 'status', 'usage', 'verifier',
+] as const;
+
 export async function runLedgerCommand(argv: string[], options: LedgerCommandOptions): Promise<void> {
     // The family reads its own `--change`, because the entry point's positional guesser cannot tell a subcommand from an id:
     // `ledger status --change x` would otherwise read `status` as the change id, which it did until this line existed.
@@ -88,7 +112,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     const ledger = await readLedger(options.root, changeId);
 
     if (sub === 'status') {
-        if (argv.includes('--cost')) {
+        if (switchPresent(argv, '--cost')) {
             // The author-side measurement the round-shaped loop never had, plus the discovery rates it never compared. A
             // rate that cannot be computed is reported as null rather than 0, and the baseline field says so in words.
             outputResult({ ok: true, command: 'ledger status --cost', report: await ledgerReport(options.root, changeId) });
@@ -115,6 +139,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             challenges: ledger.challenges.filter((challenge) => challenge.state === 'open').length,
             runs: ledger.runs.length,
             assurance: ledger.assurance,
+            // The retired values this ledger moved past, published where the current one is — see `Ledger.assuranceHistory`.
+            assuranceHistory: ledger.assuranceHistory,
+            assuranceScope: 'observed means Kata executed evidence in the host-provided runtime; the host platform owns network, filesystem, process and credential isolation',
             usage: ledger.usage,
             note: ledger.recordedFiles.length === 0
                 ? 'nothing has been recorded for this change yet; that is a state, not an empty review'
@@ -143,7 +170,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     }
 
     if (sub === 'policy') {
-        if (argv.includes('--init')) {
+        if (switchPresent(argv, '--init')) {
             await writePolicy(options.root, changeId, defaultPolicy());
             outputResult({ ok: true, command: 'ledger policy', wrote: 'policy.json', tierDefaults: ['standard', 'strict', 'security'] });
             return;
@@ -151,6 +178,21 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const raw = argValue(argv, '--set-file');
         if (raw !== undefined) {
             const parsed = JSON.parse(await readFile(raw, 'utf8')) as unknown;
+            // **The write is judged on what the operator wrote, not on what the reader would fill.** R8-F9 made the policy
+            // *reader* substitute a retired floor (so a historical document stays readable and the substitution is named in
+            // `policyFilled`). This command writes a policy, and a write must not launder a retired value into a current one
+            // through the reader: the document as offered is checked for a retired floor first, and only then loaded.
+            const offeredRetired = offeredRetiredFloors(parsed);
+            if (offeredRetired.length > 0) {
+                fail({
+                    command: 'ledger policy',
+                    // The refusal names the level the operator offered (R15-F1: this site kept the old sentence, which
+                    // said `sandboxed is historical only` even for `signed` — the defect fixed on the store and `decide`
+                    // paths had not been carried to the third site).
+                    error: `cannot write retired assurance floor(s): ${offeredRetired.join(', ')}; these are historical only, not obtainable Kata assurance`,
+                });
+                return;
+            }
             const loaded = loadPolicy(parsed);
             if (!loaded.ok) {
                 fail({ command: 'ledger policy', error: loaded.error });
@@ -166,8 +208,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 at: nowIso(),
                 requireReview: loaded.policy.riskFloorAudit.changesRequireReview,
             });
+            // **The policy write decides first, and the claims follow it.** Measured by an independent review: the claims
+            // were appended before `writePolicy` ran, so a policy the store refuses for a retired floor left the change's
+            // `claims.json` modified — a rejected write with a side effect, while the refusal says nothing was written.
+            // The store's refusal is reported like every other refusal rather than escaping as a thrown error: a caller
+            // reading the envelope has to be able to tell it from a crash.
+            try {
+                await writePolicy(options.root, changeId, loaded.policy);
+            } catch (error) {
+                fail({ command: 'ledger policy', error: (error as Error).message });
+                return;
+            }
             for (const claim of floorClaims) await appendClaim(options.root, changeId, claim);
-            await writePolicy(options.root, changeId, loaded.policy);
             outputResult({ ok: true, command: 'ledger policy', wrote: 'policy.json', floorClaims: floorClaims.map((claim) => claim.id) });
             return;
         }
@@ -250,6 +302,38 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             const reopened = { ...rest, status: 'open' as const, reopens: (claim.reopens ?? 0) + 1 };
             await appendClaim(options.root, changeId, reopened);
             outputResult({ ok: true, command: 'ledger claim reopen', claim: claim.id, reopens: reopened.reopens });
+            return;
+        }
+        if (action === 'restate') {
+            // **A claim's statement can be corrected, and the correction is recorded as a reopen.** R8-F5: AC-6's statement
+            // said the record "is bound to this revision" while the record, the evidence and the test had all moved to what
+            // is provable — so the claim asserted more than its own evidence. Restating it by hand-editing `claims.json` is
+            // not available to an operator, and the ledger is a store of record: the correction goes through the CLI, keeps
+            // the same claim id and evidence, and stamps a reopen so the decision knows the statement changed.
+            const id = argValue(argv, '--id');
+            const statement = argValue(argv, '--statement');
+            if (id === undefined || statement === undefined) {
+                fail({ command: 'ledger claim restate', error: '--id and --statement are both required' });
+                return;
+            }
+            const target = ledger.claims.find((claim) => claim.id === id);
+            if (target === undefined) {
+                fail({ command: 'ledger claim restate', error: `no claim ${id} in this ledger` });
+                return;
+            }
+            if (target.statement === statement) {
+                outputResult({ ok: true, command: 'ledger claim restate', claim: id, changed: false });
+                return;
+            }
+            await restateClaim(options.root, changeId, id, statement);
+            outputResult({
+                ok: true,
+                command: 'ledger claim restate',
+                claim: id,
+                changed: true,
+                previous: target.statement,
+                note: 'the claim was restated; its existing readings are reviewed by their own binding, and the statement itself is re-read against its evidence',
+            });
             return;
         }
         if (action === 'add') {
@@ -422,7 +506,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             // **Recorded, not merely reported.** The adapter's assurance is a measured fact about the round that just ran,
             // and gating the write on a flag is how a change whose checks kata itself observed came to be judged as having
             // no provenance at all: the value appeared in the result and nothing stored it.
-            const assurance = await ensureAssurance(options.root, changeId, adapter.assurance as AssuranceLevel);
+            const assurance = await ensureAssurance(options.root, changeId, adapter.assurance);
             outputResult({
                 ok: true,
                 command: 'ledger evidence verify',
@@ -707,6 +791,20 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');
         const assuranceFlag = argValue(argv, '--assurance');
+        if (assuranceFlag !== undefined && !isCurrentAssuranceLevel(assuranceFlag)) {
+            fail({
+                command: 'ledger decide',
+                // The retired value is named rather than compared: a reader of this refusal sees the whole
+                // vocabulary, not a third spelling of the one value that is gone.
+                // **The refusal names the value the operator actually gave.** R8-F1: the branch fires for *any* legacy
+                // level, and its message was written for one of them, so `decide --assurance signed` was refused with a
+                // sentence about `sandboxed` — a value nobody had typed. It names the input now, and then the vocabulary.
+                error: (LEGACY_ASSURANCE_LEVELS as readonly string[]).includes(assuranceFlag)
+                    ? `${assuranceFlag} is a historical assurance level, not a current Kata override; execution isolation is owned by the host platform`
+                    : `--assurance must be one of ${ASSURANCE_LEVELS.join(', ')}`,
+            });
+            return;
+        }
         // **The party asking is passed, so the independence check can fire.** It could not before: `decide` takes an
         // `actor` and no caller supplied one, so `same_actor` was unreachable from every command while the operations guide
         // described it as live. Measured by an independent review. Same resolution as a reading's producer, so an operator
@@ -717,7 +815,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             changeId,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
             ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
-            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as AssuranceLevel }),
+            ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as CurrentAssuranceLevel }),
             ...(decidingActor === undefined || decidingActor === '' ? {} : { actor: decidingActor }),
         });
         if (verdict.kind !== 'decided') {
@@ -769,7 +867,32 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger run', error: built.why });
             return;
         }
-        outputResult({ ok: true, command: 'ledger run', request: built.request });
+        // Both spellings, resolved in one place: G-5 fixed `--result-file` only, so `--out=path` was recognised as
+        // "given" and then read as "not given" — a refusal that told the operator to supply the path it already supplied.
+        // The companion predicate asks the shared reader (R5-F5 shape, and now the one entry point).
+        const outRequested = flagPresent(argv, '--out');
+        const out = argValue(argv, '--out');
+        if (outRequested && !out) {
+            fail({ command: 'ledger run', error: '--out requires a workspace-relative file path' });
+            return;
+        }
+        if (out) {
+            // **The same containment the result path uses**, so a symlinked directory cannot send the request outside
+            // the workspace while the path still looks relative. A second copy of this rule is the defect this
+            // repository removes most often, and only one of the two copies would get fixed.
+            const outputPath = containedPath(options.root, out);
+            if (!outputPath) {
+                fail({ command: 'ledger run', error: `--out must stay inside the workspace: ${out}` });
+                return;
+            }
+            try {
+                await writeFile(outputPath, `${JSON.stringify(built.request, null, 2)}\n`, 'utf8');
+            } catch (error) {
+                fail({ command: 'ledger run', error: `cannot write ReviewRequest to ${out}: ${(error as Error).message}` });
+                return;
+            }
+        }
+        outputResult({ ok: true, command: 'ledger run', request: built.request, ...(out ? { out } : {}) });
         return;
     }
 
@@ -869,5 +992,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         return;
     }
 
-    fail({ command: 'ledger', error: `unknown verb "${sub}"`, verbs: ['status', 'freeze', 'policy', 'claim', 'evidence', 'challenge', 'plan', 'decide', 'focus'] });
+    // **The list is the dispatcher's, not a hand-kept subset.** It named nine of the nineteen verbs, so an operator who
+    // mistyped `ledger run` was told the verb does not exist while `ledger run` is exactly what the review node's own
+    // contract hands them. Derived from the handlers' `sub` literals so a rename cannot leave this behind.
+    fail({
+        command: 'ledger',
+        error: `unknown verb "${sub}"`,
+        verbs: [...new Set([...LEDGER_VERBS])].sort(),
+    });
 }

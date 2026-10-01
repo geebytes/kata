@@ -1,3 +1,4 @@
+import { readFlag, splitFlag, switchPresent } from './invocation.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
@@ -25,17 +26,29 @@ import { parseDelegationArgs } from './handoff.js';
  */
 
 export async function runEvalCommand(argv: string[]): Promise<Record<string, unknown>> {
-    const [manifestPath, ...rest] = argv.filter((arg) => arg !== '--json' && arg !== '--quiet');
+    // A switch is a switch in either spelling, through the shared reader (T6-1/F-1).
+    const [manifestPath, ...rest] = argv.filter((arg) => !switchPresent([arg], '--json') && !switchPresent([arg], '--quiet'));
     if (!manifestPath || manifestPath.startsWith('--')) {
         throw new Error('Usage: kata-cli eval <manifest.json> [--persist <report.json>] [--root <path>]');
     }
-    const rootIndex = rest.indexOf('--root');
-    const root = rootIndex >= 0 ? rest[rootIndex + 1] ?? resolveWorkspaceRoot() : resolveWorkspaceRoot();
+    // R12-F4: `--persist=…` produced no report file while the command reported success, and `--root=` fell back to
+    // workspace discovery. Both are documented value flags, so both go through the one reader.
+    const rootRead = readFlag(rest, '--root');
+    if (rootRead.present && rootRead.value === undefined) {
+        // R12-F6: `--root=` fell back to workspace discovery — a named root silently ignored. Present-but-empty says so.
+        throw new Error('Invalid root: --root requires a path.');
+    }
+    const root = rootRead.value ?? resolveWorkspaceRoot();
     const manifest = await loadEvaluationManifest(manifestPath);
     const report = await runEvaluation(manifest, root);
 
-    const persistIndex = rest.indexOf('--persist');
-    const persistPath = persistIndex >= 0 ? rest[persistIndex + 1] : undefined;
+    const persistRead = readFlag(rest, '--persist');
+    if (persistRead.present && persistRead.value === undefined) {
+        // R12-F6: `--persist=` produced no file while the command reported success — the report the operator asked for
+        // was silently not written.
+        throw new Error('Invalid persist path: --persist requires a path.');
+    }
+    const persistPath = persistRead.value;
     if (persistPath) await persistEvaluationReport(report, persistPath);
 
     return {
@@ -354,16 +367,19 @@ export async function runCometCommand(argv: string[], root = resolveWorkspaceRoo
 export function parseCometArgs(argv: string[]): { version?: string; change?: string } {
     const args: { version?: string; change?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if ((arg === '--version' || arg === '-v') && value !== undefined) {
             args.version = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--change' && value !== undefined) {
             args.change = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg !== undefined) {
-            throw new Error(`Unknown comet option: ${arg}`);
+            throw new Error(`Unknown comet option: ${argv[index]}`);
         }
     }
     return args;

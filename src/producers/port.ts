@@ -5,7 +5,7 @@
  * decides** (a verdict), and the two are never the same party for the same item. That is what replaces the receipt: the
  * evidence is re-decided by execution rather than trusted because of where it came from.
  */
-import type { AssuranceLevel, Claim, Evidence, EvidenceType, EvidenceVerdict, Subject, VerdictProducer } from '../kernel/types.js';
+import type { CurrentAssuranceLevel, Claim, Evidence, EvidenceType, EvidenceVerdict, Subject, VerdictProducer } from '../kernel/types.js';
 
 export type CommandOutcome = { code: number; stdout: string; stderr: string; timedOut: boolean };
 
@@ -44,7 +44,7 @@ export type EvidenceVerifier = {
  */
 export type EvidenceAdapter = {
     id: string;
-    assurance: AssuranceLevel;
+    assurance: CurrentAssuranceLevel;
     /** Capabilities this adapter can actually provide, in the neutral vocabulary. Declared, then refuted by use. */
     capabilities: string[];
     verify: (evidence: Evidence, context: VerifyContext) => Promise<EvidenceVerdict>;

@@ -77,6 +77,23 @@ Run kata-cli handoff verify --task <change-id> --id <handoff-id>, kata-cli hando
 
 The packet's allowed writes and guard instructions are authoritative. Model selection belongs to the host platform and never bypasses CI, tests, Reviewer, or Judge.
 
+## Node contract
+
+What this node consumes, produces, and asks. The input of a node is the **deterministic output of the previous node**,
+not a summary of it: hand a reader the artefact itself, so the next node can be pointed at the same thing.
+
+**Inputs**
+
+- **the review findings and the approved revision** — from `kata-review` — `.kata/tasks/<id>/review.json`
+- **the decision derived from the evidence** — `kata-cli ledger decide --change <id>`
+
+**Outputs**
+
+- **the judge result for the current revision** — `.kata/tasks/<id>/judge.json`
+
+**Interaction**
+
+- **the archive decision after a judge result is the operator's** — `kata-cli gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated>`
 ## Skill automation contract
 
 The Skill MUST run these commands itself. Do not ask the user to copy or type them unless the platform cannot execute shell commands.

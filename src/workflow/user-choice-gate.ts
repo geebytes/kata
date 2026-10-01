@@ -45,6 +45,9 @@ export function gateRebuildInstruction(boundary: UserChoiceBoundary): string {
 }
 export type UserChoice = 'continue_current' | 'switched' | 'delegated';
 
+/** The answers a gate accepts, as a value rather than as a union with no runtime form. */
+export const USER_CHOICES = ['continue_current', 'switched', 'delegated'] as const satisfies readonly UserChoice[];
+
 /**
  * A choice the human made **for the whole task**, recorded only when they say so.
  *
