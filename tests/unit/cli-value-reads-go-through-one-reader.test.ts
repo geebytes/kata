@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
     argValue, flagPresent, inlineValue, paradeArgValue, readFlag, splitFlag,
 } from '../../src/cli/invocation.js';
+import { scanHandRolledFlagLookups } from '../helpers/cli-flag-scan.js';
 
 const cliDir = join(import.meta.dirname, '..', '..', 'src', 'cli');
 const cliRoot = join(import.meta.dirname, '..', '..', 'src', 'cli.ts');
@@ -13,39 +14,70 @@ async function cliSources(): Promise<Array<{ path: string; text: string }>> {
     return Promise.all(files.map(async (path) => ({ path, text: await readFile(path, 'utf8') })));
 }
 
-/** Comments and string bodies blanked (newlines kept), so prose about a pattern is not read as the pattern. */
-function codeOnly(text: string): string {
-    return text
-        .replace(/\/\*[\s\S]*?\*\//gu, (block) => block.replace(/[^\n]/gu, ' '))
-        .replace(/(^|[^:])\/\/[^\n]*/gu, (match, prefix: string) => prefix + ' '.repeat(match.length - prefix.length))
-        .replace(/'(?:[^'\\\n]|\\.)*'/gu, (literal) => `'${' '.repeat(Math.max(0, literal.length - 2))}'`)
-        .replace(/`(?:[^`\\]|\\.)*`/gu, (literal) => `\`${' '.repeat(Math.max(0, literal.length - 2))}\``);
-}
-
 /**
- * **The class, enforced rather than restated.** Four review rounds each found the same shape — one rule
- * (`--flag value` and `--flag=value` are one flag; "absent" and "present but empty" are two facts) applied to the
- * readers that had been named and not to the adjacent ones. Fixing instances one at a time kept producing new
- * instances, so the rule is enforced here: a hand-rolled `argv.indexOf('--x')` / `argv.includes('--x')` /
- * `argv[i + 1]` in `src/cli/**` fails this case, and every value read goes through `readFlag`.
+ * **Samples that must be caught, first.** The previous version of this guard blanked quoted literals before looking for a
+ * pattern that began with a quote, so two of its rules could never match and it called 21 live occurrences clean while its
+ * own case stayed green. A rule that cannot be shown to fire is not a rule, so these come before the scan of the tree.
  */
+const MUST_CATCH: Array<{ why: string; source: string }> = [
+    {
+        why: 'whole-token lookup',
+        source: "const index = argv.indexOf('--root');\n",
+    },
+    {
+        why: 'whole-token presence check',
+        source: "if (argv.includes('--platform')) return true;\n",
+    },
+    {
+        why: 'next token read with no guard',
+        source: "const value = inline ?? argv[index + 1];\n",
+    },
+    {
+        why: 'next token read behind a slice',
+        source: "const value = argv.slice(index + 1)[0];\n",
+    },
+    {
+        why: 'flag name held in a variable',
+        source: "const flag = '--root';\nconst present = argv.some((token) => token.startsWith(`${flag}`));\n",
+    },
+    {
+        why: 'next token read behind readFlag().present, still unguarded',
+        source: "const value = readFlag(argv, '--root').present ? argv[index + 1] : undefined;\n",
+    },
+];
+
+/** And samples that must pass, so the guard is not just "everything is an offence". */
+const MUST_PASS: Array<{ why: string; source: string }> = [
+    { why: 'the shared reader', source: "const value = readFlag(argv, '--root').value;\n" },
+    { why: 'repeated values through the shared reader', source: "const values = paradeArgValue(argv, '--owned-path');\n" },
+    {
+        why: 'inline plus a guarded neighbour',
+        source: "const value = inline ?? (value2 === undefined || value2.startsWith('--') ? undefined : value2);\n",
+    },
+    { why: 'previous-token read, not a neighbour read', source: "const previous = argv[index - 1];\n" },
+    { why: 'a comment about the pattern is not the pattern', source: "// argv.indexOf('--root') is forbidden here\n" },
+];
+
 describe('CLI value reads go through one reader', () => {
+    it('catches every shape it claims to forbid, on samples that must be caught', () => {
+        for (const sample of MUST_CATCH) {
+            const offences = scanHandRolledFlagLookups(sample.source);
+            expect(offences.length, `${sample.why} was not caught:\n${sample.source}`).toBeGreaterThan(0);
+        }
+    });
+
+    it('passes the shapes that are the reader itself', () => {
+        for (const sample of MUST_PASS) {
+            expect(scanHandRolledFlagLookups(sample.source), `${sample.why} was wrongly flagged:\n${sample.source}`).toEqual([]);
+        }
+    });
+
     it('finds no hand-rolled flag lookup left in src/cli', async () => {
         const offences: string[] = [];
         for (const { path, text } of await cliSources()) {
             if (path.endsWith('invocation.ts')) continue;
-            const code = codeOnly(text);
-            const lines = code.split('\n');
-            for (const [index, line] of lines.entries()) {
-                // `argv[i + 1]` is allowed only on a line that also takes the inline value from `splitFlag`, because
-                // that is the shape in which both spellings and the flag-is-not-a-value guard are present together.
-                const handRolled = /argv\s*\.\s*indexOf\(\s*'--/u.test(line)
-                    || /argv\s*\.\s*includes\(\s*'--/u.test(line);
-                const nextToken = /argv\s*\[\s*[A-Za-z_$][\w$.]*\s*\+\s*1\s*\]/u.test(line);
-                const pairedWithInline = /splitFlag\(/u.test(line) || /inline\s*\?\?/u.test(line) || /readFlag\(/u.test(line);
-                if (handRolled || (nextToken && !pairedWithInline)) {
-                    offences.push(`${path}:${index + 1}  ${line.trim()}`);
-                }
+            for (const offence of scanHandRolledFlagLookups(text, { allowReader: true })) {
+                offences.push(`${path}:${offence.line}  ${offence.text}  [${offence.why}]`);
             }
         }
         expect(offences, `hand-rolled flag lookups must go through readFlag:\n${offences.join('\n')}`).toEqual([]);
@@ -57,12 +89,8 @@ describe('CLI value reads go through one reader', () => {
         expect(readFlag(['--root'], '--root')).toEqual({ present: true, value: undefined });
         expect(readFlag(['--root='], '--root')).toEqual({ present: true, value: undefined });
         expect(readFlag([], '--root')).toEqual({ present: false, value: undefined });
-
-        // A flag is not the next flag's value — the guard R10-F1 showed was missing in the installer loop.
         expect(readFlag(['--root', '--dry-run'], '--root')).toEqual({ present: true, value: undefined });
-        expect(readFlag(['--root', '--dry-run'], '--root').value).toBeUndefined();
 
-        // The aliases are the same reader, so a fix in one cannot diverge from the others.
         expect(argValue(['--root=/ws'], '--root')).toBe('/ws');
         expect(argValue(['--root', '/ws'], '--root')).toBe('/ws');
         expect(inlineValue(['--root=/ws'], '--root')).toBe('/ws');
@@ -70,17 +98,22 @@ describe('CLI value reads go through one reader', () => {
         expect(splitFlag('--root=/ws')).toEqual({ flag: '--root', inline: '/ws' });
         expect(paradeArgValue(['--owned-path=a', '--owned-path=b'], '--owned-path')).toEqual(['a', 'b']);
         expect(paradeArgValue(['--owned-path', 'a', '--owned-path=b'], '--owned-path')).toEqual(['a', 'b']);
+
+        // **Position decides, not spelling.** Scanning every inline token before the spaced ones made the *later* one win,
+        // so a sliced read (`readFlag(argv.slice(i), flag)`) answered with a flag that came after the neighbour — measured
+        // as `paradeArgValue(['--owned-path', 'a', '--owned-path=b'])` returning `['b','b']`. Found by a probe, so it gets
+        // a case: the first occurrence in order is the answer.
+        expect(readFlag(['--root', '/ws', '--root=/other'], '--root')).toEqual({ present: true, value: '/ws' });
+        expect(readFlag(['--root=/other', '--root', '/ws'], '--root')).toEqual({ present: true, value: '/other' });
+        expect(readFlag(['--root', '--dry-run', '--root=/other'], '--root').value).toBeUndefined();
     });
 
     it('pins the two choices the review found unpinned: repeated inline values and an empty inline value', async () => {
-        // R12-F12: disabling the inline branch of `repeatedValues` left the whole suite green, and so did making
-        // `argValue` return an empty string instead of `undefined`. Both were real choices with no case behind them.
         const { repeatedValues } = await import('../../src/cli/workflow.js');
         expect(repeatedValues(['--reviewed-path=a.ts', '--reviewed-path=b.ts'], '--reviewed-path')).toEqual(['a.ts', 'b.ts']);
         expect(repeatedValues(['--reviewed-path', 'a.ts'], '--reviewed-path')).toEqual(['a.ts']);
         expect(() => repeatedValues(['--reviewed-path='], '--reviewed-path')).toThrow(/requires a value/u);
 
-        // An empty inline value is "no value", not the empty string: `argValue(...) ?? fallback` must fall back.
         expect(argValue(['--seed='], '--seed')).toBeUndefined();
         expect(argValue(['--seed='], '--seed') ?? 'default').toBe('default');
     });

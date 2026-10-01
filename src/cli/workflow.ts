@@ -43,7 +43,7 @@ import { type KataCommand } from '../workflow/orchestrator.js';
 import { validateMatrix, validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
 import type { AcceptanceMatrix, ClaimDeclaration, UpstreamCoverage } from '../core/task.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';
-import { argValue, flagPresent, paradeArgValue, parseChangeArg, readFlag } from './invocation.js';
+import { argValue, flagPresent, paradeArgValue, parseChangeArg, readFlag, switchPresent } from './invocation.js';
 export { flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 
@@ -79,7 +79,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     const explicitChange = parseChangeArg(argv.slice(1));
     let workflowProfile = requiresWorkflowProfile(command) ? await resolveWorkflowProfile(command, argv) : undefined;
     const abortController = command === 'build' ? new AbortController() : undefined;
-    const onProgress = command === 'build' && argv.includes('--seal')
+    const onProgress = command === 'build' && switchPresent(argv, '--seal')
         ? (event: { type: string; check: string; state: string; timeoutMs: number; exitCode?: number | null }) => {
             process.stderr.write(`${JSON.stringify(event)}\n`);
         }
@@ -108,13 +108,13 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
             ? { acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }] }
             : {}),
         ...(platform ? { platform } : {}),
-        ...(commandToRun === 'build' ? { seal: argv.includes('--seal') } : {}),
+        ...(commandToRun === 'build' ? { seal: switchPresent(argv, '--seal') } : {}),
         ...(commandToRun === 'build' && argValue(argv, '--judgement')
             ? { judgement: argValue(argv, '--judgement') as string }
             : {}),
         // The frozen tier is opt-in per run: a seal defers `tier: 'frozen'` checks and names them unless asked.
-        ...(commandToRun === 'build' ? { frozen: argv.includes('--frozen') } : {}),
-        ...(command === 'review' ? { approve: argv.includes('--approve') } : {}),
+        ...(commandToRun === 'build' ? { frozen: switchPresent(argv, '--frozen') } : {}),
+        ...(command === 'review' ? { approve: switchPresent(argv, '--approve') } : {}),
         ...(command === 'review' && reviewEvidenceArg(argv) ? { reviewEvidence: reviewEvidenceArg(argv) } : {}),
         // The flag's presence is what selects the result path: a malformed value must fail by name in the
         // orchestrator rather than silently degrade into the plain review route (F-5).
@@ -128,11 +128,11 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         ...(command === 'archive' && argValue(argv, '--findings-carried-to')
             ? { findingsCarriedTo: argValue(argv, '--findings-carried-to') as string }
             : {}),
-        ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: argv.includes('--allow-ownership-conflicts') } : {}),
-        ...(commandToRun === 'build' ? { allowOutOfScopeRepair: argv.includes('--allow-out-of-scope-repair') } : {}),
-        ...(commandToRun === 'build' ? { listChecks: argv.includes('--list-checks') } : {}),
-        ...(commandToRun === 'build' && (argv.includes('--discover-checks') || argv.includes('--no-discover-checks'))
-            ? { discoverChecks: argv.includes('--discover-checks') && !argv.includes('--no-discover-checks') }
+        ...((commandToRun === 'open' || commandToRun === 'build') ? { allowOwnershipConflicts: switchPresent(argv, '--allow-ownership-conflicts') } : {}),
+        ...(commandToRun === 'build' ? { allowOutOfScopeRepair: switchPresent(argv, '--allow-out-of-scope-repair') } : {}),
+        ...(commandToRun === 'build' ? { listChecks: switchPresent(argv, '--list-checks') } : {}),
+        ...(commandToRun === 'build' && (switchPresent(argv, '--discover-checks') || switchPresent(argv, '--no-discover-checks'))
+            ? { discoverChecks: switchPresent(argv, '--discover-checks') && !switchPresent(argv, '--no-discover-checks') }
             : {}),
         ...(waivers ? { waivers } : {}),
         ...(commandToRun === 'open' && bootstrap ? { bootstrap } : {}),
@@ -147,7 +147,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     // **One table, read in this direction too.** The chain that used to live here was the only statement of which command
     // creates which gate, so the refusal that tells an operator how to rebuild one had nothing to read from.
     const nextBoundary = result.success
-        ? boundaryCreatedBy(result.phase, command, argv.includes('--approve'))
+        ? boundaryCreatedBy(result.phase, command, switchPresent(argv, '--approve'))
         : null;
     if (nextBoundary) await createUserChoiceGate({ root, taskId: result.taskId, boundary: nextBoundary });
     if (result.success && workflowProfile?.isolationMode === 'git_flow') {
@@ -303,7 +303,7 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
     if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
     // --for-task records the same answer for the whole task: the boundaries still exist and are still recorded, they
     // just stop asking the same human the same question (and they report when they reuse the answer).
-    const forTask = argv.includes('--for-task');
+    const forTask = switchPresent(argv, '--for-task');
     await approveUserChoiceGate({ root, taskId: task, boundary, choice, forTask });
     return {
         command: 'gate approve',
@@ -554,8 +554,12 @@ export async function readBootstrapFile(argv: string[]): Promise<{
     acceptanceMatrix?: AcceptanceMatrix;
     upstreamCoverage?: UpstreamCoverage;
 } | undefined> {
+    // R12-F5: `--bootstrap-file=` returned `undefined` — a supplied declaration silently dropped — while the sibling
+    // readers threw for the same input. Absent and present-but-empty are two facts, and this is the one that decides
+    // whether a task is created with the declaration the operator supplied.
+    if (!flagPresent(argv, '--bootstrap-file')) return undefined;
     const path = argValue(argv, '--bootstrap-file');
-    if (!path) return undefined;
+    if (!path) throw new Error('Invalid bootstrap file: --bootstrap-file requires a path.');
 
     let parsed: unknown;
     try {

@@ -1,4 +1,4 @@
-import { splitFlag } from './invocation.js';
+import { splitFlag, switchPresent } from './invocation.js';
 import { flagPresent } from './workflow.js';
 import { platformDefinitionById } from '../adapters/platforms.js';
 import { doctor } from '../adapters/doctor.js';
@@ -101,8 +101,8 @@ function skipRuntimeRefresh(reason: string): RuntimeRefreshResult {
 export type RefreshPolicy = 'auto' | 'always' | 'never';
 
 export function refreshPolicyFromArgs(argv: string[]): RefreshPolicy {
-    if (argv.includes('--refresh')) return 'always';
-    if (argv.includes('--no-refresh')) return 'never';
+    if (switchPresent(argv, '--refresh')) return 'always';
+    if (switchPresent(argv, '--no-refresh')) return 'never';
     return 'auto';
 }
 
@@ -295,7 +295,10 @@ export function parseInstallerArgs(
         // the docblock beside `splitFlag` — added in this same change — named exactly that shape as one it fixed. The
         // comparison is on the flag name and the inline value is taken from the token, so an `=` form consumes nothing.
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--platform' && value !== undefined) {
             platform = parsePlatform(value);
             if (inline === undefined) index += 1;
@@ -325,7 +328,23 @@ export function parseInstallerArgs(
         } else if (arg === '--refresh' || arg === '--no-refresh') {
             // Consumed by `refreshPolicyFromArgs`; accepted here so the parser does not reject it.
         } else if (arg !== undefined) {
-            throw new Error(`Unknown installer option: ${argv[index]}`);
+            // **A known switch is a known option in either spelling.** `--dry-run=1` (or any inline value on a switch)
+            // reached this branch and was refused as unknown, because the arm below compares the bare flag name only.
+            const knownSwitch = ['--dry-run', '--force', '--no-wiki', '--yes', '--refresh', '--no-refresh'];
+            const valueFlags = ['--platform', '--scope', '--root', '--home', '--language', '--wiki-from'];
+            if (knownSwitch.includes(arg)) {
+                if (arg === '--dry-run') options.dryRun = true;
+                else if (arg === '--force') options.force = true;
+                else if (arg === '--no-wiki') options.noWiki = true;
+                else if (arg === '--yes') yes = true;
+            } else if (valueFlags.includes(arg)) {
+                // **A value flag with no value says so.** R12-F1: `--root --dry-run` used to fall through to "unknown
+                // option: --root", which names the wrong problem — the operator wrote a valid flag and omitted its value,
+                // and the flag that followed was not consumed as one.
+                throw new Error(`${arg} requires a value; ${neighbour ?? 'nothing'} followed it instead`);
+            } else {
+                throw new Error(`Unknown installer option: ${argv[index]}`);
+            }
         }
     }
 

@@ -277,7 +277,10 @@ export function parseWikiArgs(argv: string[]): WikiArgs {
     for (let index = 0; index < argv.length; index += 1) {
         // Both spellings, through the one reader (R12-F13).
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--from' && value !== undefined && !value.startsWith('--')) {
             args.from = value;
             if (inline === undefined) index += 1;

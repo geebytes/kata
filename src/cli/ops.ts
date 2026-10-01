@@ -32,11 +32,22 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
     }
     // R12-F4: `--persist=…` produced no report file while the command reported success, and `--root=` fell back to
     // workspace discovery. Both are documented value flags, so both go through the one reader.
-    const root = readFlag(rest, '--root').value ?? resolveWorkspaceRoot();
+    const rootRead = readFlag(rest, '--root');
+    if (rootRead.present && rootRead.value === undefined) {
+        // R12-F6: `--root=` fell back to workspace discovery — a named root silently ignored. Present-but-empty says so.
+        throw new Error('Invalid root: --root requires a path.');
+    }
+    const root = rootRead.value ?? resolveWorkspaceRoot();
     const manifest = await loadEvaluationManifest(manifestPath);
     const report = await runEvaluation(manifest, root);
 
-    const persistPath = readFlag(rest, '--persist').value;
+    const persistRead = readFlag(rest, '--persist');
+    if (persistRead.present && persistRead.value === undefined) {
+        // R12-F6: `--persist=` produced no file while the command reported success — the report the operator asked for
+        // was silently not written.
+        throw new Error('Invalid persist path: --persist requires a path.');
+    }
+    const persistPath = persistRead.value;
     if (persistPath) await persistEvaluationReport(report, persistPath);
 
     return {
@@ -356,7 +367,10 @@ export function parseCometArgs(argv: string[]): { version?: string; change?: str
     const args: { version?: string; change?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if ((arg === '--version' || arg === '-v') && value !== undefined) {
             args.version = value;
             if (inline === undefined) index += 1;

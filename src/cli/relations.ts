@@ -1,4 +1,4 @@
-import { splitFlag } from './invocation.js';
+import { splitFlag, switchPresent } from './invocation.js';
 import { readFile } from 'node:fs/promises';
 import {
     addKataRelation,
@@ -40,7 +40,7 @@ export async function runGitFlowCommand(argv: string[], root: string): Promise<R
         throw new Error(`Task ${taskId} does not use Git Flow isolation`);
     }
     const inspected = inspectGitFlow(root, taskId, undefined, gitFlowBranchKindForProfile(task.workflowProfile));
-    if (inspected.status === 'pending_confirmation' && !argv.includes('--confirm')) {
+    if (inspected.status === 'pending_confirmation' && !switchPresent(argv, '--confirm')) {
         return {
             command: 'git-flow apply', taskId, workflowProfile: task.workflowProfile,
             nextAction: {
@@ -118,7 +118,10 @@ function parseRelationsArgs(argv: string[]): {
     for (let index = 0; index < argv.length; index += 1) {
         // Hand-written comparison, both spellings: `--from=task:a` and `--from task:a` are the same flag (R8-F4).
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--from' && value !== undefined) {
             args.from = value;
             if (inline === undefined) index += 1;

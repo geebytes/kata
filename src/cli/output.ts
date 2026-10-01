@@ -1,3 +1,4 @@
+import { switchPresent } from './invocation.js';
 /**
  * Where an invocation writes, and in what shape.
  *
@@ -90,11 +91,11 @@ export function writeProgress(message: string): void {
 }
 
 export function isQuietOutput(argv: string[]): boolean {
-    return process.env.STRATA_QUIET === '1' || process.env.STRATA_QUIET === 'true' || argv.includes('--quiet');
+    return process.env.STRATA_QUIET === '1' || process.env.STRATA_QUIET === 'true' || switchPresent(argv, '--quiet');
 }
 
 export function isJsonOutput(argv: string[]): boolean {
-    return argv.includes('--json') || process.env.STRATA_JSON === '1' || process.env.STRATA_JSON === 'true';
+    return switchPresent(argv, '--json') || process.env.STRATA_JSON === '1' || process.env.STRATA_JSON === 'true';
 }
 
 export function isDefaultSilentInstallerCommand(argv: string[]): boolean {
@@ -103,7 +104,7 @@ export function isDefaultSilentInstallerCommand(argv: string[]): boolean {
     // progress rather than return a document — but `--help` asked for the document, and the silence rule swallowed it:
     // `kata-cli init --help` printed nothing at all. The guard in the dispatcher fired and its answer went nowhere, which
     // is why this defect had two independent causes and the second one hid behind the first.
-    const askedForHelp = argv.includes('--help') || argv.includes('-h');
+    const askedForHelp = switchPresent(argv, '--help') || argv.includes('-h');
     return (command === 'init' || command === 'uninstall') && !isJsonOutput(argv) && !askedForHelp;
 }
 

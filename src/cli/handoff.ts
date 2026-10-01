@@ -131,7 +131,10 @@ export function parseDelegationArgs(argv: string[]): DelegationArgs {
         // R12-F13: both spellings, through `splitFlag`. This loop compared whole tokens, so `--change --role reviewer`
         // silently took `--role` as the change id (the guard was "is the next token a flag", which this never asked).
         const { flag: key, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (key === '--change' || key === '--task') {
             if (value === undefined || value.startsWith('--')) throw new Error(`${key} requires a value`);
             args.change = value; if (inline === undefined) index += 1; continue;
@@ -194,7 +197,10 @@ export function parseHandoffArgs(argv: string[]): { task?: string; id?: string; 
     for (let index = 0; index < argv.length; index += 1) {
         // Both spellings, and a flag is never the next flag's value (R12-F13).
         const { flag: key, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         const target = key === '--task' ? 'task' : key === '--id' ? 'id' : key === '--from' ? 'from' : key === '--to' ? 'to' : key === '--role' ? 'role' : key === '--platform' ? 'platform' : key === '--root' ? 'root' : undefined;
         if (!target || value === undefined || value.startsWith('--')) throw new Error(`Unknown handoff option: ${argv[index]}`);
         args[target] = value; if (inline === undefined) index += 1;

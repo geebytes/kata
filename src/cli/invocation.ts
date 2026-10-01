@@ -17,6 +17,17 @@ export function flagPresent(argv: string[], flag: string): boolean {
     return readFlag(argv, flag).present;
 }
 
+/**
+ * Whether a boolean switch was given, in either spelling.
+ *
+ * A switch carries no value, but it is still a flag: `--seal=1` and `--seal` are the same switch, and two spellings of
+ * "is it present" is the same divergence the value readers had — an independent review found `argv.includes('--seal')`
+ * and `flagPresent(argv, '--seal')` answering `false` and `true` for one input. This is the name every switch read uses.
+ */
+export function switchPresent(argv: string[], flag: string): boolean {
+    return readFlag(argv, flag).present;
+}
+
 export function readFlag(argv: string[], flag: string): { present: boolean; value: string | undefined } {
     // **The one entry point for a CLI value read.** Rounds 9–12 each found the same shape: the rule below reached the
     // readers that had been named and not the adjacent hand-rolled ones, so `--root --dry-run` set a *directory* named
@@ -28,13 +39,17 @@ export function readFlag(argv: string[], flag: string): { present: boolean; valu
     //
     // A flag never takes the next token when that token is itself a flag: measured, `installer --root --dry-run` wrote
     // 14 files outside the intended root because the guard lived in `argValue` and not in the loop that called it.
-    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
-    if (inline !== undefined) {
-        const value = inline.slice(flag.length + 1);
-        return { present: true, value: value.trim() === '' ? undefined : value };
-    }
+    // **Position decides, not spelling.** Scanning all inline tokens first made `readFlag(['--root', '/ws', '--root=/other'])`
+    // answer `/other`: an inline occurrence *later* in the argument list outranked the token next to the flag. The first
+    // occurrence in order is the one the operator wrote first, so the tokens are walked in order and the first match wins —
+    // measured slip: `paradeArgValue(['--owned-path', 'a', '--owned-path=b'])` returned `['b','b']`.
     for (let index = 0; index < argv.length; index += 1) {
-        if (argv[index] !== flag) continue;
+        const token = argv[index] ?? '';
+        if (token.startsWith(`${flag}=`)) {
+            const value = token.slice(flag.length + 1);
+            return { present: true, value: value.trim() === '' ? undefined : value };
+        }
+        if (token !== flag) continue;
         const next = argv[index + 1];
         return { present: true, value: next === undefined || next.startsWith('--') ? undefined : next };
     }
@@ -43,20 +58,21 @@ export function readFlag(argv: string[], flag: string): { present: boolean; valu
 
 /** Every occurrence of a repeated value flag, either spelling. `--owned-path a --owned-path=b` is two declarations. */
 export function paradeArgValue(argv: string[], flag: string): string[] {
+    // R12-F8: this used to carry its own copy of "both spellings + skip the neighbour + drop an empty inline value" —
+    // the same rule in two places. The neighbour guard now comes from `readFlag` (one rule, one place); the loop only
+    // walks positions.
     const values: string[] = [];
     for (let index = 0; index < argv.length; index += 1) {
-        const token = argv[index] ?? '';
-        if (token === flag) {
-            const next = argv[index + 1];
-            if (next !== undefined && !next.startsWith('--')) {
-                values.push(next);
-                index += 1;
-            }
+        const { flag: name, inline } = splitFlag(argv[index] ?? '');
+        if (name !== flag) continue;
+        if (inline !== undefined) {
+            if (inline.trim() !== '') values.push(inline);
             continue;
         }
-        if (token.startsWith(`${flag}=`)) {
-            const value = token.slice(flag.length + 1);
-            if (value.trim() !== '') values.push(value);
+        const spaced = readFlag(argv.slice(index), flag).value;
+        if (spaced !== undefined) {
+            values.push(spaced);
+            index += 1;
         }
     }
     return values;
@@ -94,13 +110,9 @@ export const VALUE_FLAGS: readonly string[] = [
 ];
 
 export function parseRootArg(argv: string[]): string | undefined {
-    const inline = inlineValue(argv, '--root');
-    if (inline !== undefined) return inline;
-    const index = argv.indexOf('--root');
-    const value = index >= 0 ? argv[index + 1] : undefined;
-    // **A flag's value is not the next flag.** Measured: `--root --change=c1` returned `"--change=c1"` as the root, so the
-    // command ran against a workspace named after a flag. The spaced form takes the next token only when it is a value.
-    return value === undefined || value.startsWith('--') ? undefined : value;
+    // R12-F8: the inlined copy of the spaced-form fallback lived here too. `readFlag` answers both spellings and refuses
+    // to take the next flag as a value, so this is one line rather than a second implementation of the same rule.
+    return readFlag(argv, '--root').value;
 }
 
 export function parseChangeArg(argv: string[]): string | undefined {

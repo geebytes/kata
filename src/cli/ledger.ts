@@ -9,7 +9,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { argValue } from './invocation.js';
+import { argValue, switchPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
 import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
@@ -112,7 +112,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     const ledger = await readLedger(options.root, changeId);
 
     if (sub === 'status') {
-        if (argv.includes('--cost')) {
+        if (switchPresent(argv, '--cost')) {
             // The author-side measurement the round-shaped loop never had, plus the discovery rates it never compared. A
             // rate that cannot be computed is reported as null rather than 0, and the baseline field says so in words.
             outputResult({ ok: true, command: 'ledger status --cost', report: await ledgerReport(options.root, changeId) });
@@ -170,7 +170,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     }
 
     if (sub === 'policy') {
-        if (argv.includes('--init')) {
+        if (switchPresent(argv, '--init')) {
             await writePolicy(options.root, changeId, defaultPolicy());
             outputResult({ ok: true, command: 'ledger policy', wrote: 'policy.json', tierDefaults: ['standard', 'strict', 'security'] });
             return;

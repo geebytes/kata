@@ -1,3 +1,4 @@
+import { switchPresent } from './cli/invocation.js';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -177,7 +178,7 @@ async function runMain(argv: string[]): Promise<void> {
     //
     // The list is every family the dispatcher below answers, so a new command has to add itself here to be reachable —
     // and a command absent from this map is exactly the case a `--help` would silently mutate.
-    if ((argv.includes('--help') || argv.includes('-h')) && SELF_HANDLED_HELP[command] === undefined) {
+    if ((switchPresent(argv, '--help') || argv.includes('-h')) && SELF_HANDLED_HELP[command] === undefined) {
         outputResult({ command, usage: usageFor(command), readOnly: true });
         return;
     }
@@ -391,7 +392,7 @@ async function runMain(argv: string[]): Promise<void> {
         // `--with-context` is the only way to ask for the context projection now; the default answers the dispatch
         // question without building it (L0-01). It is not a rendering mode, so `stripOutputModeArgs` leaves it alone.
         outputResult(await runLocalStatusCommand(change, resolved, workspaceRoot, {
-            withContext: argv.includes('--with-context'),
+            withContext: switchPresent(argv, '--with-context'),
         }));
         return;
     }

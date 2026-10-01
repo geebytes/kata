@@ -674,7 +674,10 @@ export function parseOrientArgs(argv: string[]): {
     for (let index = 0; index < argv.length; index += 1) {
         // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--change' && value !== undefined && !value.startsWith('--')) {
             args.change = value;
             if (inline === undefined) index += 1;
@@ -692,12 +695,14 @@ export function parseOrientArgs(argv: string[]): {
             if (inline === undefined) index += 1;
         } else if ((arg === '--mode' || arg === '--routing-mode') && value !== undefined && !value.startsWith('--')) {
             args.routingMode = value;
-            index += 1;
+            // An inline value consumes nothing (R12-F4): `index += 1` regardless of the spelling made two adjacent inline
+            // flags swallow one another, silently dropping `--role=reviewer` next to `--mode=strict`.
+            if (inline === undefined) index += 1;
         } else if ((arg === '--failures' || arg === '--failure-count') && value !== undefined && !value.startsWith('--')) {
             const parsed = Number.parseInt(value, 10);
             if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid failure count: ${value}`);
             args.failureCount = parsed;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else {
             throw new Error(`Unknown orient option: ${arg}`);
         }
@@ -720,31 +725,34 @@ export function parseTasksArgs(argv: string[]): {
     for (let index = 0; index < argv.length; index += 1) {
         // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--from' && value !== undefined && !value.startsWith('--')) {
             args.from = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--to' && value !== undefined && !value.startsWith('--')) {
             args.to = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--field' && value !== undefined && !value.startsWith('--')) {
             args.field = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--file' && value !== undefined && !value.startsWith('--')) {
             args.file = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--by' && value !== undefined && !value.startsWith('--')) {
             args.by = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if ((arg === '--task' || arg === '--change') && value !== undefined && !value.startsWith('--')) {
             args.task = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--type' && value !== undefined && !value.startsWith('--')) {
             args.type = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--reason' && value !== undefined && !value.startsWith('--')) {
             args.reason = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--root' && value !== undefined && !value.startsWith('--')) {
             args.root = value;
             if (inline === undefined) index += 1;
@@ -764,7 +772,10 @@ export function parseHooksArgs(argv: string[]): { change?: string; root?: string
     for (let index = 0; index < argv.length; index += 1) {
         // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
         const { flag: arg, inline } = splitFlag(argv[index] ?? '');
-        const value = inline ?? argv[index + 1];
+        // **A flag is not the next flag's value.** Measured: `--root --dry-run` set a directory named `--dry-run` and wrote
+        // 14 files into it, because the neighbour guard lived in `argValue` and not in the loop that called it (R12-F1).
+        const neighbour = argv[index + 1];
+        const value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);
         if (arg === '--change' && value !== undefined && !value.startsWith('--')) {
             args.change = value;
             if (inline === undefined) index += 1;

@@ -603,6 +603,13 @@ describe('review CLI I/O', () => {
         await expect(readRequirementsFile(['--requirements-file'])).rejects.toThrow(/requires a path/u);
         await expect(readRequirementsFile(['--requirements-file='])).rejects.toThrow(/requires a path/u);
 
+        // R12-F5/F-6: present-but-empty is refused by these readers too, instead of reading as "absent".
+        const { readBootstrapFile } = await import('../../src/cli/workflow.js');
+        await expect(readBootstrapFile(['--bootstrap-file='])).rejects.toThrow(/requires a path/u);
+        const { runEvalCommand } = await import('../../src/cli/ops.js');
+        await expect(runEvalCommand(['/nonexistent-manifest.json', '--persist='])).rejects.toThrow();
+        await expect(runEvalCommand(['/nonexistent-manifest.json', '--root='])).rejects.toThrow();
+
         // And the `=` spelling resolves the same file the spaced form does.
         await writeFile(join(root, 'tmp', 'waivers.json'), JSON.stringify({ waivers: [] }));
         await writeFile(join(root, 'tmp', 'requirements.json'), JSON.stringify({ requirements: [{ id: 'AC-1', statement: 'x' }] }));
@@ -642,6 +649,36 @@ describe('review CLI I/O', () => {
         expect(inline.platform).toBe(spaced.platform);
         expect(inline.scope).toBe(spaced.scope);
         expect(() => parseInstallerArgs(['--platform='])).toThrow();
+    });
+
+
+    it('never takes the next flag as a value, in any parser', async () => {
+        // R12-F1, measured: `init --platform pi --scope project --root --dry-run` set `options.root = '--dry-run'`, left
+        // `dryRun` false, and the end-to-end run created a directory of that name and wrote 14 files into it — "ask for a
+        // dry run" became a real write. The guard against this lived in `argValue` and not in the loops that called it.
+        const { parseInstallerArgs } = await import('../../src/cli/installer.js');
+        // `--root` with no value is refused and says which problem it is (a value flag missing its value), rather than
+        // either slurping `--dry-run` into the path or reporting the wrong fault ("unknown option: --root").
+        expect(() => parseInstallerArgs(['--platform', 'pi', '--scope', 'project', '--root', '--dry-run']))
+            .toThrow(/--root requires a value/u);
+        // And the switch itself is a switch in either spelling.
+        expect(parseInstallerArgs(['--platform=pi', '--scope=project', '--dry-run']).options.dryRun).toBe(true);
+        expect(parseInstallerArgs(['--platform=pi', '--scope=project', '--dry-run=1']).options.dryRun).toBe(true);
+
+        // `--mode` belongs to the orient parser, not the tasks one — assert each parser against its own flags, and make
+        // the point that matters: two adjacent inline flags must not swallow one another.
+        const tasks = await import('../../src/cli/tasks.js');
+        expect(tasks.parseOrientArgs(['--mode=strict', '--role=reviewer'])).toMatchObject({ routingMode: 'strict', role: 'reviewer' });
+        expect(tasks.parseTasksArgs(['--from=a', '--to=b', '--type=x'])).toMatchObject({ from: 'a', to: 'b', type: 'x' });
+
+        const { parseHandoffArgs } = await import('../../src/cli/handoff.js');
+        expect(parseHandoffArgs(['--task=t1', '--role=reviewer'])).toMatchObject({ task: 't1', role: 'reviewer' });
+
+        const { parseWikiArgs } = await import('../../src/cli/wiki.js');
+        expect(parseWikiArgs(['--root=/ws', '--wiki=proj'])).toMatchObject({ root: '/ws', wikiPath: 'proj' });
+
+        // And a flag is not the next flag's value here either: it is refused rather than read as one.
+        expect(() => parseHandoffArgs(['--task', '--role'])).toThrow(/Unknown handoff option/u);
     });
 
     it('resolves the = spelling for hand-written flag parsers too, not only the shared readers', async () => {
