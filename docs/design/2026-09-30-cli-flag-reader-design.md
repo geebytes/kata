@@ -44,3 +44,15 @@
 ## 6. 与当前 change 的关系
 
 本 change（`security-tier-platform-boundary`）的主题是 assurance 平台边界，其 AC-1…AC-6 在七轮里**未被证伪**。CLI 参数解析不属于它的主题，第 4–7 轮的发现里 **6 条在该 change 之前就存在**。因此本 change 以其声明的主题收口，本文档承接其余。
+
+
+## 7. 从 `security-tier-platform-boundary` 第 8 轮带出来的其余项
+
+| 项 | 站点 | 事实 |
+|---|---|---|
+| 开关类的**存在性**读取仍有手写形态 | `src/cli/wiki.ts:105`（`rest.includes('--all')`）、`src/cli/scope.ts:92`（`--allow-ownership-conflicts`）、`src/cli/ops.ts:190`（`--force`） | 只读"有没有给"，不吞下一枚 flag，因此**未造成**静默改行为；但同一个问题（一个开关两种拼写）仍有两套语义。`switchPresent` 已存在，应统一 |
+| `src/cli/**` 之外的同形取值读取 | `src/policy/guard-script.ts:49-50`（`process.argv.indexOf(name)` + 无守卫的 `argv[index+1]`） | **会吞下一枚 flag**；flag 固定为 `--project-root` 故实际影响有限，但仍在扫描范围外 |
+
+### 7.1 拒绝措辞的规则（由第 8 轮 F-1 带出）
+
+`ledger policy --set-file` 用 `!isCurrentAssuranceLevel` 作判据，于是**未知值**也得到"historical only"这句话。正确规则：**只有 `LEGACY_ASSURANCE_LEVELS` 里的是"历史值"，其余未知值交给 schema 说 `must be one of …`**。同一形状在该 change 里出现过五次（`writePolicy`、`decide`、CLI 三站点、措辞），修法是让"这是什么值"只有一个判据、一处文案。

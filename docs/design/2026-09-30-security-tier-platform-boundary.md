@@ -527,3 +527,35 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 **F-1 是本 change 那个形状的第 N 次现身**：一条规则（"拒绝要说出操作者实际给出的值"）在 `writePolicy` 与 `decide` 两个站点修了、带了用例，**第三个站点没修且没有用例**。作者七轮里反复栽在这里；这一次它被标为 in-scope 并当场修掉。
 
 1303 用例 / 209 文件全绿，`tsc --noEmit` 干净。
+
+
+## 27. 第二条独立读数（补 quorum）与放行
+
+第二条独立读数（`closing independent review`）在 `revision-68f68c2a284154d5` 上判定 **PASS**，做的是最硬的那种验证：
+
+- 在副本上**逐条重跑 E-1…E-6 的 mutation**：六条全部真红（1/1、1/1、1/1、5 个文件全红、1/1、1/1），无跑不红者、无 SITE-MISSING；
+- **重算 subject**：73/73 digest 与内容 sha256 一致，`declaredPaths` 与 `pathDigests` 键集相等且有序，`rev:d5ad6ea1d62738ae` 可由 digest 表精确重算；
+- **端到端跑 C-1…C-6**（含 security 档真实 `ledger decide`）：`observed` 干净、`relayed` 报 `assurance_below_tier`；零分歧下 1 名审阅者仍报 `quorum_missing`、2 名即消失；触碰 `privilege`/`provenance` 无 claim 时报 `uncovered_risk_class` 并点名；
+- 它记录的 5 条**全部是 note / cut-over**，无一放宽门或使任一 claim 失效。
+
+`ledger decide` 随后为 **`pass`**（6/6 `supported`，两条独立读数，无 reason、无 deficit）——七轮里第一次。
+
+### 27.1 它带走的两条（已记入，未修）
+
+| 项 | 判定 | 事实 |
+|---|---|---|
+| **F-1** `ledger policy --set-file` 对**未知值**也说 "these are historical only" | note · C-3 | 该站点用 `!isCurrentAssuranceLevel` 作判据（任意非当前值），于是 `bogus_value` 得到一句"历史值"的话，**抢先于 schema 本应给的** `must be one of none, relayed, observed`。R9-F4 已把"只有 `LEGACY_ASSURANCE_LEVELS` 里的是历史"定为规则，此处未对齐。**方向仍保守**（拒绝而非放行），故只是措辞 |
+| **F-2** `docs/review2.md` 仍把退役的 `signed` 列进 `executionAssurance` 词表并两次称"跨边界可要求 signed" | note · C-3 | 与 C-3 同主题（退役词汇的读写分离），但 C-3 原文只点名 `sandboxed`，故不构成 claim 违反。面向操作员的页面把一个当前 write set 产不出的值当作可获得 |
+| **F-3** 两个 schema 的 evidence 类型 enum 仍含已从 `EVIDENCE_TYPES` 删除的 `invariant_proof` | note | 同类形状换了一条轴（证据类型）；手写文档过 schema、被 loader 拒，**方向安全**；属既存漂移，非本 change 引入 |
+| **F-4/F-5** `rest.includes('--all')` 三处、`src/policy/guard-script.ts` 的手写取值 | note · cut-over | 归 `docs/design/2026-09-30-cli-flag-reader-design.md` |
+
+F-1/F-2/F-3 三条是**同一个形状的第三、四、五次现身**：一条规则在一个站点收口了、在相邻站点没有，而两处的**文案/声明都比实现宽**。它们都不放宽门，因此记为 follow-up 而非当场修复。
+
+### 27.2 最终状态
+
+- `revision-68f68c2a284154d5`（current），verify **PASS**，8 项证据，`openProblems: 0`，`workspaceDrift: []`，`implementationReady`/`governanceReady` 均 true，wiki closure 有效；
+- 1303 用例 / 209 文件全绿，`tsc --noEmit` 干净；
+- ledger `rev:d5ad6ea1d62738ae`（73 paths），6/6 `supported`，两条独立读数，**`decide` = `pass`**；
+- 交付：`security` 档的 assurance floor 从 `sandboxed` 改为 `observed`（执行隔离归宿主 Agent 平台）、退役词汇的**读写分离**（`ASSURANCE_LEVELS` 写 / `LEGACY_ASSURANCE_LEVELS | READABLE_ASSURANCE_LEVELS` 读、`ASSURANCE_RANK` 保留使历史记录仍可比较）、`writePolicy`/`ensureAssurance`/CLI 三面拒绝退役值、历史 artefact 可读且读时不改写、`meetsAssuranceFloor` 要求"可产出的当前值"、`security` 档的双审阅/always quorum/`privilege`+`provenance` 覆盖全部保留。
+
+**七轮的净结论**：本 change 的主题（assurance 平台边界）**八条独立读数里从未被证伪**；被反复证伪的是 `src/cli/**` 的参数解析，那是**另一件事**，已切出为 `2026-09-30-cli-flag-reader-design.md`。
