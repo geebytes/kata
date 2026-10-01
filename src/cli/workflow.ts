@@ -43,7 +43,8 @@ import { type KataCommand } from '../workflow/orchestrator.js';
 import { validateMatrix, validateWaivers, type Waiver } from '../quality/acceptance-matrix.js';
 import type { AcceptanceMatrix, ClaimDeclaration, UpstreamCoverage } from '../core/task.js';
 import { type Role as HandoffRole } from '../workflow/handoff.js';
-import { argValue, parseChangeArg } from './invocation.js';
+import { argValue, flagPresent, paradeArgValue, parseChangeArg, readFlag } from './invocation.js';
+export { flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 
 /**
@@ -314,20 +315,16 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
     };
 }
 
-export /** Every value a repeated flag carries, in order. */
-function repeatedValues(argv: string[], flag: string): string[] {
-    const values: string[] = [];
-    for (let index = 0; index < argv.length; index += 1) {
-        const token = argv[index];
-        // Both spellings: the spaced form takes the next token, the `=` form carries its own value.
-        if (token?.startsWith(`${flag}=`)) {
-            const inline = token.slice(flag.length + 1);
-            if (inline.trim() !== '') values.push(inline);
-            continue;
-        }
-        if (token !== flag) continue;
-        const value = argv[index + 1];
-        if (value && !value.startsWith('--')) values.push(value);
+/**
+ * Every value a repeated flag carries, in order.
+ *
+ * R12-F7/F-12: the rule lives in `paradeArgValue` and this was a second copy of it — with no case asserting the inline
+ * spelling, so disabling that branch left the suite green. One implementation, one case.
+ */
+export function repeatedValues(argv: string[], flag: string): string[] {
+    const values = paradeArgValue(argv, flag);
+    if (values.length === 0 && argv.some((token) => token === `${flag}=`)) {
+        throw new Error(`Invalid value: ${flag} requires a value.`);
     }
     return values;
 }
@@ -400,11 +397,9 @@ export function reviewResultFileArg(argv: string[]): string | undefined {
  *
  * **The reader is shared, not copied.** R5-8: this change added a second, character-for-character copy of the `=`
  * handling beside `argValue`, so the rule lived in two places and only one of them would be updated next time — the
- * defect this repository removes most often, added by the fix for it.
+ * defect this repository removes most often, added by the fix for it — and R12-F10 found the same duplication inside
+ * `invocation.ts` itself, so the implementation now lives there once and this file re-exports it.
  */
-export function flagPresent(argv: string[], flag: string): boolean {
-    return argv.includes(flag) || argv.some((entry) => entry.startsWith(`${flag}=`));
-}
 
 /** True when the invocation asked for result recording at all, however malformed the value is — either spelling. */
 export function resultFileRequested(argv: string[]): boolean {
@@ -430,6 +425,11 @@ export function resultFileRequested(argv: string[]): boolean {
  * by name instead of degrading.
  */
 
+
+/** True when the invocation named an approval reason at all, however malformed — the companion to the value reader. */
+export function reviewEvidenceRequested(argv: string[]): boolean {
+    return flagPresent(argv, '--review-evidence');
+}
 
 export function reviewEvidenceArg(argv: string[]): string | undefined {
     return argValue(argv, '--review-evidence');
@@ -479,33 +479,12 @@ export function workflowNextReason(phase: Phase): NextActionReason {
 }
 
 export function ownedPaths(argv: string[]): string[] {
-    // **Both spellings, through the shared reader.** R9-F2: this kept the spaced form while the same file learned the `=`
-    // form for `--result-file`, so `open --owned-path=src/a.ts` built a task with *no owned paths at all* and nothing
-    // complained — a silent fail-open on the declaration surface, which is the one surface a change's trust rests on.
-    const values: string[] = [];
-    for (let index = 0; index < argv.length; index += 1) {
-        const token = argv[index]!;
-        if (token === '--owned-path') {
-            const next = argv[index + 1];
-            if (next !== undefined && !next.startsWith('--')) {
-                values.push(next);
-                index += 1;
-            }
-            continue;
-        }
-        if (token.startsWith('--owned-path=')) {
-            // **A present-but-empty value is malformed, not "no declaration".** R10-F1: this returned `[]`, so
-            // `open --owned-path=` built a task whose declaration surface was empty and nothing said so, while
-            // `--owned-path ''` produced one empty-string path and the sibling readers threw on the same input. R10's read
-            // is right that a *silent* empty declaration is the worst of the three answers.
-            const value = token.slice('--owned-path='.length);
-            if (value.trim() === '') {
-                throw new Error('Invalid owned path: --owned-path requires a path.');
-            }
-            values.push(value);
-        }
+    // R9-F2/R10-F1: both spellings through the shared reader, and a present-but-empty value is refused rather than read as
+    // "no declaration" — an empty declaration surface is the one silent failure a change must not have.
+    if (argv.some((token) => token === '--owned-path=')) {
+        throw new Error('Invalid owned path: --owned-path requires a path.');
     }
-    return values;
+    return paradeArgValue(argv, '--owned-path');
 }
 
 export async function readWaiversFile(argv: string[]): Promise<Waiver[] | undefined> {

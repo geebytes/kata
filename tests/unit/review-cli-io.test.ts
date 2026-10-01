@@ -584,7 +584,13 @@ describe('review CLI I/O', () => {
         // `--waivers-file=` / `--requirements-file=` were silently ignored — a supplied waiver set that did not apply,
         // with the command reporting success. Silent fail-open on the declaration surface is the one place it must not
         // happen: the task would be built with a surface nobody declared.
-        const { ownedPaths, readWaiversFile, readRequirementsFile } = await import('../../src/cli/workflow.js');
+        const { ownedPaths, readWaiversFile, readRequirementsFile, reviewEvidenceRequested, reviewEvidenceArg } = await import('../../src/cli/workflow.js');
+        // R12-F8: the "present but malformed is refused by name" rule only reached `--result-file`; its sibling
+        // `--review-evidence` had no companion predicate at all.
+        expect(reviewEvidenceRequested(['--review-evidence='])).toBe(true);
+        expect(reviewEvidenceRequested(['--review-evidence', 'text'])).toBe(true);
+        expect(reviewEvidenceRequested([])).toBe(false);
+        expect(reviewEvidenceArg(['--review-evidence'])).toBeUndefined();
         expect(ownedPaths(['--owned-path', 'src/a.ts', '--owned-path=src/b.ts'])).toEqual(['src/a.ts', 'src/b.ts']);
         expect(ownedPaths(['--owned-path=src/a.ts'])).toEqual(['src/a.ts']);
         // Absent stays absent; present-but-empty is malformed rather than ignored — for the `=` form too, so a task is

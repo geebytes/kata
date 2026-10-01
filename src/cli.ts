@@ -88,7 +88,7 @@ import {
     runRuntimeRefresh,
 } from './cli/installer.js';
 import { runInitWizardCommand, shouldUseInitWizard } from './cli/wizard.js';
-import { argValue, parseChangeArg, parseRootArg } from './cli/invocation.js';
+import { argValue, flagPresent, parseChangeArg, parseRootArg, readFlag } from './cli/invocation.js';
 import { parseWikiArgs, runWikiCommand } from './cli/wiki.js';
 import {
     parseCometArgs,
@@ -188,8 +188,11 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
-    if (command === 'init' && !process.stdin.isTTY && !argv.includes('--yes')
-        && (!argv.includes('--platform') || !argv.includes('--scope'))) {
+    // R12-F6: `init --platform=pi --scope=project` in a non-TTY threw "requires explicit choices" while the spaced form
+    // installed; `update --platform=pi` silently fell into the aggregate path and updated *every* platform. Both were the
+    // flag matched as a switch while the rest of the CLI had already learned the inline spelling.
+    if (command === 'init' && !process.stdin.isTTY && !flagPresent(argv, '--yes')
+        && (!flagPresent(argv, '--platform') || !flagPresent(argv, '--scope'))) {
         throw new Error('kata-cli init requires explicit --platform and --scope choices in non-interactive mode; use the installation Skill to collect user confirmation first.');
     }
 
@@ -207,7 +210,7 @@ async function runMain(argv: string[]): Promise<void> {
                 return;
             }
         }
-        if (command === 'update' && !argv.includes('--platform')) {
+        if (command === 'update' && !flagPresent(argv, '--platform')) {
             outputResult(await runAggregateUpdate(args.scope, args.options, refreshPolicyFromArgs(argv)), { human: renderUpdateSummary });
             return;
         }
@@ -431,8 +434,9 @@ function stripOutputModeArgs(argv: string[]): string[] {
 
 
 function workflowPlatform(argv: string[]): string | undefined {
-    const index = argv.indexOf('--platform');
-    return index >= 0 ? argv[index + 1] : undefined;
+    // R12-F5: the last `indexOf` reader of its kind. Measured: `design <task> --platform=codex` recorded
+    // `actor.platform: null`, so the platform a run was executed on went missing from the audit record.
+    return readFlag(argv, '--platform').present ? readFlag(argv, '--platform').value : undefined;
 }
 
 

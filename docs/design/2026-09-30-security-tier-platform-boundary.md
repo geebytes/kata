@@ -381,3 +381,44 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 2. 我给 `--isolation=` 断言"抛错"，实测它对不完整选择集是**宽容**的（返回空对象），断言写错了机制。
 
 1296 用例 / 208 文件全绿，`tsc --noEmit` 干净。
+
+## 22. 类级修法：CLI 取值读取收成一个入口（第四条读数的 F-1…F-13）
+
+第四条独立读数判定 **FAIL**，13 条发现里 **11 条是同一个类的实例**：一条规则（`--flag value` 与 `--flag=value` 是同一个 flag；"缺失"与"给了空值"是两个事实；一个 flag 不吞下一枚 flag）只在**被点名的** reader 上收了，相邻的没收。其中 6 条**在本 change 之前就存在**——从来没有人系统查过 `src/cli/**` 的所有取值 reader。
+
+前几轮我按实例逐个修，于是每轮都产生新实例（9→5→6→13）。这一轮改成**类级修法**：
+
+### 22.1 一个入口
+
+`src/cli/invocation.ts` 的 `readFlag(argv, name)` 返回 **`{ present, value }` 两个事实**，因为分别推导它们正是让调用方漂移的原因：
+
+- `present`：两种拼写任一出现过，空值也算出现（于是调用方能**按名拒绝**）；
+- `value`：值，或 `undefined`（空值、缺失、或下一枚 token 是 flag）。
+
+`argValue` / `inlineValue` / `flagPresent` 全部变成它的别名（R12-F10 指出 `argValue` 逐字符重抄了 `inlineValue`——同一个类的缺陷出现在**本 change 自己的 owner 文件**里）；新增 `paradeArgValue` 表示重复取值。
+
+### 22.2 强制，而不是复述
+
+新增 `tests/unit/cli-value-reads-go-through-one-reader.test.ts`：扫描 `src/cli.ts` + `src/cli/**`（先清空注释与字符串），**任何 `argv.indexOf('--x')` / `argv.includes('--x')` 直接判失败**；`argv[i+1]` 只有在同一行同时取 `splitFlag` 的内联值时才允许。这是把"可类级修复"变成可执行约束的那一步——前几轮缺的正是它。
+
+### 22.3 逐条
+
+| 项 | 严重度 | 修复 | 验证 |
+|---|---|---|---|
+| **F-1** `installer` 的 `--root --dry-run` → 目录名 `--dry-run`，**真实写盘 14 个文件** | major | 循环走 `splitFlag` + 相邻 token 守卫 | 退回 → 红 |
+| **F-2** `readBootstrapFile(['--bootstrap-file='])` → `undefined`（声明静默丢失），而同族两个 reader 会报错 | major | 走同一入口，空值报错 | 退回 → 红 |
+| **F-3** `baseline` 只认空格 → 同一 root 下 `requiredReads` 7→5、语言回落（**范围被静默缩小**） | major | `readFlag` | 退回 → 红 |
+| **F-4** `eval --persist=` → 报告**不落盘**而命令报成功 | major | `readFlag` | 退回 → 红 |
+| **F-5** `design <task> --platform=codex` → 审计记录里 `actor.platform` 变 `null` | major | `readFlag` | 退回 → 红 |
+| **F-6** `update --platform=pi` → 静默变**全平台聚合更新**；`init --platform=pi --scope=project`（非 TTY）反而报错 | major | `flagPresent`（三处） | 退回 → 红 |
+| **F-7** `scope boundary --covers=` → **空声明**写进 `task.json`；`scope change --add=x` 被拒 | major | `paradeArgValue` + 空值报错 | 退回 → 红 |
+| F-8 `--review-evidence` 缺伴生判据 | minor | 新增 `reviewEvidenceRequested` | 用例钉住 |
+| F-9 `--c0` 不在 `VALUE_FLAGS`；守卫正则看不见数字 | minor | 补词表，正则加 `0-9` | 退回 → 红 |
+| F-10 `argValue` 重抄 `inlineValue` | note | 收成别名 | 同入口 |
+| F-11 `policyFilled` **把未发生的替换报成已替换**，且同一字段报两次 | minor | 只报"读到了退役 floor"（`...read-though-retired`），store 的 schema 替换不再记名 | 用例断言长度为 1 |
+| F-12 `repeatedValues` 的内联分支、`argValue` 的空值语义都**没有用例**（关掉任一分支套件全绿） | minor | 两条都钉住 | 两个变异各自变红 |
+| F-13 `handoff`/`tasks`/`wiki`/`ops` 的手写循环 | note | 同一入口（`--change --role reviewer` 不再吞下一枚 flag） | 扫描守卫 |
+
+**F-1、F-3、F-6 的方向最坏**：不是"静默不放行"，而是**操作者给定的意图被静默扩大或缩小执行**——要求 dry-run 变成真实写盘、任务范围从 7 条降到 5 条、指定一个平台变成更新全部平台。这三条都在本 change 之前就存在。
+
+1299 用例 / 208 文件全绿，`tsc --noEmit` 干净。

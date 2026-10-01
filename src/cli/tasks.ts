@@ -1,3 +1,4 @@
+import { splitFlag } from './invocation.js';
 import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildContextManifest, summarizeExcludedWiki } from '../core/context.js';
@@ -671,27 +672,28 @@ export function parseOrientArgs(argv: string[]): {
         failureCount?: number;
     } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
-        if (arg === '--change' && value !== undefined) {
+        // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
+        if (arg === '--change' && value !== undefined && !value.startsWith('--')) {
             args.change = value;
-            index += 1;
-        } else if (arg === '--root' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--root' && value !== undefined && !value.startsWith('--')) {
             args.root = value;
-            index += 1;
-        } else if (arg === '--role' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--role' && value !== undefined && !value.startsWith('--')) {
             args.role = value;
-            index += 1;
-        } else if (arg === '--platform' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--platform' && value !== undefined && !value.startsWith('--')) {
             args.platform = value;
-            index += 1;
-        } else if (arg === '--task-kind' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--task-kind' && value !== undefined && !value.startsWith('--')) {
             args.taskKind = value;
-            index += 1;
-        } else if ((arg === '--mode' || arg === '--routing-mode') && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if ((arg === '--mode' || arg === '--routing-mode') && value !== undefined && !value.startsWith('--')) {
             args.routingMode = value;
             index += 1;
-        } else if ((arg === '--failures' || arg === '--failure-count') && value !== undefined) {
+        } else if ((arg === '--failures' || arg === '--failure-count') && value !== undefined && !value.startsWith('--')) {
             const parsed = Number.parseInt(value, 10);
             if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid failure count: ${value}`);
             args.failureCount = parsed;
@@ -716,37 +718,38 @@ export function parseTasksArgs(argv: string[]): {
 } {
     const args: { from?: string; to?: string; task?: string; type?: string; reason?: string; root?: string; field?: string; file?: string; by?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
-        if (arg === '--from' && value !== undefined) {
+        // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
+        if (arg === '--from' && value !== undefined && !value.startsWith('--')) {
             args.from = value;
             index += 1;
-        } else if (arg === '--to' && value !== undefined) {
+        } else if (arg === '--to' && value !== undefined && !value.startsWith('--')) {
             args.to = value;
             index += 1;
-        } else if (arg === '--field' && value !== undefined) {
+        } else if (arg === '--field' && value !== undefined && !value.startsWith('--')) {
             args.field = value;
             index += 1;
-        } else if (arg === '--file' && value !== undefined) {
+        } else if (arg === '--file' && value !== undefined && !value.startsWith('--')) {
             args.file = value;
             index += 1;
-        } else if (arg === '--by' && value !== undefined) {
+        } else if (arg === '--by' && value !== undefined && !value.startsWith('--')) {
             args.by = value;
             index += 1;
-        } else if ((arg === '--task' || arg === '--change') && value !== undefined) {
+        } else if ((arg === '--task' || arg === '--change') && value !== undefined && !value.startsWith('--')) {
             args.task = value;
             index += 1;
-        } else if (arg === '--type' && value !== undefined) {
+        } else if (arg === '--type' && value !== undefined && !value.startsWith('--')) {
             args.type = value;
             index += 1;
-        } else if (arg === '--reason' && value !== undefined) {
+        } else if (arg === '--reason' && value !== undefined && !value.startsWith('--')) {
             args.reason = value;
             index += 1;
-        } else if (arg === '--root' && value !== undefined) {
+        } else if (arg === '--root' && value !== undefined && !value.startsWith('--')) {
             args.root = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg?.startsWith('--')) {
-            throw new Error(`Unknown tasks option: ${arg}`);
+            throw new Error(`Unknown tasks option: ${argv[index]}`);
         } else if (!args.task) {
             args.task = arg;
         } else {
@@ -759,20 +762,21 @@ export function parseTasksArgs(argv: string[]): {
 export function parseHooksArgs(argv: string[]): { change?: string; root?: string; role?: string; platform?: string } {
     const args: { change?: string; root?: string; role?: string; platform?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
-        if (arg === '--change' && value !== undefined) {
+        // R12-F13: both spellings and the flag-is-not-a-value guard, through the one reader.
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
+        if (arg === '--change' && value !== undefined && !value.startsWith('--')) {
             args.change = value;
-            index += 1;
-        } else if (arg === '--root' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--root' && value !== undefined && !value.startsWith('--')) {
             args.root = value;
-            index += 1;
-        } else if (arg === '--role' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--role' && value !== undefined && !value.startsWith('--')) {
             args.role = value;
-            index += 1;
-        } else if (arg === '--platform' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--platform' && value !== undefined && !value.startsWith('--')) {
             args.platform = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else {
             throw new Error(`Unknown hooks option: ${arg}`);
         }

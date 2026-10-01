@@ -343,7 +343,10 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
                     name,
                     { ...tier, assuranceFloor: defaultPolicy().tiers[name as keyof typeof policy.tiers].assuranceFloor },
                 ]);
-                policyFilled = [...policyFilled, `tiers.${name}.assuranceFloor`];
+                // **The substitution is for the schema check only — it is not a fill and must not be reported as one.**
+                // R12-F11: this named the field a second time, so a policy read back reported `policyFilled` twice for one
+                // field while the value delivered to consumers kept the historical floor: a report of a change that the
+                // reader did not make. `policy.ts` names the read-through, once, and that is the only entry.
             }
             const substituted = { ...policy, tiers: Object.fromEntries(substitutedTiers) as typeof policy.tiers };
             try {

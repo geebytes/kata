@@ -1,3 +1,4 @@
+import { readFlag, splitFlag } from './invocation.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
@@ -29,13 +30,13 @@ export async function runEvalCommand(argv: string[]): Promise<Record<string, unk
     if (!manifestPath || manifestPath.startsWith('--')) {
         throw new Error('Usage: kata-cli eval <manifest.json> [--persist <report.json>] [--root <path>]');
     }
-    const rootIndex = rest.indexOf('--root');
-    const root = rootIndex >= 0 ? rest[rootIndex + 1] ?? resolveWorkspaceRoot() : resolveWorkspaceRoot();
+    // R12-F4: `--persist=…` produced no report file while the command reported success, and `--root=` fell back to
+    // workspace discovery. Both are documented value flags, so both go through the one reader.
+    const root = readFlag(rest, '--root').value ?? resolveWorkspaceRoot();
     const manifest = await loadEvaluationManifest(manifestPath);
     const report = await runEvaluation(manifest, root);
 
-    const persistIndex = rest.indexOf('--persist');
-    const persistPath = persistIndex >= 0 ? rest[persistIndex + 1] : undefined;
+    const persistPath = readFlag(rest, '--persist').value;
     if (persistPath) await persistEvaluationReport(report, persistPath);
 
     return {
@@ -354,16 +355,16 @@ export async function runCometCommand(argv: string[], root = resolveWorkspaceRoo
 export function parseCometArgs(argv: string[]): { version?: string; change?: string } {
     const args: { version?: string; change?: string } = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
         if ((arg === '--version' || arg === '-v') && value !== undefined) {
             args.version = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--change' && value !== undefined) {
             args.change = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg !== undefined) {
-            throw new Error(`Unknown comet option: ${arg}`);
+            throw new Error(`Unknown comet option: ${argv[index]}`);
         }
     }
     return args;

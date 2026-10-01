@@ -1,3 +1,4 @@
+import { flagPresent } from './invocation.js';
 import { discoverPlatforms, identifyPlatformInstallState, install } from '../adapters/discovery.js';
 import type { PlatformInstallState } from '../adapters/manifest.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
@@ -30,8 +31,10 @@ import { parseInstallerArgs } from './installer.js';
  */
 
 export function shouldUseInitWizard(argv: string[]): boolean {
-    if (argv.includes('--platform') || argv.includes('--scope') || argv.includes('--home')) return false;
-    if (argv.includes('--yes')) return true;
+    // R12-F6: an inline spelling must be recognised here too, or `init --platform=pi --yes` takes the wizard path while
+    // the spaced form takes the direct one.
+    if (flagPresent(argv, '--platform') || flagPresent(argv, '--scope') || flagPresent(argv, '--home')) return false;
+    if (flagPresent(argv, '--yes')) return true;
     return argv.length === 0 && process.stdin.isTTY;
 }
 

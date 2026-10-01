@@ -65,7 +65,7 @@ describe('a historical floor exempts the floor field only', () => {
             tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: 'sandboxed' } },
         });
         expect(retired.malformedFiles).toEqual([]);
-        expect(retired.policyFilled).toContain('tiers.security.assuranceFloor');
+        expect(retired.policyFilled).toContain('tiers.security.assuranceFloor.read-though-retired');
     });
 
     it('accepts a document that is valid apart from the retired floor', async () => {
@@ -92,7 +92,10 @@ describe('a historical floor exempts the floor field only', () => {
         // kept above `observed` (rank 2) instead of being silently weakened to it: a reader may not lower a gate while
         // reporting that it only filled a field. The fill is still named.
         expect(ledger.policy.tiers.security.assuranceFloor).toBe('sandboxed');
-        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
+        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor.read-though-retired');
+        // R12-F11: named once, and named for what happened (the document was read despite a retired floor) rather than
+        // for a replacement that never occurs.
+        expect(ledger.policyFilled.filter((entry) => entry.startsWith('tiers.security.assuranceFloor'))).toHaveLength(1);
     });
 
     it("keeps a rolling tier historical floor when the tier default would be weaker", async () => {
@@ -105,6 +108,6 @@ describe('a historical floor exempts the floor field only', () => {
         });
         expect(ledger.malformedFiles).toEqual([]);
         expect(ledger.policy.tiers.standard.assuranceFloor).toBe('sandboxed');
-        expect(ledger.policyFilled).toContain('tiers.standard.assuranceFloor');
+        expect(ledger.policyFilled).toContain('tiers.standard.assuranceFloor.read-though-retired');
     });
 });

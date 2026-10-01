@@ -28,14 +28,14 @@ async function sourceFiles(): Promise<string[]> {
 
 /** Every flag literal read as a *value*, in the shapes this scan can see. */
 const READS = [
-    /(?:argValue|inlineValue)\(\s*[^,()]+,\s*'(--[a-z][a-z-]*)'/gu,
-    /indexOf\(\s*'(--[a-z][a-z-]*)'/gu,
-    /startsWith\(\s*`\$\{(--[a-z][a-z-]*)/gu,
+    /(?:argValue|inlineValue)\(\s*[^,()]+,\s*'(--[a-z][a-z0-9-]*)'/gu,
+    /indexOf\(\s*'(--[a-z][a-z0-9-]*)'/gu,
+    /startsWith\(\s*`\$\{(--[a-z][a-z0-9-]*)/gu,
     // **The shape that was missing, and it is the common one.** A hand-written `arg === '--x'` parser reads a value just as
     // much as `argValue` does — `relations add --from <v>`, `installer --home <path>`, `handoff --to <role>` — and eight
     // flags were reachable only through it while the vocabulary stayed green (R8-F3).
-    /===\s*'(--[a-z][a-z-]*)'/gu,
-    /'(--[a-z][a-z-]*)'\s*===/gu,
+    /===\s*'(--[a-z][a-z0-9-]*)'/gu,
+    /'(--[a-z][a-z0-9-]*)'\s*===/gu,
 ];
 
 /**
@@ -72,7 +72,7 @@ describe('the CLI value-flag vocabulary', () => {
     const SWITCHES = new Set([
         '--all', '--approve', '--confirm', '--cost', '--create', '--discover-checks', '--dry-run', '--force', '--frozen',
         '--help', '--init', '--json', '--list-checks', '--no-discover-checks', '--no-refresh', '--no-wiki', '--quiet',
-        '--refresh', '--version', '--x', '--yes',
+        '--refresh', '--x', '--yes',
     ]);
 
     it('lists every flag a value is read for in the shapes the scan can see', async () => {
@@ -89,7 +89,7 @@ describe('the CLI value-flag vocabulary', () => {
         const cli = join(import.meta.dirname, '..', '..', 'src', 'cli');
         const sources = await Promise.all((await readdir(cli)).filter((name) => name.endsWith('.ts'))
             .map((name) => readFile(join(cli, name), 'utf8')));
-        const comparedShape = sources.reduce((total, text) => total + [...text.matchAll(/===\s*'(--[a-z][a-z-]*)'/gu)].length, 0);
+        const comparedShape = sources.reduce((total, text) => total + [...text.matchAll(/===\s*'(--[a-z][a-z0-9-]*)'/gu)].length, 0);
         expect(comparedShape).toBeGreaterThan(20);
 
         const read = await readFlags();

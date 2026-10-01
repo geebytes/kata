@@ -44,7 +44,7 @@ describe('historical assurance vocabulary', () => {
         // floor and the tier default: `sandboxed` (rank 3) is kept rather than weakened to `observed` (rank 2). The *usage*
         // record below is the one that must be preserved verbatim, and it is.
         expect(ledger.policy.tiers.security.assuranceFloor).toBe('sandboxed');
-        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
+        expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor.read-though-retired');
         expect(ledger.policyRejected).toBeNull();
 
         // **Reading is not deciding.** A reader preserves what the file says: the current assurance stays `sandboxed`

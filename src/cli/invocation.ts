@@ -13,11 +13,57 @@
  * still saw only the spaced form, so `kata-cli --root=/ws …` fell back to workspace discovery and quietly used the wrong
  * root — the fail-open direction of a spelling gap. Every reader below asks this one predicate.
  */
-function inlineValue(argv: string[], flag: string): string | undefined {
+export function flagPresent(argv: string[], flag: string): boolean {
+    return readFlag(argv, flag).present;
+}
+
+export function readFlag(argv: string[], flag: string): { present: boolean; value: string | undefined } {
+    // **The one entry point for a CLI value read.** Rounds 9–12 each found the same shape: the rule below reached the
+    // readers that had been named and not the adjacent hand-rolled ones, so `--root --dry-run` set a *directory* named
+    // `--dry-run` and `update --platform=pi` silently updated every platform. Two facts are returned together because the
+    // callers need both and deriving either one separately is what let them diverge:
+    //
+    //   `present` — the flag was given in either spelling, even with an empty value (so a caller can refuse it by name);
+    //   `value`   — the value, or `undefined` when there is none (empty, missing, or the next token is another flag).
+    //
+    // A flag never takes the next token when that token is itself a flag: measured, `installer --root --dry-run` wrote
+    // 14 files outside the intended root because the guard lived in `argValue` and not in the loop that called it.
     const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
-    if (inline === undefined) return undefined;
-    const value = inline.slice(flag.length + 1);
-    return value.trim() === '' ? undefined : value;
+    if (inline !== undefined) {
+        const value = inline.slice(flag.length + 1);
+        return { present: true, value: value.trim() === '' ? undefined : value };
+    }
+    for (let index = 0; index < argv.length; index += 1) {
+        if (argv[index] !== flag) continue;
+        const next = argv[index + 1];
+        return { present: true, value: next === undefined || next.startsWith('--') ? undefined : next };
+    }
+    return { present: false, value: undefined };
+}
+
+/** Every occurrence of a repeated value flag, either spelling. `--owned-path a --owned-path=b` is two declarations. */
+export function paradeArgValue(argv: string[], flag: string): string[] {
+    const values: string[] = [];
+    for (let index = 0; index < argv.length; index += 1) {
+        const token = argv[index] ?? '';
+        if (token === flag) {
+            const next = argv[index + 1];
+            if (next !== undefined && !next.startsWith('--')) {
+                values.push(next);
+                index += 1;
+            }
+            continue;
+        }
+        if (token.startsWith(`${flag}=`)) {
+            const value = token.slice(flag.length + 1);
+            if (value.trim() !== '') values.push(value);
+        }
+    }
+    return values;
+}
+
+export function inlineValue(argv: string[], flag: string): string | undefined {
+    return readFlag(argv, flag).value;
 }
 
 /**
@@ -35,7 +81,7 @@ function inlineValue(argv: string[], flag: string): string | undefined {
  * shape extends the scan.
  */
 export const VALUE_FLAGS: readonly string[] = [
-    '--add', '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
+    '--add', '--c0', '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
     '--candidate', '--change', '--choice', '--claim', '--command', '--covers', '--decision', '--depends-on',
     '--development', '--development-mode', '--diversity', '--endpoint', '--evidence', '--excludes', '--failure-count',
     '--failures', '--fails-on', '--field', '--file', '--findings-carried-to', '--for-task', '--from', '--home', '--id',
@@ -118,13 +164,7 @@ export function splitFlag(token: string): { flag: string; inline?: string } {
  * once, for every flag — rather than per-flag in whichever module happened to notice.
  */
 export function argValue(argv: string[], flag: string): string | undefined {
-    const inline = argv.find((entry) => entry.startsWith(`${flag}=`));
-    if (inline !== undefined) {
-        const value = inline.slice(flag.length + 1);
-        return value.trim() === '' ? undefined : value;
-    }
-    const index = argv.indexOf(flag);
-    if (index === -1) return undefined;
-    const value = argv[index + 1];
-    return value !== undefined && !value.startsWith('--') ? value : undefined;
+    // R12-F10: this was a character-for-character second copy of the `=` scan. It is now the same reader, so the next
+    // change to the rule cannot reach one and miss the other — the shape this file has produced most often.
+    return readFlag(argv, flag).value;
 }

@@ -1,3 +1,4 @@
+import { splitFlag } from './invocation.js';
 import { readWikiRecords } from '../wiki/store.js';
 import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../wiki/drift.js';
 import { auditWiki, createRefreshPacket, relevantWiki } from '../wiki/lifecycle.js';
@@ -274,43 +275,44 @@ export type WikiArgs = {
 export function parseWikiArgs(argv: string[]): WikiArgs {
     const args: WikiArgs = {};
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        const value = argv[index + 1];
-        if (arg === '--from' && value !== undefined) {
+        // Both spellings, through the one reader (R12-F13).
+        const { flag: arg, inline } = splitFlag(argv[index] ?? '');
+        const value = inline ?? argv[index + 1];
+        if (arg === '--from' && value !== undefined && !value.startsWith('--')) {
             args.from = value;
-            index += 1;
-        } else if (arg === '--root' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--root' && value !== undefined && !value.startsWith('--')) {
             args.root = value;
-            index += 1;
-        } else if (arg === '--wiki' && value !== undefined) {
+            if (inline === undefined) index += 1;
+        } else if (arg === '--wiki' && value !== undefined && !value.startsWith('--')) {
             args.wikiPath = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if ((arg === '--q' || arg === '--query') && value !== undefined) {
             args.query = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--file') {
             args.file = true;
         } else if (arg === '--by' && value !== undefined) {
             args.by = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--role' && value !== undefined) {
             args.role = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--reason' && value !== undefined) {
             args.reason = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--kind' && value !== undefined) {
             args.kind = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--task' && value !== undefined) {
             args.task = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--decision' && value !== undefined) {
             args.decision = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--candidate' && value !== undefined) {
             args.candidates = [...(args.candidates ?? []), value];
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--force') {
             args.force = true;
         } else if (arg === '--record' && value !== undefined) {
@@ -318,11 +320,11 @@ export function parseWikiArgs(argv: string[]): WikiArgs {
             // the only transition out of `stale` could not be invoked from the CLI at all — and the unit cases exercising `revalidateWikiRecord`
             // never touched the layer that refused it. Same for the bare `--all` below.
             args.record = value;
-            index += 1;
+            if (inline === undefined) index += 1;
         } else if (arg === '--all') {
             args.all = true;
         } else {
-            throw new Error(`Unknown wiki option: ${arg}`);
+            throw new Error(`Unknown wiki option: ${argv[index]}`);
         }
     }
     return args;

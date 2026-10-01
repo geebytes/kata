@@ -268,15 +268,16 @@ export function loadPolicy(value: unknown): PolicyLoad {
                     if (!retired) return [name, tier];
                     const replacement = defaultTiers[name]?.assuranceFloor;
                     if (replacement === undefined) return [name, tier];
+                    // R12-F11: the historical floor is *kept* (a retired rank is always ≥ the current default), so there is
+                    // no substitution to perform here — reporting `policyFilled` for it said a replacement had happened
+                    // that had not, and the store's schema check then named the same field a second time. The fact worth
+                    // reporting is that the document was read despite a floor no current writer can produce.
                     // **The fill must not weaken the tier it fills.** R10-F6: taking the tier default unconditionally
                     // meant `standard.assuranceFloor: sandboxed` became `none` — a reader lowering a gate while reporting
                     // that it had merely filled a field. A historical floor that outranks the default is kept as the
                     // default of the *stricter* of the two, in the conservative direction.
-                    const kept = ASSURANCE_RANK[floor as AssuranceLevel] > ASSURANCE_RANK[replacement as AssuranceLevel]
-                        ? floor
-                        : replacement;
-                    filled.push(`tiers.${name}.assuranceFloor`);
-                    return [name, { ...tier, assuranceFloor: kept }];
+                    filled.push(`tiers.${name}.assuranceFloor.read-though-retired`);
+                    return [name, { ...tier, assuranceFloor: floor }];
                 }),
             );
         }
