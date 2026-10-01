@@ -88,7 +88,23 @@ describe('a historical floor exempts the floor field only', () => {
             tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: 'sandboxed' } },
         });
         expect(ledger.malformedFiles).toEqual([]);
-        expect(ledger.policy.tiers.security.assuranceFloor).toBe('observed');
+        // R10-F6: the fill keeps the *stricter* of the historical floor and the tier default, so `sandboxed` (rank 3) is
+        // kept above `observed` (rank 2) instead of being silently weakened to it: a reader may not lower a gate while
+        // reporting that it only filled a field. The fill is still named.
+        expect(ledger.policy.tiers.security.assuranceFloor).toBe('sandboxed');
         expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
+    });
+
+    it("keeps a rolling tier historical floor when the tier default would be weaker", async () => {
+        // The `standard` tier's default is `none`, so replacing a historical `sandboxed` with it would *lower* the gate —
+        // the direction R10-F6 named. The conservative reading keeps the stronger value.
+        const policy = defaultPolicy();
+        const ledger = await ledgerWithPolicy({
+            ...policy,
+            tiers: { ...policy.tiers, standard: { ...policy.tiers.standard, assuranceFloor: 'sandboxed' } },
+        });
+        expect(ledger.malformedFiles).toEqual([]);
+        expect(ledger.policy.tiers.standard.assuranceFloor).toBe('sandboxed');
+        expect(ledger.policyFilled).toContain('tiers.standard.assuranceFloor');
     });
 });

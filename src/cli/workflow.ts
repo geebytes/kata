@@ -494,8 +494,15 @@ export function ownedPaths(argv: string[]): string[] {
             continue;
         }
         if (token.startsWith('--owned-path=')) {
+            // **A present-but-empty value is malformed, not "no declaration".** R10-F1: this returned `[]`, so
+            // `open --owned-path=` built a task whose declaration surface was empty and nothing said so, while
+            // `--owned-path ''` produced one empty-string path and the sibling readers threw on the same input. R10's read
+            // is right that a *silent* empty declaration is the worst of the three answers.
             const value = token.slice('--owned-path='.length);
-            if (value.trim() !== '') values.push(value);
+            if (value.trim() === '') {
+                throw new Error('Invalid owned path: --owned-path requires a path.');
+            }
+            values.push(value);
         }
     }
     return values;
@@ -647,9 +654,13 @@ function parseEnumArg<const T extends readonly string[]>(
     allowed: T,
     label: string,
 ): T[number] | undefined {
-    const flag = flags.find((candidate) => argv.includes(candidate));
+    // **Both spellings, through the shared reader.** R10-F3: this reader compared whole tokens while the same file had
+    // already accepted `--flag=value` for other flags, so `open --isolation=git_flow --development=tdd --review=strict`
+    // reached the profile resolver as "no choices given" and was refused — a caller who had made every choice told they
+    // had made none.
+    const flag = flags.find((candidate) => flagPresent(argv, candidate));
     if (!flag) return undefined;
-    const value = argv[argv.indexOf(flag) + 1];
+    const value = argValue(argv, flag);
     if (!value) throw new Error(`Missing ${label} after ${flag}`);
     if (!(allowed as readonly string[]).includes(value)) {
         throw new Error(`Invalid ${label}: ${value}. Expected one of: ${allowed.join(', ')}`);

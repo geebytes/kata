@@ -39,11 +39,11 @@ describe('historical assurance vocabulary', () => {
         const ledger = await readLedger(root, changeId);
         expect(ledger.assurance).toBe('sandboxed');
         expect(ledger.malformedFiles).toEqual([]);
-        // **The policy is read and the retired floor is substituted, visibly.** R8-F9 moved the substitution into the
-        // reader's fill step (it used to happen only for the schema check), so a historical policy comes back with the
-        // current default floor and the fact is named — the same rule every other fill in this reader follows. The *usage*
+        // **The policy is read and the retired floor is filled, visibly.** R8-F9 moved the fill into the reader's fill
+        // step (it used to happen only for the schema check), and R10-F6 made it keep the *stricter* of the historical
+        // floor and the tier default: `sandboxed` (rank 3) is kept rather than weakened to `observed` (rank 2). The *usage*
         // record below is the one that must be preserved verbatim, and it is.
-        expect(ledger.policy.tiers.security.assuranceFloor).toBe('observed');
+        expect(ledger.policy.tiers.security.assuranceFloor).toBe('sandboxed');
         expect(ledger.policyFilled).toContain('tiers.security.assuranceFloor');
         expect(ledger.policyRejected).toBeNull();
 

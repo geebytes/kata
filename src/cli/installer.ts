@@ -1,4 +1,5 @@
 import { splitFlag } from './invocation.js';
+import { flagPresent } from './workflow.js';
 import { platformDefinitionById } from '../adapters/platforms.js';
 import { doctor } from '../adapters/doctor.js';
 import { discoverPlatforms, isManagedPlatformSurfacePresent, listManagedPlatforms, update } from '../adapters/discovery.js';
@@ -233,7 +234,10 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message:
 }
 
 export async function runDoctorCommand(argv: string[]): Promise<Record<string, unknown>> {
-    const hasExplicitPlatform = argv.includes('--platform');
+    // **Both spellings.** R10-F2: `parseInstallerArgs` learned the inline form in the previous round and this line did
+    // not, so `doctor --platform=codex` stopped being a loud `Unknown installer option` and became a *silent* ignore of
+    // the platform the operator named — the repair made the behaviour worse than the bug it fixed.
+    const hasExplicitPlatform = flagPresent(argv, '--platform');
     const args = parseInstallerArgs(argv, { requirePlatform: false });
     if (hasExplicitPlatform) return doctor(args.platform, args.scope, args.options);
 

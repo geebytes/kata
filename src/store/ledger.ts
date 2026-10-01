@@ -507,7 +507,10 @@ export async function writePolicy(root: string, changeId: string, policy: Policy
         .filter(([, tier]) => !isCurrentAssuranceLevel(tier.assuranceFloor))
         .map(([name, tier]) => `${name}:${tier.assuranceFloor}`);
     if (retiredFloors.length > 0) {
-        throw new Error(`cannot write retired assurance floor(s): ${retiredFloors.join(', ')}; sandboxed is historical only`);
+        // **The refusal names the value given.** R10-F4: it said `sandboxed is historical only` for every retired level, so
+        // `signed` was refused with a sentence about a value the operator had not typed — the same defect the CLI's
+        // `decide --assurance` path had already had fixed.
+        throw new Error(`cannot write retired assurance floor(s): ${retiredFloors.join(', ')}; these are historical only, not obtainable Kata assurance`);
     }
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.policy, policy));
 }

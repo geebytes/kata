@@ -85,6 +85,22 @@ describe('the writable assurance vocabulary', () => {
         expect([...READABLE_ASSURANCE_LEVELS].sort()).toEqual(['none', 'observed', 'relayed', 'sandboxed', 'signed']);
     });
 
+
+    it('names the retired level the writer was given, not the one the sentence was written for', async () => {
+        // R10-F4: the store's refusal said `sandboxed is historical only` for every retired level, so writing `signed` was
+        // refused with a sentence about a value the operator had not typed — fixed on the CLI's `decide` path, left here.
+        const policy = defaultPolicy();
+        for (const level of ['sandboxed', 'signed']) {
+            const refused = await writePolicy(root, 'retired-assurance-fixture', {
+                ...policy,
+                tiers: { ...policy.tiers, security: { ...policy.tiers.security, assuranceFloor: level as never } },
+            } as never).then(() => null, (error: unknown) => (error as Error).message);
+            expect(refused, `${level} must be refused`).not.toBeNull();
+            expect(refused).toContain(level);
+            expect(refused).not.toContain('sandboxed is historical');
+        }
+    });
+
     it('names the historical value the operator gave, not the one the branch was written for', async () => {
         // R8-F1: the branch fires for every legacy level and its message was written for `sandboxed`, so
         // `decide --assurance signed` was refused with a sentence about a value the operator had not typed.

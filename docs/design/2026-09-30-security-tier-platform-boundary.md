@@ -358,3 +358,26 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 **F-2 是真缺陷**：静默 fail-open 落在**声明面**上——正是 seal 的信任所依赖的那个面。它和第 19.3 节记录的 `evidence replace` 是同一个形态：**一个规则在收口时只覆盖了它被点名的那个调用方**。这一轮之后，"两种拼写等价"在所有取值 reader 上都成立（含手写循环），并且每个 reader 都有可失败证据。
 
 1292 用例 / 208 文件全绿，`tsc --noEmit` 干净。
+
+## 21. 第三条读数的 F-1…F-6 收口
+
+第三条独立读数判定 **PASS**（C-1…C-6 全部成立、六条证据变异逐条实跑全部变红），给出 6 条 minor/note。全部收口：
+
+| 项 | 严重度 | 修复 | 变异验证 |
+|---|---|---|---|
+| **F-2** 上一轮让 `parseInstallerArgs` 接受 `--platform=`，但同文件 `hasExplicitPlatform` 仍是 `argv.includes('--platform')` → `doctor --platform=codex` 从**响亮报错**变成**静默忽略**点名的平台 | minor（**上一轮修复引入的回归**） | 改用 `flagPresent` | 退回 → 红 |
+| **F-1** `ownedPaths(['--owned-path='])` → `[]`（静默不给声明面），而 `--owned-path ''` → `['']`、兄弟 reader 会报错 | minor（**声明面 fail-open**） | 空内联值报错 | 退回 → 红 |
+| **F-3** `parseEnumArg`（`--isolation=`/`--development=`/`--review=`）仍只认空格 → 给了全部选择的人被告知"没给选择" | minor | 走共享 `flagPresent`/`argValue` | 退回 → 红 |
+| **F-4** `writePolicy` 的拒绝写死 `sandboxed`，`signed` 也会触发该分支 | note | 文案改为不点名单个值 | 退回 → 红 |
+| **F-5** E-4 的 command 不含 `legacy-assurance-vocabulary.test.ts`，而 C-4 的"不回写/不判 unreadable"半句由它断言 | note · C-4 | E-4 的 command 补齐该文件（实测：变异下 8 例红） | 变异实测 |
+| **F-6** `standard` 档的 `sandboxed` 被回填为 `none`（弱于历史值）——reader 在**降低**门，却报告只是填了个字段 | note | 填充取"历史值与档位默认中更严的那个" | 退回无条件填充 → 红 |
+
+**F-2 与 F-1 是这一轮的教训**：F-2 是**我的修复自己引入的静默回归**（改了解析器、没同步同文件的判定），F-1 是我在 §20 里刚写下"缺失与空值是两个事实"却没在自己那行代码里兑现。两条都指向同一个形状——**修复一处时未把同一规则在同文件的其他点上走完**。
+
+**F-6 是方向的发现**：原来按"该档默认值"回填，`standard`（默认 `none`）会把历史 `sandboxed` **降级**——一个 reader 静默放宽门。现在取更严者，方向保守。
+
+**另外记下这一轮我自己的两次测试事故**（都靠变异验证抓出）：
+1. `resolveWorkflowProfile` 是 **async**，我第一版用例比较两个 Promise，于是它的变异"通过了"——一个不 await 的断言可以骗过自己的变异检查；
+2. 我给 `--isolation=` 断言"抛错"，实测它对不完整选择集是**宽容**的（返回空对象），断言写错了机制。
+
+1296 用例 / 208 文件全绿，`tsc --noEmit` 干净。

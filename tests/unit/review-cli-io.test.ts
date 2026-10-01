@@ -587,9 +587,10 @@ describe('review CLI I/O', () => {
         const { ownedPaths, readWaiversFile, readRequirementsFile } = await import('../../src/cli/workflow.js');
         expect(ownedPaths(['--owned-path', 'src/a.ts', '--owned-path=src/b.ts'])).toEqual(['src/a.ts', 'src/b.ts']);
         expect(ownedPaths(['--owned-path=src/a.ts'])).toEqual(['src/a.ts']);
-        // Absent stays absent; present-but-empty is malformed rather than ignored.
+        // Absent stays absent; present-but-empty is malformed rather than ignored — for the `=` form too, so a task is
+        // never built with an empty declaration surface (R10-F1).
         expect(ownedPaths(['--owned-path'])).toEqual([]);
-        expect(ownedPaths(['--owned-path='])).toEqual([]);
+        expect(() => ownedPaths(['--owned-path='])).toThrow(/requires a path/u);
 
         await expect(readWaiversFile(['--waivers-file'])).rejects.toThrow(/requires a path/u);
         await expect(readWaiversFile(['--waivers-file='])).rejects.toThrow(/requires a path/u);
@@ -601,6 +602,30 @@ describe('review CLI I/O', () => {
         await writeFile(join(root, 'tmp', 'requirements.json'), JSON.stringify({ requirements: [{ id: 'AC-1', statement: 'x' }] }));
         expect(await readWaiversFile([`--waivers-file=${join(root, 'tmp', 'waivers.json')}`])).toEqual([]);
         expect(await readRequirementsFile([`--requirements-file=${join(root, 'tmp', 'requirements.json')}`])).toHaveLength(1);
+    });
+
+
+    it('keeps the platform the operator named when it is spelled inline', async () => {
+        // R10-F2, introduced by the previous round's own repair: `parseInstallerArgs` learned the `=` form and
+        // `hasExplicitPlatform` did not, so `doctor --platform=codex` went from a loud `Unknown installer option` to a
+        // *silent* aggregate discovery that ignored the named platform.
+        const { runDoctorCommand } = await import('../../src/cli/installer.js');
+        const named = await runDoctorCommand([`--platform=pi`, '--scope=project', '--root', root]);
+        expect(named.mode).not.toBe('aggregate');
+    });
+
+    it('resolves the workflow profile choices in either spelling', async () => {
+        // `resolveWorkflowProfile` is async: an un-awaited call compares two Promises, which is how the first version of
+        // this case passed its own mutation checks by accident.
+        // R10-F3: `parseEnumArg` compared whole tokens, so a caller who gave every choice inline was told they had given
+        // none. The rule this change states is one rule for every flag reader, and this is the reader that was missed.
+        const { resolveWorkflowProfile } = await import('../../src/cli/workflow.js');
+        const spaced = await resolveWorkflowProfile('open', ['--isolation', 'current_worktree', '--development', 'tdd', '--review', 'strict']);
+        const inline = await resolveWorkflowProfile('open', ['--isolation=current_worktree', '--development=tdd', '--review=strict']);
+        expect(inline).toEqual(spaced);
+        expect(inline.isolationMode).toBe('current_worktree');
+        expect(inline.developmentMode).toBe('tdd');
+        expect(inline.reviewMode).toBe('strict');
     });
 
     it("accepts the inline spelling in the installer flag loop", async () => {
