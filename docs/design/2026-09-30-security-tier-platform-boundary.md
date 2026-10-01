@@ -464,3 +464,25 @@ F-2：`buildReviewRequest` 只校验"subject 与当前内容一致"和"存在 se
 改法是**按位置走，第一个匹配即答案**；新增用例钉住三条（首个空格形胜、首个内联形胜、首个裸 flag 无值时**不**被后面的内联形填上）。**这条守卫抓不到**——它是语义缺陷，不是形状问题；这正是"扫描守卫不能替代行为证据"的例证。
 
 1302 用例 / 209 文件全绿，`tsc --noEmit` 干净。
+
+## 24. 第六条读数：守卫的覆盖必须等于它的声明
+
+第六条读数判 **FAIL**，但它开头就确认了上一轮的指控**已被证伪**：守卫现在确实会红（6 条 `MUST_CATCH` 全被抓、正对照会红）、F-1 的 installer 修复真的落地且用例承重、三条行为用例退回都变红、证据账本自洽（E-1…E-6 逐条真红、72 条 digest 逐一对上）、**C-1…C-6 全部未能证伪**。
+
+它给的是 2 major + 3 minor + 2 note，全部收口：
+
+| 项 | 严重度 | 事实 | 修复 |
+|---|---|---|---|
+| **F-2** `parseDelegationArgs` 的 `--role`/`--from`/`--root` 三个分支无条件 `index += 1` → **内联拼写吞掉后一个 flag**（`--role=reviewer --task=t1` 丢掉 task，随后**静默委托到错误的 task**） | major | 三个分支改为仅空格形递增；**五个分支逐一变异**验证（`--change` 起初仍绿，补了断言后才红） |
+| **F-1** 守卫只认 4 种形状，`argv.some((t) => t === '--x')` 不在其中；树上仍有 4 处活的手写查找（`scope.ts`、`workflow.ts`×2、`ledger.ts`），而证据说 "Everything"、用例名说 "finds no hand-rolled lookup left" | major | 守卫扩到**谓词遍历**（`some`/`find`/`filter`/`every`/`findIndex` 上的 flag 字面量比较），4 处全部改为共享读取器；`MUST_CATCH` 从 6 条增到 8 条 |
+| **F-3** `ownedPaths(['--owned-path'])`（裸 flag 无值）静默返回 `[]`，而 `--owned-path=` 会报错 | minor | 判断改为 `paradeArgValue(...).length === 0 && flagPresent(...)`，两种拼写都报错 |
+| **F-4** 用例**硬编码跳过 `invocation.ts`**——读取者自身所在文件 | minor | 不再跳过；读取器自己的 `argv[i+1]` 由**形状**放行（同一语句里有 `readFlag(...).value`/`paradeArgValue(...)`），而不是靠豁免文件 |
+| **F-5** `--root=`/`--home=`/`--wiki-from=` 在 installer 里静默接受空值，而 `--platform=`/`--scope=` 会抛 | minor | 路径值 flag 的空值报错 |
+| **F-6** `readFlag` 的"首个出现优先"会让靠前的残缺出现压过靠后的合法值 | note | 有意行为，已写在读取器旁并加用例（`['--root=', '--root', '/ws']` → `{present:true, value:undefined}`） |
+| **F-7** `options.allowReader` 是**死参数**，从未被读 | note | 删除 |
+
+**这一轮的模式与上一轮完全一致，而且证据更硬**：五个分支我修了三个、漏了两个；守卫我扩到了四种形状、漏了第五种（谓词遍历）；而两处的**声明都写得比覆盖宽**（"F-4 已关闭"、"Every hand-rolled lookup"）。守卫扩宽后立刻又报出 **4 处**真实违规——它一直是能抓到的，只是我没让它看。
+
+**F-2 特别值得记下**：`--change` 分支的变异起初**仍然全绿**，说明我那条用例只覆盖了"内联 flag 在末尾"的顺序。补上断言后五个分支的变异全部变红。**用例的形状和缺陷的形状必须对齐**，否则用例只是在陪跑。
+
+1302 用例 / 209 文件全绿，`tsc --noEmit` 干净。

@@ -27,13 +27,20 @@ export type Offence = { line: number; text: string; why: string };
 /**
  * Every hand-rolled lookup in `text`.
  *
- * Four shapes are forbidden, because each of them is how a value flag's spelling or its neighbour guard gets lost:
- *   - `argv.indexOf('--x')` / `argv.includes('--x')` — the flag is looked up by whole-token comparison;
- *   - `argv[i + 1]` with no guard, unless the same statement also takes the inline value from `splitFlag`;
+ * Five shapes are forbidden, because each is how a value flag's spelling or its neighbour guard gets lost:
+ *   - `argv.indexOf('--x')` / `argv.includes('--x')` — whole-token comparison;
+ *   - a flag comparison inside a predicate walk — `argv.some((t) => t === '--x')` and the `find`/`filter`/`every`/`findIndex`
+ *     equivalents. T6-1: the guard called itself complete while `scope.ts`, `workflow.ts` (twice) and `ledger.ts` carried
+ *     live lookups in this shape, and the case name claimed the tree was clean;
+ *   - `argv[i + 1]` with no guard — unless a `readFlag(...).value`/`paradeArgValue(...)` read, or a `startsWith('--')`
+ *     guard visible in the next two lines, is present;
  *   - a flag name held in a variable, which the text scan cannot follow;
  *   - `argv.slice(...)` followed by an index, which hides the lookup from the patterns above.
- */
-export function scanHandRolledFlagLookups(text: string, options: { allowReader?: boolean } = {}): Offence[] {
+ *
+ * **The scope is the scope it states.** `invocation.ts` is scanned too: it is where the reader lives, and a regression
+ * there is as invisible to a reviewer as one anywhere else — which is how T6-4 found the case exempting the very file.
+ * The reader's own reads are recognised by their shape, not by exempting the file.
+ */export function scanHandRolledFlagLookups(text: string): Offence[] {
     const code = stripComments(text);
     const offences: Offence[] = [];
     for (const [index, line] of code.split('\n').entries()) {
@@ -45,6 +52,13 @@ export function scanHandRolledFlagLookups(text: string, options: { allowReader?:
         }
         if (/argv\s*\.\s*includes\(\s*(?:'--|`--|"--)/u.test(line)) {
             offences.push({ line: index + 1, text: trimmed, why: 'whole-token flag presence check' });
+            continue;
+        }
+        // A predicate walk comparing a token against a flag literal is the same whole-token lookup, written longer —
+        // `argv.some((t) => t === '--x')`, `argv.find((t) => t === '--x')`, `argv.filter`/`argv.every` likewise.
+        if (/argv\s*\.\s*(?:some|find|filter|every|findIndex)\s*\(/u.test(line)
+            && /(?:===|!==|==|!=)\s*['"`]--/u.test(line)) {
+            offences.push({ line: index + 1, text: trimmed, why: 'predicate walk over a flag literal' });
             continue;
         }
         // A flag name bound to an identifier, then used as a template — the lookup is real but the text scan cannot see

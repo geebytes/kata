@@ -306,9 +306,13 @@ export function parseInstallerArgs(
             scope = parseScope(value);
             if (inline === undefined) index += 1;
         } else if (arg === '--root' && value !== undefined) {
+            // T6-4: `--root=` was accepted as the empty string while `--platform=`/`--scope=` threw — the same parser
+            // answering the same question two ways. A path flag with no path says so.
+            if (value.trim() === '') throw new Error(`${arg} requires a path`);
             options.root = value;
             if (inline === undefined) index += 1;
         } else if (arg === '--home' && value !== undefined) {
+            if (value.trim() === '') throw new Error(`${arg} requires a path`);
             options.home = value;
             if (inline === undefined) index += 1;
         } else if (arg === '--language' && value !== undefined) {
@@ -319,6 +323,7 @@ export function parseInstallerArgs(
         } else if (arg === '--force') {
             options.force = true;
         } else if (arg === '--wiki-from' && value !== undefined) {
+            if (value.trim() === '') throw new Error(`${arg} requires a path`);
             options.wikiFrom = value;
             if (inline === undefined) index += 1;
         } else if (arg === '--no-wiki') {

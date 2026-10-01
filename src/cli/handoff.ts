@@ -143,17 +143,21 @@ export function parseDelegationArgs(argv: string[]): DelegationArgs {
             if (value === undefined || value.startsWith('--')) throw new Error(`${key} requires a value`);
             args.to = value; if (inline === undefined) index += 1; continue;
         }
+        // T6-1: three of the five value branches incremented unconditionally, so the inline form swallowed the flag that
+        // followed it — `--role=reviewer --task=t1` parsed as `{role}` with the task gone, and the caller then fell back to
+        // `recommendDelegationTask` and delegated to *a different task* while reporting success. The two branches above
+        // were already right, which is why the case that existed (inline flag last) passed.
         if (key === '--role') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.role = value; index += 1; continue;
+            args.role = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--from') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.from = value; index += 1; continue;
+            args.from = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--root') {
             if (value === undefined) throw new Error(`${key} requires a value`);
-            args.root = value; index += 1; continue;
+            args.root = value; if (inline === undefined) index += 1; continue;
         }
         if (key === '--create') {
             args.create = true; continue;

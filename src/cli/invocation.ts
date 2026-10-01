@@ -43,6 +43,11 @@ export function readFlag(argv: string[], flag: string): { present: boolean; valu
     // answer `/other`: an inline occurrence *later* in the argument list outranked the token next to the flag. The first
     // occurrence in order is the one the operator wrote first, so the tokens are walked in order and the first match wins —
     // measured slip: `paradeArgValue(['--owned-path', 'a', '--owned-path=b'])` returned `['b','b']`.
+    //
+    // **The first occurrence wins, complete or not** (T6-5, operator-visible): `readFlag(['--root=', '--root', '/ws'])` is
+    // `{present: true, value: undefined}` — the earlier, malformed occurrence is not skipped in favour of the later valid
+    // one. That is deliberate: silently preferring a later flag over an earlier malformed one is how "I named a root and it
+    // used another" happens. The caller refuses it by name; a repeated flag is a mistake to report, not to arbitrate.
     for (let index = 0; index < argv.length; index += 1) {
         const token = argv[index] ?? '';
         if (token.startsWith(`${flag}=`)) {

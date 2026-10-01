@@ -430,7 +430,9 @@ async function runMain(argv: string[]): Promise<void> {
 
 
 function stripOutputModeArgs(argv: string[]): string[] {
-    return argv.filter((arg) => arg !== '--quiet' && arg !== '--json');
+    // Both spellings of every switch this handles (T6-1/F-1: a predicate walk over a flag literal is the same
+    // whole-token lookup, written longer — the scan refuses it, and `switchPresent` already knows the rule).
+    return argv.filter((arg) => !switchPresent([arg], '--quiet') && !switchPresent([arg], '--json'));
 }
 
 

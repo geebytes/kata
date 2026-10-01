@@ -41,6 +41,14 @@ const MUST_CATCH: Array<{ why: string; source: string }> = [
         source: "const flag = '--root';\nconst present = argv.some((token) => token.startsWith(`${flag}`));\n",
     },
     {
+        why: 'predicate walk over a flag literal',
+        source: "const on = argv.some((token) => token === '--seal');\n",
+    },
+    {
+        why: 'predicate walk, find form',
+        source: "const at = argv.findIndex((token) => token === '--root');\n",
+    },
+    {
         why: 'next token read behind readFlag().present, still unguarded',
         source: "const value = readFlag(argv, '--root').present ? argv[index + 1] : undefined;\n",
     },
@@ -56,6 +64,11 @@ const MUST_PASS: Array<{ why: string; source: string }> = [
     },
     { why: 'previous-token read, not a neighbour read', source: "const previous = argv[index - 1];\n" },
     { why: 'a comment about the pattern is not the pattern', source: "// argv.indexOf('--root') is forbidden here\n" },
+    {
+        why: 'the neighbour guard assigned on the next line',
+        source: "const neighbour = argv[index + 1];\nconst value = inline ?? (neighbour === undefined || neighbour.startsWith('--') ? undefined : neighbour);\n",
+    },
+    { why: 'a switch read through the shared name', source: "if (switchPresent(argv, '--seal')) return true;\n" },
 ];
 
 describe('CLI value reads go through one reader', () => {
@@ -72,11 +85,13 @@ describe('CLI value reads go through one reader', () => {
         }
     });
 
-    it('finds no hand-rolled flag lookup left in src/cli', async () => {
+    it('finds no hand-rolled flag lookup left in src/cli, including the reader itself', async () => {
         const offences: string[] = [];
         for (const { path, text } of await cliSources()) {
-            if (path.endsWith('invocation.ts')) continue;
-            for (const offence of scanHandRolledFlagLookups(text, { allowReader: true })) {
+            // T6-4: `invocation.ts` used to be skipped — the file where a regression would be least visible. The reader's
+            // own `argv[i + 1]` read is allowed by *shape* (`readFlag`/`paradeArgValue` in the same statement), not by
+            // exempting the file that contains it.
+            for (const offence of scanHandRolledFlagLookups(text)) {
                 offences.push(`${path}:${offence.line}  ${offence.text}  [${offence.why}]`);
             }
         }
@@ -106,6 +121,9 @@ describe('CLI value reads go through one reader', () => {
         expect(readFlag(['--root', '/ws', '--root=/other'], '--root')).toEqual({ present: true, value: '/ws' });
         expect(readFlag(['--root=/other', '--root', '/ws'], '--root')).toEqual({ present: true, value: '/other' });
         expect(readFlag(['--root', '--dry-run', '--root=/other'], '--root').value).toBeUndefined();
+        // The first occurrence wins even when it is incomplete: a later valid flag does not silently arbitrate an earlier
+        // malformed one (T6-5). The caller refuses it by name.
+        expect(readFlag(['--root=', '--root', '/ws'], '--root')).toEqual({ present: true, value: undefined });
     });
 
     it('pins the two choices the review found unpinned: repeated inline values and an empty inline value', async () => {

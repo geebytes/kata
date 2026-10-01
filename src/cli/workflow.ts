@@ -481,7 +481,7 @@ export function workflowNextReason(phase: Phase): NextActionReason {
 export function ownedPaths(argv: string[]): string[] {
     // R9-F2/R10-F1: both spellings through the shared reader, and a present-but-empty value is refused rather than read as
     // "no declaration" — an empty declaration surface is the one silent failure a change must not have.
-    if (argv.some((token) => token === '--owned-path=')) {
+    if (paradeArgValue(argv, '--owned-path').length === 0 && flagPresent(argv, '--owned-path')) {
         throw new Error('Invalid owned path: --owned-path requires a path.');
     }
     return paradeArgValue(argv, '--owned-path');

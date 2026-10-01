@@ -595,8 +595,12 @@ describe('review CLI I/O', () => {
         expect(ownedPaths(['--owned-path=src/a.ts'])).toEqual(['src/a.ts']);
         // Absent stays absent; present-but-empty is malformed rather than ignored — for the `=` form too, so a task is
         // never built with an empty declaration surface (R10-F1).
-        expect(ownedPaths(['--owned-path'])).toEqual([]);
+        // T6-3: a bare value flag with no value is present-but-empty as well, not "no declaration" — the earlier check
+        // only recognised the inline spelling, so `--owned-path` (with nothing after it) silently declared nothing.
+        expect(() => ownedPaths(['--owned-path'])).toThrow(/requires a path/u);
         expect(() => ownedPaths(['--owned-path='])).toThrow(/requires a path/u);
+        // A flag given a value is of course fine, in either spelling.
+        expect(ownedPaths(['--owned-path=src/a.ts'])).toEqual(['src/a.ts']);
 
         await expect(readWaiversFile(['--waivers-file'])).rejects.toThrow(/requires a path/u);
         await expect(readWaiversFile(['--waivers-file='])).rejects.toThrow(/requires a path/u);
@@ -664,6 +668,9 @@ describe('review CLI I/O', () => {
         // And the switch itself is a switch in either spelling.
         expect(parseInstallerArgs(['--platform=pi', '--scope=project', '--dry-run']).options.dryRun).toBe(true);
         expect(parseInstallerArgs(['--platform=pi', '--scope=project', '--dry-run=1']).options.dryRun).toBe(true);
+        // T6-4: the same parser answered "empty value" two ways — `--platform=` threw, `--root=` was accepted as `''`.
+        expect(() => parseInstallerArgs(['--platform=pi', '--scope=project', '--root='])).toThrow(/requires a path/u);
+        expect(() => parseInstallerArgs(['--platform=pi', '--scope=project', '--home='])).toThrow(/requires a path/u);
 
         // `--mode` belongs to the orient parser, not the tasks one — assert each parser against its own flags, and make
         // the point that matters: two adjacent inline flags must not swallow one another.
@@ -679,6 +686,18 @@ describe('review CLI I/O', () => {
 
         // And a flag is not the next flag's value here either: it is refused rather than read as one.
         expect(() => parseHandoffArgs(['--task', '--role'])).toThrow(/Unknown handoff option/u);
+
+        // T6-1: an inline value consumes nothing, in **every** branch of this parser, and each branch is asserted rather
+        // than one of them — the three that were wrong (`--role`/`--from`/`--root`) each swallowed the flag that followed,
+        // so `--role=reviewer --task=t1` lost the task and the caller delegated to a different one.
+        const { parseDelegationArgs } = await import('../../src/cli/handoff.js');
+        expect(parseDelegationArgs(['--role=reviewer', '--task=t1'])).toMatchObject({ role: 'reviewer', change: 't1' });
+        expect(parseDelegationArgs(['--from=a', '--task=t1'])).toMatchObject({ from: 'a', change: 't1' });
+        expect(parseDelegationArgs(['--root=/ws', '--task=t1'])).toMatchObject({ root: '/ws', change: 't1' });
+        expect(parseDelegationArgs(['--to=opencode', '--task=t1'])).toMatchObject({ to: 'opencode', change: 't1' });
+        expect(parseDelegationArgs(['--platform=pi', '--task=t1'])).toMatchObject({ to: 'pi', change: 't1' });
+        // The  branch too: mutating it must redden this case, so it gets its own assertion with a flag after it.
+        expect(parseDelegationArgs(['--change=t1', '--role=reviewer'])).toMatchObject({ change: 't1', role: 'reviewer' });
     });
 
     it('resolves the = spelling for hand-written flag parsers too, not only the shared readers', async () => {

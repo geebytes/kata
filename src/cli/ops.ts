@@ -1,4 +1,4 @@
-import { readFlag, splitFlag } from './invocation.js';
+import { readFlag, splitFlag, switchPresent } from './invocation.js';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
@@ -26,7 +26,8 @@ import { parseDelegationArgs } from './handoff.js';
  */
 
 export async function runEvalCommand(argv: string[]): Promise<Record<string, unknown>> {
-    const [manifestPath, ...rest] = argv.filter((arg) => arg !== '--json' && arg !== '--quiet');
+    // A switch is a switch in either spelling, through the shared reader (T6-1/F-1).
+    const [manifestPath, ...rest] = argv.filter((arg) => !switchPresent([arg], '--json') && !switchPresent([arg], '--quiet'));
     if (!manifestPath || manifestPath.startsWith('--')) {
         throw new Error('Usage: kata-cli eval <manifest.json> [--persist <report.json>] [--root <path>]');
     }
