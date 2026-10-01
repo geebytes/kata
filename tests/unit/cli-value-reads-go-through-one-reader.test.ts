@@ -85,7 +85,7 @@ describe('CLI value reads go through one reader', () => {
         }
     });
 
-    it('finds no hand-rolled flag lookup left in src/cli, including the reader itself', async () => {
+    it('finds none of the five shapes this scan recognises, in src/cli.ts and src/cli/** (including the reader)', async () => {
         const offences: string[] = [];
         for (const { path, text } of await cliSources()) {
             // T6-4: `invocation.ts` used to be skipped — the file where a regression would be least visible. The reader's
@@ -96,6 +96,8 @@ describe('CLI value reads go through one reader', () => {
             }
         }
         expect(offences, `hand-rolled flag lookups must go through readFlag:\n${offences.join('\n')}`).toEqual([]);
+        // The case name and the docblock beside `scanHandRolledFlagLookups` state this surface and these shapes exactly,
+        // because the previous three rounds each promised more than the scan could see and the next round found the gap.
     });
 
     it('treats both spellings as one flag, and keeps absent distinct from empty', () => {

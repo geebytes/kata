@@ -138,7 +138,9 @@ export function parseChangeArg(argv: string[]): string | undefined {
         // **The first bare token is the change id only when it is not already spoken for.** A subcommand such as the
         // `review` in `review --review-evidence hello --change t1` is positional, not the id: the flag vocabulary above
         // decides which tokens are values, and a bare token that precedes a `--change` is the command word.
-        if (argv.slice(index + 1).some((entry) => entry === '--change' || entry.startsWith('--change='))) continue;
+        // The shared reader answers this in either spelling, and the scan no longer has to recognise a predicate walk with
+        // a slice in the middle of it — the shape that survived the previous round's own "coverage equals the claim".
+        if (readFlag(argv.slice(index + 1), '--change').present) continue;
         return value;
     }
     return undefined;

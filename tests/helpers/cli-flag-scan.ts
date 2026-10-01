@@ -15,32 +15,29 @@ export function stripComments(text: string): string {
         .replace(/(^|[^:])\/\/[^\n]*/gu, (match, prefix: string) => prefix + ' '.repeat(match.length - prefix.length));
 }
 
-/** The blanked view used only to decide *where* a comment is; flag scanning reads `stripComments` instead. */
-export function blankLiterals(text: string): string {
-    return text
-        .replace(/'(?:[^'\\\n]|\\.)*'/gu, (literal) => `'${' '.repeat(Math.max(0, literal.length - 2))}'`)
-        .replace(/`(?:[^`\\]|\\.)*`/gu, (literal) => `\`${' '.repeat(Math.max(0, literal.length - 2))}\``);
-}
-
 export type Offence = { line: number; text: string; why: string };
 
 /**
- * Every hand-rolled lookup in `text`.
+ * Hand-rolled lookups in `text`, in the five shapes this scan can recognise.
  *
- * Five shapes are forbidden, because each is how a value flag's spelling or its neighbour guard gets lost:
- *   - `argv.indexOf('--x')` / `argv.includes('--x')` — whole-token comparison;
- *   - a flag comparison inside a predicate walk — `argv.some((t) => t === '--x')` and the `find`/`filter`/`every`/`findIndex`
- *     equivalents. T6-1: the guard called itself complete while `scope.ts`, `workflow.ts` (twice) and `ledger.ts` carried
- *     live lookups in this shape, and the case name claimed the tree was clean;
- *   - `argv[i + 1]` with no guard — unless a `readFlag(...).value`/`paradeArgValue(...)` read, or a `startsWith('--')`
- *     guard visible in the next two lines, is present;
- *   - a flag name held in a variable, which the text scan cannot follow;
- *   - `argv.slice(...)` followed by an index, which hides the lookup from the patterns above.
+ * **What it covers.** `argv.indexOf('--x')` / `argv.includes('--x')`; a flag literal compared inside a direct
+ * predicate walk (`argv.some|find|filter|every|findIndex((t) => t === '--x')`); `argv[i + 1]` with neither a
+ * `readFlag(...).value`/`paradeArgValue(...)` read nor a `startsWith('--')` guard in the next two lines; a flag name
+ * bound to a `const`; `argv.slice(...)` followed by an index.
  *
- * **The scope is the scope it states.** `invocation.ts` is scanned too: it is where the reader lives, and a regression
- * there is as invisible to a reviewer as one anywhere else — which is how T6-4 found the case exempting the very file.
- * The reader's own reads are recognised by their shape, not by exempting the file.
- */export function scanHandRolledFlagLookups(text: string): Offence[] {
+ * **What it does not cover, measured rather than assumed.** Round 7 injected each of these into `src/cli/scope.ts` and
+ * the scan stayed green while the code silently skipped the neighbour guard: `argv.at(i + 1)`, `argv.reduce`,
+ * `[...argv]` under an alias, `for (const [i, t] of argv.entries())`, `argv.join().includes('--x')`, a flag taken from
+ * `VALUE_FLAGS[0]`, `argv.flatMap`, an alias of `process.argv`, a `` `--${name}` `` template, `argv` and `.indexOf`
+ * on **different lines**, and `argv\n.some(\n… === '--x')` across lines. It also does not scan outside
+ * `src/cli.ts` + `src/cli/**` (`src/policy/guard-script.ts` carries the same shape).
+ *
+ * So this is a **strong approximation over a named surface**, not a rule that closes the class. The claim is written to
+ * the coverage on purpose: three rounds running, the docblock promised "every hand-rolled lookup" while the shape beside
+ * it was missed, and the missed shape is what the next round found. A scan cannot enumerate spellings; the class needs a
+ * type that makes the hand-rolled read unexpressible, which is a design, not a repair.
+ */
+export function scanHandRolledFlagLookups(text: string): Offence[] {
     const code = stripComments(text);
     const offences: Offence[] = [];
     for (const [index, line] of code.split('\n').entries()) {
