@@ -559,3 +559,49 @@ F-1/F-2/F-3 三条是**同一个形状的第三、四、五次现身**：一条�
 - 交付：`security` 档的 assurance floor 从 `sandboxed` 改为 `observed`（执行隔离归宿主 Agent 平台）、退役词汇的**读写分离**（`ASSURANCE_LEVELS` 写 / `LEGACY_ASSURANCE_LEVELS | READABLE_ASSURANCE_LEVELS` 读、`ASSURANCE_RANK` 保留使历史记录仍可比较）、`writePolicy`/`ensureAssurance`/CLI 三面拒绝退役值、历史 artefact 可读且读时不改写、`meetsAssuranceFloor` 要求"可产出的当前值"、`security` 档的双审阅/always quorum/`privilege`+`provenance` 覆盖全部保留。
 
 **七轮的净结论**：本 change 的主题（assurance 平台边界）**八条独立读数里从未被证伪**；被反复证伪的是 `src/cli/**` 的参数解析，那是**另一件事**，已切出为 `2026-09-30-cli-flag-reader-design.md`。
+
+## 28. `escalate_review_without_progress` 在本 change 自己的审查通过时误报
+
+第二十八节记录一次被机制正确抓住、但根因与我的第一直觉不同的事故。
+
+### 28.1 现象
+
+`review --approve` 成功后，`kata-cli status` 报 `escalate_review_without_progress`——**审查已通过、ledger 已 pass、无任何未处置项**，却被升级为"需要人决定是否继续修复"。它挡住了合法的 judge。
+
+### 28.2 我先错了两次
+
+1. **第一次假设**：`blockingCount: null` 被当成"没有下降"。→ 探针测得九轮里 `noProgressRounds = 3`、`escalating: true`，与假设**不符**。
+2. **第二次假设**：`blockingCount: 0` 被当成"没有新低"。→ 我据此在 `reviewProgress` 加了"0 = 达成"分支。**探针说这不起作用**（仍是 3），因为**真实数据里根本没有 `0`**。
+
+两次都是**先下结论、后测量**。实际九轮是：
+
+```
+2, null, 2, 4, null, null, 6, null, null
+```
+
+最小值 2，其后每一次测量都 ≥2 且没有新低 → `noProgressRounds` 累计 3 → **升级是正确的**：**阻塞项一路涨（2 → 4 → 6），从未下降过。**
+
+### 28.3 真正的根因
+
+`null` 承担了**两个相反的事实**：
+
+| 写入源 | 记什么 | 含义 |
+|---|---|---|
+| 因 review findings 进入修复 | `blockingCount: 2/4/6` | 还有 N 个阻塞项 |
+| 因 revision 被顶替进入修复 | `null` | 没有计数可读 |
+| **审查通过（approve）** | **`null`（因为它根本不是 repair）** | **循环清零了** |
+
+第三行是关键：**一次通过的审查不留任何轮次**，所以"从未下降"的历史里看不到那次"降到 0"。这正是本 change 反复修的同一个形状——**一个字段承担两个事实**。
+
+### 28.4 修法与它的证据
+
+- **写侧**：`orchestrator.ts` 的审批路径在写完 `review.json` 之后 `appendReviewRound({ blockingIds: [], blockingCount: 0 })`。`0` = 循环清零；`null` 仍然只表示"无可测量"。
+- **判据**：`reviewProgress` 把 `blockingCount === 0` 视为达成（结束 run、不延长），其余规则不变（仍按"历史最低值"比较并升级）。
+
+**证据的曲折值得单独记下**：我先写了两条用例（一条只测 `reviewProgress` 纯函数、一条只测 `appendReviewRound`），**它们在同一变异下全绿**——删掉 `orchestrator.ts` 里的写入，两条都通过。它们与缺陷形状**不对齐**。
+
+真正的证据是复用 `ledger-can-approve-a-review.test.ts` 里已有的 `reviewTask()` fixture（它能构造 sealed + ledger pass），驱动真实 `approve`，断言 `review-rounds.jsonl` 新增一行且 `blockingCount === 0`。**删掉写入 → 这条变红**。两条假用例已删除/收窄（保留者标注"不驱动审批"）。
+
+**成本对照**：我原以为需要"重 fixture"，实际是复用现成的。**"成本高"这个判断本身就该先测量**。
+
+1313 用例 / 210 文件全绿，`tsc --noEmit` 干净。

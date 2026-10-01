@@ -27,7 +27,7 @@ import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from '
 import { type TaskRevision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
-import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape } from '../quality/repair.js';
+import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
 import { authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
@@ -1783,6 +1783,15 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
             const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes);
+            // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
+            // repair was entered, so an approval recorded nothing and the escalation read a history whose blocking count
+            // rose (2 → 4 → 6) and never fell — firing on this change the moment its review passed with no findings. `0` and
+            // `null` are now two facts: cleared, and nothing to measure.
+            await appendReviewRound(root, taskId, {
+                at: new Date().toISOString(),
+                blockingIds: [],
+                blockingCount: 0,
+            });
             return {
                 command: 'review',
                 taskId,

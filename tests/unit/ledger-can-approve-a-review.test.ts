@@ -20,6 +20,7 @@ import {
     writeSubject,
 } from '../../src/store/ledger.js';
 import { planReview } from '../../src/producers/planner.js';
+import { readReviewRoundsState, reviewProgress } from '../../src/quality/repair.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -173,6 +174,30 @@ describe('the evidence ledger can hold a review approval', () => {
         expect(record.ledgerReview.subjectRevision).toMatch(/^rev:[0-9a-f]{16}$/u);
         // The limit is recorded rather than implied: this route does not establish who wrote the claims.
         expect(record.ledgerReview.limits.join(' ')).toContain('not who wrote the claims');
+    });
+
+    it('records the approval as a cleared round, so a passing loop does not read as a stalled one', async () => {
+        // **A1: the writer half of the escalation fix, driven through the real approval path.** `review-rounds.jsonl`
+        // previously gained a line only when a *repair* was entered, so an approval recorded nothing and the judgement saw
+        // a blocking count that rose (2 → 4 → 6) and never fell — which is how `escalate_review_without_progress` fired on
+        // this change at the moment its review passed with no findings. The mutation that matters is deleting the write in
+        // `orchestrator.ts`: this case must redden, and the two cases that assert `reviewProgress`/`appendReviewRound`
+        // directly do not (they were measured green under that mutation).
+        const root = await reviewTask('round-task');
+        await passLedger(root, 'round-task');
+
+        const before = await readReviewRoundsState(root, 'round-task');
+        expect(before.rounds).toHaveLength(0);
+
+        const result = await approve(root, 'round-task');
+        expect(result.success).toBe(true);
+
+        const after = await readReviewRoundsState(root, 'round-task');
+        expect(after.rounds).toHaveLength(1);
+        // **Zero, not null.** `0` is "the loop cleared"; `null` is "nothing could be measured", and the judgement reads
+        // them differently — an approved change recorded as unmeasurable is the defect this case exists for.
+        expect(after.rounds[0]?.blockingCount).toBe(0);
+        expect(reviewProgress(after.rounds).escalating).toBe(false);
     });
 
     it('refuses when the ledger does not pass, naming the kernel\'s reason', async () => {

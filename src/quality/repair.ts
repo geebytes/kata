@@ -187,8 +187,9 @@ export function reviewRoundsPath(root: string, taskId: string): string {
 /**
  * Derive the loop's progress from the recorded rounds.
  *
- * Only rounds that measured a count participate in the comparison, and a run of them is what escalates: a round that
- * measured nothing can neither be progress nor be read as one.
+ * Only rounds that measured a count participate in the comparison, and a run of rounds that **left work behind** is what
+ * escalates: a round that measured zero cleared the loop, and a round that measured nothing can neither be progress nor
+ * be read as one.
  */
 export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
     // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
@@ -208,7 +209,16 @@ export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
             continue;
         }
         newestMeasuredIds = [...round.blockingIds];
-        if (best === null || round.blockingCount < best) {
+        // **A cleared round is the goal state, not a round that failed to improve.** Nothing left to reduce means the run
+        // ends; keeping it open would make a loop that reached zero look like one that stalled on zero. (Zero is the
+        // writer's job to record — see `recordReviewRound`; a round that merely *could not* be measured is `null` and stays
+        // neutral below.)
+        if (round.blockingCount === 0) {
+            best = 0;
+            noProgressRounds = 0;
+            continue;
+        }
+        if (best === null || best === 0 || round.blockingCount < best) {
             best = round.blockingCount;
             noProgressRounds = 0;
         } else {
