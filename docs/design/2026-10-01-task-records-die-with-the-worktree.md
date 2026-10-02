@@ -355,3 +355,27 @@ return removeWorktree(input);         // ← 放行
 | AC-1 / AC-4 / AC-5 | **降级** —— 它们断言的正是被移出的部分 |
 
 **未 merge 到 master**，因此三条 blocking 的路径不会被触发。
+
+## 17. 收窄后的账本状态：诚实为 `insufficient`
+
+收窄后本 change 的三条 claim（C1 代码根接线 / C2 检测器递归且覆盖双面 / C3 任务由内容推导 + 恢复隔离）
+全部有 `executable_falsifier` 证据并 `supported`（3/3）。而 `ledger decide` 仍是 **`insufficient`**，原因是：
+
+| reason | deficit | 含义 |
+|---|---|---|
+| `challenge_open` | `challenge:X2` | 一条**能失败在本 change 上**的独立挑战仍失败：守卫按调用者的 `taskId` 匹配而非按删除路径匹配 |
+| `discovery_unverified` | `discovery:verified_challenge` | 该挑战尚未记录观测 |
+
+**这是正确的终态，不是失败**：收窄后的 change **只声称它做到的**，而它**没有**修守卫 —— 账本如实反映了这一点。挑战 X2 的复现命令：
+
+```
+npx vite-node --config vitest.config.ts tmp/probe-guard-blindspot.mts
+  report: [{"taskId":"U","worktree":".kata/worktrees/T","files":["tasks/verdicts.json"]}]
+  guard asked with taskId='T': wouldRefuse=false
+  the path being removed holds the only copy: true
+  → exit 1: the guard matches the caller's task id instead of the path being removed
+```
+
+这条挑战的存在是**本 change 与它的下一步之间的接缝**：它把"守卫缺陷仍未修"变成一个可执行、可复现、由机器判定的句子，而不是文档里的一句声明。
+
+守卫缺陷本身的设计在 `docs/design/2026-10-02-record-ownership-single-derivation.md`（AC-2）。
