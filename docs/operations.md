@@ -247,13 +247,15 @@ kata-cli worktree remove <path> [--force]
 - **Where they live.** Linked worktrees go under `<repo>/.kata/worktrees/<task>`, which is ignored by git **and** by
   repository identity, so a nested worktree never appears as untracked paths in its primary checkout and never counts as
   workspace drift.
-- **What a created worktree carries.** Kata's ignore rules, and the task's own state — copied in when the branch's commit
-  predates the task (task state is tracked, so an older base would otherwise check out an empty workspace). The session
-  pointer is deliberately **not** copied: activate in the worktree (`kata-cli hooks activate --change <task> --role <role>`).
-- **Which checkout a command uses.** A task shared by a nested worktree and its primary checkout resolves to the
-  **nearest** owner — the checkout the command runs in. From the primary checkout it resolves to the primary checkout.
-  Sibling worktrees that own the task with no owner above them still fail closed (`Multiple descendant worktrees own…`),
-  because nothing in the invocation says which one was meant; `--root` selects one explicitly.
+- **What a created worktree carries.** Kata's ignore rules, and **no copy of the task's records**: they have one owner,
+  the checkout that holds the task. The worktree isolates the code. The session pointer is likewise **not** copied —
+  activate in the worktree (`kata-cli hooks activate --change <task> --role <role>`).
+- **Which checkout owns the records.** The nearest checkout that holds the task and is not a linked worktree. A worktree
+  resolves to its own checkout, whichever directory it was created at. Sibling worktrees that own the task with no owner
+  above them still fail closed (`Multiple descendant worktrees own…`), because nothing in the invocation says which one
+  was meant; `--root` selects one explicitly.
+- **Which checkout a workflow command runs against.** The code root: a task-addressed command run from inside a worktree
+  uses that worktree, so `build` and `verify` operate on the code the worktree holds.
 - **Removal.** `git worktree remove` semantics: uncommitted changes are refused unless `--force`, and a forced removal
   says so in its result rather than passing silently.
 

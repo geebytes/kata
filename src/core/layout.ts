@@ -555,10 +555,13 @@ async function directoryExists(dir: string): Promise<boolean> {
 /**
  * **The root that owns a task's records.**
  *
- * Isolating a change isolates its code: `resolveWorkspaceRootForTask` prefers the nearest owner so a command inside
- * `.kata/worktrees/<id>` edits that checkout and leaves the primary alone — `worktree.test.ts` pins that, and it is what
- * `isolated_worktree` means. Records are a different thing: they are the audit of what happened, one copy should exist, and
- * `archive` removes the worktree at the end. Leaving them under whichever root resolved produced two answers to one
+ * Isolating a change isolates its **code**, and that is a different question from this one. `resolveCodeRoot` answers the
+ * code question — a command run inside a worktree uses that worktree, which is what `isolated_worktree` means and what
+ * `worktree.test.ts` pins. **This function answers the records question, and it is not the nearest checkout.** An earlier
+ * version of this paragraph said the opposite ("prefers the nearest owner so a command inside `.kata/worktrees/<id>` edits
+ * that checkout") and cited the same test for it; the sentence was true of a function that has since been split in two,
+ * and the coincidence is why the prose outlived the behaviour. Records are the audit of what happened: one copy exists,
+ * and `archive` removes the worktree at the end. Leaving them under whichever root resolved produced two answers to one
  * question (measured: one task reporting `phase: archive` from its worktree and `phase: implement` from the primary
  * checkout) and put 129 record files, across four merged changes, inside a directory the archive deletes.
  *
@@ -568,29 +571,15 @@ async function directoryExists(dir: string): Promise<boolean> {
  */
 export function recordsRoot(root: string, taskId: string): string {
     const start = resolve(root);
-    // **Ownership is decided by the task directory, not by a file inside it.** The key used to be
-    // `.kata/tasks/<id>/current-state.json`, so dropping that one file into any nested checkout moved the answer: measured,
-    // `recordsRoot` and `resolveWorkspaceRootForTask` both switched to the intruder and `taskDir` began writing the task's
-    // records there. Ownership that a file can grant is not ownership — it is a race with whoever writes the file.
-    const owning: string[] = [];
-    let directory = start;
-    while (true) {
-        if (hasFileOrDir(directory, join('.kata', 'tasks', taskId)) && !isUnderLinkedWorktrees(directory)) {
-            owning.push(directory);
-        }
-        const parent = resolve(directory, '..');
-        if (parent === directory) break;
-        directory = parent;
-    }
-    if (owning.length > 0) return owning[0]!;
-    // No checkout outside `.kata/worktrees/` holds it: the worktree's copy is the only one, so it is the owner.
-    let candidate = start;
-    while (true) {
-        if (hasFileOrDir(candidate, join('.kata', 'tasks', taskId))) return candidate;
-        const parent = resolve(candidate, '..');
-        if (parent === candidate) break;
-        candidate = parent;
-    }
+    // **One derivation.** Was: walk ancestors for `.kata/tasks/<id>/current-state.json`, and when nothing held it, return
+    // the caller's own directory. Two faults, both measured: dropping that one file into a nested checkout moved ownership
+    // (and `taskDir` began writing the task's records there), and "no owner" read as "here", so a command run inside a
+    // worktree wrote records into the worktree. The second walk below also kept the worktree's own copy as an owner, which
+    // is what made a worktree's records look like a second answer to the same question.
+    const owner = recordOwner({ root: start, taskId }).ownerRoot;
+    if (owner !== undefined) return owner;
+    // The task is genuinely nowhere. Falling back to the caller keeps this function total, and the caller's expectations
+    // are unchanged from before — `resolveWorkspaceRootForTask` is where "nobody owns this" becomes a refusal.
     return start;
 }
 
@@ -696,11 +685,30 @@ export function currentRevisionPath(root: string, taskId: string): string {
  */
 export function evidenceDir(root: string): string {
     const start = resolve(root);
-    if (!isUnderLinkedWorktrees(start)) return join(kataDir(start), 'evidence');
-    // Standing inside a linked worktree: the checkout that contains it owns the store, which is the same answer for every
-    // task under it.
-    const owner = owningCheckoutOf(start);
+    // **One derivation.** The store belongs to the checkout that owns the records — the same answer `recordsRoot` gives,
+    // reached the same way. The store itself is flat and shared, so which task is asked about does not change the
+    // directory; what matters is that a worktree resolves to its owning checkout rather than keeping a per-root copy.
+    //
+    // The task id is read from the worktree's own record directories when the caller stands in one. Asking without it
+    // would leave `recordOwner` with no task to look up and return `undefined`, which is how a path-shape test came to be
+    // written here in the first place.
+    const owner = recordOwner({ root: start, taskId: worktreeTaskId(start) }).ownerRoot;
     return join(kataDir(owner ?? start), 'evidence');
+}
+
+/** The first task a worktree holds, read from its own record directories. `undefined` outside a worktree. */
+function worktreeTaskId(start: string): string | undefined {
+    const worktree = worktreeContaining(start);
+    if (worktree === undefined) return undefined;
+    try {
+        const entries = readdirSync(join(worktree, '.kata', 'tasks'), { withFileTypes: true });
+        const held = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).map((entry) => entry.name);
+        return held.sort()[0];
+    } catch {
+        // A worktree that holds no record directory yet still needs an answer, and any task id serves: the owner walk
+        // only has to reach the checkout that owns `.kata/worktrees/`, which does not depend on which task was asked.
+        return undefined;
+    }
 }
 
 /**
@@ -717,6 +725,100 @@ function owningCheckoutOf(worktree: string): string | undefined {
         }
     }
     return undefined;
+}
+
+/**
+ * Which checkout owns a record, and which task it belongs to — **the one derivation, asked by every surface**.
+ *
+ * Five places used to answer this by five different shapes: `recordsRoot` walked ancestors for a marker file,
+ * `worktreeOnlyRecords` scanned `.kata/worktrees/<dirname>` and read the task off the directory name,
+ * `removeWorktreeSafely` matched the task id its *caller* supplied, `worktreeOwner` took the first task the worktree
+ * listed, and `evidenceDir` tested the path shape. The consequence was measurable rather than theoretical: `archive`
+ * removed a worktree holding another task's only records and returned success, because the guard asked about a task id
+ * while the detector answered about a path.
+ *
+ * The three decisions, stated rather than implied:
+ *
+ *   1. **The path shape decides the worktree.** A path inside `.kata/worktrees/<dir>/` is in that worktree; nothing else
+ *      is, so a `--path` worktree (which lives wherever the operator put it) is recognised by its own path, not by
+ *      living under `.kata/`.
+ *   2. **The task id comes from the record directory, not from a directory name.** A worktree created with `--path` is
+ *      called whatever the operator typed, so `tasksHeldByWorktree` reads `.kata/tasks/<id>/` and the id is the
+ *      directory name *there*.
+ *   3. **The owner is the nearest checkout that holds the task and is not a linked worktree.** `.kata/worktrees/` is
+ *      excluded by construction — a worktree is a copy of the code, not a second owner of the records.
+ *
+ * `ownerRoot` is `undefined` when nothing holds the task. That state used to read as the caller's own directory, which
+ * made "unknown" indistinguishable from "here" and let a command run inside a worktree write records into it.
+ */
+export interface RecordOwnership {
+    /** The checkout holding this record, or `undefined` when no checkout holds the task. */
+    ownerRoot: string | undefined;
+    /** The task the path carries, when the path is inside a task's record directory. */
+    taskId: string | undefined;
+    /** The worktree the path sits in, when it sits in one. */
+    worktreeRoot: string | undefined;
+}
+
+export function recordOwner(input: { root: string; path?: string; taskId?: string }): RecordOwnership {
+    const start = resolve(input.path ?? input.root);
+    const worktreeRoot = worktreeContaining(start);
+
+    // (2) The task id is read off the record directory the path is inside, so a worktree whose name says nothing still
+    // answers correctly. An explicit `taskId` is honoured only as a *query* — it never changes which checkout owns it.
+    const fromPath = taskIdInPath(start);
+    const taskId = fromPath ?? input.taskId;
+
+    // Where to begin looking for the owner: the worktree's own checkout when we are inside one, otherwise this path.
+    // `dirname(worktreeRoot)` is the checkout that holds `.kata/worktrees/`, and the walk below continues upward from
+    // there, so a worktree nested inside another directory still resolves to the repository that owns it.
+    const searchFrom = worktreeRoot ? dirname(worktreeRoot) : start;
+    const ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId);
+    return { ownerRoot, taskId, worktreeRoot };
+}
+
+/**
+ * The worktree a path sits in, or `undefined`.
+ *
+ * Recognised by two shapes: the linked checkouts this repository creates under `.kata/worktrees/<dir>`, and a git
+ * worktree listed by `git worktree list` (which is how a `--path` checkout appears). The second shape is why this
+ * cannot be a pure path test on `.kata/worktrees/` — that test is what made a `--path` worktree invisible to the
+ * detector while `resolveCodeRoot` recognised it.
+ */
+function worktreeContaining(candidate: string): string | undefined {
+    const segments = resolve(candidate).split(sep);
+    for (let index = segments.length - 1; index >= 1; index -= 1) {
+        if (segments[index] === 'worktrees' && segments[index - 1] === '.kata') {
+            // The worktree root is `worktrees/<dir>`, not `worktrees` — returning the parent lost the one segment that
+            // distinguishes this worktree from its siblings.
+            return segments.slice(0, index + 2).join(sep) || sep;
+        }
+    }
+    return undefined;
+}
+
+/** The task id a path carries, read from the `.kata/tasks/<id>/` directory the path is inside. */
+function taskIdInPath(candidate: string): string | undefined {
+    const segments = resolve(candidate).split(sep);
+    for (let index = segments.length - 1; index >= 1; index -= 1) {
+        if (segments[index] === 'tasks' && segments[index - 1] === '.kata') {
+            return segments[index + 1] === undefined ? undefined : segments[index + 1];
+        }
+    }
+    return undefined;
+}
+
+/** The nearest ancestor-or-self that holds `taskId` as a task directory and is not a linked worktree. */
+function findOwningCheckout(from: string, taskId: string): string | undefined {
+    let directory = resolve(from);
+    while (true) {
+        if (!worktreeContaining(directory) && hasFileOrDir(directory, join('.kata', 'tasks', taskId))) {
+            return directory;
+        }
+        const parent = resolve(directory, '..');
+        if (parent === directory) return undefined;
+        directory = parent;
+    }
 }
 
 /** Where a superseded revision's evidence is kept, so a seal never destroys what a previous one proved. */

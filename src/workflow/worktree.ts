@@ -14,9 +14,10 @@ import { assertValidTaskId } from '../core/ids.js';
  *
  * What a created worktree gets, so an agent can start working in it immediately:
  *   - kata's workspace hygiene (the `.kata/runtime/` and `.kata/worktrees/` ignore rules);
- *   - the task's own state, copied in when it is not already present (the state is tracked, so a branch whose commit
- *     predates the task would otherwise check out an empty workspace) — **without** the runtime pointer, which is
- *     per-session and must be activated in the worktree itself.
+ *   - **no copy of the task's records.** They have one owner (the checkout that holds the task), and a worktree that
+ *     carried its own copy was the defect this line of work removed: two answers to one question, and an archive that
+ *     deleted whichever copy lived in the worktree. The worktree isolates the *code*; `taskStateCopied` is `false` and
+ *     kept as a witness. The runtime pointer is likewise not copied — it is per-session and activated in the worktree.
  */
 
 export const worktreesDirName = join('.kata', 'worktrees');
@@ -270,14 +271,24 @@ export async function removeWorktreeSafely(input: {
 }): Promise<GuardedRemoval> {
     const { worktreeOnlyRecords } = await import('../core/layout.js');
     const report = await worktreeOnlyRecords(input.root);
-    const forThisTask = report.find((entry) => entry.taskId === input.taskId);
-    if (forThisTask && forThisTask.files.length > 0) {
+    // **The guard judges the path, not the task id it was handed.** It used to ask
+    // `report.find((entry) => entry.taskId === input.taskId)`, so a worktree called `T` holding `U`'s records produced a
+    // report entry for `U`, the lookup for `T` found nothing, and the removal proceeded — deleting `U`'s only copy and
+    // returning success. Measured on a fixture before this criterion: `{"removed":true}`, `verdicts.json` gone.
+    //
+    // The caller's id is a *claim about the worktree*, and the guard exists because that claim can be wrong; that is the
+    // whole reason it is not the guard's input any more. It stays accepted for compatibility, and is not consulted.
+    const target = resolve(input.root, input.path);
+    const forThisPath = report.filter((entry) => resolve(input.root, entry.worktree) === target);
+    const files = forThisPath.flatMap((entry) => entry.files);
+    if (files.length > 0) {
+        const forThisTask = { taskId: forThisPath[0]!.taskId, files };
         return {
             path: resolve(input.root, input.path),
             removed: false,
             refusedBecause: 'worktree-only-records',
             worktreeOnlyRecords: forThisTask.files,
-            remedy: `kata-cli worktree recover --change ${input.taskId}`,
+            remedy: `kata-cli worktree recover --change ${forThisTask.taskId}`,
             remedyDetail:
                 'Copies the records the owner does not have, never overwrites one it has, and reports what moved. '
                 + 'Run it, then remove the worktree.',

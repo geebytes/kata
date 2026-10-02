@@ -480,7 +480,7 @@ function isInstallerCommand(command: string): command is 'init' | 'update' | 'un
  * `isolated_worktree` used to be a declaration kata could not act on: every host nested worktrees in its own place, and
  * from inside a nested one no task-addressed command could resolve `--root` without help. Kata now creates, lists and
  * removes them under `.kata/worktrees/` (ignored, so a nested worktree never shows up as untracked paths in its primary
- * checkout) and carries the task's state into the checkout.
+ * checkout). The worktree holds the code; the task's records stay with the checkout that owns the task.
  */
 
 

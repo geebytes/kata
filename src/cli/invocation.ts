@@ -141,9 +141,24 @@ export function parseChangeArg(argv: string[]): string | undefined {
         // The shared reader answers this in either spelling, and the scan no longer has to recognise a predicate walk with
         // a slice in the middle of it — the shape that survived the previous round's own "coverage equals the claim".
         if (readFlag(argv.slice(index + 1), '--change').present) continue;
+        // **A path is not a task id.** `worktree remove <path>` is the documented spelling, and the path arrives as the
+        // first bare token — so this reader returned it as the change id, the caller then compared it with the derived
+        // owner, and the mismatch branch refused *every* worktree, clean or not. Measured: the positional form threw while
+        // `remove --path <p>` worked, which made the broken spelling the documented one.
+        //
+        // This recognises the shape rather than the caller: a token that names a filesystem location (it contains a
+        // separator, or starts at the root) is a path, and an id is a bare name. The caller-side rule — remove your
+        // positional tokens before asking — is the fix in `worktree remove`; this is the belt that keeps the next verb
+        // with a positional path from repeating it.
+        if (value !== undefined && looksLikeAPath(value)) continue;
         return value;
     }
     return undefined;
+}
+
+/** True when a token names a filesystem location rather than an identifier. */
+export function looksLikeAPath(value: string): boolean {
+    return value.startsWith('/') || value.startsWith('./') || value.startsWith('../') || value.includes('/');
 }
 
 /**
