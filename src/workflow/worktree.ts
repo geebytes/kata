@@ -171,14 +171,32 @@ export interface RecordRecovery {
  * safe outcome. Where both roots have a file, the owner's copy wins, because the worktree's copy may be the stale one and
  * nothing here can tell which was written last without inventing a rule.
  */
-export async function recoverWorktreeRecords(root: string): Promise<RecordRecovery[]> {
-    const { worktreeOnlyRecords } = await import('../core/layout.js');
+export async function recoverWorktreeRecords(
+    input: string | { root: string; taskId?: string },
+): Promise<RecordRecovery[]> {
+    const root = typeof input === 'string' ? input : input.root;
+    const scopedTask = typeof input === 'string' ? undefined : input.taskId;
+    const { uniqueCopies } = await import('../core/layout.js');
     const { copyFile, mkdir: makeDir } = await import('node:fs/promises');
-    const stranded = await worktreeOnlyRecords(root);
+    // **One derivation, shared with the detector and the guard.** This used to call the detector and then re-derive the
+    // owner and the worktree directory from the shapes it returned, so a record the detector could not see (a `--path`
+    // checkout outside the root) was also a record this could not move — while the guard's own remedy named this command.
+    const stranded = await uniqueCopies({ root, ...(scopedTask === undefined ? {} : { taskId: scopedTask }) });
+    // **Grouped by (task, worktree), not by task.** Keying on the task alone kept the first worktree's location and
+    // dropped the rest, so a record unique to a second worktree was never moved while the command reported success —
+    // measured: two worktrees each holding only their own file moved one of the two.
+    const grouped = new Map<string, { taskId: string; worktreeRelative: string; files: string[] }>();
+    for (const copy of stranded) {
+        const key = `${copy.taskId}\u0000${copy.worktreeRelative}`;
+        const entry = grouped.get(key) ?? { taskId: copy.taskId, worktreeRelative: copy.worktreeRelative, files: [] };
+        entry.files.push(copy.path);
+        grouped.set(key, entry);
+    }
     const recovery: RecordRecovery[] = [];
-    for (const entry of stranded) {
-        const ownerDir = join(root, '.kata', 'tasks', entry.taskId);
-        const worktreeDir = join(root, entry.worktree, '.kata', 'tasks', entry.taskId);
+    for (const entry of grouped.values()) {
+        const taskId = entry.taskId;
+        const ownerDir = join(root, '.kata', 'tasks', taskId);
+        const worktreeDir = join(root, entry.worktreeRelative, '.kata', 'tasks', taskId);
         await makeDir(ownerDir, { recursive: true });
         const moved: string[] = [];
         const kept: string[] = [];
@@ -194,7 +212,7 @@ export async function recoverWorktreeRecords(root: string): Promise<RecordRecove
                     : join(ownerDir, inSurface);
             const source =
                 surface === 'evidence'
-                    ? join(root, entry.worktree, '.kata', 'evidence', inSurface)
+                    ? join(root, entry.worktreeRelative, '.kata', 'evidence', inSurface)
                     : join(worktreeDir, inSurface);
             if (destination === undefined || source === undefined) continue;
             // **A name that exists at the owner is kept, whatever it is.** The first version of this used `stat` on the
@@ -230,7 +248,7 @@ export async function recoverWorktreeRecords(root: string): Promise<RecordRecove
                 skipped.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
             }
         }
-        recovery.push({ taskId: entry.taskId, moved: moved.sort(), kept: kept.sort(), skipped: skipped.sort() });
+        recovery.push({ taskId, moved: moved.sort(), kept: kept.sort(), skipped: skipped.sort() });
     }
     return recovery;
 }

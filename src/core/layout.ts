@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promi
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { cwd } from 'node:process';
-import { accessSync, readdirSync, type Dirent } from 'node:fs';
+import { accessSync, existsSync, readdirSync, type Dirent } from 'node:fs';
 import { gitWorktreeList } from './git.js';
 import { loadConfig } from './config.js';
 import taskSchema from 'kata-asset:schemas/task.schema.json';
@@ -839,6 +839,196 @@ function findOwningCheckout(from: string, taskId: string): string | undefined {
         if (parent === directory) return undefined;
         directory = parent;
     }
+}
+
+/**
+ * A record that exists in only one place — deleting where it lives would lose it.
+ *
+ * `path` is relative to the record surface's task directory (`tasks/<file>` or `evidence/<file>`), which is the shape a
+ * refusal names, and `worktreeRelative` is the worktree it was found in, relative to the repository root.
+ */
+export interface UniqueCopy {
+    path: string;
+    taskId: string;
+    worktreeRoot: string;
+    worktreeRelative: string;
+}
+
+/** Thrown when the enumeration cannot answer. **Not** an empty result: an empty set means nothing would be lost. */
+export class UniqueCopiesUndetermined extends Error {
+    constructor(reason: string) {
+        super(`which records exist in only one place could not be determined: ${reason}`);
+        this.name = 'UniqueCopiesUndetermined';
+    }
+}
+
+/**
+ * Which records exist in only one place — **the one derivation**.
+ *
+ * Four consumers used to answer this, and each repair so far fixed one of them: the detector built its own enumeration
+ * and comparison, the ownership predicate asked whether a directory existed, archive selected its target by the task's
+ * name, and recovery filtered the detector's output itself. The measured failures are recorded per site in
+ * `docs/design/2026-10-02-unique-copies-is-one-model.md`; the property they share is that a question answered in four
+ * places has four chances to disagree, and the disagreements were reachable.
+ *
+ * Three decisions live here rather than in the consumers:
+ *
+ *   1. **Every worktree, including one outside the root.** The candidates come from `git worktree list` and from
+ *      `.kata/worktrees/`, and a path outside the repository is kept — a `worktree create --path /elsewhere` checkout is
+ *      a real checkout whose records can be the only copy. Dropping candidates outside the root (the previous round's
+ *      `!relativePath.startsWith('..')`) left exactly those invisible.
+ *   2. **Ownership by content, not by the existence of a directory.** A checkout holds a task when its task directory
+ *      holds a record, so `mkdir -p <anywhere>/.kata/tasks/<id>` grants nothing. The previous predicate was `accessSync`,
+ *      which made an empty directory an owner — a cheaper way to hijack ownership than the file it replaced.
+ *   3. **A record is unique only if every holder agrees.** When two worktrees hold the same path for one task, the
+ *      record is not unique to either; counting it twice would name the same loss twice and let recovery's first move
+ *      silently overwrite the second holder's copy.
+ *
+ * A source that cannot answer **raises** rather than returning nothing: `git worktree list` failing, or a worktree
+ * directory that cannot be read, means "I could not look", and the caller (archive) cannot tell that from "there is
+ * nothing to lose". Returning the empty set for both is what made the previous implementation fail open.
+ */
+export async function uniqueCopies(input: { root: string; taskId?: string }): Promise<UniqueCopy[]> {
+    const root = resolve(input.root);
+    const worktrees = await linkedWorktreesOutcome(root);
+    if (worktrees.kind === 'undetermined') throw new UniqueCopiesUndetermined(worktrees.reason);
+
+    // Every holder of every task: the primary checkout, then each worktree.
+    const holders: Array<{ worktreeRoot: string; worktreeRelative: string }> = [
+        { worktreeRoot: root, worktreeRelative: '' },
+        ...worktrees.paths.map((path) => ({ worktreeRoot: path, worktreeRelative: relative(root, path) })),
+    ];
+
+    // What each holder has, per task, per surface.
+    const held = new Map<string, Map<string, Set<string>>>();
+    for (const holder of holders) {
+        const taskIds = input.taskId !== undefined ? [input.taskId] : await taskIdsWithRecords(holder.worktreeRoot);
+        for (const taskId of taskIds) {
+            const files = await recordFilesOf(holder.worktreeRoot, taskId);
+            if (files.length === 0) continue;
+            const byTask = held.get(taskId) ?? new Map<string, Set<string>>();
+            byTask.set(holder.worktreeRoot, new Set(files));
+            held.set(taskId, byTask);
+        }
+    }
+
+    const reported: UniqueCopy[] = [];
+    for (const [taskId, byHolder] of held) {
+        for (const [worktreeRoot, files] of byHolder) {
+            // **A copy in the primary checkout is not at risk.** The question this answers is "what would be lost if a
+            // worktree went away", because a worktree is what removal deletes. Reporting the primary checkout's own
+            // records made every task's `current-state.json` a "unique copy" the moment a worktree happened not to carry
+            // it — measured: recovery tried to move the owner's own state file to the owner.
+            if (worktreeRoot === root) continue;
+            for (const path of files) {
+                // (3) Held by more than one checkout: not unique to any of them.
+                const holdersOfThisPath = [...byHolder.values()].filter((other) => other.has(path)).length;
+                if (holdersOfThisPath > 1) continue;
+                reported.push({
+                    path,
+                    taskId,
+                    worktreeRoot,
+                    worktreeRelative: relative(root, worktreeRoot),
+                });
+            }
+        }
+    }
+    return reported;
+}
+
+/** The linked checkouts, as an outcome rather than a possibly-empty list. */
+async function linkedWorktreesOutcome(root: string): Promise<{ kind: 'determined'; paths: string[] } | { kind: 'undetermined'; reason: string }> {
+    const paths = new Set<string>();
+    try {
+        for (const worktree of await gitWorktreeList(root)) {
+            const resolved = resolve(worktree.path);
+            // **Outside the root is kept.** A `--path` checkout is a real holder of records.
+            if (resolved !== root) paths.add(resolved);
+        }
+    } catch (error) {
+        // git could not answer. The directory below may still answer, so this is not fatal on its own — but if that
+        // also fails, the caller gets an undetermined answer rather than "nothing to lose".
+        if (!(await directoryWorktrees(root)).ok) {
+            return { kind: 'undetermined', reason: `git could not list worktrees (${String(error)}) and .kata/worktrees could not be read` };
+        }
+    }
+    const byDirectory = await directoryWorktrees(root);
+    if (!byDirectory.ok) {
+        // The directory exists but cannot be read: that is an unreadable source, not an absent one.
+        return { kind: 'undetermined', reason: '.kata/worktrees exists but could not be read' };
+    }
+    for (const path of byDirectory.paths) paths.add(path);
+    return { kind: 'determined', paths: [...paths] };
+}
+
+async function directoryWorktrees(root: string): Promise<{ ok: true; paths: string[] } | { ok: false }> {
+    const worktrees = join(kataDir(root), 'worktrees');
+    if (!existsSync(worktrees)) return { ok: true, paths: [] };
+    try {
+        const entries = await readdir(worktrees, { withFileTypes: true });
+        return { ok: true, paths: entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).map((entry) => join(worktrees, entry.name)) };
+    } catch {
+        return { ok: false };
+    }
+}
+
+/** The tasks a checkout holds **records** of — content, not the existence of a directory. */
+async function taskIdsWithRecords(worktreeRoot: string): Promise<string[]> {
+    try {
+        const entries = await readdir(join(worktreeRoot, '.kata', 'tasks'), { withFileTypes: true });
+        const ids: string[] = [];
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+            if ((await recordFilesOf(worktreeRoot, entry.name)).length > 0) ids.push(entry.name);
+        }
+        return ids;
+    } catch {
+        return [];
+    }
+}
+
+/** The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths. */
+async function recordFilesOf(worktreeRoot: string, taskId: string): Promise<string[]> {
+    const files: string[] = [];
+    for (const surface of ['tasks', 'evidence'] as const) {
+        const base = join(worktreeRoot, '.kata', surface);
+        if (surface === 'tasks') {
+            const taskDir = join(base, taskId);
+            // (2) A task directory with no record in it is not a holder.
+            files.push(...(await filesUnder(taskDir)).map((file) => `tasks/${file}`));
+        } else {
+            // The evidence store is flat and keys files by a `<taskId>-` prefix.
+            files.push(
+                ...(await filesUnder(base))
+                    .filter((file) => !file.includes('/') && file.startsWith(`${taskId}-`))
+                    .map((file) => `evidence/${file}`),
+            );
+        }
+    }
+    return files;
+}
+
+/** Every file under a directory, relative to it, recursive. A missing directory is no files. */
+async function filesUnder(directory: string): Promise<string[]> {
+    const found: string[] = [];
+    async function walk(current: string, prefix: string): Promise<void> {
+        let entries: Dirent[];
+        try {
+            entries = await readdir(current, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            const next = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+            if (entry.isDirectory()) {
+                await walk(join(current, entry.name), next);
+            } else if (entry.isFile()) {
+                found.push(next);
+            }
+        }
+    }
+    await walk(directory, '');
+    return found;
 }
 
 /** Where a superseded revision's evidence is kept, so a seal never destroys what a previous one proved. */
