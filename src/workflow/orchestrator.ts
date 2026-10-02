@@ -2136,6 +2136,36 @@ async function currentScopeHashes(root: string, evidence: EvidenceEnvelope[]): P
 }
 
 
+/**
+ * **Which worktrees an archive may consider removing, derived from the model.**
+ *
+ * Extracted so the decision is testable without passing the archive trust boundary, which refuses before the cleanup
+ * branch runs — a criterion driven through `runCommand('archive')` would be green whatever this returned, and the first
+ * version of that test was exactly that false negative.
+ *
+ * The shape it replaces is `join(worktreesDir(root), taskId)`: a directory named after the task. A worktree whose
+ * directory name differs from the task it holds is then never looked at, and the guard it feeds is handed the same
+ * derivation for `path` and `taskId` — so the guard judges the right kind of object, just not this one.
+ *
+ * A model that cannot answer is **not** an empty answer here either: the archive keeps every candidate rather than
+ * guessing, because a guess in this direction deletes records.
+ */
+export async function archiveRemovalTargets(root: string, taskId: string): Promise<string[]> {
+    const { existsSync } = await import('node:fs');
+    const { worktreesDir } = await import('./worktree.js');
+    const { uniqueCopies } = await import('../core/layout.js');
+    const named = join(worktreesDir(root), taskId);
+    const holding = await uniqueCopies({ root, taskId }).catch(() => undefined);
+    if (holding === undefined) {
+        // Undetermined: only the named directory is even a candidate, and the guard inside the removal is what refuses.
+        return [];
+    }
+    const fromModel = [...new Set(holding.map((copy) => copy.worktreeRelative))].map((relative) => join(root, relative));
+    if (fromModel.length > 0) return fromModel;
+    // Nothing is unique to a worktree, so the ordinary case applies: the worktree named after the task, if it exists.
+    return existsSync(named) ? [named] : [];
+}
+
 async function cmdArchive(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
     let archivePhase: Phase = 'distill';
     let archiveError: string | undefined;
@@ -2297,7 +2327,13 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     try {
         const { existsSync } = await import('node:fs');
         const { worktreesDir, removeWorktreeSafely } = await import('./worktree.js');
-        const linked = join(worktreesDir(root), taskId);
+        // **The worktrees the model says hold this task's only copy, not the one whose directory is named after it.**
+        // The selector used to be `join(worktreesDir(root), taskId)`, so a worktree whose directory name differs from
+        // the task it holds was never looked at — and it then passed the same derivation for `path` and `taskId`, so the
+        // guard judged the right kind of object, just not this one. Measured on the frozen revision restored with
+        // `git archive`: the removal returned `{"removed":true}` and the only copy was gone.
+        const targets = await archiveRemovalTargets(root, taskId);
+        for (const linked of targets) {
         if (archivePhase === 'archive' && existsSync(linked)) {
             try {
                 // No `force`: a worktree with uncommitted work must not be destroyed by an archive, and git refuses it
@@ -2321,6 +2357,7 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
             } catch (error) {
                 worktreeCleanup = { kept: linked, reason: (error as Error).message };
             }
+        }
         }
     } catch (error) {
         worktreeCleanup = { kept: join(root, '.kata/worktrees', taskId), reason: (error as Error).message };

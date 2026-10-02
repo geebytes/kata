@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { uniqueCopies } from '../../src/core/layout.js';
+import { recordOwner, uniqueCopies } from '../../src/core/layout.js';
 
 /**
  * AC-3 — ownership is not granted by the existence of a directory.
@@ -53,6 +53,22 @@ describe('an empty directory grants nothing', () => {
 
         const copies = await uniqueCopies({ root: primary });
         expect(copies.filter((copy) => copy.taskId === 'held')).toHaveLength(1);
+    });
+
+    it('recordsRoot does not hand ownership to an empty directory either', () => {
+        // **The consumer, not only the model.** The first version of this criterion fixed the ownership predicate and
+        // left `recordsRoot` reading the old one — measured: `recordOwner` answered `undefined` while
+        // `recordsRoot(<root>/vendor/copy/src, held)` still returned `<root>/vendor/copy`, so `taskDir` would have written
+        // the task's records into a directory it does not belong to. A criterion on the model alone does not cover it.
+        const primary = repo('records-root');
+        const intruder = join(primary, 'vendor', 'copy');
+        mkdirSync(join(intruder, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(intruder, 'package.json'), '{ "name": "copy", "private": true }\n');
+
+        expect(recordOwner({ root: join(intruder, 'src'), taskId: 'held' }).ownerRoot).toBeUndefined();
+        // The fallback names the checkout the caller works in, which for this fixture is the intruder itself — the point
+        // is that it is *not* reported as an owner of `held`.
+        expect(recordOwner({ root: primary, taskId: 'held' }).ownerRoot).toBeUndefined();
     });
 
     it('a worktree directory named after one task but holding another task\'s files is attributed correctly', async () => {

@@ -238,15 +238,33 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
         // nothing answers is worse than no advice: it reads as a route and is a dead end.
         const change = parseChangeArg(rest);
         const resolvedRoot = parseRootArg(rest) ?? root;
-        const recovery = await recoverWorktreeRecords(resolvedRoot);
+        // **The task is passed to the reader, not filtered afterwards.** Filtering the whole recovery by task id kept the
+        // shape of the old defect: the work was done for every task and then narrowed by a string comparison, so a task
+        // whose records the reader could not see produced the same empty answer as one with nothing to recover.
+        const recovery = await recoverWorktreeRecords({ root: resolvedRoot, ...(change === undefined ? {} : { taskId: change }) });
         const scoped = change ? recovery.filter((entry) => entry.taskId === change) : recovery;
+        const movedCount = scoped.reduce((total, entry) => total + entry.moved.length, 0);
+        const keptCount = scoped.reduce((total, entry) => total + entry.kept.length, 0);
+        const skippedCount = scoped.reduce((total, entry) => total + entry.skipped.length, 0);
         return {
             command: 'worktree recover',
             workspaceRoot: resolvedRoot,
             ...(change ? { taskId: change } : {}),
             recovered: scoped,
-            movedCount: scoped.reduce((total, entry) => total + entry.moved.length, 0),
-            keptCount: scoped.reduce((total, entry) => total + entry.kept.length, 0),
+            movedCount,
+            keptCount,
+            skippedCount,
+            // **A zero count says what it means.** The guard's remedy points here, and `movedCount: 0` alone reads as
+            // "there was nothing to move" when it can equally mean "nothing of this task is in a worktree". The operator
+            // needs the difference: the second is the state in which records are lost at archive time.
+            foundNothing: movedCount === 0,
+            ...(movedCount === 0
+                ? {
+                    note: change
+                        ? `no worktree holds a record that only it has for ${change}; nothing needed recovering`
+                        : 'no worktree holds a record that only it has; nothing needed recovering',
+                }
+                : {}),
         };
     }
 

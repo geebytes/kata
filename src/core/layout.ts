@@ -214,8 +214,26 @@ export function resolveWorkspaceRootForTask(taskId: string, from?: string): stri
  * Ownership asks "does this checkout hold the task", which is a question about the directory. Keying it on a file inside
  * the directory is what made the answer move when that file did, so this checks the outermost fact and nothing more.
  */
+/**
+ * Whether a checkout is the owner of a task — **by content, not by the existence of a directory**.
+ *
+ * `accessSync` made an empty directory an owner, which is the same defect the record model fixes one level up and
+ * **cheaper** to arrange than the file it replaced: `mkdir -p <anywhere>/.kata/tasks/<id>` was enough to move ownership
+ * and `taskDir` began writing the task's records there. Measured after the model was already answering by content —
+ * `recordsRoot(<root>/vendor/copy/src, held)` still returned `<root>/vendor/copy`, because this predicate had not been
+ * brought along.
+ *
+ * A directory that holds a record is a holder; a directory that holds nothing is not. The task's own state file counts,
+ * and so does any other file under it — the question is whether there is anything at all, not which file.
+ */
 function hasTaskDir(root: string, taskId: string): boolean {
-  return hasFileOrDir(root, join('.kata', 'tasks', taskId));
+  const taskDir = join(root, '.kata', 'tasks', taskId);
+  try {
+    // A file where the task directory should be is not a task record either, and `readdirSync` says so.
+    return readdirSync(taskDir).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function findDescendantTaskRoots(taskId: string, root: string): string[] {
@@ -598,9 +616,21 @@ export function recordsRoot(root: string, taskId: string): string {
     // is what made a worktree's records look like a second answer to the same question.
     const owner = recordOwner({ root: start, taskId }).ownerRoot;
     if (owner !== undefined) return owner;
-    // The task is genuinely nowhere. Falling back to the caller keeps this function total, and the caller's expectations
-    // are unchanged from before — `resolveWorkspaceRootForTask` is where "nobody owns this" becomes a refusal.
-    return start;
+    // **No owner is not the same answer as "here".** Falling back to the caller made those two indistinguishable, and
+    // `taskDir` writes through this function — so a command run inside a directory that merely *looks* like a checkout
+    // put the task's records there. Measured: with the ownership predicate fixed to content, `recordsRoot` still fell
+    // back to `<root>/vendor/copy/src` for a task no checkout holds.
+    //
+    // The honest answer for a task nobody holds is the checkout the caller is working in — the nearest ancestor that
+    // has a `.kata` directory, because that is where a task would be created. A caller standing outside any checkout
+    // keeps its own directory, which is what `resolveWorkspaceRoot` reports as no workspace at all.
+    let directory = start;
+    while (true) {
+        if (existsSync(join(directory, '.kata'))) return directory;
+        const parent = resolve(directory, '..');
+        if (parent === directory) return start;
+        directory = parent;
+    }
 }
 
 function isUnderLinkedWorktrees(candidate: string): boolean {
@@ -832,7 +862,7 @@ function taskIdInPath(candidate: string): string | undefined {
 function findOwningCheckout(from: string, taskId: string): string | undefined {
     let directory = resolve(from);
     while (true) {
-        if (!worktreeContaining(directory) && hasFileOrDir(directory, join('.kata', 'tasks', taskId))) {
+        if (!worktreeContaining(directory) && hasTaskDir(directory, taskId)) {
             return directory;
         }
         const parent = resolve(directory, '..');

@@ -60,16 +60,22 @@ describe('ownership is not granted by a file', () => {
 
     it('recognises a worktree that lives outside .kata/worktrees', () => {
         // What `worktree create --path <somewhere>` produces, and what every path-shape test missed.
+        //
+        // **The holder must hold something.** This fixture used to create empty task directories and assert that an owner
+        // was found — which is the very predicate the record model replaces, so the case asserted the old behaviour. A
+        // checkout is a holder when its task directory carries a record.
         const primary = repo('outside');
         mkdirSync(join(primary, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(primary, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
         const outside = join(primary, 'elsewhere', 'a-checkout');
         mkdirSync(join(outside, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'tasks', 'held', 'verdicts.json'), '{}\n');
 
         const owner = recordOwner({ root: outside, path: join(outside, '.kata', 'tasks', 'held') });
         expect(owner.taskId).toBe('held');
-        // Its records are the only ones under it, so it is the nearest holder from that path — the answer is *an* owner,
-        // and the point of the case is that the shape is recognised at all rather than reported as nothing.
-        expect(owner.ownerRoot).toBeDefined();
+        // It holds the task itself, so it is the nearest holder from that path — the point of the case is that the shape
+        // is recognised at all rather than reported as nothing.
+        expect(owner.ownerRoot).toBe(outside);
     });
 
     it('the detector sees a worktree that lives outside .kata/worktrees', async () => {
