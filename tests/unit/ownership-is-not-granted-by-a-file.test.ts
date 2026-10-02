@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { recordOwner } from '../../src/core/layout.js';
+import { recordOwner, worktreeOnlyRecords } from '../../src/core/layout.js';
 
 /**
  * AC-4 — ownership is not granted by the presence of a file.
@@ -70,6 +70,27 @@ describe('ownership is not granted by a file', () => {
         // Its records are the only ones under it, so it is the nearest holder from that path — the answer is *an* owner,
         // and the point of the case is that the shape is recognised at all rather than reported as nothing.
         expect(owner.ownerRoot).toBeDefined();
+    });
+
+    it('the detector sees a worktree that lives outside .kata/worktrees', async () => {
+        // **The shape this change's own challenge caught.** `worktreeOnlyRecords` scanned `.kata/worktrees/` only, so a
+        // real linked checkout created with `worktree create --path` reported `[]` while `recordOwner` recognised it —
+        // the ownership function and one of its consumers disagreeing, which is the defect this change exists to remove,
+        // reproduced inside it. Both sources are now unioned: `git worktree list` (the only one that sees a `--path`
+        // checkout) and the directory this repository creates them in.
+        const primary = repo('outside-detector');
+        writeFileSync(join(primary, '.gitignore'), '.kata/\n');
+        execFileSync('git', ['add', '-A'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+
+        const outside = join(primary, 'elsewhere', 'checkout');
+        mkdirSync(join(primary, 'elsewhere'), { recursive: true });
+        execFileSync('git', ['worktree', 'add', '-q', '-b', 'wt-branch', outside], { cwd: primary });
+        mkdirSync(join(outside, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
+
+        const report = await worktreeOnlyRecords(primary);
+        expect(report.some((entry) => entry.worktree.includes('elsewhere')), JSON.stringify(report)).toBe(true);
     });
 
     it('an empty directory is not an owner', () => {

@@ -1,8 +1,9 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { cwd } from 'node:process';
 import { accessSync, readdirSync, type Dirent } from 'node:fs';
+import { gitWorktreeList } from './git.js';
 import { loadConfig } from './config.js';
 import taskSchema from 'kata-asset:schemas/task.schema.json';
 import workflowStateRecordSchema from 'kata-asset:schemas/workflow-state-record.schema.json';
@@ -439,24 +440,43 @@ export interface WorktreeOnlyRecords {
  */
 export async function worktreeOnlyRecords(root: string): Promise<WorktreeOnlyRecords[]> {
     const worktrees = join(kataDir(root), 'worktrees');
-    let entries: Dirent[] = [];
+    // **Every worktree, not only the ones under `.kata/worktrees/`.** `worktree create --path` puts the checkout wherever
+    // the operator asked, and `git worktree add` can be run by hand — in both shapes a scan of `.kata/worktrees/` finds
+    // nothing, so the detector reported `[]` for a worktree holding the only copy of a record. Measured by this change's
+    // own independent challenge: a worktree under `elsewhere/checkout` was invisible to the detector while `recordOwner`
+    // recognised it, i.e. the ownership function and one of its consumers disagreed — the defect this change exists to
+    // remove, reproduced inside it.
+    // **Two sources, unioned.** `git worktree list` is the authority on linked checkouts and is the only source that sees
+    // a `--path` one; `.kata/worktrees/` is the directory this repository creates them in and is what a fixture (or a
+    // repository where git cannot answer) has. Taking either alone loses a shape: git alone missed the fixtures that
+    // build the directory without a real linked checkout, and the directory alone missed every `--path` worktree.
+    const candidates = new Set<string>();
+    for (const worktree of await gitWorktreeList(root)) {
+        const relativePath = relative(root, worktree.path);
+        // The main checkout is not a worktree to compare against itself.
+        if (relativePath !== '' && !relativePath.startsWith('..')) candidates.add(relativePath);
+    }
     try {
-        entries = await readdir(worktrees, { withFileTypes: true });
+        const entries = await readdir(worktrees, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isDirectory() && !entry.name.startsWith('.')) candidates.add(join('.kata', 'worktrees', entry.name));
+        }
     } catch {
-        // No `.kata/worktrees` means no linked checkout, the ordinary state of a change that never isolated.
-        return [];
+        // No `.kata/worktrees` here: the git listing above is the whole answer.
     }
     const reported: WorktreeOnlyRecords[] = [];
-    for (const entry of entries.filter((candidate) => candidate.isDirectory() && !candidate.name.startsWith('.'))) {
+    for (const relativeWorktree of candidates) {
+        const entry = { name: basename(relativeWorktree) };
         // **The task is derived from what the worktree holds, not from its directory name.** `worktree create --path`
         // (and a hand-made `git worktree add`) puts the checkout somewhere the name says nothing about: measured with a
         // custom path, the detector returned `[]` for a worktree holding the only copy of a record, the guard let the
         // removal through, and the remedy reported a `movedCount: 0` success. The directory name is a hint; the task
         // directories inside the worktree are the fact.
         const directoryName = entry.name;
-        const taskIds = await tasksHeldByWorktree(join(worktrees, directoryName));
-        const candidates = taskIds.length > 0 ? taskIds : [directoryName];
-        for (const taskId of candidates) {
+        const worktreeRoot = resolve(root, relativeWorktree);
+        const taskIds = await tasksHeldByWorktree(worktreeRoot);
+        const taskCandidates = taskIds.length > 0 ? taskIds : [directoryName];
+        for (const taskId of taskCandidates) {
         // **Every record surface, not just `.kata/tasks`.** The detector used to look at one directory, so the evidence
         // store was outside it: measured on this repository, **1053 evidence files existed only under worktrees** while
         // the report said `[]` and the removal guard therefore let `archive` delete the only copy. A surface that is
@@ -464,7 +484,7 @@ export async function worktreeOnlyRecords(root: string): Promise<WorktreeOnlyRec
         const pairs = await Promise.all(
             recordSurfaces(taskId).map(async ([surface, taskRelative]) => {
                 const primarySurface = join(kataDir(root), surface, taskRelative);
-                const worktreeSurface = join(worktrees, directoryName, '.kata', surface, taskRelative);
+                const worktreeSurface = join(worktreeRoot, '.kata', surface, taskRelative);
                 const primaryFiles = new Set(await relativeFilesUnder(primarySurface));
                 const allWorktreeFiles = await relativeFilesUnder(worktreeSurface);
                 // **The evidence store is shared and flat.** It keys its files by `<taskId>-`, and it belongs to the
@@ -480,7 +500,7 @@ export async function worktreeOnlyRecords(root: string): Promise<WorktreeOnlyRec
         );
         const onlyHere = pairs.flat().sort();
         if (onlyHere.length > 0) {
-            reported.push({ taskId, worktree: join('.kata', 'worktrees', directoryName), files: onlyHere });
+            reported.push({ taskId, worktree: relativeWorktree, files: onlyHere });
         }
         }
     }
