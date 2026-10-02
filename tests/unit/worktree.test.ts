@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ensureWorkspaceHygiene, ignoredRuntimePaths, resolveWorkspaceRootForTask } from '../../src/core/layout.js';
+import { ensureWorkspaceHygiene, ignoredRuntimePaths, recordsRoot, resolveWorkspaceRootForTask, resolveCodeRoot } from '../../src/core/layout.js';
 import { runGit } from '../../src/core/git.js';
 import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from '../../src/workflow/worktree.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
@@ -79,7 +79,7 @@ describe('kata worktrees', () => {
         expect(status).toContain('.gitignore');
     });
 
-    it('copies the task state when the base commit predates the task, and never the session pointer', async () => {
+    it('leaves the task records where they are, and never copies the session pointer', async () => {
         const root = await repo();
         // The task is created after the commit the worktree branches from.
         await openTask(root, 'uncommitted-task');
@@ -88,28 +88,47 @@ describe('kata worktrees', () => {
 
         const created = await createWorktree({ root, taskId: 'uncommitted-task' });
 
-        expect(created.taskStateCopied).toBe(true);
-        expect(await stat(join(created.path, '.kata/tasks/uncommitted-task/current-state.json')).then(() => true)).toBe(true);
+        // **This case used to assert `taskStateCopied === true` and that the worktree held a `current-state.json`.** Both
+        // were true, and both were the defect: `.gitignore` ignores all of `.kata/`, so "the state is tracked" (the reason
+        // the copy existed) was false, and the copy was the only way the records reached the worktree. Once there, a command
+        // run inside the worktree kept writing to them — one task, two answers about its phase (measured on this repository:
+        // `phase: archive` from the worktree, `phase: implement` from the primary checkout) — and `archive` deletes that
+        // worktree, which is where the surviving copy lived. The records now have one owner (`recordsRoot`); the worktree
+        // isolates the code and holds no second copy.
+        expect(created.taskStateCopied).toBe(false);
+        expect(await stat(join(created.path, '.kata/tasks/uncommitted-task/current-state.json')).then(() => true).catch(() => false)).toBe(false);
         // The session pointer belongs to the session that activates in the worktree, not to the one that created it.
         expect(await stat(join(created.path, '.kata/runtime/active-task.json')).then(() => true).catch(() => false)).toBe(false);
     });
 
-    it('resolves task commands to the worktree they run in, leaving the primary checkout alone', async () => {
+    it('isolates the code to the worktree, and keeps one answer about the task', async () => {
         const root = await repo();
         await openTask(root, 'resolve-task');
         execFileSync('git', ['add', '-A'], { cwd: root });
         execFileSync('git', ['commit', '-qm', 'task state'], { cwd: root });
         const created = await createWorktree({ root, taskId: 'resolve-task' });
 
-        // The nearest owner wins: both checkouts own the task, and the command ran inside the worktree.
-        expect(resolveWorkspaceRootForTask('resolve-task', created.path)).toBe(created.path);
+        // **Two questions, two answers.** The code question is answered by the path the caller stands in — that is what
+        // `isolated_worktree` means — and it needs no `.kata/` file in the worktree to answer correctly.
+        //
+        // This case used to assert that `resolveWorkspaceRootForTask` returned the worktree here. That was the defect, not
+        // the contract: the same function was answering both questions, so the worktree could only be a "root" by holding
+        // a copy of the records, and `archive` deleted that copy with the worktree. The record question now has one answer
+        // from anywhere (`recordsRoot`, asserted below), and the code question has the caller's own path.
+        expect(resolveCodeRoot(created.path)).toBe(created.path);
+        expect(resolveCodeRoot(root)).toBe(root);
+        // The record resolver agrees with itself from both roots — one question, one answer.
+        expect(resolveWorkspaceRootForTask('resolve-task', created.path)).toBe(root);
         expect(resolveWorkspaceRootForTask('resolve-task', root)).toBe(root);
 
         await runCommand('design', 'resolve-task', created.path);
 
+        // **And the records have one owner.** This case used to assert the opposite — `plan` in the worktree and `intake` in
+        // the primary checkout — which is two answers to one question, produced by a copy that nothing reconciled and that
+        // `archive` deletes along with the worktree.
         const phaseIn = async (path: string): Promise<string> => JSON.parse(await readFile(join(path, '.kata/tasks/resolve-task/current-state.json'), 'utf8')).phase;
-        expect(await phaseIn(created.path)).toBe('plan');
-        expect(await phaseIn(root)).toBe('intake');
+        expect(await phaseIn(root)).toBe('plan');
+        expect(recordsRoot(created.path, 'resolve-task')).toBe(root);
     });
 
     it('lists the worktrees with the tasks each one carries', async () => {

@@ -23,7 +23,6 @@ import {
 } from '../workflow/user-choice-gate.js';
 import { inspectGitFlow, toGitFlowState, type GitFlowBranchKind } from '../core/git-flow.js';
 import { runCommand } from '../workflow/orchestrator.js';
-import { resolveWorkspaceRootForTask } from '../core/layout.js';
 import {
     nextActionForTask,
     roleForPhase,

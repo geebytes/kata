@@ -1,5 +1,4 @@
 .strata/
-.kata/
 .llmwiki/
 node_modules/
 node_modules
@@ -21,5 +20,78 @@ openspec/changes/archive/*/.comet/*
 
 # Scratch artifacts (AGENTS.md: evidence and working files live under tmp/)
 tmp/
-.kata/runtime/
+
+# ---------------------------------------------------------------------------
+# `.kata/` — the governance record is part of the repository, the machinery is not.
+#
+# This used to ignore `.kata/` whole, and separate rules below re-ignored `runtime/` and `worktrees/` — three ways of
+# saying one thing, and the outer rule was the one that won. The consequence was measured: because git carried none of
+# `.kata/`, a linked worktree held its task's records only if `createWorktree` `cp`'d them in, and a command run inside
+# the worktree then wrote a *second* copy there — so one task answered `phase: archive` from its worktree and
+# `phase: implement` from the primary checkout, and four merged changes held 129 record files that existed only under the
+# directory `archive` deletes.
+#
+# What is tracked is the **trace and the project's evolution**: what a change was, what was concluded about it, who
+# decided what, and the verdict history. What is not tracked is the machinery that produced those: a worktree is a copy of
+# the source, a runtime pointer belongs to one session, and a handoff packet is a message between two nodes of one run.
+# ---------------------------------------------------------------------------
+.kata/*
+
+# The trace: one directory per change under `.kata/tasks/<id>/`.
+!.kata/tasks/
+!.kata/tasks/*/
+# The directory is re-admitted so git descends into it; everything inside is denied again, and the whitelist below is the
+# only way in. Without this line the directory rule re-admitted every intermediate file it contains - measured: 2169
+# files, including 17 `seal-progress.jsonl`, 16 `repair.json` and 11 `repair-batch.json`, none of which are the trace.
+.kata/tasks/*/*.json
+.kata/tasks/*/*.jsonl
+.kata/tasks/*/handoffs/
+.kata/tasks/*/revisions/
+.kata/tasks/*/review/
+# The brief handed to one review round, and the round's own artefacts. A brief is a message to a reviewer (largest measured:
+# 1.6 MB), not the trace of what the change was or what was concluded about it - the conclusion is `review.json` and
+# `judge.json`, which are whitelisted.
+.kata/tasks/*/adversarial-briefs/
+.kata/tasks/*/review-*.json
+.kata/tasks/*/repair*.json
+.kata/tasks/*/seal-progress.jsonl
+.kata/tasks/*/falsifier-reddenings.json
+.kata/tasks/*/probes.json
+.kata/tasks/*/probe-answers.json
+.kata/tasks/*/runs.json
+!.kata/tasks/*/task.json
+!.kata/tasks/*/current-state.json
+!.kata/tasks/*/state-events.jsonl
+!.kata/tasks/*/current-revision.json
+!.kata/tasks/*/change-record.json
+!.kata/tasks/*/change-record-revision-*.json
+!.kata/tasks/*/verify.json
+!.kata/tasks/*/review.json
+!.kata/tasks/*/review-rounds.jsonl
+!.kata/tasks/*/review-history.jsonl
+!.kata/tasks/*/judge.json
+!.kata/tasks/*/wiki-closure.json
+!.kata/tasks/*/adversarial-review.json
+!.kata/tasks/*/evidence.json
+!.kata/tasks/*/claims.json
+!.kata/tasks/*/verdicts.json
+!.kata/tasks/*/verdict-history.jsonl
+!.kata/tasks/*/usage.json
+!.kata/tasks/*/delivered-facts.json
+!.kata/tasks/*/subject.json
+!.kata/tasks/*/waivers.json
+!.kata/tasks/*/user-choice-*.json
+
+# The knowledge the changes produced.
+!.kata/wiki/
+!.kata/wiki/**
+
+# Not tracked, and each for its own reason: a worktree is a second copy of the source; a runtime pointer belongs to the
+# session that activated it; a lock is held by one process; `.kata/evidence/` holds what one verification run produced;
+# and `kt-scratch`/`kt-master` are other checkouts that were copied here.
 .kata/worktrees/
+.kata/runtime/
+.kata/locks/
+.kata/evidence/
+.kata/kt-scratch/
+.kata/kt-master/

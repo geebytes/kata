@@ -1,10 +1,10 @@
 import { readFlag, splitFlag, switchPresent } from './invocation.js';
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { resolveWorkspaceRoot } from '../core/layout.js';
 import { acknowledgeCometOpen } from '../core/workflow-profile.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
-import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from '../workflow/worktree.js';
+import { createWorktree, listWorktrees, recoverWorktreeRecords, removeWorktreeSafely, worktreesDir } from '../workflow/worktree.js';
 import { loadEvaluationManifest, persistEvaluationReport, runEvaluation } from '../eval/runner.js';
 import { runProcess, runProcessSync } from '../process/run.js';
 
@@ -13,7 +13,7 @@ const CODEGRAPH_SUBCOMMANDS = ['explore', 'query', 'impact', 'affected', 'node',
 type CodegraphSubcommand = (typeof CODEGRAPH_SUBCOMMANDS)[number];
 import { getCometVersion, installComet, readCometCompatibility, resolveCometPath, updateComet, verifyComet } from '../comet/install.js';
 import { nextActionForTask } from '../workflow/navigation.js';
-import { argValue, parseChangeArg } from './invocation.js';
+import { argValue, flagPresent, parseChangeArg, parseRootArg } from './invocation.js';
 import { listTaskCandidates, readTaskCandidate, recommendNextTask, type TaskCandidate } from './tasks.js';
 import { parseDelegationArgs } from './handoff.js';
 
@@ -187,10 +187,92 @@ export async function runWorktreeCommand(argv: string[]): Promise<Record<string,
     if (subcommand === 'remove') {
         const path = rest.find((argument) => !argument.startsWith('--')) ?? argValue(rest, '--path');
         if (!path) throw new Error('Usage: kata-cli worktree remove <path> [--force]');
-        return { command: 'worktree remove', ...(await removeWorktree({ root, path, ...(rest.includes('--force') ? { force: true } : {}) })) };
+        // **The positional path must not also read as the change id.** `parseChangeArg` answers "the first bare token
+        // that is not already spoken for", and the documented form `worktree remove <path>` puts the path there — so it
+        // was returned as `--change`, which then *differed* from the derived owner and made the verb refuse every
+        // worktree, including a clean one. Measured: `remove <path>` threw while `remove --path <path>` worked, i.e. the
+        // documented spelling was the broken one. The path is removed from the tokens the change reader sees, so the two
+        // answers come from different tokens by construction rather than by luck. Fixing the general "positional argument
+        // versus value flag" rule is scoped to its own change (`docs/design/2026-10-02-record-ownership-single-derivation.md` §3.4).
+        const restWithoutPath = rest.filter((argument) => argument !== path);
+        // **The same guard the archive path passes through.** This verb called `removeWorktree` directly while the
+        // guard lived only inside `removeWorktreeSafely`, so the one route an operator reaches by hand was the one
+        // route that skipped it: measured, the guard refused and left `judge.json` in place, then this command removed
+        // the worktree and the record was gone. A guard that one caller can walk around is a suggestion.
+        const change = parseChangeArg(restWithoutPath);
+        const resolvedRoot = parseRootArg(rest) ?? root;
+        // **The worktree's own content decides, and `--change` cannot replace it.** The guard used to look up the task
+        // the *operator* named, so `worktree remove <wtB> --change A --force` checked A (which had no stranded records)
+        // and then deleted B — measured, `judge.json` gone. An operator typo, not an attack. `--change` is still read,
+        // because it is what callers learned to pass, but it is reconciled with the derived owner rather than trusted:
+        // when the two disagree, the suspicious case is exactly the one the guard exists for, so the removal is refused.
+        const derived = await worktreeOwner(resolvedRoot, path);
+        const task = derived;
+        if (change !== undefined && derived !== undefined && change !== derived) {
+            throw new Error(
+                `worktree remove was told --change ${change}, but this worktree holds the records of ${derived}. `
+                    + 'Removing it would delete records the named task does not own. Re-run without --change, or with '
+                    + `--change ${derived} to acknowledge what is being deleted.`,
+            );
+        }
+        if (task === undefined) {
+            throw new Error(
+                `worktree remove needs the task whose records this worktree may hold: pass --change <task>. `
+                    + `The worktree is ${resolve(resolvedRoot, path)}.`,
+            );
+        }
+        return {
+            command: 'worktree remove',
+            ...(await removeWorktreeSafely({
+                root: resolvedRoot,
+                path,
+                taskId: task,
+                ...(flagPresent(rest, '--force') ? { force: true } : {}),
+            })),
+        };
     }
 
-    throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove>`);
+    if (subcommand === 'recover') {
+        // **The remedy the refusal names.** `recoverWorktreeRecords` existed with no command reaching it — only tests — so
+        // the guard told an operator what was missing and offered nothing to do about it. A refusal that names a command
+        // nothing answers is worse than no advice: it reads as a route and is a dead end.
+        const change = parseChangeArg(rest);
+        const resolvedRoot = parseRootArg(rest) ?? root;
+        const recovery = await recoverWorktreeRecords(resolvedRoot);
+        const scoped = change ? recovery.filter((entry) => entry.taskId === change) : recovery;
+        return {
+            command: 'worktree recover',
+            workspaceRoot: resolvedRoot,
+            ...(change ? { taskId: change } : {}),
+            recovered: scoped,
+            movedCount: scoped.reduce((total, entry) => total + entry.moved.length, 0),
+            keptCount: scoped.reduce((total, entry) => total + entry.kept.length, 0),
+        };
+    }
+
+    throw new Error(`Unknown worktree command: ${subcommand}. Usage: kata-cli worktree <create|list|remove|recover>`);
+}
+
+/**
+ * The task whose records a worktree path holds, or `undefined` when it holds none.
+ *
+ * `worktree remove` must pass a task id to the guard, and requiring the operator to restate it would make the guard
+ * optional in practice — the caller who forgets is the caller who walks around it. Deriving it from the worktree's own
+ * `.kata/tasks/` keeps the guard on the path of least resistance.
+ */
+async function worktreeOwner(root: string, path: string): Promise<string | undefined> {
+    const target = resolve(root, path);
+    const entries = await listWorktrees(root);
+    const match = entries.find((entry) => resolve(entry.path) === target);
+    if (match && match.tasks.length > 0) return match.tasks[0];
+    // A worktree git does not list (a fixture, or a path that is not a linked checkout yet) still carries its task
+    // directory, and reading it directly keeps the guard reachable for those paths too.
+    try {
+        const candidates = await readdir(join(target, '.kata', 'tasks'));
+        return candidates.filter((name) => !name.startsWith('.')).sort()[0];
+    } catch {
+        return undefined;
+    }
 }
 
 // **`RETIRED_TELEMETRY_FLAGS` and `RETIRED_TELEMETRY_FIELDS` were deleted with the command that enforced them.** They were

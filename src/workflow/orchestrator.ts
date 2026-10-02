@@ -2293,17 +2293,31 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     // inert — a stale worktree is a second copy of the source that every content scan walks, that `git worktree list`
     // reports, and that the earlier audits kept reading as current code. A dirty worktree is reported rather than deleted,
     // because removing a checkout with uncommitted work is the one outcome worse than leaving it.
-    let worktreeCleanup: { removed?: string; kept?: string; reason?: string } | undefined;
+    let worktreeCleanup: { removed?: string; kept?: string; reason?: string; worktreeOnlyRecords?: string[] } | undefined;
     try {
         const { existsSync } = await import('node:fs');
-        const { worktreesDir, removeWorktree } = await import('./worktree.js');
+        const { worktreesDir, removeWorktreeSafely } = await import('./worktree.js');
         const linked = join(worktreesDir(root), taskId);
         if (archivePhase === 'archive' && existsSync(linked)) {
             try {
                 // No `force`: a worktree with uncommitted work must not be destroyed by an archive, and git refuses it
                 // for exactly that reason. The refusal is reported as `kept`, with git's own explanation.
-                const removal = await removeWorktree({ root, path: linked });
-                worktreeCleanup = removal.removed ? { removed: linked } : { kept: linked, reason: 'not removed' };
+                //
+                // **And a worktree that holds the only copy of this change's records is not removed at all.** Task state is
+                // written under whichever root resolved, so `.kata/worktrees/<taskId>` can be the only place the review, the
+                // judge verdict and the change records exist — measured on this repository, four merged changes have 129 such
+                // files, and this branch is what deletes them. The guard is inside the removal so no route reaches the
+                // deletion without passing it; the refusal names the files, because the operator has to move them by hand.
+                const removal = await removeWorktreeSafely({ root, path: linked, taskId });
+                if (removal.refusedBecause === 'worktree-only-records') {
+                    worktreeCleanup = {
+                        kept: linked,
+                        reason: `it holds the only copy of ${removal.worktreeOnlyRecords?.length ?? 0} governed record(s) for this change`,
+                        worktreeOnlyRecords: removal.worktreeOnlyRecords ?? [],
+                    };
+                } else {
+                    worktreeCleanup = removal.removed ? { removed: linked } : { kept: linked, reason: 'not removed' };
+                }
             } catch (error) {
                 worktreeCleanup = { kept: linked, reason: (error as Error).message };
             }

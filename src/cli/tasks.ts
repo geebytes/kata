@@ -8,7 +8,6 @@ import {
     currentStatePath,
     relationsRelativePath,
     resolveWorkspaceRoot,
-    resolveWorkspaceRootForTask,
     skillsIndexRelativePath,
     taskPath,
     tasksDir,

@@ -9,8 +9,7 @@ import {
     isIgnoredRepositoryPath,
     maxTreeHashFileBytes,
     repositoryTreeHash,
-    walkRepositoryFiles,
-} from '../../src/core/repository-identity.js';
+    walkRepositoryFiles, ignoredPathPrefixes } from '../../src/core/repository-identity.js';
 import { computeManifestHash, workspaceDrift } from '../../src/workflow/revision.js';
 
 /**
@@ -31,17 +30,34 @@ describe('repository identity', () => {
         return root;
     }
 
-    it('excludes caches, kata state and generated trees by name or path', () => {
-        for (const name of ['.git', '.kata', '.llmwiki', '.pytest_cache', '.mypy_cache', '.ruff_cache', '__pycache__', 'node_modules', 'dist']) {
+    it('excludes caches and generated trees by name', () => {
+        for (const name of ['.git', '.llmwiki', '.pytest_cache', '.mypy_cache', '.ruff_cache', '__pycache__', 'node_modules', 'dist']) {
             expect(isIgnoredRepositoryName(name)).toBe(true);
             expect(isIgnoredRepositoryPath(`nested/${name}/file.txt`)).toBe(true);
         }
-        expect(isIgnoredRepositoryPath('.github/hooks/state.json')).toBe(true);
-        expect(isIgnoredRepositoryPath('.github/skills/README.md')).toBe(true);
-        expect(isIgnoredRepositoryPath('.models/weights.gguf')).toBe(true);
         expect(isIgnoredRepositoryName('weights.safetensors')).toBe(true);
         expect(isIgnoredRepositoryPath('src/core/state.ts')).toBe(false);
         expect(isIgnoredRepositoryPath('docs/.pytest_cache.md')).toBe(false);
+    });
+
+    it('excludes kata state by path, and the trace it writes stays out of the code surfaces', () => {
+        // **`.kata` is excluded by path, not by name.** Kata's governance record is repository content now — `.gitignore`
+        // admits the trace by name — while the machinery around it (worktrees, runtime pointers, locks, evidence) is not.
+        // A name-level exclusion cannot express that split: it would throw away the record with the machinery.
+        expect(isIgnoredRepositoryName('.kata')).toBe(false);
+        expect(isIgnoredRepositoryPath('.kata/worktrees/iso/src/a.ts')).toBe(true);
+        expect(isIgnoredRepositoryPath('.kata/runtime/active-task.json')).toBe(true);
+        expect(isIgnoredRepositoryPath('.kata/evidence/task-AC-1.json')).toBe(true);
+        // The surfaces that ask "what is this repository" and "what code moved" exclude kata's own output: kata writes it
+        // while a change is alive, so counting it as user drift makes every seal fail on the previous seal's records
+        // (measured: 467 of 485 paths `git status` reported were `.kata/` records).
+        expect(isIgnoredRepositoryPath('.kata/tasks/a-task/task.json')).toBe(true);
+        expect(isIgnoredRepositoryPath('.kata/wiki/llmwiki-concepts-x.json')).toBe(true);
+        expect(isIgnoredRepositoryPath('.github/hooks/state.json')).toBe(true);
+        expect(isIgnoredRepositoryPath('.github/skills/README.md')).toBe(true);
+        expect(isIgnoredRepositoryPath('.models/weights.gguf')).toBe(true);
+        // A file that merely starts with the prefix is not inside it.
+        expect(isIgnoredRepositoryPath('src/kata/tasks.ts')).toBe(false);
     });
 
     it('is the same policy for the tree hash and for drift', async () => {
@@ -110,8 +126,10 @@ describe('repository identity', () => {
         expect(await computeManifestHash(root, ['owned'])).not.toBe(before);
     });
 
-    it('keeps the documented directory list exported, so a new exclusion is a deliberate edit', () => {
-        expect(ignoredDirectoryNames).toEqual(expect.arrayContaining(['.git', '.kata', 'node_modules']));
+    it('keeps both exclusion tables exported, so a new exclusion is a deliberate edit', () => {
+        expect(ignoredDirectoryNames).toEqual(expect.arrayContaining(['.git', 'node_modules']));
         expect(ignoredDirectoryNames.length).toBeGreaterThan(5);
+        // The path table carries what a name cannot: kata's machinery, and kata's own output.
+        expect(ignoredPathPrefixes).toEqual(expect.arrayContaining(['.kata/worktrees', '.kata/runtime', '.kata/tasks', '.kata/wiki']));
     });
 });

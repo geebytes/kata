@@ -13,10 +13,17 @@ import { createContentHasher } from './hash.js';
  * not report, and a path the manifest excludes is one it does not hash.
  */
 
-/** Directory names that never carry identity: toolches, caches, and kata's own state. */
+/**
+ * Directory names that never carry identity: toolches, caches, and the machinery of the workflow.
+ *
+ * **`.kata` is deliberately not here.** It used to be, grouped with `.git` and `node_modules` on the reading that kata's
+ * state is runtime rather than repository content. That reading is wrong for the part that matters: `.kata/tasks/` holds
+ * what a change was, what was concluded about it, who decided what, and the verdict history — the trace and the project's
+ * evolution, which is exactly what "identity" is for. The machinery is excluded by *path* instead of by this table
+ * (`isIgnoredRepositoryPath` below), so a revision's content summary carries the record and not the worktrees.
+ */
 export const ignoredDirectoryNames: readonly string[] = [
     '.git',
-    '.kata',
     llmwikiDirName,
     '.pytest_cache',
     '.mypy_cache',
@@ -40,8 +47,45 @@ export const ignoredHeavyPaths: readonly string[] = ['.models'];
 /** File names or suffixes that are never part of identity. */
 export const ignoredFileSuffixes: readonly string[] = ['.gguf', '.safetensors', '.onnx', '.ckpt'];
 
-/** Generation-managed trees: kata writes them, so their contents are not the repository's own work. */
-export const ignoredPathPrefixes: readonly string[] = ['.github/hooks', '.github/skills', '.github/instructions'];
+/**
+ * Generation-managed trees, plus kata's own machinery.
+ *
+ * **The second group is why `.kata` left `ignoredDirectoryNames`.** The trace under `.kata/tasks/` and the knowledge under
+ * `.kata/wiki/` are the repository's own work and belong in identity; a worktree is a second copy of the source, a runtime
+ * pointer belongs to one session, a lock is held by one process, and `.kata/evidence/` holds what one verification run
+ * produced. Excluding them by prefix keeps "what is this repository" answering with the record rather than with 150 MB of
+ * checkouts — measured before this change: `.kata/worktrees/` alone was 150 MB across 10,195 files.
+ */
+export const ignoredPathPrefixes: readonly string[] = [
+    '.github/hooks',
+    '.github/skills',
+    '.github/instructions',
+    '.kata/worktrees',
+    '.kata/runtime',
+    '.kata/locks',
+    '.kata/evidence',
+    '.kata/kt-scratch',
+    '.kata/kt-master',
+    // **The whole trace, not a list of its parts.** Kata writes these files itself as a change progresses, so the working
+    // tree is dirty by definition while a change is alive — measured, 467 of the 485 paths `git status` reported were
+    // `.kata/` records. Leaving them in the drift surface makes every seal fail on the records the previous seal wrote,
+    // and enumerating the machinery file by file is the same rule stated twice: the list below was six names, while
+    // the records number in the hundreds and grow with every change.
+    //
+    // `.gitignore` decides what git carries (the trace is admitted by name); this table decides what the *identity* and
+    // *drift* surfaces count, and drift asks about code. The two are checked against each other by
+    // `owner-rule-covers-evidence-and-trace.test.ts`, because two tables that must agree will not agree by memory.
+    '.kata/tasks',
+    // The knowledge store, by the same argument: `wiki enrich` writes and re-registers pages while a change is alive, and
+    // a page is kata's own output rather than the code under review.
+    '.kata/wiki',
+    // Everything else under `.kata/` that kata generates: the vendored schema copies `initLayout` writes, the adapter
+    // descriptions, and the generated skills index. None of it is the code under review, and all of it is rewritten by
+    // the tooling, so a drift surface that counts it reports kata's own bookkeeping as the user's uncommitted work.
+    '.kata/schemas',
+    '.kata/adapters',
+    '.kata/skills-index.md',
+];
 
 /**
  * The largest file the *whole-tree* identity walk reads. Owned-path hashing has no cap: the manifest's job is to notice

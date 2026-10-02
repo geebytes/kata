@@ -5,10 +5,10 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { codeGraphInvocation } from './codegraph/runtime.js';
-import { createWorktree, listWorktrees, removeWorktree, worktreesDir } from './workflow/worktree.js';
+import { createWorktree, listWorktrees, worktreesDir } from './workflow/worktree.js';
 import { ensureWorkspaceHygiene } from './core/layout.js';
 import { runProcess, runProcessSync } from './process/run.js';
-import { relationsRelativePath, resolveWorkspaceRoot, resolveWorkspaceRootForTask, skillsIndexRelativePath } from './core/layout.js';
+import { relationsRelativePath, resolveCodeRoot, resolveWorkspaceRoot, skillsIndexRelativePath } from './core/layout.js';
 import { recover, requiresRecovery } from './core/recovery.js';
 import { CometClient } from './comet/client.js';
 import { loadCometCompatibility, loadCometCompatibilityAsync, type CometCompatibility } from './comet/compat.js';
@@ -144,6 +144,22 @@ export function getRuntimeCompatibility(manifestPath?: string): CometCompatibili
     return loadCometCompatibility(manifestPath);
 }
 
+/**
+ * The workspace root a command runs against.
+ *
+ * **This asks the code question, not the record question.** The two used to be one call, so a task-addressed command
+ * run from inside a linked worktree received the *primary checkout* — and because `cmdBuild` hands this root to
+ * `createExecutionSandbox`, the sandbox held the primary checkout's content. `isolated_worktree` was therefore not in
+ * effect on the CLI path, while `resolveCodeRoot` sat written and uncalled.
+ *
+ * Records still resolve to their owner: every record path goes through `taskDir`/`recordsRoot`, which is a separate
+ * lookup from this one. `--root` still overrides both, deliberately, because it is the operator saying where to stand.
+ */
+export function resolveCommandRoot(command: string, requestedChange: string | undefined): string {
+    const taskAddressed = requestedChange !== undefined && command !== 'open' && (isWorkflowCommand(command) || command === 'status');
+    return taskAddressed ? resolveCodeRoot() : resolveWorkspaceRoot();
+}
+
 export async function main(argv = process.argv.slice(2), overrides: OutputOverrides = {}): Promise<void> {
     const previousOutput = currentOutput();
     const requested = createOutputContext(argv, overrides);
@@ -167,10 +183,7 @@ async function runMain(argv: string[]): Promise<void> {
         throw new Error('Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|tasks> [--platform name] [--scope project|global] [--root path]');
     }
     const requestedChange = parseChangeArg(argv.slice(1));
-    const workspaceRoot = parseRootArg(argv)
-        ?? (requestedChange && command !== 'open' && (isWorkflowCommand(command) || command === 'status')
-            ? resolveWorkspaceRootForTask(requestedChange)
-            : resolveWorkspaceRoot());
+    const workspaceRoot = parseRootArg(argv) ?? resolveCommandRoot(command, requestedChange);
     // **`--help` must never reach a command that writes, for any command.** The guard used to fire only for
     // `isWorkflowCommand(command)` — nine of the thirty families — so `ledger freeze --help` fell through and *froze the
     // subject*: a request to read the manual performed a mutation. Measured, because the flag was simply ignored by the
