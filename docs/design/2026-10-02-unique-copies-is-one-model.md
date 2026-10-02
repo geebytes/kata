@@ -117,3 +117,27 @@ export async function uniqueCopies(input: {
 | 三次修复的历史 | 本设计 §2 |
 
 **两个 change 的代码在 master 上**（`current_worktree` 模式），但它们的**账本与裁决都是 FAIL** —— 记录如实。
+
+## 6. 收尾：两条 change 停在 review，不写 review.json
+
+用户裁定（甲）：**不把读数写进 ①② 的 `review.json`**，两条留在 `review` 相位。
+
+**理由**（记下来，因为"不写 gate artefact"必须有解释）：
+
+1. **读数的证据已经在设计文档里固定**：`2026-10-02-record-ownership-single-derivation.md` §8 有 10 条 finding 的清单与三条亲自复核的输出；本文件 §1–§2 有根因。写给 `review.json` 的是**同一份证据的第二份拷贝**。
+2. **写它要付完整链路**：两条共享 `src/core/layout.ts`，任一改动使另一条 supersede → re-seal → re-verify → 重签 receipt → 重新 gate → `review --result-file`。**每条一轮，而结论是 FAIL** —— 做完仍被 ③ 取代。
+3. **两条的 change 记录如实停在 `review`**：没有 approval、没有 judge、没有 archive。这正是它们的真实状态 —— **未完成**，而不是"通过后被取代"。
+
+**这不是把记录写好看**：三条不是回避，而是"同一份证据不写两遍"。若将来需要 `review.json` 里的正式条目，10 条 finding 可从 §8 逐字复录。
+
+## 7. 保留与不保留
+
+| 保留（在 master 上，被 ③ 继承） | 不保留 |
+|---|---|
+| `resolveCodeRoot` / `resolveCommandRoot`（代码根接线） | ①② 的 revision 与账本（FAIL，仅作证据） |
+| 检测器的**递归**比较与 evidence 面 | `worktreeOnlyRecords` 的枚举（③ 取代） |
+| `recordOwner`（三处消费点之一已委托） | `hasTaskDir` 的存在性判据（③ 取代） |
+| 守卫**按路径判定**（② 的 AC-2） | 归档的选择器（③ 取代） |
+| 检测器的 `git worktree list` ∪ 目录**两源合并**（③ 扩展为含 root 外） | 位置参数的形态判据（③ 取代为顺序无关） |
+| `looksLikeAPath`（③ 保留，改为顺序无关解析） | `worktree recover` 的零结果语义（③ 取代） |
+| `recoverWorktreeRecords` 的逐条隔离 | — |
