@@ -77,6 +77,23 @@ describe('unique copies is one derivation', () => {
         expect(paths).toEqual(['evidence/held-AC-1.json', 'tasks/judge.json']);
     });
 
+    it('names the task context through the ownership rule, not through the caller root', async () => {
+        // **A consumer the challenge found.** The handoff receipt's `diffHash` is computed over these paths, and they
+        // were built as `.kata/tasks/<id>/…` joined onto whatever root the caller passed — so a receipt signed from a
+        // worktree named the worktree's copy while every other reader named the owner's. Two names for one task's records
+        // is the defect this line of work removes; here it made a receipt's identity depend on where it was signed.
+        const primary = repo('context-paths');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(primary, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(primary, '.kata', 'tasks', 'held', 'task.json'), '{}\n');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'held', 'task.json'), '{}\n');
+
+        const { recordsRoot } = await import('../../src/core/layout.js');
+        // From inside the worktree, both readers must name the same place.
+        expect(recordsRoot(worktree, 'held')).toBe(primary);
+    });
+
     it('an absent task yields an empty answer, and a task with nothing yields the same', async () => {
         // Both are "there is nothing to lose", and they are different from "the source could not be read" (AC-4).
         const primary = repo('absent');

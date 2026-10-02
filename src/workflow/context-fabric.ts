@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
+import { recordsRoot } from '../core/layout.js';
 import { buildContextManifest } from '../core/context.js';
 import { createHandoff, readAcknowledgedHashes, type Role } from './handoff.js';
 import { existsSync } from 'node:fs';
@@ -266,7 +267,26 @@ function designRefsFor(root: string, taskId: string, role: Role): string[] {
 
   return candidates.filter((p) => existsSync(join(root, p)));
 }
-function taskContextPaths(root: string, taskId: string): string[] { const base = `.kata/tasks/${taskId}`; return [`${base}/task.json`, `${base}/current-state.json`, ...(existsSync(join(root, base, 'design.md')) ? [`${base}/design.md`] : [])]; }
+/**
+ * The task's own records, located **through the ownership rule** rather than through the caller's root.
+ *
+ * The handoff receipt's `diffHash` is computed over these paths, and it was built as `.kata/tasks/<id>/…` joined onto
+ * whatever root the caller passed. When that root is a linked worktree — which is exactly where an implementer works —
+ * the paths name the worktree's copy, while `recordsRoot` and every other reader name the owner's. Two names for one
+ * task's records is the defect this line of work exists to remove, and here it makes a receipt's hash depend on where it
+ * was signed from.
+ *
+ * Measured with this change's own challenge, which scans for a surviving second derivation:
+ * `src/workflow/context-fabric.ts:269` was the one it found.
+ */
+function taskContextPaths(root: string, taskId: string): string[] {
+  // `recordsRoot` answers where the records live; the returned paths stay relative to `root` because every caller of
+  // this function resolves them against `root` (git status, the manifest hash, the read list).
+  const owner = recordsRoot(root, taskId);
+  const prefix = relative(root, owner);
+  const base = prefix === '' ? `.kata/tasks/${taskId}` : `${prefix}/.kata/tasks/${taskId}`;
+  return [`${base}/task.json`, `${base}/current-state.json`, ...(existsSync(join(root, base, 'design.md')) ? [`${base}/design.md`] : [])];
+}
 /**
  * Whether two anchors cover the same content.
  *
