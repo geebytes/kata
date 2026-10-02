@@ -132,3 +132,74 @@ if (stranded.length > 0) { /* refuse, naming them */ }
 | 本设计 | **待开 change** |
 | 三条 blocking（B1/B2/B3） | 本设计的 AC-2/AC-3 |
 | 五份归属定义 | 本设计的 AC-1 |
+
+## 8. 第一轮独立读数：**FAIL** —— 10 条 finding，全部复核成立
+
+读数用一个**我没想到的方法**：它把 ① 的冻结 revision 用 `git archive d5c1adf` 还原到 `/tmp/probe3/d5tree/` **再独立跑** ——
+因为工作区已被 ② 改写，在工作区上跑 ① 的挑战必然 exit 0，那个绿灯什么也不证明。
+
+### 我亲自复核的三条
+
+| finding | 复核命令与输出 | 判断 |
+|---|---|---|
+| **F5 · blocking** | `if (relativePath !== '' && !relativePath.startsWith('..'))` —— **把 root 之外的 worktree 全部丢弃** | ✅ 成立 |
+| **F4 · C4 被证伪** | `mkdir -p vendor/copy/.kata/tasks/held`（**空目录，不写任何文件**）→ `recordsRoot` = `<P>/vendor/copy`，`taskDir` 也搬过去 | ✅ 成立 |
+| **F1 · blocking** | 归档用 `join(worktreesDir(root), taskId)` 选对象 —— **只看 `<taskId>` 命名的目录**，所以目录名 ≠ 任务时归档根本不去看它 | ✅ 成立 |
+
+### 完整清单
+
+- **F1 · blocking** —— 归档路径仍会删掉唯一副本并返回成功（`orchestrator.ts:2300-2311` 的选择器与守卫同源，因此选错对象）
+- **F2 · major** —— `--change` 在 argv 层被静默丢弃（位置参数**在 flag 之前**时）
+- **F3 · major** —— 位置参数形态**依赖位置**：`--root` 写在路径之后就整条失效
+- **F4 · major → C4 refute** —— "归属不由文件授予"是假的：判据仍是存在性，只是从文件降级成目录（**比原来更便宜**）；测试名 `an empty directory is not an owner` 名不副实（它问的是**不存在**的任务目录）
+- **F5 · blocking** —— `worktreeOnlyRecords` 看不见 root 之外的 worktree，`45a6535` 的修复**只覆盖了被点名的那一种**
+- **F6 · major** —— `worktree recover` 在什么都没恢复时报"成功"（`movedCount: 0`，对任意 `--change` 值都如此）
+- **F7 · major** —— 两个 worktree 持有同一任务时**重复计数**；恢复的 owner-wins 静默覆盖另一个 worktree 已搬的那份
+- **F8 · major** —— 守卫按路径判定后，"删的是什么"与"报告说删的是什么"**解耦**：报告抱怨 B，实际动作把 A 的副本也带走了
+- **F9 · major** —— 检测器**总体 fail-open**：`gitWorktreeList` 失败返回 `[]`、root 外候选被丢 —— 两种失败方向都产**空集**，而空集恰好是"没有记录会丢"的答案
+- **F10 · note** —— 无界目录遍历（每个 worktree × 每个 surface 各一次全树 walk）
+
+### 读数指出的、我漏掉的根本问题
+
+> **① 的 verify/review 绑 `revision-c91a7e52`，而那个 revision 的守卫是坏的。**
+> **守卫是 ② 修的，② 的改动在 `revision-0ce95c74`。**
+
+**① 的"收窄后 honest"状态 —— verify PASS + 账本 `pass` —— 是在一个守卫仍然坏的 revision 上取得的。**
+我在 ② 修好守卫后把 ① 也 re-seal 了，但**没有重新验证 ① 的挑战 X2**，所以 ① 的 `pass` 建立在旧读数上。
+
+## 9. 根因：这不是 10 个缺陷，是一个缺失的模型
+
+三次修复，同一个形状：
+
+| 轮次 | 我的修复 | 只覆盖了 | 漏掉 |
+|---|---|---|---|
+| ① 第一轮 | 写了 `resolveCodeRoot` | 函数定义 | **调用者（0 个）** |
+| ① 第二轮 | 检测器加 evidence 面 | `.kata/tasks/<name>` 一个目录 | 1053 个 evidence 文件 |
+| ② 第三轮 | 检测器 union `git worktree list` | root **内**的 `--path` | **root 外**的（`!startsWith('..')`） |
+| ② 第四轮 | `hasTaskDir` 从文件改目录 | 判据的形状 | **仍是存在性判据** |
+
+**"哪里有唯一副本"这个问题在三处各自回答**：
+
+| 消费点 | 它的判据 |
+|---|---|
+| `worktreeOnlyRecords` 的枚举 | `git worktree list` ∪ `.kata/worktrees/`，且丢弃 root 外的 |
+| `hasTaskDir` / `findOwningCheckout` | `accessSync` 存在性 |
+| 归档的选择器 | `join(worktreesDir(root), taskId)` |
+
+**三处各自推导 → 三处各自可以错 → 每次修一处，下一轮找到另一处。** 这与 ② 自己的设计文档 §2 论证过的根因**完全同形** —— 而 ② 在检测器上又犯了一次。
+
+## 10. 决定：停止迭代，合并为架构级 change
+
+**理由**：F1/F4/F5 不是三个 bug，是**同一个模型缺失的三个表现**。修形状无法收敛 —— 前两次证明过，这一次又证明了。
+
+**下一步 change 的范围**（待开）：
+
+- **一个模型**：`uniqueCopiesOf(root) → { path, taskId, worktreeRoot, uniqueTo[] }` —— 回答"哪些记录只在某处存在"的**唯一**推导
+- 三处消费点（检测器枚举、`hasTaskDir` 的判据、归档的选择器）**全部经由它**
+- **fail-closed**：枚举来源（git、目录）任一失败**不是空集**，而是"无法判定"→ 拒绝归档（F9）
+- **跨 worktree 去重**（F7），计数与恢复都以去重后的集合为准
+- **归档按"哪些 worktree 持有本任务的唯一副本"选对象**，而不是按目录名（F1/F8）
+- 位置参数的**位置无关**解析（F2/F3）
+- `worktree recover` 的零结果**不是成功**（F6）
+
+**在它落地之前，两个 change 都停在 FAIL，不 merge。**
