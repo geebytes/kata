@@ -379,3 +379,35 @@ npx vite-node --config vitest.config.ts tmp/probe-guard-blindspot.mts
 这条挑战的存在是**本 change 与它的下一步之间的接缝**：它把"守卫缺陷仍未修"变成一个可执行、可复现、由机器判定的句子，而不是文档里的一句声明。
 
 守卫缺陷本身的设计在 `docs/design/2026-10-02-record-ownership-single-derivation.md`（AC-2）。
+
+## 18. 终态：verify PASS，账本诚实为 `insufficient`（交接给 ②）
+
+| 项 | 值 |
+|---|---|
+| revision | `revision-c91a7e52010dce93` |
+| 相位 | `hardVerify` |
+| verify | **PASS**（`failedAcceptance: 0`，`failedVerifyAcceptance: 0`） |
+| 账本 | **`insufficient`** —— `challenge_open` + `discovery_unverified` |
+| 挑战 X2 | **复现中（exit 1）**，指向守卫缺陷 |
+| 测试 | 218 文件 / 1348 全绿，`tsc` 干净 |
+
+**本 change 不通过审批，这是正确的终态**：它只声称它做到的（代码根接线、递归检测覆盖双面、任务由内容推导 + 恢复隔离），
+而它没有修守卫 —— 账本如实反映这一点，并把它变成一条**可执行、可复现、由机器判定**的挑战（X2）。
+
+`X2` 是 ① 与 ② 之间的接缝：② 修好守卫后，这条挑战会自然闭合，① 的账本随之转 `pass`。
+
+### 过程中发现的两条机制缺陷（均在本 change 之外）
+
+**M1 · seal 的沙箱不含声明的全部路径。** `cmdBuild --seal` 在 `/tmp/kata-seal-execution-*/` 里算 digest，
+而该副本只含 `src/`、`package.json`、`node_modules`（实测）。于是声明面里的 `docs/**`、`.gitignore`、
+`.agents/**` 在沙箱中**不存在**，其 digest 不参与 revision 身份。
+
+**实测的后果**：改动已提交的 `docs/design/*.md` 后，工作区里的 `manifestHash` 变了
+（`c7641bda…` vs revision 的 `c786ffcb…`），而 `build --seal` **复用了旧 revision**（`revision-d401d54a1013c630`
+的 mtime 停在 11:54，文档提交于 12:02）。随后 `verify` 报 `revision_superseded` 与 3 个失败的 AC —— 因为
+`revisionStatus` 用的是工作区哈希，而 seal 用的是沙箱哈希。**同一个问题（"内容变了吗"）在两处各算一次。**
+
+**M2 · 从声明面移除一个已提交路径，被 preflight 判为"未声明的改动"。**
+`scope change --remove docs/design/…` 之后 `build --seal` 拒绝：
+"The working tree holds 3 change(s) the declared surface does not cover" —— 而这三个文件都已提交、工作树干净。
+即**声明面无法通过 `--remove` 收窄**，除非同时改掉那些文件的内容。
