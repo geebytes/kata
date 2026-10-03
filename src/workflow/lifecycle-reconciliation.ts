@@ -1,4 +1,9 @@
-import { appendLifecycleEvent, readInitiativeLifecycle, type InitiativeProjection } from '../core/initiative-lifecycle.js';
+import {
+    appendLifecycleEvent,
+    evaluateInitiativeClosure as evaluateStoredInitiativeClosure,
+    readInitiativeLifecycle,
+    type InitiativeProjection,
+} from '../core/initiative-lifecycle.js';
 import { readKataRelations, type KataRelationWithLegacyId, type KataRelationsGraph, type RelationEndpoint } from '../core/relations.js';
 import { readDesignDeclarations } from '../cli/lifecycle.js';
 
@@ -35,11 +40,6 @@ export type RevisionManifest = {
     changedPaths: string[];
 };
 
-export type FindingRevalidation = {
-    findingId: string;
-    revisionId: string;
-};
-
 export type ImpactPacket = {
     initiativeId: string;
     relationId: string;
@@ -64,7 +64,6 @@ export type ReconciliationInput = {
     projection: InitiativeProjection;
     designs: readonly DesignDependency[];
     revisions: readonly RevisionManifest[];
-    revalidations?: readonly FindingRevalidation[];
 };
 
 /** The endpoints of the Initiative's own connected component, in a stable order. */
@@ -139,8 +138,13 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
         }
 
         const revision = input.revisions.find((entry) => entry.taskId === taskEnd.id);
-        if (!revision) continue;
-
+        if (!revision) {
+            // A related child with no revision manifest has changed nothing we can compare, not nothing at all.
+            // The only sound answer is undetermined until its manifest is supplied.
+            undetermined = true;
+            for (const design of input.designs) statusByDesign[design.designId] = 'undetermined';
+            continue;
+        }
         for (const design of input.designs) {
             const declared = declaredPaths(design);
             if (declared.size === 0) {
@@ -168,13 +172,11 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
         }
     }
 
-    // A transferred finding is unresolved until its successor's result was revalidated against the current revision AND
-    // the packet that carries that result was consumed. Both halves are required: a revalidation with an unconsumed
-    // packet is a result nobody has read yet, and a consumed packet without a revalidation is a receipt for a check that
-    // was never re-run.
-    const revalidated = new Set((input.revalidations ?? []).map((entry) => entry.findingId));
+    // The lifecycle writer sets `revalidated` only after binding the finding to its relation's latest consumed
+    // successor packet. The evaluator therefore reads the one projected state instead of reconstructing a second
+    // return-matching algorithm from caller-supplied arrays.
     const unresolvedFindings = Object.entries(input.projection.findings)
-        .filter(([findingId, state]) => state.status === 'transferred' && !(revalidated.has(findingId) && input.projection.consumedPacketIds.length > 0))
+        .filter(([, state]) => state.status === 'transferred')
         .map(([findingId]) => findingId)
         .sort();
 
@@ -244,12 +246,17 @@ export async function recordLifecycleTrigger(root: string, event: LifecycleTrigg
             status = 'needs_reassessment';
             continue;
         }
-        const designs = await readDesignDeclarations(root, initiativeId);
+        const designDeclarations = await readDesignDeclarations(root, initiativeId);
+        if (designDeclarations.readState !== 'usable') {
+            // A missing or unreadable declaration cannot prove an Initiative unaffected.
+            status = 'undetermined';
+            continue;
+        }
         const result = reconcileInitiative({
             initiativeId,
             graph,
             projection: projection.current,
-            designs,
+            designs: designDeclarations.designs,
             revisions: [{ taskId: event.taskId, revisionId: event.revisionId, changedPaths: event.changedPaths }],
         });
         if (result.overall === 'undetermined') status = 'undetermined';
@@ -271,52 +278,15 @@ export async function recordLifecycleTrigger(root: string, event: LifecycleTrigg
     return { status, packets, initiatives };
 }
 
-export type ClosureBlocker = {
-    kind: 'unconsumed_packet' | 'needs_reassessment' | 'unresolved_return' | 'open_blocks' | 'undetermined' | 'unfinished_slice';
-    detail: string;
-};
+export type { ClosureBlocker, InitiativeClosureDecision } from '../core/initiative-lifecycle.js';
 
-export type InitiativeClosureDecision = { allowed: boolean; blockers: ClosureBlocker[] };
-
-/**
- * **Whether this Initiative may close, with every outstanding fact named.**
- *
- * The scan is the Initiative's own component — the same bounded walk the trigger uses — so closing does not become the
- * one operation that reads the repository. Each blocker carries its kind and a detail string, because "closure refused"
- * without the reasons is a refusal an operator cannot act on.
- *
- * Nothing outstanding is `allowed: true`; anything unknown is `undetermined` and blocks. The asymmetry is deliberate:
- * a closure that happened on the strength of an unreadable record is indistinguishable from one that happened on the
- * strength of nothing at all.
- */
-export function evaluateInitiativeClosure(input: ReconciliationInput): InitiativeClosureDecision {
-    const blockers: ClosureBlocker[] = [];
-    const projection = input.projection;
-
-    for (const packetId of projection.openPacketIds) {
-        blockers.push({ kind: 'unconsumed_packet', detail: `impact packet '${packetId}' was recorded but never consumed` });
-    }
-    for (const [designId, design] of Object.entries(projection.designs)) {
-        if (design.status === 'needs_reassessment' || design.status === 'invalidated') {
-            blockers.push({ kind: 'needs_reassessment', detail: `design '${designId}' is ${design.status}${design.reason ? `: ${design.reason}` : ''}` });
-        }
-    }
-    const unresolved = Object.entries(projection.findings).filter(([, finding]) => finding.status === 'transferred');
-    for (const [findingId] of unresolved) {
-        blockers.push({ kind: 'unresolved_return', detail: `finding '${findingId}' was transferred and has not been revalidated against the current revision` });
-    }
-
-    const { edges } = componentOf(input.graph, input.initiativeId);
-    for (const relation of edges) {
-        if (relation.lifecycle?.policy === 'blocks') {
-            blockers.push({ kind: 'open_blocks', detail: `relation '${relation.id ?? 'unknown'}' still blocks this Initiative` });
-        }
-        if (!relation.lifecycle) {
-            blockers.push({ kind: 'undetermined', detail: `relation with ${relation.to.type}:${relation.to.id} carries no lifecycle metadata, so nothing about it could be evaluated` });
-        }
-    }
-
-    return { allowed: blockers.length === 0, blockers };
+/** Delegate closure evaluation to the store that owns the only closure writer. */
+export function evaluateInitiativeClosure(input: ReconciliationInput) {
+    return evaluateStoredInitiativeClosure({
+        initiativeId: input.initiativeId,
+        graph: input.graph,
+        projection: input.projection,
+    });
 }
 
 /**

@@ -6,7 +6,7 @@
   "required": ["version", "relations", "updatedAt"],
   "additionalProperties": false,
   "properties": {
-    "version": { "type": "integer", "minimum": 1 },
+    "version": { "type": "integer", "enum": [1, 2] },
     "updatedAt": { "type": "string", "minLength": 1 },
     "relations": {
       "type": "array",
@@ -18,6 +18,16 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "version": { "const": 2 } } },
+      "then": {
+        "properties": {
+          "relations": { "items": { "required": ["id"] } }
+        }
+      }
+    }
+  ],
   "$defs": {
     "endpoint": {
       "type": "object",

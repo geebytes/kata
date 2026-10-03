@@ -112,4 +112,17 @@ describe('lifecycle reconciliation', () => {
         expect(result.impactPackets).toEqual([]);
         expect(result.visitedEndpoints).toEqual(['change:records-initiative', 'task:child']);
     });
+    it('returns undetermined when a related lifecycle child has no revision manifest', () => {
+        const result = reconcileInitiative({
+            initiativeId: 'records-initiative',
+            graph: graph({ initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' }),
+            projection: projection(),
+            designs: [{ designId: 'parent-design', dependsOn: ['path:src/core/layout.ts'] }],
+            revisions: [],
+        });
+
+        expect(result.overall).toBe('undetermined');
+        expect(result.statusByDesign['parent-design']).toBe('undetermined');
+    });
+
 });

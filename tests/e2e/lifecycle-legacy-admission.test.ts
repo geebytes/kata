@@ -88,4 +88,22 @@ describe('a slice admitted to an Initiative is not silently current', () => {
         expect(untouched.current.status).toBe('active');
         expect(untouched.current.openPacketIds).toEqual([]);
     });
+    it('treats a linked legacy slice without designs.json as undetermined rather than fresh', async () => {
+        const root = await tempRoot('kata-lifecycle-legacy-no-declaration-', ['legacy-slice']);
+        await runLifecycleCommand(['create', '--initiative', 'legacy-initiative', '--root', root]);
+        await runLifecycleCommand([
+            'attach', '--initiative', 'legacy-initiative', '--task', 'legacy-slice',
+            '--policy', 'informs', '--return', 'impact_packet', '--root', root,
+        ]);
+
+        const result = await recordLifecycleTrigger(root, {
+            taskId: 'legacy-slice',
+            revisionId: 'revision-legacy',
+            changedPaths: ['src/core/layout.ts'],
+        });
+
+        expect(result.status).toBe('undetermined');
+        expect(result.packets).toEqual([]);
+    });
+
 });

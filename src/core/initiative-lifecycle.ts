@@ -8,7 +8,7 @@ import {
     retirementProposalsPath,
 } from './layout.js';
 import { withRepositoryArtefactLock } from './locks.js';
-import { readKataRelations } from './relations.js';
+import { readKataRelations, type KataRelationsGraph, type KataRelationWithLegacyId } from './relations.js';
 import { validate } from './schema.js';
 import { writeFileAtomic } from './state.js';
 
@@ -55,6 +55,7 @@ export type LifecycleEvent = {
     reason?: string;
     by?: string;
     result?: 'fresh' | 'needs_reassessment' | 'invalidated' | 'blocked' | 'undetermined';
+    revisionId?: string;
 };
 
 export type LifecycleEventInput = Omit<LifecycleEvent, 'id' | 'at'> & { at?: string; id?: string };
@@ -70,6 +71,22 @@ export type InitiativeProjection = {
     consumedPacketIds: string[];
     retired: string[];
     candidates: Array<{ kind: 'reconciliation_slice'; reason: string }>;
+};
+
+export type ClosureBlocker = {
+    kind: 'unconsumed_packet' | 'needs_reassessment' | 'unresolved_return' | 'open_blocks' | 'undetermined' | 'unfinished_slice';
+    detail: string;
+};
+
+export type InitiativeClosureInput = {
+    initiativeId: string;
+    graph: KataRelationsGraph;
+    projection: InitiativeProjection;
+};
+
+export type InitiativeClosureDecision = {
+    allowed: boolean;
+    blockers: ClosureBlocker[];
 };
 
 export type InitiativeReadState = 'absent' | 'usable' | 'unreadable';
@@ -264,7 +281,11 @@ function projectFrom(initiativeId: string, events: readonly LifecycleEvent[]): I
                 if (event.findingId) projection.findings[event.findingId] = { status: 'transferred' };
                 break;
             case 'finding_revalidated':
-                if (event.findingId) projection.findings[event.findingId] = { status: 'revalidated' };
+                // Legacy incomplete events remain readable but cannot close a finding; new writes are checked by
+                // assertCurrentFindingRevalidation before they reach this projection.
+                if (event.findingId && event.relationId && event.revisionId && event.packetId) {
+                    projection.findings[event.findingId] = { status: 'revalidated' };
+                }
                 break;
             case 'impact_packet_recorded':
                 if (event.packetId) open.add(event.packetId);
@@ -329,13 +350,117 @@ export async function readInitiativeLifecycle(root: string, initiativeId: string
     return { readState: 'usable', current: projectFrom(initiativeId, [...history, ...packetEntries]), history: [...history, ...packetEntries] };
 }
 
+function componentEdges(graph: KataRelationsGraph, initiativeId: string): KataRelationWithLegacyId[] {
+    const start = `change:${initiativeId}`;
+    const reachable = new Set<string>([start]);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const relation of graph.relations) {
+            const endpoints = [`${relation.from.type}:${relation.from.id}`, `${relation.to.type}:${relation.to.id}`];
+            if (!endpoints.some((endpoint) => reachable.has(endpoint))) continue;
+            for (const endpoint of endpoints) {
+                if (!reachable.has(endpoint)) {
+                    reachable.add(endpoint);
+                    changed = true;
+                }
+            }
+        }
+    }
+    return graph.relations.filter((relation) =>
+        reachable.has(`${relation.from.type}:${relation.from.id}`)
+        && reachable.has(`${relation.to.type}:${relation.to.id}`)
+    );
+}
+
+/** The one closure decision: every writer must use this evaluator rather than reconstruct its own blocker list. */
+export function evaluateInitiativeClosure(input: InitiativeClosureInput): InitiativeClosureDecision {
+    const blockers: ClosureBlocker[] = [];
+    for (const packetId of input.projection.openPacketIds) {
+        blockers.push({ kind: 'unconsumed_packet', detail: `impact packet '${packetId}' was recorded but never consumed` });
+    }
+    for (const [designId, design] of Object.entries(input.projection.designs)) {
+        if (design.status === 'needs_reassessment' || design.status === 'invalidated') {
+            blockers.push({ kind: 'needs_reassessment', detail: `design '${designId}' is ${design.status}${design.reason ? `: ${design.reason}` : ''}` });
+        }
+    }
+    for (const [findingId, finding] of Object.entries(input.projection.findings)) {
+        if (finding.status === 'transferred') {
+            blockers.push({ kind: 'unresolved_return', detail: `finding '${findingId}' was transferred and has not been revalidated against the current revision` });
+        }
+    }
+    for (const relation of componentEdges(input.graph, input.initiativeId)) {
+        if (relation.lifecycle?.policy === 'blocks') {
+            blockers.push({ kind: 'open_blocks', detail: `relation '${relation.id ?? 'unknown'}' still blocks this Initiative` });
+        }
+        if (!relation.lifecycle) {
+            blockers.push({ kind: 'undetermined', detail: `relation with ${relation.to.type}:${relation.to.id} carries no lifecycle metadata, so nothing about it could be evaluated` });
+        }
+    }
+    return { allowed: blockers.length === 0, blockers };
+}
+
+/**
+ * Append ordinary lifecycle history. Closure is deliberately excluded: it has its own authority below so it cannot
+ * bypass the evaluator by looking like an ordinary audit event.
+ */
+async function assertCurrentFindingRevalidation(root: string, initiativeId: string, input: LifecycleEventInput): Promise<void> {
+    if (!input.findingId || !input.relationId || !input.revisionId || !input.packetId) {
+        throw new Error('A finding revalidation must name its finding, relation, current revision and packet.');
+    }
+    const graph = await readKataRelations(root);
+    const relation = graph.relations.find((entry) => entry.id === input.relationId);
+    if (relation?.lifecycle?.policy !== 'implements_finding' || !relation.lifecycle.sourceFindingIds?.includes(input.findingId)) {
+        throw new Error(`Finding '${input.findingId}' is not transferred by lifecycle relation '${input.relationId}'.`);
+    }
+    const expectedPacketId = `${input.relationId}:${input.revisionId}`;
+    if (input.packetId !== expectedPacketId) {
+        throw new Error(`Finding '${input.findingId}' revalidation packet does not bind relation '${input.relationId}' to revision '${input.revisionId}'.`);
+    }
+    const lifecycle = await readInitiativeLifecycle(root, initiativeId);
+    const newestPacket = [...lifecycle.history].reverse().find((event) =>
+        event.type === 'impact_packet_recorded' && event.relationId === input.relationId
+    );
+    if (newestPacket?.packetId !== input.packetId || !lifecycle.current.consumedPacketIds.includes(input.packetId)) {
+        throw new Error(`Finding '${input.findingId}' revalidation must answer the current consumed successor packet.`);
+    }
+}
+
+
+export async function appendLifecycleEvent(root: string, initiativeId: string, input: LifecycleEventInput): Promise<LifecycleEvent> {
+    if (input.type === 'initiative_closed') {
+        throw new Error('Initiative closure must go through closeInitiative so every closure blocker is evaluated.');
+    }
+    if (input.type === 'finding_revalidated') {
+        await assertCurrentFindingRevalidation(root, initiativeId, input);
+    }
+    return appendLifecycleEventInternal(root, initiativeId, input);
+}
+
+/** Evaluate the exact graph/projection before the one write that records a closure. */
+export async function closeInitiative(
+    root: string,
+    input: InitiativeClosureInput & { reason?: string }
+ ): Promise<InitiativeProjection> {
+    const decision = evaluateInitiativeClosure(input);
+    if (!decision.allowed) {
+        throw new Error(`Cannot close Initiative '${input.initiativeId}': ${decision.blockers.map((blocker) => blocker.detail).join('; ')}.`);
+    }
+    await appendLifecycleEventInternal(root, input.initiativeId, {
+        type: 'initiative_closed',
+        reason: input.reason,
+    });
+    return (await readInitiativeLifecycle(root, input.initiativeId)).current;
+}
+
+
 /**
  * Append one lifecycle event, and refuse it if it names a relation the graph does not have.
  *
  * The relation check is the reason this cannot be a plain append: an event bound to a vanished edge would read later as
  * a fact about an edge that is not there, and the misreading is silent.
  */
-export async function appendLifecycleEvent(root: string, initiativeId: string, input: LifecycleEventInput): Promise<LifecycleEvent> {
+async function appendLifecycleEventInternal(root: string, initiativeId: string, input: LifecycleEventInput): Promise<LifecycleEvent> {
     if (input.relationId) {
         const graph = await readKataRelations(root);
         const known = graph.relations.some((relation) => relation.id === input.relationId);

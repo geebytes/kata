@@ -30,6 +30,7 @@
     "designId": { "type": "string", "minLength": 1 },
     "packetId": { "type": "string", "minLength": 1 },
     "findingId": { "type": "string", "minLength": 1 },
+    "revisionId": { "type": "string", "minLength": 1 },
     "sliceId": { "type": "string", "minLength": 1 },
     "reason": { "type": "string", "minLength": 1 },
     "by": { "type": "string", "minLength": 1 },

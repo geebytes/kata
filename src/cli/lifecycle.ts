@@ -27,13 +27,36 @@ export function designsPath(root: string, initiativeId: string): string {
 
 export type DesignDeclaration = { designId: string; dependsOn: string[] };
 
-export async function readDesignDeclarations(root: string, initiativeId: string): Promise<DesignDeclaration[]> {
-    const raw = await readFile(designsPath(root, initiativeId), 'utf8').catch(() => null);
-    if (raw === null) return [];
-    const parsed = JSON.parse(raw) as { designs?: DesignDeclaration[] };
-    return parsed.designs ?? [];
-}
+export type DesignDeclarationsRead = {
+    readState: 'absent' | 'usable' | 'unreadable';
+    designs: DesignDeclaration[];
+};
 
+export async function readDesignDeclarations(root: string, initiativeId: string): Promise<DesignDeclarationsRead> {
+    let raw: string;
+    try {
+        raw = await readFile(designsPath(root, initiativeId), 'utf8');
+    } catch (error) {
+        if (typeof error === 'object' && error !== null && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+            return { readState: 'absent', designs: [] };
+        }
+        return { readState: 'unreadable', designs: [] };
+    }
+    try {
+        const parsed = JSON.parse(raw) as { designs?: unknown };
+        if (!Array.isArray(parsed.designs) || !parsed.designs.every((entry) =>
+            typeof entry === 'object' && entry !== null
+            && typeof (entry as DesignDeclaration).designId === 'string'
+            && Array.isArray((entry as DesignDeclaration).dependsOn)
+            && (entry as DesignDeclaration).dependsOn.every((dependency) => typeof dependency === 'string')
+        )) {
+            return { readState: 'unreadable', designs: [] };
+        }
+        return { readState: 'usable', designs: parsed.designs as DesignDeclaration[] };
+    } catch {
+        return { readState: 'unreadable', designs: [] };
+    }
+}
 export async function writeDesignDeclarations(root: string, initiativeId: string, designs: readonly DesignDeclaration[]): Promise<void> {
     await mkdir(initiativeDir(root, initiativeId), { recursive: true });
     await writeFileAtomic(designsPath(root, initiativeId), `${JSON.stringify({ designs }, null, 2)}\n`);
@@ -97,7 +120,11 @@ export async function runLifecycleCommand(argv: string[]): Promise<Record<string
             .map((token, index) => (token === '--depends-on' ? rest[index + 1] : undefined))
             .filter((value): value is string => typeof value === 'string' && !value.startsWith('--'))
             .map((path) => (path.startsWith('path:') ? path : `path:${path}`));
-        const existing = await readDesignDeclarations(root, initiativeId);
+        const existingRead = await readDesignDeclarations(root, initiativeId);
+        if (existingRead.readState === 'unreadable') {
+            throw new Error(`Cannot update design declarations for '${initiativeId}': existing declarations are unreadable.`);
+        }
+        const existing = existingRead.designs;
         const next = [...existing.filter((entry) => entry.designId !== designId), { designId, dependsOn }];
         await writeDesignDeclarations(root, initiativeId, next);
         return { command: 'lifecycle design', initiativeId, designId, dependsOn };

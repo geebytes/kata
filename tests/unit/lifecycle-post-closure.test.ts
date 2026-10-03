@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { appendLifecycleEvent, readInitiativeLifecycle } from '../../src/core/initiative-lifecycle.js';
+import { appendLifecycleEvent, closeInitiative, readInitiativeLifecycle } from '../../src/core/initiative-lifecycle.js';
 import { addLifecycleRelation } from '../../src/core/relations.js';
 import { createTask } from '../../src/core/task.js';
 import { initLayout } from '../../src/core/layout.js';
@@ -45,7 +45,12 @@ describe('initiative post-closure impact', () => {
             lifecycle: { initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' },
         });
         await appendLifecycleEvent(root, 'records-initiative', { type: 'initiative_created', initiativeId: 'records-initiative' });
-        await appendLifecycleEvent(root, 'records-initiative', { type: 'initiative_closed', reason: 'all slices accounted for' });
+        await closeInitiative(root, {
+            initiativeId: 'records-initiative',
+            graph,
+            projection: (await readInitiativeLifecycle(root, 'records-initiative')).current,
+            reason: 'all slices accounted for',
+        });
         await writeFile(designsPath(root, 'records-initiative'), `${JSON.stringify({
             designs: [{ designId: 'parent-design', dependsOn: ['path:src/core/layout.ts'] }],
         })}\n`, 'utf8');

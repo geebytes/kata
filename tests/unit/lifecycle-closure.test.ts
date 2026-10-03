@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { evaluateInitiativeClosure } from '../../src/workflow/lifecycle-reconciliation.js';
 import { appendLifecycleEvent, readInitiativeLifecycle } from '../../src/core/initiative-lifecycle.js';
+import * as initiativeLifecycle from '../../src/core/initiative-lifecycle.js';
 import { addLifecycleRelation } from '../../src/core/relations.js';
 import { createTask } from '../../src/core/task.js';
 import { initLayout } from '../../src/core/layout.js';
@@ -109,5 +110,61 @@ describe('initiative closure', () => {
         expect(decision).toEqual({ allowed: true, blockers: [] });
     });
 
+
+    it('refuses a direct closure append while an impact packet remains open', async () => {
+        const root = await fixture('kata-lifecycle-direct-close-');
+        const graph = await addLifecycleRelation({
+            root,
+            from: { type: 'change', id: 'records-initiative' },
+            to: { type: 'task', id: 'child' },
+            type: 'related_to',
+            lifecycle: { initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' },
+        });
+        const relationId = graph.relations[0]?.id as string;
+        await appendLifecycleEvent(root, 'records-initiative', {
+            type: 'impact_packet_recorded',
+            relationId,
+            packetId: 'packet-open',
+        });
+
+        await expect(appendLifecycleEvent(root, 'records-initiative', { type: 'initiative_closed' }))
+            .rejects.toThrow(/closure|close/i);
+        expect((await readInitiativeLifecycle(root, 'records-initiative')).current.status).not.toBe('closed');
+    });
+
+    it('writes closure only through the evaluator-backed close authority', async () => {
+        const root = await fixture('kata-lifecycle-close-authority-');
+        const closeInitiative = (initiativeLifecycle as unknown as {
+            closeInitiative?: (
+                root: string,
+                input: {
+                    initiativeId: string;
+                    graph: Parameters<typeof evaluateInitiativeClosure>[0]['graph'];
+                    projection: Parameters<typeof evaluateInitiativeClosure>[0]['projection'];
+                    reason?: string;
+                }
+            ) => Promise<{ status: string }>
+        }).closeInitiative;
+        expect(closeInitiative).toBeTypeOf('function');
+        if (typeof closeInitiative !== 'function') return;
+
+        const state = await closeInitiative(root, {
+            initiativeId: 'records-initiative',
+            graph: { version: 2, updatedAt: '2026-10-03T00:00:00.000Z', relations: [] },
+            projection: {
+                initiativeId: 'records-initiative',
+                status: 'active',
+                designs: {},
+                findings: {},
+                openPacketIds: [],
+                consumedPacketIds: [],
+                retired: [],
+                candidates: [],
+            },
+            reason: 'all related slices reconciled',
+        });
+
+        expect(state.status).toBe('closed');
+    });
 
 });

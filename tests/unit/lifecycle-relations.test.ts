@@ -123,4 +123,21 @@ describe('lifecycle relations', () => {
         await expect(readKataRelations(root)).rejects.toThrow(/not_a_policy|lifecycle/);
         expect(await graphVersion(root)).toBe(2);
     });
+    it('rejects an id-less ordinary edge in a v2 graph while preserving v1 readability', async () => {
+        const root = await tempRoot('kata-lifecycle-v2-id-', ['a', 'b']);
+        await writeFile(relationsPath(root), `${JSON.stringify({
+            version: 2,
+            relations: [{
+                kind: 'context',
+                type: 'related_to',
+                from: { type: 'task', id: 'a' },
+                to: { type: 'task', id: 'b' },
+                createdAt: '2026-10-03T00:00:00.000Z',
+            }],
+            updatedAt: '2026-10-03T00:00:00.000Z',
+        }, null, 2)}\n`, 'utf8');
+
+        await expect(readKataRelations(root)).rejects.toThrow(/id/);
+    });
+
 });
