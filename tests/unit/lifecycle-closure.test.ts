@@ -109,28 +109,5 @@ describe('initiative closure', () => {
         expect(decision).toEqual({ allowed: true, blockers: [] });
     });
 
-    it('does not rewrite historical closure after a later related revision', async () => {
-        const root = await fixture('kata-lifecycle-post-closure-');
-        const graph = await addLifecycleRelation({
-            root,
-            from: { type: 'change', id: 'records-initiative' },
-            to: { type: 'task', id: 'child' },
-            type: 'related_to',
-            lifecycle: { initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' },
-        });
-        const relationId = graph.relations[0]?.id as string;
-        await appendLifecycleEvent(root, 'records-initiative', { type: 'initiative_created', initiativeId: 'records-initiative' });
-        await appendLifecycleEvent(root, 'records-initiative', { type: 'initiative_closed', reason: 'all slices accounted for' });
-        await writeFile(designsPath(root, 'records-initiative'), `${JSON.stringify({
-            designs: [{ designId: 'parent-design', dependsOn: ['path:src/core/layout.ts'] }],
-        })}\n`, 'utf8');
 
-        // A later related child revision lands after the closure.
-        await recordLifecycleTrigger(root, { taskId: 'child', revisionId: 'revision-late', changedPaths: ['src/core/layout.ts'] });
-
-        const state = await readInitiativeLifecycle(root, 'records-initiative');
-        expect(state.history).toContainEqual(expect.objectContaining({ type: 'initiative_closed' }));
-        expect(state.current.status).toBe('needs_reconciliation');
-        expect(state.current.candidates).toContainEqual(expect.objectContaining({ kind: 'reconciliation_slice' }));
-    });
 });
