@@ -128,6 +128,14 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
             continue;
         }
         if (relation.lifecycle.initiativeId !== input.initiativeId) continue;
+        // **A lifecycle edge carries an identity by construction.** `addLifecycleRelation` migrates the graph before it
+        // writes, so an id-less lifecycle edge means the file was hand-edited — and an impact packet that cannot name
+        // the edge it answers stops meaning anything. That is `undetermined`, not a silently unnamed packet.
+        if (typeof relation.id !== 'string' || relation.id.length === 0) {
+            undetermined = true;
+            for (const design of input.designs) statusByDesign[design.designId] = 'undetermined';
+            continue;
+        }
 
         const revision = input.revisions.find((entry) => entry.taskId === taskEnd.id);
         if (!revision) continue;
