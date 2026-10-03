@@ -144,8 +144,12 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
         for (const design of input.designs) {
             const declared = declaredPaths(design);
             if (declared.size === 0) {
-                // A design that declares no dependency surface cannot be shown unaffected, so it is not reported as such.
-                statusByDesign[design.designId] = 'undetermined';
+                // **A design that declares no dependency surface is `needs_reassessment`, and the whole answer is
+                // `undetermined`.** The two are both true and they answer different questions: this design must be
+                // looked at again (nobody can show it is unaffected), and the Initiative's overall freshness cannot be
+                // asserted (the comparison that would justify `fresh` was never possible). Reporting either one alone
+                // would lose a fact the operator needs.
+                statusByDesign[design.designId] = 'needs_reassessment';
                 undetermined = true;
                 continue;
             }

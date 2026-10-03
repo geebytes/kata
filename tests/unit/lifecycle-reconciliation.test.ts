@@ -150,4 +150,49 @@ describe('lifecycle reconciliation', () => {
         expect(result.impactPackets).toEqual([]);
         expect(result.visitedEndpoints).toEqual(['change:records-initiative', 'task:child']);
     });
+
+    it('admits a legacy linked slice as needs_reassessment, never as silently fresh', () => {
+        const result = reconcileInitiative({
+            initiativeId: 'records-initiative',
+            graph: graph({ initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' }),
+            projection: projection(),
+            // A design whose dependencies were never declared: it cannot be shown unaffected, so it is not reported so.
+            designs: [{ designId: 'legacy-design', dependsOn: [] }],
+            revisions: [{ taskId: 'child', revisionId: 'revision-a', changedPaths: ['src/core/layout.ts'] }],
+        });
+
+        expect(result.statusByDesign['legacy-design']).toBe('needs_reassessment');
+        expect(result.overall).toBe('undetermined');
+    });
+
+    it('visits only the changed relation component, and reports what it visited', () => {
+        const base = graph({ initiativeId: 'records-initiative', policy: 'informs', requiredReturn: 'impact_packet' });
+        const withOther: KataRelationsGraph = {
+            ...base,
+            relations: [
+                ...base.relations,
+                {
+                    id: 'edge-2',
+                    kind: 'context',
+                    type: 'related_to',
+                    from: { type: 'change', id: 'other-initiative' },
+                    to: { type: 'task', id: 'other-child' },
+                    createdAt: '2026-10-03T00:00:00.000Z',
+                    lifecycle: { initiativeId: 'other-initiative', policy: 'informs', requiredReturn: 'impact_packet' },
+                },
+            ],
+        };
+
+        const result = reconcileInitiative({
+            initiativeId: 'records-initiative',
+            graph: withOther,
+            projection: projection(),
+            designs: [{ designId: 'parent-design', dependsOn: ['path:src/core/layout.ts'] }],
+            revisions: [{ taskId: 'other-child', revisionId: 'revision-b', changedPaths: ['src/core/layout.ts'] }],
+        });
+
+        // The other Initiative's slice moved a path this design depends on, and it is still not this Initiative's problem.
+        expect(result.impactPackets).toEqual([]);
+        expect(result.visitedEndpoints).toEqual(['change:records-initiative', 'task:child']);
+    });
 });

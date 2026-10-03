@@ -31,6 +31,7 @@ export const USAGE: Record<string, string> = {
     baseline: 'kata-cli baseline [--root <path>]',
     scope: 'kata-cli scope <show|change|apply|declare|boundary> --change <task-id>',
     relations: 'kata-cli relations [--change <task-id>]',
+    lifecycle: 'kata-cli lifecycle <create|attach|design|status> --initiative <id> [--task <id>] [--policy <p>] [--return <r>] [--root <path>]',
     orient: 'kata-cli orient --change <task-id> --role <designer|implementer|reviewer|judge|distiller> [--platform <name>] [--task-kind <read|implementation|security>]',
     hooks: 'kata-cli hooks <activate|status|deactivate> --change <task-id> --role <role> [--platform <name>]',
     handoff: 'kata-cli handoff <create|show|verify|acknowledge> --task <task-id> [--id <handoff-id>] [--platform <name>] [--role <role>]',
