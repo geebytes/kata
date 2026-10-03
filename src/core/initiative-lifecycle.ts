@@ -79,6 +79,104 @@ export type InitiativeLifecycle = {
     current: InitiativeProjection;
     history: LifecycleEvent[];
 };
+export type RetirementProposal = {
+    id: string;
+    initiativeId: string;
+    sliceId: string;
+    reason: string;
+    blockers: string[];
+    at: string;
+};
+
+export type RetirementBlockers = { blockers: string[] };
+
+/**
+ * **Why a slice cannot be retired right now.**
+ *
+ * Three facts, all read from the projection and the graph rather than from a caller's claim: an unconsumed impact
+ * packet (somebody has not looked at what this slice changed), an unresolved transferred finding (a promise is still
+ * outstanding), and an open `blocks` relation (the slice is load-bearing). The check is shared by proposal and
+ * confirmation so the operator is told the same thing at both ends — a proposal that would be refused on confirmation
+ * is worse than a refusal.
+ */
+export async function retirementBlockers(root: string, initiativeId: string, sliceId: string): Promise<string[]> {
+    const state = await readInitiativeLifecycle(root, initiativeId);
+    const blockers: string[] = [];
+    if (state.current.openPacketIds.length > 0) {
+        blockers.push(`unconsumed impact packet(s): ${state.current.openPacketIds.join(', ')}`);
+    }
+    const unresolved = Object.entries(state.current.findings)
+        .filter(([, finding]) => finding.status === 'transferred')
+        .map(([findingId]) => findingId);
+    if (unresolved.length > 0) blockers.push(`unresolved transferred finding(s): ${unresolved.join(', ')}`);
+    const graph = await readKataRelations(root);
+    const openBlocks = graph.relations.filter(
+        (relation) => relation.lifecycle?.policy === 'blocks' && relation.to.type === 'task' && relation.to.id === sliceId
+    );
+    if (openBlocks.length > 0) blockers.push(`open blocks relation(s): ${openBlocks.map((relation) => relation.id).join(', ')}`);
+    return blockers;
+}
+
+export async function proposeRetirement(
+    root: string,
+    initiativeId: string,
+    input: { sliceId: string; reason?: string }
+): Promise<RetirementProposal> {
+    const blockers = await retirementBlockers(root, initiativeId, input.sliceId);
+    if (blockers.length > 0) {
+        throw new Error(`Cannot retire '${input.sliceId}': ${blockers.join('; ')}.`);
+    }
+    const proposal: RetirementProposal = {
+        id: `retirement-${Date.now().toString(36)}`,
+        initiativeId,
+        sliceId: input.sliceId,
+        reason: input.reason ?? 'superseded',
+        blockers: [],
+        at: new Date().toISOString(),
+    };
+    await appendLifecycleEvent(root, initiativeId, {
+        type: 'retirement_proposed',
+        sliceId: input.sliceId,
+        reason: proposal.reason,
+    });
+    await mkdir(dirname(retirementProposalsPath(root, initiativeId)), { recursive: true });
+    await appendFile(retirementProposalsPath(root, initiativeId), `${JSON.stringify(proposal)}${String.fromCharCode(10)}`, 'utf8');
+    return proposal;
+}
+
+/**
+ * Confirm a proposal, re-checking eligibility against the state as it is **now**.
+ *
+ * A confirmation is the moment the decision takes effect, so it is the moment the facts have to hold. Between the
+ * proposal and the confirmation a packet can arrive or a finding can be routed, and retiring on the strength of a stale
+ * proposal would be the system acting on a reading it has already replaced.
+ */
+export async function confirmRetirement(
+    root: string,
+    initiativeId: string,
+    input: { proposalId: string; confirmedBy: string }
+): Promise<InitiativeProjection> {
+    const raw = await readFile(retirementProposalsPath(root, initiativeId), 'utf8').catch(() => '');
+    const proposals = raw
+        .split(String.fromCharCode(10))
+        .filter((line) => line.trim() !== '')
+        .map((line) => JSON.parse(line) as RetirementProposal);
+    const proposal = proposals.find((entry) => entry.id === input.proposalId);
+    if (!proposal) throw new Error(`No retirement proposal '${input.proposalId}' exists for ${initiativeId}.`);
+
+    const blockers = await retirementBlockers(root, initiativeId, proposal.sliceId);
+    if (blockers.length > 0) {
+        throw new Error(`The proposal is no longer eligible for '${proposal.sliceId}': ${blockers.join('; ')}.`);
+    }
+    await appendLifecycleEvent(root, initiativeId, {
+        type: 'retirement_confirmed',
+        sliceId: proposal.sliceId,
+        reason: proposal.reason,
+        by: input.confirmedBy,
+    });
+    const state = await readInitiativeLifecycle(root, initiativeId);
+    return state.current;
+}
 
 /** Re-exported so a caller can name the file a trigger wrote without importing the layout module. */
 export { initiativeEventsPath } from './layout.js';
