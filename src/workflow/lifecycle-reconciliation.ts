@@ -1,5 +1,6 @@
-import type { InitiativeProjection } from '../core/initiative-lifecycle.js';
-import type { KataRelationWithLegacyId, KataRelationsGraph, RelationEndpoint } from '../core/relations.js';
+import { appendLifecycleEvent, readInitiativeLifecycle, type InitiativeProjection } from '../core/initiative-lifecycle.js';
+import { readKataRelations, type KataRelationWithLegacyId, type KataRelationsGraph, type RelationEndpoint } from '../core/relations.js';
+import { readDesignDeclarations } from '../cli/lifecycle.js';
 
 /**
  * **Reconciliation is a pure function of the graph, the projection and the manifests.**
@@ -183,4 +184,77 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
                 : 'fresh';
 
     return { overall, statusByDesign, impactPackets, unresolvedFindings, visitedEndpoints: endpoints };
+}
+
+export type LifecycleTriggerEvent = {
+    taskId: string;
+    revisionId: string;
+    changedPaths: string[];
+};
+
+export type LifecycleTriggerResult = {
+    status: Freshness;
+    packets: ImpactPacket[];
+    initiatives: string[];
+};
+
+/**
+ * **The one bridge from a workflow event to reconciliation.**
+ *
+ * The workflow calls this after a seal or a finding lands, never before: the event describes a durable state, and a
+ * reconciliation against a state that was never written would produce a packet about something that did not happen.
+ *
+ * It reads the graph to find which Initiatives relate to this task, and evaluates only those — an unrelated Initiative
+ * is never loaded, which keeps the cost proportional to the relation component rather than to the repository. The
+ * filesystem-to-input mapping lives here so the evaluator above stays pure.
+ */
+export async function recordLifecycleTrigger(root: string, event: LifecycleTriggerEvent): Promise<LifecycleTriggerResult> {
+    const graph = await readKataRelations(root);
+    // **A related edge with no lifecycle metadata still names an Initiative to evaluate.** Filtering on
+    // `lifecycle.initiativeId` alone would drop it and report `fresh` — the silent pass this whole rule exists to
+    // refuse. The Initiative is the `change:` end of any related edge; whether that edge carries metadata is what the
+    // evaluator decides, and it answers `undetermined`.
+    const related = graph.relations.filter(
+        (relation) => (relation.from.type === 'task' && relation.from.id === event.taskId) || (relation.to.type === 'task' && relation.to.id === event.taskId)
+    );
+    const initiatives = [...new Set(related.flatMap((relation) => {
+        if (relation.lifecycle) return [relation.lifecycle.initiativeId];
+        const changeEnd = [relation.from, relation.to].find((end) => end.type === 'change');
+        return changeEnd ? [changeEnd.id] : [];
+    }))].sort();
+
+    const packets: ImpactPacket[] = [];
+    let status: Freshness = 'fresh';
+    for (const initiativeId of initiatives) {
+        const projection = await readInitiativeLifecycle(root, initiativeId);
+        if (projection.readState === 'unreadable') {
+            // An unreadable lifecycle is not an empty one: reporting `fresh` here is the silent pass this refuses.
+            status = 'undetermined';
+            continue;
+        }
+        const designs = await readDesignDeclarations(root, initiativeId);
+        const result = reconcileInitiative({
+            initiativeId,
+            graph,
+            projection: projection.current,
+            designs,
+            revisions: [{ taskId: event.taskId, revisionId: event.revisionId, changedPaths: event.changedPaths }],
+        });
+        if (result.overall === 'undetermined') status = 'undetermined';
+        else if (result.overall === 'needs_reassessment' && status === 'fresh') status = 'needs_reassessment';
+
+        for (const packet of result.impactPackets) {
+            // **Recorded, not merely returned.** A packet the parent cannot see later would leave it unable to tell
+            // whether the impact was ever noticed, which is the whole point of keeping it.
+            await appendLifecycleEvent(root, initiativeId, {
+                type: 'impact_packet_recorded',
+                relationId: packet.relationId,
+                packetId: `${packet.relationId}:${packet.revisionId}`,
+                designId: Object.keys(result.statusByDesign).find((designId) => result.statusByDesign[designId] === 'needs_reassessment'),
+                reason: `${packet.taskId} sealed ${packet.revisionId}, touching ${packet.intersectedPaths.join(', ')}`,
+            });
+            packets.push(packet);
+        }
+    }
+    return { status, packets, initiatives };
 }

@@ -113,6 +113,7 @@ import {
     runWorkflowCommand,
 } from './cli/workflow.js';
 import { runLedgerCommand } from './cli/ledger.js';
+import { runLifecycleCommand } from './cli/lifecycle.js';
 import {
     createPacketHash,
     discoverSingleTaskForCurrentBranch,
@@ -342,6 +343,11 @@ async function runMain(argv: string[]): Promise<void> {
         return;
     }
 
+    if (command === 'lifecycle') {
+        outputResult(await runLifecycleCommand(argv.slice(1)));
+        return;
+    }
+
     if (command === 'orient') {
         const result = await runOrientCommand(argv.slice(1));
         outputResult(result);
@@ -398,7 +404,7 @@ async function runMain(argv: string[]): Promise<void> {
 
     if (!change) {
         throw new Error(
-            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|ledger|worktree|eval|baseline|wiki|handoff|gate|recover|doctor|revision|relations|orient|hooks|tasks> [change|--change change]',
+            'Usage: kata-cli <init|update|uninstall|discover|comet|codegraph|status|open|design|build|verify|archive|hotfix|tweak|collect|next|ledger|worktree|eval|baseline|wiki|handoff|gate|recover|doctor|revision|relations|orient|hooks|tasks|lifecycle> [change|--change change]',
         );
     }
     if (command === 'status') {

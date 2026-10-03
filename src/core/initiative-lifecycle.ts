@@ -80,6 +80,9 @@ export type InitiativeLifecycle = {
     history: LifecycleEvent[];
 };
 
+/** Re-exported so a caller can name the file a trigger wrote without importing the layout module. */
+export { initiativeEventsPath } from './layout.js';
+
 export { initiativeDir, impactPacketsPath, retirementProposalsPath };
 
 function emptyProjection(initiativeId: string): InitiativeProjection {
