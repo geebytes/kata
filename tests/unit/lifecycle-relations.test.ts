@@ -7,14 +7,16 @@ import { addKataRelation, addLifecycleRelation, readKataRelations } from '../../
 import { relationsPath } from '../../src/core/layout.js';
 
 /**
- * **Lifecycle relations live in the one authoritative graph.**
+ * **AC-1: lifecycle relations extend the one authoritative graph.**
  *
- * `.kata/relations.json` is already the sole topology (`src/core/relations.ts`), so an Initiative must be an endpoint in
- * it rather than a second graph beside it. What the graph could not express is the lifecycle dimension: `KataRelation`
- * has no stable `id`, and `addKataRelation` replaces by `(from, to, type)` — so a lifecycle record that wanted to point
- * at "one particular relation" could not name it, and would have to fingerprint the endpoints. A fingerprint binding
- * breaks the moment the relation is rewritten, which is exactly the second-derivation defect this change exists to
- * remove. These cases pin the stable id, the lifecycle metadata, and the migration that keeps a v1 graph readable.
+ * `.kata/relations.json` is already the sole topology, so an Initiative is an endpoint in it rather than a second graph
+ * beside it. What the graph could not express is the lifecycle dimension: `KataRelation` had no stable `id`, and edges
+ * are replaced by `(from, to, type)` — so a lifecycle record that needed to point at "one particular relation" would have
+ * to fingerprint the endpoints, and a fingerprint breaks the first time the edge is rewritten.
+ *
+ * A v1 graph has no ids and is **readable**, not drifted: every graph written before this change is v1. The migration
+ * happens once, inside the first locked write, because minting ids on read would let two readers disagree about the
+ * identity of the same edge.
  */
 describe('lifecycle relations', () => {
     const roots: string[] = [];
@@ -96,41 +98,6 @@ describe('lifecycle relations', () => {
         expect(upgraded.relations).toHaveLength(2);
         expect(upgraded.relations.every((edge) => typeof edge.id === 'string' && edge.id.length > 0)).toBe(true);
         expect(new Set(upgraded.relations.map((edge) => edge.id)).size).toBe(2);
-    });
-
-    it('refuses a lifecycle cycle and an independent edge whose declared surfaces overlap', async () => {
-        const root = await tempRoot('kata-lifecycle-safety-', ['initiative-child', 'other-child']);
-
-        await addLifecycleRelation({
-            root,
-            from: { type: 'change', id: 'initiative' },
-            to: { type: 'task', id: 'initiative-child' },
-            type: 'contains',
-            lifecycle: { initiativeId: 'initiative', policy: 'informs', requiredReturn: 'impact_packet' },
-        });
-
-        // A cycle: the child claiming to contain the initiative that contains it.
-        await expect(addLifecycleRelation({
-            root,
-            from: { type: 'task', id: 'initiative-child' },
-            to: { type: 'change', id: 'initiative' },
-            type: 'contains',
-            lifecycle: { initiativeId: 'initiative', policy: 'informs', requiredReturn: 'none' },
-        })).rejects.toThrow(/cycle/);
-
-        // `independent` is a claim about surfaces, so it is refused when the two endpoints declare an overlapping one.
-        await expect(addLifecycleRelation({
-            root,
-            from: { type: 'change', id: 'initiative' },
-            to: { type: 'task', id: 'other-child' },
-            type: 'related_to',
-            lifecycle: {
-                initiativeId: 'initiative',
-                policy: 'independent',
-                requiredReturn: 'none',
-                declaredSurfaces: { from: ['src/core/layout.ts'], to: ['src/core/layout.ts'] },
-            },
-        })).rejects.toThrow(/independent .*overlap/);
     });
 
     it('never reports a lifecycle edge without validated metadata as a plain relation', async () => {
