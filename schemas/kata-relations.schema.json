@@ -11,49 +11,102 @@
     "relations": {
       "type": "array",
       "items": {
-        "type": "object",
-        "required": ["kind", "type", "from", "to", "createdAt"],
-        "additionalProperties": false,
-        "properties": {
-          "kind": { "type": "string", "enum": ["ownership", "lineage", "control", "context"] },
-          "type": {
-            "type": "string",
-            "enum": [
-              "superseded_by",
-              "covered_by",
-              "duplicate_of",
-              "merged_into",
-              "parent_of",
-              "spawned_from",
-              "related_to",
-              "contains",
-              "implements",
-              "repairs",
-              "depends_on",
-              "blocked_by"
-            ]
-          },
-          "from": {
-            "type": "object",
-            "required": ["type", "id"],
-            "additionalProperties": false,
-            "properties": {
-              "type": { "type": "string", "enum": ["task", "change"] },
-              "id": { "type": "string", "minLength": 1 }
+        "oneOf": [
+          { "$ref": "#/$defs/versionedRelation" },
+          { "$ref": "#/$defs/lifecycleRelation" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["task", "change"] },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "relationType": {
+      "type": "string",
+      "enum": [
+        "superseded_by",
+        "covered_by",
+        "duplicate_of",
+        "merged_into",
+        "parent_of",
+        "spawned_from",
+        "related_to",
+        "contains",
+        "implements",
+        "repairs",
+        "depends_on",
+        "blocked_by"
+      ]
+    },
+    "versionedRelation": {
+      "type": "object",
+      "required": ["kind", "type", "from", "to", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["ownership", "lineage", "control", "context"] },
+        "type": { "$ref": "#/$defs/relationType" },
+        "from": { "$ref": "#/$defs/endpoint" },
+        "to": { "$ref": "#/$defs/endpoint" },
+        "reason": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "minLength": 1 },
+        "createdBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "lifecycleRelation": {
+      "type": "object",
+      "required": ["id", "kind", "type", "from", "to", "createdAt", "lifecycle"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["ownership", "lineage", "control", "context"] },
+        "type": { "$ref": "#/$defs/relationType" },
+        "from": { "$ref": "#/$defs/endpoint" },
+        "to": { "$ref": "#/$defs/endpoint" },
+        "reason": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string", "minLength": 1 },
+        "createdBy": { "type": "string", "minLength": 1 },
+        "lifecycle": {
+          "type": "object",
+          "required": ["initiativeId", "policy", "requiredReturn"],
+          "additionalProperties": false,
+          "properties": {
+            "initiativeId": { "type": "string", "minLength": 1 },
+            "policy": {
+              "type": "string",
+              "enum": ["blocks", "invalidates_design", "implements_finding", "informs", "independent"]
+            },
+            "requiredReturn": {
+              "type": "string",
+              "enum": ["revalidation", "impact_packet", "none"]
+            },
+            "sourceFindingIds": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            },
+            "affectedAssumptionIds": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
+            },
+            "declaredSurfaces": {
+              "type": "object",
+              "required": ["from", "to"],
+              "additionalProperties": false,
+              "properties": {
+                "from": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                "to": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
             }
-          },
-          "to": {
-            "type": "object",
-            "required": ["type", "id"],
-            "additionalProperties": false,
-            "properties": {
-              "type": { "type": "string", "enum": ["task", "change"] },
-              "id": { "type": "string", "minLength": 1 }
-            }
-          },
-          "reason": { "type": "string", "minLength": 1 },
-          "createdAt": { "type": "string", "minLength": 1 },
-          "createdBy": { "type": "string", "minLength": 1 }
+          }
         }
       }
     }
