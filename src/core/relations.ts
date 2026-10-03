@@ -216,7 +216,7 @@ export async function addKataRelation(input: {
     // first write fail on a graph nobody ever wrote.
     const existing = current.trim()
       ? validate<KataRelationsGraph>('kata-relations', JSON.parse(current) as unknown)
-      : { version: 2 as const, relations: [] as KataRelationWithLegacyId[] };
+      : { version: 2 as const, relations: [] as KataRelationWithLegacyId[], updatedAt: '' };
     const { graph } = upgradeToCurrentVersion(existing);
     // **The id survives a rewrite of the same edge.** Re-adding an edge is a re-statement, not a new relation, so
     // the existing id is inherited: a lifecycle record pointing at this edge keeps pointing at it.
@@ -293,7 +293,7 @@ export async function addLifecycleRelation(input: LifecycleRelationInput): Promi
   await withRepositoryArtefactLock(input.root, 'relations', relationsPath(input.root), async (current) => {
     const existing = current.trim()
       ? validate<KataRelationsGraph>('kata-relations', JSON.parse(current) as unknown)
-      : { version: 2 as const, relations: [] as KataRelationWithLegacyId[] };
+      : { version: 2 as const, relations: [] as KataRelationWithLegacyId[], updatedAt: '' };
     const { graph } = upgradeToCurrentVersion(existing);
     if (closesCycle(graph.relations, input.from, input.to)) {
       throw new Error(`Lifecycle relation would close a cycle: ${describeEndpoint(input.to)} already reaches ${describeEndpoint(input.from)}`);
@@ -301,7 +301,7 @@ export async function addLifecycleRelation(input: LifecycleRelationInput): Promi
     const replaced = graph.relations.find((item) => sameEdge(item, { ...relationShape(input, now), id: '' } as KataRelation));
     const relation: KataRelation = {
       id: replaced?.id ?? newRelationId(),
-      kind: input.kind ?? inferRelationKind(input.type),
+      kind: inferRelationKind(input.type),
       type: input.type,
       from: input.from,
       to: input.to,
@@ -370,18 +370,22 @@ export async function readKataRelations(root: string): Promise<KataRelationsGrap
   // record on a command that only asked to look at it.
   const graph = await readValidatedOptional<KataRelationsGraph>('kata-relations', graphPath(root));
   if (!graph) return { version: 2, relations: [], updatedAt: '' };
+  // A v2 graph is required to carry an id on every edge by its writer; the reader does not invent one, so a graph whose
+  // edges lack ids is reported as what it is — v1 — rather than being given identities two readers would disagree on.
   return { version: graph.version, relations: graph.relations, updatedAt: graph.updatedAt };
 }
 
 export async function findKataRelations(root: string, endpoint: RelationEndpoint): Promise<{
   endpoint: RelationEndpoint;
-  outgoing: KataRelation[];
-  incoming: KataRelation[];
+  outgoing: KataRelationWithLegacyId[];
+  incoming: KataRelationWithLegacyId[];
 }> {
   validateEndpoint(endpoint);
   const graph = await readKataRelations(root);
   return {
     endpoint,
+    // A v1 edge has no id and is returned as it is: the caller that needs an identity is the lifecycle writer, which
+    // migrates the graph first, so this read never has to invent one.
     outgoing: graph.relations.filter((relation) => sameEndpoint(relation.from, endpoint)),
     incoming: graph.relations.filter((relation) => sameEndpoint(relation.to, endpoint)),
   };
