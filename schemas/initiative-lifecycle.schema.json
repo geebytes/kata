@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kata.dev/schemas/initiative-lifecycle.schema.json",
+  "title": "Initiative lifecycle event",
+  "type": "object",
+  "required": ["id", "type", "at"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "minLength": 1 },
+    "type": {
+      "type": "string",
+      "enum": [
+        "initiative_created",
+        "design_needs_reassessment",
+        "design_rebased",
+        "design_invalidated",
+        "impact_packet_recorded",
+        "impact_packet_consumed",
+        "finding_transferred",
+        "finding_revalidated",
+        "retirement_proposed",
+        "retirement_confirmed",
+        "initiative_closed",
+        "post_closure_impact"
+      ]
+    },
+    "relationId": { "type": "string", "minLength": 1 },
+    "initiativeId": { "type": "string", "minLength": 1 },
+    "designId": { "type": "string", "minLength": 1 },
+    "packetId": { "type": "string", "minLength": 1 },
+    "findingId": { "type": "string", "minLength": 1 },
+    "sliceId": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "by": { "type": "string", "minLength": 1 },
+    "result": {
+      "type": "string",
+      "enum": ["fresh", "needs_reassessment", "invalidated", "blocked", "undetermined"]
+    }
+  }
+}

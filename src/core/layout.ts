@@ -702,6 +702,36 @@ export function sealProgressPath(root: string, taskId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Initiatives (lifecycle history, driven by the one relation graph)
+// ---------------------------------------------------------------------------
+
+export function initiativesDir(root: string): string {
+    // **One owner, and no relation store here.** An Initiative's identity and its topology live in the repository's one
+    // relation graph; this directory holds only the lifecycle history that graph drives. A second `relations.jsonl`
+    // beside it would be the parallel topology this design exists to refuse.
+    return join(kataDir(root), 'initiatives');
+}
+
+export function initiativeDir(root: string, initiativeId: string): string {
+    return join(initiativesDir(root), initiativeId);
+}
+
+export function initiativeProjectionPath(root: string, initiativeId: string): string {
+    return join(initiativeDir(root, initiativeId), 'current.json');
+}
+
+export function initiativeEventsPath(root: string, initiativeId: string): string {
+    return join(initiativeDir(root, initiativeId), 'events.jsonl');
+}
+
+export function impactPacketsPath(root: string, initiativeId: string): string {
+    return join(initiativeDir(root, initiativeId), 'impact-packets.jsonl');
+}
+
+export function retirementProposalsPath(root: string, initiativeId: string): string {
+    return join(initiativeDir(root, initiativeId), 'retirement-proposals.jsonl');
+}
+// ---------------------------------------------------------------------------
 // Revisions
 // ---------------------------------------------------------------------------
 

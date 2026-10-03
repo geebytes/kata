@@ -15,6 +15,7 @@ import taskChoiceSchema from 'kata-asset:schemas/task-choice.schema.json';
 import reviewSchema from 'kata-asset:schemas/review.schema.json';
 import verifyResultSchema from 'kata-asset:schemas/verify-result.schema.json';
 import kataRelationsSchema from 'kata-asset:schemas/kata-relations.schema.json';
+import initiativeLifecycleSchema from 'kata-asset:schemas/initiative-lifecycle.schema.json';
 import changeRecordSchema from 'kata-asset:schemas/change-record.schema.json';
 import reviewSubjectSchema from 'kata-asset:schemas/review-subject.schema.json';
 import reviewClaimSchema from 'kata-asset:schemas/review-claim.schema.json';
@@ -44,6 +45,7 @@ const schemaText: Record<string, string> = {
   review: reviewSchema,
   'verify-result': verifyResultSchema,
   'kata-relations': kataRelationsSchema,
+  'initiative-lifecycle': initiativeLifecycleSchema,
   'change-record': changeRecordSchema,
   'review-subject': reviewSubjectSchema,
   'review-claim': reviewClaimSchema,
