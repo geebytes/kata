@@ -232,6 +232,14 @@ export async function recordLifecycleTrigger(root: string, event: LifecycleTrigg
             status = 'undetermined';
             continue;
         }
+        // **A closed Initiative is not re-opened by a later change; its projection moves.** The closure is a historical
+        // fact, so the relay records `post_closure_impact` and the projection becomes `needs_reconciliation` with a
+        // candidate — rewriting the closure event would be editing a record of something that did happen.
+        if (projection.current.status === 'closed') {
+            await recordPostClosureImpact(root, initiativeId, `${event.taskId} sealed ${event.revisionId} after this Initiative closed`);
+            status = 'needs_reassessment';
+            continue;
+        }
         const designs = await readDesignDeclarations(root, initiativeId);
         const result = reconcileInitiative({
             initiativeId,
@@ -257,4 +265,65 @@ export async function recordLifecycleTrigger(root: string, event: LifecycleTrigg
         }
     }
     return { status, packets, initiatives };
+}
+
+export type ClosureBlocker = {
+    kind: 'unconsumed_packet' | 'needs_reassessment' | 'unresolved_return' | 'open_blocks' | 'undetermined' | 'unfinished_slice';
+    detail: string;
+};
+
+export type InitiativeClosureDecision = { allowed: boolean; blockers: ClosureBlocker[] };
+
+/**
+ * **Whether this Initiative may close, with every outstanding fact named.**
+ *
+ * The scan is the Initiative's own component — the same bounded walk the trigger uses — so closing does not become the
+ * one operation that reads the repository. Each blocker carries its kind and a detail string, because "closure refused"
+ * without the reasons is a refusal an operator cannot act on.
+ *
+ * Nothing outstanding is `allowed: true`; anything unknown is `undetermined` and blocks. The asymmetry is deliberate:
+ * a closure that happened on the strength of an unreadable record is indistinguishable from one that happened on the
+ * strength of nothing at all.
+ */
+export function evaluateInitiativeClosure(input: ReconciliationInput): InitiativeClosureDecision {
+    const blockers: ClosureBlocker[] = [];
+    const projection = input.projection;
+
+    for (const packetId of projection.openPacketIds) {
+        blockers.push({ kind: 'unconsumed_packet', detail: `impact packet '${packetId}' was recorded but never consumed` });
+    }
+    for (const [designId, design] of Object.entries(projection.designs)) {
+        if (design.status === 'needs_reassessment' || design.status === 'invalidated') {
+            blockers.push({ kind: 'needs_reassessment', detail: `design '${designId}' is ${design.status}${design.reason ? `: ${design.reason}` : ''}` });
+        }
+    }
+    const unresolved = Object.entries(projection.findings).filter(([, finding]) => finding.status === 'transferred');
+    for (const [findingId] of unresolved) {
+        blockers.push({ kind: 'unresolved_return', detail: `finding '${findingId}' was transferred and has not been revalidated against the current revision` });
+    }
+
+    const { edges } = componentOf(input.graph, input.initiativeId);
+    for (const relation of edges) {
+        if (relation.lifecycle?.policy === 'blocks') {
+            blockers.push({ kind: 'open_blocks', detail: `relation '${relation.id ?? 'unknown'}' still blocks this Initiative` });
+        }
+        if (!relation.lifecycle) {
+            blockers.push({ kind: 'undetermined', detail: `relation with ${relation.to.type}:${relation.to.id} carries no lifecycle metadata, so nothing about it could be evaluated` });
+        }
+    }
+
+    return { allowed: blockers.length === 0, blockers };
+}
+
+/**
+ * After a closure, a later related change moves the projection rather than the record.
+ *
+ * The historical `initiative_closed` event stays exactly where it was — it is a record of something that did happen —
+ * and what changes is that the Initiative is no longer current plus the candidate that says so. That distinction is the
+ * whole reason the projection is derived from the events rather than being the events.
+ */
+export async function recordPostClosureImpact(root: string, initiativeId: string, reason: string): Promise<InitiativeProjection> {
+    await appendLifecycleEvent(root, initiativeId, { type: 'post_closure_impact', reason });
+    const state = await readInitiativeLifecycle(root, initiativeId);
+    return state.current;
 }
