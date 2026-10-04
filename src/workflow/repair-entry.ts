@@ -1,10 +1,11 @@
 import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
+import type { TaskRevision } from './revision.js';
+import { readCurrentTaskRevisionState, readCurrentTaskRevision, revisionIsCurrent, revisionStatus, type CurrentRevisionRead } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
-import { readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
 import { readBlockingProblems } from './review-read.js';
@@ -68,11 +69,18 @@ export async function ledgerDeficitRepairAdmission(
  * then refused a seal with "the sealed revision still matches the workspace", a claim about the workspace decided from the older
  * declaration — and the seal it refused is the only thing that can take on the newer one.
  */
-async function revisionNoLongerDescribes(root: string, taskId: string): Promise<{ id: string; manifestHash: string } | null> {
-    const revision = await readCurrentTaskRevision(root, taskId);
-    if (!revision) return null;
+/**
+ * Whether a sealed revision still describes what it is asked about. The revision comes from the caller, never from a
+ * read taken here: a caller that has already read the pointer (and used that reading to decide something) must not be
+ * answered by a second, independent read of the same non-atomic file — the two readings can disagree, and then the
+ * decision and the artefact it stamps rest on different states of the world.
+ *
+ * `root` alone is kept in the signature for the digest comparison, which is content, not the pointer.
+ */
+async function revisionStillDescribes(root: string, taskId: string, revision: TaskRevision | null): Promise<boolean> {
+    if (!revision) return true;
     const status = await revisionStatus(root, revision, taskId);
-    return revisionIsCurrent(status) ? null : revision;
+    return revisionIsCurrent(status);
 }
 
 /**
@@ -130,7 +138,7 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
     // with evidence that no longer matches. Without this the task had to run a verify it knew would FAIL merely to have
     // the phase moved back — a whole round-trip per re-seal, and the same "authorised but unrecognised" shape as the
     // review and judge deadlocks.
-    if (await revisionNoLongerDescribes(root, taskId)) {
+    if (!(await revisionStillDescribes(root, taskId, await readCurrentTaskRevision(root, taskId)))) {
         return {
             authorized: true,
             entryPhase,
@@ -175,7 +183,12 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // entry while the gate refused the same record — one malformed file, two behaviours, and the crash was the one an
     // operator would see. The reader's answer carries everything this entry needs: the mode, the problems, whether the
     // record describes the current content, and the findings themselves.
-    const blockingRead = await readBlockingProblems(root, taskId);
+    // **And the pointer is read here, once, then handed on.** `readBlockingProblems` used to take its own look at the
+    // non-atomic pointer, so this entry asked the same file a second time — and a seal landing in between left the
+    // entry's own decision and the round it stamped resting on two different states. Taking the read here and passing
+    // it in makes one read answer the binding, the mode, the problems, the supersede test and the stamp.
+    const sealedRead = await readCurrentTaskRevisionState(root, taskId);
+    const blockingRead = await readBlockingProblems(root, taskId, sealedRead);
     if (!blockingRead.ok) {
         // Name the record that actually could not be read. The reader refuses on two different ones, and blaming the
         // review record while the ledger was the unreadable one sends the repair to the wrong file.
@@ -213,7 +226,14 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
-    const superseded = (await revisionNoLongerDescribes(root, taskId)) !== null;
+    //
+    // **Asked of the same snapshot this entry already decided on.** `revision` came out of `readBlockingProblems`, and
+    // the pointer it came from is written non-atomically: asking `readCurrentTaskRevision` again here meant the answer
+    // that selects the repair reason could come from a different pointer state than the round being stamped with it
+    // (measured by an independent review — the reason said one thing while the stamp, and the `blockingIds` measured
+    // against that stamp, said another). Passing the read in makes the decision, the stamp and the supersede test
+    // one snapshot, which is the property this entry claims.
+    const superseded = !(await revisionStillDescribes(root, taskId, revision));
     const repairReason = severityAuthorized ? 'review_findings' : superseded ? 'revision_superseded' : 'ledger_deficits';
     if (!severityAuthorized && !superseded) {
         const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
@@ -293,7 +313,8 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     const judgeRepairable = judge.result === 'FAIL'
         && failedAcceptance.length > 0
         && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
-    const supersededRecord = judgeRepairable ? null : await revisionNoLongerDescribes(root, taskId);
+    const judgeRevision = await readCurrentTaskRevision(root, taskId);
+    const supersededRecord = judgeRepairable || (await revisionStillDescribes(root, taskId, judgeRevision)) ? null : judgeRevision;
     if (!judgeRepairable && !supersededRecord) {
         const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
         if (ledgerAdmission.authorized) return ledgerAdmission;

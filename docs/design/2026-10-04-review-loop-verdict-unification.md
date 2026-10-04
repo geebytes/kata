@@ -107,6 +107,25 @@ Each AC gets a mutation-backed falsifier. Mutations target the evaluator’s mem
 | C3 | AC-3 | the stalled-kind route reason | `tests/unit/review-loop-routing-contract.test.ts` |
 | C4 | AC-4 | writer reuse of `blockingRead.revision` snapshot | `tests/unit/review-round-revision-binding.test.ts` |
 
+### 6.1.1 One pointer read per repair entry (F1 of review round 1)
+
+An independent review measured that C4's claim ("does not take a second current-revision read") did not hold:
+`authorizeReviewRepair` stamped the round from the read `readBlockingProblems` carried, but then asked
+`revisionNoLongerDescribes` — which performed its own `readCurrentTaskRevision` — to choose between
+`review_findings` and `revision_superseded`. Two readers of one non-atomically written file, so under a concurrent seal the
+repair reason and the stamped round could rest on two different pointer states; the declared witness could not see it,
+because it asserted the textual absence of one spelling of the second read.
+
+The rule, now implemented and pinned behaviourally:
+
+- the entry takes **one** `readCurrentTaskRevisionState` and hands that read to `readBlockingProblems`, so the binding,
+  the mode, the open problems, the supersede test and the stamp all derive from the same snapshot;
+- `revisionStillDescribes(root, taskId, revision)` takes the revision from its caller and never reads the pointer, so a
+  second reader cannot reappear inside the supersede test;
+- the witness makes the pointer's **second** call impossible (the same counting mock the verify/judge writers use) and
+  asserts the entry still authorizes from its one read — mutation-checked: restoring a fresh pointer read inside the
+  supersede test changes the count from 1 to 2 and reddens the case.
+
 The ledger submission is produced through `kata-cli ledger evidence add`; Kata applies each mutation, requires the selector to redden, restores it, and records the observed verdict. The subsequent ReviewRequest must carry these claims and their dependency paths; an empty strict request is a blocking review failure, never an empty review conclusion.
 ## 7. Files and migration
 
