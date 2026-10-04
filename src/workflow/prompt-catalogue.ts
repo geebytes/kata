@@ -45,6 +45,17 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: '当前 revision 的审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewLoop 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
         en: 'The current revision review loop has stopped making progress: recent repairs did not reduce blocking problems, so /kata-build is no longer dispatched. The scoped rounds and open problems are recorded under reviewLoop; a person decides — keep repairing, waive a problem, or stop the change.',
     },
+    repair_unreadable_current_revision: {
+        // The two refusals the unified assessment introduced each need their own voice: the fallback line recommends
+        // /kata-build for the same command for a different reason, and an operator who cannot tell a damaged pointer from
+        // a stalled loop repairs the wrong thing. Naming the artefact is the whole content of the advice.
+        zh: 'current-revision.json 读不出来，因此无法判断这次审查针对的是哪个 revision。先修复或重建该 revision 记录，再执行 /kata-build 进入审查修复。',
+        en: 'current-revision.json cannot be read, so which revision this review is about cannot be decided. Repair or rebuild that revision record, then run /kata-build to enter the review repair.',
+    },
+    repair_unreadable_round_history: {
+        zh: 'review-rounds.jsonl 读不出来（存在无法解析的行），因此审查循环的历史无法被判定为“推进”或“停滞”。先修复该轮次记录，再执行 /kata-build 进入修复；不要把它当作 zero-count escalation。',
+        en: 'review-rounds.jsonl cannot be read (it holds a line that does not parse), so the loop history can be decided neither as progressing nor as stalled. Repair that round record, then run /kata-build; do not read it as a zero-count escalation.',
+    },
     review_loop_unmeasurable: {
         zh: '当前 revision 的审查轮记录可读，但没有任何一轮携带可测量的阻塞计数。该状态既不是零计数 escalation，也不是文件读取错误；请由人决定如何恢复可测量的 review loop。',
         en: 'Current-revision review rounds are readable but none carries a measurable blocking count. This is neither a zero-count escalation nor a read error; a person must decide how to restore a measurable review loop.',

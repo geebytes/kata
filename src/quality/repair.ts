@@ -430,8 +430,10 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
             // facts, and only the first is about the record.
             if (!isRoundRecord(parsed)) {
                 // **Counted as damage, not as a round.** This used to push a placeholder, so a file with one damaged line
-                // reported one more round than it had — and `navigation` feeds these rounds to `reviewProgress` whatever
-                // the kind says, so the loop's escalation counted rounds nobody recorded. The parseable prefix stays, for
+                // reported one more round than it had, and the loop's escalation counted rounds nobody recorded. The route
+                // no longer runs through that path at all: a malformed line anywhere makes the whole record
+                // `{ kind: 'unreadable' }`, which `assessReviewLoop` answers as `unreadable_round_history` without calling
+                // `reviewProgress` — so `navigation` never feeds these rounds anywhere. The parseable prefix stays, for
                 // diagnosis; the count does not grow for a line that is not a round.
                 malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;
                 continue;

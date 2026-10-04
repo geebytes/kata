@@ -50,7 +50,12 @@ export type ReviewRequest = {
 export type RequestGap = { claimId: string | null; what: string };
 
 /** Assemble the request from what the planner already decided and what the ledger holds. */
-export async function buildReviewRequest(input: { root: string; changeId: string }): Promise<
+export async function buildReviewRequest(input: {
+    root: string;
+    changeId: string;
+    /** The caller's own read of the pointer, so the request speaks for the revision that was decided on. */
+    sealedRead?: Awaited<ReturnType<typeof readCurrentTaskRevisionState>>;
+}): Promise<
     | { ok: true; request: ReviewRequest }
     | { ok: false; why: string }
 > {
@@ -93,7 +98,7 @@ export async function buildReviewRequest(input: { root: string; changeId: string
     }
     // The seal has to exist too: a request that speaks for content nobody sealed is a brief for a revision the workflow
     // has not accepted, and the reviewer's result could not bind to anything.
-    const sealed = await readCurrentTaskRevisionState(input.root, input.changeId);
+    const sealed = input.sealedRead ?? await readCurrentTaskRevisionState(input.root, input.changeId);
     if (sealed.kind === 'unreadable') {
         return { ok: false, why: `the sealed revision cannot be read (${sealed.detail}); a request has to speak for the content under review` };
     }
@@ -154,7 +159,12 @@ export async function buildReviewRequest(input: { root: string; changeId: string
  * `{ claimId, what }` so the reader knows which claim and which requirement, and an empty list is the only reading of
  * "the request was satisfied".
  */
-export async function verifyAgainstRequest(input: { root: string; changeId: string }): Promise<{ gaps: RequestGap[] }> {
+export async function verifyAgainstRequest(input: {
+    root: string;
+    changeId: string;
+    /** Passed through to the builder, so the handshake is checked against the revision the caller decided on. */
+    sealedRead?: Awaited<ReturnType<typeof readCurrentTaskRevisionState>>;
+}): Promise<{ gaps: RequestGap[] }> {
     const ledger = await readLedger(input.root, input.changeId);
     const built = await buildReviewRequest(input);
     if (!built.ok) return { gaps: [{ claimId: null, what: built.why }] };

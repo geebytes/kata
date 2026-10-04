@@ -490,16 +490,25 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', changeId, 'task.json'),
             `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
         );
+        // **The refused state has to be reachable, or the name asserts nothing.** This case sealed no revision, so the
+        // assessment answered `not_applicable` and the route came from the ledger: the *order* its name claims was never
+        // exercised, and moving the round-history arm below the ledger branches reddened nothing (an independent review
+        // measured that). Sealing first is what makes `unreadable_round_history` the state under test — the same shape
+        // the pointer case above uses for `repair_unreadable_current_revision`.
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
         await writeFile(reviewRoundsPath(root, changeId), 'not-json\n');
         // A ledger that exists and cannot be read decides nothing, which is what the router used to act on first.
         await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'claims.json'), '{}');
 
         const summary = await readUpstreamSummary(root, changeId);
         expect(summary.ledger?.state).toBe('unreadable');
-        expect(summary.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
+        expect(summary.reviewLoop).toMatchObject({ kind: 'unreadable_round_history' });
 
         const action = suggestCandidateAction('review', summary);
-        expect(action.reason).toBe('satisfy_ledger_deficits');
-        expect(action.nextSkill).toBe('/kata-build');
+        expect(action.reason).toBe('repair_unreadable_round_history');
+        // The order is the claim: the round-history refusal wins over the ledger route that a broken ledger would
+        // otherwise take. (The skill is `/kata-build` on this arm by design — it is a build-domain repair, and that is
+        // exactly why the *reason* has to be the one that sends it there.)
+        expect(action.reason).not.toBe('satisfy_ledger_deficits');
     });
 });

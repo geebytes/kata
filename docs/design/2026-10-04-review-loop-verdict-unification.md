@@ -196,3 +196,37 @@ There is no on-disk migration. Existing unbound rows remain legible historical d
 The prior incremental loop paid a full seal/verify plus an independent review per newly discovered source (observed reviews ranged from roughly 222 s to 929 s). This design pays one broader implementation round but bounds discovery by an explicit producer/consumer and state matrix.
 
 The design is complete only when every review-loop verdict producer and consumer is mapped to `ReviewLoopAssessment`, the matrix covers every record-state combination, and an independent reviewer can find no raw-round or optional-identity route that bypasses the evaluator.
+
+### 6.1.7 The writers' one-read invariant, third and fourth sites (F1/F2 of review round 4)
+
+The review-loop writers that stamp a round are the artefact the escalation reads, so each must mint its identity from one
+pointer read. Round 4 found the invariant still unmet on AC-4's own declared surface, in `orchestrator.ts`:
+
+- the **approval** path read the same non-atomically written file at least three times — `readBlockingProblems` reading
+  it internally, `verifyAgainstRequest` reading it again through the request builder, and `currentRevisionIdentity` a
+  third time for the round it stamps. It now takes one `readCurrentTaskRevisionState`, hands it to all three, and mints
+  the stamp through `currentRevisionIdentityFrom`;
+- the **result-file** path minted its binding from one read and let `readReviewRecord` take a second to decide whether
+  the revision already had a record. The reader now receives the caller's read.
+
+Both are pinned by `tests/unit/review-writers-read-the-pointer-once.test.ts` with the counting mock, and the falsifier is
+the mutation that reintroduces the defect (dropping the handed-in read reddens the case).
+
+### 6.1.8 An order claim needs a reachable state (F3 of review round 4)
+
+`review-artefact-read-state.test.ts` had a case named "keeps the unreadable-history refusal ahead of a broken ledger"
+whose fixture sealed no revision: the assessment answered `not_applicable` and the route came from the ledger, so the
+order the name asserts was never exercised — demoting the round-history arm below the ledger branches reddened nothing
+(measured). The fixture now seals a revision first, so `unreadable_round_history` is the state under test, and that
+demotion reddens six cases. Same rule as §6.1.6: a name may only assert what the case can reach.
+
+### 6.1.9 Two refusals need their own voice, and a stale reason needs deleting
+
+`repair_unreadable_current_revision` and `repair_unreadable_round_history` had no `statusPrompt`, so an operator saw the
+generic "run /kata-build" line for two states the unified assessment introduced precisely to stop being read as ordinary
+builds; both now name the artefact to repair. `src/quality/repair.ts` still justified its damage accounting with a call
+path that no longer exists ("`navigation` feeds these rounds to `reviewProgress` whatever the kind says") — the route
+returns `unreadable_round_history` before `reviewProgress` is reached; the sentence now describes that. The three
+`@deprecated` projections on `UpstreamSummary` (`reviewEscalation`, `reviewHistoryUnreadable`,
+`currentRevisionUnreadable`) remain written and read by no production code; they are left in place deliberately as the
+readable shape older records were written in, and are recorded here as dead output rather than silently removed.

@@ -1462,8 +1462,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     error: `Cannot record review result from ${reviewResultFile}: ${(error as Error).message}`,
                 };
             }
-            const binding = await currentRevisionIdentity(root, taskId);
-            const existing = await readReviewRecord(root, taskId);
+            // The read this binding came from is handed to the record reader, which used to take a second look at the
+            // same non-atomic pointer to decide whether this revision already had a record.
+            const resultRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+            const binding = await currentRevisionIdentityFrom(resultRevisionRead, root, taskId);
+            const existing = await readReviewRecord(root, taskId, resultRevisionRead);
             if (!existing.ok) {
                 return { command: 'review', taskId, phase: 'review', success: false, error: `Cannot record a review result: ${existing.why}` };
             }
@@ -1546,7 +1549,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // kernel's reasons say why the ledger does not pass. An operator needs both, and one message that
             // carried only one of them would send them looking for the other.
             const ledger = await readLedgerVerdict({ root, changeId: taskId });
-            const approvalBar = await readBlockingProblems(root, taskId);
+            // **One pointer read answers the bar, the request check and the round this approval stamps.** The branch used
+            // to take three looks at the same non-atomically written file — `readBlockingProblems` reading it internally,
+            // `verifyAgainstRequest` reading it again, and `currentRevisionIdentity` a third time for the stamped round —
+            // so a seal landing in between left the approval resting on one revision while it stamped another. Same
+            // invariant as the review entry and the repair writer, measured by an independent review.
+            const approvalRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+            const approvalBar = await readBlockingProblems(root, taskId, approvalRevisionRead);
             if (!approvalBar.ok) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
@@ -1663,7 +1672,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 // a command an operator could run and skip, so a change could be approved with its probes unanswered and
                 // a claim whose reading set was never planned. Asking it here is what makes the plan a plan.
                 const { verifyAgainstRequest } = await import('../store/review-request.js');
-                const requestGaps = (await verifyAgainstRequest({ root, changeId: taskId })).gaps;
+                const requestGaps = (await verifyAgainstRequest({ root, changeId: taskId, sealedRead: approvalRevisionRead })).gaps;
                 if (requestGaps.length > 0) {
                     const named = requestGaps.map((gap) => `${gap.claimId ?? 'request'}: ${gap.what}`);
                     return {
@@ -1751,7 +1760,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const existing = await readReview(root, taskId);
-            const approveBinding = await currentRevisionIdentity(root, taskId);
+            const approveBinding = await currentRevisionIdentityFrom(approvalRevisionRead, root, taskId);
             if (!approveBinding.revisionId || !approveBinding.manifestHash) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
