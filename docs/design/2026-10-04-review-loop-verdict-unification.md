@@ -95,6 +95,19 @@ The append transformation is a metamorphic property: adding non-current rows mus
 
 Each AC gets a mutation-backed falsifier. Mutations target the evaluator’s membership predicate, the sole escalation variant, the route mapping, and the writer snapshot handoff respectively; each must turn its selector red and restore cleanly.
 
+
+## 6.1 Strict review evidence contract
+
+> F1 repair: an acceptance matrix and seal evidence alone do not populate the strict ledger's ReviewRequest. This change therefore declares one ledger claim per AC, each with the relevant implementation/test paths as its reading set and a mutation-backed `executable_falsifier`.
+
+| Claim | AC | Falsifier target | Selector |
+| --- | --- | --- | --- |
+| C1 | AC-1 | the evaluator's unreadable-identity discrimination | `tests/unit/review-loop-assessment.test.ts` |
+| C2 | AC-2 | `roundBoundTo()` membership predicate | `tests/e2e/review-loop-verdict-unification.test.ts` |
+| C3 | AC-3 | the stalled-kind route reason | `tests/unit/review-loop-routing-contract.test.ts` |
+| C4 | AC-4 | writer reuse of `blockingRead.revision` snapshot | `tests/unit/review-round-revision-binding.test.ts` |
+
+The ledger submission is produced through `kata-cli ledger evidence add`; Kata applies each mutation, requires the selector to redden, restores it, and records the observed verdict. The subsequent ReviewRequest must carry these claims and their dependency paths; an empty strict request is a blocking review failure, never an empty review conclusion.
 ## 7. Files and migration
 
 Expected implementation surface:
