@@ -46,6 +46,7 @@ Each authorizer (`authorizeVerifyRepair`, `authorizeReviewRepair`, `authorizeJud
 
 1. Read/validate the phase artefact and preserve its existing unreadable/missing refusal.
 2. Preserve an already-authorized ordinary route (`verify_fail`, `review_findings`, `judge_fail`, or `revision_superseded`) without consulting the ledger helper.
+   - `review_findings` only means a blocking item whose `source` is the review record. `readBlockingProblems` may merge ledger claims for approval/closure consistency, but a claim-only strict-mode bar must not be relabelled as a review finding or bypass `ledgerDeficitRepairAdmission`.
 3. If ordinary admission is unavailable, call `ledgerDeficitRepairAdmission`.
 4. On authorized, return the shared `ledger_deficits` repair payload for that entry phase.
 5. On denied, append the helper's explanatory ledger reason to the existing phase-specific refusal.
@@ -65,7 +66,7 @@ Consequences:
 |---|---|---|
 | AC-1 | `tests/unit/ledger-repair-predicate.test.ts` | restore a direct phase-local `ledgerVerdict()` decision or remove the sole helper call; the one-derivation assertion fails |
 | AC-2 | `tests/unit/ledger-repair-denial.test.ts` | reverse the non-pass predicate or collapse `unreadable` into authorization; the table-driven boundary cases fail |
-| AC-3 | `tests/unit/ledger-repair-phase-entry.test.ts` | remove the helper delegation from each phase in turn; its normal build repair-entry fixture is denied rather than producing `ledger_deficits` |
+| AC-3 | `tests/unit/ledger-repair-phase-entry.test.ts` | remove a phase helper delegation or broaden the review `source === 'finding'` filter; the normal build fixture is denied or the strict claim-only review route records `review_findings` instead of `ledger_deficits` |
 
 Every AC owns a distinct selector. AC-3 drives the public repair entry rather than only the helper, because the preceding failure was a mechanism present in source but unreachable through the actual phase route.
 

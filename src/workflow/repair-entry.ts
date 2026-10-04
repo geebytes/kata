@@ -171,6 +171,7 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     const reviewMode = blockingRead.mode;
     const findings = [...blockingRead.findings];
     const blockingProblems = blockingRead.problems;
+    const reviewBlockingProblems = blockingProblems.filter((problem) => problem.source === 'finding');
     // **After the reader, and unguarded — because the guard here could not fire.** This was a `try/catch` written when the
     // revision reader threw on drift; once it answered `null` instead, the catch became unreachable and the comment beside
     // it claimed a refusal that happened somewhere else entirely (the reader above refuses an unreadable revision, since
@@ -187,7 +188,7 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
             + 'content under a new revision). Re-run /kata-review.',
         );
     }
-    const severityAuthorized = blockingProblems.length > 0;
+    const severityAuthorized = reviewBlockingProblems.length > 0;
     // Evidence drift authorises re-entry too: once the sealed revision is superseded the evidence cannot describe the
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
@@ -207,24 +208,26 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
         }
     }
 
-    // Both shapes are mapped to the record's own shape, so the payload that reaches `repair.json` does not depend on
-    // which source named the problem — a ledger claim has no `path`, and a legacy finding has no statement.
+    // Claim-only ledger repair carries no review findings. A superseded revision retains its
+    // current review findings for voluntary repair; only a real review finding selects `review_findings`.
     const repairFindings: Array<{ id: string; severity: string; message: string; acceptanceId?: string; path?: string }> = severityAuthorized
-        ? blockingProblems.map((problem) => ({ id: problem.id, severity: problem.severity, message: problem.message }))
-        : findings.map((finding) => ({
-            id: finding.id ?? '',
-            severity: finding.severity ?? '',
-            message: finding.message ?? '',
-            ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
-            ...(finding.path ? { path: finding.path } : {}),
-        }));
+        ? reviewBlockingProblems.map((problem) => ({ id: problem.id, severity: problem.severity, message: problem.message }))
+        : superseded
+            ? findings.map((finding) => ({
+                id: finding.id ?? '',
+                severity: finding.severity ?? '',
+                message: finding.message ?? '',
+                ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
+                ...(finding.path ? { path: finding.path } : {}),
+            }))
+            : [];
     // **The round is recorded before it is entered**, and only when it is entered: this is the fact the escalation reads to
     // decide whether the loop is moving. A repair opened because the revision was superseded has no count to record, and
     // says so with `null` rather than with a zero that would read as progress.
     await appendReviewRound(root, taskId, {
         at: new Date().toISOString(),
-        blockingIds: blockingProblems.map((problem) => problem.id),
-        blockingCount: severityAuthorized ? blockingProblems.length : null,
+        blockingIds: reviewBlockingProblems.map((problem) => problem.id),
+        blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
     });
     return {
         authorized: true,

@@ -51,7 +51,7 @@ async function seedDecidedDeficit(root: string, taskId: string): Promise<void> {
     await ledger(['challenge', 'check']);
 }
 
-async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge'): Promise<{ taskId: string }> {
+async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge', reviewMode?: 'strict'): Promise<{ taskId: string }> {
     const taskId = `ledger-${phase}`;
     await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
     await mkdir(join(root, 'src'), { recursive: true });
@@ -63,6 +63,17 @@ async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge'):
         acceptance: [{ id: 'AC-1', statement: 'ledger repair entry' }],
         ownedPaths: ['src/subject.ts'],
         createdAt: '2026-10-04T00:00:00.000Z',
+        ...(reviewMode ? {
+            workflowProfile: {
+                version: 1,
+                isolationMode: 'current_worktree',
+                developmentMode: 'tdd',
+                reviewMode,
+                comet: { projectInit: 'not_requested', openStatus: 'acknowledged' },
+                gitFlow: { strategy: 'manual', branch: 'master', baseBranch: 'master', status: 'active' },
+                strictClosure: true,
+            },
+        } : {}),
         updatedAt: '2026-10-04T00:00:00.000Z',
     });
     const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['src/subject.ts'], checkIds: ['test'] });
@@ -123,4 +134,22 @@ describe('all gate ledger-deficit repair entries', () => {
             expect(repair).toMatchObject({ fromPhase: phase, reason: 'ledger_deficits' });
         },
     );
+    it('keeps a strict ledger-only deficit on the shared ledger_deficits repair route', async () => {
+        const root = await tempRoot();
+        const { taskId } = await seedGate(root, 'review', 'strict');
+
+        const authorization = await authorizeRepair('review', root, taskId);
+        expect(authorization).toMatchObject({
+            authorized: true,
+            repair: { fromPhase: 'review', reason: 'ledger_deficits' },
+        });
+        const result = await runCommand('build', taskId, root, { seal: false });
+        const repair = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'repair.json'), 'utf8')) as {
+            fromPhase: string;
+            reason: string;
+        };
+
+        expect(result).toMatchObject({ success: true, phase: 'implement' });
+        expect(repair).toMatchObject({ fromPhase: 'review', reason: 'ledger_deficits' });
+    });
 });
