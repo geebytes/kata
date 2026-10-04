@@ -110,6 +110,10 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
     if (!verifyRead.ok) return verifyRead.denial;
     const verify = verifyRead.value;
     if (!verify) {
+        // Nothing to repair against, but an actionable ledger deficit is still a repair: the shared admission
+        // decides that, so this branch consults it before falling back to a bare state transition.
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (ledgerAdmission.authorized) return ledgerAdmission;
         // No verify verdict to repair against: the entry is recorded by the state transition alone.
         return { authorized: true, entryPhase, repair: null };
     }

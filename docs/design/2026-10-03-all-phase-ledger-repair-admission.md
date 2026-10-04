@@ -46,6 +46,7 @@ Each authorizer (`authorizeVerifyRepair`, `authorizeReviewRepair`, `authorizeJud
 
 1. Read/validate the phase artefact and preserve its existing unreadable/missing refusal.
 2. Preserve an already-authorized ordinary route (`verify_fail`, `review_findings`, `judge_fail`, or `revision_superseded`) without consulting the ledger helper.
+   - A `hardVerify` entry with no `verify.json` is not an ordinary authorization: it consults the shared helper first, and only falls back to the bare state transition when the ledger authorizes nothing. A missing verdict means "nothing to repair against", not "no repair to record" — otherwise an actionable ledger re-enters implementation without the `ledger_deficits` payload AC-3 requires.
    - `review_findings` only means a blocking item whose `source` is the review record. `readBlockingProblems` may merge ledger claims for approval/closure consistency, but a claim-only strict-mode bar must not be relabelled as a review finding or bypass `ledgerDeficitRepairAdmission`.
 3. If ordinary admission is unavailable, call `ledgerDeficitRepairAdmission`.
 4. On authorized, return the shared `ledger_deficits` repair payload for that entry phase.
@@ -66,7 +67,7 @@ Consequences:
 |---|---|---|
 | AC-1 | `tests/unit/ledger-repair-predicate.test.ts` | restore a direct phase-local `ledgerVerdict()` decision or remove the sole helper call; the one-derivation assertion fails |
 | AC-2 | `tests/unit/ledger-repair-denial.test.ts` | reverse the non-pass predicate or collapse `unreadable` into authorization; the table-driven boundary cases fail |
-| AC-3 | `tests/unit/ledger-repair-phase-entry.test.ts` | remove a phase helper delegation or broaden the review `source === 'finding'` filter; the normal build fixture is denied or the strict claim-only review route records `review_findings` instead of `ledger_deficits` |
+| AC-3 | `tests/unit/ledger-repair-phase-entry.test.ts` | remove a phase helper delegation, broaden the review `source === 'finding'` filter, or restore the no-verify shortcut that returns `repair: null` before the helper; the normal build fixture is denied, the strict claim-only review route records `review_findings` instead of `ledger_deficits`, or the no-verify hardVerify route records no repair at all |
 
 Every AC owns a distinct selector. AC-3 drives the public repair entry rather than only the helper, because the preceding failure was a mechanism present in source but unreachable through the actual phase route.
 
