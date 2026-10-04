@@ -224,9 +224,9 @@ export interface ReviewLoopAssessmentInput {
 /**
  * The complete, mutually-exclusive answer to whether the review loop may affect routing.
  *
- * `stalled_current_rounds` is deliberately the only verdict variant.  Missing or
- * unreadable artefacts name the refusal that was observed instead of borrowing the
- * semantics of a zero-count escalation.
+ * Seven variants, and `stalled_current_rounds` is deliberately the only one that escalates:
+ * every other kind names a state of its own.  Missing or unreadable artefacts name the refusal that was
+ * observed instead of borrowing the semantics of a zero-count escalation.
  */
 export type ReviewLoopAssessment =
     | { kind: 'not_applicable'; reason: 'no_current_revision' }
@@ -266,9 +266,18 @@ export function roundBoundTo(
     return round.revisionId === currentRevision.revisionId && round.manifestHash === currentRevision.manifestHash;
 }
 
+/**
+ * Measure the already-scoped set it is handed — never an identity, and a missing identity is never permission to
+ * measure a whole history.
+ *
+ * **Exported for its own tests and for no production consumer but the evaluator.** The only caller in `src/` is
+ * `assessReviewLoop`, which passes `scopedRounds`; the absence of an identity parameter is the contract, so a caller
+ * that wants a verdict about *some* revision must go through `assessReviewLoop` and its filter. Kept as a public
+ * function because the escalation arithmetic is worth testing on its own, which is a testing affordance and not a
+ * second production entry point (an independent review flagged it as a latent bypass; this is the recorded reason it
+ * stays, and `tests/unit/one-derivation-or-none` style checks pin the routing side).
+ */
 export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
-    // This helper receives the already-scoped set it measures. It never reads an identity
-    // and never interprets a missing one as permission to measure a whole history.
     const currentRounds = rounds;
     // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
     // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is

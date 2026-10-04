@@ -420,7 +420,7 @@ describe('review artefact read states', () => {
      *
      * This case drives `readUpstreamSummary` into `suggestCandidateAction`, which is the surface the CLI dispatches from.
      */
-    it('does not route a corrupted round history to the escalation terminal, and does not dispatch it to build', async () => {
+    it('refuses a corrupted round history with its own reason rather than escalating it', async () => {
         const root = await rootWithReview();
         const changeId = 'router-artefact';
         await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
@@ -430,27 +430,28 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', changeId, 'task.json'),
             `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
         );
-        // **A damaged line in an otherwise readable history is reported, and the surviving measurements decide.** The
-        // earlier version of this case escalated here — one sound round plus one unparseable line — and that is the defect
-        // an independent reading measured from the other side: a history that measurably went 3 → 1 stopped for a person
-        // because a line was damaged. One round at 2 with a damaged line after it is not a stuck loop; it is a loop with a
-        // record that cannot be read whole.
+        // **The revision has to be sealed, or none of the assertions below can be reached.** Without it the assessment
+        // answers `not_applicable`, the route comes from elsewhere, and every `not.toBe(...)` here passes for a reason
+        // that has nothing to do with a damaged history — which is what an independent review measured, twice, about this
+        // file's cases (design §6.1.8/§6.1.9).
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+        // One sound round at 2, then a line that is not a round. The damage is named; the surviving measurement is not
+        // turned into an escalation (a history that measurably went 3 → 1 must not stop for a person because a line was
+        // damaged), and it is not silently ignored either.
         await writeFile(
             reviewRoundsPath(root, changeId),
             `${JSON.stringify({ at: '2026-09-29T00:00:00.000Z', blockingIds: ['R-1'], blockingCount: 2 })}\nnot-json\n`,
         );
 
         const summary = await readUpstreamSummary(root, changeId);
-        // The fixture seals no revision, so the assessment answers `not_applicable` and no review-loop route is taken at
-        // all. The old *name* claimed an escalation route that neither half of this case ever asserted (an independent
-        // review caught the contradiction); the assertions are what the case has always meant — a damaged line must not
-        // be turned into an escalation, nor into a build dispatch.
-        expect(summary.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
-        expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
-        expect(suggestCandidateAction('review', summary).reason).not.toBe('repair_unreadable_round_history');
+        expect(summary.reviewLoop).toMatchObject({ kind: 'unreadable_round_history' });
+        const action = suggestCandidateAction('review', summary);
+        expect(action.reason).toBe('repair_unreadable_round_history');
+        expect(action.reason).not.toBe('escalate_review_without_progress');
 
         // **And the terminal is still reachable from a damaged history**: when the measurements that survive show the loop
-        // not moving, the damage does not excuse it. Three non-declining rounds plus a damaged line stops the loop.
+        // not moving, the damage does not excuse it. Four non-declining rounds plus a damaged line stops the loop — which
+        // is the same refusal, reached from a longer history, and never an escalation.
         await writeFile(
             reviewRoundsPath(root, changeId),
             [
@@ -462,10 +463,8 @@ describe('review artefact read states', () => {
             ].join('\n') + '\n',
         );
         const stalled = await readUpstreamSummary(root, changeId);
-        expect(stalled.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
-        const action = suggestCandidateAction('review', stalled);
-        expect(action.reason).not.toBe('escalate_review_without_progress');
-        expect(action.nextSkill).not.toBe('/kata-build');
+        expect(stalled.reviewLoop).toMatchObject({ kind: 'unreadable_round_history' });
+        expect(suggestCandidateAction('review', stalled).reason).not.toBe('escalate_review_without_progress');
     });
 
     /**

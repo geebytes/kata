@@ -1622,7 +1622,10 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // reasons are the kernel's vocabulary and the caller had to reconstruct the mode's severity rule from
                     // them; naming the problems is the same ladder the routers read, so the refusal and the routing cannot
                     // disagree about what blocks. A mode whose bar no open problem reaches adds nothing to the sentence.
-                    const blockingRead = await readBlockingProblems(root, taskId);
+                    // **The same read the refusal above rested on.** This used to take a second look at the pointer, so
+                    // the bar sentence and `diagnostics.blockingProblems` could describe a different state from the
+                    // decision they explain (measured by an independent review); the read is already in hand here.
+                    const blockingRead = await readBlockingProblems(root, taskId, approvalRevisionRead);
                     // **The bar sentence names the problems at the bar, and only those.** Naming every open problem would
                     // claim the mode refuses something it does not — a `major` problem is open under `std` and is not at
                     // std's bar, so a sentence that listed it would be a declaration claiming more than its reality.

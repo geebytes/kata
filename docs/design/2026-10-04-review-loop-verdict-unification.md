@@ -230,3 +230,27 @@ returns `unreadable_round_history` before `reviewProgress` is reached; the sente
 `@deprecated` projections on `UpstreamSummary` (`reviewEscalation`, `reviewHistoryUnreadable`,
 `currentRevisionUnreadable`) remain written and read by no production code; they are left in place deliberately as the
 readable shape older records were written in, and are recorded here as dead output rather than silently removed.
+
+### 6.1.10 Round 5: the same invariant, the same class, and what is deliberately left
+
+Round 5 reported no counterexample to C1–C4 and four more instances of the class this change exists to state.
+
+- **A second look inside the same refusal** (`orchestrator.ts:1628`): the ledger-not-pass branch took its own
+  `readBlockingProblems` after the decision had already been made from `approvalRevisionRead`. Measured reachable
+  (decided-and-not-passing ledger, no problems at the mode's bar) and fixed by handing it the read in hand.
+- **The third witness that counted one spelling** (`tests/unit/review-entry-reads-the-pointer-once.test.ts`): §6.1.5's
+  lesson was applied to two files and missed a third. Fixed the same way, with the sibling-spelling mutation reddening
+  it.
+- **A case that could not reach what it named** (`review-artefact-read-state.test.ts`): the case claimed a damaged
+  history is not dispatched to build, from a fixture that sealed no revision — so every `not.toBe(...)` was vacuous, and
+  its claim contradicted the sibling case that pins the sealed behaviour. The fixture now seals, and deleting the
+  round-history arm reddens two cases.
+- **Two documentation facts**: the `ReviewLoopAssessment` doc called `stalled_current_rounds` "the only verdict variant"
+  while the union has seven (it is the only one that *escalates*), and `reviewProgress` is exported without an identity
+  parameter. The second is kept deliberately — its only production caller is the evaluator — and now says so at the
+  definition instead of being inferred by the next reader.
+
+**Outside this change's declared surface, recorded rather than fixed**: `src/workflow/distill-gates.ts` synthesises one
+"is the review clear" decision from three separate pointer reads (`readReviewRecord`, `readBlockingProblems`,
+`currentRevisionIdentity` at :76/:97/:108, plus a fourth in the judge path). That file is not in this change's ownership,
+so it is a follow-up candidate, not a silent repair.

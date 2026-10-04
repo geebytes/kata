@@ -19,12 +19,21 @@ vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
     const original = await importOriginal<typeof import('../../src/workflow/revision.js')>();
     return {
         ...original,
+        // **Both exported spellings, because a module-internal call is not redirected.** `vi.mock` replaces a module's
+        // exports for its *importers* while a module internal call to its own function is untouched, so a mock of one
+        // spelling counts nothing when the entry calls the other — the lesson the change's design §6.1.5 records, and
+        // this file was the third witness to miss it (an independent review measured that).
         readCurrentTaskRevisionState: async (...args: Parameters<typeof original.readCurrentTaskRevisionState>) => {
             revisionReads.count += 1;
             if (revisionReads.count >= revisionReads.failFrom) {
                 return { kind: 'unreadable', detail: 'the pointer could not be read on this attempt' } as never;
             }
             return original.readCurrentTaskRevisionState(...args);
+        },
+        readCurrentTaskRevision: async (...args: Parameters<typeof original.readCurrentTaskRevision>) => {
+            revisionReads.count += 1;
+            if (revisionReads.count >= revisionReads.failFrom) return null;
+            return original.readCurrentTaskRevision(...args);
         },
     };
 });
