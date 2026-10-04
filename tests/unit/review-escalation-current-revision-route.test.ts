@@ -117,4 +117,61 @@ describe('current revision review routing', () => {
     expect(summary.reviewEscalation?.unmeasurable ?? false).toBe(false);
     expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
   });
+
+  /**
+   * **An unparseable history measures nothing, so it may not report a count.** The file-level state was ORed into the
+   * escalation condition, which produced a terminal carrying `rounds: 0` and `blockingIds: []` — the field's own
+   * contract says the count and the ids come from the recorded rounds, and the operator read "the recent repairs did not
+   * reduce the blocking problems" about a revision for which no round was ever counted. Reproduced before the fix:
+   * both cases below returned `reviewEscalation {rounds: 0, noProgressRounds: 0, blockingIds: [], unmeasurable: true}`
+   * with reason `escalate_review_without_progress`.
+   */
+  it('raises no escalation from a history that holds no parseable round', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kata-review-route-unparseable-'));
+    roots.push(root);
+    await initLayout(root);
+    await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+    await writeFile(join(root, 'subject.ts'), 'export const subject = true;\n');
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), `${JSON.stringify({
+      id: taskId,
+      title: 'Current review route',
+      acceptance: [{ id: 'AC-1', statement: 'x' }],
+      ownedPaths: ['subject.ts'],
+      workflowProfile: { reviewMode: 'strict' },
+    })}\n`);
+    const sealed = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: ['test'] });
+    await writeFile(join(root, '.kata', 'evidence', `${taskId}-current.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: sealed.revision.id })}\n`);
+    await writeFile(reviewRoundsPath(root, taskId), 'not-json\n');
+
+    const summary = await readUpstreamSummary(root, taskId);
+
+    expect(summary.reviewEscalation).toBeUndefined();
+    expect(summary.reviewHistoryUnreadable).toBe(true);
+    // The damage is routed as a refusal to rebuild, not as a verdict that the loop stopped moving.
+    expect(suggestCandidateAction('review', summary).reason).toBe('repair_unreadable_round_history');
+  });
+
+  it('routes a damaged pointer ahead of an unparseable history, and neither as an escalation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kata-review-route-unparseable-pointer-'));
+    roots.push(root);
+    await initLayout(root);
+    await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+    await writeFile(join(root, 'subject.ts'), 'export const subject = true;\n');
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), `${JSON.stringify({
+      id: taskId,
+      title: 'Current review route',
+      acceptance: [{ id: 'AC-1', statement: 'x' }],
+      ownedPaths: ['subject.ts'],
+      workflowProfile: { reviewMode: 'strict' },
+    })}\n`);
+    await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: ['test'] });
+    await writeFile(reviewRoundsPath(root, taskId), 'not-json\n');
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), '{');
+
+    const summary = await readUpstreamSummary(root, taskId);
+
+    expect(summary.reviewEscalation).toBeUndefined();
+    // The state kata cannot identify does not borrow the verdict; the one it can name is routed.
+    expect(suggestCandidateAction('review', summary).reason).toBe('repair_unreadable_current_revision');
+  });
 });

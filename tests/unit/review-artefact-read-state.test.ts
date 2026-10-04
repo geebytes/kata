@@ -475,9 +475,16 @@ describe('review artefact read states', () => {
     /**
      * **The same gap, on the same fixture, one branch over**: a corrupted round history that also has a broken ledger used
      * to be dispatched to `/kata-build` because the ledger routes were evaluated first. Refusing to read the history and
-     * then routing a repair anyway is the terminal not existing.
+     * then routing a repair anyway is the refusal not existing.
+     *
+     * **The refusal, not the escalation.** This case used to assert `reviewEscalation` was defined, and that assertion
+     * outlived the reason for it: the history file holds no parseable round, so an escalation raised from it carried
+     * `rounds: 0` and `blockingIds: []` — a terminal verdict ('the recent repairs did not reduce the blocking problems')
+     * about a revision for which nothing was counted, and one that outranked the branch written for the unreadable
+     * pointer. What this case is about is that the damage is *named and routed* rather than worked around, which is now
+     * `repair_unreadable_round_history`.
      */
-    it('keeps the escalation ahead of a broken ledger on the routing surface', async () => {
+    it('keeps the unreadable-history refusal ahead of a broken ledger on the routing surface', async () => {
         const root = await rootWithReview();
         const changeId = 'router-artefact';
         await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
@@ -493,10 +500,12 @@ describe('review artefact read states', () => {
 
         const summary = await readUpstreamSummary(root, changeId);
         expect(summary.ledger?.state).toBe('unreadable');
-        expect(summary.reviewEscalation).toBeDefined();
+        expect(summary.reviewHistoryUnreadable).toBe(true);
+        // Nothing was counted, so nothing is escalated: the verdict fields stay empty rather than carrying a zero.
+        expect(summary.reviewEscalation).toBeUndefined();
 
         const action = suggestCandidateAction('review', summary);
-        expect(action.reason).toBe('escalate_review_without_progress');
-        expect(action.nextSkill).toBe('/kata-review');
+        expect(action.reason).toBe('repair_unreadable_round_history');
+        expect(action.nextSkill).toBe('/kata-build');
     });
 });
