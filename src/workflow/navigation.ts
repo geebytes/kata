@@ -236,7 +236,10 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
-  const reviewProgressOfChange = reviewProgress(reviewRounds.rounds);
+  const reviewProgressOfChange = reviewProgress(
+    reviewRounds.rounds,
+    sealed?.id && sealed.manifestHash ? { revisionId: sealed.id, manifestHash: sealed.manifestHash } : undefined,
+  );
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)

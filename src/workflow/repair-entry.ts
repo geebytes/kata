@@ -241,14 +241,17 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
                 ...(finding.path ? { path: finding.path } : {}),
             }))
             : [];
-    // **The round is recorded before it is entered**, and only when it is entered: this is the fact the escalation reads to
-    // decide whether the loop is moving. A repair opened because the revision was superseded has no count to record, and
-    // says so with `null` rather than with a zero that would read as progress.
-    await appendReviewRound(root, taskId, {
-        at: new Date().toISOString(),
-        blockingIds: reviewBlockingProblems.map((problem) => problem.id),
-        blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
-    });
+    // A new loop record must describe a sealed revision. Legacy/no-seal repair entry remains readable and
+    // authorizable, but does not manufacture an unbound measurement that a later revision could misinterpret.
+    if (revision) {
+        await appendReviewRound(root, taskId, {
+            at: new Date().toISOString(),
+            revisionId: revision.id,
+            manifestHash: revision.manifestHash,
+            blockingIds: reviewBlockingProblems.map((problem) => problem.id),
+            blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
+        });
+    }
     return {
         authorized: true,
         entryPhase,

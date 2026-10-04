@@ -143,6 +143,17 @@ export interface RepairPayload {
  */
 export interface ReviewRound {
     at: string;
+    /**
+     * The sealed revision this round measured, and the content identity sealed with it.
+     *
+     * **Both, not just the id.** A re-seal of byte-identical content issues a new revision id, and the content hash is
+     * what says the round is still about the same work — the same pairing the verdicts and the gate records use.
+     *
+     * **Absent on legacy lines**, which were written before a round could name a revision. They stay readable and are
+     * treated as what they are: history that cannot claim the current revision.
+     */
+    revisionId?: string;
+    manifestHash?: string;
     /** The problems the round was opened for, by id — the escalation names these rather than a count alone. */
     blockingIds: string[];
     /**
@@ -200,7 +211,32 @@ export function reviewRoundsPath(root: string, taskId: string): string {
  * escalates: a round that measured zero cleared the loop, and a round that measured nothing can neither be progress nor
  * be read as one.
  */
-export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
+/**
+ * **Whether a recorded round measured the revision being judged.**
+ *
+ * Exported because the rule is what a counterexample has to aim at: a probe that mutates this file's *shape* proves
+ * nothing about the rule, and one that mutates this function proves exactly the rule. It also keeps a single spelling of
+ * "this round is about that revision" rather than the same conjunction repeated at every call site.
+ *
+ * A legacy line names no revision. It cannot claim the current one, so it does not measure it — and it is dropped from
+ * the comparison while staying in the file, which is the difference between "history nobody can read" and "history about
+ * something else".
+ */
+export function roundBoundTo(
+    round: ReviewRound,
+    currentRevision: { revisionId: string; manifestHash: string },
+): boolean {
+    return round.revisionId === currentRevision.revisionId && round.manifestHash === currentRevision.manifestHash;
+}
+
+export function reviewProgress(
+    rounds: readonly ReviewRound[],
+    currentRevision?: { revisionId: string; manifestHash: string },
+): ReviewProgress {
+    // **Only the current revision's rounds are measured, and an unbound line is not one of them.** Before this the whole
+    // file was one loop: a round recorded against a revision that had already been superseded kept escalating against
+    // the next one, so a fresh, clean revision inherited a stalled history it had nothing to do with.
+    const currentRounds = rounds.filter((round) => currentRevision === undefined || roundBoundTo(round, currentRevision));
     // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
     // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is
     // plainly stuck: it has not reached a new low since round 2. A loop that only ever gets worse is the same fact with
@@ -209,7 +245,7 @@ export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
     let noProgressRounds = 0;
     let unmeasuredRounds = 0;
     let newestMeasuredIds: string[] = [];
-    for (const round of rounds) {
+    for (const round of currentRounds) {
         if (round.blockingCount === null) {
             // **Neutral, and counted.** A round that measured nothing is neither progress nor a failure to progress, so it
             // neither resets the run nor extends it; `unmeasuredRounds` reports it, because a history that could not be
@@ -283,10 +319,19 @@ export type ReviewRoundsRead =
  * The fields the reader uses, and their types: a bare number, an array, or an object without `at` and `blockingIds` is not
  * a round, and reading one as a round is how a corrupt file becomes a history with rounds in it.
  */
-function isRoundRecord(value: unknown): value is { at: string; blockingIds: unknown[]; blockingCount?: unknown } {
+function isRoundRecord(value: unknown): value is {
+    at: string;
+    blockingIds: unknown[];
+    blockingCount?: unknown;
+    revisionId?: unknown;
+    manifestHash?: unknown;
+} {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const record = value as Record<string, unknown>;
-    return typeof record.at === 'string' && Array.isArray(record.blockingIds);
+    return typeof record.at === 'string'
+        && Array.isArray(record.blockingIds)
+        && (record.revisionId === undefined || typeof record.revisionId === 'string')
+        && (record.manifestHash === undefined || typeof record.manifestHash === 'string');
 }
 
 export async function readReviewRoundsState(root: string, taskId: string): Promise<ReviewRoundsRead> {
@@ -317,6 +362,8 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
             }
             rounds.push({
                 at: parsed.at,
+                ...(typeof parsed.revisionId === 'string' ? { revisionId: parsed.revisionId } : {}),
+                ...(typeof parsed.manifestHash === 'string' ? { manifestHash: parsed.manifestHash } : {}),
                 blockingIds: parsed.blockingIds.filter((id): id is string => typeof id === 'string'),
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
             });

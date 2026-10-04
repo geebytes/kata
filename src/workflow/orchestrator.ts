@@ -1752,6 +1752,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const existing = await readReview(root, taskId);
             const approveBinding = await currentRevisionIdentity(root, taskId);
+            if (!approveBinding.revisionId || !approveBinding.manifestHash) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: 'Review approval requires a current sealed revision so its loop round can be bound to that revision.',
+                };
+            }
             if (revisionId && !bindsToRevision(existing, approveBinding)) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
@@ -1789,6 +1795,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // `null` are now two facts: cleared, and nothing to measure.
             await appendReviewRound(root, taskId, {
                 at: new Date().toISOString(),
+                ...(approveBinding.revisionId ? { revisionId: approveBinding.revisionId } : {}),
+                ...(approveBinding.manifestHash ? { manifestHash: approveBinding.manifestHash } : {}),
                 blockingIds: [],
                 blockingCount: 0,
             });
