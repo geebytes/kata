@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
-import { ledgerDeficitRepairAdmission } from '../../src/workflow/repair-entry.js';
+import { authorizeRepair, ledgerDeficitRepairAdmission } from '../../src/workflow/repair-entry.js';
 
 const taskId = 'ledger-repair-boundary';
 const roots: string[] = [];
@@ -95,5 +95,25 @@ describe('ledger-deficit repair admission boundary', () => {
             authorized: true,
             repair: { fromPhase: 'judge', reason: 'ledger_deficits' },
         });
+    });
+
+    it('names the ledger when the ledger is the unreadable record, not the review', async () => {
+        const root = await tempRoot();
+        await seedDecidedLedger(root, false);
+        const reviewDir = join(root, '.kata', 'tasks', taskId, 'review');
+        await mkdir(reviewDir, { recursive: true });
+        await writeFile(join(reviewDir, 'review.json'), JSON.stringify({
+            version: 1,
+            taskId,
+            status: 'pending',
+            findings: [],
+        }));
+        await writeFile(join(reviewDir, 'claims.json'), '{not-json');
+
+        const authorization = await authorizeRepair('review', root, taskId);
+
+        expect(authorization.authorized).toBe(false);
+        expect(authorization.denial).toMatch(/the evidence ledger cannot be read/i);
+        expect(authorization.denial).not.toMatch(/the recorded review cannot be read/i);
     });
 });

@@ -170,7 +170,10 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // record describes the current content, and the findings themselves.
     const blockingRead = await readBlockingProblems(root, taskId);
     if (!blockingRead.ok) {
-        return denial(entryPhase, `Build cannot run from review because the recorded review cannot be read as one: ${blockingRead.why}`);
+        // Name the record that actually could not be read. The reader refuses on two different ones, and blaming the
+        // review record while the ledger was the unreadable one sends the repair to the wrong file.
+        const subject = blockingRead.source === 'ledger' ? 'the evidence ledger' : 'the recorded review';
+        return denial(entryPhase, `Build cannot run from review because ${subject} cannot be read as one: ${blockingRead.why}`);
     }
     const reviewMode = blockingRead.mode;
     const findings = [...blockingRead.findings];

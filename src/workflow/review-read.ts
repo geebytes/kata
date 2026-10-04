@@ -150,7 +150,9 @@ export type BlockingProblemsRead =
         /** The parsed record, for the fields this reader does not name. */
         record: Record<string, unknown>;
     }
-    | { ok: false; why: string };
+    // `source` is what lets a consumer name the record it could not read: this reader refuses on two different ones, and a
+    // denial that always blames the review record misreports the ledger case (an independent review measured exactly that).
+    | { ok: false; why: string; source: 'review-record' | 'ledger' };
 
 export async function readBlockingProblems(
     root: string,
@@ -161,7 +163,7 @@ export async function readBlockingProblems(
 ): Promise<BlockingProblemsRead> {
     const mode = await readReviewMode(root, taskId);
     const record = await readReviewRecord(root, taskId, sealedRead);
-    if (!record.ok) return { ok: false, why: record.why };
+    if (!record.ok) return { ok: false, why: record.why, source: 'review-record' };
     // **Imported here rather than at the top, deliberately.** `store/verdict` reaches `store/ledger`, which imports
     // `core/state`, which imports the distill gate — so a static edge from this module to the store closes a cycle that
     // runs back through the gate that calls it. `openLedgerProblems` used to live behind exactly this dynamic import for
@@ -171,10 +173,10 @@ export async function readBlockingProblems(
         const { openLedgerProblems } = await import('../store/verdict.js');
         ledgerProblems = await openLedgerProblems(root, taskId, ledgerInHand);
     } catch (error) {
-        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${(error as Error).message})` };
+        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${(error as Error).message})`, source: 'ledger' };
     }
     if (ledgerProblems.kind === 'unreadable') {
-        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${ledgerProblems.detail})` };
+        return { ok: false, why: `the evidence ledger cannot be read, so its open problems cannot be decided (${ledgerProblems.detail})`, source: 'ledger' };
     }
     const claims = ledgerProblems.problems;
     // A record that does not describe the current content contributes no findings — those were about other content.
