@@ -185,10 +185,16 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // the review's binding cannot be established without it). Measured: no input reaches this catch. What is honest is the
     // plain read, with the refusal left where it actually is.
     const revision = await readCurrentTaskRevision(root, taskId);
-    if (!blockingRead.exists) {
-        return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
-    }
-    if (!blockingRead.boundToCurrentRevision) {
+    // **The phase record's absence is answered by the shared admission first, exactly as hardVerify answers a missing
+    // verify verdict.** An earlier version refused here without consulting it, which made an actionable ledger deficit
+    // unreachable whenever this phase had not written its record yet — the one problem the task could act on, and the
+    // only route out. The refusal stays, below, for the case where the ledger has nothing to say either.
+    if (!blockingRead.exists || !blockingRead.boundToCurrentRevision) {
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (ledgerAdmission.authorized) return ledgerAdmission;
+        if (!blockingRead.exists) {
+            return denial(entryPhase, 'Build cannot run from review without a recorded review. Run /kata-review first.');
+        }
         return denial(
             entryPhase,
             'Build cannot run from review because its findings are not bound to the current sealed revision (or to the same '
@@ -265,6 +271,10 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     if (!judgeRead.ok) return judgeRead.denial;
     const judge = judgeRead.value;
     if (!judge) {
+        // Same order as the review and hardVerify entries: the shared admission answers a missing phase record before
+        // the refusal, because an actionable ledger deficit is the task's only remaining route.
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (ledgerAdmission.authorized) return ledgerAdmission;
         return denial(entryPhase, 'Build cannot run from judge without a recorded judge result. Run /kata-judge first.');
     }
 

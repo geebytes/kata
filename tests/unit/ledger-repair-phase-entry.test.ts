@@ -51,7 +51,7 @@ async function seedDecidedDeficit(root: string, taskId: string): Promise<void> {
     await ledger(['challenge', 'check']);
 }
 
-async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge', reviewMode?: 'strict', omitVerify = false): Promise<{ taskId: string }> {
+async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge', reviewMode?: 'strict', omitVerify = false, omitPhaseRecord = false): Promise<{ taskId: string }> {
     const taskId = `ledger-${phase}`;
     await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
     await mkdir(join(root, 'src'), { recursive: true });
@@ -91,14 +91,14 @@ async function seedGate(root: string, phase: 'hardVerify' | 'review' | 'judge', 
             acceptance: [{ id: 'AC-1', result: 'PASS' }],
         });
     }
-    if (phase === 'review') {
+    if (phase === 'review' && !omitPhaseRecord) {
         await writeJson(root, `.kata/tasks/${taskId}/review.json`, {
             revisionId: sealed.revision.id,
             status: 'pending',
             findings: [],
         });
     }
-    if (phase === 'judge') {
+    if (phase === 'judge' && !omitPhaseRecord) {
         await writeJson(root, `.kata/tasks/${taskId}/judge.json`, {
             taskId,
             result: 'PASS',
@@ -172,4 +172,28 @@ describe('all gate ledger-deficit repair entries', () => {
         expect(result).toMatchObject({ success: true, phase: 'implement' });
         expect(repair).toMatchObject({ fromPhase: 'hardVerify', reason: 'ledger_deficits' });
     });
+    // The phase record's absence is not a reason to skip the shared admission. hardVerify already answers a missing
+    // verify verdict by consulting it first; review and judge must do the same for their own missing record, or the
+    // ledger deficit that is the only actionable problem in the task is never admitted.
+    it.each(['review', 'judge'] as const)(
+        'records ledger_deficits from %s when that phase has no record yet',
+        async (phase) => {
+            const root = await tempRoot();
+            const { taskId } = await seedGate(root, phase, undefined, false, true);
+
+            const authorization = await authorizeRepair(phase, root, taskId);
+            expect(authorization).toMatchObject({
+                authorized: true,
+                repair: { fromPhase: phase, reason: 'ledger_deficits' },
+            });
+            const result = await runCommand('build', taskId, root, { seal: false });
+            const repair = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'repair.json'), 'utf8')) as {
+                fromPhase: string;
+                reason: string;
+            };
+
+            expect(result).toMatchObject({ success: true, phase: 'implement' });
+            expect(repair).toMatchObject({ fromPhase: phase, reason: 'ledger_deficits' });
+        },
+    );
 });
