@@ -43,7 +43,7 @@ describe('the review loop has a terminal state', () => {
         deficits: state === 'decided' ? ['C-1: needs evidence'] : [],
     });
     const upstream = (
-        escalation?: UpstreamSummary['reviewEscalation'],
+        reviewLoop?: UpstreamSummary['reviewLoop'],
         ledgerState?: LedgerSummary,
     ): UpstreamSummary => ({
         reviewFindings: 5,
@@ -57,7 +57,7 @@ describe('the review loop has a terminal state', () => {
         wikiClosureValid: true,
         evidenceFiles: [],
         failingEvidence: 0,
-        ...(escalation ? { reviewEscalation: escalation } : {}),
+        ...(reviewLoop ? { reviewLoop } : {}),
         ...(ledgerState ? { ledger: ledgerState } : {}),
     });
 
@@ -150,7 +150,7 @@ describe('the review loop has a terminal state', () => {
 
     it('sends a stuck loop to a human instead of back to build', () => {
 
-        const stuck = suggestCandidateAction('review', upstream({ rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] }));
+        const stuck = suggestCandidateAction('review', upstream({ kind: 'stalled_current_rounds', rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] }));
         expect(stuck?.reason).toBe('escalate_review_without_progress');
         expect(stuck?.nextSkill).not.toBe('/kata-build');
         // **And it outranks every repair route in the list an operator reads.** The branch returns first, but `priority`
@@ -178,7 +178,7 @@ describe('the review loop has a terminal state', () => {
      * between them — which is the same shape this change keeps finding, one level up.
      */
     it('keeps the terminal state ahead of every ledger repair route', () => {
-        const stuck = { rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] };
+        const stuck = { kind: 'stalled_current_rounds' as const, rounds: 4, noProgressRounds: 3, blockingIds: ['C-1', 'C-2'] };
         // The evaluation order is what a reader has to see; the field list is the fixture that proves it.
         const competingLedgers: Array<[string, LedgerSummary]> = [
             ['unreadable', ledger('unreadable')],

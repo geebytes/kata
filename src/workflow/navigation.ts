@@ -29,7 +29,7 @@ import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities } from '../quality/review-ladder.js';
-import { readReviewRoundsState, reviewProgress } from '../quality/repair.js';
+import { assessReviewLoop, readReviewRoundsState, type ReviewLoopAssessment } from '../quality/repair.js';
 
 
 export type UpstreamSummary = {
@@ -50,31 +50,15 @@ export type UpstreamSummary = {
   wikiClosureReason?: string;
   evidenceFiles: string[];
   failingEvidence: number;
-  /**
-   * Set when the review loop has stopped making progress, so the ladder escalates instead of re-dispatching.
-   *
-   * The count and the ids come from the recorded rounds (`review-rounds.jsonl`), never from prose: an escalation that
-   * cannot say what it counted is a sentence, not a state.
-   */
-  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: string[]; unmeasurable?: boolean };
-  /**
-   * The round history could not be read whole.
-   *
-   * Reported **beside** `reviewEscalation`, never instead of it: a damaged line in an otherwise measurable history is a fact
-   * about the record, and the loop's terminal state is a fact about the measurements. One answering for the other is how a
-   * progressing loop came to stop for a person.
-   */
+  /** Present on all runtime summaries; optional for legacy test/status payload compatibility. */
+  reviewLoop?: ReviewLoopAssessment;
+  /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
+  reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
+  /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
   reviewHistoryUnreadable?: boolean;
-  /**
-   * Whether that unreadable history held **no parseable round at all**, as opposed to a damaged line in an otherwise
-   * readable file. Reported beside `reviewHistoryUnreadable` rather than merged into `reviewEscalation.unmeasurable`:
-   * "this revision's rounds were all unmeasured" and "the file holds nothing parseable" are different facts, and the
-   * escalation carries the first.
-   */
-  reviewHistoryUnmeasurable?: boolean;
-  /** Why the recorded review could not be read, when it could not be. Absent when it could. */
+  /** Why the recorded review could not be read, when it could not be. */
   reviewRecordUnreadable?: string;
-  /** Why the current revision could not be read, when it could not be. Absent when it could — or when it is simply unwritten. */
+  /** @deprecated Projection of `reviewLoop.unreadable_current_revision`; routing never reads it. */
   currentRevisionUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
@@ -118,6 +102,7 @@ export const nextActionReasons = [
   'continue_implementation',
   'design_intake_task',
   'escalate_review_without_progress',
+  'review_loop_unmeasurable',
   'unreadable_review_record',
   'repair_unreadable_current_revision',
   'repair_unreadable_round_history',
@@ -244,25 +229,12 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
-  // **The history is judged about a revision, or it is not judged.** `sealed` is null both when the pointer is absent
-  // and when it cannot be read, and passing `undefined` on made `reviewProgress` fall back to the whole file — so a
-  // corrupted `current-revision.json` let four prior-revision rounds escalate as if they were this revision's progress
-  // (reproduced, and the reason this branch exists). A surface that cannot name the revision reports the damage and
-  // leaves the escalation unset; the escalation is a verdict about content kata could not identify.
-  const judgedIdentity = sealed?.id && sealed.manifestHash ? { revisionId: sealed.id, manifestHash: sealed.manifestHash } : undefined;
-  // **Two damages, two answers, and they are not the same question.**
-  //
-  // A **damaged round history** is a fact about the file: the surviving measurements still describe the revision, and a
-  // history that measurably is not moving must still be able to stop the loop (asserted in `review-artefact-read-state`).
-  // So the identity, when it is held, is used as before.
-  //
-  // A **damaged sealed pointer** is a fact about the identity: there is no revision to judge the history *about*, and a
-  // whole-file reading is not a weaker answer but a different question's answer — it is what let four `revision-prior`
-  // rounds escalate under this revision (reproduced). That state is reported through `currentRevisionUnreadable` and the
-  // ladder routes on it; no escalation is invented from history of unknown provenance.
-  const reviewProgressOfChange = judgedIdentity === undefined && sealedRead.kind === 'unreadable'
-      ? { rounds: 0, noProgressRounds: 0, escalating: false, blockingIds: [] as string[], unmeasuredRounds: 0, unmeasurable: false }
-      : reviewProgress(reviewRounds.rounds, judgedIdentity);
+  const reviewLoop = assessReviewLoop({
+    currentRevision: sealedRead.kind === 'current'
+      ? { kind: 'current', identity: { revisionId: sealedRead.revision.id, manifestHash: sealedRead.revision.manifestHash } }
+      : sealedRead,
+    reviewRounds,
+  });
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
@@ -294,12 +266,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         reason: ledgerDecision.detail,
         deficits: [] as string[],
       };
-  // **Nothing readable at all** — the file exists and not one line of it parsed, so there is no measurement to decide
-  // with. Asked of the file, not of a revision's filtered count: this used to read `progress.rounds === 0`, which after
-  // the revision filter is *also* true for a valid revision holding none of its own rounds plus one damaged line
-  // elsewhere, and that state then produced a terminal verdict about a revision nothing was ever measured for
-  // ('the recent repairs did not reduce the blocking problems', reported alongside `rounds: 0`).
-  const historyHasNothingToMeasure = reviewRounds.kind === 'unreadable' && reviewRounds.rounds.length === 0;
 
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
@@ -309,39 +275,22 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(reviewMode ? { reviewMode } : {}),
     // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it.
     ...(!blockingRead.ok ? { reviewRecordUnreadable: blockingRead.why } : {}),
-    // Same refusal for the revision artefact, which this reader used to throw on instead of reporting.
-    ...(sealedRead.kind === 'unreadable' ? { currentRevisionUnreadable: sealedRead.detail } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
-    // **The loop's own history, read rather than inferred.** Rounds are recorded when a review repair is authorised, and
-    // the trailing run that changed nothing is what stops the next one from being dispatched.
-    //
-    // **A damaged line is not the same fact as unmeasurable progress, and only the second stops the loop.** Both used to set
-    // `unmeasurable` and the terminal state fired on either, so a history that measurably went 3 → 1 stopped for a person
-    // because one line in it was damaged — measured by an independent reading, from the very field R-7 introduced. The
-    // measured progress decides; the unreadable history is reported beside it, as its own fact, because a reader has to be
-    // able to see both without one answering for the other.
-    // **The escalation is about rounds of a revision, so it is raised only by rounds of a revision.** The file-level
-    // state used to be ORed in here (`|| historyHasNothingToMeasure`), which let an unparseable history raise a terminal
-    // carrying `rounds: 0` and `blockingIds: []` — the field's own contract says its count and ids come from the
-    // recorded rounds, and the operator read 'the recent repairs did not reduce the blocking problems' about a revision
-    // nothing was ever measured for. It also outranked `repair_unreadable_current_revision`, so the state kata could not
-    // name beat the state it could. The unreadable file is a refusal with its own route, below.
-    ...(reviewProgressOfChange.escalating
-        ? {
-            reviewEscalation: {
-                rounds: reviewProgressOfChange.rounds,
-                noProgressRounds: reviewProgressOfChange.noProgressRounds,
-                blockingIds: reviewProgressOfChange.blockingIds,
-                ...(reviewProgressOfChange.unmeasurable ? { unmeasurable: true } : {}),
-            },
-        }
-        : {}),
-    ...(reviewRounds.kind === 'unreadable' ? { reviewHistoryUnreadable: true, reviewHistoryUnmeasurable: historyHasNothingToMeasure } : {}),
+    reviewLoop,
+    ...(reviewLoop.kind === 'stalled_current_rounds' ? {
+      reviewEscalation: {
+        rounds: reviewLoop.rounds,
+        noProgressRounds: reviewLoop.noProgressRounds,
+        blockingIds: reviewLoop.blockingIds,
+      },
+    } : {}),
+    ...(reviewLoop.kind === 'unreadable_current_revision' ? { currentRevisionUnreadable: reviewLoop.detail } : {}),
+    ...(reviewLoop.kind === 'unreadable_round_history' ? { reviewHistoryUnreadable: true } : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     // **A history that recorded nothing readable is a state, and it is not the same state as a damaged line in an
@@ -444,18 +393,25 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   if (phase === 'archive') {
     return phaseFallbackAction('archive');
   }
-  // A loop that has stopped reducing its blocking count is not sent back for another round; it stops for a person.
-  if (phase === 'review' && upstream.reviewEscalation) {
-    return {
-      nextSkill: '/kata-review',
-      role: 'reviewer',
-      reason: 'escalate_review_without_progress',
-      // **Above every route it precedes.** The branch returns first, but `priority` is not decoration: `candidates.sort`
-      // in `cli/tasks.ts` orders the list an operator reads, so a terminal carrying a lower number than the repair routes
-      // it outranks would still sort below them. Measured against the routes below: ledger 1985/1990/1995, mixed evidence
-      // 2100 — so the terminal has to sit above those, not merely return before them.
-      priority: 2200,
-    };
+  // The only review-loop route producer: each discriminated outcome names its own route.
+  if (phase === 'review' && upstream.reviewLoop) {
+    switch (upstream.reviewLoop.kind) {
+      case 'unreadable_current_revision':
+        return { nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_current_revision', priority: 2300 };
+      case 'unreadable_round_history':
+        return { nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_round_history', priority: 2290 };
+      case 'unmeasurable_current_rounds':
+        return { nextSkill: '/kata-review', role: 'reviewer', reason: 'review_loop_unmeasurable', priority: 2280 };
+      case 'stalled_current_rounds':
+        return {
+          nextSkill: '/kata-review',
+          role: 'reviewer',
+          reason: 'escalate_review_without_progress',
+          priority: 2200,
+        };
+      default:
+        break;
+    }
   }
   // Evidence from more than one revision cannot be judged together, so the seal that produced it is redone first.
   if (upstream.mixedRevisionEvidence) {
@@ -464,31 +420,6 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: 'implementer',
       reason: 'repair_mixed_revision_evidence',
       priority: 2100,
-    };
-  }
-  // **This branch's own note: an unreadable pointer outranks the ledger routes.** Both statements describe something
-  // wrong; this one is about the artefact every other statement is derived from, and dispatching a repair that cannot
-  // run is worse than naming the artefact to repair. It sits above the ledger branches for the reason the escalation
-  // terminal does — the state that stops everything is reported before the states that describe what is left.
-  if (phase === 'review' && upstream.currentRevisionUnreadable) {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_unreadable_current_revision',
-      priority: 1160,
-    };
-  }
-  // **A round history nobody can read is a refusal, and it has its own route** — the state that stops everything is
-  // named before the states that describe what is left. Before this it was reported (`reviewHistoryUnreadable`) and read
-  // by nobody: the file's damage raised the escalation terminal instead, which is a verdict, not a refusal, and it was
-  // a verdict about a revision for which no round was counted. The repair is to make the file readable before any
-  // judgement of a loop is worth anything — the same step, for the same reason, as the record and the pointer above.
-  if (phase === 'review' && upstream.reviewHistoryUnreadable) {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_unreadable_round_history',
-      priority: 1155,
     };
   }
   // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
@@ -703,7 +634,7 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
     reason,
     // The escalation is a decision, not a dispatch: it stops with or without a model trust boundary, because the next
     // step is a person deciding whether to keep repairing, waive a problem, or stop the change.
-    requiresUserConfirmation: gate !== null || wikiClosure || reason === 'escalate_review_without_progress',
+    requiresUserConfirmation: gate !== null || wikiClosure || reason === 'escalate_review_without_progress' || reason === 'review_loop_unmeasurable',
     modelOrPlatformSwitchAllowed: gate !== null,
     ...(gate ? { trustBoundary: gate } : {}),
     ...(gate ? { pauseInstruction: boundaryPromptFor(gate, promptLanguage()) } : {}),
@@ -748,6 +679,7 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   satisfy_ledger_deficits: null,
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
+  review_loop_unmeasurable: null,
   // Also a decision about the change rather than about which platform runs: the record has to be read again.
   unreadable_review_record: null,
   repair_unreadable_current_revision: null,

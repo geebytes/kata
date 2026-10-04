@@ -40,8 +40,12 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         // describing, since the escalation exists precisely because another review round is not the next step. The
         // counts and the ids are not repeated here: they ride on the change's status under `reviewEscalation`, which is
         // the same answer the router read, so there is one of it.
-        zh: '审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewEscalation 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
-        en: 'The review loop has stopped making progress: the recent repairs did not reduce the blocking problems, so /kata-build is no longer dispatched. The rounds and the problems still open are recorded on this change status under reviewEscalation; a person decides — keep repairing, waive a problem, or stop the change.',
+        zh: '当前 revision 的审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewLoop 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
+        en: 'The current revision review loop has stopped making progress: recent repairs did not reduce blocking problems, so /kata-build is no longer dispatched. The scoped rounds and open problems are recorded under reviewLoop; a person decides — keep repairing, waive a problem, or stop the change.',
+    },
+    review_loop_unmeasurable: {
+        zh: '当前 revision 的审查轮记录可读，但没有任何一轮携带可测量的阻塞计数。该状态既不是零计数 escalation，也不是文件读取错误；请由人决定如何恢复可测量的 review loop。',
+        en: 'Current-revision review rounds are readable but none carries a measurable blocking count. This is neither a zero-count escalation nor a read error; a person must decide how to restore a measurable review loop.',
     },
     resolve_wiki_closure: {
         zh: '实现验收和证据均已通过；当前仅 Wiki closure 待决。请决定知识是否应 captured 或 not_applicable，记录 closure 后执行 /kata-verify，不要回退到 /kata-build。',

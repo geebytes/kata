@@ -41,7 +41,7 @@ describe('current revision review routing', () => {
     const summary = await readUpstreamSummary(root, taskId);
 
     expect(summary.currentRevisionId).toBe(sealed.revision.id);
-    expect(summary.reviewEscalation).toBeUndefined();
+    expect(summary.reviewLoop).toEqual({ kind: 'no_current_rounds' });
     expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
   });
 
@@ -77,8 +77,7 @@ describe('current revision review routing', () => {
     const summary = await readUpstreamSummary(root, taskId);
 
     // No escalation: the rounds the escalation would have counted are not this revision's, and no revision could be named.
-    expect(summary.reviewEscalation).toBeUndefined();
-    expect(summary.reviewHistoryUnreadable ?? false).toBe(false);
+    expect(summary.reviewLoop).toEqual({ kind: 'unreadable_current_revision', detail: expect.any(String) });
     expect(suggestCandidateAction('review', summary).reason).toBe('repair_unreadable_current_revision');
   });
 
@@ -113,8 +112,7 @@ describe('current revision review routing', () => {
 
     const summary = await readUpstreamSummary(root, taskId);
 
-    expect(summary.reviewHistoryUnreadable).toBe(true);
-    expect(summary.reviewEscalation?.unmeasurable ?? false).toBe(false);
+    expect(summary.reviewLoop).toEqual({ kind: 'unreadable_round_history', detail: expect.any(String) });
     expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
   });
 
@@ -145,8 +143,7 @@ describe('current revision review routing', () => {
 
     const summary = await readUpstreamSummary(root, taskId);
 
-    expect(summary.reviewEscalation).toBeUndefined();
-    expect(summary.reviewHistoryUnreadable).toBe(true);
+    expect(summary.reviewLoop).toEqual({ kind: 'unreadable_round_history', detail: expect.any(String) });
     // The damage is routed as a refusal to rebuild, not as a verdict that the loop stopped moving.
     expect(suggestCandidateAction('review', summary).reason).toBe('repair_unreadable_round_history');
   });
@@ -170,7 +167,7 @@ describe('current revision review routing', () => {
 
     const summary = await readUpstreamSummary(root, taskId);
 
-    expect(summary.reviewEscalation).toBeUndefined();
+    expect(summary.reviewLoop).toEqual({ kind: 'unreadable_current_revision', detail: expect.any(String) });
     // The state kata cannot identify does not borrow the verdict; the one it can name is routed.
     expect(suggestCandidateAction('review', summary).reason).toBe('repair_unreadable_current_revision');
   });

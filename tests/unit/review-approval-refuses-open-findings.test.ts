@@ -7,7 +7,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { evaluateReviewClearance } from '../../src/workflow/distill-gates.js';
 import { authorizeReviewRepair } from '../../src/workflow/repair-entry.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
-import { appendReviewRound, reviewProgress } from '../../src/quality/repair.js';
+import { assessReviewLoop, reviewProgress } from '../../src/quality/repair.js';
 import { describeBlockingProblems, isOpenFinding, type MergeBlockingProblem } from '../../src/quality/review-ladder.js';
 import { makeClaim } from '../helpers/review.js';
 
@@ -289,15 +289,17 @@ describe('an unreadable record is refused by every surface, including the ones t
     });
 
     it('stops dispatching repairs when the loop history cannot be measured at all', async () => {
-        await appendReviewRound(root, changeId, { at: '2026-09-28T00:00:00.000Z', blockingIds: [], blockingCount: null });
-        await appendReviewRound(root, changeId, { at: '2026-09-28T01:00:00.000Z', blockingIds: [], blockingCount: null });
-
-        const progress = reviewProgress([{ at: '', blockingIds: [], blockingCount: null }, { at: '', blockingIds: [], blockingCount: null }]);
+        const identity = { revisionId: 'revision-current', manifestHash: 'c'.repeat(64) };
+        const rounds = [
+            { at: '2026-09-28T00:00:00.000Z', revisionId: identity.revisionId, manifestHash: identity.manifestHash, blockingIds: [], blockingCount: null },
+            { at: '2026-09-28T01:00:00.000Z', revisionId: identity.revisionId, manifestHash: identity.manifestHash, blockingIds: [], blockingCount: null },
+        ];
+        const progress = reviewProgress(rounds);
         expect(progress.unmeasurable).toBe(true);
         expect(progress.escalating).toBe(true);
-
-        const upstream = await readUpstreamSummary(root, changeId);
-        expect(upstream.reviewEscalation?.unmeasurable).toBe(true);
-        expect(suggestCandidateAction('review', upstream)?.reason).toBe('escalate_review_without_progress');
+        expect(assessReviewLoop({
+            currentRevision: { kind: 'current', identity },
+            reviewRounds: { kind: 'readable', rounds },
+        })).toMatchObject({ kind: 'unmeasurable_current_rounds', rounds: 2 });
     });
 });

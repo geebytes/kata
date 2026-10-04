@@ -207,6 +207,36 @@ export interface ReviewProgress {
     unmeasurable: boolean;
 }
 
+export interface ReviewLoopIdentity {
+    revisionId: string;
+    manifestHash: string;
+}
+
+/** One explicit record-state snapshot is the input to every review-loop verdict. */
+export interface ReviewLoopAssessmentInput {
+    currentRevision:
+        | { kind: 'absent' }
+        | { kind: 'unreadable'; detail: string }
+        | { kind: 'current'; identity: ReviewLoopIdentity };
+    reviewRounds: ReviewRoundsRead;
+}
+
+/**
+ * The complete, mutually-exclusive answer to whether the review loop may affect routing.
+ *
+ * `stalled_current_rounds` is deliberately the only verdict variant.  Missing or
+ * unreadable artefacts name the refusal that was observed instead of borrowing the
+ * semantics of a zero-count escalation.
+ */
+export type ReviewLoopAssessment =
+    | { kind: 'not_applicable'; reason: 'no_current_revision' }
+    | { kind: 'unreadable_current_revision'; detail: string }
+    | { kind: 'unreadable_round_history'; detail: string }
+    | { kind: 'no_current_rounds' }
+    | { kind: 'unmeasurable_current_rounds'; rounds: number; roundIds: readonly string[] }
+    | { kind: 'progressing_current_rounds'; rounds: number; noProgressRounds: number }
+    | { kind: 'stalled_current_rounds'; rounds: number; noProgressRounds: number; blockingIds: readonly string[] };
+
 export function reviewRoundsPath(root: string, taskId: string): string {
     return join(taskDir(root, taskId), 'review-rounds.jsonl');
 }
@@ -236,25 +266,10 @@ export function roundBoundTo(
     return round.revisionId === currentRevision.revisionId && round.manifestHash === currentRevision.manifestHash;
 }
 
-export function reviewProgress(
-    rounds: readonly ReviewRound[],
-    currentRevision?: { revisionId: string; manifestHash: string },
-): ReviewProgress {
-
-    // **Only the current revision's rounds are measured, and an unbound line is not one of them.** Before this the whole
-    // file was one loop: a round recorded against a revision that had already been superseded kept escalating against
-    // the next one, so a fresh, clean revision inherited a stalled history it had nothing to do with.
-    //
-    // **A missing identity is a caller saying "these rounds are all I have", not "judge everything".** `undefined` used
-    // to mean the whole file, and the routing surface — which can *fail* to read the sealed pointer — passed it, so a
-    // corrupted `current-revision.json` handed the escalating verdict to another revision's history (reproduced: four
-    // prior-revision rounds, pointer `{`, route `escalate_review_without_progress`). The surface that cannot name a
-    // revision no longer asks this function to judge one: it checks the file is readable and reports the damage, and
-    // leaves the escalation unset (`navigation.ts`). So `undefined` keeps its literal meaning — the rounds given are the
-    // set to judge — and the defect is closed where the identity was lost rather than by blanking a legitimate caller.
-    const currentRounds = currentRevision === undefined
-        ? rounds
-        : rounds.filter((round) => roundBoundTo(round, currentRevision));
+export function reviewProgress(rounds: readonly ReviewRound[]): ReviewProgress {
+    // This helper receives the already-scoped set it measures. It never reads an identity
+    // and never interprets a missing one as permission to measure a whole history.
+    const currentRounds = rounds;
     // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
     // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is
     // plainly stuck: it has not reached a new low since round 2. A loop that only ever gets worse is the same fact with
@@ -301,6 +316,45 @@ export function reviewProgress(
         blockingIds: newestMeasuredIds,
         unmeasuredRounds,
         unmeasurable,
+    };
+}
+
+/** Derive the one review-loop outcome that routing is permitted to consume. */
+export function assessReviewLoop(input: ReviewLoopAssessmentInput): ReviewLoopAssessment {
+    if (input.currentRevision.kind === 'unreadable') {
+        return { kind: 'unreadable_current_revision', detail: input.currentRevision.detail };
+    }
+    if (input.currentRevision.kind === 'absent') {
+        return { kind: 'not_applicable', reason: 'no_current_revision' };
+    }
+    if (input.reviewRounds.kind === 'unreadable') {
+        return { kind: 'unreadable_round_history', detail: input.reviewRounds.detail };
+    }
+
+    const identity = input.currentRevision.identity;
+    const scopedRounds = input.reviewRounds.rounds.filter((round) => roundBoundTo(round, identity));
+    if (scopedRounds.length === 0) return { kind: 'no_current_rounds' };
+
+    const progress = reviewProgress(scopedRounds);
+    if (progress.unmeasurable) {
+        return {
+            kind: 'unmeasurable_current_rounds',
+            rounds: progress.rounds,
+            roundIds: scopedRounds.map((round) => round.at),
+        };
+    }
+    if (progress.escalating) {
+        return {
+            kind: 'stalled_current_rounds',
+            rounds: progress.rounds,
+            noProgressRounds: progress.noProgressRounds,
+            blockingIds: progress.blockingIds,
+        };
+    }
+    return {
+        kind: 'progressing_current_rounds',
+        rounds: progress.rounds,
+        noProgressRounds: progress.noProgressRounds,
     };
 }
 

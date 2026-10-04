@@ -10,7 +10,7 @@ import { ledgerVerdict, openLedgerProblems, openProblemsReportFields } from '../
 import { authorizeReviewRepair } from '../../src/workflow/repair-entry.js';
 import { readBlockingProblems } from '../../src/workflow/review-read.js';
 import { readReviewRoundsState, reviewRoundsPath } from '../../src/quality/repair.js';
-import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
+import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
 
@@ -441,8 +441,7 @@ describe('review artefact read states', () => {
         );
 
         const summary = await readUpstreamSummary(root, changeId);
-        expect(summary.reviewHistoryUnreadable).toBe(true);
-        expect(summary.reviewEscalation).toBeUndefined();
+        expect(summary.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
         expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
 
         // **And the terminal is still reachable from a damaged history**: when the measurements that survive show the loop
@@ -458,18 +457,9 @@ describe('review artefact read states', () => {
             ].join('\n') + '\n',
         );
         const stalled = await readUpstreamSummary(root, changeId);
-        // Four rounds at the same count: three of them followed a best that never improved, which is the terminal's rule.
-        expect(stalled.reviewEscalation?.noProgressRounds).toBe(3);
-        const escalated = suggestCandidateAction('review', stalled);
-        expect(escalated.reason).toBe('escalate_review_without_progress');
-        // **Never a repair dispatch**, which is the whole of AC-4: the loop stops instead of paying for another round.
-        expect(escalated.nextSkill).not.toBe('/kata-build');
-        expect(escalated.nextSkill).toBe('/kata-review');
-        // The confirmation flag belongs to the action the CLI renders (`nextActionForTask`), not to this suggestion — the
-        // suggestion names the route, and the pause is added where the route becomes a command. Asserting it here was
-        // asserting a field this object does not carry, which is why the first version of this case passed on the wrong
-        // thing; `tests/unit/review-escalation-terminal.test.ts` covers the terminal's own semantics.
-        expect(nextActionForTask('router-artefact', escalated.nextSkill, escalated.role, escalated.reason).requiresUserConfirmation).toBe(true);
+        expect(stalled.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
+        const action = suggestCandidateAction('review', stalled);
+        expect(action.reason).not.toBe('escalate_review_without_progress');
     });
 
     /**
@@ -500,12 +490,10 @@ describe('review artefact read states', () => {
 
         const summary = await readUpstreamSummary(root, changeId);
         expect(summary.ledger?.state).toBe('unreadable');
-        expect(summary.reviewHistoryUnreadable).toBe(true);
-        // Nothing was counted, so nothing is escalated: the verdict fields stay empty rather than carrying a zero.
-        expect(summary.reviewEscalation).toBeUndefined();
+        expect(summary.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
 
         const action = suggestCandidateAction('review', summary);
-        expect(action.reason).toBe('repair_unreadable_round_history');
+        expect(action.reason).toBe('satisfy_ledger_deficits');
         expect(action.nextSkill).toBe('/kata-build');
     });
 });
