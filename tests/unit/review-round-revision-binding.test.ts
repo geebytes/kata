@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -64,5 +64,24 @@ describe('revision-bound review rounds', () => {
 
     const [round] = (await readReviewRoundsState(root, taskId)).rounds;
     expect(round).toMatchObject({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash });
+  });
+
+  /**
+   * **The stamp is the read the decision was made on, not a second look at the pointer.**
+   *
+   * An independent review measured this exposure: the entry asked `readBlockingProblems` (which reads the pointer to
+   * decide `boundToCurrentRevision`) and then read the same non-atomic pointer *again* to stamp the round, so a seal
+   * landing between the two produced a round naming a revision that had not authorised it while carrying the previous
+   * revision's `blockingIds`/`blockingCount` — a mis-attributed measurement, and the round filter downstream trusts the
+   * stamp. The window cannot be opened inside one call, so the property asserted here is the structural one that closes
+   * it: the entry takes the revision from the reader's answer. Reverting to a second read leaves the ordinary case green
+   * (the pointer has not moved), which is why the assertion is on the source contract rather than on a timing that no
+   * test can schedule.
+   */
+  it("takes the round stamp from the reader's own read rather than a second look", async () => {
+    const source = await readFile(new URL('../../src/workflow/repair-entry.ts', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('export async function authorizeReviewRepair'));
+    expect(body).toContain('const revision = blockingRead.revision;');
+    expect(body).not.toContain('const revision = await readCurrentTaskRevision(');
   });
 });

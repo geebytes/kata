@@ -236,10 +236,25 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
-  const reviewProgressOfChange = reviewProgress(
-    reviewRounds.rounds,
-    sealed?.id && sealed.manifestHash ? { revisionId: sealed.id, manifestHash: sealed.manifestHash } : undefined,
-  );
+  // **The history is judged about a revision, or it is not judged.** `sealed` is null both when the pointer is absent
+  // and when it cannot be read, and passing `undefined` on made `reviewProgress` fall back to the whole file — so a
+  // corrupted `current-revision.json` let four prior-revision rounds escalate as if they were this revision's progress
+  // (reproduced, and the reason this branch exists). A surface that cannot name the revision reports the damage and
+  // leaves the escalation unset; the escalation is a verdict about content kata could not identify.
+  const judgedIdentity = sealed?.id && sealed.manifestHash ? { revisionId: sealed.id, manifestHash: sealed.manifestHash } : undefined;
+  // **Two damages, two answers, and they are not the same question.**
+  //
+  // A **damaged round history** is a fact about the file: the surviving measurements still describe the revision, and a
+  // history that measurably is not moving must still be able to stop the loop (asserted in `review-artefact-read-state`).
+  // So the identity, when it is held, is used as before.
+  //
+  // A **damaged sealed pointer** is a fact about the identity: there is no revision to judge the history *about*, and a
+  // whole-file reading is not a weaker answer but a different question's answer — it is what let four `revision-prior`
+  // rounds escalate under this revision (reproduced). That state is reported through `currentRevisionUnreadable` and the
+  // ladder routes on it; no escalation is invented from history of unknown provenance.
+  const reviewProgressOfChange = judgedIdentity === undefined && sealedRead.kind === 'unreadable'
+      ? { rounds: 0, noProgressRounds: 0, escalating: false, blockingIds: [] as string[], unmeasuredRounds: 0, unmeasurable: false }
+      : reviewProgress(reviewRounds.rounds, judgedIdentity);
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
   const judge = currentRevisionId && !mixedRevision
     ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
@@ -271,8 +286,12 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         reason: ledgerDecision.detail,
         deficits: [] as string[],
       };
-  // Nothing readable at all: the file exists but holds no parseable round, so there is no measurement to decide with.
-  const historyHasNothingToMeasure = reviewRounds.kind === 'unreadable' && reviewProgressOfChange.rounds === 0;
+  // **Nothing readable at all** — the file exists and not one line of it parsed, so there is no measurement to decide
+  // with. Asked of the file, not of a revision's filtered count: this used to read `progress.rounds === 0`, which after
+  // the revision filter is *also* true for a valid revision holding none of its own rounds plus one damaged line
+  // elsewhere, and that state then produced a terminal verdict about a revision nothing was ever measured for
+  // ('the recent repairs did not reduce the blocking problems', reported alongside `rounds: 0`).
+  const historyHasNothingToMeasure = reviewRounds.kind === 'unreadable' && reviewRounds.rounds.length === 0;
 
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),

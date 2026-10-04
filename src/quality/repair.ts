@@ -180,7 +180,14 @@ export interface ReviewRound {
 export const NO_PROGRESS_ROUNDS = 3;
 
 export interface ReviewProgress {
-    /** Every round recorded, measured or not. */
+    /**
+     * The rounds the judgment was made of, measured or not.
+     *
+     * With an identity: the rounds of that revision. A line bound to another revision is history about something else,
+     * and one that names no revision cannot claim this one. Without one: every round given, because the caller is then
+     * stating that those rounds are the set in question — the routing surface, which can fail to read the sealed
+     * pointer, does not take that route and reports the damage instead of a verdict.
+     */
     rounds: number;
     /** The trailing run of rounds that did not reduce the count. */
     noProgressRounds: number;
@@ -233,10 +240,21 @@ export function reviewProgress(
     rounds: readonly ReviewRound[],
     currentRevision?: { revisionId: string; manifestHash: string },
 ): ReviewProgress {
+
     // **Only the current revision's rounds are measured, and an unbound line is not one of them.** Before this the whole
     // file was one loop: a round recorded against a revision that had already been superseded kept escalating against
     // the next one, so a fresh, clean revision inherited a stalled history it had nothing to do with.
-    const currentRounds = rounds.filter((round) => currentRevision === undefined || roundBoundTo(round, currentRevision));
+    //
+    // **A missing identity is a caller saying "these rounds are all I have", not "judge everything".** `undefined` used
+    // to mean the whole file, and the routing surface — which can *fail* to read the sealed pointer — passed it, so a
+    // corrupted `current-revision.json` handed the escalating verdict to another revision's history (reproduced: four
+    // prior-revision rounds, pointer `{`, route `escalate_review_without_progress`). The surface that cannot name a
+    // revision no longer asks this function to judge one: it checks the file is readable and reports the damage, and
+    // leaves the escalation unset (`navigation.ts`). So `undefined` keeps its literal meaning — the rounds given are the
+    // set to judge — and the defect is closed where the identity was lost rather than by blanking a legitimate caller.
+    const currentRounds = currentRevision === undefined
+        ? rounds
+        : rounds.filter((round) => roundBoundTo(round, currentRevision));
     // **Progress is measured against the best count reached so far, not against the round before it.** An oscillating
     // loop (5 → 4 → 5 → 4 → …) reads as progress at every single step under the neighbouring comparison, and it is
     // plainly stuck: it has not reached a new low since round 2. A loop that only ever gets worse is the same fact with

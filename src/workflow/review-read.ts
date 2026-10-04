@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { readValidatedOptional } from '../core/schema.js';
 import { bindsToRevision, currentRevisionIdentityFrom, type VerdictBinding } from './verdict-binding.js';
-import { readCurrentTaskRevisionState, type CurrentRevisionRead } from './revision.js';
+import { readCurrentTaskRevisionState, type CurrentRevisionRead, type TaskRevision } from './revision.js';
 import { reviewPath as layoutReviewPath, taskPath } from '../core/layout.js';
 import type { ReviewFinding } from '../quality/reviewer.js';
 // Type-only, so the cycle the note below is about is not created by this import.
@@ -61,6 +61,11 @@ export type ReviewRecordRead =
         boundToCurrentRevision: boolean;
         /** The parsed record, for the fields this reader does not name: status, evidence, route, binding. */
         record: Record<string, unknown>;
+        /**
+         * The sealed revision this read established the binding against, so a consumer that must stamp a revision names
+         * the one this question was answered about rather than asking the same non-atomic pointer again.
+         */
+        revision: TaskRevision | null;
     }
     | { ok: false; why: string };
 
@@ -86,7 +91,17 @@ export async function readReviewRecord(
             why: `the recorded review is not the shape its schema declares, so nothing can be decided from it (${(error as Error).message})`,
         };
     }
-    if (!record) return { ok: true, findings: [], boundToCurrentRevision: true, record: {} };
+    // No record: nothing is bound, and the revision is whatever the caller's read said — `null` when it named none.
+    if (!record) {
+        const empty = sealedRead ?? await readCurrentTaskRevisionState(root, taskId);
+        return {
+            ok: true,
+            findings: [],
+            boundToCurrentRevision: true,
+            record: {},
+            revision: empty.kind === 'current' ? empty.revision : null,
+        };
+    }
     if (record.findings !== undefined && !Array.isArray(record.findings)) {
         return { ok: false, why: 'the recorded review carries a `findings` field that is not a list' };
     }
@@ -120,6 +135,7 @@ export async function readReviewRecord(
         findings: (record.findings ?? []) as ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>,
         boundToCurrentRevision: bound,
         record: record as Record<string, unknown>,
+        revision: revisionRead.kind === 'current' ? revisionRead.revision : null,
     };
 }
 
@@ -149,6 +165,15 @@ export type BlockingProblemsRead =
         findings: ReadonlyArray<{ id?: string; severity?: string; message?: string; disposition?: string; acceptanceId?: string; path?: string }>;
         /** The parsed record, for the fields this reader does not name. */
         record: Record<string, unknown>;
+        /**
+         * The sealed revision **this read established the binding against**.
+         *
+         * Carried out so a consumer that must *stamp* the revision (the repair entry writes a review-loop round) names the
+         * one this question was answered about, instead of asking the same non-atomic pointer a second time and possibly
+         * getting a different answer — a round stamped R3 while the entry's own decision rested on R2 is a measurement
+         * attributed to a revision that did not authorise it, and the round filter downstream trusts that stamp.
+         */
+        revision: TaskRevision | null;
     }
     // `source` is what lets a consumer name the record it could not read: this reader refuses on two different ones, and a
     // denial that always blames the review record misreports the ledger case (an independent review measured exactly that).
@@ -190,5 +215,6 @@ export async function readBlockingProblems(
         boundToCurrentRevision: record.boundToCurrentRevision,
         findings,
         record: record.record,
+        revision: record.revision,
     };
 }

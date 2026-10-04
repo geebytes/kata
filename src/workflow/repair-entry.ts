@@ -186,12 +186,13 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     const findings = [...blockingRead.findings];
     const blockingProblems = blockingRead.problems;
     const reviewBlockingProblems = blockingProblems.filter((problem) => problem.source === 'finding');
-    // **After the reader, and unguarded — because the guard here could not fire.** This was a `try/catch` written when the
-    // revision reader threw on drift; once it answered `null` instead, the catch became unreachable and the comment beside
-    // it claimed a refusal that happened somewhere else entirely (the reader above refuses an unreadable revision, since
-    // the review's binding cannot be established without it). Measured: no input reaches this catch. What is honest is the
-    // plain read, with the refusal left where it actually is.
-    const revision = await readCurrentTaskRevision(root, taskId);
+    // **The revision comes from the read the reader already made, not from a second look at the pointer.** This used to
+    // ask again here, and the pointer is written non-atomically: between the reader's decision and this line a concurrent
+    // seal could move it, so the round was stamped with a revision that had not authorised it while its
+    // `blockingIds`/`blockingCount` were measured against the previous one — a mis-attributed measurement, and the new
+    // round filter downstream trusts that stamp. `readBlockingProblems` carries the revision it bound against for exactly
+    // this consumer (`review-read.ts`), which is the rule both readers state: one question, one read, one answer.
+    const revision = blockingRead.revision;
     // **The phase record's absence is answered by the shared admission first, exactly as hardVerify answers a missing
     // verify verdict.** An earlier version refused here without consulting it, which made an actionable ledger deficit
     // unreachable whenever this phase had not written its record yet — the one problem the task could act on, and the
