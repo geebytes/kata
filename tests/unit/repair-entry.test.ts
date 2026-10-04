@@ -303,6 +303,27 @@ describe('a hardVerify task whose ledger has author-actionable deficits may re-e
         expect(authorization.repair).toMatchObject({ fromPhase: 'hardVerify', reason: 'ledger_deficits' });
     });
 
+    // **The no-verify entry asks a ledger too, and it used to throw the answer away.** `authorizeVerifyRepair` returned
+    // `repair: null` and said nothing else, so the admission's reason was computed and discarded: a task whose ledger
+    // was unreadable entered by the same silent route as a task with no ledger at all. An independent review measured
+    // exactly that gap. The entry stays authorised — the state-transition route below pins it — but it now carries the
+    // admission's own reason so the caller can say which record it could not repair against.
+    it('carries the shared admission reason when no verify verdict exists and the ledger cannot authorise', async () => {
+        const root = await tempRoot();
+        await seedLedger(root, false);
+
+        // An unreadable ledger is the state that used to be indistinguishable from an absent one: the admission refuses
+        // both, and this branch discarded the refusal's reason. Corrupting the claims document is how a ledger becomes
+        // unreadable in the field, so that is what the fixture does rather than inventing a verdict.
+        await writeFile(join(root, '.kata/tasks', taskId, 'review', 'claims.json'), '{ not json', 'utf8');
+
+        const authorization = await authorizeVerifyRepair(root, taskId);
+
+        expect(authorization.authorized).toBe(true);
+        expect(authorization.repair).toBeNull();
+        expect(authorization.denial).toMatch(/ledger/i);
+    });
+
     it('keeps refusing the re-entry when there is no ledger to repair', async () => {
         const root = await tempRoot();
         await seedPassingVerify(root);

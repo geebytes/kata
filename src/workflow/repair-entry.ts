@@ -114,8 +114,15 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
         // decides that, so this branch consults it before falling back to a bare state transition.
         const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
         if (ledgerAdmission.authorized) return ledgerAdmission;
-        // No verify verdict to repair against: the entry is recorded by the state transition alone.
-        return { authorized: true, entryPhase, repair: null };
+        // No verify verdict to repair against: the entry is recorded by the state transition alone. The admission's own
+        // reason rides along — it was computed one line above, and discarding it made an unreadable ledger enter by the
+        // same silent route as an absent one (measured by an independent review of this change).
+        return {
+            authorized: true,
+            entryPhase,
+            repair: null,
+            ...(ledgerAdmission.denial ? { denial: ledgerAdmission.denial } : {}),
+        };
     }
 
     // Evidence drift authorises re-entry here for the same reason it does at review: once the sealed revision is
