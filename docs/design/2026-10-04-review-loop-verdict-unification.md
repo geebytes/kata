@@ -126,6 +126,37 @@ The rule, now implemented and pinned behaviourally:
   asserts the entry still authorizes from its one read — mutation-checked: restoring a fresh pointer read inside the
   supersede test changes the count from 1 to 2 and reddens the case.
 
+- the witness counts **both** exported spellings of the pointer read (`readCurrentTaskRevisionState` **and**
+  `readCurrentTaskRevision`), because a module-internal call is not redirected by `vi.mock` and only the first mutation
+  spelling was reddening the case — a second independent review restored the spelling the first review had recorded and
+  the case stayed green. The mutation that proves the witness now is the one that actually reintroduces the defect: a
+  fresh pointer read inside the supersede test, counted as a second call, reddens the case.
+
+### 6.1.2 The same invariant in the review entry (F4 of review round 2)
+
+The second review found the same class one layer out, in an AC-4 implementation path: `orchestrator.ts` minted the
+current-revision identity **twice** in one `review` entry — `entryBinding` for the placeholder it stamps and a second
+`currentRevisionIdentity` for the overwrite/archive decision — so a seal landing between the two reads let the stamp and
+the decision rest on different revisions. The entry now reads the pointer once (`readCurrentTaskRevisionState`) and mints
+both identities from that read through `currentRevisionIdentityFrom`, pinned by
+`tests/unit/review-entry-reads-the-pointer-once.test.ts` with the counting mock (mutation: restoring the second
+`currentRevisionIdentity` call makes the count 2 and reddens the case).
+
+### 6.1.3 Membership needs both conjuncts witnessed (F2 of review round 2)
+
+C2 claims a round enters the assessed set only when `revisionId` **and** `manifestHash` match. Every fixture coupled the
+two fields, so dropping the `manifestHash` conjunct left all declared C2 selectors green. `tests/unit/review-loop-assessment.test.ts`
+now builds the one shape that separates the conjuncts — the current `revisionId` with a different `manifestHash` — and
+asserts it stays audit-only; dropping the conjunct reddens it.
+
+### 6.1.4 An unreadable round history is a refusal, not a measurement with a note
+
+`navigation.ts` claimed a damaged line in an otherwise readable history "has measurements, and they decide — with the
+damage reported beside them". The code cannot represent that state: any malformed line makes the whole record
+`unreadable`, which `assessReviewLoop` returns as `unreadable_round_history` with no count and its own route, and no
+assessment variant carries a measurement together with `reviewHistoryUnreadable`. The comment was corrected to describe
+the pinned behaviour rather than a state that does not exist.
+
 The ledger submission is produced through `kata-cli ledger evidence add`; Kata applies each mutation, requires the selector to redden, restores it, and records the observed verdict. The subsequent ReviewRequest must carry these claims and their dependency paths; an empty strict request is a blocking review failure, never an empty review conclusion.
 ## 7. Files and migration
 

@@ -11,13 +11,15 @@ function round(
   at: string,
   revisionId: string | undefined,
   blockingCount: number | null,
+  /** The other half of the identity. Omitted means "the content this id names". */
+  manifestHash: string = revisionId === current.revisionId ? current.manifestHash : 'p'.repeat(64),
 ): ReviewRound {
   return {
     at,
     ...(revisionId
       ? {
           revisionId,
-          manifestHash: revisionId === current.revisionId ? current.manifestHash : 'p'.repeat(64),
+          manifestHash,
         }
       : {}),
     blockingIds: blockingCount === null ? [] : ['F-1'],
@@ -59,6 +61,31 @@ describe('review-loop assessment', () => {
       blockingIds: ['F-1'],
     });
     expect(withForeignHistory).toEqual(baseline);
+  });
+
+  /**
+   * **Both conjuncts of the membership rule, not just the one a fixture happens to vary.**
+   *
+   * The claim is 'revisionId **and** manifestHash match'; every other fixture couples the two fields (a round either
+   * matches both or neither), so a mutation that dropped the manifestHash conjunct left all declared selectors green —
+   * measured by an independent review. The round below matches the current revisionId and carries a different
+   * manifestHash, which is the one shape that can tell the conjunction apart from a bare id comparison: it must stay
+   * audit-only and must not enter the assessed set.
+   */
+  it('keeps a round addressing the right revision with different content out of the assessed set', () => {
+    const currentRounds = [
+      round('1', current.revisionId, 1),
+      round('2', current.revisionId, 1),
+      round('3', current.revisionId, 1),
+      round('4', current.revisionId, 1),
+    ];
+    const sameIdOtherContent: ReviewRound = round('same-id-other-content', current.revisionId, 1, 'z'.repeat(64));
+
+    const baseline = assessReviewLoop(input(currentRounds));
+    const withOtherContent = assessReviewLoop(input([sameIdOtherContent, ...currentRounds]));
+
+    expect(baseline.kind).toBe('stalled_current_rounds');
+    expect(withOtherContent).toEqual(baseline);
   });
 
   it('names an unreadable current revision instead of judging another revision history', () => {

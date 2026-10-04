@@ -1841,14 +1841,20 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         // wrote `{ findings: [], status: 'pending' }` with no binding fields, so a review entered for a revision stayed
         // `pending` and unbound across a later content change — the one state the binding exists to catch. The write below
         // carries the same binding fields the result path writes, through one derivation.
-        const entryBinding = await currentRevisionIdentity(root, taskId);
+        // **The pointer is read once here, and both uses consume that one read.** This branch used to mint the identity
+        // twice — `entryBinding` for the placeholder it stamps and a second `currentRevisionIdentity` for the
+        // overwrite/archive decision below — and the pointer is written non-atomically, so a seal landing between the two
+        // left the record stamped from one revision while the decision to replace it rested on another (measured by an
+        // independent review; same invariant as the round writer in `repair-entry.ts`).
+        const entryRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+        const entryBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
         try {
             const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
                 revisionId?: string;
                 findings?: ReviewFinding[];
                 status?: string;
             };
-            const recordBinding = await currentRevisionIdentity(root, taskId);
+            const recordBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
             if (revisionId && !bindsToRevision(previous, recordBinding)) {
                 // **A recorded round is archived before it is replaced; a placeholder is just replaced.** R5-7: this test
                 // was the third place still deriving "is this a recorded round" from `findings.length`, so a round that

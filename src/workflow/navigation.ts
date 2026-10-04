@@ -293,10 +293,13 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(reviewLoop.kind === 'unreadable_round_history' ? { reviewHistoryUnreadable: true } : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
-    // **A history that recorded nothing readable is a state, and it is not the same state as a damaged line in an
-    // otherwise readable history.** The first has no measurement at all and stops the loop; the second has measurements,
-    // and they decide — with the damage reported beside them (`reviewHistoryUnreadable`). The two used to be one flag, so a
-    // loop that measurably went 3 → 1 stopped for a person because a line was damaged.
+    // **An unreadable round history is one state, and it is a refusal — not a measurement with a report beside it.**
+    // This projection is read by routing through `reviewLoop.kind`, and a malformed line anywhere in the file makes the
+    // whole record unreadable (`readReviewRoundsState` -> `{ kind: 'unreadable' }`), which `assessReviewLoop` returns as
+    // `unreadable_round_history`: no count, no blocking ids, its own route. There is no assessment variant that carries a
+    // measurement *and* `reviewHistoryUnreadable`, so a comment here claiming the damage is merely reported beside a
+    // deciding measurement describes a state the code cannot represent — an independent review caught this file telling
+    // the next reader the opposite of the pinned behaviour (`tests/unit/review-escalation-current-revision-route.test.ts`).
     wikiClosureValid: wikiClosure.valid,
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
     ledger,
