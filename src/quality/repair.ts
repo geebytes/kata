@@ -270,10 +270,14 @@ export function reviewProgress(
             noProgressRounds += 1;
         }
     }
-    const measurable = rounds.length - unmeasuredRounds;
-    const unmeasurable = rounds.length > 0 && measurable === 0;
+    // **Every aggregate is about the rounds being judged, not about the file.** These three facts were computed from
+    // `rounds.length` while the loop above walked `currentRounds`, so one line from another revision changed the
+    // judgment: the same current-revision history read `escalating: true` alone and `escalating: false` with a single
+    // foreign line prefixed to it. A count that describes the judgment has to come from the set the judgment used.
+    const measurable = currentRounds.length - unmeasuredRounds;
+    const unmeasurable = currentRounds.length > 0 && measurable === 0;
     return {
-        rounds: rounds.length,
+        rounds: currentRounds.length,
         noProgressRounds,
         escalating: noProgressRounds >= NO_PROGRESS_ROUNDS || unmeasurable,
         blockingIds: newestMeasuredIds,
