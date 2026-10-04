@@ -35,6 +35,29 @@ function denial(entryPhase: RepairEntryPhase, message: string): RepairAuthorizat
     return { authorized: false, entryPhase, repair: null, denial: message };
 }
 
+/** One ledger verdict derivation shared by every gate repair admission. */
+export async function ledgerDeficitRepairAdmission(
+    root: string,
+    taskId: string,
+    entryPhase: RepairEntryPhase,
+ ): Promise<RepairAuthorization> {
+    const ledger = await ledgerVerdict({ root, changeId: taskId });
+    if (ledger.kind === 'decided' && ledger.decision.verdict !== 'pass') {
+        return {
+            authorized: true,
+            entryPhase,
+            repair: { fromPhase: entryPhase, reason: 'ledger_deficits', scopes: [] },
+        };
+    }
+
+    const reason = ledger.kind === 'decided'
+        ? 'the ledger decides this change passes, so there is no deficit to repair'
+        : ledger.kind === 'unreadable'
+            ? `the recorded ledger cannot be read (${ledger.detail}), so it decides nothing to repair`
+            : 'no ledger has been recorded, so there is no deficit to repair';
+    return denial(entryPhase, `The ledger does not authorize repair: ${reason}.`);
+}
+
 /** Fresh evidence after sealing supersedes the revision the verdict was bound to. */
 /**
  * A sealed revision that no longer describes what it is asked about, in **either** of the two ways it can stop.
@@ -109,48 +132,16 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
         && (failedAcceptance.length === 0
             || failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableVerifyScopes)));
     if (!isRepairable) {
-        // **A ledger deficit is a repair the router asks for, and this authoriser used to refuse it.**
-        //
-        // `navigation` routes a decided-but-not-passing ledger to `/kata-build` (`satisfy_ledger_deficits`)
-        // with no gate, so the command it names has to accept the entry — otherwise the only way to answer a
-        // recorded counterexample is to edit around the phase guard, which is what happened: measured on a real
-        // task, `challenge_open` produced a route to build that build then refused while verify was PASS.
-        //
-        // Narrow on purpose: only a *decided* ledger that cannot pass is authorisable, because `absent` records
-        // no deficit to repair and `unreadable` is reported as its own refusal rather than traded for an entry.
-        const ledger = await ledgerVerdict({ root, changeId: taskId });
-        if (ledger.kind === 'decided' && ledger.decision.verdict !== 'pass') {
-            return {
-                authorized: true,
-                entryPhase,
-                repair: {
-                    fromPhase: entryPhase,
-                    reason: 'ledger_deficits',
-                    scopes: [],
-                },
-            };
-        }
-        const ledgerReason = ledger.kind === 'decided'
-            ? 'the ledger decides this change passes, so there is no deficit to repair'
-            : ledger.kind === 'unreadable'
-                ? `the recorded ledger cannot be read (${ledger.detail}), so it decides nothing to repair`
-                : 'no ledger has been recorded, so there is no deficit to repair';
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (ledgerAdmission.authorized) return ledgerAdmission;
         return denial(
             entryPhase,
-            // **The message says what was checked, which is the declaration — not the workspace** (rba7-a4e3edc4, cg4-f2).
-            // It read "the sealed revision still matches the workspace", but the only freshness check behind it hashes
-            // `revision.ownedPaths`, so a workspace changed outside that declared set reads as current and the sentence was
-            // false about the working tree. The claim is withdrawn rather than re-worded: `revisionStatus` answers the
-            // declaration question, and claiming more than it answered is the class this change exists to remove. The
-            // unsettled part — whether the workspace outside the declaration has moved — is reported to the operator as
-            // `kata-cli verify`, which reads it, rather than asserted here.
             [
                 'Build cannot run from hardVerify without a repairable verify FAIL result, or a ledger that asks for a repair.',
-                `The ledger answer was: ${ledgerReason}.`,
-                "The sealed revision's declared manifest is unchanged (a change outside its owned paths is not seen by",
-                'this check). Run `kata-cli verify --change <task>` to record what is missing, or make the change the',
-                'verdict asks for.',
-            ].join(' '),
+                ledgerAdmission.denial,
+                "The sealed revision's declared manifest is unchanged (a change outside its owned paths is not seen by this check).",
+                'Run `kata-cli verify --change <task>` to record what is missing, or make the change the verdict asks for.',
+            ].filter(Boolean).join(' '),
         );
     }
 
@@ -201,11 +192,19 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // current implementation, and the only alternative would be judging with stale evidence. A new revision invalidates
     // the review binding, so the task still has to seal, verify and be reviewed again.
     const superseded = (await revisionNoLongerDescribes(root, taskId)) !== null;
+    const repairReason = severityAuthorized ? 'review_findings' : superseded ? 'revision_superseded' : 'ledger_deficits';
     if (!severityAuthorized && !superseded) {
-        return denial(
-            entryPhase,
-            `Build cannot run from review without a problem the ${reviewTierFor(reviewMode)} ladder blocks on (${mergeBlockingSeverities(reviewMode).join(', ')}) and none has been disposed of, or a superseded sealed revision. Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.`,
-        );
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (!ledgerAdmission.authorized) {
+            return denial(
+                entryPhase,
+                [
+                    `Build cannot run from review without a problem the ${reviewTierFor(reviewMode)} ladder blocks on (${mergeBlockingSeverities(reviewMode).join(', ')}) and none has been disposed of, or a superseded sealed revision.`,
+                    ledgerAdmission.denial,
+                    'Re-running /kata-review first ensures a fresh evaluation against the current sealed revision.',
+                ].filter(Boolean).join(' '),
+            );
+        }
     }
 
     // Both shapes are mapped to the record's own shape, so the payload that reaches `repair.json` does not depend on
@@ -232,7 +231,7 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
         entryPhase,
         repair: {
             fromPhase: entryPhase,
-            reason: severityAuthorized ? 'review_findings' : 'revision_superseded',
+            reason: repairReason,
             ...(revision ? { baselineRevisionId: revision.id, baselineManifestHash: revision.manifestHash } : {}),
             findings: repairFindings.map((finding) => ({
                 id: finding.id,
@@ -265,7 +264,15 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
         && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
     const supersededRecord = judgeRepairable ? null : await revisionNoLongerDescribes(root, taskId);
     if (!judgeRepairable && !supersededRecord) {
-        return denial(entryPhase, 'Build cannot run from judge without a repairable judge FAIL result, or a superseded sealed revision');
+        const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
+        if (ledgerAdmission.authorized) return ledgerAdmission;
+        return denial(
+            entryPhase,
+            [
+                'Build cannot run from judge without a repairable judge FAIL result, or a superseded sealed revision.',
+                ledgerAdmission.denial,
+            ].filter(Boolean).join(' '),
+        );
     }
 
     return {
