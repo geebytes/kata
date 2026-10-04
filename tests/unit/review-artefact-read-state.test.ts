@@ -420,7 +420,7 @@ describe('review artefact read states', () => {
      *
      * This case drives `readUpstreamSummary` into `suggestCandidateAction`, which is the surface the CLI dispatches from.
      */
-    it('routes a corrupted round history to the escalation terminal rather than back to build', async () => {
+    it('does not route a corrupted round history to the escalation terminal, and does not dispatch it to build', async () => {
         const root = await rootWithReview();
         const changeId = 'router-artefact';
         await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
@@ -441,8 +441,13 @@ describe('review artefact read states', () => {
         );
 
         const summary = await readUpstreamSummary(root, changeId);
+        // The fixture seals no revision, so the assessment answers `not_applicable` and no review-loop route is taken at
+        // all. The old *name* claimed an escalation route that neither half of this case ever asserted (an independent
+        // review caught the contradiction); the assertions are what the case has always meant — a damaged line must not
+        // be turned into an escalation, nor into a build dispatch.
         expect(summary.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
         expect(suggestCandidateAction('review', summary).reason).not.toBe('escalate_review_without_progress');
+        expect(suggestCandidateAction('review', summary).reason).not.toBe('repair_unreadable_round_history');
 
         // **And the terminal is still reachable from a damaged history**: when the measurements that survive show the loop
         // not moving, the damage does not excuse it. Three non-declining rounds plus a damaged line stops the loop.
@@ -460,6 +465,7 @@ describe('review artefact read states', () => {
         expect(stalled.reviewLoop).toEqual({ kind: 'not_applicable', reason: 'no_current_revision' });
         const action = suggestCandidateAction('review', stalled);
         expect(action.reason).not.toBe('escalate_review_without_progress');
+        expect(action.nextSkill).not.toBe('/kata-build');
     });
 
     /**

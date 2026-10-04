@@ -123,14 +123,29 @@ The rule, now implemented and pinned behaviourally:
 - `revisionStillDescribes(root, taskId, revision)` takes the revision from its caller and never reads the pointer, so a
   second reader cannot reappear inside the supersede test;
 - the witness makes the pointer's **second** call impossible (the same counting mock the verify/judge writers use) and
-  asserts the entry still authorizes from its one read — mutation-checked: restoring a fresh pointer read inside the
-  supersede test changes the count from 1 to 2 and reddens the case.
+  asserts the entry still authorizes from its one read. It counts **both** exported spellings — see §6.1.5, which records
+  that this clause was true of the intent and false of the file until review round 3.
 
-- the witness counts **both** exported spellings of the pointer read (`readCurrentTaskRevisionState` **and**
-  `readCurrentTaskRevision`), because a module-internal call is not redirected by `vi.mock` and only the first mutation
-  spelling was reddening the case — a second independent review restored the spelling the first review had recorded and
-  the case stayed green. The mutation that proves the witness now is the one that actually reintroduces the defect: a
-  fresh pointer read inside the supersede test, counted as a second call, reddens the case.
+### 6.1.5 The counting mock has to cover both exported spellings — measured, not assumed (F1 of review round 3)
+
+§6.1.1 claimed the witness counts both spellings; the file counted one. The claim was written from intent rather than
+from the file, and two independent reviews caught the consequence: a second pointer read spelled
+`readCurrentTaskRevision` left the counting case green, because `vi.mock` replaces a module's exports for its *importers*
+while a module-internal call to its own function is not redirected. The mock now wraps both exports, and the falsifier
+that proves it is the defect's own spelling — reintroducing
+`revisionStillDescribes(root, taskId, await readCurrentTaskRevision(root, taskId))` in the supersede test makes the count
+2 and reddens the case. Lesson recorded rather than assumed: the mutation that validates a witness must be the mutation
+that actually reintroduces the defect, not a convenient one that happens to redden.
+
+### 6.1.6 Names and comments must assert what the case asserts
+
+`tests/unit/review-artefact-read-state.test.ts` carried a case named "routes a corrupted round history to the escalation
+terminal" whose assertions were `not_applicable` and `not.toBe(...)` — it never asserted that route (an independent
+review caught it; the fixture seals no revision). The name now says what it asserts, and the case also pins that a
+damaged history is not dispatched to build. `src/workflow/prompt-catalogue.ts` told the operator the counts ride under
+`reviewEscalation`, a field `navigation.ts` declares deprecated and routing never reads — the prompt now names
+`reviewLoop`, the assessment the router actually read.
+
 
 ### 6.1.2 The same invariant in the review entry (F4 of review round 2)
 

@@ -16,12 +16,24 @@ vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
     const original = await importOriginal<typeof import('../../src/workflow/revision.js')>();
     return {
         ...original,
+        // **Both exported spellings, because a module-internal call is not redirected.** `readCurrentTaskRevision`
+        // closes over the module-local `readCurrentTaskRevisionState`, and `vi.mock` replaces exports for *importers*
+        // only — so a mock of one spelling counts nothing when the entry calls the other, and the second read this file
+        // exists to catch stayed invisible (measured by two independent reviews: the first recorded the defect in this
+        // spelling, and the second restored it and found the counting case still green).
         readCurrentTaskRevisionState: async (...args: Parameters<typeof original.readCurrentTaskRevisionState>) => {
             revisionReads.count += 1;
             if (revisionReads.count >= revisionReads.failFrom) {
                 return { kind: 'unreadable', detail: 'the pointer could not be read on this attempt' } as never;
             }
             return original.readCurrentTaskRevisionState(...args);
+        },
+        readCurrentTaskRevision: async (...args: Parameters<typeof original.readCurrentTaskRevision>) => {
+            revisionReads.count += 1;
+            if (revisionReads.count >= revisionReads.failFrom) {
+                return null;
+            }
+            return original.readCurrentTaskRevision(...args);
         },
     };
 });

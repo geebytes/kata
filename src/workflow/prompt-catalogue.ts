@@ -38,8 +38,10 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         // **The terminal state has to have a voice of its own.** Without this entry the lookup fell through to the
         // generic line, "Recommended: run /kata-review as reviewer" — advice that contradicts the state it is
         // describing, since the escalation exists precisely because another review round is not the next step. The
-        // counts and the ids are not repeated here: they ride on the change's status under `reviewEscalation`, which is
-        // the same answer the router read, so there is one of it.
+        // counts and the ids are not repeated here: they ride on the change's status under `reviewLoop`, which is the
+        // same assessment the router read, so there is one of it. (`reviewEscalation` still exists as a deprecated
+        // projection for readers of older records — routing never reads it, so naming it here would send an operator to
+        // the wrong field.)
         zh: '当前 revision 的审查循环已停止推进：最近几轮修复都没有减少阻塞项，因此不再派 /kata-build。轮次数与仍未处置的问题记录在本 change status 的 reviewLoop 字段中；这需要人来决定：继续修复、豁免某个问题，或终止这个 change。',
         en: 'The current revision review loop has stopped making progress: recent repairs did not reduce blocking problems, so /kata-build is no longer dispatched. The scoped rounds and open problems are recorded under reviewLoop; a person decides — keep repairing, waive a problem, or stop the change.',
     },
