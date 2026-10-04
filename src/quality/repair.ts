@@ -95,7 +95,16 @@ export function outOfScopeRepairPaths(
  * Why a repair was opened. One union for the record: the seal path, the reviewer-repair authorization and the repair
  * gate all read it, and each entry phase writes one member of it.
  */
-export type RepairReason = 'review_findings' | 'revision_superseded' | 'judge_fail' | 'verify_fail' | 'verify_reseal';
+export type RepairReason =
+    | 'review_findings'
+    | 'revision_superseded'
+    | 'judge_fail'
+    | 'verify_fail'
+    | 'verify_reseal'
+    // A ledger that asks the author for something (`challenge_open`, an unsupported claim) routes to `/kata-build`
+    // with no gate, so the authoriser has to accept that entry — otherwise the remedy the router names cannot be
+    // executed by the command it names.
+    | 'ledger_deficits';
 
 /** The repair artefact. Unknown fields are preserved: the resolution path spreads the record it read. */
 export interface RepairRecordShape {

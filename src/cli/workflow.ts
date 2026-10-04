@@ -94,7 +94,11 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     const branchPreparationOnly = workflowProfile?.isolationMode === 'git_flow' && command !== 'open';
     const commandToRun: KataCommand = branchPreparationOnly ? 'open' : command;
     const openRequirements = command === 'open' ? await readRequirementsFile(argv.slice(1)) : undefined;
-    const bootstrap = command === 'open' ? await readBootstrapFile(argv.slice(1)) : undefined;
+    // **`hotfix` and `tweak` are aggregates of `open`, so they read what `open` reads.** Requiring `--bootstrap-file`
+    // for `open` alone meant a strict hotfix was born with the placeholder criterion and no matrix, and `design` then
+    // refused it ("Strict closure requires an acceptanceMatrix") — with the criteria frozen at creation, the only
+    // remaining route was to delete the task and reopen it.
+    const bootstrap = requiresWorkflowProfile(command) ? await readBootstrapFile(argv.slice(1)) : undefined;
     const result = await runCommand(commandToRun, change, root, {
         // **`--title` is documented on `open`, `hotfix` and `tweak`, and nothing read it.** A documented flag that is
         // silently dropped is the shape this repository removes most often; the flag is honoured rather than deleted from
@@ -103,9 +107,13 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         title: argValue(argv, '--title')?.trim()
             || openRequirements?.[0]?.statement.slice(0, 80)
             || (command === 'hotfix' ? `Hotfix ${change}` : command === 'tweak' ? `Tweak ${change}` : `Change ${change}`),
-        ...(openRequirements ? { requirements: openRequirements } : command === 'hotfix' || command === 'tweak'
-            ? { acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }] }
-            : {}),
+        // **The bootstrap is the contract, the placeholder is the fallback.** A caller that declared its criteria and
+        // matrix gets exactly that; only a caller who declared nothing falls back to the aggregate's placeholder.
+        ...(openRequirements ? { requirements: openRequirements } : bootstrap
+            ? {}
+            : command === 'hotfix' || command === 'tweak'
+                ? { acceptance: [{ id: 'AC-1', statement: 'Implement the change.' }] }
+                : {}),
         ...(platform ? { platform } : {}),
         ...(commandToRun === 'build' ? { seal: switchPresent(argv, '--seal') } : {}),
         ...(commandToRun === 'build' && argValue(argv, '--judgement')
@@ -134,7 +142,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
             ? { discoverChecks: switchPresent(argv, '--discover-checks') && !switchPresent(argv, '--no-discover-checks') }
             : {}),
         ...(waivers ? { waivers } : {}),
-        ...(commandToRun === 'open' && bootstrap ? { bootstrap } : {}),
+        ...(bootstrap ? { bootstrap } : {}),
         ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
         ...(workflowProfile ? { workflowProfile } : {}),
         ...(onProgress ? { onProgress, signal: abortController?.signal } : {}),

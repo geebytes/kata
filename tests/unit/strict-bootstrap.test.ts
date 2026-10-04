@@ -140,6 +140,41 @@ describe('strict bootstrap', () => {
         expect(await readFile(path, 'utf8')).toContain('AC-1');
     });
 
+    /**
+     * **`hotfix` did not read `--bootstrap-file`, so a strict hotfix was born undesigned and undescribable.**
+     *
+     * Measured on a real workspace: `kata-cli hotfix --isolation … --review strict` wrote the placeholder
+     * `AC-1: Implement the change.` with no matrix, `design` then refused with "Strict closure requires an
+     * acceptanceMatrix", and because acceptance criteria freeze at creation the only remaining route was to delete the
+     * task and reopen it. `open` already reads the file; the aggregate commands have to pass it through.
+     */
+    it('passes --bootstrap-file through hotfix, so a strict hotfix is born with its declared contract', async () => {
+        const root = await tempRoot();
+        const path = await writeBootstrap(root);
+
+        const result = await runWorkflowCommand(
+            'hotfix',
+            'hotfix-cli',
+            root,
+            undefined,
+            ['hotfix', '--bootstrap-file', path, '--owned-path', 'src/one.ts', '--owned-path', 'src/two.ts',
+                '--owned-path', 'tests/unit/one.test.ts', '--owned-path', 'tests/unit/two.test.ts',
+                '--isolation', 'current_worktree', '--development', 'tdd', '--review', 'strict'],
+        );
+
+        // The task exists with the declared contract even though the aggregate cannot seal without implementation work:
+        // what this case is about is the contract reaching `open`, not the aggregate reaching `seal`.
+        const task = await readTask(root, 'hotfix-cli');
+        expect(task.acceptance.map((criterion) => criterion.id)).toEqual(['AC-1', 'AC-2']);
+        expect(task.acceptanceMatrix?.rows).toHaveLength(2);
+        expect(validateMatrix(task.acceptance, task.acceptanceMatrix)).toEqual([]);
+
+        // The contract reached `open`: the criteria and the matrix are the caller's, not the placeholder's.
+        expect(task.acceptance.map((criterion) => criterion.id)).toEqual(['AC-1', 'AC-2']);
+        expect(task.acceptanceMatrix?.rows).toHaveLength(2);
+        expect(validateMatrix(task.acceptance, task.acceptanceMatrix)).toEqual([]);
+    });
+
     it('refuses absolute and escaping owned paths before creating a task', async () => {
         const root = await tempRoot();
         const escaping = await runWorkflowCommand(

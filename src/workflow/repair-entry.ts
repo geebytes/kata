@@ -9,6 +9,7 @@ import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
 import { readBlockingProblems } from './review-read.js';
 import { mergeBlockingSeverities, reviewTierFor } from '../quality/review-ladder.js';
+import { ledgerVerdict } from '../store/verdict.js';
 
 /**
  * Whether a task may leave a gate and re-enter implementation, and what that entry is recorded as.
@@ -108,6 +109,32 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
         && (failedAcceptance.length === 0
             || failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableVerifyScopes)));
     if (!isRepairable) {
+        // **A ledger deficit is a repair the router asks for, and this authoriser used to refuse it.**
+        //
+        // `navigation` routes a decided-but-not-passing ledger to `/kata-build` (`satisfy_ledger_deficits`)
+        // with no gate, so the command it names has to accept the entry — otherwise the only way to answer a
+        // recorded counterexample is to edit around the phase guard, which is what happened: measured on a real
+        // task, `challenge_open` produced a route to build that build then refused while verify was PASS.
+        //
+        // Narrow on purpose: only a *decided* ledger that cannot pass is authorisable, because `absent` records
+        // no deficit to repair and `unreadable` is reported as its own refusal rather than traded for an entry.
+        const ledger = await ledgerVerdict({ root, changeId: taskId });
+        if (ledger.kind === 'decided' && ledger.decision.verdict !== 'pass') {
+            return {
+                authorized: true,
+                entryPhase,
+                repair: {
+                    fromPhase: entryPhase,
+                    reason: 'ledger_deficits',
+                    scopes: [],
+                },
+            };
+        }
+        const ledgerReason = ledger.kind === 'decided'
+            ? 'the ledger decides this change passes, so there is no deficit to repair'
+            : ledger.kind === 'unreadable'
+                ? `the recorded ledger cannot be read (${ledger.detail}), so it decides nothing to repair`
+                : 'no ledger has been recorded, so there is no deficit to repair';
         return denial(
             entryPhase,
             // **The message says what was checked, which is the declaration — not the workspace** (rba7-a4e3edc4, cg4-f2).
@@ -117,9 +144,13 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
             // declaration question, and claiming more than it answered is the class this change exists to remove. The
             // unsettled part — whether the workspace outside the declaration has moved — is reported to the operator as
             // `kata-cli verify`, which reads it, rather than asserted here.
-            'Build cannot run from hardVerify without a repairable verify FAIL result, and the sealed revision\'s declared '
-            + 'manifest is unchanged (a change outside its owned paths is not seen by this check). Run '
-            + '`kata-cli verify --change <task>` to record what is missing, or make the change the verdict asks for.',
+            [
+                'Build cannot run from hardVerify without a repairable verify FAIL result, or a ledger that asks for a repair.',
+                `The ledger answer was: ${ledgerReason}.`,
+                "The sealed revision's declared manifest is unchanged (a change outside its owned paths is not seen by",
+                'this check). Run `kata-cli verify --change <task>` to record what is missing, or make the change the',
+                'verdict asks for.',
+            ].join(' '),
         );
     }
 

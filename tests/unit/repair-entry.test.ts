@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { authorizeJudgeRepair, authorizeRepair, authorizeReviewRepair, authorizeVerifyRepair } from '../../src/workflow/repair-entry.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+import { runLedgerCommand } from '../../src/cli/ledger.js';
+import { ledgerVerdict } from '../../src/store/verdict.js';
 
 /**
  * One table per gate over (entry phase × artefact outcome × drift state).
@@ -212,6 +214,108 @@ describe('repair authorisation', () => {
         expect((await authorizeRepair('judge', root, taskId)).repair).toMatchObject({ reason: 'judge_fail' });
         expect((await authorizeRepair('hardVerify', root, taskId)).authorized).toBe(true);
     });
+/**
+ * **A ledger deficit is a repair the router asks for, and the authoriser used to refuse it.**
+ *
+ * Measured on a real task: `ledger decide` answered `insufficient` with `challenge_open`, `navigation` therefore
+ * routed to `/kata-build`, and `build` refused with the sentence this file writes — "Build cannot run from hardVerify
+ * without a repairable verify FAIL result" — while verify was PASS. The remedy the router names could not be
+ * executed by the command it named, so the only way to answer a recorded counterexample was to edit around the
+ * phase guard. These cases pin the missing authorisation, and pin that it stays narrow: no ledger, a passing ledger
+ * and an unreadable ledger all keep refusing.
+ */
+describe('a hardVerify task whose ledger has author-actionable deficits may re-enter implement', () => {
+    const roots: string[] = [];
+    const taskId = 'ledger-deficit-task';
+
+    afterEach(async () => {
+        await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+    });
+
+    async function tempRoot(): Promise<string> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-ledger-repair-entry-'));
+        roots.push(root);
+        await mkdir(join(root, '.kata/tasks', taskId), { recursive: true });
+        return root;
+    }
+
+    async function writeJson(root: string, relative: string, value: unknown): Promise<void> {
+        await writeFile(join(root, relative), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    }
+
+    /** A verify PASS with a decision on record: the state the refusal was measured in. */
+    async function seedPassingVerify(root: string): Promise<void> {
+        await writeJson(root, `.kata/tasks/${taskId}/verify.json`, {
+            taskId,
+            result: 'PASS',
+            diffHash: 'd'.repeat(64),
+            acceptance: [{ id: 'AC-1', result: 'PASS' }],
+        });
+    }
+
+    /**
+     * A ledger with one claim whose evidence is supported and an optional open counterexample.
+     *
+     * Written through the ledger's own commands rather than by hand: the value under test is *what the ledger
+     * decides*, so a fixture that invented `claims.json` would be measuring its own arithmetic — the mistake this
+     * repository has a fixture guard for.
+     */
+    async function seedLedger(root: string, withOpenChallenge: boolean): Promise<void> {
+        const ledger = (argv: string[]) => runLedgerCommand(argv, { root, changeId: taskId });
+        await writeFile(join(root, 'subject.ts'), 'export const holds = true;\n', 'utf8');
+        await writeJson(root, `.kata/tasks/${taskId}/task.json`, { id: taskId, ownedPaths: ['subject.ts'] });
+        await ledger(['freeze']);
+        await ledger(['claim', 'add', '--statement', 'The export is present', '--risk-class', 'consistency',
+            '--severity', 'major', '--evidence', 'E1', '--depends-on', 'path:subject.ts', '--id', 'C1']);
+        const submission = join(root, 'submission.json');
+        await writeFile(submission, `${JSON.stringify({
+            claims: [],
+            evidence: [{ id: 'E1', type: 'static_witness', ref: 'subject.ts', assertion: 'contains:holds' }],
+        }, null, 2)}\n`, 'utf8');
+        await ledger(['evidence', 'add', '--file', submission]);
+        await ledger(['evidence', 'verify']);
+        if (withOpenChallenge) {
+            // The command measures a file nobody wrote, so it fails: the challenge reproduces and stays open, which is
+            // the `challenge_open` deficit the router asks the author to repair.
+            await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marker notes/absent.txt', '--id', 'X1']);
+            await ledger(['challenge', 'check']);
+        }
+    }
+
+    /** The ledger's own decision, so the case asserts against the same verdict the router reads. */
+    async function ledgerVerdictOf(root: string): Promise<string> {
+        return (await ledgerVerdict({ root, changeId: taskId })).kind === 'decided'
+            ? (await ledgerVerdict({ root, changeId: taskId }) as { decision: { verdict: string } }).decision.verdict
+            : 'not-decided';
+    }
+
+    it('authorises the re-entry when the ledger records an open counterexample', async () => {
+        const root = await tempRoot();
+        await seedPassingVerify(root);
+        await seedLedger(root, true);
+
+        // The precondition is the router's own: the ledger asks the author for something and cannot pass.
+        expect(await ledgerVerdictOf(root)).toBe('insufficient');
+
+        const authorization = await authorizeVerifyRepair(root, taskId);
+
+        expect(authorization.authorized).toBe(true);
+        expect(authorization.repair).toMatchObject({ fromPhase: 'hardVerify', reason: 'ledger_deficits' });
+    });
+
+    it('keeps refusing the re-entry when there is no ledger to repair', async () => {
+        const root = await tempRoot();
+        await seedPassingVerify(root);
+
+        // No ledger at all: there is no recorded deficit, so nothing authorises leaving hardVerify.
+        const authorization = await authorizeVerifyRepair(root, taskId);
+        expect(authorization.authorized).toBe(false);
+        expect(authorization.denial).toMatch(/ledger/i);
+    });
+});
+
+
+
 describe('a superseded seal authorises the re-seal from hardVerify', () => {
     it('authorises the re-entry once the workspace has moved past the sealed revision', async () => {
         // Measured cost of not allowing this: a verify run known to FAIL, purely to have the phase moved back, on

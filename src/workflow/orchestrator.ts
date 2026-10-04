@@ -2397,6 +2397,10 @@ async function cmdHotfix(
         acceptance: options.acceptance ?? [{ id: 'AC-1', statement: 'Fix is correct.' }],
         guard: options.guard,
         workflowProfile: options.workflowProfile,
+        // **The declared contract travels with the aggregate.** Without this the caller's `--bootstrap-file` was read,
+        // validated, and then dropped here: the task was created from the placeholder criterion with no matrix, and
+        // `design` refused it while the file that would have satisfied it sat unused.
+        ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}),
     });
     if (!openResult.success) return openResult;
 
@@ -2419,6 +2423,7 @@ async function cmdTweak(
         acceptance: options.acceptance ?? [{ id: 'AC-1', statement: 'Tweak is correct.' }],
         guard: options.guard,
         workflowProfile: options.workflowProfile,
+        ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}),
     });
     if (!openResult.success) return openResult;
 
