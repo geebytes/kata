@@ -168,6 +168,10 @@ describe('strict bootstrap', () => {
         expect(task.acceptance.map((criterion) => criterion.id)).toEqual(['AC-1', 'AC-2']);
         expect(task.acceptanceMatrix?.rows).toHaveLength(2);
         expect(validateMatrix(task.acceptance, task.acceptanceMatrix)).toEqual([]);
+        // **The declared surface is part of the contract, and it was dropped the same way the criteria were.**
+        // A caller who declared `--owned-path` on the aggregate got a task with none, so the very next `build`
+        // refused it with `missingOwnedPaths` — the aggregate read the flag and then did not pass it on.
+        expect(task.ownedPaths).toEqual(['src/one.ts', 'src/two.ts', 'tests/unit/one.test.ts', 'tests/unit/two.test.ts']);
 
         // The contract reached `open`: the criteria and the matrix are the caller's, not the placeholder's.
         expect(task.acceptance.map((criterion) => criterion.id)).toEqual(['AC-1', 'AC-2']);

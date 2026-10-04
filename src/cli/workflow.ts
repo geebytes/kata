@@ -143,7 +143,11 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
             : {}),
         ...(waivers ? { waivers } : {}),
         ...(bootstrap ? { bootstrap } : {}),
-        ...((commandToRun === 'open' || commandToRun === 'build') && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
+        // **`--owned-path` travels with the aggregate too, and for the same reason the bootstrap does.** `hotfix` and
+        // `tweak` are aggregates of `open`: the flag was read from the command line, dropped here, and the task was
+        // created with no declared surface — so its very next `build` refused it with `missingOwnedPaths`.
+        ...((commandToRun === 'open' || commandToRun === 'build' || commandToRun === 'hotfix' || commandToRun === 'tweak')
+            && ownedPaths(argv).length ? { ownedPaths: ownedPaths(argv) } : {}),
         ...(workflowProfile ? { workflowProfile } : {}),
         ...(onProgress ? { onProgress, signal: abortController?.signal } : {}),
     });
