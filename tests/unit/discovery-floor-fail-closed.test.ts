@@ -272,7 +272,9 @@ describe('the readers of the schema-less ledger files', () => {
         // independent round found it the round after the reader guard was extended to the other three.
         const { codes } = await ledgerWithChallenge(
             { ...base, state: 'withdrawn', resolution: { at: '2026-10-05T00:01:00.000Z', observed: 'exit 0 when checked' } },
-            { runs: [null, { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }] },
+            // The array element is the discriminating one for this file: `runs.json` declares no identity field, so an
+            // element that is not a record reaches the array filter rather than being dropped as unnameable.
+            { runs: [null, ['x'], { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }] },
         );
         expect(codes).not.toContain('discovery_unverified');
         // Asserted on the reader itself, not only through the decision: the decision stopped depending on the run log's
