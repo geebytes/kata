@@ -26,6 +26,22 @@ export interface Actor {
     platform?: string;
 }
 
+
+const taskLockBrand = Symbol('task-lock');
+
+/** Capability issued only while a task's single-writer lock is held. */
+export interface TaskLock {
+    readonly root: string;
+    readonly taskId: string;
+    readonly [taskLockBrand]: true;
+}
+
+/** Reject a lock capability from another task or repository before an unlocked write. */
+export function assertTaskLock(lock: TaskLock, root: string, taskId: string): void {
+    if (lock.root !== root || lock.taskId !== taskId || lock[taskLockBrand] !== true) {
+        throw new Error(`Task lock capability does not authorize ${taskId}`);
+    }
+}
 export interface TransitionOptions {
     root?: string;
     activeSession?: string;
@@ -209,14 +225,21 @@ export async function mutateTaskArtefact(
     taskId: string,
     path: string,
     mutate: (current: string) => Promise<string>,
-): Promise<void> {
-    await withTaskLock(root, taskId, async () => {
-        // The read happens *inside* the lock. A helper that only locked the write would leave the read-modify-write window
+    lock?: TaskLock,
+ ): Promise<void> {
+    const write = async () => {
+        // The read happens inside the lock. A helper that only locked the write would leave the read-modify-write window
         // open — which is the window this exists to close (L3-09).
         const current = await readFile(path, 'utf8').catch(() => '');
         const content = await mutate(current);
         await writeFileAtomic(path, content);
-    });
+    };
+    if (lock) {
+        assertTaskLock(lock, root, taskId);
+        await write();
+        return;
+    }
+    await withTaskLock(root, taskId, async () => write());
 }
 
 /**
@@ -273,7 +296,7 @@ async function readLockHolder(lockPath: string): Promise<{ pid?: number; at?: st
     }
 }
 
-export async function withTaskLock<T>(root: string, taskId: string, action: () => Promise<T>): Promise<T> {
+export async function withTaskLock<T>(root: string, taskId: string, action: (lock: TaskLock) => Promise<T>): Promise<T> {
     assertValidTaskId(taskId);
     const lockPath = transitionLockPath(root, taskId);
     try {
@@ -294,7 +317,7 @@ export async function withTaskLock<T>(root: string, taskId: string, action: () =
         await rm(lockPath, { recursive: true, force: true });
     }
     try {
-        return await action();
+        return await action({ root, taskId, [taskLockBrand]: true });
     } finally {
         await rm(lockPath, { recursive: true, force: true });
     }

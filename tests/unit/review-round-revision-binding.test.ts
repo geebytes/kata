@@ -6,34 +6,18 @@ import { initLayout } from '../../src/core/layout.js';
 import { appendReviewRound, readReviewRoundsState } from '../../src/quality/repair.js';
 import { authorizeReviewRepair } from '../../src/workflow/repair-entry.js';
 
-/**
- * The pointer is counted, and can be made to fail from a chosen call onward — the same instrument
- * `commands-stamp-from-their-read.test.ts` uses for the verify/judge writers. A test that cannot make the second read
- * answer *differently* from the first cannot see a second read at all.
- */
-const revisionReads = vi.hoisted(() => ({ count: 0, failFrom: Number.POSITIVE_INFINITY }));
+/** The authorizing snapshot is observable; the lock-held validator is covered separately. */
+const decisionSnapshots = vi.hoisted(() => ({ count: 0, failFrom: Number.POSITIVE_INFINITY }));
 vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
     const original = await importOriginal<typeof import('../../src/workflow/revision.js')>();
     return {
         ...original,
-        // **Both exported spellings, because a module-internal call is not redirected.** `readCurrentTaskRevision`
-        // closes over the module-local `readCurrentTaskRevisionState`, and `vi.mock` replaces exports for *importers*
-        // only — so a mock of one spelling counts nothing when the entry calls the other, and the second read this file
-        // exists to catch stayed invisible (measured by two independent reviews: the first recorded the defect in this
-        // spelling, and the second restored it and found the counting case still green).
-        readCurrentTaskRevisionState: async (...args: Parameters<typeof original.readCurrentTaskRevisionState>) => {
-            revisionReads.count += 1;
-            if (revisionReads.count >= revisionReads.failFrom) {
-                return { kind: 'unreadable', detail: 'the pointer could not be read on this attempt' } as never;
+        readReviewDecisionSnapshot: async (...args: Parameters<typeof original.readReviewDecisionSnapshot>) => {
+            decisionSnapshots.count += 1;
+            if (decisionSnapshots.count >= decisionSnapshots.failFrom) {
+                throw new Error('a second authorizing snapshot must not be read');
             }
-            return original.readCurrentTaskRevisionState(...args);
-        },
-        readCurrentTaskRevision: async (...args: Parameters<typeof original.readCurrentTaskRevision>) => {
-            revisionReads.count += 1;
-            if (revisionReads.count >= revisionReads.failFrom) {
-                return null;
-            }
-            return original.readCurrentTaskRevision(...args);
+            return original.readReviewDecisionSnapshot(...args);
         },
     };
 });
@@ -118,13 +102,11 @@ describe('revision-bound review rounds', () => {
   });
 
   /**
-   * **One pointer read answers the decision, the supersede test and the stamp.**
+   * **One authorizing snapshot decides, stamps and selects the supersede test.**
    *
-   * A reader cannot see a second read by looking for one spelling of it in the source, and a fixture whose pointer
-   * never moves proves nothing: both readings then agree. This case makes the *second* read impossible instead — the
-   * mocked pointer fails from the second call onward, so an entry that reads it twice must change its answer (refuse,
-   * or stamp `revision_superseded`) while an entry that reads it once keeps the finding-based authorisation and the
-   * revision it already had. Same instrument as `commands-stamp-from-their-read.test.ts`.
+   * The snapshot factory is called once. Its commit validator deliberately re-reads while holding
+   * the task lock; that read is optimistic-concurrency validation, not a second authorization.
+   * A mocked second factory call throws, so a writer cannot silently take another authorizing snapshot.
    */
   it('reads the pointer once and stamps what that read said', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kata-review-repair-snapshot-'));
@@ -150,13 +132,12 @@ describe('revision-bound review rounds', () => {
       reviewEvidence: 'sealed revision reviewed',
       findings: [{ id: 'F-1', taskId, severity: 'blocking', message: 'must repair' }],
     })}\n`);
-    revisionReads.count = 0;
-    revisionReads.failFrom = 2;
-
+    decisionSnapshots.count = 0;
+    decisionSnapshots.failFrom = 2;
     const authorization = await authorizeReviewRepair(root, taskId);
 
     expect(authorization).toMatchObject({ authorized: true, repair: { reason: 'review_findings' } });
-    expect(revisionReads.count).toBe(1);
+    expect(decisionSnapshots.count).toBe(1);
     const [round] = (await readReviewRoundsState(root, taskId)).rounds;
     expect(round).toMatchObject({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash });
   });

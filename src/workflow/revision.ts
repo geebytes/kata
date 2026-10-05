@@ -1,4 +1,5 @@
 import { readTask } from '../core/task.js';
+import { withTaskLock } from '../core/state.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
@@ -228,6 +229,58 @@ export async function readCurrentTaskRevisionState(root: string, taskId: string)
   } catch (error) {
     return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** A review-family decision is bound to exactly one observed pointer state. */
+export interface ReviewDecisionSnapshot {
+  readonly revisionRead: CurrentRevisionRead;
+}
+
+/** Read the current-revision pointer once for a review-family decision. */
+export async function readReviewDecisionSnapshot(root: string, taskId: string): Promise<ReviewDecisionSnapshot> {
+  return { revisionRead: await readCurrentTaskRevisionState(root, taskId) };
+}
+
+export type ReviewDecisionCommit<T> =
+  | { kind: 'committed'; value: T }
+  | { kind: 'moved'; current: CurrentRevisionRead }
+  | { kind: 'missing'; current: CurrentRevisionRead }
+  | { kind: 'unreadable'; current: CurrentRevisionRead };
+
+/** Compare the complete identity carried by an authorizing snapshot. */
+export function reviewDecisionSnapshotMatches(expected: CurrentRevisionRead, current: CurrentRevisionRead): boolean {
+  if (expected.kind !== current.kind) return false;
+  if (expected.kind !== 'current' || current.kind !== 'current') return expected.kind === 'absent';
+  return expected.revision.id === current.revision.id
+    && expected.revision.manifestHash === current.revision.manifestHash;
+}
+
+/**
+ * Recheck a review decision's pointer under the task writer lock before committing its outcome.
+ *
+ * The second read is deliberately not another authorizing decision: it is optimistic-concurrency
+ * validation. A pointer that moved after the snapshot makes the commit a no-op rather than recording
+ * an A decision as if it described B.
+ */
+export async function commitReviewDecision<T>(
+  root: string,
+  taskId: string,
+  snapshot: ReviewDecisionSnapshot,
+  commit: (lock: import('../core/state.js').TaskLock) => Promise<T>,
+): Promise<ReviewDecisionCommit<T>> {
+  if (snapshot.revisionRead.kind === 'unreadable') {
+    return { kind: 'unreadable', current: snapshot.revisionRead };
+  }
+  if (snapshot.revisionRead.kind === 'absent') {
+    return { kind: 'missing', current: snapshot.revisionRead };
+  }
+  return withTaskLock(root, taskId, async (lock) => {
+    const current = await readCurrentTaskRevisionState(root, taskId);
+    if (current.kind === 'unreadable') return { kind: 'unreadable', current };
+    if (current.kind === 'absent') return { kind: 'missing', current };
+    if (!reviewDecisionSnapshotMatches(snapshot.revisionRead, current)) return { kind: 'moved', current };
+    return { kind: 'committed', value: await commit(lock) };
+  });
 }
 
 /**

@@ -210,6 +210,7 @@ describe('review CLI I/O', () => {
     });
 
     it('takes a structured subagent result through the CLI and binds its findings to the review record', async () => {
+        await prepareRequest();
         await writeCurrentState(root, {
             taskId: changeId,
             phase: 'review',

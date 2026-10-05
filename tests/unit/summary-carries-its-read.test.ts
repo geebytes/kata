@@ -6,28 +6,18 @@ import { appendClaim, freezeSubject, readLedger, writeSubject } from '../../src/
 import { ledgerVerdict, openLedgerProblems } from '../../src/store/verdict.js';
 import { makeClaim } from '../helpers/review.js';
 
-/**
- * **The summary's read is the read, and the router's answer cannot depend on which read failed.**
- *
- * `readUpstreamSummary` reads `current-revision.json` to know what content a verdict is about; `readReviewRecord` reads
- * the same file again to bind the recorded review to it. When the second read was the one that failed, the router
- * reported `unreadable_review_record` (priority 1150) and routed to `/kata-review`, **bypassing the branch written for
- * exactly that state** — so the operator was sent to re-read a review whose premise could not be read at all.
- *
- * The pointer is written non-atomically, so "read it twice and hope" is not a guard. The count is asserted here, because
- * that is what makes the answer invariant: one decision, one read, whatever the file does next.
- */
-const revisionReads = vi.hoisted(() => ({ count: 0, failFrom: Number.POSITIVE_INFINITY }));
+/** Router consumers receive one authorizing snapshot; they must not request another. */
+const decisionSnapshots = vi.hoisted(() => ({ count: 0, failFrom: Number.POSITIVE_INFINITY }));
 vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
     const original = await importOriginal<typeof import('../../src/workflow/revision.js')>();
     return {
         ...original,
-        readCurrentTaskRevisionState: async (...args: Parameters<typeof original.readCurrentTaskRevisionState>) => {
-            revisionReads.count += 1;
-            if (revisionReads.count >= revisionReads.failFrom) {
-                return { kind: 'unreadable', detail: 'the pointer could not be read on this attempt' } as never;
+        readReviewDecisionSnapshot: async (...args: Parameters<typeof original.readReviewDecisionSnapshot>) => {
+            decisionSnapshots.count += 1;
+            if (decisionSnapshots.count >= decisionSnapshots.failFrom) {
+                throw new Error('a second authorizing snapshot must not be read');
             }
-            return original.readCurrentTaskRevisionState(...args);
+            return original.readReviewDecisionSnapshot(...args);
         },
     };
 });
@@ -63,8 +53,8 @@ async function seed(): Promise<void> {
 describe('the summary carries its own read into the review reader', () => {
     beforeEach(async () => {
         await seed();
-        revisionReads.count = 0;
-        revisionReads.failFrom = Number.POSITIVE_INFINITY;
+        decisionSnapshots.count = 0;
+        decisionSnapshots.failFrom = Number.POSITIVE_INFINITY;
     });
 
     afterEach(async () => {
@@ -74,16 +64,15 @@ describe('the summary carries its own read into the review reader', () => {
     it('reads the current revision once for a whole router decision', async () => {
         const upstream = await readUpstreamSummary(root, taskId);
         suggestCandidateAction('review', upstream);
-        // One. The summary used to read it, the review reader used to read it again, and the two could disagree.
-        expect(revisionReads.count).toBe(1);
+        expect(decisionSnapshots.count).toBe(1);
     });
 
     it('gives the same answer whether or not a later read of the same file would have failed', async () => {
         const clean = suggestCandidateAction('review', await readUpstreamSummary(root, taskId));
 
-        revisionReads.count = 0;
-        // Every read after the first fails, which is the state that used to be reported as an unreadable review record.
-        revisionReads.failFrom = 2;
+        decisionSnapshots.count = 0;
+        // A second authorizing snapshot is forbidden; routing must reuse the first one.
+        decisionSnapshots.failFrom = 2;
         const upstream = await readUpstreamSummary(root, taskId);
         const second = suggestCandidateAction('review', upstream);
 

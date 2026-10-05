@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
 import type { TaskRevision } from './revision.js';
-import { readCurrentTaskRevisionState, readCurrentTaskRevision, revisionIsCurrent, revisionStatus, type CurrentRevisionRead } from './revision.js';
+import { commitReviewDecision, readReviewDecisionSnapshot, readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
@@ -187,7 +187,8 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // non-atomic pointer, so this entry asked the same file a second time — and a seal landing in between left the
     // entry's own decision and the round it stamped resting on two different states. Taking the read here and passing
     // it in makes one read answer the binding, the mode, the problems, the supersede test and the stamp.
-    const sealedRead = await readCurrentTaskRevisionState(root, taskId);
+    const snapshot = await readReviewDecisionSnapshot(root, taskId);
+    const sealedRead = snapshot.revisionRead;
     const blockingRead = await readBlockingProblems(root, taskId, sealedRead);
     if (!blockingRead.ok) {
         // Name the record that actually could not be read. The reader refuses on two different ones, and blaming the
@@ -265,13 +266,21 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // A new loop record must describe a sealed revision. Legacy/no-seal repair entry remains readable and
     // authorizable, but does not manufacture an unbound measurement that a later revision could misinterpret.
     if (revision) {
-        await appendReviewRound(root, taskId, {
-            at: new Date().toISOString(),
-            revisionId: revision.id,
-            manifestHash: revision.manifestHash,
-            blockingIds: reviewBlockingProblems.map((problem) => problem.id),
-            blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
+        const committed = await commitReviewDecision(root, taskId, snapshot, async (lock) => {
+            await appendReviewRound(root, taskId, {
+                at: new Date().toISOString(),
+                revisionId: revision.id,
+                manifestHash: revision.manifestHash,
+                blockingIds: reviewBlockingProblems.map((problem) => problem.id),
+                blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
+            }, lock);
         });
+        if (committed.kind !== 'committed') {
+            return denial(
+                entryPhase,
+                'Build cannot enter repair because the sealed revision moved or became unavailable while the review decision was being committed. Re-run /kata-review.',
+            );
+        }
     }
     return {
         authorized: true,

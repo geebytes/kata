@@ -24,7 +24,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type TaskRevision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
+import { type TaskRevision, commitReviewDecision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
@@ -1464,7 +1464,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
             // The read this binding came from is handed to the record reader, which used to take a second look at the
             // same non-atomic pointer to decide whether this revision already had a record.
-            const resultRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+            const resultSnapshot = await readReviewDecisionSnapshot(root, taskId);
+            const resultRevisionRead = resultSnapshot.revisionRead;
             const binding = await currentRevisionIdentityFrom(resultRevisionRead, root, taskId);
             const existing = await readReviewRecord(root, taskId, resultRevisionRead);
             if (!existing.ok) {
@@ -1499,12 +1500,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const recordPath = layoutReviewPath(root, taskId);
-            await mutateTaskArtefact(
-                root,
-                taskId,
-                recordPath,
-                async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
-            );
+            const committed = await commitReviewDecision(root, taskId, resultSnapshot, async (lock) => {
+                await mutateTaskArtefact(
+                    root,
+                    taskId,
+                    recordPath,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    lock,
+                );
+            });
+            if (committed.kind !== 'committed') {
+                return { command: 'review', taskId, phase: 'review', success: false, error: 'Cannot record a review result because the sealed revision moved or became unavailable while it was being committed. Re-run /kata-review.' };
+            }
             return {
                 command: 'review',
                 taskId,
@@ -1554,7 +1561,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // `verifyAgainstRequest` reading it again, and `currentRevisionIdentity` a third time for the stamped round —
             // so a seal landing in between left the approval resting on one revision while it stamped another. Same
             // invariant as the review entry and the repair writer, measured by an independent review.
-            const approvalRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+            const approvalSnapshot = await readReviewDecisionSnapshot(root, taskId);
+            const approvalRevisionRead = approvalSnapshot.revisionRead;
             const approvalBar = await readBlockingProblems(root, taskId, approvalRevisionRead);
             if (!approvalBar.ok) {
                 return {
@@ -1800,18 +1808,23 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // leave a half-written `review.json` — the artefact the archive gate reads to decide whether a change was
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
             const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
-            await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes);
-            // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
-            // repair was entered, so an approval recorded nothing and the escalation read a history whose blocking count
-            // rose (2 → 4 → 6) and never fell — firing on this change the moment its review passed with no findings. `0` and
-            // `null` are now two facts: cleared, and nothing to measure.
-            await appendReviewRound(root, taskId, {
-                at: new Date().toISOString(),
-                ...(approveBinding.revisionId ? { revisionId: approveBinding.revisionId } : {}),
-                ...(approveBinding.manifestHash ? { manifestHash: approveBinding.manifestHash } : {}),
-                blockingIds: [],
-                blockingCount: 0,
+            const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {
+                await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes, lock);
+                // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
+                // repair was entered, so an approval recorded nothing and the escalation read a history whose blocking count
+                // rose (2 → 4 → 6) and never fell — firing on this change the moment its review passed with no findings. `0` and
+                // `null` are now two facts: cleared, and nothing to measure.
+                await appendReviewRound(root, taskId, {
+                    at: new Date().toISOString(),
+                    ...(approveBinding.revisionId ? { revisionId: approveBinding.revisionId } : {}),
+                    ...(approveBinding.manifestHash ? { manifestHash: approveBinding.manifestHash } : {}),
+                    blockingIds: [],
+                    blockingCount: 0,
+                }, lock);
             });
+            if (committed.kind !== 'committed') {
+                return { command: 'review', taskId, phase: 'review', success: false, error: 'Review approval could not be committed because the sealed revision moved or became unavailable. Re-run /kata-review.' };
+            }
             return {
                 command: 'review',
                 taskId,
@@ -1858,53 +1871,57 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         // overwrite/archive decision below — and the pointer is written non-atomically, so a seal landing between the two
         // left the record stamped from one revision while the decision to replace it rested on another (measured by an
         // independent review; same invariant as the round writer in `repair-entry.ts`).
-        const entryRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+        const entrySnapshot = await readReviewDecisionSnapshot(root, taskId);
+        const entryRevisionRead = entrySnapshot.revisionRead;
         const entryBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
+        let committed;
         try {
-            const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
-                revisionId?: string;
-                findings?: ReviewFinding[];
-                status?: string;
-            };
-            const recordBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
-            if (revisionId && !bindsToRevision(previous, recordBinding)) {
-                // **A recorded round is archived before it is replaced; a placeholder is just replaced.** R5-7: this test
-                // was the third place still deriving "is this a recorded round" from `findings.length`, so a round that
-                // legitimately reported nothing (empty findings with a declared coverage) was overwritten without being
-                // kept anywhere — while a round with one minor finding was. One question, asked once, is what the other two
-                // sites now do; this one asks the same function.
-                if (!isReviewPlaceholder(previous)) {
-                    const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
-                    const historyEntry = JSON.stringify({
-                        revisionId: previous.revisionId,
-                        findings: previous.findings,
-                        status: previous.status ?? 'pending',
-                        archivedAt: new Date().toISOString(),
-                    }) + '\n';
-                    await appendFile(historyPath, historyEntry, 'utf8');
+            committed = await commitReviewDecision(root, taskId, entrySnapshot, async (lock) => {
+                try {
+                    const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
+                        revisionId?: string;
+                        findings?: ReviewFinding[];
+                        status?: string;
+                    };
+                    const recordBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
+                    if (revisionId && !bindsToRevision(previous, recordBinding)) {
+                        if (!isReviewPlaceholder(previous)) {
+                            const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
+                            const historyEntry = JSON.stringify({
+                                revisionId: previous.revisionId,
+                                findings: previous.findings,
+                                status: previous.status ?? 'pending',
+                                archivedAt: new Date().toISOString(),
+                            }) + '\n';
+                            await appendFile(historyPath, historyEntry, 'utf8');
+                        }
+                        await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
+                    } else if (isReviewPlaceholder(previous)) {
+                        await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
+                    }
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                    await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                 }
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
-            } else if (isReviewPlaceholder(previous)) {
-                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
-            }
+            });
         } catch (error) {
-            // **No record yet is not a failed entry.** The two were one branch, and separating them is the whole of R5-6:
-            // "nothing is here" is the ordinary first entry into review, while a failure *inside* the try used to be
-            // silently replaced by a placeholder — the round it described lost, under a message saying the review had been
-            // entered. Only the failure refuses now, and the refusal has to say what failed: R6-F5 measured that it named
-            // "the existing review record cannot be read" for any non-ENOENT throw, including one raised while writing the
-            // archive or the placeholder — a reason it had not established.
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                return {
-                    command: 'review',
-                    taskId,
-                    phase: state.phase,
-                    success: false,
-                    error: `Review could not be entered: ${(error as Error).message}. `
-                        + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
-                };
-            }
-            await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`);
+            return {
+                command: 'review',
+                taskId,
+                phase: state.phase,
+                success: false,
+                error: `Review could not be entered: ${(error as Error).message}. `
+                    + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
+            };
+        }
+        if (committed.kind !== 'committed') {
+            return {
+                command: 'review',
+                taskId,
+                phase: state.phase,
+                success: false,
+                error: 'Review could not be entered because the sealed revision moved or became unavailable while the placeholder was being committed. Re-run /kata-review.',
+            };
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }

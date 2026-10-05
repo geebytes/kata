@@ -23,7 +23,7 @@ import { isLegacyTask } from '../quality/acceptance-matrix.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
-import { readCurrentTaskRevisionState } from './revision.js';
+import { readReviewDecisionSnapshot } from './revision.js';
 import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
@@ -198,7 +198,8 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // `current-revision.json` threw here while the sibling reader (`readReviewRecord`, on the same file set) refused with a
   // reason — one fact, two answers. `absent` is a normal state for a change nobody has sealed yet; `unreadable` is a
   // refusal, reported below in the same shape the review record's unreadable state is.
-  const sealedRead = await readCurrentTaskRevisionState(root, taskId);
+  const snapshot = await readReviewDecisionSnapshot(root, taskId);
+  const sealedRead = snapshot.revisionRead;
   const sealed = sealedRead.kind === 'current' ? sealedRead.revision : null;
   const binding = { revisionId: currentRevisionId ?? '', manifestHash: sealed?.manifestHash ?? null };
   const review = currentRevisionId && !mixedRevision

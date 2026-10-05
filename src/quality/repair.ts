@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { taskDir } from '../core/layout.js';
-import { withTaskLock } from '../core/state.js';
+import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import type { Phase } from '../core/state.js';
 import type { ReviewSeverity } from './reviewer.js';
 import type { AcceptanceMatrix } from '../core/task.js';
@@ -374,14 +374,20 @@ export function assessReviewLoop(input: ReviewLoopAssessmentInput): ReviewLoopAs
  * moving. The lock is the repository's one rule for task artefacts, and this file keeps a single write entry point so
  * there is no second, unlocked way in.
  */
-export async function appendReviewRound(root: string, taskId: string, round: ReviewRound): Promise<void> {
+export async function appendReviewRound(root: string, taskId: string, round: ReviewRound, lock?: TaskLock): Promise<void> {
     const path = reviewRoundsPath(root, taskId);
     // The directory before the lock: this is the first write of a round, and a task that has not written anything yet has
     // no directory for the lock's own file to live in.
     await mkdir(dirname(path), { recursive: true });
-    await withTaskLock(root, taskId, async () => {
+    const append = async () => {
         await appendFile(path, `${JSON.stringify(round)}\n`, 'utf8');
-    });
+    };
+    if (lock) {
+        assertTaskLock(lock, root, taskId);
+        await append();
+        return;
+    }
+    await withTaskLock(root, taskId, async () => append());
 }
 
 export type ReviewRoundsRead =
