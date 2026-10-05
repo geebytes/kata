@@ -650,9 +650,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                     state,
                     observed: `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`,
                     at: nowIso(),
-                    // **The reproduction is what makes this a counterexample.** A command that exits 0 on the first check
-                    // never failed on anything, and counting it as an independent challenge is how `challenge add
-                    // --command 'exit 0'` satisfied the strict discovery floor.
+                    // `reproduced` preserves counterexample history only. Every check persists its observation, and the
+                    // discovery floor derives execution from a terminal state plus that observation, so a passing check
+                    // is not discarded merely because it found no current failure.
                     reproduced: result.code !== 0 && !result.timedOut,
                 });
                 outcomes.push({ id: challenge.id, code: result.code, state });

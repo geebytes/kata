@@ -57,11 +57,12 @@ describe('a probe set asks distinct questions', () => {
         expect(verifiedChallengeCount([], answersOf(['a', 'b', 'c']))).toBe(3);
     });
 
-    it('still counts a challenge that reproduced, and refuses one that never did', () => {
-        const reproduced = [{ id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: 'rev:test', state: 'withdrawn' as const, at: 'x', resolution: { at: 'y', observed: 'exit 0' }, reproduced: true }];
-        expect(verifiedChallengeCount(reproduced, [])).toBe(1);
-        const neverReproduced = [{ ...reproduced[0]!, reproduced: false }];
-        expect(verifiedChallengeCount(neverReproduced, [])).toBe(0);
+    it('counts a terminal observation whether or not it previously reproduced, while rejecting open and unobserved records', () => {
+        const observed = [{ id: 'X1', claimId: 'C1', command: 'grep -q holds src/a.ts', failsOn: 'rev:test', state: 'withdrawn' as const, at: 'x', resolution: { at: 'y', observed: 'exit 0' } }];
+        expect(verifiedChallengeCount(observed, [])).toBe(1);
+        expect(verifiedChallengeCount([{ ...observed[0]!, reproduced: true }], [])).toBe(1);
+        expect(verifiedChallengeCount([{ ...observed[0]!, state: 'open' as const }], [])).toBe(0);
+        expect(verifiedChallengeCount([{ ...observed[0]!, resolution: { at: 'y', observed: '  ' } }], [])).toBe(0);
     });
 });
 

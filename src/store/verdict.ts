@@ -26,8 +26,8 @@ import type { ProbeAnswer } from '../kernel/discovery.js';
  * both halves were satisfiable by doing nothing: a challenge whose command is `exit 0` is withdrawn by one check, and an
  * answer was a string nobody compared against the question. So the floor is computed from evidence of a measurement:
  *
- *   - a **withdrawn** challenge counts only when it records the failure it was drawn from (`resolution.observed` names
- *     an exit code other than 0) — that is the observation that a counterexample was real and the fix removed it;
+ *   - a **terminal** challenge counts when its persisted `resolution.observed` is non-blank; execution is what the
+ *     discovery floor proves, while `reproduced` remains historical counterexample information;
  *   - a **probe answer** counts only when the recorded observation carries the fact the probe asked about — the digest
  *     prefix for `digest-prefix`, or the path for the existence questions. An empty `observed` (the default) cannot
  *     answer anything, and treating it as an answer is how a plain `ledger answer --probe X` satisfied a strict floor.
@@ -35,12 +35,11 @@ import type { ProbeAnswer } from '../kernel/discovery.js';
 export function verifiedChallengeCount(challenges: readonly Challenge[], answers: readonly ProbeAnswer[]): number {
     let verified = 0;
     for (const challenge of challenges) {
-        // **A challenge counts only if it ever reproduced.** `challenge add --command 'exit 0'` followed by one check
-        // leaves the state `withdrawn` (the command exits 0), and counting that as an independent challenge is how the
-        // strict discovery floor was satisfied by doing nothing. A counterexample that never failed on anything has not
-        // challenged anything, whatever its state says.
-        if (challenge.reproduced !== true) continue;
+        // A terminal challenge proves discovery only after its check persisted a non-blank observation. `reproduced`
+        // records whether that measurement ever found a counterexample; requiring it here would make an honest passing
+        // independent check ineligible and pressure reviewers to manufacture a current failure.
         if (challenge.state !== 'withdrawn' && challenge.state !== 'resolved') continue;
+        if (!challenge.resolution?.observed.trim()) continue;
         verified += 1;
     }
     // **Distinct questions, not distinct answer records.** Counting answers let the same question answered twice satisfy
@@ -286,14 +285,9 @@ export async function ledgerVerdict(input: {
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,
-        // **Discovery counts what was observed, not what was declared.** Both signals are independent challenges — a
-        // counterexample is a challenge the author must answer, a probe is a question asked of the reviewer after the
-        // fact — but the *count* alone was satisfiable without anything running: `challenge add --command 'exit 0'`
-        // followed by one check withdraws it (the command exits 0) and increments the count, and a probe answer was a
-        // free-text string with nothing to compare against. `verifiedChallenges` is derived from what was recorded:
-        // a challenge withdrawn with a failure observation, or a probe answer whose `observed` carries the digest prefix
-        // the probe asked for. Measured before this: a ledger with four answered probes of empty `observed` satisfied the
-        // strict floor.
+        // **Discovery counts what was observed, not what was declared.** A terminal challenge contributes only after its
+        // check persisted a non-blank observation; a probe answer must likewise carry the fact its command asked about.
+        // `reproduced` remains counterexample history, not a requirement that the current revision still fail.
         discovery: {
             independentChallenges:
                 ledger.challenges.filter((challenge) => challenge.state !== 'open').length

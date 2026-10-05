@@ -88,7 +88,7 @@ async function submission(): Promise<string> {
  * floor's one independent challenge on record. A fixture that skipped it would be testing a weaker route than the one
  * shipped — and would fail for a reason unrelated to its subject.
  */
-async function satisfyStrictTier(): Promise<void> {
+async function satisfyStrictTier(options: { discovery?: 'reproducing' | 'passing' } = {}): Promise<void> {
     const classes = ['boundary', 'failure_mode'] as const;
     for (const [index, riskClass] of classes.entries()) {
         const evidenceId = `E${index + 2}`;
@@ -102,13 +102,16 @@ async function satisfyStrictTier(): Promise<void> {
         await ledger(['evidence', 'add', '--file', path]);
     }
     await ledger(['evidence', 'verify']);
-    // **A challenge that reproduced is the discovery the floor asks for.** It is raised against a file outside the
-    // frozen subject, measured, and found to fail (`grep` finds no marker) — that failure is the reproduction the floor
-    // counts. The author then writes the marker, the same command passes, and the challenge is withdrawn.
-    //
-    // The previous fixture used `exit 0` and relied on the count alone, which is exactly the hole the floor's
-    // `verifiedChallenges` half closes: a command that never failed on anything is not a challenge, whatever state it
-    // ends in. The file lives outside the subject so applying the fix does not move the revision and stale the verdicts.
+    if (options.discovery === 'passing') {
+        // This is a real, discriminating check against the frozen source: it passes now, but would fail if the
+        // declared export changed. Its passing observation is execution evidence, not a claim verdict.
+        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q "export const holds = true" src/a.ts', '--id', 'X1']);
+        await ledger(['challenge', 'check']);
+        return;
+    }
+
+    // Historical counterexamples stay supported: a challenge that first fails and then passes retains `reproduced`,
+    // but discovery execution is no longer defined by that historical fact.
     await mkdir(join(root, 'notes'), { recursive: true });
     await writeFile(join(root, 'notes', 'discovery.txt'), 'Nothing here yet\n');
     await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marked notes/discovery.txt', '--id', 'X1']);
@@ -205,6 +208,28 @@ describe('the ledger verbs', () => {
         // The refusal above set the exit code; a pass leaves it as it is, because a passing command must not clear an
         // earlier failure in the same process.
         expect(process.exitCode).toBe(1);
+    });
+
+    it('accepts a recorded passing challenge as executed discovery without treating it as claim evidence', async () => {
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        await satisfyStrictTier({ discovery: 'passing' });
+
+        const decision = await ledger(['decide']);
+        expect(decision.verdict).toBe('pass');
+        expect((decision.reasons as Array<{ code: string }>).map((reason) => reason.code)).not.toContain('discovery_unverified');
+
+        const stored = await readLedger(root, changeId);
+        const challenge = stored.challenges.find((entry) => entry.id === 'X1');
+        expect(challenge).toMatchObject({
+            id: 'X1',
+            state: 'withdrawn',
+            resolution: expect.objectContaining({ observed: expect.stringContaining('exit 0') }),
+        });
+        expect(challenge).not.toHaveProperty('reproduced');
     });
 
     it('refuses a decision asked for by a party that produced a reading, which the verb now passes', async () => {

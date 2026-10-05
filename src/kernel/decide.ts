@@ -420,11 +420,10 @@ export function decide(input: DecideInput): Decision {
         }
     }
 
-    // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge — and the challenge
-    //    must be one that actually ran. The count alone was satisfiable by `challenge add --command 'exit 0'` followed by
-    //    one check (the command exits 0, the state becomes `withdrawn`, the count increments), so a change could satisfy
-    //    the floor without anything having been challenged. `verifiedChallenges` counts the ones with a recorded
-    //    observation, which is the difference between a challenge and a declaration of one.
+    // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge, and it must
+    //    have actually run. A terminal state alone is only a declaration; `verifiedChallenges` requires the persisted
+    //    non-blank observation produced by that execution. It does not require a current counterexample: that historical
+    //    fact belongs to `reproduced`, while discovery proves an independent attempt to refute.
     if (input.tier !== 'standard' && input.discovery.independentChallenges === 0) {
         reasons.push(reason('discovery_floor', REASON_MESSAGES.discovery_floor.message));
         // **The step, not only the state.** These five refusals were `reasons` non-empty with an empty `deficits` list, which
@@ -432,19 +431,19 @@ export function decide(input: DecideInput): Decision {
         // remedy, and the remedy is a command. Each one now names what to add.
         deficits.push({
             claimId: 'discovery:independent_challenge',
-            need: 'record an independent challenge (`kata-cli ledger challenge add --command <cmd>`) that can fail on this change',
+            need: 'record an independent challenge (`kata-cli ledger challenge add --command <cmd>`) and run it to persist an observation',
         });
     }
     if (input.tier !== 'standard'
         && input.discovery.independentChallenges > 0
         && (input.discovery.verifiedChallenges ?? 0) === 0) {
         // Named separately from `discovery_floor` because the remediation differs: the first says "nothing challenged
-        // this", the second says "something claims to have, and no observation supports it".
+        // this", the second says "something was declared, and no terminal observation supports execution".
         reasons.push(reason('discovery_unverified', REASON_MESSAGES.discovery_unverified.message));
         deficits.push({
             claimId: 'discovery:verified_challenge',
-            need: 'run the recorded challenge and let it record its observation (`kata-cli ledger challenge run`); a challenge '
-                + 'that never ran verifies nothing',
+            need: 'run the recorded challenge and let it record its observation (`kata-cli ledger challenge check`); a challenge '
+                + 'with no terminal observation verifies nothing',
         });
     }
 

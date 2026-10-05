@@ -231,12 +231,9 @@ export type Challenge = {
     /**
      * Whether this counterexample was ever observed to reproduce.
      *
-     * **The field the discovery floor needed.** A challenge whose command exits 0 is *withdrawn* by one check, and the
-     * floor used to count every non-open challenge as an independent challenge — so `challenge add --command 'exit 0'`
-     * followed by one `challenge check` satisfied the strict floor without anything having been challenged. A
-     * counterexample is only a counterexample if it failed at some point, and that failure is a fact the ledger can
-     * record: it is set when a check observes a non-zero exit, and it is never cleared, because a reproduction that
-     * happened stays a fact about the artifact.
+     * This is durable history about the challenge, not discovery-floor eligibility. A passing terminal check still
+     * records an executed independent attempt through `resolution.observed`; when a check finds a non-zero exit, this
+     * field preserves that counterexample fact after a later fix makes the command pass.
      */
     reproduced?: boolean;
 };

@@ -166,7 +166,7 @@ export const reviewScenarios: ReviewScenario[] = [
     {
         id: 'discovery-declared-but-never-run',
         mode: 'discovery',
-        why: 'The floor cannot be met by declaring a challenge: `challenge add --command \'exit 0\'` plus one check leaves a withdrawn challenge that never failed on anything, so the count is satisfied and nothing was challenged.',
+        why: 'The floor cannot be met by declaring a challenge or a terminal record without a usable observation: only an actual check that persists one counts as discovery; a passing observation is execution, not claim evidence.',
         build: () => base({ tier: 'strict', discovery: { independentChallenges: 1, verifiedChallenges: 0 } }),
         expect: { verdict: 'insufficient', reasons: ['discovery_unverified'] },
     },

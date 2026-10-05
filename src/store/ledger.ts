@@ -761,9 +761,8 @@ export async function resolveChallenge(
             state: resolution.state,
             resolution: { at: resolution.at, observed: resolution.observed },
             // **A reproduction is a fact that is never cleared.** Set the moment a check observes the command failing,
-            // and kept through resolution and amendment: a counterexample that once reproduced is a counterexample,
-            // even after the fix makes it pass. This is what lets the discovery floor count challenges that actually
-            // challenged something rather than challenges that were declared.
+            // and keep it through resolution and amendment; the discovery floor separately counts terminal, observed
+            // execution, so historical counterexample status is never used as a surrogate for whether a check ran.
             ...(current.reproduced === true || resolution.reproduced === true ? { reproduced: true } : {}),
         };
         await writeJson(root, changeId, FILES.challenges, challenges);
