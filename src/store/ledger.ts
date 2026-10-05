@@ -110,7 +110,55 @@ export async function appendProbe(root: string, changeId: string, probe: Probe):
 }
 
 export async function readProbes(root: string, changeId: string): Promise<Probe[]> {
-    return (await readJson<Probe[]>(join(reviewDir(root, changeId), FILES.probes))) ?? [];
+    return records<Probe>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.probes)), STRING_FIELDS.probes);
+}
+
+/**
+ * **The string fields each schema-less artefact declares.** Coercing exactly these is what makes a reader's type honest:
+ * `Challenge[]`, `Probe[]` and `ProbeAnswer[]` all promise strings, and nothing validates the files they come from.
+ * Optional fields are only coerced when present, so an absent `prefix` stays absent rather than becoming `''`.
+ *
+ * The union-typed `state` is deliberately not coerced: it is only ever compared to a literal, never dereferenced, and
+ * inventing a member for it would make the type lie in the other direction.
+ */
+const STRING_FIELDS = {
+    challenges: ['id', 'claimId', 'command', 'failsOn', 'at'],
+    probes: ['id', 'claimId', 'kind', 'path', 'prefix', 'command', 'askedAt'],
+    answers: ['probeId', 'command', 'observed', 'answeredAt'],
+} as const;
+
+/**
+ * **A record from a schema-less file still has to answer its declared type, and this is where that is enforced.**
+ *
+ * Three review rounds in a row found the same defect: a consumer trusted the type, dereferenced a field the file did not
+ * have, and threw — turning a promised refusal into a crash on every surface that reads the ledger. Guarding each
+ * consumer is what produced the series (`verifiedChallengeCount`'s challenge half, its probe half, then
+ * `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the consumers: a reader added
+ * later cannot reintroduce it.
+ *
+ * Normalization is lossless and conservative. A field that is not a string becomes `''`, which fails the presence tests
+ * that already exist — the refusing path — and unknown fields are preserved. An element that is not an object carries no
+ * fact to act on and is dropped rather than dereferenced. Nothing is hidden: the file keeps its bytes, and the caller
+ * sees the records it can actually use.
+ *
+ * **What this does not settle:** a document that is not an array at all (`{}`, `42`, `"x"`). It is passed through as the
+ * reader read it, which is the behaviour that existed before this normalization — deciding whether a corrupt document is
+ * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
+ * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
+ */
+function records<T>(value: unknown, fields: readonly string[]): T[] {
+    // A missing file is no records — the `?? []` this replaced, kept where the read happens rather than at each caller.
+    if (value === null || value === undefined) return [];
+    if (!Array.isArray(value)) return value as T[];
+    return value
+        .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+        .map((entry) => {
+            const normalized: Record<string, unknown> = { ...entry };
+            for (const field of fields) {
+                if (normalized[field] !== undefined) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
+            }
+            return normalized;
+        }) as T[];
 }
 
 /**
@@ -138,7 +186,7 @@ export async function answerProbe(
 }
 
 export async function readProbeAnswers(root: string, changeId: string): Promise<ProbeAnswer[]> {
-    return (await readJson<ProbeAnswer[]>(join(reviewDir(root, changeId), FILES.probeAnswers))) ?? [];
+    return records<ProbeAnswer>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.probeAnswers)), STRING_FIELDS.answers);
 }
 
 export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
@@ -375,7 +423,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             const readings = verdictsRaw;
             return { readings, verdicts: projectVerdicts(readings, { currentRevision: subjectForProjection?.revision ?? null }) };
         })(),
-        challenges: (await readJson<Challenge[]>(join(dir, FILES.challenges))) ?? [],
+        challenges: records<Challenge>(await readJson<unknown>(join(dir, FILES.challenges)), STRING_FIELDS.challenges),
         usage: usage?.usage ?? {},
         assurance: usage?.assurance ?? 'none',
         // **The history has a reader, because a record nothing reads is not a record.** R8-F2: `ensureAssurance` moved a
@@ -740,7 +788,7 @@ export async function amendChallenge(
 }
 
 export async function challengeExists(root: string, changeId: string, challengeId: string): Promise<boolean> {
-    const challenges = (await readJson<Challenge[]>(join(reviewDir(root, changeId), FILES.challenges))) ?? [];
+    const challenges = records<Challenge>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.challenges)), STRING_FIELDS.challenges);
     return challenges.some((challenge) => challenge.id === challengeId);
 }
 

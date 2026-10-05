@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendChallenge, appendClaim, appendEvidence, freezeSubject, recordVerdicts, writeSubject } from '../../src/store/ledger.js';
+import { appendChallenge, appendClaim, appendEvidence, freezeSubject, readLedger, readProbeAnswers, recordVerdicts, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -186,5 +186,44 @@ describe('the discovery floor keeps refusing what did not run', () => {
         });
         expect(codes).toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
+    });
+});
+
+/**
+ * **The other readers of the same schema-less files, at the layer where the type is claimed.**
+ *
+ * The cases above drive the decision; these drive the readers themselves. Three review rounds found the same defect one
+ * consumer at a time — a reader trusted `Challenge[]`/`ProbeAnswer[]` and dereferenced a field the file did not have —
+ * so the guarantee is asserted where the type is promised rather than at each consumer that might forget it.
+ */
+describe('the readers of the schema-less ledger files', () => {
+    it('hands out records whose declared string fields are strings, whatever the file holds', async () => {
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
+            `${JSON.stringify([{ probeId: 'P1-C1', command: 42, observed: { seen: true }, answeredAt: null }], null, 2)}\n`,
+        );
+
+        const answers = await readProbeAnswers(root, changeId);
+        expect(answers).toHaveLength(1);
+        expect(answers[0]?.command).toBe('');
+        expect(answers[0]?.observed).toBe('');
+        expect(answers[0]?.probeId).toBe('P1-C1');
+    });
+
+    it('drops an element that is not a record instead of dereferencing it', async () => {
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
+            `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'withdrawn', at: 'x' }], null, 2)}\n`,
+        );
+
+        // The reader hands out the record it can act on. The element it cannot act on is gone, and nothing dereferenced it.
+        const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
+        expect(challenges.map((challenge) => challenge.id)).toEqual(['X1']);
     });
 });
