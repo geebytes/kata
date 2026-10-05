@@ -123,12 +123,18 @@ export async function readProbes(root: string, changeId: string): Promise<Probe[
  *
  * The union-typed `state` is deliberately not coerced: it is only ever compared to a literal, never dereferenced, and
  * inventing a member for it would make the type lie in the other direction.
+ *
+ * `identity` names the field a caller points at the record with. **A record whose identity field is not a string is not
+ * handed out at all** — the file keeps its bytes and the reader reports what it could not use. This is not coercion's
+ * neighbour but its replacement for the identity field: two records whose `id` the reader coerced to `''` became one name,
+ * and naming one of them by position was how a resolution could be written to the record the caller did not mean. An
+ * unnameable record is not usable, and saying so is what keeps a name a name.
  */
 const STRING_FIELDS = {
-    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: [] },
-    probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix'] },
-    answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: [] },
-    runs: { required: ['at', 'producer', 'diversity'], optional: ['note'] },
+    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: [], identity: 'id' },
+    probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix'], identity: 'id' },
+    answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: [], identity: 'probeId' },
+    runs: { required: ['at', 'producer', 'diversity'], optional: ['note'], identity: null },
 } as const;
 
 /**
@@ -164,8 +170,12 @@ const STRING_FIELDS = {
  * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
  * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
  */
-function records<T>(value: unknown, fields: { required: readonly string[]; optional: readonly string[] }): T[] {
-    return recordElements(value).map((entry) => {
+function records<T>(value: unknown, fields: { required: readonly string[]; optional: readonly string[]; identity?: string | null }): T[] {
+    return recordElements(value)
+        // A record nobody can name is not handed out: the caller could not point at it afterwards, and handing it out under
+        // an invented name is what made two records one (`identity` above carries the reasoning).
+        .filter((entry) => fields.identity === null || typeof entry[fields.identity as string] === 'string')
+        .map((entry) => {
         const normalized: Record<string, unknown> = { ...entry };
         // A required field answers its type whether or not the file has it.
         for (const field of fields.required) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
@@ -191,32 +201,15 @@ function recordKey(value: unknown): string {
 }
 
 /**
- * **How a caller names the record it wants written.**
+ * **The index of the one record a name refers to, or `-1` when it refers to none or to more than one.**
  *
- * A name alone is not always enough: the reader coerces what it cannot promise, so two records whose `id` is not a string
- * are handed out under one name — and a `findIndex` on that name matches the first of them every time. `index` is the
- * record's position in the file as the caller read it, which is what disambiguates; `id` stays required, because it is
- * what verifies that the position still holds the record the caller meant. An operator typing `--id` has only a name, and
- * that is the honest limit of what a person can point at: an ambiguous name is refused rather than guessed.
+ * Two independent rounds narrowed this. The first found that a lookup by a coerced name matched the first of several
+ * records sharing it; the second found that the position added to fix that was verified with the same shared name, so a
+ * file that shifted mid-command was written to anyway — a resolution landing on the record the caller did not mean, with
+ * the command still reporting success. Both are answered upstream now: a record whose identity field is not a string is
+ * not handed out, so a name is a name again. What remains reachable here is a genuine duplicate — two records with the
+ * same stored id — and that is refused rather than guessed.
  */
-export type ChallengeRef = { id: string; index?: number };
-
-/**
- * **The index of the record a reference points at, or `-1` when it points at none, at more than one, or at a position
- * that no longer holds that record.**
- *
- * Two independent rounds found the two halves of this: a lookup by a coerced name matched the first of several records
- * sharing it, and a lookup that ignored the name would write to whatever now sits at a remembered position. Counting the
- * name matches handles the first; checking the name at the given position handles the second.
- */
-function locateChallenge(entries: ReadonlyArray<{ id?: unknown }>, ref: string | ChallengeRef): number {
-    if (typeof ref === 'string') return uniqueByName(entries, ref);
-    if (ref.index === undefined) return uniqueByName(entries, ref.id);
-    if (!Number.isInteger(ref.index) || ref.index < 0 || ref.index >= entries.length) return -1;
-    return recordKey(entries[ref.index]?.id) === recordKey(ref.id) ? ref.index : -1;
-}
-
-/** The one record a name refers to, or `-1` when it refers to none or to more than one. */
 function uniqueByName(entries: ReadonlyArray<{ id?: unknown }>, name: unknown): number {
     const wanted = recordKey(name);
     let found = -1;
@@ -417,7 +410,12 @@ export async function readPlan(root: string, changeId: string): Promise<unknown 
     const stored = await readJson<unknown>(join(reviewDir(root, changeId), FILES.plan));
     if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
     const plan = { ...(stored as Record<string, unknown>) };
-    if (!Array.isArray(plan.readingSets)) plan.readingSets = [];
+    // **Array-ness is not enough: the consumers dereference the elements.** `(plan.readingSets ?? []).map(set => set.claimId)`
+    // throws on a `null` element, and a round found exactly that one level inside the field the previous round normalized.
+    // Both fields are normalized the same way, because both are mapped over by the same two callers.
+    for (const field of ['readingSets', 'requiredEvidence']) {
+        plan[field] = Array.isArray(plan[field]) ? recordElements(plan[field]) : [];
+    }
     return plan;
 }
 
@@ -875,15 +873,13 @@ export async function appendChallenge(root: string, changeId: string, challenge:
 export async function amendChallenge(
     root: string,
     changeId: string,
-    challengeId: string | ChallengeRef,
+    challengeId: string,
     amendment: { command: string; reason: string; at: string },
 ): Promise<Challenge | null> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        // A caller that read the file can name the record by position; an operator with only `--id` cannot, and an
-        // ambiguous name is refused rather than guessed (`locateChallenge` carries the reasoning).
-        const index = locateChallenge(challenges, challengeId);
+        const index = uniqueByName(challenges, challengeId);
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
         const amended: Challenge = {
@@ -907,13 +903,13 @@ export async function challengeExists(root: string, changeId: string, challengeI
 export async function resolveChallenge(
     root: string,
     changeId: string,
-    challengeId: string | ChallengeRef,
+    challengeId: string,
     resolution: { state: Challenge['state']; observed: string; at: string; /** Whether this check observed the command fail. */ reproduced?: boolean },
 ): Promise<boolean> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        const index = locateChallenge(challenges, challengeId);
+        const index = uniqueByName(challenges, challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
         challenges[index] = {

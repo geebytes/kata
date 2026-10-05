@@ -282,46 +282,38 @@ describe('the readers of the schema-less ledger files', () => {
         expect(runs[0]?.producer).toBe('pi');
     });
 
-    it('refuses to resolve a name that fits two records', async () => {
-        // The reader coerces what it cannot promise, so two records with a non-string id read as one name. Resolving
-        // "the first match" then reports a resolution the second record never got — the same defect as the raw/coerced
-        // mismatch, through the key rather than the view.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
-            `${JSON.stringify([
-                { id: 42, claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x' },
-                { id: 43, claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x' },
-            ], null, 2)}\n`,
-        );
-
-        const named = await readLedger(root, changeId).then((ledger) => ledger.challenges.map((challenge) => challenge.id));
-        expect(named).toEqual(['', '']);
-        await expect(resolveChallenge(root, changeId, named[0] ?? '', { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(false);
-        const after = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<{ state: string }>;
-        expect(after.map((entry) => entry.state)).toEqual(['open', 'open']);
-    });
-
-    it('resolves by position when two records share a name, and refuses a position that moved', async () => {
-        // An operator with only `--id` cannot point at one of two records sharing a name, but a caller that read the file
-        // can: the position is the identity, and the name at that position is what verifies it is still the same record.
+    it('does not hand out a record nobody can name, so two records cannot share one name', async () => {
+        // A record whose identity field is not a string is not usable: the reader coerces it to `''`, two such records
+        // become one name, and naming one of them by position was how a resolution could be written to the record the
+        // caller did not mean — with the command still reporting success. Dropping it upstream is what keeps a name a name.
+        // The file keeps its bytes, so nothing is hidden; what the reader hands out is what a caller can act on.
         await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
         const file = join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json');
         await writeFile(file, `${JSON.stringify([
-            { id: 42, claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
+            { id: 42, claimId: 'C1', command: 'exit 1', failsOn: 'rev:x', state: 'open', at: 'x' },
             { id: 43, claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
+            { id: 'X1', claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
         ], null, 2)}\n`);
 
         const named = await readLedger(root, changeId).then((ledger) => ledger.challenges.map((challenge) => challenge.id));
-        // Both records answer to the same name, so each is resolved at its own position rather than at "the first match".
-        await expect(resolveChallenge(root, changeId, { id: named[0] ?? '', index: 0 }, { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
-        await expect(resolveChallenge(root, changeId, { id: named[1] ?? '', index: 1 }, { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
-        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ state: string }>;
-        expect(after.map((entry) => entry.state)).toEqual(['withdrawn', 'withdrawn']);
+        expect(named).toEqual(['X1']);
+        await expect(resolveChallenge(root, changeId, 'X1', { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
+        // The two it could not name are untouched on disk, and neither of them was written to.
+        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ id: unknown; state: string }>;
+        expect(after.map((entry) => entry.state)).toEqual(['open', 'open', 'withdrawn']);
+    });
 
-        // A position the file no longer holds that record is refused rather than written to a stranger.
-        await expect(resolveChallenge(root, changeId, { id: 'X1', index: 1 }, { state: 'open', observed: 'exit 1', at: 'x' })).resolves.toBe(false);
-        await expect(resolveChallenge(root, changeId, { id: named[0] ?? '', index: 9 }, { state: 'open', observed: 'exit 1', at: 'x' })).resolves.toBe(false);
+    it('refuses a name that a duplicate id makes ambiguous', async () => {
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        const file = join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json');
+        await writeFile(file, `${JSON.stringify([
+            { id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: 'rev:x', state: 'open', at: 'x' },
+            { id: 'X1', claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
+        ], null, 2)}\n`);
+
+        await expect(resolveChallenge(root, changeId, 'X1', { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(false);
+        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ state: string }>;
+        expect(after.map((entry) => entry.state)).toEqual(['open', 'open']);
     });
 
     it('promises the shape its consumers dereference for the plan, and drops a line that is not a record', async () => {
@@ -329,11 +321,13 @@ describe('the readers of the schema-less ledger files', () => {
         // is not an array made `ledger focus` throw. And a `null` line in the history reached a consumer that read
         // `.evidenceId` off it — a line that parses is not yet a record.
         await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), `${JSON.stringify({ readingSets: 42, tier: 'strict' }, null, 2)}\n`);
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), `${JSON.stringify({ readingSets: [null, { claimId: 'C1', paths: ['src/a.ts'] }], requiredEvidence: 42, tier: 'strict' }, null, 2)}\n`);
         await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'verdict-history.jsonl'), `null\n{"evidenceId":"E1","verdict":"supported"}\n`);
 
-        const plan = await readPlan(root, changeId) as { readingSets: unknown; tier: string };
-        expect(plan.readingSets).toEqual([]);
+        const plan = await readPlan(root, changeId) as { readingSets: Array<{ claimId: string }>; requiredEvidence: unknown[]; tier: string };
+        // Array-ness is not enough: the consumers dereference the elements, so a non-record element is dropped here too.
+        expect(plan.readingSets.map((set) => set.claimId)).toEqual(['C1']);
+        expect(plan.requiredEvidence).toEqual([]);
         expect(plan.tier).toBe('strict');
         const history = await readVerdictHistory(root, changeId);
         expect(history.entries.map((entry) => entry.evidenceId)).toEqual(['E1']);
