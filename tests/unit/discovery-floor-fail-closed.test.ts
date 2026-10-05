@@ -54,7 +54,7 @@ afterEach(async () => {
  */
 async function ledgerWithChallenge(
     challenge: Parameters<typeof appendChallenge>[2] | null,
-    options: { stored?: unknown } = {},
+    options: { stored?: unknown; answers?: unknown[] } = {},
 ): Promise<{ codes: string[]; deficits: Array<{ claimId: string; need: string }> }> {
     const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
     expect(frozen.ok).toBe(true);
@@ -69,11 +69,16 @@ async function ledgerWithChallenge(
     }));
     await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
     await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: frozen.subject.revision })]);
-    if (options.stored === undefined) {
-        if (challenge === null) throw new Error('the fixture must pass either a challenge or the record to store');
-        await appendChallenge(root, changeId, challenge);
-    } else {
+    if (options.stored !== undefined) {
         await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), `${JSON.stringify([options.stored], null, 2)}\n`);
+    } else if (challenge !== null) {
+        await appendChallenge(root, changeId, challenge);
+    } else if (options.answers === undefined) {
+        throw new Error('the fixture must pass a challenge, a record to store, or the answers to store');
+    }
+    // The same shape question for the probe half, which reads a second schema-less artefact.
+    if (options.answers !== undefined) {
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'), `${JSON.stringify(options.answers, null, 2)}\n`);
     }
 
     // The tier is named rather than classified: the discovery floor is a strict-tier rule, and letting the fixture's
@@ -123,6 +128,24 @@ describe('the discovery floor keeps refusing what did not run', () => {
         // The refusal carries the step, not only the state: an author reading it can act without inventing the remedy.
         const deficit = deficits.find((entry) => entry.claimId === 'discovery:verified_challenge');
         expect(deficit?.need).toContain('challenge check');
+    });
+
+    it('refuses an answer whose observation key is absent instead of crashing on it', async () => {
+        // The probe half reads a second schema-less artefact, and it had the same unguarded dereference the challenge half
+        // was repaired for — one branch below it. An answer recorded without an `observed` is not an answer that proved
+        // anything, so it must land on the refusing path; a `TypeError` here reaches every surface that reads the ledger.
+        const { codes } = await ledgerWithChallenge(null, {
+            answers: [{ probeId: 'P1-C1', command: 'test -f src/a.ts', answeredAt: '2026-10-05T00:00:00.000Z' }],
+        });
+        expect(codes).toContain('discovery_unverified');
+        expect(codes).not.toContain('challenge_open');
+    });
+
+    it('refuses an answer whose command is a non-string instead of crashing on it', async () => {
+        const { codes } = await ledgerWithChallenge(null, {
+            answers: [{ probeId: 'P1-C1', command: 42, observed: 'exit 0', answeredAt: '2026-10-05T00:00:00.000Z' }],
+        });
+        expect(codes).toContain('discovery_unverified');
     });
 
     it('clears discovery for a terminal record that recorded an observation, without any counterexample history', async () => {

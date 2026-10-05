@@ -57,13 +57,20 @@ export function verifiedChallengeCount(challenges: readonly Challenge[], answers
     // path it is about), so the count is of independent readings whatever produced the list.
     const askedQuestion = new Set<string>();
     for (const answer of answers) {
-        // The answer carries the command it ran and what it saw. Both have to be present, and the observation has to be
-        // more than whitespace, for the answer to count as having looked at something.
-        if (!answer.command.trim() || !answer.observed.trim()) continue;
+        // **Both fields are tested before they are used, for the same reason the challenge half tests its own.**
+        // `probe-answers.json` is registered `internal` with no schema, so an answer may carry a `command` without an
+        // `observed`, or carry a non-string in either — a legacy or hand-repaired ledger is where such a record lives.
+        // This branch had the identical unguarded dereference the challenge branch above was repaired for, one line
+        // below it, and the same repair applies: keep the record on the refusing path instead of throwing on it.
+        // Normalized in one place, so the identity below is the same string the presence test judged — and so each half of
+        // this test has a single, nameable site a falsifier can aim at.
+        const command = typeof answer.command === 'string' ? answer.command.trim() : '';
+        const observed = typeof answer.observed === 'string' ? answer.observed.trim() : '';
+        if (command === '' || observed === '') continue;
         // **The command *is* the question.** A probe's identity is the command it asks, so two answers to one command are
         // one reading however they were recorded — the answer type carries no kind or path, and inventing one from the
         // stored probe list would make the count depend on a lookup that can be absent.
-        const identity = answer.command.trim();
+        const identity = command;
         if (askedQuestion.has(identity)) continue;
         askedQuestion.add(identity);
         verified += 1;
