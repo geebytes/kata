@@ -128,6 +128,12 @@ export async function readReviewRecord(
         ...(typeof record.manifestHash === 'string' ? { manifestHash: record.manifestHash } : {}),
         ...(typeof record.codeManifestHash === 'string' ? { codeManifestHash: record.codeManifestHash } : {}),
         ...(typeof record.governanceManifestHash === 'string' ? { governanceManifestHash: record.governanceManifestHash } : {}),
+        // `bindsToRevision` gives the frozen candidate precedence over the owned manifest, so dropping this field made a
+        // correctly freeze-bound record read as unbound whenever the manifest had moved — and every consumer of this one
+        // reader then dropped the record's findings, in the fail-open direction: the approval bar, the repair entry, the
+        // router and the distill gate all under-counted the open problems.
+        ...(typeof record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: record.candidateFreezeSha256 } : {}),
+        ...(typeof record.instrumentManifestHash === 'string' ? { instrumentManifestHash: record.instrumentManifestHash } : {}),
     };
     const bound = bindsToRevision(binding, await currentRevisionIdentityFrom(revisionRead, root, taskId));
     return {

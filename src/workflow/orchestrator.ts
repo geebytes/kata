@@ -1790,7 +1790,25 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const approvalTask = await readTask(root, taskId);
             const reviewPath = layoutReviewPath(root, taskId);
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
-            const existing = await readReview(root, taskId);
+            // **One reader, and it is the one that carries every binding field.** `readReview` returns no `manifestHash`,
+            // so a binding built from it could never satisfy the manifest branch of `bindsToRevision` — the refusal below
+            // promises "(or the same content)" and that branch was unreachable, while the bar above had already decided
+            // the same question from a different read. `readReviewRecord` answers both from the record it read.
+            const approvalRecord = await readReviewRecord(root, taskId, approvalRevisionRead);
+            if (!approvalRecord.ok) {
+                return {
+                    command: 'review', taskId, phase: 'review', success: false,
+                    error: `Review approval cannot be decided: ${approvalRecord.why}` ,
+                };
+            }
+            const existing: VerdictBinding = {
+                ...(typeof approvalRecord.record.revisionId === 'string' ? { revisionId: approvalRecord.record.revisionId } : {}),
+                ...(typeof approvalRecord.record.manifestHash === 'string' ? { manifestHash: approvalRecord.record.manifestHash } : {}),
+                ...(typeof approvalRecord.record.codeManifestHash === 'string' ? { codeManifestHash: approvalRecord.record.codeManifestHash } : {}),
+                ...(typeof approvalRecord.record.governanceManifestHash === 'string' ? { governanceManifestHash: approvalRecord.record.governanceManifestHash } : {}),
+                ...(typeof approvalRecord.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: approvalRecord.record.instrumentManifestHash } : {}),
+                ...(typeof approvalRecord.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: approvalRecord.record.candidateFreezeSha256 } : {}),
+            };
             const approveBinding = await currentRevisionIdentityFrom(approvalRevisionRead, root, taskId);
             if (!approveBinding.revisionId || !approveBinding.manifestHash) {
                 return {
@@ -1822,12 +1840,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 ? []
                 : suggestedReviewedPaths(
                     approvalTask.acceptanceMatrix,
-                    existing.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
+                    approvalRecord.findings.map((finding) => finding.acceptanceId).filter((id): id is string => Boolean(id)),
                 );
             // **The approval lands atomically and under the task lock.** It was a bare `writeFile`, so a crash could
             // leave a half-written `review.json` — the artefact the archive gate reads to decide whether a change was
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
-            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: existing.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
+            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {
                 await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes, lock);
                 // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a

@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeResult } from '../quality/judge.js';
 import { judgePath, reviewPath } from '../core/layout.js';
-import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
+import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.js';
+import { readReviewDecisionSnapshot } from './revision.js';
 import { readBlockingProblems, readReviewRecord } from './review-read.js';
 
 /**
@@ -73,7 +74,10 @@ export async function evaluateReviewClearance(
     // **One read, through the reader every other surface uses.** This gate used a validating reader of its own and let
     // its error escape, so a record that did not match its schema produced an *exception* out of a gate — the one thing a
     // gate must never do. It now refuses, and names the reason as the reader's own sentence.
-    const read = await readReviewRecord(root, taskId);
+    // One snapshot for the whole clearance: the record's binding, its problems and the identity the verdict is bound to
+    // are one decision, and three separate reads of a non-atomically written pointer could answer it three ways.
+    const snapshot = await readReviewDecisionSnapshot(root, taskId);
+    const read = await readReviewRecord(root, taskId, snapshot.revisionRead);
     if (!read.ok) return { cleared: false, restsOn: 'unstated', reason: 'unreadable_review', detail: read.why };
     const review = read.record as {
         revisionId?: string;
@@ -94,7 +98,7 @@ export async function evaluateReviewClearance(
     // ladder routing repairs sent the same change back to build — one question, two answers, and the archive resting on
     // the weaker one. It now asks `readBlockingProblems`, which the approval, the repair entry and the router ask too, so
     // there is no call site left that can assemble a different version of the question.
-    const blockingRead = await readBlockingProblems(root, taskId);
+    const blockingRead = await readBlockingProblems(root, taskId, snapshot.revisionRead);
     if (!blockingRead.ok) {
         // A record that cannot be read is refused, and *named as that* rather than as a blocking finding: the two need
         // different repairs, and the reader used to propagate a schema error out of a gate instead of denying here.
@@ -105,7 +109,7 @@ export async function evaluateReviewClearance(
     }
     // Bound by revision **or** by the content it reviewed: a re-seal of unchanged owned paths issues a new id, and
     // expiring the clearance there is what made a re-seal re-run the whole review.
-    if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentity(root, taskId)), revisionId })) {
+    if (revisionId && !bindsToRevision(review, { ...(await currentRevisionIdentityFrom(snapshot.revisionRead, root, taskId)), revisionId })) {
         return { cleared: false, restsOn, reason: 'stale_review' };
     }
     return { cleared: true, restsOn, ...(revisionId ? { revisionId } : {}) };
@@ -133,7 +137,7 @@ export async function evaluateJudgePass(input: {
     if (input.freshEvidence?.revisionId) {
         // The id is the revision the fresh evidence was sealed under; the content fields come from the current revision,
         // because a re-seal of unchanged content issues a new id and the content is what a verdict is really about.
-        const identity = await currentRevisionIdentity(input.root, input.taskId);
+        const identity = await currentRevisionIdentityFrom((await readReviewDecisionSnapshot(input.root, input.taskId)).revisionRead, input.root, input.taskId);
         if (!bindsToRevision(judge, { ...identity, revisionId: input.freshEvidence.revisionId })) {
             return { passed: false, reason: 'stale_judgement' };
         }
