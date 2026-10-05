@@ -275,6 +275,11 @@ describe('the readers of the schema-less ledger files', () => {
             { runs: [null, { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }] },
         );
         expect(codes).not.toContain('discovery_unverified');
+        // Asserted on the reader itself, not only through the decision: the decision stopped depending on the run log's
+        // shape when the dead producer read was removed, so a decision-level assertion would no longer be able to redden.
+        const runs = await readLedger(root, changeId).then((ledger) => ledger.runs);
+        expect(runs).toHaveLength(1);
+        expect(runs[0]?.producer).toBe('pi');
     });
 
     it('refuses to resolve a name that fits two records', async () => {
