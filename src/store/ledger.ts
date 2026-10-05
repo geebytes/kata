@@ -95,7 +95,7 @@ const ARTEFACTS_WITHOUT_A_SCHEMA: Record<string, string> = {
     'probes.json': 'internal: derived deterministically from the claims and read only by `ask`/`answer`',
     'probe-answers.json': 'internal: the reviewer’s own answers, read only by the discovery count',
     'usage.json': 'internal: two counters the cost report reads, with `null` for anything unmeasured',
-    'runs.json': 'internal: the write log the cost report reads; a corrupt entry is reported, not acted on',
+    'runs.json': 'internal: the write log the cost report and the quorum read, through `records` like every other file here',
     'plan.json': 'internal: the plan the operator was handed, read back by `focus` through the planner’s own type',
 };
 
@@ -128,6 +128,7 @@ const STRING_FIELDS = {
     challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: [] },
     probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix'] },
     answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: [] },
+    runs: { required: ['at', 'producer', 'diversity'], optional: ['note'] },
 } as const;
 
 /**
@@ -187,6 +188,25 @@ function records<T>(value: unknown, fields: { required: readonly string[]; optio
  */
 function recordKey(value: unknown): string {
     return typeof value === 'string' ? value : '';
+}
+
+/**
+ * **The index of the one record a coerced name refers to, or `-1` when it refers to none or to more than one.**
+ *
+ * Coercion is lossy in one direction: two records whose `id` is not a string both read as `''`. A `findIndex` on the
+ * coerced key then matches the first of them every time, so a read-modify-write path can report having resolved a record
+ * it never touched — the same "the report is not the file" defect, re-entering through the key rather than through the
+ * view. Counting the matches is what turns that into a refusal.
+ */
+function uniqueByName(entries: ReadonlyArray<{ id?: unknown }>, name: unknown): number {
+    const wanted = recordKey(name);
+    let found = -1;
+    for (const [index, entry] of entries.entries()) {
+        if (recordKey(entry.id) !== wanted) continue;
+        if (found >= 0) return -1;
+        found = index;
+    }
+    return found;
 }
 
 /**
@@ -368,8 +388,18 @@ export async function writePlan(root: string, changeId: string, plan: unknown): 
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.plan, plan));
 }
 
+/**
+ * **`plan.json` is another schema-less file, so the reader promises the shape its consumers dereference.** Both the
+ * `focus` verb and the request builder write `(plan.readingSets ?? []).map(...)`, which throws when the key is present but
+ * is not an array — an independent round found `ledger focus` crashing on a hand-repaired plan. The rest of the document is
+ * handed back as read: this normalizes the one field consumers assume, not the whole file.
+ */
 export async function readPlan(root: string, changeId: string): Promise<unknown | null> {
-    return readJson<unknown>(join(reviewDir(root, changeId), FILES.plan));
+    const stored = await readJson<unknown>(join(reviewDir(root, changeId), FILES.plan));
+    if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
+    const plan = { ...(stored as Record<string, unknown>) };
+    if (!Array.isArray(plan.readingSets)) plan.readingSets = [];
+    return plan;
 }
 
 export async function readLedger(root: string, changeId: string): Promise<Ledger> {
@@ -484,7 +514,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         // retired value here and only a test ever looked at it, so "kept as history" was true of the file and false of
         // the system. It is carried on the ledger read, which is what every report surface already consumes.
         assuranceHistory: usage?.assuranceHistory ?? [],
-        runs: (await readJson<LedgerRun[]>(join(dir, FILES.runs))) ?? [],
+        runs: records<LedgerRun>(await readJson<unknown>(join(dir, FILES.runs)), STRING_FIELDS.runs),
         recordedFiles,
         malformedFiles,
         malformedReasons: Object.fromEntries(malformedReasons),
@@ -781,7 +811,14 @@ function parseJsonLines(text: string): { entries: Record<string, unknown>[]; mal
     for (const line of text.split('\n')) {
         if (line.trim() === '') continue;
         try {
-            entries.push(JSON.parse(line) as Record<string, unknown>);
+            const parsed: unknown = JSON.parse(line);
+            // A line that parses but is not a record carries no fact, and handing it out as one is how a `null` line in
+            // `verdict-history.jsonl` reached a consumer that read `.evidenceId` off it. Counted as malformed, not kept.
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                malformed += 1;
+                continue;
+            }
+            entries.push(parsed as Record<string, unknown>);
         } catch {
             malformed += 1;
         }
@@ -825,7 +862,11 @@ export async function amendChallenge(
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        const index = challenges.findIndex((entry) => recordKey(entry.id) === recordKey(challengeId));
+        // **A name that fits two records is not a name.** The reader coerces what it cannot promise, so a ledger holding
+        // two unnameable records hands out one name twice — and resolving "the first match" then reports a resolution the
+        // second record never got. Refusing is the only answer that keeps the report equal to the file; the caller is the
+        // one that can tell the operator, which is why `challenge check` fails on it rather than printing a state.
+        const index = uniqueByName(challenges, challengeId);
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
         const amended: Challenge = {
@@ -855,7 +896,11 @@ export async function resolveChallenge(
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        const index = challenges.findIndex((entry) => recordKey(entry.id) === recordKey(challengeId));
+        // **A name that fits two records is not a name.** The reader coerces what it cannot promise, so a ledger holding
+        // two unnameable records hands out one name twice — and resolving "the first match" then reports a resolution the
+        // second record never got. Refusing is the only answer that keeps the report equal to the file; the caller is the
+        // one that can tell the operator, which is why `challenge check` fails on it rather than printing a state.
+        const index = uniqueByName(challenges, challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
         challenges[index] = {

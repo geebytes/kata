@@ -245,7 +245,9 @@ export async function ledgerVerdict(input: {
 
     // The quorum is assembled from the runs, compared over evidence rather than counted as votes; a single producer is not
     // a quorum and gets no report at all rather than a report claiming agreement.
-    const producers = [...new Set(ledger.runs.map((run) => run.producer))];
+    // **The runs are read, not dereferenced here.** This line built a producer set nothing used, and it was the site that
+    // threw on a `null` entry in `runs.json` — a schema-less file, so the entry exists in principle. The quorum below
+    // groups readings by their producing run, which is where the producers actually matter.
     const evidenceToClaim: Record<string, string> = {};
     for (const claim of ledger.claims) for (const evidenceId of claim.evidenceIds) evidenceToClaim[evidenceId] = claim.id;
     // **The ceiling, applied at the boundary rather than left to the classification.** A floor is only as good as its
