@@ -164,7 +164,6 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
   await writeFile(currentRevisionPath(input.root, input.taskId), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
-  return { revision, reused: false };
     return { revision, reused: false };
   };
   if (lock) {

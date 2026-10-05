@@ -170,6 +170,12 @@ export async function transitionForRepair(input: {
     entryPhase: Extract<Phase, 'hardVerify' | 'review' | 'judge'>;
     /** The repair record to persist, or `null` when the entry carries nothing to record. */
     repair: RepairPayload | null;
+    /**
+     * Run inside the same lock that writes the record, so a revision that moves between the decision and this write is
+     * refused instead of recorded. A callback, because the revision readers live in the workflow layer above this module
+     * — and the check has to happen under the lock rather than at the caller's convenience.
+     */
+    verifyStillCurrent?: () => Promise<void>;
     root?: string;
 }): Promise<StateRecord> {
     const root = input.root ?? process.cwd();
@@ -182,6 +188,11 @@ export async function transitionForRepair(input: {
         if (!isRepairReturn(current.phase, 'implement')) {
             throw new Error(`Illegal repair return from ${current.phase} to implement`);
         }
+        // Before anything is written: the record's baseline has to still describe the revision the decision named.
+        // Measured — the review authoriser committed its round under this lock and then returned a payload naming the
+        // revision it had read, which a seal landing in between turned into a repair record describing a revision it
+        // did not supersede.
+        if (input.repair && input.verifyStillCurrent) await input.verifyStillCurrent();
 
         const now = new Date().toISOString();
         const next: StateRecord = { taskId: input.taskId, phase: 'implement', actor: input.actor, updatedAt: now };

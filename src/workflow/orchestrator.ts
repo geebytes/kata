@@ -28,7 +28,7 @@ import { type TaskRevision, commitReviewDecision, computeManifestHash, contentSn
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
-import { authorizeRepair } from './repair-entry.js';
+import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReview, readReviewMode, readReviewRecord } from './review-read.js';
@@ -1120,12 +1120,16 @@ async function readActiveRepair(root: string, taskId: string): Promise<ActiveRep
 
 async function resolveReviewRepair(root: string, taskId: string, revisionId: string): Promise<void> {
     const repairRecordPath = repairPath(root, taskId);
-    const repair = await readValidated<RepairRecordShape>('repair', repairRecordPath);
-    await writeFile(repairRecordPath, `${JSON.stringify({
-        ...repair,
-        resolvedAt: new Date().toISOString(),
-        resolvedRevisionId: revisionId,
-    }, null, 2)}\n`, 'utf8');
+    // Under the task lock and through the shared artefact writer: this was an unlocked read-modify-write, which the
+    // repository's own invariant scan could not see because the path reached the writer through a local variable.
+    await mutateTaskArtefact(root, taskId, repairRecordPath, async (current) => {
+        const repair = JSON.parse(current) as RepairRecordShape;
+        return `${JSON.stringify({
+            ...repair,
+            resolvedAt: new Date().toISOString(),
+            resolvedRevisionId: revisionId,
+        }, null, 2)}\n`;
+    });
 }
 
 /**
@@ -1144,7 +1148,22 @@ async function reenterImplementForRepairEntry(
         // wrote rather than a stack trace with the same words inside it.
         return { authorized: false, denial: authorization.denial ?? `Build cannot re-enter implementation from ${entryPhase}` };
     }
-    await transitionForRepair({ taskId, actor, entryPhase, repair: authorization.repair, root });
+    const decidedOn = authorization.repair?.baselineRevisionId;
+    await transitionForRepair({
+        taskId,
+        actor,
+        entryPhase,
+        repair: authorization.repair,
+        root,
+        // The baseline the authoriser recorded has to still describe the pointer at the moment the record is written.
+        // Authorisation and this write are two steps with the lock released in between, so a seal landing there would
+        // otherwise be recorded as a repair of the wrong revision (measured).
+        ...(decidedOn
+            ? {
+                verifyStillCurrent: () => assertRepairBaselineStillCurrent(root, taskId, decidedOn),
+            }
+            : {}),
+    });
     return { authorized: true };
 }
 

@@ -363,6 +363,18 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     };
 }
 
+/**
+ * Runs inside `transitionForRepair`'s lock. Authorisation and the repair write are two steps with the lock released in
+ * between, so the baseline the authoriser recorded only means something if it still describes the pointer at the moment
+ * the record lands — otherwise the repair names a revision it did not supersede (measured).
+ */
+export async function assertRepairBaselineStillCurrent(root: string, taskId: string, decidedOn: string): Promise<void> {
+    const snapshot = await readReviewDecisionSnapshot(root, taskId);
+    const current = snapshot.revisionRead.kind === 'current' ? snapshot.revisionRead.revision : null;
+    if (!current || current.id !== decidedOn) {
+        throw new Error(`Repair baseline ${decidedOn} no longer describes the current revision; the sealed revision moved while the repair was being recorded.`);
+    }
+}
 const authorizers: Record<RepairEntryPhase, (root: string, taskId: string) => Promise<RepairAuthorization>> = {
     hardVerify: authorizeVerifyRepair,
     review: authorizeReviewRepair,
