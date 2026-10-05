@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendChallenge, appendClaim, appendEvidence, freezeSubject, readLedger, readProbeAnswers, recordVerdicts, writeSubject } from '../../src/store/ledger.js';
+import { appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readProbeAnswers, recordVerdicts, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -158,6 +158,17 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('challenge_open');
     });
 
+    it('names the floor, not an unrun challenge, when the only record has no usable state', async () => {
+        // The negation `state !== 'open'` used to count a record whose state is missing or unknown as an independent
+        // challenge, so the refusal said "run the recorded challenge" about a ledger that holds none. Both refuse; only
+        // one of them names the step that would fix it.
+        const { codes } = await ledgerWithChallenge(null, {
+            stored: { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', at: '2026-10-05T00:00:00.000Z' },
+        });
+        expect(codes).toContain('discovery_floor');
+        expect(codes).not.toContain('discovery_unverified');
+    });
+
     it('still reads a legacy resolved challenge, so a pre-existing record is not silently demoted', async () => {
         const { codes } = await ledgerWithChallenge({
             ...base,
@@ -211,6 +222,43 @@ describe('the readers of the schema-less ledger files', () => {
         expect(answers[0]?.command).toBe('');
         expect(answers[0]?.observed).toBe('');
         expect(answers[0]?.probeId).toBe('P1-C1');
+    });
+
+    it('does not mistake an array for a record', async () => {
+        // An array satisfies `typeof entry === 'object' && entry !== null`, so the first version of the filter let one
+        // through, spread it into `{0: 'x'}`, and handed it out as an answer with no command — crashing the very report
+        // reader the filter was written to protect. An independent round found it the round after the guard moved here.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
+            `${JSON.stringify([['x'], { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 'x' }], null, 2)}\n`,
+        );
+
+        const answers = await readProbeAnswers(root, changeId);
+        expect(answers.map((answer) => answer.probeId)).toEqual(['P1-C1']);
+        await expect(ledgerReport(root, changeId)).resolves.toBeDefined();
+    });
+
+    it('lets a write path read the same file the readers do, without crashing on what it cannot dereference', async () => {
+        // The write paths dereference `entry.id` too, so the guarantee has to hold there as well — and it must hold
+        // without coercing, because rewriting a legacy record's fields as a side effect of an unrelated append would
+        // destroy the value that says the file is corrupt.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
+            `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 42, failsOn: 'rev:x', state: 'open', at: 'x' }], null, 2)}\n`,
+        );
+
+        await expect(appendChallenge(root, changeId, {
+            id: 'X2', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x',
+        })).resolves.toBeDefined();
+        const written = await readLedger(root, changeId).then((ledger) => ledger.challenges);
+        expect(written.map((challenge) => challenge.id)).toEqual(['X1', 'X2']);
+        // The preserved field is the point, and it has to be read from the file rather than through the coercing reader:
+        // the write path must leave a legacy value alone, so an unrelated append cannot destroy what says the file is corrupt.
+        const raw = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<{ id: string; command: unknown }>;
+        expect(raw.map((entry) => entry.id)).toEqual(['X1', 'X2']);
+        expect(raw[0]?.command).toBe(42);
     });
 
     it('drops an element that is not a record instead of dereferencing it', async () => {

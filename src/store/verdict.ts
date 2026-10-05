@@ -308,7 +308,12 @@ export async function ledgerVerdict(input: {
         // revision still fail.
         discovery: {
             independentChallenges:
-                ledger.challenges.filter((challenge) => challenge.state !== 'open').length
+                // **Terminal, not "anything that is not open".** The negation counted a record whose `state` is missing or
+                // not a member of the union, which made `independentChallenges` non-zero for a ledger that holds no
+                // challenge at all — and the refusal then said `discovery_unverified` ("run the recorded challenge") when
+                // the true remedy is `discovery_floor` ("record one"). Both refuse, but a refusal that names the wrong
+                // step is the defect this whole criterion exists to remove.
+                ledger.challenges.filter((challenge) => challenge.state === 'withdrawn' || challenge.state === 'resolved').length
                 + (await readProbeAnswers(input.root, input.changeId)).length,
             verifiedChallenges:
                 verifiedChallengeCount(ledger.challenges, await readProbeAnswers(input.root, input.changeId)),

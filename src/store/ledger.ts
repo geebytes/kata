@@ -102,7 +102,10 @@ const ARTEFACTS_WITHOUT_A_SCHEMA: Record<string, string> = {
 export async function appendProbe(root: string, changeId: string, probe: Probe): Promise<Probe> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.probes);
-        const items = (await readJson<Probe[]>(path)) ?? [];
+        // Read through the same filter the pure readers use: this path dereferences `entry.id` below, and a file it
+        // cannot dereference must not be a crash here either. Fields are preserved as read, so an unrelated append never
+        // rewrites a legacy record's values.
+        const items = recordElements(await readJson<unknown>(path)) as Probe[];
         if (!items.some((entry) => entry.id === probe.id)) items.push(probe);
         await writeJson(root, changeId, FILES.probes, items);
         return probe;
@@ -147,18 +150,37 @@ const STRING_FIELDS = {
  * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
  */
 function records<T>(value: unknown, fields: readonly string[]): T[] {
-    // A missing file is no records — the `?? []` this replaced, kept where the read happens rather than at each caller.
+    return recordElements(value).map((entry) => {
+        const normalized: Record<string, unknown> = { ...entry };
+        for (const field of fields) {
+            if (normalized[field] !== undefined) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
+        }
+        return normalized;
+    }) as T[];
+}
+
+/**
+ * **The elements of a schema-less document that are records at all**, with their fields exactly as the file holds them.
+ *
+ * This is the narrower half of `records`, and it exists because the two callers want different things. A pure reader
+ * wants values it can trust, so it also coerces the declared fields. A read-modify-write path wants to dereference an
+ * element and then write the file back: coercing there would rewrite a legacy record's fields as a side effect of an
+ * unrelated append, destroying the value that says the file is corrupt, so it filters and preserves instead.
+ *
+ * **An array is not a record.** The first version of this filter tested `typeof entry === 'object' && entry !== null`,
+ * which an array satisfies — so `["x"]` was spread into `{0: 'x'}`, handed out as a `Probe`/`ProbeAnswer` with no
+ * `command`, and crashed the report reader the filter was written to protect. An independent round found exactly that,
+ * one round after the guard moved here to stop the series. The lesson is recorded rather than remembered: the predicate
+ * names what it excludes.
+ *
+ * A missing file is no records, and a document that is not an array is passed through as read — the pre-existing
+ * behaviour, because deciding whether a corrupt document is "no records" or "unreadable" is the three-way-state
+ * question and answering it in a guard would make a corrupt file look empty.
+ */
+function recordElements(value: unknown): Array<Record<string, unknown>> {
     if (value === null || value === undefined) return [];
-    if (!Array.isArray(value)) return value as T[];
-    return value
-        .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
-        .map((entry) => {
-            const normalized: Record<string, unknown> = { ...entry };
-            for (const field of fields) {
-                if (normalized[field] !== undefined) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
-            }
-            return normalized;
-        }) as T[];
+    if (!Array.isArray(value)) return value as Array<Record<string, unknown>>;
+    return value.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry));
 }
 
 /**
@@ -175,7 +197,9 @@ export async function answerProbe(
 ): Promise<{ ok: true; answer: ProbeAnswer } | { ok: false; why: string }> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.probeAnswers);
-        const items = (await readJson<ProbeAnswer[]>(path)) ?? [];
+        // Filtered like every other read of this file: `entry.probeId` below is a dereference, and a record the file
+        // cannot support is not this command's business to crash on.
+        const items = recordElements(await readJson<unknown>(path)) as ProbeAnswer[];
         if (items.some((entry) => entry.probeId === answer.probeId)) {
             return { ok: false as const, why: `${answer.probeId} has already been answered; a probe is answered once, so a reviewer cannot try until something passes` };
         }
@@ -748,7 +772,7 @@ export async function readVerdictHistory(root: string, changeId: string): Promis
 export async function appendChallenge(root: string, changeId: string, challenge: Challenge): Promise<Challenge> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = (await readJson<Challenge[]>(path)) ?? [];
+        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
         if (!challenges.some((entry) => entry.id === challenge.id)) challenges.push(challenge);
         await writeJson(root, changeId, FILES.challenges, challenges);
         return challenge;
@@ -770,7 +794,7 @@ export async function amendChallenge(
 ): Promise<Challenge | null> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = (await readJson<Challenge[]>(path)) ?? [];
+        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
         const index = challenges.findIndex((entry) => entry.id === challengeId);
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
@@ -800,7 +824,7 @@ export async function resolveChallenge(
 ): Promise<boolean> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = (await readJson<Challenge[]>(path)) ?? [];
+        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
         const index = challenges.findIndex((entry) => entry.id === challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
