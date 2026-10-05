@@ -646,7 +646,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 // A counterexample that no longer fails is a claim the author has fixed: it resolves the challenge
                 // rather than being silently ignored, and the observation is recorded with it.
                 const state: Challenge['state'] = result.code === 0 ? 'withdrawn' : 'open';
-                await resolveChallenge(options.root, changeId, challenge.id, {
+                // **The reported outcome is the persisted one.** `resolveChallenge` can decline — the record it was asked
+                // to resolve may be unnameable, or already gone — and reporting `state: 'withdrawn'` anyway would print a
+                // fact the file does not hold. An independent round found exactly that: the boolean was discarded, and the
+                // command claimed a resolution the ledger never recorded.
+                const persisted = await resolveChallenge(options.root, changeId, challenge.id, {
                     state,
                     observed: `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`,
                     at: nowIso(),
@@ -655,6 +659,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                     // is not discarded merely because it found no current failure.
                     reproduced: result.code !== 0 && !result.timedOut,
                 });
+                if (!persisted) {
+                    fail({ command: 'ledger challenge check', error: `the resolution of ${challenge.id} was not recorded: the ledger holds no record it can name that way, so the state on disk is unchanged` });
+                    return;
+                }
                 outcomes.push({ id: challenge.id, code: result.code, state });
             }
             outputResult({ ok: true, command: 'ledger challenge check', outcomes });

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readProbeAnswers, recordVerdicts, writeSubject } from '../../src/store/ledger.js';
+import { appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readProbeAnswers, readProbes, recordVerdicts, resolveChallenge, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -222,6 +222,44 @@ describe('the readers of the schema-less ledger files', () => {
         expect(answers[0]?.command).toBe('');
         expect(answers[0]?.observed).toBe('');
         expect(answers[0]?.probeId).toBe('P1-C1');
+    });
+
+    it('answers its declared type when a required field is absent, not merely when it is present', async () => {
+        // The first version of the coercion only touched fields the file *had*, so a record that simply lacked a required
+        // one was handed out with `undefined` where `Challenge`/`Probe`/`ProbeAnswer` promise `string` — and the next
+        // `.trim()` threw. A sixth independent round found it, one round after the filter was fixed for the same reason.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'), `${JSON.stringify([{ probeId: 'P1-C1' }], null, 2)}\n`);
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probes.json'), `${JSON.stringify([{ id: 'P1-C1', claimId: 'C1' }], null, 2)}\n`);
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), `${JSON.stringify([{ id: 'X1', claimId: 'C1' }], null, 2)}\n`);
+
+        const answers = await readProbeAnswers(root, changeId);
+        const probes = await readProbes(root, changeId);
+        const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
+        expect(answers[0]?.command).toBe('');
+        expect(answers[0]?.observed).toBe('');
+        expect(probes[0]?.command).toBe('');
+        expect(challenges[0]?.command).toBe('');
+        // `state` is required too, and an unknown state must not read as one the floor can count.
+        expect(challenges[0]?.state).toBe('');
+        await expect(ledgerReport(root, changeId)).resolves.toBeDefined();
+    });
+
+    it('lets the write path resolve the record by the name the reader handed out', async () => {
+        // The reader coerces a non-string id, so the caller's copy of the name is the coerced one. Looking the record up by
+        // the raw value could not find it — and the caller discarded the `false`, printing a resolution the file never
+        // recorded. Both sides now name a record the same way.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
+            `${JSON.stringify([{ id: 42, claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x' }], null, 2)}\n`,
+        );
+
+        const named = await readLedger(root, changeId).then((ledger) => ledger.challenges[0]?.id);
+        const resolved = await resolveChallenge(root, changeId, named ?? '', { state: 'withdrawn', observed: 'exit 0 when checked', at: 'x' });
+        expect(resolved).toBe(true);
+        const after = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<{ state: string }>;
+        expect(after[0]?.state).toBe('withdrawn');
     });
 
     it('does not mistake an array for a record', async () => {

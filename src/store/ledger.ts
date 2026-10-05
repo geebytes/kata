@@ -125,10 +125,24 @@ export async function readProbes(root: string, changeId: string): Promise<Probe[
  * inventing a member for it would make the type lie in the other direction.
  */
 const STRING_FIELDS = {
-    challenges: ['id', 'claimId', 'command', 'failsOn', 'at'],
-    probes: ['id', 'claimId', 'kind', 'path', 'prefix', 'command', 'askedAt'],
-    answers: ['probeId', 'command', 'observed', 'answeredAt'],
+    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: [] },
+    probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix'] },
+    answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: [] },
 } as const;
+
+/**
+ * **The string fields each schema-less artefact declares, split by whether its own type makes them optional.**
+ *
+ * The split is the whole point, and getting it wrong is what a sixth independent round found: an earlier version coerced
+ * only fields that were *present*, so a record that simply lacked a required field was handed out with `undefined` where
+ * `Challenge`, `Probe` and `ProbeAnswer` all promise `string` — and the next consumer to call `.trim()` threw. Presence
+ * is not the question for a required field; its declared type is. An optional field is a different case: an absent
+ * `prefix` must stay absent rather than becoming `''`, because the type says `string | undefined`.
+ *
+ * The union-typed `state` is coerced like the rest. `''` is not a member of `ChallengeState`, and that is deliberate: it
+ * reads as "no state this build knows", which every consumer already treats as neither terminal nor open, so such a
+ * record is not counted as a challenge and the refusal names the step that would add one.
+ */
 
 /**
  * **A record from a schema-less file still has to answer its declared type, and this is where that is enforced.**
@@ -149,14 +163,30 @@ const STRING_FIELDS = {
  * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
  * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
  */
-function records<T>(value: unknown, fields: readonly string[]): T[] {
+function records<T>(value: unknown, fields: { required: readonly string[]; optional: readonly string[] }): T[] {
     return recordElements(value).map((entry) => {
         const normalized: Record<string, unknown> = { ...entry };
-        for (const field of fields) {
+        // A required field answers its type whether or not the file has it.
+        for (const field of fields.required) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
+        // An optional one keeps its absence, so the type's `| undefined` stays true.
+        for (const field of fields.optional) {
             if (normalized[field] !== undefined) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
         }
         return normalized;
     }) as T[];
+}
+
+/**
+ * **The key a record is named by, coerced the way a reader hands it out.**
+ *
+ * A reader promises `id`/`probeId` as `string` and coerces what it cannot promise, so the caller's copy of that name is
+ * the coerced one. A read-modify-write path that looks the record up by the *raw* value therefore cannot find the record
+ * the caller just read — and the failure was invisible, because the caller discarded the `false`: `ledger challenge check`
+ * printed `state: "withdrawn"` for a challenge whose file still said `open`. Matching through this function is what makes
+ * the two sides agree; a seventh-round finding is why it exists.
+ */
+function recordKey(value: unknown): string {
+    return typeof value === 'string' ? value : '';
 }
 
 /**
@@ -773,7 +803,7 @@ export async function appendChallenge(root: string, changeId: string, challenge:
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        if (!challenges.some((entry) => entry.id === challenge.id)) challenges.push(challenge);
+        if (!challenges.some((entry) => recordKey(entry.id) === recordKey(challenge.id))) challenges.push(challenge);
         await writeJson(root, changeId, FILES.challenges, challenges);
         return challenge;
     });
@@ -795,7 +825,7 @@ export async function amendChallenge(
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        const index = challenges.findIndex((entry) => entry.id === challengeId);
+        const index = challenges.findIndex((entry) => recordKey(entry.id) === recordKey(challengeId));
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
         const amended: Challenge = {
@@ -825,7 +855,7 @@ export async function resolveChallenge(
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        const index = challenges.findIndex((entry) => entry.id === challengeId);
+        const index = challenges.findIndex((entry) => recordKey(entry.id) === recordKey(challengeId));
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
         challenges[index] = {
