@@ -22,13 +22,14 @@ The second pointer read in step 2 is deliberate compare-and-commit validation. I
 
 ### In scope
 
-- Review-entry, review approval, review repair authorization, and review-round writing paths.
+- Review-entry, review approval, review repair authorization, review-round writing, and Judge verdict writing paths.
+- Review-clearance consumers that decide from the Review artefact: `distill-gates.ts` and the archive security gate.
 - The shared revision/identity and task-lock primitive they use.
-- A static reader inventory, a deterministic reference model, focused unit tests, and one workflow entrypoint test.
+- A static reader inventory, a deterministic reference model, focused unit tests, and workflow entrypoint tests.
 
 ### Explicitly out of scope
 
-- `src/workflow/distill-gates.ts`, judge clearance, and archive/distill decisions. They are a separate decision family with different inputs and will need their own snapshot contract.
+- Decision families whose inputs are not Review artefacts (for example scope mutation, context construction, CLI display, and evaluation fixtures). They retain their own reader semantics rather than inheriting a review decision snapshot.
 - Changing strict review gate semantics, allowing an iteration cap, or treating `insufficient` as pass.
 - A global private/raw-reader ban, ESLint-boundaries adoption, or a `fast-check` dependency. The first two over-couple unrelated families; the last is premature while the state product is finite and readable in Vitest.
 - Moving or deleting compatibility projections merely because they have no current source reader.
@@ -68,7 +69,7 @@ Allowed direct current-pointer calls are limited to:
 
 The allowlist is a typed/documented inventory with a reason for every site. Test fixtures are excluded by path, not by string-pattern loopholes. A new direct reader in `navigation.ts`, `repair-entry.ts`, or `orchestrator.ts` fails locally until it is either routed through the snapshot or explicitly added to the design and guard as a validator.
 
-The inventory does **not** claim that every current-revision reader in the repository belongs to this family. `distill-gates.ts` is recorded as a residual follow-up, not silently exempted.
+`distill-gates.ts`, `cmdJudge`, and `cmdArchive` are inventory consumers: their review-derived decisions receive the same snapshot through `readReviewRecord`, and the Judge writer passes the lock capability from commit validation into its atomic artefact write. Readers outside this bounded family remain follow-up candidates, not silent exemptions.
 
 ### 3.4 Reference model and mutation classes
 
@@ -93,15 +94,15 @@ Mutation evidence is class-based, not spelling-based. The declared family includ
 
 ### 3.5 Entrypoint evidence
 
-`tests/e2e/review-decision-snapshot.test.ts` drives the actual workflow path, creates/moves a revision between the initial read and commit using a deterministic test seam, and asserts that the command does not record a current decision for the later revision. This is required because a unit-only model cannot prove the production command invokes the validate/write boundary.
+`tests/e2e/review-decision-snapshot.test.ts` drives the actual review and Judge workflow paths, creates/moves a revision between the initial read and commit using a deterministic test seam, and asserts that neither command writes a current decision for the later revision. This is required because a unit-only model cannot prove the production command invokes the validate/write boundary.
 
 ## 4. Acceptance-criterion mapping
 
 | AC | Mechanism | Evidence |
 | --- | --- | --- |
-| AC-1 | Snapshot factory plus lock-scoped identity comparison before review-family writes | `tests/unit/review-decision-snapshot-commit.test.ts` |
-| AC-2 | AST/wiring inventory and snapshots threaded through review entry/approval/repair/round writers | `tests/unit/review-decision-snapshot-inventory.test.ts` |
-| AC-3 | Declarative 54-state matrix, moved-identity sequence, class mutations, and workflow entrypoint | `tests/unit/review-decision-snapshot-model.test.ts`; `tests/e2e/review-decision-snapshot.test.ts` |
+| AC-1 | Snapshot factory plus lock-scoped identity comparison before review-family and Judge verdict writes | `tests/unit/review-decision-snapshot-commit.test.ts`; `tests/e2e/review-decision-snapshot.test.ts` |
+| AC-2 | Wiring inventory; snapshots threaded through review entry/approval/repair/round writers and Review-clearance consumers | `tests/unit/review-decision-snapshot-inventory.test.ts` |
+| AC-3 | Declarative 54-state matrix, moved-identity sequence, class mutations, and workflow entrypoints | `tests/unit/review-decision-snapshot-model.test.ts`; `tests/e2e/review-decision-snapshot.test.ts` |
 
 ## 5. Failure semantics and compatibility
 
@@ -114,7 +115,7 @@ Mutation evidence is class-based, not spelling-based. The declared family includ
 
 Before sealing, all three focused selectors, the entrypoint selector, the full TypeScript check, and the full test suite must pass. The static inventory and declarative model run before the independent review so mechanically discoverable reader sites are found locally.
 
-A fresh strict review remains mandatory for the sealed content. Its brief must name the bounded review decision family and the residual `distill-gates.ts` follow-up, so reviewers may challenge the inventory/model but cannot turn an undeclared, different family into a retroactive scope waiver.
+A fresh strict review remains mandatory for the sealed content. Its brief must name the bounded review decision family — including Judge verdict writing and Review-clearance consumers — so reviewers may challenge the inventory/model but cannot turn an unrelated decision family into a retroactive scope waiver.
 
 ## 7. Risks and rejected alternatives
 

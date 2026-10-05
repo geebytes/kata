@@ -31,7 +31,7 @@ import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type Repair
 import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entry.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
-import { readBlockingProblems, readReview, readReviewMode, readReviewRecord } from './review-read.js';
+import { readBlockingProblems, readReviewMode, readReviewRecord } from './review-read.js';
 import { readLedger } from '../store/ledger.js';
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
@@ -1265,7 +1265,6 @@ async function cmdVerify(
     const evidence = await readTaskEvidence(root, taskId, options);
     const scopeHashes = await currentScopeHashes(root, evidence);
     const revisionId = revisionIdForEvidence(evidence);
-    const review = await readReview(root, taskId);
     const revision = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
     // With the task id, so a revision whose declaration the task has since outgrown reads as `declaration-moved` rather than
     // `current` — the status payload is where an operator learns which of the two happened.
@@ -2011,7 +2010,30 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix;
         workflowProfile?: { reviewMode?: string };
     };
-    const review = await readReview(root, taskId);
+    // One read decides both the conclusion this command checks and the revision its evidence is bound to. Two readers
+    // were asked the same question from the same file — `readReview` for the conclusion and `readReviewRevisionId`
+    // below for the revision — so a pointer written between them could pair one review's conclusion with another's
+    // revision. Both now come from a single snapshot.
+    const judgeSnapshot = await readReviewDecisionSnapshot(root, taskId);
+    if (judgeSnapshot.revisionRead.kind === 'unreadable') {
+        return {
+            command: 'judge',
+            taskId,
+            phase: 'review',
+            success: false,
+            error: `The judgement cannot be recorded: the current revision cannot be read (${judgeSnapshot.revisionRead.detail}). `
+                + 'The content it would speak for is unknown, so nothing is written. Repair or remove the artefact and run judge again.',
+            diagnostics: { currentRevisionUnreadable: judgeSnapshot.revisionRead.detail },
+        };
+    }
+    const judgeRecord = await readReviewRecord(root, taskId, judgeSnapshot.revisionRead);
+    if (!judgeRecord.ok) {
+        return {
+            command: 'judge', taskId, phase: 'review', success: false,
+            error: `Judge cannot be decided: ${judgeRecord.why}`,
+        };
+    }
+    const review = judgeRecord.record as { status?: string; reviewEvidence?: string; revisionId?: string };
     if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
         return {
             command: 'judge', taskId, phase: 'review', success: false,
@@ -2027,7 +2049,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     // question in `decide` — so the input is gone rather than left accepting a list nothing fills.
     let reportFailedCriteria: string[] = [];
     const evidenceRevisionId = revisionIdForEvidence(evidence);
-    const reviewRevisionId = await readReviewRevisionId(root, taskId);
+    const reviewRevisionId = typeof review.revisionId === 'string' ? review.revisionId : undefined;
     if (evidenceRevisionId && reviewRevisionId !== evidenceRevisionId) {
         return {
             command: 'judge', taskId, phase: 'review', success: false,
@@ -2035,25 +2057,11 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             diagnostics: { revisionId: evidenceRevisionId, reviewRevisionId: reviewRevisionId ?? null, repairScope: 'cross_revision_review' },
         };
     }
-    // **The same boundary refusal `verify` got, for the same reason.** `judge` computes the whole result and only then
-    // reads the revision to stamp it — so a corrupted pointer threw at the stamp and `judge.json` was never written,
-    // discarding a judgement that had already been computed. Measured: `runCommand('judge')` with a corrupted pointer threw
-    // at `quality/judge.ts:138` (the write is at `:140`). A tool an operator runs while repairing a task directory has to
-    // answer with something it can read.
-    const judgeRevisionRead = (await readReviewDecisionSnapshot(root, taskId)).revisionRead;
-    if (judgeRevisionRead.kind === 'unreadable') {
-        return {
-            command: 'judge',
-            taskId,
-            phase: 'review',
-            success: false,
-            error: `The judgement cannot be recorded: the current revision cannot be read (${judgeRevisionRead.detail}). `
-                + 'The content it would speak for is unknown, so nothing is written. Repair or remove the artefact and run judge again.',
-            diagnostics: { currentRevisionUnreadable: judgeRevisionRead.detail },
-        };
-    }
+    // The snapshot answers the authorizing question. `commitReviewDecision` takes the only permitted second read
+    // under the task lock, then gives its capability to the writer; a seal that lands after this snapshot makes the
+    // write a no-op rather than attaching an A judgement to B.
     const scopeHashes = await currentScopeHashes(root, evidence);
-    const judgeResult = await judge({
+    const committed = await commitReviewDecision(root, taskId, judgeSnapshot, async (lock) => judge({
         root,
         taskId,
         acceptance: task.acceptance,
@@ -2062,11 +2070,19 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         currentScopeHashes: scopeHashes,
         matrix: task.acceptanceMatrix,
         reviewMode: task.workflowProfile?.reviewMode,
-        // **The read taken above, handed over.** Without it the stamp re-reads the non-atomic pointer, and the refusal
-        // above becomes a check-then-use: measured by corrupting the file between the two reads, the command still threw
-        // after computing the judgement and before writing it.
-        revisionRead: judgeRevisionRead,
-    } as import('../quality/judge.js').JudgeInput);
+        revisionRead: judgeSnapshot.revisionRead,
+        lock,
+    }));
+    if (committed.kind !== 'committed') {
+        return {
+            command: 'judge',
+            taskId,
+            phase: 'review',
+            success: false,
+            error: 'Judge cannot be recorded because the sealed revision moved or became unavailable while the judgement was being committed. Re-run /kata-review.',
+        };
+    }
+    const judgeResult = committed.value;
 
     // **A judge FAIL records no obligation, and the reason is that it cannot be reached without a ledger.**
     //
@@ -2144,14 +2160,6 @@ async function readTaskEvidence(root: string, taskId: string, options: CommandOp
 
 
 
-async function readReviewRevisionId(root: string, taskId: string): Promise<string | undefined> {
-    try {
-        const raw = await readFile(layoutReviewPath(root, taskId), 'utf8');
-        return (JSON.parse(raw) as { revisionId?: string }).revisionId;
-    } catch {
-        return undefined;
-    }
-}
 
 /**
  * The verify step's reading of the same question the Judge answers: is each acceptance criterion evidenced? The ladder
@@ -2263,7 +2271,27 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
     // Archive is a security boundary: a forged Judge PASS must not be enough to
     // cross it. Revalidate the Review artifact before changing state so that a
     // direct write of judge.json cannot bypass the evidence-backed Review gate.
-    const review = await readReview(root, taskId);
+    const archiveSnapshot = await readReviewDecisionSnapshot(root, taskId);
+    if (archiveSnapshot.revisionRead.kind === 'unreadable') {
+        return {
+            command: 'archive', taskId, phase: current.phase, success: false,
+            error: `Archive cannot determine whether Review approved this change because the current revision cannot be read (${archiveSnapshot.revisionRead.detail}).`,
+        };
+    }
+    const archiveReview = await readReviewRecord(root, taskId, archiveSnapshot.revisionRead);
+    if (!archiveReview.ok) {
+        return {
+            command: 'archive', taskId, phase: current.phase, success: false,
+            error: `Archive cannot determine whether Review approved this change: ${archiveReview.why}`,
+        };
+    }
+    if (!archiveReview.boundToCurrentRevision) {
+        return {
+            command: 'archive', taskId, phase: current.phase, success: false,
+            error: 'Archive requires an evidence-backed Review approval bound to the current revision before a Judge result can be archived.',
+        };
+    }
+    const review = archiveReview.record as { status?: string; reviewEvidence?: string };
     if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
         return {
             command: 'archive', taskId, phase: current.phase, success: false,

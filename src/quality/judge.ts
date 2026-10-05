@@ -1,9 +1,8 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mutateTaskArtefact, type TaskLock } from '../core/state.js';
 import type { AcceptanceCriterion, AcceptanceMatrix } from '../core/task.js';
 import type { EvidenceEnvelope } from './evidence.js';
 import { evaluateAcceptanceAdequacy } from './evidence-adequacy.js';
-import { judgePath as layoutJudgePath, taskDir } from '../core/layout.js';
+import { judgePath as layoutJudgePath } from '../core/layout.js';
 import { readCurrentTaskRevisionState } from '../workflow/revision.js';
 
 export interface JudgeInput {
@@ -20,6 +19,8 @@ export interface JudgeInput {
   taskId: string;
   /** The caller's own read of the current revision, when it has one: the stamp must not re-read a non-atomic file. */
   revisionRead?: import('../workflow/revision.js').CurrentRevisionRead;
+  /** The caller's task-lock capability when this judge is committed as a review decision. */
+  lock?: TaskLock;
   acceptance: AcceptanceCriterion[];
   evidence: EvidenceEnvelope[];
   currentDiffHash: string;
@@ -114,7 +115,7 @@ export interface JudgeResult {
  * decided the artefact is readable, re-reading it is the check-then-use the whole round is about.
  */
 async function identityFor(input: JudgeInput, root: string): Promise<import('../workflow/verdict-binding.js').RevisionIdentity> {
-  const { currentRevisionIdentity, currentRevisionIdentityFrom } = await import('../workflow/verdict-binding.js');
+  const { currentRevisionIdentityFrom } = await import('../workflow/verdict-binding.js');
   const read = input.revisionRead ?? (await readCurrentTaskRevisionState(root, input.taskId));
   return currentRevisionIdentityFrom(read, root, input.taskId);
 }
@@ -148,17 +149,17 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
 
   const root = input.root;
   // Stamped like every other verdict: the id names the revision, the manifest hash names the content it judged, so a
-  // re-seal that changed nothing does not expire the judgement (see `workflow/verdict-binding.ts`).
-  // **Derived from a read taken by the command, not re-read here.** The pointer is written non-atomically, so this stamp
-  // used to be able to throw *after* the judgement was computed and before it was written — discarding the run. The caller
-  // reads the states once and hands the revision over.
+  // re-seal that changed nothing does not expire the judgement (see `workflow/verdict-binding.ts`). The orchestrator
+  // hands in both its authorizing read and, when this is a review-family decision, the lock that validated it.
   const { revisionBindingFields } = await import('../workflow/verdict-binding.js');
   const binding = revisionBindingFields(await identityFor(input, root));
-  await mkdir(taskDir(root, input.taskId), { recursive: true });
-  await writeFile(
+  const serialized = `${JSON.stringify({ ...result, ...binding }, null, 2)}\n`;
+  await mutateTaskArtefact(
+    root,
+    input.taskId,
     layoutJudgePath(root, input.taskId),
-    `${JSON.stringify({ ...result, ...binding }, null, 2)}\n`,
-    'utf8',
+    async () => serialized,
+    input.lock,
   );
 
   return result;

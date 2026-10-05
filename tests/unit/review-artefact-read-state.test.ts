@@ -127,6 +127,7 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', taskId, 'task.json'),
             `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
         );
+        await writeFile(join(root, 'subject.ts'), 'export const revision = 1;\n');
         await writeFile(
             join(root, '.kata', 'tasks', taskId, 'current-state.json'),
             `${JSON.stringify({ taskId, phase: 'review', actor: { id: 'kata-agent', role: 'reviewer' }, updatedAt: '2026-09-29T00:00:00.000Z' })}\n`,
@@ -135,8 +136,9 @@ describe('review artefact read states', () => {
             join(root, '.kata', 'tasks', taskId, 'review.json'),
             `${JSON.stringify({ taskId, status: 'approved', reviewEvidence: 'reviewed', findings: [] })}\n`,
         );
-        // A revision the judgement can be stamped with, so the run reaches the envelope.
-        await createTaskRevision({ root, taskId, ownedPaths: [], checkIds: [] }).catch(() => undefined);
+        // A real seal is required: an empty owned-path set is deliberately rejected, and swallowing that failure would
+        // turn this into a missing-revision case before the unreadable-ledger envelope is reached.
+        await createTaskRevision({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
         await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
         await writeFile(join(root, '.kata', 'tasks', taskId, 'review', 'claims.json'), '{}');
 

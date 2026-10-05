@@ -97,4 +97,15 @@ describe('review decision snapshot inventory', () => {
         expect(approval).toMatch(/const existing: VerdictBinding = \{\s*\.\.\.\(typeof approvalRecord\.record\.revisionId/);
     });
 
+    it('asks the archive security gate about review approval from one snapshot', async () => {
+        const orchestrator = await readFile(new URL('../../src/workflow/orchestrator.ts', import.meta.url), 'utf8');
+        const archive = bodyOf(orchestrator, 'async function cmdArchive', 'async function cmdHotfix');
+
+        // Archive crosses the final trust boundary. It must not ask the permissive display reader after a pointer
+        // has already been observed, because unreadable or stale review evidence is not an approval.
+        expect(archive).toContain('const archiveSnapshot = await readReviewDecisionSnapshot(root, taskId);');
+        expect(archive).toContain('readReviewRecord(root, taskId, archiveSnapshot.revisionRead)');
+        expect(archive).not.toMatch(/await readReview\(root, taskId\)/);
+    });
+
 });
