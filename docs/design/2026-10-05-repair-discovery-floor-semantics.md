@@ -42,11 +42,17 @@ Kata cannot infer semantic adversarial quality from a shell command or exit code
 | --- | --- | --- |
 | No non-open challenge/probe | 0 independent | `discovery_floor` |
 | Challenge is `open`, including non-zero or timeout result | not verified | `challenge_open` |
-| Non-open challenge without a non-blank observation | not verified | `discovery_unverified` |
+| Non-open challenge without a non-blank observation — blank **or absent**, since the artefact has no schema | not verified | `discovery_unverified` |
 | Non-open challenge with a recorded observation, whether or not `reproduced` | verified | may clear discovery only; all other gates still apply |
 | Recorded probe answer without command or observation | not verified | `discovery_unverified` |
 
 Legacy `resolved` challenges remain readable under the same non-blank-observation rule.
+
+### 2.4 The false positive this trades for, stated plainly
+
+The floor is now satisfiable by a command that measures nothing: `challenge add --command 'exit 0'` plus one `challenge check` leaves a terminal record with a non-blank observation, and it counts. That is the deliberate price of removing the false negative — under the old rule an honest passing check was ineligible, which is what drove reviewers to manufacture a current failure — and `reproduced` could not separate the two cases anyway: it records that a command once failed, not that the command was worth running.
+
+The honest reading of "execution evidence" is therefore **a command ran and its output was recorded**, not "the measurement was meaningful". The probe half has the same shape plus one more gap: `verifiedChallengeCount` does not compare a probe answer's observation against the fact the probe asked for, because an answer carries neither the probe's kind nor its path. Both are behaviour changes with their own review; a mechanical bar (for example, requiring a challenge to reference a declared path, and a probe answer to carry the asked digest or path) is a candidate successor, not something this change pretends to have done.
 
 ## 3. Implementation boundary
 
@@ -57,7 +63,7 @@ The existing writer already provides the required record:
 - `src/cli/ledger.ts` executes the command and persists `resolution.observed` on every `challenge check`.
 - `src/store/ledger.ts` preserves `reproduced` when a prior counterexample existed; comments will state that the field is historical counterexample evidence, not discovery execution evidence.
 - `src/kernel/decide.ts` keeps the existing two checks and their reason codes: no independent record remains `discovery_floor`; a terminal record with no usable observation remains `discovery_unverified`.
-- `src/kernel/types.ts` and nearby comments will be updated to remove the obsolete claim that `reproduced` alone is the discovery-floor credential.
+- `src/kernel/types.ts` and the `discovery` field's doc in `src/kernel/decide.ts` state the rule that now holds, and name the limit beside it (a recorded measurement is not a meaningful one). An earlier draft of this section claimed the "nearby comments" were covered while `decide.ts` still described the removed rule — found by an independent round, which is why the claim is now specific about where.
 
 No schema migration, provider integration, platform adapter, receipt protocol, or change to the acceptance/approval/Judge gates is introduced.
 

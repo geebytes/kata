@@ -115,9 +115,10 @@ describe('the evidence ledger can hold a review approval', () => {
             state: 'withdrawn',
             at: '2026-09-27T00:00:00.000Z',
             resolution: { at: '2026-09-27T00:01:00.000Z', observed: 'exit 0 when checked against the frozen subject' },
-            // **The reproduction, without which this is not a challenge.** The command failed while the defect was
-            // present; the resolution above records that it now passes. Counting a challenge that never failed is how
-            // the discovery floor was satisfiable by `challenge add --command 'exit 0'`.
+            // **The reproduction is history here, not the floor's condition.** The command failed while the defect was
+            // present, and the resolution above records that it passes now. What the floor counts is that terminal
+            // observation; it no longer requires the command to still fail — the false negative this change removed —
+            // and the price of removing it is that a vacuous command counts too (see `verifiedChallengeCount`).
             reproduced: true,
         });
         // **The plan travels with the approval.** `ledger run` hands a reviewer a request derived from the stored plan —

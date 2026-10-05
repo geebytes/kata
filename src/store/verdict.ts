@@ -28,9 +28,12 @@ import type { ProbeAnswer } from '../kernel/discovery.js';
  *
  *   - a **terminal** challenge counts when its persisted `resolution.observed` is non-blank; execution is what the
  *     discovery floor proves, while `reproduced` remains historical counterexample information;
- *   - a **probe answer** counts only when the recorded observation carries the fact the probe asked about — the digest
- *     prefix for `digest-prefix`, or the path for the existence questions. An empty `observed` (the default) cannot
- *     answer anything, and treating it as an answer is how a plain `ledger answer --probe X` satisfied a strict floor.
+ *   - a **probe answer** counts when it records a non-blank command and observation, de-duplicated by the command it ran.
+ *     **What this half does not prove, and what the comment here used to claim:** the code does not compare the
+ *     observation against the fact the probe asked for (the digest prefix, or the path), because an answer carries neither
+ *     the kind nor the path. So an arbitrary observation still counts as one reading. Adding that comparison is a
+ *     behaviour change with its own review; until then the honest statement is that this half proves an answer was
+ *     recorded, not that it was right.
  */
 export function verifiedChallengeCount(challenges: readonly Challenge[], answers: readonly ProbeAnswer[]): number {
     let verified = 0;
@@ -39,7 +42,13 @@ export function verifiedChallengeCount(challenges: readonly Challenge[], answers
         // records whether that measurement ever found a counterexample; requiring it here would make an honest passing
         // independent check ineligible and pressure reviewers to manufacture a current failure.
         if (challenge.state !== 'withdrawn' && challenge.state !== 'resolved') continue;
-        if (!challenge.resolution?.observed.trim()) continue;
+        // **The field is tested before it is used, because nothing else tests it.** `challenges.json` is registered
+        // `internal` with no schema, so a record may carry a `resolution` without an `observed`, or carry a non-string
+        // there — a legacy or hand-repaired ledger is exactly where such a record lives. Checking the type keeps that
+        // state on the refusing path it belongs to; dereferencing it turned a promised refusal into a `TypeError` inside
+        // every surface that reads the ledger, which is worse than the state it was meant to reject.
+        const observed = challenge.resolution?.observed;
+        if (typeof observed !== 'string' || observed.trim() === '') continue;
         verified += 1;
     }
     // **Distinct questions, not distinct answer records.** Counting answers let the same question answered twice satisfy
@@ -286,8 +295,10 @@ export async function ledgerVerdict(input: {
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,
         // **Discovery counts what was observed, not what was declared.** A terminal challenge contributes only after its
-        // check persisted a non-blank observation; a probe answer must likewise carry the fact its command asked about.
-        // `reproduced` remains counterexample history, not a requirement that the current revision still fail.
+        // check persisted a non-blank observation, and a probe answer only when it records a command and what that command
+        // printed. Neither half proves the measurement was meaningful — what is deliberately *not* checked is written down
+        // beside the derivation — and `reproduced` remains counterexample history, not a requirement that the current
+        // revision still fail.
         discovery: {
             independentChallenges:
                 ledger.challenges.filter((challenge) => challenge.state !== 'open').length

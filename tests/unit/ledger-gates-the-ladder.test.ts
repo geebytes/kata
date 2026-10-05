@@ -88,8 +88,10 @@ describe('the ledger gates the ladder', () => {
         await appendChallenge(root, changeId, {
             id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: subject.subject.revision, state: 'withdrawn',
             at: '2026-09-27T00:00:00.000Z', resolution: { at: '2026-09-27T00:01:00.000Z', observed: 'exit 0 when checked' },
-            // **`reproduced` is the fact the floor counts.** The command failed before the fix — that is what makes it a
-            // counterexample — and a challenge that never failed on anything no longer satisfies the discovery floor.
+            // **The observation is the fact the floor counts, not the reproduction.** `reproduced` stays because the command
+            // really did fail once — that is history worth keeping — but the floor is met by the terminal state plus the
+            // non-blank `resolution.observed` above. It no longer asks the command to still fail; that rule is pinned in
+            // `tests/unit/discovery-floor-fail-closed.test.ts`.
             reproduced: true,
         });
 

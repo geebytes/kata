@@ -45,8 +45,17 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
-/** A ledger with one supported claim and exactly one challenge in the state under test. */
-async function ledgerWithChallenge(challenge: Parameters<typeof appendChallenge>[2]): Promise<{ codes: string[]; deficits: Array<{ claimId: string; need: string }> }> {
+/**
+ * A ledger with one supported claim and exactly one challenge in the state under test.
+ *
+ * `stored` writes the record straight to `challenges.json` instead of through `appendChallenge`. That is not a shortcut:
+ * `challenges.json` is registered `internal` with no schema, so a record the typed writer cannot produce is exactly the
+ * shape a legacy or hand-repaired ledger holds — and the reader has to survive it rather than assume it away.
+ */
+async function ledgerWithChallenge(
+    challenge: Parameters<typeof appendChallenge>[2] | null,
+    options: { stored?: unknown } = {},
+): Promise<{ codes: string[]; deficits: Array<{ claimId: string; need: string }> }> {
     const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
     expect(frozen.ok).toBe(true);
     if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
@@ -60,7 +69,12 @@ async function ledgerWithChallenge(challenge: Parameters<typeof appendChallenge>
     }));
     await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
     await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: frozen.subject.revision })]);
-    await appendChallenge(root, changeId, challenge);
+    if (options.stored === undefined) {
+        if (challenge === null) throw new Error('the fixture must pass either a challenge or the record to store');
+        await appendChallenge(root, changeId, challenge);
+    } else {
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), `${JSON.stringify([options.stored], null, 2)}\n`);
+    }
 
     // The tier is named rather than classified: the discovery floor is a strict-tier rule, and letting the fixture's
     // automatic classification decide would make these cases depend on a path table they are not about.
@@ -128,6 +142,26 @@ describe('the discovery floor keeps refusing what did not run', () => {
             resolution: { at: '2026-10-05T00:01:00.000Z', observed: 'exit 1 when checked against rev:whatever' },
         });
         expect(codes).not.toContain('discovery_unverified');
+        expect(codes).not.toContain('challenge_open');
+    });
+
+    it('refuses a terminal record whose observation key is absent instead of crashing on it', async () => {
+        // The absent key is not the blank string. `observed` is required by the type and by nothing else — the artefact has
+        // no schema — so this record reaches the derivation, and the derivation must turn it into the same refusal as a
+        // blank one. A guard that dereferences the field instead converts a promised refusal into a crash on every surface
+        // that reads the ledger, which is strictly worse than the state it was meant to reject.
+        const { codes } = await ledgerWithChallenge(null, {
+            stored: {
+                id: 'X1',
+                claimId: 'C1',
+                command: 'grep -q marked notes/discovery.txt',
+                failsOn: 'rev:whatever',
+                state: 'withdrawn',
+                at: '2026-10-05T00:00:00.000Z',
+                resolution: { at: '2026-10-05T00:01:00.000Z' },
+            },
+        });
+        expect(codes).toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
     });
 });
