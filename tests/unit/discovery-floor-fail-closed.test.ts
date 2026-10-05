@@ -302,6 +302,28 @@ describe('the readers of the schema-less ledger files', () => {
         expect(after.map((entry) => entry.state)).toEqual(['open', 'open']);
     });
 
+    it('resolves by position when two records share a name, and refuses a position that moved', async () => {
+        // An operator with only `--id` cannot point at one of two records sharing a name, but a caller that read the file
+        // can: the position is the identity, and the name at that position is what verifies it is still the same record.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        const file = join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json');
+        await writeFile(file, `${JSON.stringify([
+            { id: 42, claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
+            { id: 43, claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
+        ], null, 2)}\n`);
+
+        const named = await readLedger(root, changeId).then((ledger) => ledger.challenges.map((challenge) => challenge.id));
+        // Both records answer to the same name, so each is resolved at its own position rather than at "the first match".
+        await expect(resolveChallenge(root, changeId, { id: named[0] ?? '', index: 0 }, { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
+        await expect(resolveChallenge(root, changeId, { id: named[1] ?? '', index: 1 }, { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
+        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ state: string }>;
+        expect(after.map((entry) => entry.state)).toEqual(['withdrawn', 'withdrawn']);
+
+        // A position the file no longer holds that record is refused rather than written to a stranger.
+        await expect(resolveChallenge(root, changeId, { id: 'X1', index: 1 }, { state: 'open', observed: 'exit 1', at: 'x' })).resolves.toBe(false);
+        await expect(resolveChallenge(root, changeId, { id: named[0] ?? '', index: 9 }, { state: 'open', observed: 'exit 1', at: 'x' })).resolves.toBe(false);
+    });
+
     it('promises the shape its consumers dereference for the plan, and drops a line that is not a record', async () => {
         // Both `focus` and the request builder write `(plan.readingSets ?? []).map(...)`; a plan whose key is present but
         // is not an array made `ledger focus` throw. And a `null` line in the history reached a consumer that read

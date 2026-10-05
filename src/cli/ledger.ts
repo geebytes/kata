@@ -629,7 +629,13 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 return;
             }
             const only = argValue(argv, '--id');
-            const open = ledger.challenges.filter((challenge) => (only === undefined ? challenge.state === 'open' : challenge.id === only));
+            // **Carried with its position, because a name can be shared.** The reader coerces what it cannot promise, so
+            // two records with a non-string id are handed out under one name; resolving by name alone would update the
+            // first of them twice and report a resolution the second never got. The position is what the caller actually
+            // has — it read the file — and the write path verifies the name at that position before touching it.
+            const open = ledger.challenges
+                .map((challenge, index) => ({ challenge, index }))
+                .filter(({ challenge }) => (only === undefined ? challenge.state === 'open' : challenge.id === only));
             if (open.length === 0) {
                 fail({ command: 'ledger challenge check', error: 'there is no open challenge to check' });
                 return;
@@ -641,7 +647,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 producer: producerFor(argv),
             });
             const outcomes: Array<{ id: string; code: number; state: Challenge['state'] }> = [];
-            for (const challenge of open) {
+            for (const { challenge, index } of open) {
                 const result = await context.run(challenge.command);
                 // A counterexample that no longer fails is a claim the author has fixed: it resolves the challenge
                 // rather than being silently ignored, and the observation is recorded with it.
@@ -650,7 +656,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 // to resolve may be unnameable, or already gone — and reporting `state: 'withdrawn'` anyway would print a
                 // fact the file does not hold. An independent round found exactly that: the boolean was discarded, and the
                 // command claimed a resolution the ledger never recorded.
-                const persisted = await resolveChallenge(options.root, changeId, challenge.id, {
+                const persisted = await resolveChallenge(options.root, changeId, { id: challenge.id, index }, {
                     state,
                     observed: `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`,
                     at: nowIso(),

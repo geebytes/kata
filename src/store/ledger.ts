@@ -191,13 +191,32 @@ function recordKey(value: unknown): string {
 }
 
 /**
- * **The index of the one record a coerced name refers to, or `-1` when it refers to none or to more than one.**
+ * **How a caller names the record it wants written.**
  *
- * Coercion is lossy in one direction: two records whose `id` is not a string both read as `''`. A `findIndex` on the
- * coerced key then matches the first of them every time, so a read-modify-write path can report having resolved a record
- * it never touched — the same "the report is not the file" defect, re-entering through the key rather than through the
- * view. Counting the matches is what turns that into a refusal.
+ * A name alone is not always enough: the reader coerces what it cannot promise, so two records whose `id` is not a string
+ * are handed out under one name — and a `findIndex` on that name matches the first of them every time. `index` is the
+ * record's position in the file as the caller read it, which is what disambiguates; `id` stays required, because it is
+ * what verifies that the position still holds the record the caller meant. An operator typing `--id` has only a name, and
+ * that is the honest limit of what a person can point at: an ambiguous name is refused rather than guessed.
  */
+export type ChallengeRef = { id: string; index?: number };
+
+/**
+ * **The index of the record a reference points at, or `-1` when it points at none, at more than one, or at a position
+ * that no longer holds that record.**
+ *
+ * Two independent rounds found the two halves of this: a lookup by a coerced name matched the first of several records
+ * sharing it, and a lookup that ignored the name would write to whatever now sits at a remembered position. Counting the
+ * name matches handles the first; checking the name at the given position handles the second.
+ */
+function locateChallenge(entries: ReadonlyArray<{ id?: unknown }>, ref: string | ChallengeRef): number {
+    if (typeof ref === 'string') return uniqueByName(entries, ref);
+    if (ref.index === undefined) return uniqueByName(entries, ref.id);
+    if (!Number.isInteger(ref.index) || ref.index < 0 || ref.index >= entries.length) return -1;
+    return recordKey(entries[ref.index]?.id) === recordKey(ref.id) ? ref.index : -1;
+}
+
+/** The one record a name refers to, or `-1` when it refers to none or to more than one. */
 function uniqueByName(entries: ReadonlyArray<{ id?: unknown }>, name: unknown): number {
     const wanted = recordKey(name);
     let found = -1;
@@ -856,17 +875,15 @@ export async function appendChallenge(root: string, changeId: string, challenge:
 export async function amendChallenge(
     root: string,
     changeId: string,
-    challengeId: string,
+    challengeId: string | ChallengeRef,
     amendment: { command: string; reason: string; at: string },
 ): Promise<Challenge | null> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        // **A name that fits two records is not a name.** The reader coerces what it cannot promise, so a ledger holding
-        // two unnameable records hands out one name twice — and resolving "the first match" then reports a resolution the
-        // second record never got. Refusing is the only answer that keeps the report equal to the file; the caller is the
-        // one that can tell the operator, which is why `challenge check` fails on it rather than printing a state.
-        const index = uniqueByName(challenges, challengeId);
+        // A caller that read the file can name the record by position; an operator with only `--id` cannot, and an
+        // ambiguous name is refused rather than guessed (`locateChallenge` carries the reasoning).
+        const index = locateChallenge(challenges, challengeId);
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
         const amended: Challenge = {
@@ -890,17 +907,13 @@ export async function challengeExists(root: string, changeId: string, challengeI
 export async function resolveChallenge(
     root: string,
     changeId: string,
-    challengeId: string,
+    challengeId: string | ChallengeRef,
     resolution: { state: Challenge['state']; observed: string; at: string; /** Whether this check observed the command fail. */ reproduced?: boolean },
 ): Promise<boolean> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
         const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
-        // **A name that fits two records is not a name.** The reader coerces what it cannot promise, so a ledger holding
-        // two unnameable records hands out one name twice — and resolving "the first match" then reports a resolution the
-        // second record never got. Refusing is the only answer that keeps the report equal to the file; the caller is the
-        // one that can tell the operator, which is why `challenge check` fails on it rather than printing a state.
-        const index = uniqueByName(challenges, challengeId);
+        const index = locateChallenge(challenges, challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
         challenges[index] = {
