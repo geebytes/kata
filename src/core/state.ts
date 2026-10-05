@@ -299,7 +299,11 @@ async function readLockHolder(lockPath: string): Promise<{ pid?: number; at?: st
 export async function withTaskLock<T>(root: string, taskId: string, action: (lock: TaskLock) => Promise<T>): Promise<T> {
     assertValidTaskId(taskId);
     const lockPath = transitionLockPath(root, taskId);
+    // The lock's directory is nested inside the task's, so a caller that takes the lock before anything else has been
+    // written (a seal over a task whose directory does not exist yet) needs the parents created. `mkdir` on the lock
+    // path alone fails with ENOENT, which reads as an unrelated filesystem error.
     try {
+        await mkdir(dirname(lockPath), { recursive: true });
         await mkdir(lockPath);
         await writeFile(join(lockPath, 'holder.json'), `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`, 'utf8').catch(() => undefined);
     } catch (error) {

@@ -173,4 +173,37 @@ describe('review decision snapshots', () => {
         expect(committed).toMatchObject({ kind: 'committed' });
         await expect(readFile(record, 'utf8')).resolves.toBe('{"status":"pending"}\n');
     });
+
+    it('does not commit a decision whose revision a concurrent seal has replaced', async () => {
+        const root = await tempRoot();
+        const taskId = 'review-decision-snapshot-seal-race';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeFile(join(root, 'subject.ts'), 'export const version = "A";\n');
+        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
+        const snapshot = await readReviewDecisionSnapshot(root, taskId);
+
+        // The seal lands while the review commit holds the lock. Both writers take the task lock, so either the seal
+        // finishes before the commit revalidates (which must then report `moved`) or the seal cannot start until the
+        // commit has finished. What must never happen is a commit that reports `committed` while the pointer already
+        // names different content — that is a decision recorded as current for a revision it did not describe.
+        const seal = (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            await writeFile(join(root, 'subject.ts'), 'export const version = "B";\n');
+            return createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] })
+                .then(() => 'sealed' as const)
+                .catch(() => 'refused' as const);
+        })();
+
+        const committed = await commitReviewDecision(root, taskId, snapshot, async () => {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+        });
+        await seal;
+
+        const pointer = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), 'utf8')) as { id: string };
+        const decidedOn = snapshot.revisionRead.kind === 'current' ? snapshot.revisionRead.revision.id : null;
+        expect(decidedOn).not.toBeNull();
+        if (pointer.id !== decidedOn) {
+            expect(committed.kind).not.toBe('committed');
+        }
+    });
 });

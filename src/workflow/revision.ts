@@ -1,5 +1,5 @@
 import { readTask } from '../core/task.js';
-import { withTaskLock } from '../core/state.js';
+import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
 import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
@@ -89,7 +89,7 @@ export async function createTaskRevision(input: CreateTaskRevisionInput): Promis
 }
 
 /** The same call, reporting whether the revision already existed — the caller may then reuse what it recorded. */
-export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput): Promise<{ revision: TaskRevision; reused: boolean }> {
+export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput, lock?: TaskLock): Promise<{ revision: TaskRevision; reused: boolean }> {
   const contentRoot = input.contentRoot ?? input.root;
   const ownedPaths = normalizeOwnedPaths(input.root, input.ownedPaths);
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
@@ -101,6 +101,12 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   // every existing binding keeps its meaning — but a revision *exists* for a change outside the declaration, which the
   // own  the owned-path hash alone could not express.
   const id = revisionIdFor(input.taskId, manifestHash, input.checkIds ?? [], contentSnapshotHash(contentDigests));
+  // **This write moves the pointer, so it takes the same lock the review commit holds.** `commitReviewDecision` re-reads
+  // the pointer under `withTaskLock` and refuses to write a decision that no longer describes it — but that guarantee held
+  // only for writers that take the lock, and this function did not: a seal could land between the revalidation and the
+  // commit, leaving `kind: 'committed'` beside a pointer naming different content (measured). Taking the lock here makes
+  // the two writers mutually exclusive, so the commit observes either the old pointer or the new one, never both.
+  const write = async (): Promise<{ revision: TaskRevision; reused: boolean }> => {
   const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
   if (existing) {
     // Identical content: the same revision, with any newly acknowledged conflicts folded in.
@@ -154,12 +160,18 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   };
   // A revision for this content-bound id did not exist, so this seal is what creates it. The write is unconditional: a
   // corrupt file sitting at that id is replaced rather than refused, which is the right answer for an artefact whose
-  // identity *is* its content and which the reader above would have refused to parse.
   const directory = revisionsDir(input.root, input.taskId);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, `${revision.id}.json`), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
   await writeFile(currentRevisionPath(input.root, input.taskId), `${JSON.stringify(revision, null, 2)}\n`, 'utf8');
   return { revision, reused: false };
+    return { revision, reused: false };
+  };
+  if (lock) {
+    assertTaskLock(lock, input.root, input.taskId);
+    return write();
+  }
+  return withTaskLock(input.root, input.taskId, async () => write());
 }
 
 export interface CreateTaskRevisionInput {
