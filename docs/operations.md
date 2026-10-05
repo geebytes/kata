@@ -314,6 +314,16 @@ kata-cli ledger status   --change <id> --cost                 # per claim, plus 
   (`inline` runs the checks and is `observed`; `file` reads results recorded elsewhere and is `relayed`), and the approval
   record states the limit plainly: *the ledger records what was verified, not who wrote the claims*.
 
+- **A probe set is asked once and cannot be refreshed.** `ledger ask` derives its questions from the frozen subject, but a
+  probe's id is positional (`P<n>-<claim>`) and `appendProbe` never replaces an existing one — so once a reading-set file
+  moves, the stored question keeps asking about content the revision no longer has, while `ledger answer` refuses a second
+  answer for that id. The derivation is right and the write is discarded, and `ask` still reports that it asked. Because a
+  repair round moves exactly the files a claim's reading set names, a strict change that repairs anything after its first
+  `ask` reaches this state. The ledger does not notice — a stale answer still satisfies the discovery floor — so the refusal
+  comes from the rule above, *a verdict does not outlive its content*, applied by a reader. Until this is repaired the only
+  in-task mitigation is additive: re-run `ask` with a larger `--per-claim` so fresh ids are appended against the current
+  subject, and answer those. See `design/2026-10-05-probe-answers-outlive-their-revision.md`.
+
 **Repairing.** A repair changes content, the sealed revision derives from content, and a verdict is bound to the revision
 it was recorded against — so **sealing after each repair buys a round per repair**. Repair everything one revision can
 answer, then seal once. What a repair owes is a claim whose evidence does not support it, which `ledger decide` names.
