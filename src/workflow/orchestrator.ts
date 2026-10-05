@@ -24,7 +24,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type TaskRevision, commitReviewDecision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readCurrentTaskRevision, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift, readCurrentTaskRevisionState } from './revision.js';
+import { type TaskRevision, commitReviewDecision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
@@ -622,7 +622,8 @@ async function cmdBuild(
     try {
     // What this seal narrows against: the revision that was current before it. Its digests are half the change
     // surface the record derives — the half that survives the round committing.
-    const baseRevision = await readCurrentTaskRevision(root, taskId);
+    const baseSnapshot = await readReviewDecisionSnapshot(root, taskId);
+    const baseRevision = baseSnapshot.revisionRead.kind === 'current' ? baseSnapshot.revisionRead.revision : null;
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
@@ -1192,8 +1193,8 @@ async function deriveSealRelevantChecks(
     // Only a re-seal can be narrowed: the first seal has nothing to compare against, and the freeze points must see
     // everything regardless.
     if (options.frozen === true || options.fullChecks === true) return {};
-    const { readCurrentTaskRevision } = await import('./revision.js');
-    const previous = revision ? null : await readCurrentTaskRevision(root, taskId);
+    const previousSnapshot = await readReviewDecisionSnapshot(root, taskId);
+    const previous = revision ? null : (previousSnapshot.revisionRead.kind === 'current' ? previousSnapshot.revisionRead.revision : null);
     const base = revision ?? previous;
     if (!base?.pathDigests) return {};
     const { changeSurfaceAgainstWorkspace } = await import('../quality/revision-delta.js');
@@ -1300,7 +1301,7 @@ async function cmdVerify(
     // threw *after* verifying everything and *before* writing `verify.json` — so the run was discarded and the operator got
     // no envelope at all from the command the router had just recommended. A repair tool has to answer with a refusal it
     // can read.
-    const verifyRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+    const verifyRevisionRead = (await readReviewDecisionSnapshot(root, taskId)).revisionRead;
     if (verifyRevisionRead.kind === 'unreadable') {
         return {
             command: 'verify',
@@ -2002,7 +2003,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     // discarding a judgement that had already been computed. Measured: `runCommand('judge')` with a corrupted pointer threw
     // at `quality/judge.ts:138` (the write is at `:140`). A tool an operator runs while repairing a task directory has to
     // answer with something it can read.
-    const judgeRevisionRead = await readCurrentTaskRevisionState(root, taskId);
+    const judgeRevisionRead = (await readReviewDecisionSnapshot(root, taskId)).revisionRead;
     if (judgeRevisionRead.kind === 'unreadable') {
         return {
             command: 'judge',

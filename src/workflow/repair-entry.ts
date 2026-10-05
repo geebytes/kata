@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
 import type { TaskRevision } from './revision.js';
-import { commitReviewDecision, readReviewDecisionSnapshot, readCurrentTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
+import { commitReviewDecision, readReviewDecisionSnapshot, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
@@ -133,12 +133,18 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
         };
     }
 
+    // **Asked of one snapshot, like the review branch beside it.** The supersede test needs a revision, and reading the
+    // pointer here for that purpose alone meant the reason this entry records could come from a different pointer state
+    // than the one the entry was decided on. The snapshot is taken once and the revision is derived from it.
+    const snapshot = await readReviewDecisionSnapshot(root, taskId);
+    const revision = snapshot.revisionRead.kind === 'current' ? snapshot.revisionRead.revision : null;
     // Evidence drift authorises re-entry here for the same reason it does at review: once the sealed revision is
     // superseded, the recorded verdict cannot describe the current implementation, and the only alternative is to judge
     // with evidence that no longer matches. Without this the task had to run a verify it knew would FAIL merely to have
     // the phase moved back — a whole round-trip per re-seal, and the same "authorised but unrecognised" shape as the
+    // the phase moved back — a whole round-trip per re-seal, and the same "authorised but unrecognised" shape as the
     // review and judge deadlocks.
-    if (!(await revisionStillDescribes(root, taskId, await readCurrentTaskRevision(root, taskId)))) {
+    if (!(await revisionStillDescribes(root, taskId, revision))) {
         return {
             authorized: true,
             entryPhase,
@@ -322,7 +328,12 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     const judgeRepairable = judge.result === 'FAIL'
         && failedAcceptance.length > 0
         && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
-    const judgeRevision = await readCurrentTaskRevision(root, taskId);
+    // **The baseline is written from this snapshot, not from a second read.** The revision decided on here is the one
+    // recorded as the repair's `baselineRevisionId`/`baselineManifestHash`, and the seal path compares the next manifest
+    // against that baseline — so a read taken for the decision and a read taken for the stamp have to be one snapshot,
+    // which is the property the review branch beside it already holds.
+    const snapshot = await readReviewDecisionSnapshot(root, taskId);
+    const judgeRevision = snapshot.revisionRead.kind === 'current' ? snapshot.revisionRead.revision : null;
     const supersededRecord = judgeRepairable || (await revisionStillDescribes(root, taskId, judgeRevision)) ? null : judgeRevision;
     if (!judgeRepairable && !supersededRecord) {
         const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
