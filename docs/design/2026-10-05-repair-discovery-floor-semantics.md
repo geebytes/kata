@@ -80,6 +80,14 @@ No schema migration, provider integration, platform adapter, receipt protocol, o
 
 **Mutation:** omit or blank the observation passed by the CLI writer; the workflow must again refuse with `discovery_unverified`.
 
+### Fail-closed state matrix
+
+`tests/unit/discovery-floor-fail-closed.test.ts` drives a **real ledger on disk** through `freezeSubject` → `appendChallenge` → `ledgerVerdict` for the states AC-2 names, so the refusals are pinned where they decide rather than only in the count: an open counterexample, a timed-out check left unresolved, a terminal record with a blank observation (which must refuse with a deficit naming `challenge check`), a terminal record with an observation, and a legacy `resolved` record.
+
+It is a separate suite rather than a reuse of the AC-1 selector because the two rows then resolve to **one** check: measured on the first seal of this change, `ac-1-terminal-observation` and `ac-2-fail-closed-discovery-states` produced the same resolved command line, the change record listed a single check, and AC-2 was left with no evidence of its own.
+
+**Mutation:** remove the `resolution.observed` guard in `verifiedChallengeCount`; the blank-observation case must fail.
+
 ### Decision matrix
 
 `tests/fixtures/review-scenarios.ts` retains an explicit `discovery_unverified` case, but describes it truthfully as a record with no usable observation rather than a command that passed. `src/kernel/decide.ts` continues to pair every reachable reason with an actionable deficit.
@@ -101,20 +109,21 @@ Excluded:
 | AC | Contract | Verification |
 | --- | --- | --- |
 | AC-1 | A terminal challenge with a non-blank persisted observation counts as executed discovery even when `reproduced` is false. | Unit derivation and `reproduced`-predicate mutation |
-| AC-2 | Open, timeout/unresolved, or observation-free challenge states remain fail-closed; existing reason/deficit routing remains reachable. | State cases plus `a-refusal-names-the-next-step` regression |
+| AC-2 | Open, timeout/unresolved, or observation-free challenge states remain fail-closed; existing reason/deficit routing remains reachable. | Fail-closed state matrix over a real ledger (`tests/unit/discovery-floor-fail-closed.test.ts`) plus the observation-guard mutation |
 | AC-3 | The real CLI check → ledger decision path consumes the recorded passing observation and does not demand a manufactured counterexample. | End-to-end ledger CLI test and observation-writer mutation |
 | AC-4 | The change does not treat discovery as claim evidence or weaken evidence/quorum/review/Judge requirements. | Existing strict-ledger workflow regression and focused decision assertions |
 
 ## 7. Measured verification
 
-Both declared mutations were applied to production source, observed to redden, and restored:
+Three declared mutations were applied to production source, observed to redden, and restored:
 
 | Mutation | Restored line | Observed result |
 | --- | --- | --- |
 | Re-require `challenge.reproduced !== true` in `verifiedChallengeCount` | `src/store/verdict.ts` | the AC-1 derivation case failed (`expected 0 to be 1`) and the AC-3 CLI case failed (`expected 'insufficient' to be 'pass'`) |
 | Blank the observation persisted by the CLI writer | `src/cli/ledger.ts` | five `ledger-cli-end-to-end` cases failed with `expected 'insufficient' to be 'pass'`, including the AC-3 case |
+| Remove the `resolution.observed` guard in `verifiedChallengeCount` | `src/store/verdict.ts` | the AC-2 blank-observation case failed (`expected 1 to be +0`) beside the AC-1 unobserved case |
 
-Restored state: focused suites 53/53 green (`probe-set-asks-distinct-questions`, `ledger-cli-end-to-end`, `review-seed-corpus`), `tsc --noEmit` clean, full suite **259 files / 1500 tests** green.
+Restored state: focused suites 58/58 green (`probe-set-asks-distinct-questions` 5, `discovery-floor-fail-closed` 5, `ledger-cli-end-to-end` 18, `review-seed-corpus` 30), `tsc --noEmit` clean, full suite **260 files / 1505 tests** green.
 
 ## 8. Recorded limitation
 
