@@ -228,3 +228,31 @@ invalidate it (`evidence replace` — evidence is otherwise write-once). A hand-
 while leaving a challenge's resolution intact is schema-valid and would still be credited. Closing that would mean the
 projection re-deriving `declared` from an evidence list it is not given, which is a second derivation of the same question
 and a behaviour change with its own review.
+
+### 9.1 The second round: the boundary was consumed, but not atomically
+
+The second independent round could not falsify any of the four repairs — its own challenge was withdrawn — and reported
+three neighbouring defects, the same class one step out:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| R2-A (major, AC-2) | `replaceEvidence` is one decision over four artefacts, but it wrote `evidence.json` *before* reading `verdicts.json`, so an unreadable verdict file was refused **after** the replacement had landed, under a message that said nothing had been written | every read of the decision happens before the first write — the verdict list, the run log and the challenge list are all read up front |
+| R2-B (minor, AC-3) | unbinding a demoted falsifier replaced the whole `resolution`, erasing the recorded verdict, subject and producer — more than the binding the comment claimed to remove | only `falsifierEvidenceId` (top-level, and inside the resolution) is removed; the measurement stays and the reason is appended to the observation |
+| R2-C (minor, AC-2) | `ledger answer` still read through the convenience reader, so an unreadable `probes.json` was reported as "no probe has been asked" | the sibling verb of `ask` reads the explicit state and refuses in the same shape |
+
+**Measured after commit `a1a5742`** (same method: committed source, one mutation, its selector, restored and SHA-checked):
+
+| mutation | selector | result |
+| --- | --- | --- |
+| write `evidence.json` before reading the rest of the decision | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+| unbinding replaces the whole resolution again | `tests/unit/discovery-challenge-binding.test.ts` | exit 1 (red) |
+| `ledger answer` reads through the convenience reader again | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+
+Two cases and two assertions carry this round in the declared surface. Full suite after it: 264 files / 1562 tests.
+
+**Still not closed, and recorded rather than implied:** the round also observed that the twelve recorded probes carry digest
+prefixes from the content that existed *before* this repair (8 of the 12 commands now fail). That is the same dogfooding
+artifact as F5 — the probes were issued by the installed bundle built from master, and this change's own refresh rule (a
+probe whose command or subject moved is re-asked) is exactly what would have re-issued them. It is invisible once the
+change is merged and the bundle rebuilt, and it is why the probe half of this ledger is not offered as evidence of the
+repair.
