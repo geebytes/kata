@@ -189,6 +189,18 @@ There are deliberately two questions, with different permitted fallbacks:
   does not hold the queried task must not win over the worktree holding the only copy.
 - AC-1 additionally corrupts the inner Git marker while retaining an outside linked outer marker. The selector must refuse instead of placing either flat store under that outer checkout; temporarily removing the marker recognition makes this case RED.
 
+**Post-commit mutation evidence:**
+
+| mutation | selector result | interpretation |
+| --- | --- | --- |
+| remove `worktreeOwnerHoldingTask` from task-addressed fallback | AC-2 RED | a Git/path owner that does not hold the task cannot become the record owner |
+| remove external `.git/worktrees/` marker recognition | AC-1 unnameable-nested case RED | a nested caller must refuse when neither Git nor a valid path owner can name the primary |
+| make both regressions together: path-first owner *and* no external marker recognition | AC-1 outside-nested case RED | this is the original F1 path-only failure |
+| make only Git ordering path-first | GREEN | marker recognition independently skips the outer linked checkout; this is intentional defense in depth, not a standalone witness |
+
+Every mutation was applied after commits `1b20c99` / `648eb58`, restored with `git checkout -- src/core/layout.ts`, and SHA-256 checked byte-identical before the next mutation.
+
+
 
 ## Non-goals
 
