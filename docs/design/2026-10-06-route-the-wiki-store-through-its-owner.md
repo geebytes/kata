@@ -34,7 +34,7 @@ lives under a directory `archive` deletes — the copy would disappear with its 
 
 ## The fix
 
-One derivation, in the module that owns the question, mirroring `evidenceDir`:
+`wikiDir` mirrors `evidenceDir`'s derivation, and `recordOwner` gains the one branch it was missing:
 
 ```ts
 export function wikiDir(root: string): string {
@@ -42,7 +42,44 @@ export function wikiDir(root: string): string {
     const owner = recordOwner({ root: start, taskId: worktreeTaskId(start) }).ownerRoot;
     return join(kataDir(owner ?? start), 'wiki');
 }
+
+// in recordOwner
+const ownerRoot = taskId !== undefined
+    ? findOwningCheckout(searchFrom, taskId)
+    : worktreeRoot === undefined
+        ? undefined
+        : owningCheckoutOf(worktreeRoot);
 ```
+
+### Why `wikiDir` alone was not enough — measured
+
+The first version of this change only rewrote `wikiDir`, and the selectors passed. The real workflow still answered `0`:
+`kata-cli wiki candidate` run from inside the linked worktree reported **0** candidates (the primary reported 26), because
+`recordOwner` needs a task id to walk, and `worktreeTaskId` reads it from `<worktree>/.kata/tasks/` — a directory a
+worktree a task is *working in* does not have. It returns `undefined`, `recordOwner` returns `ownerRoot: undefined`, and
+`wikiDir`'s `?? start` fallback then answers **"here"**, i.e. the store inside the worktree. The fallback that is correct
+for a single-checkout repository is exactly wrong for a worktree.
+
+Three facts pinned the root cause:
+
+- `owningCheckoutOf` — the path-shape derivation of "the checkout that holds `.kata/worktrees/<dir>`", documented as
+  *"Nothing is read from disk, because ownership must not depend on a file being present"* — **had no caller at all**. It
+  was written for this answer and never wired.
+- `worktreeTaskId`'s own catch block says *"A worktree that holds no record directory yet still needs an answer, and any
+  task id serves: the owner walk only has to reach the checkout that owns `.kata/worktrees/`"* — and then returns
+  `undefined`, which is the one answer that does not reach it.
+- every fixture in the three affected suites **created `.kata/tasks/<id>/` inside the worktree**, which is how the record
+  walk learned a task id — so the tests exercised a shape no real worktree has. This is the same defect shape as the
+  comment-versus-code cases this project keeps meeting: the assertion was about a state the fixture invented.
+
+After wiring it, the real workflow answers **26** candidates from inside the worktree, and the same branch fixes
+`evidenceDir`, which had been writing a second evidence copy under the worktree for the same reason.
+
+### The consequence for the evidence surface
+
+`evidenceDir` shares the derivation, so it shares the repair: a seal run from inside a real worktree now writes evidence to
+the owning checkout instead of `<worktree>/.kata/evidence`. That is the same class and the same fix, and it is asserted in
+AC-1's selector (the file whose subject is "record ownership answers every surface") and in AC-3's.
 
 - **No consumer changes.** `wikiRecordPath` derives from `wikiDir`, and every reader/writer of the store goes through one
   of the two (`src/wiki/store.ts`, `src/wiki/llmwiki.ts`, `src/wiki/drift.ts`, `src/wiki/context.ts`, `src/wiki/closure.ts`,
@@ -78,13 +115,17 @@ export function wikiDir(root: string): string {
 ## Verification plan
 
 - **AC-1** extends the existing "the evidence store, `recordsRoot` and the ownership answer agree on one path" case to the
-  Wiki store, and asserts that no `.kata/wiki` exists under the worktree after a write through the worktree root. The case
-  asserts the *answers*, not the call sites, so a rewrite that routes the question elsewhere but keeps the answers passes.
-- **AC-2** builds a repository, a task and a linked worktree, writes one candidate record through the **worktree** root and
-  reads it back through the primary — then asks `evaluateWikiClosure(worktree, taskId)`: `valid` for the registered id,
-  `candidate_missing` for an id that was never registered. The second half is what keeps the fix from being "accept any id".
+  Wiki store, and adds the **bare worktree** case: a worktree with no record directory inside it, which is the shape a real
+  one has and the shape every existing fixture invented its way around. The case asserts the *answers*, not the call sites,
+  so a rewrite that routes the question elsewhere but keeps the answers passes.
+- **AC-2** builds a repository, a task and a linked worktree **with no record directory inside it**, writes one candidate
+  record through the worktree root and reads it back through the primary — then asks
+  `evaluateWikiClosure(worktree, taskId)`: `valid` for the registered id, `candidate_missing` for an id that was never
+  registered. The second half is what keeps the fix from being "accept any id".
 - **AC-3** asserts `wikiDir(root)` and `wikiRecordPath(root, id)` for a repository with no worktree at all: the location is
   `<root>/.kata/wiki`, i.e. today's path, and the record resolves inside it.
 - **Reversible mutations**, applied after the commit so a restore cannot discard uncommitted work:
   1. restore `join(kataDir(root), 'wiki')` → AC-1 and AC-2 selectors must redden;
-  2. drop the `?? start` fallback → AC-3 must redden.
+  2. drop the `?? start` fallback → AC-3 must redden;
+  3. restore `ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId)` → AC-1's bare-worktree
+     case and AC-2 must redden (this is the mutation that would have caught the first, insufficient version).

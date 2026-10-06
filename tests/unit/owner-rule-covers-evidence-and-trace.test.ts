@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { evidenceDir, initLayout, recordsRoot, wikiDir, wikiRecordPath } from '../../src/core/layout.js';
+import { evidenceDir, initLayout, recordOwner, recordsRoot, wikiDir, wikiRecordPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 
 /**
@@ -68,6 +68,21 @@ describe('the owner rule covers evidence, and the tracked set agrees with it', (
         expect(await readFile(viaOwner, 'utf8')).toContain('"ok":true');
         // And there is no second copy under the worktree's own `.kata/evidence`.
         expect(viaOwner.startsWith(linked)).toBe(false);
+    });
+
+    it('a worktree that holds no record directory still resolves to its owner', async () => {
+        // The fixtures above create `.kata/tasks/<id>/` inside the worktree, which is how `worktreeTaskId` learned the task
+        // id — and that is not the shape a real worktree has. Without it the record walk finds nothing, and "no owner" was
+        // read as "here", so the store went back inside the worktree. The owner comes from the path shape instead.
+        const primary = await mkdtemp(join(tmpdir(), 'kata-evidence-bare-'));
+        roots.push(primary);
+        await initLayout(primary);
+        const linked = join(primary, '.kata', 'worktrees', 'bare');
+        await mkdir(join(linked, 'src'), { recursive: true });
+
+        expect(recordOwner({ root: linked }).ownerRoot).toBe(primary);
+        expect(evidenceDir(linked)).toBe(join(primary, '.kata', 'evidence'));
+        expect(wikiDir(linked)).toBe(join(primary, '.kata', 'wiki'));
     });
 
     it('the .gitignore whitelist and the record files agree, measured against git itself', async () => {
