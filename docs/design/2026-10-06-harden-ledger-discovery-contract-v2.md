@@ -367,3 +367,30 @@ change integrates the archived `route-the-wiki-store-through-its-owner` definiti
 owner is derived by checkout/worktree shape, and `wikiDir` resolves through that owner. C8/E8 make the dependency
 explicit for this revision: a closure asked from the linked worktree must resolve its registered candidate in the owner
 store.
+
+### 9.8 The eighth round: the branch was behind master, and a refusal named the wrong file
+
+The eighth round could not falsify C7's refusal projection and reported two items. The first is the deeper one: it was not a
+wrong line of code but a **divergent branch**. This worktree was cut before the sibling's later repairs landed on `master`,
+and the integration cherry-picked only the prefix `c51d77e^..1b20c99` of that sibling's work — so `9883073`, which derives
+the lock root from the artefact path, was never carried in. `wikiDir` resolved to the owner checkout while
+`withRepositoryArtefactLock` still locked `<caller>/.kata/locks/`, and the round reproduced it as its own challenge: a
+primary-held owner lock rejects a write from the primary checkout but lets the linked-worktree write of the same record
+through.
+
+The repair is the structural one rather than another instance: **`master` was merged into this branch** (`71d52bf`), so the
+branch is no longer behind it and `src/core/locks.ts` is byte-identical to `master`. Two conflicts had to be resolved, both
+of the same shape — the branch had applied an earlier version of a change `master` already had — so both resolved to
+`master`'s side, and the merged tree was re-verified (`265 files / 1600 tests`, typecheck clean) before the merge commit.
+Merging instead of patching the lock removes the whole class: no later `master` fix can be missing from this revision
+without the merge showing it.
+
+The second item is the round's note: both unreadable sources arrive through one reader, and the status published the
+ledger's refusal in `reviewRecordUnreadable` — telling whoever had to repair a corrupt `claims.json` to look at the review
+record. Routing was already right (the ledger branch outranks this one); the label was not. Each source now keeps its own
+problem id and its own field (`ledgerUnreadable` / `reviewRecordUnreadable`), and C9/E9 give that distinction its own
+coverage rather than leaving a repaired label outside the ledger.
+
+**Measured after commits `71d52bf` / `a8abfc9`:** collapsing the two sources back into one id and one field reddens
+`tests/unit/workflow-navigation.test.ts`, which now asserts each source in its own field and asserts the other is absent.
+Full suite: 265 files / 1601 tests.
