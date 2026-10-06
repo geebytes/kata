@@ -853,7 +853,18 @@ export function recordOwner(input: { root: string; path?: string; taskId?: strin
     // `dirname(worktreeRoot)` is the checkout that holds `.kata/worktrees/`, and the walk below continues upward from
     // there, so a worktree nested inside another directory still resolves to the repository that owns it.
     const searchFrom = worktreeRoot ? dirname(worktreeRoot) : start;
-    const ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId);
+    // **When the caller stands in a worktree, the owner is decided by the path shape — because that is the only thing
+    // that is there.** A worktree a task is *working in* holds no `.kata/tasks/<id>/` (the records live in the checkout
+    // that owns it), so the record walk has no task id to look up, and `undefined` was read as "no owner" — which the
+    // surfaces above turn into "here", i.e. the store goes back inside the worktree. `owningCheckoutOf` derives the
+    // answer from the path alone and sat unwired (`owningCheckoutOf` had no caller at all), which is why `evidenceDir`
+    // and `wikiDir` both kept a per-root copy under a real worktree while their tests — whose fixtures created the
+    // record directory — passed.
+    const ownerRoot = taskId !== undefined
+        ? findOwningCheckout(searchFrom, taskId)
+        : worktreeRoot === undefined
+            ? undefined
+            : owningCheckoutOf(worktreeRoot);
     return { ownerRoot, taskId, worktreeRoot };
 }
 

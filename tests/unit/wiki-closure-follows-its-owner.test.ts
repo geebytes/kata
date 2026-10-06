@@ -37,10 +37,10 @@ async function fixture(): Promise<{ primary: string; linked: string }> {
         acceptance: [{ id: 'AC-1', statement: 'x' }],
         ownedPaths: ['src/a.ts'],
     });
+    // **The real shape.** A worktree a task is working in holds no `.kata/tasks/<id>/` — the records live in the checkout
+    // that owns it — so nothing inside the worktree can name the task, and the owner has to come from the path shape.
     const linked = join(primary, '.kata', 'worktrees', 'wiki-task');
-    // The worktree holds a record directory, which is how `worktreeTaskId` learns which task it carries — the same shape
-    // `worktree create` produces.
-    await mkdir(join(linked, '.kata', 'tasks', 'wiki-task'), { recursive: true });
+    await mkdir(join(linked, 'src'), { recursive: true });
     return { primary, linked };
 }
 

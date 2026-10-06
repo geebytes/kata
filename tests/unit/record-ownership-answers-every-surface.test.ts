@@ -92,6 +92,24 @@ describe('record ownership has one answer', () => {
         expect(wikiDir(worktree).startsWith(worktree)).toBe(false);
     });
 
+    it('answers from the path shape when the worktree holds no record directory', () => {
+        // **The shape the defect hid behind.** Every fixture in this file created `.kata/tasks/<id>/` inside the worktree,
+        // which is not what a worktree a task is *working in* looks like: the records live in the checkout that owns it, so
+        // the record walk finds no task id and `recordOwner` answered `undefined`. Read as "no owner", that put the Wiki
+        // store — and the evidence store — back inside the worktree, which is exactly the per-root copy this rule forbids.
+        const primary = repo('bare-worktree');
+        seedTask(primary, 'held');
+        const worktree = join(primary, '.kata', 'worktrees', 'bare');
+        mkdirSync(join(worktree, 'src'), { recursive: true });
+
+        const owner = recordOwner({ root: worktree });
+        expect(owner.taskId, 'a bare worktree carries no task id').toBeUndefined();
+        expect(owner.ownerRoot, 'the path shape still names the checkout that holds the worktree').toBe(primary);
+        expect(wikiDir(worktree)).toBe(join(primary, '.kata', 'wiki'));
+        // The same derivation answers the evidence store, which is the same question one surface over.
+        expect(evidenceDir(worktree)).toBe(join(primary, '.kata', 'evidence'));
+    });
+
     it('says no owner rather than inventing one when the task is nowhere', () => {
         // The previous shapes returned the caller's directory when nothing held the task, which made "unknown" read as
         // "here" — and let a command run inside a worktree write records into the worktree.
