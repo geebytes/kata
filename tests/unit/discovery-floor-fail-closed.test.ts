@@ -428,4 +428,46 @@ describe('the writers consume the read boundary instead of answering `[]` for it
         expect(payload.ok).toBe(false);
         expect(String(payload.error)).toContain('probes.json');
     });
+
+    it('refuses before writing anything when a later artefact of the same decision is unreadable', async () => {
+        // `replaceEvidence` is one decision over four artefacts: which items changed, which verdicts they drop, the run
+        // that records why, and the challenges whose binding the change invalidates. Writing the evidence file first and
+        // discovering an unreadable verdict file afterwards left the replacement landed, under a message that said nothing
+        // had been written — so the reads all happen before the first write.
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
+        const before = await readFile(join(reviewDirOf(), 'evidence.json'), 'utf8');
+        await corrupt('verdicts.json');
+        await expect(replaceEvidence(root, changeId, [makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:absent' })], 'the recorded item was wrong'))
+            .rejects.toThrow(/verdicts\.json/);
+        await untouched('evidence.json', before);
+    });
+
+    it('refuses to answer over an unreadable probe list instead of reporting that no probe was asked', async () => {
+        // The sibling verb of `ask`, with the same defect: the convenience reader answers `[]` for a file that exists and
+        // cannot be read, so the refusal said "no probe has been asked" — a claim about the record — for a file nobody
+        // could look at.
+        await runLedgerCommand(['policy', '--init'], { root, changeId });
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await appendClaim(root, changeId, makeClaim({ id: 'C1', riskClass: 'consistency', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
+        await corrupt('probes.json', '{}\n');
+        const chunks: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { chunks.push(String(chunk)); return true; });
+        let threw: unknown = null;
+        try {
+            await runLedgerCommand(['answer', '--probe', 'P1-C1', '--observed', 'exit 0'], { root, changeId });
+        } catch (error) {
+            threw = error;
+        } finally {
+            spy.mockRestore();
+        }
+        const text = chunks.join('');
+        const payload = text.includes('{') ? (JSON.parse(text.slice(text.indexOf('{'))) as Record<string, unknown>) : {};
+        expect(threw).toBeNull();
+        expect(String(payload.error)).toContain('probes.json');
+    });
 });

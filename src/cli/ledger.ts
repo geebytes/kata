@@ -599,7 +599,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger answer', error: '--probe <id> is required' });
             return;
         }
-        const probes = await readProbes(options.root, changeId);
+        // **The sibling of `ask`, and it had the same defect.** The convenience reader answers `[]` for a file that exists
+        // and cannot be read, so an unreadable probe list was reported as "no probe has been asked" — a claim about the
+        // record for a file nobody could look at.
+        const storedProbes = await readProbesState(options.root, changeId);
+        if (storedProbes.kind === 'unreadable') {
+            fail({ command: 'ledger answer', error: `refusing to answer over ${storedProbes.file}: ${storedProbes.detail}. Nothing was written; repair or replace that file explicitly.` });
+            return;
+        }
+        const probes = storedProbes.kind === 'usable' ? storedProbes.value : [];
         const probe = probes.find((entry) => entry.id === probeId);
         if (probe === undefined) {
             const known = probes.map((entry) => entry.id);

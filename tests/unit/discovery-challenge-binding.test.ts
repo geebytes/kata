@@ -225,6 +225,11 @@ describe('a challenge bound to a declared falsifier', () => {
         const challenge = after.challenges.find((entry) => entry.id === 'X1');
         expect(challenge?.falsifierEvidenceId).toBeUndefined();
         expect(challenge?.resolution?.falsifierEvidenceId).toBeUndefined();
+        // **The measurement is not the binding.** The verdict and the revision it was measured against are the record of a
+        // run that really happened; unbinding a falsifier that no longer exists must remove the field naming it, not erase
+        // the observation. Only the binding goes, and the reason travels in the observation.
+        expect(challenge?.resolution?.verdict).toBe('supported');
+        expect(challenge?.resolution?.subjectRevision).toBe(after.subject?.revision);
         const projection = discoveryProjection({
             challenges: after.challenges, probes: [], answers: [], currentRevision: after.subject?.revision ?? null,
         });

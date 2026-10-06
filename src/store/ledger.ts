@@ -939,44 +939,52 @@ export async function replaceEvidence(
     reason: string,
 ): Promise<{ replaced: number; droppedVerdicts: string[] }> {
     return mutate(root, changeId, async () => {
+        // **Every read happens before every write.** These four artefacts are one decision — which items changed, which
+        // verdicts they drop, the run that records the reason, and the challenges whose binding the change invalidates —
+        // and a refusal from any of them has to leave all of them untouched. Writing `evidence.json` first and reading
+        // `verdicts.json` afterwards refused an unreadable verdict file *after* the replacement had landed, under a message
+        // that said nothing had been written.
         const before = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
+        const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
+        const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
         const changed = items.filter((item) => {
             const existing = before.find((entry) => entry.id === item.id);
             return existing === undefined || JSON.stringify(existing) !== JSON.stringify(item);
         });
         const changedIds = new Set(changed.map((item) => item.id));
-        await writeJson(root, changeId, FILES.evidence, [...items]);
-        const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
         const kept = verdicts.filter((verdict) => !changedIds.has(verdict.evidenceId));
         const dropped = verdicts.filter((verdict) => changedIds.has(verdict.evidenceId)).map((verdict) => verdict.evidenceId);
-        if (dropped.length > 0) await writeJson(root, changeId, FILES.verdicts, kept);
-        const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
-        runs.push({ at: nowIso(), producer: 'operator', claims: 0, evidence: changed.length, diversity: 'n/a', note: reason });
-        await writeJson(root, changeId, FILES.runs, runs);
         // **A binding this write invalidated is dropped by this write.** `discoveryProjection` credits a challenge from
         // its own resolution, so a falsifier that stops being an `executable_falsifier` would leave its challenge carrying
         // credit for a declaration that no longer exists — and no reader can tell that from one that is still declared.
-        // The challenge stays readable and its observation stays recorded; only the binding the demotion invalidated goes.
+        // What was *measured* stays: the verdict, the revision it was measured against and the producer are the record of
+        // a run that really happened, and deleting them would erase an observation rather than unbind it. Only the field
+        // naming a falsifier that no longer exists is removed, and the reason travels in the observation.
         const declaredFalsifiers = new Set(items.filter((item) => item.type === 'executable_falsifier').map((item) => item.id));
-        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
         const unboundCount = challenges.filter((challenge) => challenge.falsifierEvidenceId !== undefined
             && !declaredFalsifiers.has(challenge.falsifierEvidenceId)).length;
-        if (unboundCount > 0) {
-            const rebound = challenges.map((challenge) => {
-                const named = challenge.falsifierEvidenceId;
-                if (named === undefined || declaredFalsifiers.has(named)) return challenge;
-                const unbound: Challenge = { ...challenge };
-                delete unbound.falsifierEvidenceId;
-                if (challenge.resolution !== undefined) {
-                    unbound.resolution = {
-                        at: challenge.resolution.at,
-                        observed: `${challenge.resolution.observed} (unbound: ${named} is no longer an executable_falsifier)`
-                    };
-                }
-                return unbound;
-            });
-            await writeJson(root, changeId, FILES.challenges, rebound);
-        }
+        const rebound = unboundCount === 0 ? challenges : challenges.map((challenge) => {
+            const named = challenge.falsifierEvidenceId;
+            if (named === undefined || declaredFalsifiers.has(named)) return challenge;
+            const unbound: Challenge = { ...challenge };
+            delete unbound.falsifierEvidenceId;
+            if (challenge.resolution !== undefined) {
+                const resolution = { ...challenge.resolution };
+                delete resolution.falsifierEvidenceId;
+                unbound.resolution = {
+                    ...resolution,
+                    observed: `${resolution.observed} (unbound: ${named} is no longer an executable_falsifier)`
+                };
+            }
+            return unbound;
+        });
+
+        await writeJson(root, changeId, FILES.evidence, [...items]);
+        if (dropped.length > 0) await writeJson(root, changeId, FILES.verdicts, kept);
+        runs.push({ at: nowIso(), producer: 'operator', claims: 0, evidence: changed.length, diversity: 'n/a', note: reason });
+        await writeJson(root, changeId, FILES.runs, runs);
+        if (unboundCount > 0) await writeJson(root, changeId, FILES.challenges, rebound);
         return { replaced: changed.length, droppedVerdicts: dropped };
     });
 }
