@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { evidenceDir, initLayout, recordsRoot } from '../../src/core/layout.js';
+import { evidenceDir, initLayout, recordsRoot, wikiDir, wikiRecordPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 
 /**
@@ -44,6 +44,16 @@ describe('the owner rule covers evidence, and the tracked set agrees with it', (
         expect(recordsRoot(linked, 'evidence-task')).toBe(primary);
         const fromWorktree = evidenceDir(linked);
         expect(fromWorktree).toBe(join(primary, '.kata', 'evidence'));
+    });
+
+    it('the Wiki store keeps its location when the code and the records share one checkout', async () => {
+        const { primary } = await fixture();
+
+        // **The fallback is not the defect this class usually has.** `ownerRoot` is undefined when no other checkout holds
+        // the task, and for a task whose records live here that is the correct answer: the store is *here*, at the path it
+        // has always had. Nothing is migrated, and every reader and writer resolves the same file as before.
+        expect(wikiDir(primary)).toBe(join(primary, '.kata', 'wiki'));
+        expect(wikiRecordPath(primary, 'a-record')).toBe(join(primary, '.kata', 'wiki', 'a-record.json'));
     });
 
     it('an evidence file is reachable from the owner whatever root wrote it', async () => {

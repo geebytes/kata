@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { evidenceDir, recordOwner, recordsRoot } from '../../src/core/layout.js';
+import { evidenceDir, recordOwner, recordsRoot, wikiDir, wikiRecordPath } from '../../src/core/layout.js';
 
 /**
  * AC-1 — one function answers which checkout owns a record and which task it belongs to.
@@ -81,6 +81,15 @@ describe('record ownership has one answer', () => {
         expect(owner.ownerRoot).toBeDefined();
         expect(evidenceDir(worktree)).toBe(join(owner.ownerRoot!, '.kata', 'evidence'));
         expect(recordsRoot(worktree, 'held')).toBe(owner.ownerRoot!);
+        // **The Wiki store is the same question, and it was the last surface still derived per-caller.** Measured on a
+        // task sealed under `isolated_worktree`: `wiki register` wrote the candidate under the primary checkout while
+        // `verify --change` read the worktree's own `.kata/wiki`, which does not exist — so the closure gate answered
+        // `candidate_missing` for a candidate that exists.
+        expect(wikiDir(worktree)).toBe(join(owner.ownerRoot!, '.kata', 'wiki'));
+        expect(wikiRecordPath(worktree, 'a-record')).toBe(join(owner.ownerRoot!, '.kata', 'wiki', 'a-record.json'));
+        // And the worktree keeps no copy of its own: a second store would be a second answer, under a directory the
+        // archive deletes.
+        expect(wikiDir(worktree).startsWith(worktree)).toBe(false);
     });
 
     it('says no owner rather than inventing one when the task is nowhere', () => {
