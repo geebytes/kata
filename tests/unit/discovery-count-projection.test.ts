@@ -66,12 +66,19 @@ function challengeOf(overrides: Partial<Challenge> = {}): Challenge {
     };
 }
 
-function project(input: { challenges?: Challenge[]; probes?: Probe[]; answers?: ProbeAnswer[] } = {}): { independentChallenges: number; verifiedChallenges: number } {
+function project(
+    input: { challenges?: Challenge[]; probes?: Probe[]; answers?: ProbeAnswer[]; declaredFalsifiers?: ReadonlySet<string> } = {},
+): { independentChallenges: number; verifiedChallenges: number } {
     return discoveryProjection({
         challenges: input.challenges ?? [],
         probes: input.probes ?? [],
         answers: input.answers ?? [],
         currentRevision: revision,
+        // **The declaration is an input, and these cases are about a falsifier that is declared.** The projection credits
+        // a binding only when the ledger declares the falsifier it names, so the fixture has to say which ones it
+        // declares — the default is "the one these cases name", and the case that checks an undeclared id passes its own
+        // set. An absent set credits nothing, which is asserted separately.
+        declaredFalsifiers: input.declaredFalsifiers ?? new Set(['E1']),
     });
 }
 
@@ -166,5 +173,35 @@ describe('the discovery projection', () => {
 
     it('reports nothing at all when the ledger holds no bound record', () => {
         expect(project()).toEqual({ independentChallenges: 0, verifiedChallenges: 0 });
+    });
+
+    it('does not credit a binding to a falsifier the ledger never declared', () => {
+        // **The challenge cannot certify its own binding.** A record can name an id the ledger never declared — it is
+        // reachable without tooling, because `challenges.json` has no schema — and a resolution that repeats the same id
+        // used to be enough to satisfy the discovery floor. The declaration is an input, so an id outside it credits
+        // nothing while the attempt is still counted as an attempt.
+        const challenge = challengeOf();
+        expect(project({ challenges: [challenge] }).verifiedChallenges).toBe(1);
+        // **The attempt is not counted either.** A challenge naming a falsifier the ledger never declared is not an attempt
+        // at anything the change declared, so the honest refusal is `discovery_floor` ("record one") rather than
+        // `discovery_unverified` ("the recorded attempt decided nothing") — counting it as an attempt would let a fabricated
+        // record choose which refusal it gets.
+        expect(project({ challenges: [challenge], declaredFalsifiers: new Set(['E-OTHER']) })).toEqual({
+            independentChallenges: 0,
+            verifiedChallenges: 0,
+        });
+        expect(project({ challenges: [challenge], declaredFalsifiers: new Set() }).verifiedChallenges).toBe(0);
+    });
+
+    it('credits nothing when the declaration is not supplied at all', () => {
+        // An absent set is not a permissive default: a binding that cannot be checked against a declaration is not
+        // evidence, and defaulting to "assume it is declared" is exactly the fail-open shape this projection removes.
+        const counts = discoveryProjection({
+            challenges: [challengeOf()],
+            probes: [],
+            answers: [],
+            currentRevision: revision,
+        });
+        expect(counts.verifiedChallenges).toBe(0);
     });
 });

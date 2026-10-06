@@ -703,18 +703,27 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             }
         } else policyRejected = loaded.error;
     }
-    const usage = (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] }>(join(dir, FILES.usage))) ?? null;
-    const verdictsRaw = (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? [];
+    /**
+     * **The scan's verdict governs the view.** These documents are validated while the ledger is scanned, but the view used
+     * to be built by a second, independent read that coerced whatever it found — so a `claims.json` holding an object
+     * produced `ledger.claims` as an object, and `ledger.claims.some(...)` threw inside a command instead of the ledger
+     * reporting that the file cannot be read. A document the scan called malformed contributes nothing to the view now: the
+     * file keeps its bytes, `malformedFiles` names it, and consumers see the absence rather than a shape the file never
+     * had.
+     */
+    const validated = <T>(file: string, value: T | null): T | null => (malformedFiles.includes(file) ? null : value);
+    const usage = validated(FILES.usage, (await readJson<{ usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] }>(join(dir, FILES.usage))) ?? null);
+    const verdictsRaw = validated(FILES.verdicts, (await readJson<EvidenceVerdict[]>(join(dir, FILES.verdicts))) ?? []) ?? [];
     // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
     // about another one, and it is the same value the caller receives as `subject`.
-    const subjectForProjection = await readJson<Subject>(join(dir, FILES.subject));
+    const subjectForProjection = validated(FILES.subject, await readJson<Subject>(join(dir, FILES.subject)));
     return {
         changeId,
         dir,
         subject: subjectForProjection,
         policy,
-        claims: (await readJson<Claim[]>(join(dir, FILES.claims))) ?? [],
-        evidence: (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? [],
+        claims: validated(FILES.claims, (await readJson<Claim[]>(join(dir, FILES.claims))) ?? []) ?? [],
+        evidence: validated(FILES.evidence, (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? []) ?? [],
         // **One read, two views.** The document is read once; the projection is derived from those bytes, so a caller
         // cannot see a projection computed from different content than the readings it is compared against.
         ...(() => {
@@ -1103,6 +1112,32 @@ export async function appendChallenge(root: string, changeId: string, challenge:
 }
 
 /**
+ * Record a challenge and link it from its claim, as one decision over two artefacts.
+ *
+ * `appendChallenge` writes one artefact; the claim's `challengeIds` is a second, and the command used to call both in
+ * sequence — so a refusal from the second (an unreadable `claims.json`) left the first one written, under a message that
+ * said nothing had been written. Both artefacts are read before either is written here, and the claim has to exist: a
+ * challenge that no claim links to is a record nobody asked for.
+ */
+export async function recordChallenge(root: string, changeId: string, challenge: Challenge): Promise<Challenge> {
+    return mutate(root, changeId, async () => {
+        const claims = (await readDocumentForWrite<Claim[]>(root, changeId, FILES.claims)) ?? [];
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
+        const claim = claims.find((entry) => recordKey(entry.id) === recordKey(challenge.claimId));
+        if (claim === undefined) throw new Error(`no claim ${challenge.claimId} in this ledger, so there is nothing to link ${challenge.id} to`);
+        const next = challenges.some((entry) => recordKey(entry.id) === recordKey(challenge.id))
+            ? challenges
+            : [...challenges, challenge];
+        const linked = claims.map((entry) => (recordKey(entry.id) === recordKey(challenge.claimId)
+            ? { ...entry, challengeIds: [...entry.challengeIds, challenge.id] }
+            : entry));
+        await writeJson(root, changeId, FILES.challenges, next);
+        await writeJson(root, changeId, FILES.claims, linked);
+        return challenge;
+    });
+}
+
+/**
  * Replace a counterexample's command, keeping the one it replaces.
  *
  * The state resets to `open` on purpose: the previous outcome was measured with a command that has changed, so carrying a
@@ -1322,8 +1357,16 @@ export type LedgerReport = {
          * rule the other two rates follow.
          */
         probeResponseRate: number | null;
-        probesAsked: number;
-        probesAnswered: number;
+        probesAsked: number | null;
+        probesAnswered: number | null;
+        /**
+         * The artefacts this report could not read, by name.
+         *
+         * **A count over a file nobody could read is not zero**, so the three numbers above are `null` when their
+         * artefact is unreadable and this field says which file it was. Without it a corrupt `probes.json` published
+         * `probesAsked: 0` while `decide` refused the same file: one question, two answers, and the report's was false.
+         */
+        unreadableArtefacts: string[];
         /**
          * The change-level baseline the acceptance items compare against, or why it is absent.
          *
@@ -1405,6 +1448,8 @@ export async function ledgerDrift(root: string, changeId: string): Promise<{
 
 export async function ledgerReport(root: string, changeId: string): Promise<LedgerReport> {
     const ledger = await readLedger(root, changeId);
+    const probes = await readProbesState(root, changeId);
+    const answers = await readProbeAnswersState(root, changeId);
     const byStatus = { open: 0, supported: 0, refuted: 0, insufficient: 0, waived: 0 } as Record<ClaimStatus, number>;
     for (const claim of ledger.claims) byStatus[claim.status] += 1;
 
@@ -1505,16 +1550,24 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             challengeWithdrawalRate: ledger.challenges.length === 0
                 ? null
                 : ledger.challenges.filter((challenge) => challenge.state === 'withdrawn').length / ledger.challenges.length,
-            // **Distinct questions on every count, so the rate and the floor read the same denominator.** A stored probe
-            // list can hold the same question twice — a hand-written ledger, or one recorded before the generator was
-            // de-duplicated — and the rate is the quantity the discovery floor reads, so counting records rather than
-            // questions would let repetition raise it.
-            probeResponseRate: responseRate({
-                asked: distinctProbeCount(await readProbes(root, changeId)),
-                answered: distinctProbeCount(await readProbeAnswers(root, changeId)),
-            }),
-            probesAsked: distinctProbeCount(await readProbes(root, changeId)),
-            probesAnswered: distinctProbeCount(await readProbeAnswers(root, changeId)),
+            // **A count over a file nobody could read is not zero.** The convenience readers answer `[]` for a file that
+            // exists and cannot be read, so this report used to publish `probesAsked: 0` for a corrupt `probes.json`
+            // while `decide` refused the same file — one question, two answers, and the report's was the false one. The
+            // counts are `null` and the artefact is named instead.
+            probeResponseRate: probes.kind === 'usable' && answers.kind === 'usable'
+                ? responseRate({
+                    // **Distinct questions on every count, so the rate and the floor read the same denominator.** A stored
+                    // probe list can hold the same question twice — a hand-written ledger, or one recorded before the
+                    // generator was de-duplicated — and the rate is the quantity the discovery floor reads, so counting
+                    // records rather than questions would let repetition raise it.
+                    asked: distinctProbeCount(probes.value),
+                    answered: distinctProbeCount(answers.value),
+                })
+                : null,
+            probesAsked: probes.kind === 'usable' ? distinctProbeCount(probes.value) : null,
+            probesAnswered: answers.kind === 'usable' ? distinctProbeCount(answers.value) : null,
+            // The artefacts this report could not read, named so a `null` above is never mistaken for a measured zero.
+            unreadableArtefacts: ledger.malformedFiles,
             // Read rather than asserted. `buildBaseline` is the only reader of the retired records and the run registry,
             // and a failure to read them is reported as the reason rather than as the constant it replaces.
             baseline: await baselineOrReason(root),

@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, readProbesState, answerProbe } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbes, readProbesState, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -647,6 +647,14 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
 
     if (sub === 'challenge') {
         const action = argv[1] ?? 'list';
+        // **Every action of this verb reads two artefacts, so an unreadable one is named before anything is decided.** A
+        // list answered "no challenges", a check answered "there is nothing to check" and an add answered "no claim C1" —
+        // three claims about content, for files nobody could look at. One refusal, naming the files, covers all three.
+        const unreadableHere = ledger.malformedFiles.filter((file) => file === 'challenges.json' || file === 'claims.json');
+        if (unreadableHere.length > 0) {
+            fail({ command: `ledger challenge ${action}`, error: `the ledger holds ${unreadableHere.join(' and ')}, which cannot be read. Nothing was written; repair or replace that file explicitly.` });
+            return;
+        }
         if (action === 'list') {
             outputResult({ ok: true, challenges: ledger.challenges });
             return;
@@ -709,9 +717,16 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 at: nowIso(),
                 ...(falsifierId === undefined ? {} : { falsifierEvidenceId: falsifierId }),
             };
-            await appendChallenge(options.root, changeId, challenge);
-            const claim = ledger.claims.find((entry) => entry.id === claimId) as Claim;
-            await appendClaim(options.root, changeId, { ...claim, challengeIds: [...claim.challengeIds, id] });
+            // **One decision over two artefacts.** Recording the challenge and linking it from its claim used to be two
+            // calls, so a refusal from the second (an unreadable `claims.json`) left the first one written under a message
+            // that said nothing had been written. `recordChallenge` reads both before writing either, and its refusal
+            // arrives as the structured envelope the rest of this surface uses instead of escaping as an exception.
+            try {
+                await recordChallenge(options.root, changeId, challenge);
+            } catch (error) {
+                fail({ command: 'ledger challenge add', error: (error as Error).message });
+                return;
+            }
             outputResult({
                 ok: true,
                 command: 'ledger challenge add',
@@ -1095,12 +1110,19 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // **A focus narrows a plan; it does not invent one.** Without a stored plan there are no reading sets to narrow, and
         // producing an impact cone by re-deriving the dependencies here would be the second answer to a question the planner
         // already answered — so it is a named state rather than a silent fallback.
-        const storedPlan = await readPlan(options.root, changeId);
-        if (storedPlan === null) {
+        const storedPlan = await readPlanState(options.root, changeId);
+        if (storedPlan.kind === 'unreadable') {
+            // **An unreadable plan is not an absent one.** `readPlan` answers `null` for both, so this command used to say
+            // "no plan has been stored" — a claim about the content — and recommended `ledger plan`, which overwrites the
+            // bytes that are the only evidence the file is corrupt.
+            fail({ command: 'ledger focus', state: 'plan-unreadable', error: `plan.json exists and cannot be read (${storedPlan.detail}). Nothing was written; repair or replace that file explicitly.` });
+            return;
+        }
+        if (storedPlan.kind === 'absent') {
             fail({ command: 'ledger focus', state: 'no-plan', error: 'no plan has been stored for this change: run `ledger plan` first, because a focus narrows the reading sets a plan produced.' });
             return;
         }
-        const plan = storedPlan as { readingSets?: Array<{ claimId: string; paths: string[]; truncated: boolean }>; tier?: string };
+        const plan = storedPlan.value as { readingSets?: Array<{ claimId: string; paths: string[]; truncated: boolean }>; tier?: string };
         const sets = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set]));
         const diff = diffSubjects(ledger.subject, subjectOf(current.pathDigests));
         const drifted = new Set([...diff.changed, ...diff.added, ...diff.removed]);

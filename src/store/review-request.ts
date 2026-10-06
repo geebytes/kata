@@ -19,7 +19,7 @@
  * least one evidence item, the reading set was not exceeded by what the reviewer cited, and the probes were answered. A
  * gap is named rather than scored, for the same reason the decision names its reasons.
  */
-import { declaredPaths, freezeSubject, readProbes, readProbeAnswers, readLedger, readPlan } from './ledger.js';
+import { declaredPaths, freezeSubject, readProbes, readProbeAnswers, readLedger, readPlan, readPlanState, readProbesState, readProbeAnswersState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
@@ -61,8 +61,13 @@ export async function buildReviewRequest(input: {
 > {
     const ledger = await readLedger(input.root, input.changeId);
     if (ledger.subject === null) return { ok: false, why: 'the subject is not frozen' };
-    const stored = await readPlan(input.root, input.changeId);
-    if (stored === null) return { ok: false, why: 'no plan has been stored: a request is derived from the plan, and without one there is nothing to hand over' };
+    // **An unreadable plan is not an absent one.** `readPlan` answers `null` for both, so a corrupt `plan.json` was reported
+    // as "no plan has been stored" — a claim about the content — and the brief handed to a reviewer was built from that
+    // answer. The two states are named separately.
+    const storedPlan = await readPlanState(input.root, input.changeId);
+    if (storedPlan.kind === 'unreadable') return { ok: false, why: `plan.json exists and cannot be read (${storedPlan.detail})` };
+    if (storedPlan.kind === 'absent') return { ok: false, why: 'no plan has been stored: a request is derived from the plan, and without one there is nothing to hand over' };
+    const stored = storedPlan.value;
     const plan = stored as {
         tier?: string;
         readingSets?: Array<{ claimId: string; paths: string[] }>;
@@ -130,7 +135,15 @@ export async function buildReviewRequest(input: {
     }
     const readingById = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set.paths]));
     const requiredById = new Map((plan.requiredEvidence ?? []).map((entry) => [entry.claimId, entry]));
-    const probes = await readProbes(input.root, input.changeId);
+    // **A brief that silently omits what it could not read is a brief about a different ledger.** `readProbes` answers `[]`
+    // for a file that exists and cannot be decoded, so the request carried no probes and said nothing about why. The
+    // artefacts that could not be read travel with the request now, so the reviewer sees the state rather than an absence.
+    const probesRead = await readProbesState(input.root, input.changeId);
+    const probes = probesRead.kind === 'usable' ? probesRead.value : [];
+    const unreadableArtefacts = [...new Set([
+        ...(probesRead.kind === 'unreadable' ? [probesRead.file] : []),
+        ...ledger.malformedFiles,
+    ])];
 
     return {
         ok: true,
@@ -140,6 +153,9 @@ export async function buildReviewRequest(input: {
             subjectRevision: ledger.subject.revision,
             tier: plan.tier ?? 'unknown',
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
+            // Present only when something could not be read: an absent field means the brief describes a ledger that was
+            // fully readable, and a name here means the reviewer is looking at a request built around a hole.
+            ...(unreadableArtefacts.length === 0 ? {} : { unreadableArtefacts }),
             claims: ledger.claims.map((claim) => ({
                 claimId: claim.id,
                 statement: claim.statement,
@@ -170,7 +186,14 @@ export async function verifyAgainstRequest(input: {
     if (!built.ok) return { gaps: [{ claimId: null, what: built.why }] };
     const { claimDecisions } = await import('./verdict.js');
     const decisions = new Map(claimDecisions(ledger).map((decision) => [decision.claimId, decision]));
-    const answers = await readProbeAnswers(input.root, input.changeId);
+    // **An unreadable answer list is not an unanswered one.** The convenience reader answers `[]` for a file that exists
+    // and cannot be read, which would make every probe read as a gap — the same defect one layer out, on the side that
+    // decides whether the brief has been answered at all.
+    const answersRead = await readProbeAnswersState(input.root, input.changeId);
+    if (answersRead.kind === 'unreadable') {
+        return { gaps: [{ claimId: null, what: `probe-answers.json exists and cannot be read (${answersRead.detail})` }] };
+    }
+    const answers = answersRead.kind === 'usable' ? answersRead.value : [];
     const answered = new Set(answers.map((answer) => answer.probeId));
     const gaps: RequestGap[] = [];
 

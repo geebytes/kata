@@ -471,3 +471,73 @@ describe('the writers consume the read boundary instead of answering `[]` for it
         expect(String(payload.error)).toContain('probes.json');
     });
 });
+
+/**
+ * **The surfaces that read the ledger in order to report on it.**
+ *
+ * AC-1 promises that an artefact which exists and cannot be decoded is `unreadable`. A report that answers `0`, `[]` or
+ * "nothing has been stored" for it publishes the opposite of that promise — a claim about the content of a file nobody
+ * could look at — and it is the shape that started this whole change. These cases pin the answer at the commands an
+ * operator actually runs.
+ */
+describe('a report over an unreadable ledger names the artefact instead of answering zero', () => {
+    const reviewDirOf = (): string => join(root, '.kata', 'tasks', changeId, 'review');
+    const corrupt = async (file: string, content = '{ this is not JSON\n'): Promise<void> => {
+        await mkdir(reviewDirOf(), { recursive: true });
+        await writeFile(join(reviewDirOf(), file), content);
+    };
+    const run = async (argv: string[]): Promise<Record<string, unknown>> => {
+        const chunks: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { chunks.push(String(chunk)); return true; });
+        try {
+            await runLedgerCommand(argv, { root, changeId });
+        } catch {
+            // A refusal may arrive as an envelope or as a thrown error; the envelope is what is asserted, and the throw
+            // case is covered by the writer cases above.
+        } finally {
+            spy.mockRestore();
+        }
+        const text = chunks.join('');
+        return text.includes('{') ? (JSON.parse(text.slice(text.indexOf('{'))) as Record<string, unknown>) : {};
+    };
+    const frozen = async (): Promise<void> => {
+        const result = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!result.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, result.subject);
+    };
+
+    it('reports null counts and names the file when the probe list cannot be read', async () => {
+        await corrupt('probes.json', '{}\n');
+        const report = (await run(['status', '--cost'])).report as Record<string, unknown>;
+        const discovery = report.discovery as Record<string, unknown>;
+        expect(discovery.probesAsked).toBeNull();
+        expect(discovery.probesAnswered).toBeNull();
+        expect(discovery.probeResponseRate).toBeNull();
+        expect(discovery.unreadableArtefacts).toContain('probes.json');
+    });
+
+    it('says a plan exists and cannot be read rather than that none was stored', async () => {
+        await frozen();
+        await corrupt('plan.json');
+        const payload = await run(['focus']);
+        expect(payload.state).toBe('plan-unreadable');
+        expect(String(payload.error)).toContain('plan.json');
+    });
+
+    it('refuses to list or check challenges when the challenge list cannot be read', async () => {
+        await corrupt('challenges.json', '{}\n');
+        expect(String((await run(['challenge', 'list'])).error)).toContain('challenges.json');
+        expect(String((await run(['challenge', 'check'])).error)).toContain('challenges.json');
+    });
+
+    it('records a challenge and its claim link as one decision, or writes neither', async () => {
+        // The command called two writers in sequence, so an unreadable `claims.json` refused *after* the challenge had been
+        // recorded — under a message that said nothing had been written, leaving a record no claim links to.
+        await corrupt('claims.json', '{}\n');
+        await corrupt('challenges.json', '[]\n');
+        const before = await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8');
+        const payload = await run(['challenge', 'add', '--claim', 'C1', '--command', 'true', '--id', 'X9']);
+        expect(String(payload.error)).toContain('claims.json');
+        expect(await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8')).toBe(before);
+    });
+});

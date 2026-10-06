@@ -44,6 +44,17 @@ export function discoveryProjection(input: {
     answers: readonly ProbeAnswer[];
     probes: readonly Probe[];
     currentRevision: string | null;
+    /**
+     * The falsifiers this ledger actually declares, by id.
+     *
+     * **A binding is only as good as the declaration behind it, and the declaration is not in the challenge.** A challenge
+     * record carries the id of the falsifier it claims to reproduce and its own resolution repeats that id, so a record
+     * naming an id the ledger never declared can satisfy the discovery floor by certifying itself — reachable without any
+     * tooling, because `challenges.json` has no schema and the CLI's `--falsifier` validation only guards the path that
+     * writes it. The declared set is therefore an input, and when it is absent nothing is credited: a binding that cannot
+     * be checked against a declaration is not evidence of anything.
+     */
+    declaredFalsifiers?: ReadonlySet<string>;
 }): { independentChallenges: number; verifiedChallenges: number } {
     const readings = new Map<string, boolean>();
     const current = input.currentRevision;
@@ -51,6 +62,7 @@ export function discoveryProjection(input: {
     for (const challenge of input.challenges) {
         const falsifierEvidenceId = challenge.falsifierEvidenceId;
         if (typeof falsifierEvidenceId !== 'string' || falsifierEvidenceId === '') continue;
+        if (input.declaredFalsifiers === undefined || !input.declaredFalsifiers.has(falsifierEvidenceId)) continue;
         const resolution = challenge.resolution;
         const verified = resolution !== undefined
             && resolution.falsifierEvidenceId === falsifierEvidenceId
@@ -318,6 +330,9 @@ export async function ledgerVerdict(input: {
             probes: await readProbes(input.root, input.changeId),
             answers: await readProbeAnswers(input.root, input.changeId),
             currentRevision: ledger.subject.revision,
+            declaredFalsifiers: new Set(ledger.evidence
+                .filter((item) => item.type === 'executable_falsifier')
+                .map((item) => item.id)),
         }),
         ...(quorum === undefined ? {} : { quorum }),
         ...(input.actor === undefined ? {} : { actor: input.actor }),
