@@ -394,3 +394,22 @@ coverage rather than leaving a repaired label outside the ledger.
 **Measured after commits `71d52bf` / `a8abfc9`:** collapsing the two sources back into one id and one field reddens
 `tests/unit/workflow-navigation.test.ts`, which now asserts each source in its own field and asserts the other is absent.
 Full suite: 265 files / 1601 tests.
+
+### 9.9 The tenth round: three artefacts, and one refusal each
+
+The tenth round could not falsify the C9 boundary repair — its own challenge `X41` was withdrawn, and its independent reading
+of E1–E9 was `supported` throughout — and then found the same class one artefact further out:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| the pointer's refusal borrowed the record's name | `readReviewRecord` refuses on two different artefacts — the record and the pointer it binds to — and returned one shape for both, so `readBlockingProblems` labelled every refusal `source: 'review-record'`. A corrupt `current-revision.json` was published as an unreadable *review record*: the message named the right file, the field named the wrong one | the refusal carries its own `source` (`review-record` \| `current-revision`), and the blocking reader passes it through |
+| two unreadable artefacts counted as one | the published problems came from the blocking reader's single `source`, so with both the record and the ledger corrupt only one got a problem id while the count said one refusal | the problem list is assembled from the three independent facts the summary already reads — the pointer (`sealedRead`), the record (`blockingRead`), the ledger (`ledger.state`) — one blocking problem per unreadable artefact, each under its own id |
+
+This is what makes C9 true as written: *each* refusal now has its own problem id (`current_revision_unreadable`,
+`review_record_unreadable`, `ledger_unreadable`) and its own status field, and no artefact's refusal can be published under
+another's name.
+
+**Measured after commit `aec3465`:** removing the ledger's own problem line, or collapsing the record and pointer sources back
+into one, reddens `tests/unit/workflow-navigation.test.ts`; the selector now carries four cases — isolated ledger, isolated
+record, isolated pointer, and both-broken — and asserts each source in its own field with the others absent, plus that two
+unreadable artefacts open two problems. Full suite: 265 files / 1603 tests.
