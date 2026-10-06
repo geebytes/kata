@@ -187,6 +187,7 @@ There are deliberately two questions, with different permitted fallbacks:
   evaluates under the primary.
 - The existing stranded-task test remains the guard against turning Git's primary into an unverified owner: a primary that
   does not hold the queried task must not win over the worktree holding the only copy.
+- AC-1 additionally corrupts the inner Git marker while retaining an outside linked outer marker. The selector must refuse instead of placing either flat store under that outer checkout; temporarily removing the marker recognition makes this case RED.
 
 
 ## Non-goals
