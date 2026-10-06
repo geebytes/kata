@@ -176,6 +176,30 @@ describe('record ownership has one answer', () => {
         expect(evidenceDir(inner)).toBe(join(primary, '.kata', 'evidence'));
     });
 
+    it('uses git’s primary checkout when an outside-path worktree contains a nested worktree', () => {
+        // **The path answer is only a fixture fallback; git is authoritative for a real linked checkout.** An outside
+        // `git worktree add` checkout has no `.kata/worktrees` segment. If it creates the product’s nested shape, the
+        // inner path does contain one — but the checkout above it is still a linked worktree, so it cannot own records.
+        // The inner `.git` marker points at the primary and `git worktree list` names that primary as main.
+        const primary = repo('outside-nested');
+        seedTask(primary, 'a-task');
+        writeFileSync(join(primary, 'README.md'), 'primary\n');
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', 'README.md'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        const outer = `${primary}-outer`;
+        const inner = join(outer, '.kata', 'worktrees', 'inner');
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', outer], { cwd: primary });
+        roots.push(outer);
+        mkdirSync(join(outer, '.kata', 'worktrees'), { recursive: true });
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', inner], { cwd: outer });
+
+        const owner = recordOwner({ root: inner });
+        expect(owner.worktreeRoot).toBe(inner);
+        expect(owner.ownerRoot).toBe(primary);
+        expect(wikiDir(inner)).toBe(join(primary, '.kata', 'wiki'));
+        expect(evidenceDir(inner)).toBe(join(primary, '.kata', 'evidence'));
+    });
+
     it('answers with the worktree that holds the only copy of a task', () => {
         // **The documented fallback, restored.** `recordsRoot` says it in words — "When nothing else holds the task the
         // worktree is still used, because an unreachable record is worse than a remote one" — and this repository keeps

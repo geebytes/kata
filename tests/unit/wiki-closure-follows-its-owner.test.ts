@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout, wikiDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
@@ -175,6 +176,45 @@ describe('the Wiki closure follows its owner', () => {
         });
 
         expect(await exists(join(linked, '.kata', 'tasks')), 'the closure did not land in the outer worktree').toBe(false);
+        expect(await evaluateWikiClosure(inner, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
+    });
+
+    it('evaluates a captured closure from a nested worktree inside an outside-path worktree', async () => {
+        // The primary actually holds `wiki-task`; the outer checkout is only a linked code copy. The task-addressed
+        // owner query therefore must use git to reach the primary and then prove that the primary holds the task.
+        const { primary } = await fixture();
+        await writeFile(join(primary, 'README.md'), 'primary\n');
+        execFileSync('git', ['init', '-q'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', 'README.md'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        const outer = `${primary}-outside`;
+        const inner = join(outer, '.kata', 'worktrees', 'inner');
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', outer], { cwd: primary });
+        roots.push(outer);
+        await mkdir(join(outer, '.kata', 'worktrees'), { recursive: true });
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', inner], { cwd: outer });
+        await writeWikiRecord(primary, {
+            id: candidateId,
+            statement: 'a reading carries the fact it is about',
+            scope: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            kind: 'llmwiki-summary',
+            sourceRefs: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            sourceHashes: {},
+            validationTaskId: 'wiki-task',
+            provenance: 'distilled',
+            evidenceIds: ['llmwiki-000000000000'],
+            status: 'candidate',
+            lastVerifiedAt: now,
+            createdAt: now,
+            updatedAt: now,
+        });
+        await writeWikiClosure(inner, 'wiki-task', {
+            decision: 'captured',
+            reason: 'a reading carries the fact it is about',
+            candidateIds: [candidateId],
+        });
+
+        expect(await exists(join(outer, '.kata', 'tasks')), 'the closure does not remain under the outer linked checkout').toBe(false);
         expect(await evaluateWikiClosure(inner, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
     });
 
