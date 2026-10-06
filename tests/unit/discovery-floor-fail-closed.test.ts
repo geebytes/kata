@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, freezeSubject, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, freezeSubject, recordChallenge, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -530,14 +530,25 @@ describe('a report over an unreadable ledger names the artefact instead of answe
         expect(String((await run(['challenge', 'check'])).error)).toContain('challenges.json');
     });
 
+    it('refuses a challenge whose claim list cannot be read, naming the file', async () => {
+        await corrupt('claims.json', '{}\n');
+        await corrupt('challenges.json', '[]\n');
+        const payload = await run(['challenge', 'add', '--claim', 'C1', '--command', 'true', '--id', 'X9']);
+        expect(String(payload.error)).toContain('claims.json');
+    });
+
     it('records a challenge and its claim link as one decision, or writes neither', async () => {
         // The command called two writers in sequence, so an unreadable `claims.json` refused *after* the challenge had been
-        // recorded — under a message that said nothing had been written, leaving a record no claim links to.
+        // recorded — under a message that said nothing had been written, leaving a record no claim links to. The store's
+        // own entry point is asserted here, because the verb-level refusal above would otherwise answer first and hide
+        // whether the write itself is one decision.
+        await appendClaim(root, changeId, makeClaim({ id: 'C1', riskClass: 'consistency', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
         await corrupt('claims.json', '{}\n');
         await corrupt('challenges.json', '[]\n');
         const before = await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8');
-        const payload = await run(['challenge', 'add', '--claim', 'C1', '--command', 'true', '--id', 'X9']);
-        expect(String(payload.error)).toContain('claims.json');
+        await expect(recordChallenge(root, changeId, {
+            id: 'X9', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: '2026-10-06T00:00:00.000Z',
+        })).rejects.toThrow(/claims\.json/);
         expect(await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8')).toBe(before);
     });
 });
