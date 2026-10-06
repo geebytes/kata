@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -107,6 +107,40 @@ describe('the Wiki closure follows its owner', () => {
         expect(await evaluateWikiClosure(linked, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
         // And the primary checkout gives the same answer, because it is the same store.
         expect(await evaluateWikiClosure(primary, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
+    });
+
+    it('evaluates the closure from a worktree that holds a task nobody owns', async () => {
+        // **A task-less question answered by a task-addressed derivation, reached through the gate.** The candidate set
+        // comes from `readWikiRecordsWithIssues(root)` → `wikiDir(root)`, while the closure itself is read through
+        // `taskDir` → `recordsRoot(root, taskId)`, which keeps the owner. When the worktree holds a record directory for a
+        // task no checkout holds — the stranded shape `worktreeOnlyRecords` reports — `wikiDir` used to fall back inside
+        // the worktree, so the gate answered `candidate_missing` for a candidate registered in the primary, with a remedy
+        // that reproduced the state. Named by the independent round as F3, the corollary of the two AC-1 findings.
+        const { primary, linked } = await fixture();
+        await mkdir(join(linked, '.kata', 'tasks', 'stranded-task'), { recursive: true });
+        await writeFile(join(linked, '.kata', 'tasks', 'stranded-task', 'judge.json'), '{}\n');
+        await writeWikiRecord(primary, {
+            id: candidateId,
+            statement: 'a reading carries the fact it is about',
+            scope: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            kind: 'llmwiki-summary',
+            sourceRefs: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            sourceHashes: {},
+            validationTaskId: 'wiki-task',
+            provenance: 'distilled',
+            evidenceIds: ['llmwiki-000000000000'],
+            status: 'candidate',
+            lastVerifiedAt: now,
+            createdAt: now,
+            updatedAt: now,
+        });
+        await writeWikiClosure(linked, 'wiki-task', {
+            decision: 'captured',
+            reason: 'a reading carries the fact it is about',
+            candidateIds: [candidateId],
+        });
+
+        expect(await evaluateWikiClosure(linked, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
     });
 
     it('still fails closed for a candidate that was never registered', async () => {
