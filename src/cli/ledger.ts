@@ -138,6 +138,10 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             changeId,
             dir: reviewDir(options.root, changeId),
             recordedFiles: ledger.recordedFiles,
+            // **The one verb that reports the state has to actually report it.** This command is exempt from the boundary
+            // gate above precisely because naming an unreadable artefact is its job — so the names travel here, and every
+            // `null` or `0` below is readable as "measured" or as "not measured, because this file could not be read".
+            unreadableArtefacts: ledger.malformedFiles,
             subject: ledger.subject?.revision ?? null,
             claims: ledger.claims.length,
             evidence: ledger.evidence.length,

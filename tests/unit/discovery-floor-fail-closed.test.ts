@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, freezeSubject, recordChallenge, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -395,6 +395,16 @@ describe('the writers consume the read boundary instead of answering `[]` for it
         await untouched('verdicts.json', before);
     });
 
+    it('refuses to record usage or assurance over a document that is not a record', async () => {
+        // The one schema-less artefact whose read-modify-write path had its own reader: `[]` parsed fine, the writers took it
+        // as an empty record, and the bytes that were the only evidence the file is corrupt were overwritten.
+        const before = await corrupt('usage.json', '[]\n');
+        await expect(setUsage(root, changeId, { tokens: 5 })).rejects.toThrow(/usage\.json/);
+        await untouched('usage.json', before);
+        await expect(ensureAssurance(root, changeId, 'observed')).rejects.toThrow(/usage\.json/);
+        await untouched('usage.json', before);
+    });
+
     it('refuses a claim list that parses but does not answer its schema', async () => {
         // Parseable is not usable: the scan refuses this document, so a writer that read it with `readJson` would accept
         // a state the reader had already called unreadable and then write over it.
@@ -524,6 +534,19 @@ describe('a report over an unreadable ledger names the artefact instead of answe
         // Either the verb's own three-state refusal or the command boundary names the file; what matters is that it is not
         // reported as "no plan has been stored".
         expect(String(payload.error)).toContain('plan.json');
+    });
+
+    it('refuses every reporting verb over a partial view, naming the artefact', async () => {
+        // **A partial view is what produced the false answers.** `claims: []`, `evidence: []` and `subject: null` are claims
+        // about content for a file nobody could look at, so a verb that reports on, decides from or writes to the ledger stops
+        // at one gate — `status` is the exception, because naming the state is its job.
+        await corrupt('claims.json', '{}\n');
+        const list = await run(['claim', 'list']);
+        expect(list.state).toBe('ledger-unreadable');
+        expect(String(list.error)).toContain('claims.json');
+        const status = await run(['status']);
+        expect(status.ok).toBe(true);
+        expect(status.unreadableArtefacts).toContain('claims.json');
     });
 
     it('refuses to list or check challenges when the challenge list cannot be read', async () => {
