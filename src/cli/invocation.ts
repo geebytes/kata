@@ -105,7 +105,7 @@ export const VALUE_FLAGS: readonly string[] = [
     '--add', '--c0', '--actor', '--adapter', '--assurance', '--base', '--bootstrap-file', '--boundary', '--branch', '--by',
     '--candidate', '--change', '--choice', '--claim', '--command', '--covers', '--decision', '--depends-on',
     '--development', '--development-mode', '--diversity', '--endpoint', '--evidence', '--excludes', '--failure-count',
-    '--failures', '--fails-on', '--field', '--file', '--findings-carried-to', '--for-task', '--from', '--home', '--id',
+    '--failures', '--fails-on', '--falsifier', '--field', '--file', '--findings-carried-to', '--for-task', '--from', '--home', '--id',
     '--instrument', '--isolation', '--isolation-mode', '--judgement', '--kind', '--language', '--mode', '--observed',
     '--out', '--owned-path', '--path', '--paths', '--per-claim', '--persist', '--platform', '--probe', '--producer',
     '--q', '--query', '--reason', '--record', '--remove', '--requirements-file', '--result-file', '--results-dir',

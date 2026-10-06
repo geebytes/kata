@@ -20,7 +20,7 @@ import { projectVerdicts } from '../kernel/evidence.js';
 import { responseRate, type Probe, type ProbeAnswer } from '../kernel/discovery.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { subjectOf } from '../kernel/subject.js';
-import type { AssuranceHistoryEntry, AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject } from '../kernel/types.js';
+import type { AssuranceHistoryEntry, AssuranceLevel, Challenge, Claim, ClaimStatus, CurrentAssuranceLevel, Evidence, EvidenceVerdict, Subject, VerdictProducer } from '../kernel/types.js';
 
 const FILES = {
     subject: 'subject.json',
@@ -99,21 +99,142 @@ const ARTEFACTS_WITHOUT_A_SCHEMA: Record<string, string> = {
     'plan.json': 'internal: the plan the operator was handed, read back by `focus` through the planner’s own type',
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate the outer shape of ledger artefacts that deliberately have no JSON schema.
+ *
+ * This is the first shared boundary: a parseable document still cannot be handed
+ * to a reader or writer as though its container were the declared one. Field-level
+ * decoding remains with the artefact readers, where legacy/current grammar differs.
+ */
+function decodeSchemaLess(file: string, value: unknown): unknown {
+    if (file === FILES.challenges) return records<Challenge>(file, value, STRING_FIELDS.challenges);
+    if (file === FILES.probes) return records<Probe>(file, value, STRING_FIELDS.probes);
+    if (file === FILES.probeAnswers) return records<ProbeAnswer>(file, value, STRING_FIELDS.answers);
+    if (file === FILES.runs) return records<LedgerRun>(file, value, STRING_FIELDS.runs);
+    if (file === FILES.usage) {
+        if (!isRecord(value)) throw new Error(`${file} must hold an object, not ${describeShape(value)}`);
+        return value;
+    }
+    if (file === FILES.plan) return decodePlan(value);
+    return value;
+}
+
+/**
+ * The plan, normalized to the shape its consumers dereference — or refused.
+ *
+ * `focus` and the request builder both map over `readingSets` and `requiredEvidence`, so a key that is present but not
+ * an array of records used to throw inside the command. Under this boundary it makes the artefact unreadable instead.
+ */
+function decodePlan(value: unknown): unknown {
+    if (!isRecord(value)) throw new Error(`${FILES.plan} must hold an object, not ${describeShape(value)}`);
+    const plan = { ...value };
+    for (const field of ['readingSets', 'requiredEvidence']) {
+        if (plan[field] === undefined) continue;
+        plan[field] = records<Record<string, unknown>>(FILES.plan, plan[field], { required: ['claimId'], optional: [] });
+    }
+    return plan;
+}
+
+/**
+ * **The state of one ledger artefact, as one value.**
+ *
+ * Only `ENOENT` is absence. A document that exists and cannot be parsed, holds the wrong container, or carries an
+ * element that does not answer its declared type is `unreadable` — never an empty list and never a coerced record,
+ * because those two states decide different things and only one of them is somebody's mistake.
+ */
+export type ArtefactRead<T> =
+    | { kind: 'absent' }
+    | { kind: 'usable'; value: T }
+    | { kind: 'unreadable'; file: string; detail: string };
+
+/** One decoder for one artefact, so a reader and the scan cannot disagree about the same bytes. */
+async function readArtefact<T>(
+    root: string,
+    changeId: string,
+    file: string,
+    decode: (value: unknown) => T,
+): Promise<ArtefactRead<T>> {
+    let raw: string;
+    try {
+        raw = await readFile(join(reviewDir(root, changeId), file), 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
+        return { kind: 'unreadable', file, detail: (error as Error).message };
+    }
+    if (file.endsWith('.jsonl')) {
+        const parsed = parseJsonLines(raw);
+        if (parsed.malformed > 0) {
+            return { kind: 'unreadable', file, detail: `${parsed.malformed} line(s) are not records` };
+        }
+        try {
+            return { kind: 'usable', value: decode(parsed.entries) };
+        } catch (error) {
+            return { kind: 'unreadable', file, detail: (error as Error).message };
+        }
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        return { kind: 'unreadable', file, detail: `not valid JSON (${(error as Error).message})` };
+    }
+    try {
+        return { kind: 'usable', value: decode(parsed) };
+    } catch (error) {
+        return { kind: 'unreadable', file, detail: (error as Error).message };
+    }
+}
+
+/**
+ * The records of one schema-less artefact, for a read-modify-write path.
+ *
+ * An unreadable artefact is refused rather than replaced: writing `[]` over bytes the reader could not use would destroy
+ * the evidence that the file is corrupt and report a successful append over it.
+ */
+async function readRecordsForWrite<T>(
+    root: string,
+    changeId: string,
+    file: string,
+    fields: { required: readonly string[]; optional: readonly string[] },
+): Promise<T[]> {
+    const read = await readArtefact(root, changeId, file, (value) => records<T>(file, value, fields));
+    if (read.kind === 'unreadable') {
+        throw new Error(`refusing to rewrite ${file} for ${changeId}: ${read.detail}. Nothing was written; repair or replace that file explicitly.`);
+    }
+    return read.kind === 'usable' ? read.value : [];
+}
+
 export async function appendProbe(root: string, changeId: string, probe: Probe): Promise<Probe> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.probes);
         // Read through the same filter the pure readers use: this path dereferences `entry.id` below, and a file it
         // cannot dereference must not be a crash here either. Fields are preserved as read, so an unrelated append never
         // rewrites a legacy record's values.
-        const items = recordElements(await readJson<unknown>(path)) as Probe[];
-        if (!items.some((entry) => entry.id === probe.id)) items.push(probe);
+        const items = await readRecordsForWrite<Probe>(root, changeId, FILES.probes, STRING_FIELDS.probes);
+        const index = items.findIndex((entry) => entry.id === probe.id);
+        // **A stored question is refreshed when the fact it asks about has moved.** Keeping the old record would leave
+        // `ledger answer` asking a question this revision no longer poses, and the answer to it would be checked against a
+        // fact that no longer describes the content under review.
+        if (index < 0) items.push(probe);
+        else if (items[index]?.command !== probe.command || items[index]?.subjectRevision !== probe.subjectRevision) {
+            items[index] = probe;
+        }
         await writeJson(root, changeId, FILES.probes, items);
         return probe;
     });
 }
 
+export async function readProbesState(root: string, changeId: string): Promise<ArtefactRead<Probe[]>> {
+    return readArtefact(root, changeId, FILES.probes, (value) => records<Probe>(FILES.probes, value, STRING_FIELDS.probes));
+}
+
 export async function readProbes(root: string, changeId: string): Promise<Probe[]> {
-    return records<Probe>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.probes)), STRING_FIELDS.probes);
+    const read = await readProbesState(root, changeId);
+    return read.kind === 'usable' ? read.value : [];
 }
 
 /**
@@ -131,9 +252,9 @@ export async function readProbes(root: string, changeId: string): Promise<Probe[
  * unnameable record is not usable, and saying so is what keeps a name a name.
  */
 const STRING_FIELDS = {
-    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: [], identity: 'id' },
-    probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix'], identity: 'id' },
-    answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: [], identity: 'probeId' },
+    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: ['falsifierEvidenceId'], identity: 'id' },
+    probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix', 'subjectRevision'], identity: 'id' },
+    answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: ['subjectRevision', 'path', 'expected'], identity: 'probeId' },
     runs: { required: ['at', 'producer', 'diversity'], optional: ['note'], identity: null },
 } as const;
 
@@ -170,21 +291,34 @@ const STRING_FIELDS = {
  * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
  * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
  */
-function records<T>(value: unknown, fields: { required: readonly string[]; optional: readonly string[]; identity?: string | null }): T[] {
-    return recordElements(value)
-        // A record nobody can name is not handed out: the caller could not point at it afterwards, and handing it out under
-        // an invented name is what made two records one (`identity` above carries the reasoning).
-        .filter((entry) => fields.identity === null || typeof entry[fields.identity as string] === 'string')
-        .map((entry) => {
-        const normalized: Record<string, unknown> = { ...entry };
-        // A required field answers its type whether or not the file has it.
-        for (const field of fields.required) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
-        // An optional one keeps its absence, so the type's `| undefined` stays true.
-        for (const field of fields.optional) {
-            if (normalized[field] !== undefined) normalized[field] = typeof normalized[field] === 'string' ? normalized[field] : '';
+function records<T>(file: string, value: unknown, fields: { required: readonly string[]; optional: readonly string[] }): T[] {
+    // **A wrong container is not an empty document.** `[]` here would make a corrupt file read as "nothing recorded",
+    // which is the state this boundary exists to keep apart from "unreadable".
+    if (!Array.isArray(value)) throw new Error(`${file} must hold an array, not ${describeShape(value)}`);
+    return value.map((entry, index) => {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+            throw new Error(`${file} entry ${index + 1} is not a record`);
         }
-        return normalized;
-    }) as T[];
+        const record = { ...(entry as Record<string, unknown>) };
+        // A required field answers its declared type or the artefact is unreadable: coercing it to `''` would hand a
+        // consumer a value the file never held, and dropping the record would make it disappear instead.
+        for (const field of fields.required) {
+            if (typeof record[field] !== 'string') throw new Error(`${file} entry ${index + 1} has no usable ${field}`);
+        }
+        for (const field of fields.optional) {
+            if (record[field] !== undefined && typeof record[field] !== 'string') {
+                throw new Error(`${file} entry ${index + 1} carries a ${field} that is not a string`);
+            }
+        }
+        return record as T;
+    });
+}
+
+/** The shape a wrong container has, named so the refusal does not have to guess. */
+function describeShape(value: unknown): string {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'an array';
+    return `a ${typeof value}`;
 }
 
 /**
@@ -241,7 +375,7 @@ function uniqueByName(entries: ReadonlyArray<{ id?: unknown }>, name: unknown): 
  */
 function recordElements(value: unknown): Array<Record<string, unknown>> {
     if (value === null || value === undefined) return [];
-    if (!Array.isArray(value)) return value as Array<Record<string, unknown>>;
+    if (!Array.isArray(value)) return [];
     return value.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry));
 }
 
@@ -261,9 +395,19 @@ export async function answerProbe(
         const path = join(reviewDir(root, changeId), FILES.probeAnswers);
         // Filtered like every other read of this file: `entry.probeId` below is a dereference, and a record the file
         // cannot support is not this command's business to crash on.
-        const items = recordElements(await readJson<unknown>(path)) as ProbeAnswer[];
-        if (items.some((entry) => entry.probeId === answer.probeId)) {
-            return { ok: false as const, why: `${answer.probeId} has already been answered; a probe is answered once, so a reviewer cannot try until something passes` };
+        const read = await readArtefact(root, changeId, FILES.probeAnswers, (value) => records<ProbeAnswer>(FILES.probeAnswers, value, STRING_FIELDS.answers));
+        if (read.kind === 'unreadable') {
+            return { ok: false as const, why: `${FILES.probeAnswers} cannot be read (${read.detail}), so an answer cannot be appended to it without destroying what it holds` };
+        }
+        const items = read.kind === 'usable' ? read.value : [];
+        // **Write-once per question, not per id.** The id is positional, so a moved subject re-asks the same id about
+        // different content; refusing that answer would leave the new question unanswerable. Answering the *same* question
+        // twice is what stays refused, because that is how a reviewer would try until something passed.
+        const alreadyAnswered = items.some((entry) => entry.probeId === answer.probeId
+            && entry.subjectRevision === answer.subjectRevision
+            && entry.command === answer.command);
+        if (alreadyAnswered) {
+            return { ok: false as const, why: `${answer.probeId} has already been answered for this revision and question; a probe is answered once, so a reviewer cannot try until something passes` };
         }
         items.push(answer);
         await writeJson(root, changeId, FILES.probeAnswers, items);
@@ -271,8 +415,13 @@ export async function answerProbe(
     });
 }
 
+export async function readProbeAnswersState(root: string, changeId: string): Promise<ArtefactRead<ProbeAnswer[]>> {
+    return readArtefact(root, changeId, FILES.probeAnswers, (value) => records<ProbeAnswer>(FILES.probeAnswers, value, STRING_FIELDS.answers));
+}
+
 export async function readProbeAnswers(root: string, changeId: string): Promise<ProbeAnswer[]> {
-    return records<ProbeAnswer>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.probeAnswers)), STRING_FIELDS.answers);
+    const read = await readProbeAnswersState(root, changeId);
+    return read.kind === 'usable' ? read.value : [];
 }
 
 export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
@@ -406,17 +555,13 @@ export async function writePlan(root: string, changeId: string, plan: unknown): 
  * is not an array — an independent round found `ledger focus` crashing on a hand-repaired plan. The rest of the document is
  * handed back as read: this normalizes the one field consumers assume, not the whole file.
  */
+export async function readPlanState(root: string, changeId: string): Promise<ArtefactRead<unknown>> {
+    return readArtefact(root, changeId, FILES.plan, (value) => decodePlan(value));
+}
+
 export async function readPlan(root: string, changeId: string): Promise<unknown | null> {
-    const stored = await readJson<unknown>(join(reviewDir(root, changeId), FILES.plan));
-    if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return stored;
-    const plan = { ...(stored as Record<string, unknown>) };
-    // **Array-ness is not enough: the consumers dereference the elements.** `(plan.readingSets ?? []).map(set => set.claimId)`
-    // throws on a `null` element, and a round found exactly that one level inside the field the previous round normalized.
-    // Both fields are normalized the same way, because both are mapped over by the same two callers.
-    for (const field of ['readingSets', 'requiredEvidence']) {
-        plan[field] = Array.isArray(plan[field]) ? recordElements(plan[field]) : [];
-    }
-    return plan;
+    const read = await readPlanState(root, changeId);
+    return read.kind === 'usable' ? read.value : null;
 }
 
 export async function readLedger(root: string, changeId: string): Promise<Ledger> {
@@ -428,6 +573,17 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     // correctness fix for verdict reversals would have refused every change in the repository. The reader knows which
     // shape each file has, so it parses the one JSONL file per line and reports *its* bad lines through the same field.
     const malformedReasons = new Map<string, string>();
+    // **The same decoder the artefact's own reader uses.** A file the scan flagged and a file a reader refuses are the
+    // same state, so a consumer that reads the ledger cannot receive a value the reader would have refused.
+    const artefact = async <T>(file: string, decode: (value: unknown) => T): Promise<T | undefined> => {
+        const read = await readArtefact(root, changeId, file, decode);
+        if (read.kind === 'unreadable') {
+            if (!malformedFiles.includes(file)) malformedFiles.push(file);
+            malformedReasons.set(file, read.detail);
+            return undefined;
+        }
+        return read.kind === 'usable' ? read.value : undefined;
+    };
     for (const name of Object.values(FILES)) {
         if (!(await exists(join(dir, name)))) continue;
         recordedFiles.push(name);
@@ -449,8 +605,15 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
                         malformedFiles.push(name);
                         malformedReasons.set(name, `does not match ${schemaName}: ${(error as Error).message}`);
                     }
+                } else if (ARTEFACTS_WITHOUT_A_SCHEMA[name] !== undefined) {
+                    try {
+                        decodeSchemaLess(name, parsed);
+                    } catch (error) {
+                        malformedFiles.push(name);
+                        malformedReasons.set(name, (error as Error).message);
+                    }
                 }
-            }
+                }
         } catch {
             malformedFiles.push(name);
         }
@@ -524,14 +687,14 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             const readings = verdictsRaw;
             return { readings, verdicts: projectVerdicts(readings, { currentRevision: subjectForProjection?.revision ?? null }) };
         })(),
-        challenges: records<Challenge>(await readJson<unknown>(join(dir, FILES.challenges)), STRING_FIELDS.challenges),
+        challenges: (await artefact(FILES.challenges, (value) => records<Challenge>(FILES.challenges, value, STRING_FIELDS.challenges))) ?? [],
         usage: usage?.usage ?? {},
         assurance: usage?.assurance ?? 'none',
         // **The history has a reader, because a record nothing reads is not a record.** R8-F2: `ensureAssurance` moved a
         // retired value here and only a test ever looked at it, so "kept as history" was true of the file and false of
         // the system. It is carried on the ledger read, which is what every report surface already consumes.
         assuranceHistory: usage?.assuranceHistory ?? [],
-        runs: records<LedgerRun>(await readJson<unknown>(join(dir, FILES.runs)), STRING_FIELDS.runs),
+        runs: (await artefact(FILES.runs, (value) => records<LedgerRun>(FILES.runs, value, STRING_FIELDS.runs))) ?? [],
         recordedFiles,
         malformedFiles,
         malformedReasons: Object.fromEntries(malformedReasons),
@@ -556,6 +719,14 @@ async function writeJson(root: string, changeId: string, file: string, value: un
             throw new Error(
                 `refusing to write ${file} for ${changeId}: the record would not match ${schemaName}, so nothing that reads it could use it. `
                 + `${(error as Error).message} Nothing was written.`,
+            );
+        }
+    } else if (ARTEFACTS_WITHOUT_A_SCHEMA[file] !== undefined) {
+        try {
+            decodeSchemaLess(file, value);
+        } catch (error) {
+            throw new Error(
+                `refusing to write ${file} for ${changeId}: ${(error as Error).message}. Nothing was written.`,
             );
         }
     }
@@ -856,7 +1027,7 @@ export async function readVerdictHistory(root: string, changeId: string): Promis
 export async function appendChallenge(root: string, changeId: string, challenge: Challenge): Promise<Challenge> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
         if (!challenges.some((entry) => recordKey(entry.id) === recordKey(challenge.id))) challenges.push(challenge);
         await writeJson(root, changeId, FILES.challenges, challenges);
         return challenge;
@@ -878,7 +1049,7 @@ export async function amendChallenge(
 ): Promise<Challenge | null> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
         const index = uniqueByName(challenges, challengeId);
         if (index < 0) return null;
         const current = challenges[index] as Challenge;
@@ -896,26 +1067,48 @@ export async function amendChallenge(
 }
 
 export async function challengeExists(root: string, changeId: string, challengeId: string): Promise<boolean> {
-    const challenges = records<Challenge>(await readJson<unknown>(join(reviewDir(root, changeId), FILES.challenges)), STRING_FIELDS.challenges);
-    return challenges.some((challenge) => challenge.id === challengeId);
+    const challenges = (await readArtefact(root, changeId, FILES.challenges, (value) => records<Challenge>(FILES.challenges, value, STRING_FIELDS.challenges)));
+    if (challenges.kind !== 'usable') return false;
+    return challenges.kind === 'usable' && challenges.value.some((challenge) => challenge.id === challengeId);
 }
 
 export async function resolveChallenge(
     root: string,
     changeId: string,
     challengeId: string,
-    resolution: { state: Challenge['state']; observed: string; at: string; /** Whether this check observed the command fail. */ reproduced?: boolean },
+    resolution: {
+        state: Challenge['state'];
+        observed: string;
+        at: string;
+        /** Whether this check observed the command fail. */
+        reproduced?: boolean;
+        /** The binding, when this check reproduced a declared falsifier rather than running a free command. */
+        falsifierEvidenceId?: string;
+        subjectRevision?: string;
+        verdict?: 'supported' | 'refuted' | 'inconclusive';
+        producer?: VerdictProducer;
+    },
 ): Promise<boolean> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.challenges);
-        const challenges = recordElements(await readJson<unknown>(path)) as Challenge[];
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
         const index = uniqueByName(challenges, challengeId);
         if (index < 0) return false;
         const current = challenges[index] as Challenge;
         challenges[index] = {
             ...current,
             state: resolution.state,
-            resolution: { at: resolution.at, observed: resolution.observed },
+            resolution: {
+                at: resolution.at,
+                observed: resolution.observed,
+                // The binding travels with the observation: which declared falsifier ran, against which revision, and what
+                // the verifier decided. The discovery projection reads exactly these, so a record that lost one of them
+                // cannot be counted as a reading about this revision.
+                ...(resolution.falsifierEvidenceId === undefined ? {} : { falsifierEvidenceId: resolution.falsifierEvidenceId }),
+                ...(resolution.subjectRevision === undefined ? {} : { subjectRevision: resolution.subjectRevision }),
+                ...(resolution.verdict === undefined ? {} : { verdict: resolution.verdict }),
+                ...(resolution.producer === undefined ? {} : { producer: resolution.producer }),
+            },
             // **A reproduction is a fact that is never cleared.** Set the moment a check observes the command failing,
             // and keep it through resolution and amendment; the discovery floor separately counts terminal, observed
             // execution, so historical counterexample status is never used as a surrogate for whether a check ran.

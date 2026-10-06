@@ -10,15 +10,14 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths, readProbeAnswers, type Ledger } from './ledger.js';
+import { readLedger, declaredPaths, readProbeAnswers, readProbes, type Ledger } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { readingsForRevision } from '../kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
 import { classifyRisk, resolveTier } from '../kernel/risk.js';
 import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } from '../kernel/types.js';
 import type { Challenge } from '../kernel/types.js';
-import type { ProbeAnswer } from '../kernel/discovery.js';
-
+import type { Probe, ProbeAnswer } from '../kernel/discovery.js';
 /**
  * How many of the recorded challenges actually ran.
  *
@@ -35,47 +34,69 @@ import type { ProbeAnswer } from '../kernel/discovery.js';
  *     behaviour change with its own review; until then the honest statement is that this half proves an answer was
  *     recorded, not that it was right.
  */
-export function verifiedChallengeCount(challenges: readonly Challenge[], answers: readonly ProbeAnswer[]): number {
+/**
+ * **The one projection every discovery count is derived from.**
+ *
+ * Two counts used to be derived independently — `independentChallenges` from a filter over terminal records plus the raw
+ * length of the answer list, `verifiedChallenges` from a separate walk that de-duplicated commands — so the same ledger
+ * could report two different numbers of the same thing, and duplicate questions or stale answers could inflate one side
+ * without the other. Both numbers now come out of one map, so they cannot disagree about the records in front of them.
+ *
+ * A reading counts only when it is *bound* to this revision:
+ *
+ *   - a **challenge** counts when it names a declared `executable_falsifier` and its persisted resolution carries that
+ *     same falsifier, the current subject revision, and a `supported` verifier verdict. A free-form command is readable
+ *     history and nothing more — `--command 'exit 0'` used to satisfy the floor by being terminal with an observation;
+ *   - a **probe answer** counts when a probe frozen to the current revision still asks the same question — same id, same
+ *     subject, same canonical command, same path — and the answer records a non-blank observation. An answer to a question
+ *     this revision no longer asks, or to a different question under the same id, is not a reading about this content.
+ *
+ * Identity is the question, not the record: one falsifier or one command answered twice is one reading, however many
+ * records carry it. `attempts` is the size of that map — an attempt that has not verified still supports the actionable
+ * `discovery_unverified` refusal — while `verified` counts the entries that actually decided something.
+ */
+export function discoveryProjection(input: {
+    challenges: readonly Challenge[];
+    answers: readonly ProbeAnswer[];
+    probes: readonly Probe[];
+    currentRevision: string | null;
+}): { independentChallenges: number; verifiedChallenges: number } {
+    const readings = new Map<string, boolean>();
+    const current = input.currentRevision;
+
+    for (const challenge of input.challenges) {
+        const falsifierEvidenceId = challenge.falsifierEvidenceId;
+        if (typeof falsifierEvidenceId !== 'string' || falsifierEvidenceId === '') continue;
+        const resolution = challenge.resolution;
+        const verified = resolution !== undefined
+            && resolution.falsifierEvidenceId === falsifierEvidenceId
+            && resolution.verdict === 'supported'
+            && typeof resolution.subjectRevision === 'string'
+            && resolution.subjectRevision === current;
+        const identity = `falsifier:${falsifierEvidenceId}`;
+        readings.set(identity, (readings.get(identity) ?? false) || verified);
+    }
+
+    const currentProbes = new Map<string, Probe>();
+    for (const probe of input.probes) {
+        if (typeof probe.subjectRevision !== 'string' || probe.subjectRevision !== current) continue;
+        currentProbes.set(probe.id, probe);
+    }
+    for (const answer of input.answers) {
+        const probe = currentProbes.get(answer.probeId);
+        // No current question behind the answer: it answers something this revision does not ask.
+        if (probe === undefined) continue;
+        if (answer.subjectRevision !== probe.subjectRevision) continue;
+        if (answer.command !== probe.command) continue;
+        if ((answer.path ?? '') !== probe.path) continue;
+        const identity = `probe:${probe.command}`;
+        const verified = typeof answer.observed === 'string' && answer.observed.trim() !== '';
+        readings.set(identity, (readings.get(identity) ?? false) || verified);
+    }
+
     let verified = 0;
-    for (const challenge of challenges) {
-        // A terminal challenge proves discovery only after its check persisted a non-blank observation. `reproduced`
-        // records whether that measurement ever found a counterexample; requiring it here would make an honest passing
-        // independent check ineligible and pressure reviewers to manufacture a current failure.
-        if (challenge.state !== 'withdrawn' && challenge.state !== 'resolved') continue;
-        // **The field is tested before it is used, because nothing else tests it.** `challenges.json` is registered
-        // `internal` with no schema, so a record may carry a `resolution` without an `observed`, or carry a non-string
-        // there — a legacy or hand-repaired ledger is exactly where such a record lives. Checking the type keeps that
-        // state on the refusing path it belongs to; dereferencing it turned a promised refusal into a `TypeError` inside
-        // every surface that reads the ledger, which is worse than the state it was meant to reject.
-        const observed = challenge.resolution?.observed;
-        if (typeof observed !== 'string' || observed.trim() === '') continue;
-        verified += 1;
-    }
-    // **Distinct questions, not distinct answer records.** Counting answers let the same question answered twice satisfy
-    // the floor twice — and the generator could produce such duplicates, which is how it was found: a real change asked six
-    // probes of which three pairs were identical, and the floor read six. Identity is the question itself (its kind and the
-    // path it is about), so the count is of independent readings whatever produced the list.
-    const askedQuestion = new Set<string>();
-    for (const answer of answers) {
-        // **Both fields are tested before they are used, for the same reason the challenge half tests its own.**
-        // `probe-answers.json` is registered `internal` with no schema, so an answer may carry a `command` without an
-        // `observed`, or carry a non-string in either — a legacy or hand-repaired ledger is where such a record lives.
-        // This branch had the identical unguarded dereference the challenge branch above was repaired for, one line
-        // below it, and the same repair applies: keep the record on the refusing path instead of throwing on it.
-        // Normalized in one place, so the identity below is the same string the presence test judged — and so each half of
-        // this test has a single, nameable site a falsifier can aim at.
-        const command = typeof answer.command === 'string' ? answer.command.trim() : '';
-        const observed = typeof answer.observed === 'string' ? answer.observed.trim() : '';
-        if (command === '' || observed === '') continue;
-        // **The command *is* the question.** A probe's identity is the command it asks, so two answers to one command are
-        // one reading however they were recorded — the answer type carries no kind or path, and inventing one from the
-        // stored probe list would make the count depend on a lookup that can be absent.
-        const identity = command;
-        if (askedQuestion.has(identity)) continue;
-        askedQuestion.add(identity);
-        verified += 1;
-    }
-    return verified;
+    for (const value of readings.values()) if (value) verified += 1;
+    return { independentChallenges: readings.size, verifiedChallenges: verified };
 }
 
 /**
@@ -308,18 +329,12 @@ export async function ledgerVerdict(input: {
         // printed. Neither half proves the measurement was meaningful — what is deliberately *not* checked is written down
         // beside the derivation — and `reproduced` remains counterexample history, not a requirement that the current
         // revision still fail.
-        discovery: {
-            independentChallenges:
-                // **Terminal, not "anything that is not open".** The negation counted a record whose `state` is missing or
-                // not a member of the union, which made `independentChallenges` non-zero for a ledger that holds no
-                // challenge at all — and the refusal then said `discovery_unverified` ("run the recorded challenge") when
-                // the true remedy is `discovery_floor` ("record one"). Both refuse, but a refusal that names the wrong
-                // step is the defect this whole criterion exists to remove.
-                ledger.challenges.filter((challenge) => challenge.state === 'withdrawn' || challenge.state === 'resolved').length
-                + (await readProbeAnswers(input.root, input.changeId)).length,
-            verifiedChallenges:
-                verifiedChallengeCount(ledger.challenges, await readProbeAnswers(input.root, input.changeId)),
-        },
+        discovery: discoveryProjection({
+            challenges: ledger.challenges,
+            probes: await readProbes(input.root, input.changeId),
+            answers: await readProbeAnswers(input.root, input.changeId),
+            currentRevision: ledger.subject.revision,
+        }),
         ...(quorum === undefined ? {} : { quorum }),
         ...(input.actor === undefined ? {} : { actor: input.actor }),
     });

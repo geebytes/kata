@@ -46,21 +46,24 @@ async function seedDecidedLedger(root: string, leaveChallengeOpen: boolean): Pro
         const submission = join(root, `${evidenceId}.json`);
         await writeFile(submission, JSON.stringify({
             claims: [],
-            evidence: [{ id: evidenceId, type: 'static_witness', ref: 'src/subject.ts', assertion: 'contains:holds' }],
+            // **C1's evidence is a falsifier, because the discovery floor counts a reproduction of one.** The item carries
+            // the mutation as well as the check, so a challenge bound to it reproduces a declared defect instead of running
+            // a free command — the form the floor no longer accepts.
+            evidence: [index === 0
+                ? { id: evidenceId, type: 'executable_falsifier', command: 'grep -q holds src/subject.ts', mutation: { file: 'src/subject.ts', find: 'holds', replace: 'broken' } }
+                : { id: evidenceId, type: 'static_witness', ref: 'src/subject.ts', assertion: 'contains:holds' }],
         }));
         await ledger(root, ['evidence', 'add', '--file', submission]);
     }
     await ledger(root, ['evidence', 'verify']);
 
-    await mkdir(join(root, 'notes'), { recursive: true });
-    const discovery = join(root, 'notes', 'discovery.txt');
-    await writeFile(discovery, 'unresolved\n');
-    await ledger(root, ['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marked notes/discovery.txt', '--id', 'X1']);
-    await ledger(root, ['challenge', 'check']);
-    if (!leaveChallengeOpen) {
-        await writeFile(discovery, 'marked\n');
-        await ledger(root, ['challenge', 'check']);
+    await ledger(root, ['challenge', 'add', '--claim', 'C1', '--falsifier', 'E1', '--id', 'X1']);
+    if (leaveChallengeOpen) {
+        // Left unrun: a declared attempt that verified nothing, which is the decided-but-not-passing state this boundary
+        // has to tell apart from "passes".
+        return;
     }
+    await ledger(root, ['challenge', 'check']);
 }
 
 describe('ledger-deficit repair admission boundary', () => {

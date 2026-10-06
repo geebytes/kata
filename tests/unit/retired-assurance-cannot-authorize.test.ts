@@ -90,11 +90,20 @@ describe('a retired assurance value cannot authorise a decision', () => {
         await appendChallenge(root, id, {
             id: 'X1',
             claimId: 'C1',
-            command: 'exit 1',
+            command: `grep -q export ${subjectPath}`,
             failsOn: subject.subject.revision,
             state: 'withdrawn',
             at: '2026-09-30T00:00:00.000Z',
-            resolution: { at: '2026-09-30T00:01:00.000Z', observed: 'exit 0 when checked against the frozen subject' },
+            // The floor counts a reproduction of a declared falsifier, so the fixture binds the challenge to `E1` and
+            // records the verifier's outcome against this revision beside it.
+            falsifierEvidenceId: 'E1',
+            resolution: {
+                at: '2026-09-30T00:01:00.000Z',
+                observed: '{"before":0,"mutated":1,"after":0}',
+                falsifierEvidenceId: 'E1',
+                subjectRevision: subject.subject.revision,
+                verdict: 'supported',
+            },
             reproduced: true,
         });
         await writePlan(root, id, planReview({

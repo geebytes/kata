@@ -216,10 +216,41 @@ export type Challenge = {
     id: string;
     claimId: string;
     command: string;
+    /**
+     * **The declared falsifier this challenge reproduces, when it is a current challenge.**
+     *
+     * A challenge used to be a free shell string, which made the discovery floor satisfiable by `--command 'exit 0'`: the
+     * record was terminal, its observation was non-blank, and nothing compared it to anything the change had declared.
+     * A current challenge names an `executable_falsifier` item instead — the item carries the command *and* the mutation
+     * that must redden it — and only a run of that verifier can withdraw the challenge.
+     *
+     * Absent means the record is the legacy form. It stays readable and reportable, and it is deliberately ineligible for
+     * current discovery credit: a challenge nobody declared a defect for cannot show that a check was sensitive to one.
+     */
+    falsifierEvidenceId?: string;
     failsOn: string;
     state: ChallengeState;
     at: string;
-    resolution?: { at: string; observed: string };
+    /**
+     * The outcome of the check that resolved this challenge — and, for a *current* challenge, the binding that makes it
+     * evidence about this revision.
+     *
+     * A free-form observation is not enough to count as discovery: a later subject could inherit it, and an observation
+     * about one question could be re-recorded against another. The three bound fields say which declared falsifier ran,
+     * against which revision, and what the verifier decided, so a stale or mismatched record cannot be counted.
+     */
+    resolution?: {
+        at: string;
+        observed: string;
+        /** The falsifier this run reproduced, copied from the challenge so the two cannot drift apart. */
+        falsifierEvidenceId?: string;
+        /** The revision the run was measured against. A reading about another revision is not a reading about this one. */
+        subjectRevision?: string;
+        /** What the falsifier's verifier decided. Only `supported` withdraws the challenge. */
+        verdict?: 'supported' | 'refuted' | 'inconclusive';
+        /** Who ran it, so two runs are two observations and one run reported twice is one. */
+        producer?: VerdictProducer;
+    };
     /**
      * The previous command, kept when a measurement turns out to have been wrong.
      *

@@ -102,16 +102,37 @@ async function satisfyStrictTier(options: { discovery?: 'reproducing' | 'passing
         await ledger(['evidence', 'add', '--file', path]);
     }
     await ledger(['evidence', 'verify']);
+    // **The floor needs a declared falsifier, not a command.** A challenge counts as executed discovery only when it
+    // reproduces an `executable_falsifier` — the item that carries both the check and the defect that must redden it — so
+    // the fixture declares one whose mutation really does redden its check against the frozen source.
+    const declared = await readLedger(root, changeId);
+    const first = declared.claims.find((claim) => claim.id === 'C1');
+    if (first === undefined) throw new Error('the fixture could not read back the claim it declared');
+    const falsifierPath = join(root, 'falsifier.json');
+    await writeFile(falsifierPath, `${JSON.stringify({
+        claims: [{ ...first, evidenceIds: [...first.evidenceIds, 'E9'] }],
+        evidence: [{
+            id: 'E9',
+            type: 'executable_falsifier',
+            command: 'grep -q "export const holds = true" src/a.ts',
+            mutation: { file: 'src/a.ts', find: 'holds = true', replace: 'holds = false' },
+        }],
+    }, null, 2)}\n`);
+    await ledger(['evidence', 'add', '--file', falsifierPath]);
+
     if (options.discovery === 'passing') {
-        // This is a real, discriminating check against the frozen source: it passes now, but would fail if the
-        // declared export changed. Its passing observation is execution evidence, not a claim verdict.
-        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q "export const holds = true" src/a.ts', '--id', 'X1']);
+        // A real, discriminating check against the frozen source: it passes now and reddens when the declared export is
+        // mutated, which is what makes it execution evidence rather than a declaration.
+        await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E9', '--id', 'X1']);
         await ledger(['challenge', 'check']);
         return;
     }
 
-    // Historical counterexamples stay supported: a challenge that first fails and then passes retains `reproduced`,
-    // but discovery execution is no longer defined by that historical fact.
+    // **The bound challenge satisfies the floor; the free-form one is history.** A challenge that first fails and then
+    // passes retains `reproduced`, and it is deliberately not counted as current discovery: nothing declared a defect for
+    // it to be sensitive to.
+    await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E9', '--id', 'X9']);
+    await ledger(['challenge', 'check']);
     await mkdir(join(root, 'notes'), { recursive: true });
     await writeFile(join(root, 'notes', 'discovery.txt'), 'Nothing here yet\n');
     await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'grep -q marked notes/discovery.txt', '--id', 'X1']);
@@ -224,12 +245,38 @@ describe('the ledger verbs', () => {
 
         const stored = await readLedger(root, changeId);
         const challenge = stored.challenges.find((entry) => entry.id === 'X1');
+        // The resolution is the binding: which falsifier ran, against which revision, and the verifier's three-step result
+        // (`before`/`mutated`/`after` exit codes). That is what makes it a measurement rather than a declaration.
         expect(challenge).toMatchObject({
             id: 'X1',
             state: 'withdrawn',
-            resolution: expect.objectContaining({ observed: expect.stringContaining('exit 0') }),
+            falsifierEvidenceId: 'E9',
+            resolution: expect.objectContaining({ verdict: 'supported', falsifierEvidenceId: 'E9' }),
         });
+        expect(challenge?.resolution?.subjectRevision).toBe(stored.subject?.revision);
         expect(challenge).not.toHaveProperty('reproduced');
+    });
+
+    it('keeps a free-form challenge readable without letting it satisfy the discovery floor', async () => {
+        // **The legacy boundary.** `challenge add --command` still works, still runs, and is still reported — a record
+        // already in a ledger must not become unreadable — but it reproduces nothing the change declared, so the floor is
+        // still unmet and the refusal names the step that would meet it.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+        await ledger(['evidence', 'add', '--file', await submission()]);
+        await ledger(['evidence', 'verify']);
+        await ledger(['challenge', 'add', '--claim', 'C1', '--command', 'exit 0', '--id', 'X9']);
+        await ledger(['challenge', 'check']);
+
+        const stored = await readLedger(root, changeId);
+        const legacy = stored.challenges.find((entry) => entry.id === 'X9');
+        expect(legacy).toMatchObject({ state: 'withdrawn' });
+        expect(legacy?.resolution?.observed).toBeTruthy();
+        expect(legacy).not.toHaveProperty('falsifierEvidenceId');
+
+        const decision = await ledger(['decide']);
+        expect((decision.reasons as Array<{ code: string }>).map((reason) => reason.code)).toContain('discovery_floor');
     });
 
     it('refuses a decision asked for by a party that produced a reading, which the verb now passes', async () => {

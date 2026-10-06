@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, resolveChallenge, writeSubject } from '../../src/store/ledger.js';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, resolveChallenge, writeSubject } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -121,35 +121,46 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('discovery_unverified');
     });
 
-    it('refuses a terminal record with no usable observation, and names the command that would fix it', async () => {
+    it('names the floor for a free-form terminal record, because it is not an attempt at all', async () => {
+        // The free form is a record, not a reproduction: nothing declared a defect for it to be sensitive to, so it is not
+        // an attempt this revision can verify. `discovery_floor` ("record one") is the honest remedy, and the deficit names
+        // the flag that declares a falsifier rather than the free command that cannot count.
         const { codes, deficits } = await ledgerWithChallenge({
             ...base,
             state: 'withdrawn',
             resolution: { at: '2026-10-05T00:01:00.000Z', observed: '   ' },
         });
-        expect(codes).toContain('discovery_unverified');
+        expect(codes).toContain('discovery_floor');
+        expect(codes).not.toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
-        // The refusal carries the step, not only the state: an author reading it can act without inventing the remedy.
-        const deficit = deficits.find((entry) => entry.claimId === 'discovery:verified_challenge');
-        expect(deficit?.need).toContain('challenge check');
+        const deficit = deficits.find((entry) => entry.claimId === 'discovery:independent_challenge');
+        expect(deficit?.need).toContain('--falsifier');
     });
 
-    it('refuses an answer whose observation key is absent instead of crashing on it', async () => {
-        // The probe half reads a second schema-less artefact, and it had the same unguarded dereference the challenge half
-        // was repaired for — one branch below it. An answer recorded without an `observed` is not an answer that proved
-        // anything, so it must land on the refusing path; a `TypeError` here reaches every surface that reads the ledger.
-        const { codes } = await ledgerWithChallenge(null, {
-            answers: [{ probeId: 'P1-C1', command: 'test -f src/a.ts', answeredAt: '2026-10-05T00:00:00.000Z' }],
-        });
-        expect(codes).toContain('discovery_unverified');
-        expect(codes).not.toContain('challenge_open');
+    it('refuses an answer whose observation key is absent, naming the artefact instead of inventing a blank one', async () => {
+        // The probe half reads a second schema-less artefact. An answer that lacks a declared field is not a blank
+        // answer: under this boundary the artefact is unreadable, and the refusal names the file rather than coercing a
+        // value the file never held.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
+            `${JSON.stringify([{ probeId: 'P1-C1', command: 'test -f src/a.ts', answeredAt: '2026-10-05T00:00:00.000Z' }], null, 2)}\n`,
+        );
+        const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
+        expect(verdict.kind).toBe('unreadable');
+        expect(verdict.kind === 'unreadable' ? verdict.detail : '').toContain('probe-answers.json');
+        expect((await readLedger(root, changeId)).malformedFiles).toContain('probe-answers.json');
     });
 
-    it('refuses an answer whose command is a non-string instead of crashing on it', async () => {
-        const { codes } = await ledgerWithChallenge(null, {
-            answers: [{ probeId: 'P1-C1', command: 42, observed: 'exit 0', answeredAt: '2026-10-05T00:00:00.000Z' }],
-        });
-        expect(codes).toContain('discovery_unverified');
+    it('refuses an answer whose command is a non-string, rather than coercing it', async () => {
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
+            `${JSON.stringify([{ probeId: 'P1-C1', command: 42, observed: 'exit 0', answeredAt: '2026-10-05T00:00:00.000Z' }], null, 2)}\n`,
+        );
+        const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
+        expect(verdict.kind).toBe('unreadable');
+        expect(verdict.kind === 'unreadable' ? verdict.detail : '').toContain('probe-answers.json');
     });
 
     it('clears discovery for a terminal record that recorded an observation, without any counterexample history', async () => {
@@ -162,12 +173,13 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('challenge_open');
     });
 
-    it('names the floor, not an unrun challenge, when the only record has no usable state', async () => {
+    it('names the floor, not an unrun challenge, when the only record carries a state this build does not know', async () => {
         // The negation `state !== 'open'` used to count a record whose state is missing or unknown as an independent
         // challenge, so the refusal said "run the recorded challenge" about a ledger that holds none. Both refuse; only
-        // one of them names the step that would fix it.
+        // one of them names the step that would fix it. A *missing* state is now unreadable instead (see the reader
+        // cases below), so the unknown-but-present state is what keeps this distinction testable.
         const { codes } = await ledgerWithChallenge(null, {
-            stored: { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', at: '2026-10-05T00:00:00.000Z' },
+            stored: { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'not-a-state', at: '2026-10-05T00:00:00.000Z' },
         });
         expect(codes).toContain('discovery_floor');
         expect(codes).not.toContain('discovery_unverified');
@@ -199,7 +211,8 @@ describe('the discovery floor keeps refusing what did not run', () => {
                 resolution: { at: '2026-10-05T00:01:00.000Z' },
             },
         });
-        expect(codes).toContain('discovery_unverified');
+        expect(codes).toContain('discovery_floor');
+        expect(codes).not.toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
     });
 });
@@ -207,182 +220,98 @@ describe('the discovery floor keeps refusing what did not run', () => {
 /**
  * **The other readers of the same schema-less files, at the layer where the type is claimed.**
  *
- * The cases above drive the decision; these drive the readers themselves. Three review rounds found the same defect one
- * consumer at a time — a reader trusted `Challenge[]`/`ProbeAnswer[]` and dereferenced a field the file did not have —
- * so the guarantee is asserted where the type is promised rather than at each consumer that might forget it.
+ * The cases above drive the decision; these drive the readers themselves. The guarantee is asserted where the type is
+ * promised rather than at each consumer that might forget it — but the guarantee is now stronger than "hand out what
+ * can be coerced": a document whose container or element does not answer its declared type is *unreadable*, and the
+ * artefact is named. Coercing a field to `''` and dropping a record were both ways of reporting a state the file never
+ * held, and a dropped record is indistinguishable from one that was never written.
  */
 describe('the readers of the schema-less ledger files', () => {
-    it('hands out records whose declared string fields are strings, whatever the file holds', async () => {
-        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
-        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
-        await writeSubject(root, changeId, frozen.subject);
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
-            `${JSON.stringify([{ probeId: 'P1-C1', command: 42, observed: { seen: true }, answeredAt: null }], null, 2)}\n`,
-        );
+    const reviewDirOf = (): string => join(root, '.kata', 'tasks', changeId, 'review');
+    const writeArtefact = async (file: string, content: string): Promise<void> => {
+        await mkdir(reviewDirOf(), { recursive: true });
+        await writeFile(join(reviewDirOf(), file), content);
+    };
+    const unreadableDetail = async (): Promise<string> => {
+        const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
+        return verdict.kind === 'unreadable' ? verdict.detail : `read as ${verdict.kind}`;
+    };
 
-        const answers = await readProbeAnswers(root, changeId);
-        expect(answers).toHaveLength(1);
-        expect(answers[0]?.command).toBe('');
-        expect(answers[0]?.observed).toBe('');
-        expect(answers[0]?.probeId).toBe('P1-C1');
-    });
-
-    it('answers its declared type when a required field is absent, not merely when it is present', async () => {
-        // The first version of the coercion only touched fields the file *had*, so a record that simply lacked a required
-        // one was handed out with `undefined` where `Challenge`/`Probe`/`ProbeAnswer` promise `string` — and the next
-        // `.trim()` threw. A sixth independent round found it, one round after the filter was fixed for the same reason.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'), `${JSON.stringify([{ probeId: 'P1-C1' }], null, 2)}\n`);
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probes.json'), `${JSON.stringify([{ id: 'P1-C1', claimId: 'C1' }], null, 2)}\n`);
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), `${JSON.stringify([{ id: 'X1', claimId: 'C1' }], null, 2)}\n`);
-
-        const answers = await readProbeAnswers(root, changeId);
-        const probes = await readProbes(root, changeId);
-        const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
-        expect(answers[0]?.command).toBe('');
-        expect(answers[0]?.observed).toBe('');
-        expect(probes[0]?.command).toBe('');
-        expect(challenges[0]?.command).toBe('');
-        // `state` is required too, and an unknown state must not read as one the floor can count.
-        expect(challenges[0]?.state).toBe('');
-        await expect(ledgerReport(root, changeId)).resolves.toBeDefined();
-    });
-
-    it('lets the write path resolve the record by the name the reader handed out', async () => {
-        // The reader coerces a non-string id, so the caller's copy of the name is the coerced one. Looking the record up by
-        // the raw value could not find it — and the caller discarded the `false`, printing a resolution the file never
-        // recorded. Both sides now name a record the same way.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
-            `${JSON.stringify([{ id: 42, claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x' }], null, 2)}\n`,
-        );
-
-        const named = await readLedger(root, changeId).then((ledger) => ledger.challenges[0]?.id);
-        const resolved = await resolveChallenge(root, changeId, named ?? '', { state: 'withdrawn', observed: 'exit 0 when checked', at: 'x' });
-        expect(resolved).toBe(true);
-        const after = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<{ state: string }>;
-        expect(after[0]?.state).toBe('withdrawn');
-    });
-
-    it('reads the run log through the same filter, so a corrupt entry cannot stop the decision', async () => {
-        // `runs.json` is listed as schema-less beside the others, and it was the one file `readLedger` still handed out
-        // raw — so a single null entry made the quorum's producer read throw on every surface that decides. An
-        // independent round found it the round after the reader guard was extended to the other three.
-        const { codes } = await ledgerWithChallenge(
-            { ...base, state: 'withdrawn', resolution: { at: '2026-10-05T00:01:00.000Z', observed: 'exit 0 when checked' } },
-            // The array element is the discriminating one for this file: `runs.json` declares no identity field, so an
-            // element that is not a record reaches the array filter rather than being dropped as unnameable.
-            { runs: [null, ['x'], { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }] },
-        );
-        expect(codes).not.toContain('discovery_unverified');
-        // Asserted on the reader itself, not only through the decision: the decision stopped depending on the run log's
-        // shape when the dead producer read was removed, so a decision-level assertion would no longer be able to redden.
-        const runs = await readLedger(root, changeId).then((ledger) => ledger.runs);
-        expect(runs).toHaveLength(1);
-        expect(runs[0]?.producer).toBe('pi');
-    });
-
-    it('does not hand out a record nobody can name, so two records cannot share one name', async () => {
-        // A record whose identity field is not a string is not usable: the reader coerces it to `''`, two such records
-        // become one name, and naming one of them by position was how a resolution could be written to the record the
-        // caller did not mean — with the command still reporting success. Dropping it upstream is what keeps a name a name.
-        // The file keeps its bytes, so nothing is hidden; what the reader hands out is what a caller can act on.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        const file = join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json');
-        await writeFile(file, `${JSON.stringify([
-            { id: 42, claimId: 'C1', command: 'exit 1', failsOn: 'rev:x', state: 'open', at: 'x' },
-            { id: 43, claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
-            { id: 'X1', claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
-        ], null, 2)}\n`);
-
-        const named = await readLedger(root, changeId).then((ledger) => ledger.challenges.map((challenge) => challenge.id));
-        expect(named).toEqual(['X1']);
-        await expect(resolveChallenge(root, changeId, 'X1', { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(true);
-        // The two it could not name are untouched on disk, and neither of them was written to.
-        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ id: unknown; state: string }>;
-        expect(after.map((entry) => entry.state)).toEqual(['open', 'open', 'withdrawn']);
-    });
-
-    it('refuses a name that a duplicate id makes ambiguous', async () => {
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        const file = join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json');
-        await writeFile(file, `${JSON.stringify([
-            { id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: 'rev:x', state: 'open', at: 'x' },
-            { id: 'X1', claimId: 'C1', command: 'exit 0', failsOn: 'rev:x', state: 'open', at: 'x' },
-        ], null, 2)}\n`);
-
-        await expect(resolveChallenge(root, changeId, 'X1', { state: 'withdrawn', observed: 'exit 0', at: 'x' })).resolves.toBe(false);
-        const after = JSON.parse(await readFile(file, 'utf8')) as Array<{ state: string }>;
-        expect(after.map((entry) => entry.state)).toEqual(['open', 'open']);
-    });
-
-    it('promises the shape its consumers dereference for the plan, and drops a line that is not a record', async () => {
-        // Both `focus` and the request builder write `(plan.readingSets ?? []).map(...)`; a plan whose key is present but
-        // is not an array made `ledger focus` throw. And a `null` line in the history reached a consumer that read
-        // `.evidenceId` off it — a line that parses is not yet a record.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), `${JSON.stringify({ readingSets: [null, { claimId: 'C1', paths: ['src/a.ts'] }], requiredEvidence: 42, tier: 'strict' }, null, 2)}\n`);
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'verdict-history.jsonl'), `null\n{"evidenceId":"E1","verdict":"supported"}\n`);
-
-        const plan = await readPlan(root, changeId) as { readingSets: Array<{ claimId: string }>; requiredEvidence: unknown[]; tier: string };
-        // Array-ness is not enough: the consumers dereference the elements, so a non-record element is dropped here too.
-        expect(plan.readingSets.map((set) => set.claimId)).toEqual(['C1']);
-        expect(plan.requiredEvidence).toEqual([]);
-        expect(plan.tier).toBe('strict');
-        const history = await readVerdictHistory(root, changeId);
-        expect(history.entries.map((entry) => entry.evidenceId)).toEqual(['E1']);
-        expect(history.malformed).toBe(1);
+    it('refuses an artefact whose element is not a record, and names it', async () => {
+        await writeArtefact('challenges.json', `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'withdrawn', at: 'x' }], null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('challenges.json');
+        expect((await readLedger(root, changeId)).malformedFiles).toContain('challenges.json');
     });
 
     it('does not mistake an array for a record', async () => {
-        // An array satisfies `typeof entry === 'object' && entry !== null`, so the first version of the filter let one
-        // through, spread it into `{0: 'x'}`, and handed it out as an answer with no command — crashing the very report
-        // reader the filter was written to protect. An independent round found it the round after the guard moved here.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'),
-            `${JSON.stringify([['x'], { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 'x' }], null, 2)}\n`,
-        );
-
-        const answers = await readProbeAnswers(root, changeId);
-        expect(answers.map((answer) => answer.probeId)).toEqual(['P1-C1']);
-        await expect(ledgerReport(root, changeId)).resolves.toBeDefined();
+        await writeArtefact('probe-answers.json', `${JSON.stringify([['x'], { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 'x' }], null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('probe-answers.json');
     });
 
-    it('lets a write path read the same file the readers do, without crashing on what it cannot dereference', async () => {
-        // The write paths dereference `entry.id` too, so the guarantee has to hold there as well — and it must hold
-        // without coercing, because rewriting a legacy record's fields as a side effect of an unrelated append would
-        // destroy the value that says the file is corrupt.
-        await mkdir(join(root, '.kata', 'tasks', changeId, 'review'), { recursive: true });
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
-            `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 42, failsOn: 'rev:x', state: 'open', at: 'x' }], null, 2)}\n`,
-        );
-
-        await expect(appendChallenge(root, changeId, {
-            id: 'X2', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x',
-        })).resolves.toBeDefined();
-        const written = await readLedger(root, changeId).then((ledger) => ledger.challenges);
-        expect(written.map((challenge) => challenge.id)).toEqual(['X1', 'X2']);
-        // The preserved field is the point, and it has to be read from the file rather than through the coercing reader:
-        // the write path must leave a legacy value alone, so an unrelated append cannot destroy what says the file is corrupt.
-        const raw = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<{ id: string; command: unknown }>;
-        expect(raw.map((entry) => entry.id)).toEqual(['X1', 'X2']);
-        expect(raw[0]?.command).toBe(42);
+    it('refuses a record that lacks a required field, rather than answering with a value the file never held', async () => {
+        await writeArtefact('probe-answers.json', `${JSON.stringify([{ probeId: 'P1-C1' }], null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('probe-answers.json');
     });
 
-    it('drops an element that is not a record instead of dereferencing it', async () => {
+    it('refuses a record whose declared field is not a string', async () => {
+        await writeArtefact('probes.json', `${JSON.stringify([{ id: 'P1-C1', claimId: 'C1', kind: 'file-exists', path: 'src/a.ts', command: 42, askedAt: 'x' }], null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('probes.json');
+    });
+
+    it('still reads a legacy record whose required fields are all present', async () => {
+        // The boundary refuses records that do not answer the type; it does not refuse an old record that does. This is
+        // the distinction the whole change turns on: a legacy record stays readable, and is only ineligible for current
+        // discovery credit (asserted in the end-to-end suite).
         const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
         if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
         await writeSubject(root, changeId, frozen.subject);
-        await writeFile(
-            join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'),
-            `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'withdrawn', at: 'x' }], null, 2)}\n`,
-        );
+        await writeArtefact('challenges.json', `${JSON.stringify([{ id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'withdrawn', at: 'x', resolution: { at: 'y', observed: 'exit 0' } }], null, 2)}\n`);
+        const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
+        expect(challenges.map((challenge) => challenge.id)).toEqual(['X1']);
+    });
 
-        // The reader hands out the record it can act on. The element it cannot act on is gone, and nothing dereferenced it.
+    it('reads the run log through the same boundary, so a corrupt entry cannot stop the decision', async () => {
+        // `runs.json` is listed as schema-less beside the others. Its array element is the discriminating case: it
+        // declares no identity field, so an element that is not a record reaches the container check.
+        await writeArtefact('runs.json', `${JSON.stringify([null, { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }], null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('runs.json');
+    });
+
+    it('refuses a plan whose mapped field is not an array of records', async () => {
+        // Both `focus` and the request builder write `(plan.readingSets ?? []).map(...)`; a plan whose key is present but
+        // is not an array of records used to throw inside the command. It is unreadable now.
+        await writeArtefact('plan.json', `${JSON.stringify({ readingSets: [null, { claimId: 'C1', paths: ['src/a.ts'] }], requiredEvidence: 42, tier: 'strict' }, null, 2)}\n`);
+        expect(await unreadableDetail()).toContain('plan.json');
+    });
+
+    it('refuses a JSONL history whose line is not a record', async () => {
+        await writeArtefact('verdict-history.jsonl', `null\n{"evidenceId":"E1","verdict":"supported"}\n`);
+        expect(await unreadableDetail()).toContain('verdict-history.jsonl');
+    });
+
+    it('refuses a write over an unreadable artefact and leaves its bytes alone', async () => {
+        // **A writer is not a repair tool.** Replacing bytes the reader could not use with `[]` would destroy the evidence
+        // that the file is corrupt and report a successful append over it.
+        await writeArtefact('challenges.json', `${JSON.stringify([null, { id: 'X1', claimId: 'C1', command: 42, failsOn: 'rev:x', state: 'open', at: 'x' }], null, 2)}\n`);
+        const before = await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8');
+        await expect(appendChallenge(root, changeId, {
+            id: 'X2', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x',
+        })).rejects.toThrow(/challenges\.json/);
+        expect(await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8')).toBe(before);
+    });
+
+    it('refuses to append an answer to an unreadable answer list, and says so instead of throwing', async () => {
+        await writeArtefact('probe-answers.json', `${JSON.stringify([{ probeId: 42, command: 'x', observed: 'y', answeredAt: 'z' }], null, 2)}\n`);
+        const before = await readFile(join(reviewDirOf(), 'probe-answers.json'), 'utf8');
+        const recorded = await answerProbe(root, changeId, { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 'x' });
+        expect(recorded.ok).toBe(false);
+        expect(await readFile(join(reviewDirOf(), 'probe-answers.json'), 'utf8')).toBe(before);
+    });
+
+    it('creates a valid document when the artefact is absent, and does not confuse that with unreadable', async () => {
+        await expect(appendChallenge(root, changeId, {
+            id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x',
+        })).resolves.toBeDefined();
         const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
         expect(challenges.map((challenge) => challenge.id)).toEqual(['X1']);
     });

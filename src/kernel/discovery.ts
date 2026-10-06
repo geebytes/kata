@@ -36,6 +36,16 @@ export type Probe = {
     /** The command that answers it: exit 0 means the asked-about fact holds. */
     command: string;
     askedAt: string;
+    /**
+     * **The revision this question was derived from.**
+     *
+     * A probe is a fact about one revision's content: the digest it asks for, the file it asks about. Without the revision
+     * on the record, an answer could be carried over to a subject it says nothing about — and a later revision that moved
+     * the file would inherit a reading about the content that preceded it.
+     *
+     * Absent means a legacy record: still readable, and ineligible as a reading about the current content.
+     */
+    subjectRevision?: string;
 };
 
 export type ProbeAnswer = {
@@ -44,6 +54,12 @@ export type ProbeAnswer = {
     command: string;
     observed: string;
     answeredAt: string;
+    /** The revision whose question this answer is about, copied from the probe it answered. */
+    subjectRevision?: string;
+    /** The path the question asked about, copied so the answer can be checked against the question rather than trusted. */
+    path?: string;
+    /** The fact the question asked for (a digest prefix, a literal, or `exists`), copied for the same reason. */
+    expected?: string;
 };
 
 /**
@@ -125,6 +141,7 @@ export function probesFor(input: {
             ...(kind === 'digest-prefix' ? { prefix } : {}),
             command,
             askedAt: input.askedAt,
+            subjectRevision: input.subject.revision,
         });
     }
     return probes;

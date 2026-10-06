@@ -537,7 +537,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const count = Number(argValue(argv, '--per-claim') ?? 2);
         const seed = argValue(argv, '--seed') ?? ledger.subject.revision;
         const asked: string[] = [];
+        const repeated: Array<{ claimId: string; command: string }> = [];
         const skipped: Array<{ claimId: string; why: string }> = [];
+        // **The question is the command, across the whole set and not only within one claim.** Two claims resting on the
+        // same path produced two records asking one question, so answering it once answered both — repetition counted as
+        // independent readings. The set is seeded from what is already stored, so a second `ask` does not pad either.
+        const questions = new Set((await readProbes(options.root, changeId)).map((probe) => probe.command));
         for (const claim of ledger.claims) {
             const probes = probesFor({ claim, subject: ledger.subject, seed, count, askedAt: nowIso() });
             if (probes.length === 0) {
@@ -547,11 +552,25 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 continue;
             }
             for (const probe of probes) {
+                if (questions.has(probe.command)) {
+                    repeated.push({ claimId: claim.id, command: probe.command });
+                    continue;
+                }
+                questions.add(probe.command);
                 await appendProbe(options.root, changeId, probe);
                 asked.push(probe.id);
             }
         }
-        outputResult({ ok: true, command: 'ledger ask', seed, perClaim: count, asked, skipped, note: 'each probe is answered once; a re-answer is refused, so a reviewer cannot try until something passes' });
+        outputResult({
+            ok: true,
+            command: 'ledger ask',
+            seed,
+            perClaim: count,
+            asked,
+            repeated,
+            skipped,
+            note: 'each probe is answered once; a re-answer is refused, so a reviewer cannot try until something passes. A question already asked — by this run or by an earlier one — is not asked again, because one question answered twice is one reading'
+        });
         return;
     }
 
@@ -568,20 +587,34 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger answer', error: `no probe ${probeId} has been asked${known.length === 0 ? ' — run `ledger ask` first' : `; asked: ${known.join(', ')}`}` });
             return;
         }
-        // The reviewer runs its own command and reports what it saw; the probe's own command is what kata can run, and it
-        // is recorded beside the answer so a reader can compare the two rather than trust either.
+        // **The answer is about the stored question, so it is recorded from that question.** A caller-supplied command was
+        // the hole: an answer for one probe could be re-recorded against another, and nothing compared the two. The
+        // observation still comes from the reviewer — kata running the command itself would make the probe prove nothing
+        // about whether anyone read the path — but the question it answers is the ledger's, not the caller's.
+        const supplied = argValue(argv, '--command');
+        if (supplied !== undefined && supplied !== probe.command) {
+            fail({ command: 'ledger answer', error: `--command does not match the question ${probeId} asks; the answer is recorded against the stored question (asked: ${probe.command})` });
+            return;
+        }
         const observed = argValue(argv, '--observed') ?? '';
+        if (observed.trim() === '') {
+            fail({ command: 'ledger answer', error: '--observed <what you saw> is required: a blank observation is not a reading' });
+            return;
+        }
         const recorded = await answerProbe(options.root, changeId, {
             probeId,
-            command: argValue(argv, '--command') ?? probe.command,
+            command: probe.command,
             observed,
             answeredAt: nowIso(),
+            ...(probe.subjectRevision === undefined ? {} : { subjectRevision: probe.subjectRevision }),
+            path: probe.path,
+            expected: probe.prefix ?? probe.literal ?? 'exists',
         });
         if (!recorded.ok) {
             fail({ command: 'ledger answer', error: recorded.why });
             return;
         }
-        outputResult({ ok: true, command: 'ledger answer', probeId, asked: probe.command, observed });
+        outputResult({ ok: true, command: 'ledger answer', probeId, asked: probe.command, observed, subjectRevision: probe.subjectRevision ?? null });
         return;
     }
 
@@ -593,13 +626,44 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         }
         if (action === 'add') {
             const claimId = argValue(argv, '--claim');
+            const falsifierId = argValue(argv, '--falsifier');
             const command = argValue(argv, '--command');
-            if (claimId === undefined || command === undefined) {
-                fail({ command: 'ledger challenge add', error: '--claim and --command are required' });
+            if (claimId === undefined) {
+                fail({ command: 'ledger challenge add', error: '--claim <claim-id> is required' });
                 return;
             }
-            if (!ledger.claims.some((claim) => claim.id === claimId)) {
+            if (claimId !== undefined && !ledger.claims.some((claim) => claim.id === claimId)) {
                 fail({ command: 'ledger challenge add', error: `no claim ${claimId} in this ledger` });
+                return;
+            }
+            // **A current challenge reproduces a declared falsifier; a free command is the legacy form.** The evidence item
+            // carries both the command and the mutation that must redden it, which is what makes a check able to fail for the
+            // right reason — a property a shell string cannot express, and the reason `--command exit 0` used to satisfy the
+            // discovery floor.
+            let boundCommand = command;
+            if (falsifierId !== undefined) {
+                if (!ledger.subject) {
+                    fail({ command: 'ledger challenge add', error: 'the subject is not frozen: run `ledger freeze` first' });
+                    return;
+                }
+                const claim = ledger.claims.find((entry) => entry.id === claimId);
+                const item = ledger.evidence.find((entry) => entry.id === falsifierId);
+                if (item === undefined) {
+                    fail({ command: 'ledger challenge add', error: `no evidence ${falsifierId} in this ledger, so there is no falsifier to reproduce` });
+                    return;
+                }
+                if (claim === undefined || !claim.evidenceIds.includes(falsifierId)) {
+                    fail({ command: 'ledger challenge add', error: `claim ${claimId} does not name evidence ${falsifierId}: a challenge reproduces a falsifier its own claim rests on` });
+                    return;
+                }
+                if (item.type !== 'executable_falsifier') {
+                    fail({ command: 'ledger challenge add', error: `${falsifierId} is a ${item.type}, not an executable_falsifier: only that type declares the mutation a falsifier run injects, so a challenge cannot reproduce it` });
+                    return;
+                }
+                boundCommand = item.command;
+            }
+            if (boundCommand === undefined) {
+                fail({ command: 'ledger challenge add', error: '--falsifier <evidence-id> is required (or --command <cmd> for the legacy free form, which cannot count as current discovery)' });
                 return;
             }
             const id = argValue(argv, '--id') ?? `X${ledger.challenges.length + 1}`;
@@ -612,15 +676,23 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             const challenge: Challenge = {
                 id,
                 claimId,
-                command,
+                command: boundCommand,
                 failsOn: argValue(argv, '--fails-on') ?? ledger.subject?.revision ?? 'unknown',
                 state: 'open',
                 at: nowIso(),
+                ...(falsifierId === undefined ? {} : { falsifierEvidenceId: falsifierId }),
             };
             await appendChallenge(options.root, changeId, challenge);
             const claim = ledger.claims.find((entry) => entry.id === claimId) as Claim;
             await appendClaim(options.root, changeId, { ...claim, challengeIds: [...claim.challengeIds, id] });
-            outputResult({ ok: true, command: 'ledger challenge add', challenge });
+            outputResult({
+                ok: true,
+                command: 'ledger challenge add',
+                challenge,
+                binding: falsifierId === undefined
+                    ? 'none: a free-form challenge is readable history and cannot count as current discovery — add one with --falsifier'
+                    : `reproduces ${falsifierId}`,
+            });
             return;
         }
         if (action === 'check') {
@@ -642,30 +714,73 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 timeoutMs: ledger.policy.budgets.maxWallMs,
                 producer: producerFor(argv),
             });
-            const outcomes: Array<{ id: string; code: number; state: Challenge['state'] }> = [];
+            const outcomes: Array<{ id: string; code: number; state: Challenge['state']; verdict?: string; falsifier?: string }> = [];
             for (const challenge of open) {
-                const result = await context.run(challenge.command);
-                // A counterexample that no longer fails is a claim the author has fixed: it resolves the challenge
-                // rather than being silently ignored, and the observation is recorded with it.
-                const state: Challenge['state'] = result.code === 0 ? 'withdrawn' : 'open';
+                const falsifierEvidenceId = challenge.falsifierEvidenceId;
+                const bound = typeof falsifierEvidenceId === 'string' && falsifierEvidenceId !== '';
+                let code: number;
+                let observed: string;
+                let state: Challenge['state'];
+                let verdict: 'supported' | 'refuted' | 'inconclusive' | undefined;
+                if (bound) {
+                    // **The declared falsifier's own verifier runs.** Baseline, injected defect, restored baseline — the same
+                    // path `ledger evidence verify` uses, so a challenge cannot be checked by a weaker procedure than the
+                    // evidence it names. A second mutation runner here would be a second answer to "did this redden".
+                    const item = ledger.evidence.find((entry) => entry.id === falsifierEvidenceId);
+                    if (item === undefined || item.type !== 'executable_falsifier') {
+                        fail({ command: 'ledger challenge check', error: `the falsifier ${falsifierEvidenceId} this challenge reproduces is not an executable_falsifier in this ledger any more, so the check it names cannot be run` });
+                        return;
+                    }
+                    const [produced] = await verifyAll([item], context);
+                    if (produced === undefined) {
+                        fail({ command: 'ledger challenge check', error: `the verifier produced no verdict for ${falsifierEvidenceId}, so nothing was recorded` });
+                        return;
+                    }
+                    // The reading is recorded where every other reading is recorded: the falsifier's verdict is the fact, and
+                    // the challenge's resolution binds to it rather than restating it.
+                    await recordVerdicts(options.root, changeId, [produced]);
+                    verdict = produced.verdict;
+                    observed = produced.observed;
+                    code = verdict === 'supported' ? 0 : 1;
+                    state = verdict === 'supported' ? 'withdrawn' : 'open';
+                } else {
+                    // The legacy free form: still runnable and still reportable, and never current discovery credit.
+                    const result = await context.run(challenge.command);
+                    code = result.code;
+                    observed = `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`;
+                    state = result.code === 0 ? 'withdrawn' : 'open';
+                }
                 // **The reported outcome is the persisted one.** `resolveChallenge` can decline — the record it was asked
                 // to resolve may be unnameable, or already gone — and reporting `state: 'withdrawn'` anyway would print a
                 // fact the file does not hold. An independent round found exactly that: the boolean was discarded, and the
                 // command claimed a resolution the ledger never recorded.
                 const persisted = await resolveChallenge(options.root, changeId, challenge.id, {
                     state,
-                    observed: `${result.timedOut ? 'timed out after' : 'exit'} ${result.timedOut ? ledger.policy.budgets.maxWallMs : result.code} when checked against ${ledger.subject.revision}`,
+                    observed,
                     at: nowIso(),
-                    // `reproduced` preserves counterexample history only. Every check persists its observation, and the
-                    // discovery floor derives execution from a terminal state plus that observation, so a passing check
-                    // is not discarded merely because it found no current failure.
-                    reproduced: result.code !== 0 && !result.timedOut,
+                    // `reproduced` preserves counterexample history only, and only for a check whose exit code says the
+                    // command failed on the current revision. For a bound falsifier the verifier's verdict is the fact, so
+                    // this historical field is left to the free form that has nothing else to record.
+                    ...(bound ? {} : { reproduced: code !== 0 }),
+                    ...(bound && falsifierEvidenceId !== undefined
+                        ? {
+                            falsifierEvidenceId,
+                            subjectRevision: ledger.subject.revision,
+                            ...(verdict === undefined ? {} : { verdict }),
+                            producer: context.producer(),
+                        }
+                        : {}),
                 });
                 if (!persisted) {
                     fail({ command: 'ledger challenge check', error: `the resolution of ${challenge.id} was not recorded: the ledger holds no record it can name that way, so the state on disk is unchanged` });
                     return;
                 }
-                outcomes.push({ id: challenge.id, code: result.code, state });
+                outcomes.push({
+                    id: challenge.id,
+                    code,
+                    state,
+                    ...(bound ? { falsifier: String(falsifierEvidenceId), verdict: String(verdict) } : {}),
+                });
             }
             outputResult({ ok: true, command: 'ledger challenge check', outcomes });
             return;

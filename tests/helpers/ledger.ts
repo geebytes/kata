@@ -91,12 +91,19 @@ export async function seedLedger(
         path: target,
         command: `test -f ${target}`,
         askedAt: new Date().toISOString(),
+        // **Frozen to the revision that asked it.** A question with no revision on it is a legacy record: it stays
+        // readable, and it cannot count as a reading about the content under review — which is what this fixture needs.
+        subjectRevision: frozenAgain.subject.revision,
     });
     await answerProbe(root, taskId, {
         probeId,
         command: `test -f ${target}`,
         observed: 'exit 0: the file the claim rests on exists at this revision',
         answeredAt: new Date().toISOString(),
+        // The answer copies the fact it answers, so the projection can check it against the question rather than trust it.
+        subjectRevision: frozenAgain.subject.revision,
+        path: target,
+        expected: 'exists',
     });
     // **The plan is now part of what an approval needs.** `verifyAgainstRequest` compares what the reviewer was handed
     // with what arrived, and a request is derived from the stored plan — so a change that never planned has no reading

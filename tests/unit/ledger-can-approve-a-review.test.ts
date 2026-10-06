@@ -110,15 +110,22 @@ describe('the evidence ledger can hold a review approval', () => {
         await appendChallenge(root, id, {
             id: 'X1',
             claimId: 'C1',
-            command: 'exit 1',
+            command: `grep -q export ${path}`,
             failsOn: subject.subject.revision,
             state: 'withdrawn',
             at: '2026-09-27T00:00:00.000Z',
-            resolution: { at: '2026-09-27T00:01:00.000Z', observed: 'exit 0 when checked against the frozen subject' },
-            // **The reproduction is history here, not the floor's condition.** The command failed while the defect was
-            // present, and the resolution above records that it passes now. What the floor counts is that terminal
-            // observation; it no longer requires the command to still fail — the false negative this change removed —
-            // and the price of removing it is that a vacuous command counts too (see `verifiedChallengeCount`).
+            // **The floor counts a reproduction of a declared falsifier, not a terminal observation.** The challenge names
+            // `E1` — the falsifier the tier requires, with the mutation that reddens it — and its resolution carries the
+            // binding back: which falsifier ran, against which revision, and what the verifier decided. A free-form command
+            // is readable history and nothing more (see `discoveryProjection`).
+            falsifierEvidenceId: 'E1',
+            resolution: {
+                at: '2026-09-27T00:01:00.000Z',
+                observed: '{"before":0,"mutated":1,"after":0}',
+                falsifierEvidenceId: 'E1',
+                subjectRevision: subject.subject.revision,
+                verdict: 'supported',
+            },
             reproduced: true,
         });
         // **The plan travels with the approval.** `ledger run` hands a reviewer a request derived from the stored plan —

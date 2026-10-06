@@ -436,7 +436,7 @@ export function decide(input: DecideInput): Decision {
         // remedy, and the remedy is a command. Each one now names what to add.
         deficits.push({
             claimId: 'discovery:independent_challenge',
-            need: 'record an independent challenge (`kata-cli ledger challenge add --command <cmd>`) and run it to persist an observation',
+            need: 'record an independent challenge that reproduces a declared falsifier (`kata-cli ledger challenge add --claim <claim> --falsifier <evidence-id>`) and run it to persist an observation',
         });
     }
     if (input.tier !== 'standard'

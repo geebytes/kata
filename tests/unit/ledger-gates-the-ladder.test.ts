@@ -85,13 +85,27 @@ describe('the ledger gates the ladder', () => {
             verdicts.push(makeVerdict({ evidenceId, subjectRevision: subject.subject.revision }));
         }
         await recordVerdicts(root, changeId, verdicts);
+        // **The floor counts a reproduction of a declared falsifier, not a terminal observation.** The fixture declares one
+        // whose mutation reddens its check against the frozen path, and the challenge binds to it: which falsifier ran,
+        // against which revision, and what the verifier decided. A free-form command is readable history and cannot meet
+        // the floor — the rule is pinned in `tests/unit/discovery-count-projection.test.ts`.
+        await appendEvidence(root, changeId, {
+            id: 'E-falsifier',
+            type: 'executable_falsifier',
+            command: 'grep -q holds src/a.ts',
+            mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
+        });
         await appendChallenge(root, changeId, {
-            id: 'X1', claimId: 'C1', command: 'exit 1', failsOn: subject.subject.revision, state: 'withdrawn',
-            at: '2026-09-27T00:00:00.000Z', resolution: { at: '2026-09-27T00:01:00.000Z', observed: 'exit 0 when checked' },
-            // **The observation is the fact the floor counts, not the reproduction.** `reproduced` stays because the command
-            // really did fail once — that is history worth keeping — but the floor is met by the terminal state plus the
-            // non-blank `resolution.observed` above. It no longer asks the command to still fail; that rule is pinned in
-            // `tests/unit/discovery-floor-fail-closed.test.ts`.
+            id: 'X1', claimId: 'C1', command: 'grep -q holds src/a.ts', failsOn: subject.subject.revision, state: 'withdrawn',
+            at: '2026-09-27T00:00:00.000Z',
+            falsifierEvidenceId: 'E-falsifier',
+            resolution: {
+                at: '2026-09-27T00:01:00.000Z',
+                observed: '{"before":0,"mutated":1,"after":0}',
+                falsifierEvidenceId: 'E-falsifier',
+                subjectRevision: subject.subject.revision,
+                verdict: 'supported',
+            },
             reproduced: true,
         });
 
