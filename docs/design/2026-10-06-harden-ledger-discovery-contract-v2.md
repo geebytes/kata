@@ -281,3 +281,19 @@ decision layer's trust in a record's self-description:
 Six cases carry this round in the declared surface. Full suite: 264 files / 1568 tests. The one-decision witness lives at the
 store entry point rather than behind the command, because the verb-level refusal answers first and would otherwise hide
 whether the write itself is one decision — the same trap as witnessing a fix without witnessing the path that reaches it.
+
+### 9.3 The fourth round: a partial view, and a record certifying itself
+
+The fourth independent round could not falsify eight of the eleven repairs and found the class at two more layers:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| `usage.json` (major, AC-2) | the one schema-less artefact whose writer-path reader was its own: `readUsageRecord` parsed without a container check, so `[]` read as an empty record and `ensureAssurance`/`setUsage` overwrote the bytes that were the only evidence the file is corrupt | the reader is `readJsonObject` and requires an object; `policy.json` uses it too, which closes the literal `null` case (it parsed to `null` and was indistinguishable from an absent file) |
+| **a self-asserted run** (major, AC-3) — the security-relevant one | the declaration check landed, but the *resolution* was still the only account of the run: a hand-written `challenges.json` asserting a falsifier id, a supported verdict and the current revision satisfied the floor with `verdicts.json` empty | `discoveryProjection` also requires the reading the ledger recorded — same evidence, same revision, written only by `evidence verify` — so the record cannot certify itself |
+| a partial view reaching the consumers (major, AC-1) | with the scan's verdict now nulling a malformed section, the consumers read that null as *absent*: `claim list` answered `claims: []`, `status` answered `0`/`null`, `focus` answered "the subject is not frozen" — each with a remedy that overwrites the evidence | **one gate at the command boundary**: a verb that reports on, decides from or writes to a ledger with an unreadable section stops, naming the files; `status` is the exception, and now carries `unreadableArtefacts` so the exemption is honest |
+
+**Measured after commit `4b75333`/`1e4d3a5`** (same method): the recorded-run requirement, the usage container check and the boundary gate each redden their selector; restoring the file returns the committed SHA-256 and green.
+
+Three cases and two assertions carry this round. Full suite: 264 files / 1572 tests.
+
+**What four rounds say about the shape.** Each round found the same class one layer further out — a reader, then a writer, then a report, then the view a report is built from — and each round's fix was one layer up from the previous one: per-reader, then per-decision, then per-verb, and now **one gate at the boundary plus one input to the decision**. The rule that emerged and is worth keeping is not "check the container" but: *an absence and an unreadable file must not be representable by the same value anywhere a decision or a report reads it.*
