@@ -110,6 +110,49 @@ describe('record ownership has one answer', () => {
         expect(evidenceDir(worktree)).toBe(join(primary, '.kata', 'evidence'));
     });
 
+    it('recognises a linked worktree that git lists outside .kata/worktrees', () => {
+        // **The shape the docstring promised and the code never had.** `worktreeContaining` has always documented two
+        // shapes — "the linked checkouts this repository creates under `.kata/worktrees/<dir>`, and a git worktree listed
+        // by `git worktree list` (which is how a `--path` checkout appears)" — while its body was a pure path test. So a
+        // checkout created with `worktree create --path`, or by hand with `git worktree add`, was not recognised: the
+        // owner came back `undefined`, and both stores fell back into the worktree. Measured on the frozen revision as
+        // challenge X1: `wiki candidate` answered the registered candidate from the primary and `[]` from this worktree.
+        const primary = repo('path-worktree');
+        seedTask(primary, 'a-task');
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        // Deliberately not under `.kata/worktrees/`: this is the `--path` shape, which only git can name.
+        const linked = `${primary}-linked`;
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', linked], { cwd: primary });
+        roots.push(linked);
+
+        const owner = recordOwner({ root: linked });
+        expect(owner.worktreeRoot, 'git is the only source that names this shape').toBe(linked);
+        expect(owner.ownerRoot, 'and its owner is the checkout git says it belongs to').toBe(primary);
+        expect(wikiDir(linked)).toBe(join(primary, '.kata', 'wiki'));
+        expect(evidenceDir(linked)).toBe(join(primary, '.kata', 'evidence'));
+    });
+
+    it('resolves a worktree to its owner even when the task it holds has no owner anywhere', () => {
+        // **A task-less question must not be answered by a task-addressed derivation.** `wikiDir` and `evidenceDir` have
+        // no task parameter; they used to supply `worktreeTaskId(start)` anyway, which reads the sorted-first task
+        // directory the worktree happens to contain. When that task is one no checkout holds — the stranded state this
+        // project handles through `worktreeOnlyRecords`/`recoverWorktreeRecords` — the owner walk found nothing and both
+        // stores fell back inside the worktree, while `recordsRoot` for the task actually being worked on still answered
+        // the owner. Measured on the frozen revision as challenge X2.
+        const primary = repo('stranded-worktree');
+        seedTask(primary, 'held');
+        const worktree = join(primary, '.kata', 'worktrees', 'a-task');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'other-task'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'other-task', 'judge.json'), '{}\n');
+
+        expect(recordOwner({ root: worktree }).ownerRoot, 'the worktree still belongs to its checkout').toBe(primary);
+        expect(wikiDir(worktree)).toBe(join(primary, '.kata', 'wiki'));
+        expect(evidenceDir(worktree)).toBe(join(primary, '.kata', 'evidence'));
+        // The two surfaces agree again: the task being worked on is held by the same checkout.
+        expect(recordsRoot(worktree, 'held')).toBe(primary);
+    });
+
     it('says no owner rather than inventing one when the task is nowhere', () => {
         // The previous shapes returned the caller's directory when nothing held the task, which made "unknown" read as
         // "here" — and let a command run inside a worktree write records into the worktree.

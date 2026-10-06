@@ -1,7 +1,7 @@
 # Route the Wiki record store through its owner
 
 **Change:** `route-the-wiki-store-through-its-owner`
-**Status:** implemented (the derivation and its three selectors landed; see Verification plan)
+**Status:** implemented and repaired (an independent strict round falsified C1 twice; both shapes are now covered — see Repair)
 **Profile:** `current_worktree / tdd / strict`
 
 ## Problem
@@ -92,6 +92,37 @@ AC-1's selector (the file whose subject is "record ownership answers every surfa
 - `worktreeTaskId(start)` supplies the task id when the caller stands in a worktree, because `recordOwner` needs one to
   look up; this is the same call `evidenceDir` makes, for the same reason (`src/core/layout.ts:772-775`).
 
+## Repair: the two shapes the first fix did not cover
+
+An independent strict round (`kata-reviewer`, 397 s, 45 tool calls) falsified C1 twice, and both reproductions were
+re-run by hand before being accepted. Both are the same class: **the owner of a worktree caller was derived from a task id,
+and from a path shape only one kind of worktree has.**
+
+| finding | shape | what happened | falsifier |
+| --- | --- | --- | --- |
+| F1 (major) | a `--path` / hand-made `git worktree add` checkout, outside `.kata/worktrees/` | `worktreeContaining` was a pure path test while its docstring promised two shapes, so the worktree was not recognised, `ownerRoot` came back `undefined`, and both stores fell back inside it | challenge X1: `wiki candidate --root <primary>` vs `--root <primary>-linked` — differed, exit 1 |
+| F2 (major) | a `.kata/worktrees/<id>` worktree holding a record directory for a task no checkout owns | `wikiDir`/`evidenceDir` asked a **task-addressed** question (`taskId: worktreeTaskId(start)`) to answer a **task-less** one, so the walk found no owner and the stores fell back inside the worktree while `recordsRoot` for the task being worked on still answered the owner | challenge X2: same comparison with the stranded directory present — differed, exit 1 |
+| F3 (note) | either of the above, through the closure gate | the candidate set comes from `wikiDir` while the closure comes from `recordsRoot`, so the gate answered `candidate_missing` for a registered candidate | selector case, added |
+
+**The fix, by class rather than by instance:**
+
+1. `worktreeContaining` recognises the second shape its docstring has always documented, gated on a cheap fact first: a
+   linked worktree's `.git` is a *file* while the main checkout's is a directory, so an ordinary command in an ordinary
+   repository spawns nothing and only a possible linked checkout pays for a listing.
+2. `recordOwner` answers a worktree caller from the worktree's own identity — `owningCheckoutOf` for the shape this
+   repository creates (no disk), git's `main` entry for a `--path` checkout — and never from a task id. The task-addressed
+   walk applies only to a caller that is *not* in a worktree.
+3. `wikiDir` and `evidenceDir` stop supplying a task id, because their question does not carry one.
+
+**Measured after the repair:** the round's own two challenge commands exit **0** (they exited 1 against the frozen
+revision); `worktreeTaskId` — whose catch block claimed "any task id serves" — is gone, having no caller left; and the
+false sentence in `worktreeContaining`'s docstring is now true rather than deleted.
+
+> **A claim from an earlier change, checked.** Commit `45a6535` ("the detector sees worktrees outside `.kata/worktrees`
+> too") states that a `--path` checkout "reported `[]` **while `recordOwner` recognised it**". `recordOwner` did not
+> recognise it then, and does not until this repair — the commit's own message asserted the very disagreement it was
+> fixing, one function over. The detector was fixed; the ownership function it was compared against was not.
+
 ## Non-goals
 
 - **No migration and no record moves.** For a repository whose task lives in the caller's checkout the derived directory is
@@ -108,7 +139,7 @@ AC-1's selector (the file whose subject is "record ownership answers every surfa
 
 | AC | Contract | Evidence selector |
 | --- | --- | --- |
-| AC-1 | The Wiki store is derived from the record owner: the primary checkout and a linked worktree answer the same directory, and no second copy appears under the worktree. | `tests/unit/record-ownership-answers-every-surface.test.ts` |
+| AC-1 | The Wiki store is derived from the record owner: the primary checkout and a linked worktree answer the same directory — for both worktree shapes (under `.kata/worktrees/` and git-listed elsewhere) and whatever task directory the worktree happens to hold — and no second copy appears under the worktree. | `tests/unit/record-ownership-answers-every-surface.test.ts` |
 | AC-2 | A closure naming a registered candidate evaluates valid when asked from inside the linked worktree, and a genuinely absent candidate still fails closed. | `tests/unit/wiki-closure-follows-its-owner.test.ts` |
 | AC-3 | For a single-checkout repository the store's location is unchanged, and every consumer resolves the same file as before. | `tests/unit/owner-rule-covers-evidence-and-trace.test.ts` |
 
@@ -128,4 +159,7 @@ AC-1's selector (the file whose subject is "record ownership answers every surfa
   1. restore `join(kataDir(root), 'wiki')` → AC-1 and AC-2 selectors must redden;
   2. drop the `?? start` fallback → AC-3 must redden;
   3. restore `ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId)` → AC-1's bare-worktree
-     case and AC-2 must redden (this is the mutation that would have caught the first, insufficient version).
+     case and AC-2 must redden (this is the mutation that would have caught the first, insufficient version);
+  4. drop the git shape from `worktreeContaining` → AC-1's `--path` case must redden (this is the mutation that would have
+     caught F1);
+  5. restore `taskId: worktreeTaskId(start)` in `wikiDir` → AC-1's stranded case must redden (F2's mutation).
