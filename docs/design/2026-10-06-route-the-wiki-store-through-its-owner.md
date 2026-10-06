@@ -161,5 +161,19 @@ false sentence in `worktreeContaining`'s docstring is now true rather than delet
   3. restore `ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId)` → AC-1's bare-worktree
      case and AC-2 must redden (this is the mutation that would have caught the first, insufficient version);
   4. drop the git shape from `worktreeContaining` → AC-1's `--path` case must redden (this is the mutation that would have
-     caught F1);
-  5. restore `taskId: worktreeTaskId(start)` in `wikiDir` → AC-1's stranded case must redden (F2's mutation).
+     caught F1).
+
+Measured, all four applied against the committed repair and restored byte-identical:
+
+| mutation | result |
+| --- | --- |
+| `wikiDir` derives per-caller again | selector RED |
+| `recordOwner` ignores the worktree branch (the first, insufficient version) | selector RED — this is F2's falsifier |
+| `worktreeContaining` drops the git shape | selector RED — this is F1's falsifier |
+| `wikiDir` supplies `taskId: worktreeTaskId(start)` again | **GREEN — and that is the finding** |
+
+The fourth mutation does not redden, and the honest reading is that **removing the task-id argument is a simplification,
+not a separately load-bearing fix**: once `recordOwner` answers a worktree caller from the worktree's identity, the answer
+no longer depends on the id, so supplying one changes nothing. The dependency was removed because a task-less question
+carrying a task id is what made the defect expressible in the first place — not because the argument is now a witness. F2's
+own falsifier is the second row.
