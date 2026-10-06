@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readLedger, readVerdictHistory } from '../../src/store/ledger.js';
-import { ledgerVerdict } from '../../src/store/verdict.js';
+import { ledgerVerdict, unsupportedClaims } from '../../src/store/verdict.js';
 
 /**
  * Every schema-less ledger artefact has the same three-state boundary.
@@ -106,6 +106,21 @@ describe('schema-less ledger artefact read states', () => {
         expect(ledger.policyRejected).not.toBeNull();
         expect(ledger.malformedFiles).toContain('policy.json');
         expect((await ledgerVerdict({ root, changeId })).kind).toBe('unreadable');
+    });
+
+    it('refuses to project an unreadable ledger as "no claims are still open"', async () => {
+        // **A zero over a file nobody could read is not a zero.** `openLedgerProblems` asks the readability predicate first,
+        // but the two callers that read `unsupportedClaims` directly — the change record's `findings` and the archive's
+        // known-problem read — did not, so a corrupt `claims.json` became `findings: []` and `0 problems`: the same zero
+        // meaning "none" that this family of fixes exists to remove, on the gate that decides whether a change may close.
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'claims.json'), '{ this is not JSON\n');
+        const ledger = await readLedger(root, changeId);
+        expect(ledger.malformedFiles).toContain('claims.json');
+        expect(() => unsupportedClaims(ledger)).toThrow(/claims\.json/);
+
+        // Absence is not that refusal: a ledger nobody wrote has no open claims, and that is a fact rather than a fault.
+        const empty = await readLedger(root, 'a-change-with-no-ledger');
+        expect(unsupportedClaims(empty)).toEqual([]);
     });
 
     it('reports an existing but unreadable history as unreadable, not as an empty one', async () => {
