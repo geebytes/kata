@@ -147,6 +147,48 @@ The four changes that implement it: `owningCheckoutOf` walks past linked checkou
 
 > **One challenge had to be re-aimed, and the reason is recorded.** X5's original form compared the two answers; the repair changed the worktree's behaviour from *silently answering `[]`* to *refusing by name*, which also makes the comparison fail. The defect is the silent per-root store, so the amended command exits 0 only on the named refusal (`no owner to read`) and 1 on any answer read from inside the worktree. `ledger challenge amend` records the replaced command as an amendment rather than rewriting history.
 
+## Third repair: Git identity outranks a nested path, task ownership remains content-bound
+
+A third strict round found that the second repair still chose the wrong source of truth for one reachable topology: an
+**outside-path** linked worktree can itself create the product's nested `.kata/worktrees/<id>` directory. The inner path
+therefore has a valid local path shape, but its apparent parent is the *outside linked checkout*, not the primary. The
+inner `.git` marker and `git worktree list` name the primary as `main`; `owningCheckoutOf` was selected first, so Git was
+never consulted.
+
+The two blocking findings are one root cause expressed at two surfaces:
+
+| finding | failing answer | required answer |
+| --- | --- | --- |
+| F1 / AC-1 | `wikiDir(inner)` chose `<outside-outer>/.kata/wiki` | a real linked worktree asks Git first, so it chooses `<primary>/.kata/wiki` |
+| F2 / AC-2 | `recordsRoot(inner, task)` could not reach the primary and wrote the captured closure under the outer copy; candidate lookup then returned `candidate_missing` | Git's primary is considered for a task **only when it actually holds that task**; then the closure and candidate read one primary store |
+
+### Refined ownership contract
+
+There are deliberately two questions, with different permitted fallbacks:
+
+1. **Task-less store** (`wikiDir`, `evidenceDir`): for a real linked checkout, Git's `main` entry is authoritative; the
+   `.kata/worktrees` path derivation is only a no-Git fixture/fallback. If neither source can name a non-worktree owner,
+   the store refuses rather than reading inside a worktree.
+2. **Task-addressed record** (`recordsRoot(root, taskId)`): first find a non-worktree ancestor holding `taskId`; if none,
+   ask the current worktree's Git/path owner and accept it **only if it holds `taskId`**; only then fall back to the
+   current worktree when that worktree holds the task's sole copy. Thus `ownerRoot` is never a non-holding checkout, while
+   a stranded task remains reachable.
+3. A checkout is known to be linked by either the product path shape or a `.git` marker explicitly pointing under
+   `/.git/worktrees/`; a submodule marker (`/.git/modules/`) is not a worktree marker. This lets `owningCheckoutOf` skip
+   an outside linked outer checkout even if Git itself is unavailable, preserving the fail-closed result.
+
+### RED and verification
+
+- AC-1's new actual-Git fixture creates `<primary>-outer` with `git worktree add --detach`, then asks that outer to create
+  `<outer>/.kata/worktrees/inner`. Before the repair `recordOwner(inner).ownerRoot` is the outer checkout; it must be the
+  primary, and both flat stores must agree.
+- AC-2 constructs the same topology, registers the candidate in the primary and writes a captured closure from the inner
+  worktree. Before the repair the closure lands below the outer and evaluates `candidate_missing`; after it, it lands and
+  evaluates under the primary.
+- The existing stranded-task test remains the guard against turning Git's primary into an unverified owner: a primary that
+  does not hold the queried task must not win over the worktree holding the only copy.
+
+
 ## Non-goals
 
 - **No migration and no record moves.** For a repository whose task lives in the caller's checkout the derived directory is

@@ -139,19 +139,21 @@ function nearestLinkedWorktree(from: string): string | undefined {
 }
 
 /**
- * True when `dir` is a linked worktree root: a checkout that lives under `.kata/worktrees/`.
+ * True when `dir` is a linked worktree root.
  *
- * The test is the path shape, deliberately — a linked checkout is recognisable from where it is, so recognising it does
- * not depend on `.git` being readable or on any record existing there.
+ * The product path shape answers without disk access for its own worktrees. An outside-path worktree has no such
+ * segment, so its `.git` marker is the additional source of truth — but only a marker under `/.git/worktrees/` counts;
+ * a submodule's `/.git/modules/` marker does not make it a linked worktree.
  */
 function isLinkedWorktreeRoot(dir: string): boolean {
-  const segments = resolve(dir).split(sep);
+  const resolved = resolve(dir);
+  const segments = resolved.split(sep);
   for (let index = 0; index + 2 < segments.length; index += 1) {
     if (segments[index] === '.kata' && segments[index + 1] === 'worktrees' && index + 2 === segments.length - 1) {
       return true;
     }
   }
-  return false;
+  return linkedWorktreeCheckout(resolved) === resolved;
 }
 
 /**
@@ -855,15 +857,24 @@ function unnameableOwner(surface: string, worktree: string): Error {
 }
 
 /**
+/**
  * The checkout that owns a worktree, whichever shape it is.
  *
- * The path shape answers for a worktree this repository created, without reading anything. A `--path` checkout has no such
- * shape, so git answers instead: `git worktree list` run inside it names the main checkout, which is the one that holds the
- * records. A worktree whose owner neither source can name stays `undefined`, which the callers read as "no owner" rather
- * than as "here".
+ * A real linked checkout asks Git first: only its `main` entry can distinguish a primary checkout from an outside-path
+ * linked parent that happens to contain a nested `.kata/worktrees/<id>` directory. The path derivation remains the
+ * no-Git fallback for the product's synthetic/test shape.
  */
 function worktreeOwnerOf(worktree: string): string | undefined {
-    return owningCheckoutOf(worktree) ?? gitWorktreeList(worktree).find((entry) => entry.kind === 'main')?.path;
+    const gitOwner = hasGitFileMarker(worktree)
+        ? gitWorktreeList(worktree).find((entry) => entry.kind === 'main')?.path
+        : undefined;
+    return gitOwner ?? owningCheckoutOf(worktree);
+}
+
+/** The Git/path owner of a worktree only when it actually holds the queried task. */
+function worktreeOwnerHoldingTask(worktree: string, taskId: string): string | undefined {
+    const owner = worktreeOwnerOf(worktree);
+    return owner !== undefined && hasTaskDir(owner, taskId) ? owner : undefined;
 }
 
 /**
@@ -926,6 +937,7 @@ export function recordOwner(input: { root: string; path?: string; taskId?: strin
     //     rather than read as "here" (challenge X5).
     const ownerRoot = taskId !== undefined
         ? findOwningCheckout(searchFrom, taskId) ??
+            (worktreeRoot !== undefined ? worktreeOwnerHoldingTask(worktreeRoot, taskId) : undefined) ??
             (worktreeRoot !== undefined && hasTaskDir(worktreeRoot, taskId) ? worktreeRoot : undefined)
         : worktreeRoot === undefined
             ? undefined
