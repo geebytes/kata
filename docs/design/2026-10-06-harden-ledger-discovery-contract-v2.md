@@ -121,7 +121,9 @@ A generated `Probe` becomes a canonical frozen fact: its subject revision, kind,
 
 > **Why kata does not run the probe itself.** The sentence this replaces said the verb "executes that canonical command". Executing it in kata would destroy the credential: the probe exists so that a reviewer has to look at one path of this revision, and if the harness runs the check the reviewer need not read anything. The binding is what AC-4 requires, and it is enforced on both sides — the answer copies the fact, and the projection re-checks it against the question.
 
-`ledger ask` refreshes a stored probe when the derived current-subject fact changes and reports what was actually written. Answers remain write-once for one exact `(probe id, subject revision, fact)` identity; a moved subject may receive a new answer.
+`ledger ask` refreshes a stored probe when the derived current-subject fact changes and reports what was actually written. A question already asked is not asked again — but **only a probe frozen to the current revision counts as already asked**, because a stale record is not the question this revision poses. Answers remain write-once for one exact `(probe id, subject revision, command)` identity; a moved subject may receive a new answer.
+
+> **Found by the mutation proof, not by review.** The first version seeded the "already asked" set from every stored probe's command, so a question whose command is identical after the subject moves (`test -f <path>`) was skipped and never refreshed. Its recorded revision stayed the old one, which made it ineligible on both sides: the moved content was left with no askable question, and an answer recorded against the stale record could count for neither revision. The witness only caught it once the probe-level revision check was mutated away — the round before that, the projection's probe check had been doing the work the refresh was supposed to do.
 
 ### 4.3 One discovery derivation
 
@@ -141,6 +143,19 @@ Both values supplied to `decide()` come from that one projection: candidate atte
 - Writers never repair unreadable bytes implicitly. A human may intentionally repair the source document, then rerun the command.
 
 ## 6. Verification plan
+
+**Measured, after the implementation was committed** (each mutation applied, the selector run, the file restored byte-identical):
+
+| AC | Mutation applied | Result |
+| --- | --- | --- |
+| AC-1 | `records()` returns `[]` for a wrong container instead of throwing | selector RED |
+| AC-2 | `readRecordsForWrite` returns `[]` instead of refusing | selector RED |
+| AC-3 | a terminal free-form challenge counts again | selector RED |
+| AC-4 | the answer/question revision equality is dropped | selector RED |
+| AC-5 | a probe reading is identified by its record id rather than its command | selector RED |
+| AC-6 | an unbound record is treated as a current reading | selector RED |
+
+The AC-4 row is the second attempt: the first mutation (dropping the answer-side equality) left the witness green, because at that point the probe was never refreshed and the projection's probe-side check was what excluded the stale answer. That green mutation was the signal — it is what exposed the refresh hole recorded in §4.2.
 
 | AC | Focused proof | Reversible mutation |
 | --- | --- | --- |
