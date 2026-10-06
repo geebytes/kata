@@ -293,6 +293,26 @@ describe('workflow guidance', () => {
     // state: otherwise the ledger's field goes missing exactly when both files are broken and an operator needs both.
     expect(upstream.reviewRecordUnreadable).toContain('review.json');
     expect(upstream.ledgerUnreadable).toContain('claims.json');
+    // Two artefacts could not be read, so two problems are open: a count of one would say a single refusal where the
+    // operator has two files to repair.
+    expect(upstream.reviewFindings).toBe(2);
+    expect(upstream.blockingFindings).toBe(2);
+  });
+  it('does not blame the review record for a pointer it could not read', async () => {
+    const root = await tempRoot();
+    const taskId = 'unreadable-pointer';
+    await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), JSON.stringify({ id: taskId, acceptance: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), JSON.stringify({ taskId, phase: 'review' }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), JSON.stringify({ status: 'pending', findings: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), '{ this is not JSON\n');
+
+    const upstream = await readUpstreamSummary(root, taskId);
+
+    // The record is readable; the pointer it binds to is not. Publishing that refusal under the record's name sent an
+    // operator to repair a file that is fine — the defect these two fields exist to prevent, one artefact further out.
+    expect(upstream.currentRevisionUnreadable).toContain('current-revision.json');
+    expect(upstream.reviewRecordUnreadable).toBeUndefined();
     expect(upstream.reviewFindings).toBe(1);
   });
   it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {

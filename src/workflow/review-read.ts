@@ -67,7 +67,14 @@ export type ReviewRecordRead =
          */
         revision: TaskRevision | null;
     }
-    | { ok: false; why: string };
+    /**
+     * **A refusal names which of the two artefacts it could not read.** This reader refuses on the record and on the
+     * pointer the record binds to, and it used to return one shape for both — so every consumer that had to publish a
+     * reason published the pointer's under the record's name. An independent round measured exactly that: a corrupt
+     * `current-revision.json` was reported as an unreadable *review record*, whose message named the right file and whose
+     * field named the wrong one.
+     */
+    | { ok: false; why: string; source: 'review-record' | 'current-revision' };
 
 export async function readReviewRecord(
     root: string,
@@ -88,6 +95,7 @@ export async function readReviewRecord(
     } catch (error) {
         return {
             ok: false,
+            source: 'review-record',
             why: `the recorded review is not the shape its schema declares, so nothing can be decided from it (${(error as Error).message})`,
         };
     }
@@ -103,7 +111,7 @@ export async function readReviewRecord(
         };
     }
     if (record.findings !== undefined && !Array.isArray(record.findings)) {
-        return { ok: false, why: 'the recorded review carries a `findings` field that is not a list' };
+        return { ok: false, source: 'review-record', why: 'the recorded review carries a `findings` field that is not a list' };
     }
     // **The revision read is part of reading the record, so it is asked explicitly rather than caught.** This used to be
     // a try/catch around `currentRevisionIdentity`, which threw on drift and answered `null` for both absence and
@@ -114,6 +122,7 @@ export async function readReviewRecord(
     if (revisionRead.kind === 'unreadable') {
         return {
             ok: false,
+            source: 'current-revision',
             why: `the revision this change is bound to cannot be read, so nothing can be said about which content the review is about (${revisionRead.detail})`,
         };
     }
@@ -181,9 +190,10 @@ export type BlockingProblemsRead =
          */
         revision: TaskRevision | null;
     }
-    // `source` is what lets a consumer name the record it could not read: this reader refuses on two different ones, and a
-    // denial that always blames the review record misreports the ledger case (an independent review measured exactly that).
-    | { ok: false; why: string; source: 'review-record' | 'ledger' };
+    // `source` is what lets a consumer name the artefact it could not read: this reader refuses on three different ones — the
+    // review record, the pointer the record binds to, and the evidence ledger — and a denial that always blamed the review
+    // record misreported the other two (an independent review measured exactly that, twice).
+    | { ok: false; why: string; source: 'review-record' | 'ledger' | 'current-revision' };
 
 export async function readBlockingProblems(
     root: string,
@@ -194,7 +204,9 @@ export async function readBlockingProblems(
 ): Promise<BlockingProblemsRead> {
     const mode = await readReviewMode(root, taskId);
     const record = await readReviewRecord(root, taskId, sealedRead);
-    if (!record.ok) return { ok: false, why: record.why, source: 'review-record' };
+    // The refusal's own source travels with it: this reader is the one that knows which artefact it could not read, and a
+    // consumer that had to guess published the pointer's reason under the record's name.
+    if (!record.ok) return { ok: false, why: record.why, source: record.source };
     // **Imported here rather than at the top, deliberately.** `store/verdict` reaches `store/ledger`, which imports
     // `core/state`, which imports the distill gate — so a static edge from this module to the store closes a cycle that
     // runs back through the gate that calls it. `openLedgerProblems` used to live behind exactly this dynamic import for

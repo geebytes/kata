@@ -235,24 +235,44 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const { readLedger } = await import('../store/ledger.js');
   const ledgerInHand = await readLedger(root, taskId);
   const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
+  // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
+  // ladder and the operator cannot see two different answers to the same question — the defect this repository keeps
+  // finding, and the reason this is a call rather than a second assembly.
+  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId, ledger: ledgerInHand });
+  const ledger = ledgerDecision.kind === 'decided'
+    ? {
+        state: 'decided' as const,
+        verdict: ledgerDecision.decision.verdict,
+        claims: ledgerDecision.claims,
+        reason: ledgerDecision.decision.reasons.map((entry) => entry.code).join(', ') || 'no reason given',
+        deficits: ledgerDecision.decision.deficits.map((deficit) => `${deficit.claimId}: ${deficit.need}`),
+      }
+    : {
+        state: ledgerDecision.kind,
+        verdict: null,
+        claims: 0,
+        reason: ledgerDecision.detail,
+        deficits: [] as string[],
+      };
   // **Unreadable is an open blocking state, not an empty projection.** A status that published `ledger: unreadable`
   // alongside `reviewFindings: 0` made the same unreadable ledger say both "nobody can decide" and "nothing blocks".
-  // The refusal already comes from the single reader used by gates; represent it as one synthetic problem so every count,
-  // route and status consumer receives the same answer instead of each inventing a null/zero convention.
   //
-  // **And it names the artefact it is about.** Both unreadable sources — the evidence ledger and the recorded review —
-  // arrive through that one reader, and publishing them under a single id made the status say "the review record is
-  // unreadable" about a corrupt `claims.json`. Routing was already right (the ledger branch outranks this one); what was
-  // wrong is that whoever has to repair the file could not tell which one it is.
-  const unreadableSource = blockingRead.ok ? null : blockingRead.source;
-  const openProblems: ReadonlyArray<MergeBlockingProblem> = blockingRead.ok
-    ? blockingRead.openProblems
-    : [{
-        source: 'claim',
-        id: unreadableSource === 'ledger' ? 'ledger_unreadable' : 'review_record_unreadable',
-        severity: 'blocking',
-        message: blockingRead.why,
-      }];
+  // **And every unreadable artefact gets its own problem, under its own name.** The blocking reader refuses on the first
+  // artefact it cannot read, so deriving the published problems from its single `source` left the others unnamed: a pointer
+  // that could not be read borrowed the review record's field, and with both the record and the ledger corrupt only one of
+  // them got an id — while the count said one refusal where there were two. The three facts are independent and all three
+  // are already read here, so each one names itself and none can stand in for another.
+  const unreadableProblems: MergeBlockingProblem[] = [];
+  if (sealedRead.kind === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'current_revision_unreadable', severity: 'blocking', message: sealedRead.detail });
+  }
+  if (!blockingRead.ok && blockingRead.source === 'review-record') {
+    unreadableProblems.push({ source: 'claim', id: 'review_record_unreadable', severity: 'blocking', message: blockingRead.why });
+  }
+  if (ledger.state === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'ledger_unreadable', severity: 'blocking', message: ledger.reason });
+  }
+  const openProblems: ReadonlyArray<MergeBlockingProblem> = blockingRead.ok ? blockingRead.openProblems : unreadableProblems;
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
   const reviewLoop = assessReviewLoop({
@@ -273,25 +293,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const wikiClosure = await evaluateWikiClosure(root, taskId);
   const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
   const reviewMode = task?.workflowProfile?.reviewMode;
-  // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
-  // ladder and the operator cannot see two different answers to the same question — the defect this repository keeps
-  // finding, and the reason this is a call rather than a second assembly.
-  const ledgerDecision = await ledgerVerdict({ root, changeId: taskId, ledger: ledgerInHand });
-  const ledger = ledgerDecision.kind === 'decided'
-    ? {
-        state: 'decided' as const,
-        verdict: ledgerDecision.decision.verdict,
-        claims: ledgerDecision.claims,
-        reason: ledgerDecision.decision.reasons.map((entry) => entry.code).join(', ') || 'no reason given',
-        deficits: ledgerDecision.decision.deficits.map((deficit) => `${deficit.claimId}: ${deficit.need}`),
-      }
-    : {
-        state: ledgerDecision.kind,
-        verdict: null,
-        claims: 0,
-        reason: ledgerDecision.detail,
-        deficits: [] as string[],
-      };
 
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
