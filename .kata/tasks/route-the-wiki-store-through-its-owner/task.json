@@ -1,0 +1,114 @@
+{
+  "id": "route-the-wiki-store-through-its-owner",
+  "title": "Route the Wiki record store through its owner",
+  "phase": "intake",
+  "engine": {
+    "version": "0.2.0",
+    "stampedAt": "2026-10-06T06:50:20.960Z"
+  },
+  "acceptance": [
+    {
+      "id": "AC-1",
+      "statement": "The Wiki record store is derived from the checkout that owns the task's records, not from the caller's root: the same directory is answered from the primary checkout and from inside a linked worktree, and no second copy of the store is created under the worktree."
+    },
+    {
+      "id": "AC-2",
+      "statement": "A Wiki closure that names a registered candidate evaluates valid when the task is verified from inside its linked worktree, and a candidate that is genuinely absent still fails closed with candidate_missing."
+    },
+    {
+      "id": "AC-3",
+      "statement": "For a task whose records and code live in one checkout, the store's location and contents are unchanged: every existing reader and writer resolves the same file as before, and no record is moved or rewritten by this change."
+    }
+  ],
+  "branch": "master",
+  "createdAt": "2026-10-06T06:50:20.960Z",
+  "updatedAt": "2026-10-06T06:50:20.960Z",
+  "workflowProfile": {
+    "version": 1,
+    "isolationMode": "current_worktree",
+    "developmentMode": "tdd",
+    "reviewMode": "strict",
+    "comet": {
+      "projectInit": "not_requested",
+      "openStatus": "acknowledged"
+    }
+  },
+  "acceptanceMatrix": {
+    "version": 1,
+    "rows": [
+      {
+        "acceptanceId": "AC-1",
+        "designRefs": [
+          "docs/design/2026-10-06-route-the-wiki-store-through-its-owner.md#acceptance-matrix"
+        ],
+        "implementationPaths": [
+          "src/core/layout.ts"
+        ],
+        "testPaths": [
+          "tests/unit/record-ownership-answers-every-surface.test.ts"
+        ],
+        "evidence": [
+          {
+            "id": "ac-1-wiki-store-follows-the-owner",
+            "kind": "test",
+            "command": "vitest",
+            "testSelector": "tests/unit/record-ownership-answers-every-surface.test.ts"
+          }
+        ],
+        "verificationLevel": "unit"
+      },
+      {
+        "acceptanceId": "AC-2",
+        "designRefs": [
+          "docs/design/2026-10-06-route-the-wiki-store-through-its-owner.md#acceptance-matrix"
+        ],
+        "implementationPaths": [
+          "src/core/layout.ts"
+        ],
+        "testPaths": [
+          "tests/unit/wiki-closure-follows-its-owner.test.ts"
+        ],
+        "evidence": [
+          {
+            "id": "ac-2-closure-valid-from-the-worktree",
+            "kind": "test",
+            "command": "vitest",
+            "testSelector": "tests/unit/wiki-closure-follows-its-owner.test.ts"
+          }
+        ],
+        "verificationLevel": "unit"
+      },
+      {
+        "acceptanceId": "AC-3",
+        "designRefs": [
+          "docs/design/2026-10-06-route-the-wiki-store-through-its-owner.md#acceptance-matrix"
+        ],
+        "implementationPaths": [
+          "src/core/layout.ts"
+        ],
+        "testPaths": [
+          "tests/unit/owner-rule-covers-evidence-and-trace.test.ts"
+        ],
+        "evidence": [
+          {
+            "id": "ac-3-store-location-unchanged",
+            "kind": "test",
+            "command": "vitest",
+            "testSelector": "tests/unit/owner-rule-covers-evidence-and-trace.test.ts"
+          }
+        ],
+        "verificationLevel": "unit"
+      }
+    ]
+  },
+  "ownedPaths": [
+    "docs/design/2026-10-06-route-the-wiki-store-through-its-owner.md",
+    "src/core/layout.ts",
+    "src/core/locks.ts",
+    "src/wiki/store.ts",
+    "tests/unit/owner-rule-covers-evidence-and-trace.test.ts",
+    "tests/unit/record-ownership-answers-every-surface.test.ts",
+    "tests/unit/wiki-closure-follows-its-owner.test.ts",
+    "tests/unit/wiki-store-durability.test.ts"
+  ]
+}

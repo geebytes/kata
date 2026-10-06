@@ -1,0 +1,9 @@
+{
+  "taskId": "route-the-wiki-store-through-its-owner",
+  "boundary": "judge_gate",
+  "manifestHash": "6c72e91cf7a520f75ca092abe8365ccfdfa2fcd3a870a491734fefae7b660f98",
+  "createdAt": "2026-10-06T12:01:58.877Z",
+  "choice": "continue_current",
+  "approvedAt": "2026-10-06T12:04:34.653Z",
+  "consumedAt": "2026-10-06T12:04:35.324Z"
+}

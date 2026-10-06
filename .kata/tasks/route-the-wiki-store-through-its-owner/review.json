@@ -1,0 +1,21 @@
+{
+  "revisionId": "revision-68bb45a2a9a176aa",
+  "manifestHash": "6c72e91cf7a520f75ca092abe8365ccfdfa2fcd3a870a491734fefae7b660f98",
+  "codeManifestHash": "fe96588b1326588881f3d293d66b9346a72eb72fc32898410cd614ee2b0bf03a",
+  "governanceManifestHash": "d62593de338765502cb5a86db2a6200b96f80d7fa28246dcce492f4dda65aef2",
+  "candidateFreezeSha256": "8d3320af1694639917833455bbbba7807256cd5294a0dd3b0c2f5fb07d846665",
+  "findings": [],
+  "status": "approved",
+  "reviewEvidence": "Round 5 ran in an independent read-only context (kata-reviewer: read/grep/find/ls, no shell) bound to rev:9bb53a4025f4f780. It read the full reading set — src/core/layout.ts, src/core/locks.ts, src/wiki/store.ts and the four selectors — and returned findings: [] with no counterexample constructed by reading; it explicitly declined to call itself an executed pass because it holds no process capability, so its four repro commands were recorded as challenges and replayed by kata: X12 (C1), X13 (C2), X14 (C3), X15 (C4) each exit 0 → withdrawn. Strict ledger: 4/4 claims supported by 5 executable_falsifier items, each verified baseline→mutation→restore by kata (assurance observed); 8/8 probes answered from having read the revision; 15 challenges recorded and all withdrawn; decide = pass, no deficits. The round's own limitation (it could not execute) is therefore supplied by the axis kata owns, not waived: every claim rests on evidence a verifier re-executed, and the approval is derived from that evidence rather than reported by the author.",
+  "reviewRoute": "ledger",
+  "ledgerReview": {
+    "subjectRevision": "rev:9bb53a4025f4f780",
+    "tier": "strict",
+    "assurance": "observed",
+    "claims": 4,
+    "limits": [
+      "the ledger records what was verified, not who wrote the claims"
+    ]
+  },
+  "approvedAt": "2026-10-06T12:01:58.866Z"
+}
