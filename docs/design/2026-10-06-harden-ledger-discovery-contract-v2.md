@@ -193,3 +193,38 @@ Because this change is isolated, shared-path changes in other active worktrees w
 | AC-4 | Probe answers bind and revalidate the exact current frozen fact, so stale/mismatched answers cannot count. | `tests/unit/probe-answer-binding.test.ts` |
 | AC-5 | Candidate and verified readings share one current-bound, fact-bound, deduplicated projection; duplicates and stale answers cannot inflate either side. | `tests/unit/discovery-count-projection.test.ts` |
 | AC-6 | Legacy records remain report-readable but cannot become current discovery evidence. | `tests/unit/ledger-cli-end-to-end.test.ts` |
+
+## 9. Review-driven repair: the boundary was declared but not consumed
+
+The first independent security-tier round failed this change with one blocking and three lesser findings, all of one class:
+the three-state read was **built** and then consumed by only part of the ledger. The round's own counterexamples were recorded
+as challenges and replayed by kata — `X20`, `X21` and `X22` each exited 1 — and all three now exit 0, which is what
+withdrew them.
+
+| finding | what was actually wrong | repair |
+| --- | --- | --- |
+| F1 (blocking, AC-2) | `restateClaim`, `appendClaim`, `appendEvidence`, `replaceEvidence`, `recordVerdicts` and `appendRun` still read with `readJson`, which answers `null` for absent *and* unreadable, so an unrelated append replaced a corrupt file and reported success | a second write-side boundary, `readDocumentForWrite`, validates schema-carrying artefacts (parse + `validateArtefact`) before any write; the schema-less run log goes through `readRecordsForWrite` |
+| F2 (major, AC-1) | `readVerdictHistory` had a catch-all that reported *any* read failure as `{ entries: [], malformed: 0 }`, so an existing but unreadable history read as "no verdict was ever reversed" | only ENOENT is absent; other failures return an `unreadable` detail, and `claim show` publishes `historyUnreadable` instead of an empty `readings` list |
+| F3 (major, AC-3) | the projection credits a challenge from its own resolution, so a falsifier demoted by `evidence replace` left its challenge carrying credit for a declaration that no longer existed | the write that invalidates the binding drops it: `replaceEvidence` removes `falsifierEvidenceId` (and the resolution's binding) from any challenge whose falsifier is no longer an `executable_falsifier` |
+| F4 (minor, AC-2) | `ledger ask` read through the convenience reader, answered `[]` for an unreadable file, and only then hit the writer's refusal — so the refusal escaped as an exception | the command reads the explicit state and refuses in the same shape as every other refusal |
+
+The stale comment F3's neighbourhood exposed — an orphaned doc block describing a removed `verifiedChallengeCount` and explaining a limit with a reason (`an answer carries neither the kind nor the path`) that the change's own `ProbeAnswer` had already made false — was deleted rather than reworded.
+
+**Measured after commit `5c9a5f6`** (each mutation applied to committed source, its selector run, then restored and
+SHA-256-checked byte-identical):
+
+| mutation | selector | result |
+| --- | --- | --- |
+| `readDocumentForWrite` returns `undefined` instead of refusing a parse failure | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+| `readVerdictHistory` returns the empty history for every read failure again | `tests/unit/ledger-record-read-state.test.ts` | exit 1 (red) |
+| every evidence item counts as a declared falsifier | `tests/unit/discovery-challenge-binding.test.ts` | exit 1 (red) |
+| `ledger ask` reads through the convenience reader again | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+
+Nine new cases carry the repairs in the declared surface (six writers, one `claim show` publication, one history boundary, one
+demoted-falsifier binding). Full suite after the repair: 264 files / 1560 tests.
+
+**A limit this repair does not remove, recorded rather than implied:** the binding is maintained by the only writer that can
+invalidate it (`evidence replace` — evidence is otherwise write-once). A hand-edited `evidence.json` that demotes a falsifier
+while leaving a challenge's resolution intact is schema-valid and would still be credited. Closing that would mean the
+projection re-deriving `declared` from an evidence list it is not given, which is a second derivation of the same question
+and a behaviour change with its own review.
