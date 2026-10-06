@@ -218,16 +218,13 @@ Every mutation was applied after commits `1b20c99` / `648eb58`, restored with `g
 
 | AC | Contract | Evidence selector |
 | --- | --- | --- |
-| AC-1 | The Wiki store is derived from the record owner: the primary checkout and a linked worktree answer the same directory — for both worktree shapes (under `.kata/worktrees/` and git-listed elsewhere) and whatever task directory the worktree happens to hold — and no second copy appears under the worktree. | `tests/unit/record-ownership-answers-every-surface.test.ts` |
+| AC-1 | The Wiki store is derived from the record owner: the primary checkout and a linked worktree answer the same directory — for both worktree shapes (under `.kata/worktrees/` and git-listed elsewhere) and whatever task directory the worktree happens to hold — **and every writer of that one owner-owned file shares the owner lock**, so no second store or silently competing lock appears under the worktree. | `tests/unit/record-ownership-answers-every-surface.test.ts`; `tests/unit/wiki-store-durability.test.ts` |
 | AC-2 | A closure naming a registered candidate evaluates valid when asked from inside the linked worktree, and a genuinely absent candidate still fails closed. | `tests/unit/wiki-closure-follows-its-owner.test.ts` |
 | AC-3 | For a single-checkout repository the store's location is unchanged, and every consumer resolves the same file as before. | `tests/unit/owner-rule-covers-evidence-and-trace.test.ts` |
 
 ## Verification plan
 
-- **AC-1** extends the existing "the evidence store, `recordsRoot` and the ownership answer agree on one path" case to the
-  Wiki store, and adds the **bare worktree** case: a worktree with no record directory inside it, which is the shape a real
-  one has and the shape every existing fixture invented its way around. The case asserts the *answers*, not the call sites,
-  so a rewrite that routes the question elsewhere but keeps the answers passes.
+- **AC-1** extends the existing ownership selector with both worktree shapes and a bare worktree, then runs a cross-root durability case: a primary-held lock on an owner-owned Wiki record must reject `updateWikiRecord` entered through a linked root that resolves to that same record. It asserts answers and mutual exclusion rather than a particular call site, so a definition-level rewrite remains valid.
 - **AC-2** builds a repository, a task and a linked worktree **with no record directory inside it**, writes one candidate
   record through the worktree root and reads it back through the primary — then asks
   `evaluateWikiClosure(worktree, taskId)`: `valid` for the registered id, `candidate_missing` for an id that was never
@@ -260,3 +257,13 @@ not a separately load-bearing fix**: once `recordOwner` answers a worktree calle
 no longer depends on the id, so supplying one changes nothing. The dependency was removed because a task-less question
 carrying a task id is what made the defect expressible in the first place — not because the argument is now a witness. F2's
 own falsifier is the second row.
+
+## Fourth repair: an owner-owned file needs an owner-owned lock
+
+The third repair made primary and linked callers resolve one Wiki file, but strict review found that its writer still passed the **caller** root to `withRepositoryArtefactLock`. The lock directory was therefore `<caller>/.kata/locks`, while the file was `<owner>/.kata/wiki/<id>.json`: two callers could atomically overwrite the same file under distinct locks. The result is valid JSON with one state transition silently lost.
+
+**The lock primitive, not each writer, derives lock identity from the artefact it mutates.** Every existing repository artefact path lies below `<repository>/.kata/`; `withRepositoryArtefactLock` derives that repository prefix from `path` and creates `<derived-owner>/.kata/locks/<name>.lock`. The caller-root argument remains an API fallback only for a path outside that protected shape; current `relations` and `initiative` callers remain byte-for-byte equivalent because their artefact paths and callers already share a root. `writeWikiRecord` and `updateWikiRecord` need no second owner derivation.
+
+The focused RED holds `wiki-durability`'s owner lock and calls `updateWikiRecord` through a linked-worktree root that resolves to the same record path. Before the repair, the linked call acquires `<linked>/.kata/locks/wiki-durability.lock`; after the repair it is refused by the held owner lock. This asserts both write entrypoints through their shared critical section, not a direct lock-only fixture.
+
+The mutation proof removes artefact-path lock-root derivation; the cross-root durability case must redden. This repair does not weaken closure semantics or move any record; it makes the already-single file's locking identity equally single.

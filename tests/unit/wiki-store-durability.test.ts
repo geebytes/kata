@@ -1,8 +1,10 @@
-import { readdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readWikiRecordsWithIssues, updateWikiRecord, writeWikiRecord } from '../../src/wiki/store.js';
+import { wikiRecordPath } from '../../src/core/layout.js';
+import { withRepositoryArtefactLock } from '../../src/core/locks.js';
 import type { WikiRecord } from '../../src/wiki/record.js';
 
 /**
@@ -94,5 +96,33 @@ describe('Wiki store durability', () => {
         const { records, invalid } = await readWikiRecordsWithIssues(root);
         expect(invalid).toEqual([]);
         expect(records[0]!.scope).toHaveLength(1);
+    });
+
+    it('uses the owner lock when a linked-worktree caller updates the same record', async () => {
+        const root = await tempRoot();
+        const linked = join(root, '.kata', 'worktrees', 'linked');
+        await mkdir(linked, { recursive: true });
+        await writeWikiRecord(root, record);
+
+        const ownerPath = wikiRecordPath(root, 'durability');
+        expect(wikiRecordPath(linked, 'durability')).toBe(ownerPath);
+        let entered!: () => void;
+        let release!: () => void;
+        const enteredFirst = new Promise<void>((resolve) => { entered = resolve; });
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        const held = withRepositoryArtefactLock(root, 'wiki-durability', ownerPath, async (current) => {
+            entered();
+            await released;
+            return current;
+        });
+        await enteredFirst;
+
+        try {
+            await expect(updateWikiRecord(linked, 'durability', { scope: ['packages/linked'] }))
+                .rejects.toThrow(/Another kata process is mutating wiki-durability/);
+        } finally {
+            release();
+            await held;
+        }
     });
 });

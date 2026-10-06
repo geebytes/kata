@@ -1,6 +1,16 @@
 import { mkdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { writeFileAtomic } from './state.js';
+
+function lockRootForArtefact(callerRoot: string, artefactPath: string): string {
+    const resolvedPath = resolve(artefactPath);
+    const kataSegment = `${sep}.kata${sep}`;
+    const kataOffset = resolvedPath.lastIndexOf(kataSegment);
+    // Repository artefacts live below <repository>/.kata/. Their lock identity follows that owner path,
+    // not the caller that happened to reach it through a linked worktree. Retain the caller fallback
+    // for a future non-Kata artefact instead of inventing a second layout rule here.
+    return kataOffset === -1 ? resolve(callerRoot) : resolvedPath.slice(0, kataOffset);
+}
 
 /**
  * Mutual exclusion for a repository-scoped artefact.
@@ -20,8 +30,10 @@ export async function withRepositoryArtefactLock(
     path: string,
     mutate: (current: string) => Promise<string>,
 ): Promise<void> {
-    const lockPath = join(root, '.kata', 'locks', `${name}.lock`);
-    await mkdir(join(root, '.kata', 'locks'), { recursive: true });
+    const lockRoot = lockRootForArtefact(root, path);
+    const lockDir = join(lockRoot, '.kata', 'locks');
+    const lockPath = join(lockDir, `${name}.lock`);
+    await mkdir(lockDir, { recursive: true });
     try {
         await mkdir(lockPath);
     } catch (error) {
