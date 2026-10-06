@@ -1104,8 +1104,24 @@ export function relationsPath(root: string): string {
     return join(kataDir(root), 'relations.json');
 }
 
+/**
+ * The Wiki record store, owned by the checkout that owns the task's records.
+ *
+ * **The last surface still derived per-caller, and it cost a gate.** `wikiDir(root)` used to be
+ * `join(kataDir(root), 'wiki')`, so `kata-cli wiki register` — not a workflow command, so the *workspace* root — wrote a
+ * candidate under the primary checkout while `kata-cli verify --change` — task-addressed, so the *code* root — read the
+ * linked worktree's own `.kata/wiki`, which does not exist. Measured on the first task sealed under
+ * `isolated_worktree`: `wiki candidate` answered 0 from inside the worktree and 26 from the primary, and the closure gate
+ * reported `candidate_missing` for a candidate that exists — with a remedy that reproduced the state.
+ *
+ * It is the same derivation as `evidenceDir`, reached the same way, for the same reason: one question, one answer. The
+ * fallback is the answer for "no owner", which is correct for a task whose records live in the caller's own checkout —
+ * what must not happen is a worktree reading "here".
+ */
 export function wikiDir(root: string): string {
-    return join(kataDir(root), 'wiki');
+    const start = resolve(root);
+    const owner = recordOwner({ root: start, taskId: worktreeTaskId(start) }).ownerRoot;
+    return join(kataDir(owner ?? start), 'wiki');
 }
 
 export function wikiRecordPath(root: string, id: string): string {
