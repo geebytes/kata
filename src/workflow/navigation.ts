@@ -28,7 +28,7 @@ import { bindsToRevision, type VerdictScope } from './verdict-binding.js';
 import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
-import { countFindingsBySeverity, mergeBlockingSeverities } from '../quality/review-ladder.js';
+import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, readReviewRoundsState, type ReviewLoopAssessment } from '../quality/repair.js';
 
 
@@ -227,7 +227,13 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const { readLedger } = await import('../store/ledger.js');
   const ledgerInHand = await readLedger(root, taskId);
   const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
-  const openProblems = blockingRead.ok ? blockingRead.openProblems : [];
+  // **Unreadable is an open blocking state, not an empty projection.** A status that published `ledger: unreadable`
+  // alongside `reviewFindings: 0` made the same unreadable ledger say both "nobody can decide" and "nothing blocks".
+  // The refusal already comes from the single reader used by gates; represent it as one synthetic problem so every count,
+  // route and status consumer receives the same answer instead of each inventing a null/zero convention.
+  const openProblems: ReadonlyArray<MergeBlockingProblem> = blockingRead.ok
+    ? blockingRead.openProblems
+    : [{ source: 'claim', id: 'ledger_unreadable', severity: 'blocking', message: blockingRead.why }];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
   const reviewLoop = assessReviewLoop({

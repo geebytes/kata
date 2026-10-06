@@ -341,3 +341,19 @@ closed a layer rather than the class — the mechanism was right and the sequenc
 behind, in the reviewer's own words, is the invariant, not the sites: *an absence and an unreadable file must not be
 representable by the same value anywhere a decision or a report reads it* — and when a round names a class, the class is
 closed in one pass before the next seal, because every partial repair costs a full independent round.
+
+### 9.6 The seventh round: navigation must carry the refusal too
+
+The narrow seventh review checked the only remaining report projection outside the ledger workflow and found the same
+false-zero shape in `readUpstreamSummary`: it correctly exposed `ledger.state: "unreadable"`, then replaced the failed
+problem read with `[]` and reported `reviewFindings: 0`, `blockingFindings: 0`, and `majorFindings: 0`. That is not an
+absence of findings; it is a refusal to answer how many there are.
+
+The repair turns the named refusal into one synthetic `ledger_unreadable` **blocking** problem at the navigation
+boundary. This is deliberately a projection-only representation: it does not change the ledger's decision, fabricate a
+claim finding, or cause another reader to derive readability. All existing navigation counters and priority logic now
+consume the same explicit problem instead of interpreting `[]` as both empty and unreadable.
+
+The permanent regression test is the reviewer’s minimal topology: a task with a malformed `claims.json` has an
+unreadable ledger and must report one blocking review problem whose message names `claims.json`; it may never report zero.
+The reversible mutation restores the old `[]` fallback and reddens that test.

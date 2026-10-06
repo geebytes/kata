@@ -239,6 +239,25 @@ describe('workflow guidance', () => {
     }
   });
 
+  it('does not project an unreadable ledger to zero review findings', async () => {
+    const root = await tempRoot();
+    const taskId = 'unreadable-navigation';
+    await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), JSON.stringify({ id: taskId, acceptance: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), JSON.stringify({ taskId, phase: 'review' }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'review', 'claims.json'), '{ this is not JSON\n');
+
+    const upstream = await readUpstreamSummary(root, taskId);
+
+    expect(upstream.ledger?.state).toBe('unreadable');
+    expect(upstream.reviewRecordUnreadable).toContain('claims.json');
+    // An unavailable problem set is not an empty problem set. The explicit refusal occupies the same ladder the router
+    // already uses, so report consumers cannot silently recast this state as "there are zero blocking findings".
+    expect(upstream.reviewFindings).toBe(1);
+    expect(upstream.blockingFindings).toBe(1);
+    expect(upstream.majorFindings).toBe(0);
+  });
+
   it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {
     const root = await tempRoot();
     const taskId = 'forged-review-approval';
