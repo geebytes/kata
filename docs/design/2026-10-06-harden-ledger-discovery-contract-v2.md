@@ -357,3 +357,13 @@ consume the same explicit problem instead of interpreting `[]` as both empty and
 The permanent regression test is the reviewer’s minimal topology: a task with a malformed `claims.json` has an
 unreadable ledger and must report one blocking review problem whose message names `claims.json`; it may never report zero.
 The reversible mutation restores the old `[]` fallback and reddens that test.
+
+### 9.7 Owner-routed Wiki store integration
+
+Verification runs in an isolated linked worktree, while the registered Wiki closure candidate lives in the owning
+checkout's record store. Keeping `wikiDir(root)` caller-derived made a valid registered candidate read as
+`candidate_missing` from this worktree. Copying the candidate would create a second record of the same fact, so this
+change integrates the archived `route-the-wiki-store-through-its-owner` definition-layer repair instead: the record
+owner is derived by checkout/worktree shape, and `wikiDir` resolves through that owner. C8/E8 make the dependency
+explicit for this revision: a closure asked from the linked worktree must resolve its registered candidate in the owner
+store.
