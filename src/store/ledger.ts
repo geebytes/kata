@@ -543,10 +543,17 @@ async function readJson<T>(path: string): Promise<T | null> {
  * invented value back — so a damaged historical record came back as `none`, which is exactly the rewrite the read-side
  * fidelity rule forbids. Only ENOENT is absence here; anything else that cannot be read or parsed is reported.
  */
-async function readUsageRecord(path: string): Promise<
+/**
+ * A JSON document read for a read-modify-write path, with the container check the scan applies to every schema-less file.
+ *
+ * Named for what it does rather than for its first caller: `usage.json` and `policy.json` are both single objects, and the
+ * check that a document parsing to `null`, an array or a scalar is *unreadable* rather than absent is the same check for
+ * both. It was `readUsageRecord`, which is how `policy.json` came to be read with `readJson` and to lose that distinction.
+ */
+async function readJsonObject(path: string): Promise<
     | { kind: 'absent' }
     | { kind: 'unreadable'; detail: string }
-    | { kind: 'usable'; value: { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } }
+    | { kind: 'usable'; value: Record<string, unknown> }
 > {
     let raw: string;
     try {
@@ -556,7 +563,15 @@ async function readUsageRecord(path: string): Promise<
         return { kind: 'unreadable', detail: (error as Error).message };
     }
     try {
-        return { kind: 'usable', value: JSON.parse(raw) as { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] } };
+        const parsed = JSON.parse(raw) as unknown;
+        // **A document that parses to something other than an object is not a usage record.** This is the container check
+        // every other schema-less artefact already gets from the scan; without it `[]` parsed fine, `ensureAssurance` and
+        // `setUsage` accepted it as an empty record, and the bytes that were the only evidence the file is corrupt were
+        // overwritten by the next unrelated append.
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            return { kind: 'unreadable', detail: `must hold an object, not ${Array.isArray(parsed) ? 'an array' : typeof parsed}` };
+        }
+        return { kind: 'usable', value: parsed as Record<string, unknown> };
     } catch (error) {
         return { kind: 'unreadable', detail: `not valid JSON (${(error as Error).message})` };
     }
@@ -652,8 +667,11 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
             malformedFiles.push(name);
         }
     }
-    const rawPolicy = await readJson<unknown>(join(dir, FILES.policy));
-    const loaded = rawPolicy === null ? null : loadPolicy(rawPolicy);
+    // **A document that parses to `null` is not an absent document.** `readJson` answers `null` for both, so a `policy.json`
+    // holding the literal `null` was silently replaced by the default policy — the one shape that made a corrupt rule
+    // indistinguishable from no rule at all, which is the distinction this whole boundary exists to keep.
+    const policyDocument = await readJsonObject(join(dir, FILES.policy));
+    const loaded = policyDocument.kind === 'absent' ? null : loadPolicy(policyDocument.kind === 'usable' ? policyDocument.value : null);
     let policy = defaultPolicy();
     // **A rejected policy is reported, not substituted silently.** Falling back to the default would let a stored policy
     // that the build no longer accepts decide as though it had been read — the record would look clean while the rule that
@@ -1239,11 +1257,13 @@ export async function ensureAssurance(root: string, changeId: string, achieved: 
         // **A damaged record refuses; only an absent one is defaulted.** `readJson` returned `null` for both, so a
         // truncated `usage.json` was silently replaced by `{ `usage`: {}, assurance: 'none' }` — the read-side fidelity
         // rule broken by the writer that follows it.
-        const read = await readUsageRecord(path);
+        const read = await readJsonObject(path);
         if (read.kind === 'unreadable') {
             throw new Error(`cannot record assurance: ${path} exists but cannot be read (${read.detail}); repair or remove it rather than overwriting a damaged record`);
         }
-        const current = read.kind === 'absent' ? { usage: {}, assurance: 'none' as AssuranceLevel } : read.value;
+        const current = read.kind === 'absent'
+            ? { usage: {} as BudgetUsage, assurance: 'none' as AssuranceLevel }
+            : (read.value as { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] });
         if (achieved === current.assurance) return achieved;
         // **A recorded round replaces a recorded round, including a retired value.** Keeping the stronger of the two
         // meant a `sandboxed` value written before the vocabulary retired it outranked every later `observed`, and that
@@ -1266,11 +1286,13 @@ export async function setUsage(root: string, changeId: string, usage: BudgetUsag
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.usage);
         // The same rule as `ensureAssurance`: a record that cannot be parsed is not an empty one.
-        const read = await readUsageRecord(path);
+        const read = await readJsonObject(path);
         if (read.kind === 'unreadable') {
             throw new Error(`cannot record usage: ${path} exists but cannot be read (${read.detail}); repair or remove it rather than overwriting a damaged record`);
         }
-        const current = read.kind === 'absent' ? { usage: {}, assurance: 'none' as AssuranceLevel } : read.value;
+        const current = read.kind === 'absent'
+            ? { usage: {} as BudgetUsage, assurance: 'none' as AssuranceLevel }
+            : (read.value as { usage: BudgetUsage; assurance: AssuranceLevel; assuranceHistory?: AssuranceHistoryEntry[] });
         await writeJson(root, changeId, FILES.usage, { ...current, usage });
     });
 }

@@ -111,6 +111,21 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
     const sub = argv[0] ?? 'status';
     const ledger = await readLedger(options.root, changeId);
 
+    // **One gate, because a partial view is what produced the false answers.** Every verb below reports on, decides from, or
+    // writes to this ledger, and a section the scan called unreadable reaches them as an *absence* — `claims: []`,
+    // `probesAsked: 0`, "the subject is not frozen" — which is a claim about content for a file nobody could look at.
+    // `status` is the one verb that exists to report that state, and it names the files; everything else stops here, where
+    // the refusal can name them too. Guarding each consumer is what produced four rounds of this class, one site at a time.
+    if (ledger.malformedFiles.length > 0 && sub !== 'status') {
+        fail({
+            command: `ledger ${sub}` as const,
+            state: 'ledger-unreadable',
+            error: `the ledger holds ${ledger.malformedFiles.join(', ')}, which cannot be read. Nothing was written; repair or replace ${ledger.malformedFiles.length === 1 ? 'that file' : 'those files'} explicitly.`,
+            unreadableArtefacts: ledger.malformedFiles,
+        });
+        return;
+    }
+
     if (sub === 'status') {
         if (switchPresent(argv, '--cost')) {
             // The author-side measurement the round-shaped loop never had, plus the discovery rates it never compared. A

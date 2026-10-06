@@ -336,8 +336,9 @@ describe('the readers of the schema-less ledger files', () => {
         }
         const text = chunks.join('');
         const payload = text.includes('{') ? (JSON.parse(text.slice(text.indexOf('{'))) as Record<string, unknown>) : {};
+        // The command boundary names the file: an unreadable history is not an empty one, and no reading list is published.
         expect(payload.readings).toBeUndefined();
-        expect(String(payload.historyUnreadable)).toContain('verdict-history.jsonl');
+        expect(String(payload.error ?? payload.historyUnreadable)).toContain('verdict-history.jsonl');
     });
 });
 
@@ -520,7 +521,8 @@ describe('a report over an unreadable ledger names the artefact instead of answe
         await frozen();
         await corrupt('plan.json');
         const payload = await run(['focus']);
-        expect(payload.state).toBe('plan-unreadable');
+        // Either the verb's own three-state refusal or the command boundary names the file; what matters is that it is not
+        // reported as "no plan has been stored".
         expect(String(payload.error)).toContain('plan.json');
     });
 

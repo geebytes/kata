@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Challenge } from '../../src/kernel/types.js';
+import type { Challenge, EvidenceVerdict } from '../../src/kernel/types.js';
 import type { Probe, ProbeAnswer } from '../../src/kernel/discovery.js';
 import { discoveryProjection } from '../../src/store/verdict.js';
 import { makeSubject } from '../helpers/review.js';
@@ -66,14 +66,36 @@ function challengeOf(overrides: Partial<Challenge> = {}): Challenge {
     };
 }
 
+function recordedVerdict(overrides: Partial<EvidenceVerdict> = {}): EvidenceVerdict {
+    return {
+        evidenceId: 'E1',
+        evidenceType: 'executable_falsifier',
+        verdict: 'supported',
+        observed: '{"before":0,"mutated":1,"after":0}',
+        at: '2026-10-06T00:01:00.000Z',
+        verifier: 'kata',
+        subjectRevision: revision,
+        ...overrides,
+    };
+}
+
 function project(
-    input: { challenges?: Challenge[]; probes?: Probe[]; answers?: ProbeAnswer[]; declaredFalsifiers?: ReadonlySet<string> } = {},
+    input: {
+        challenges?: Challenge[];
+        probes?: Probe[];
+        answers?: ProbeAnswer[];
+        declaredFalsifiers?: ReadonlySet<string>;
+        recordedVerdicts?: EvidenceVerdict[];
+    } = {},
 ): { independentChallenges: number; verifiedChallenges: number } {
     return discoveryProjection({
         challenges: input.challenges ?? [],
         probes: input.probes ?? [],
         answers: input.answers ?? [],
         currentRevision: revision,
+        // **The reading the ledger recorded, which the resolution has to agree with.** These cases are about a binding whose
+        // run really happened, so the fixture holds one; the case that checks a hand-written resolution passes `[]`.
+        recordedVerdicts: input.recordedVerdicts ?? [recordedVerdict()],
         // **The declaration is an input, and these cases are about a falsifier that is declared.** The projection credits
         // a binding only when the ledger declares the falsifier it names, so the fixture has to say which ones it
         // declares — the default is "the one these cases name", and the case that checks an undeclared id passes its own
@@ -191,6 +213,17 @@ describe('the discovery projection', () => {
             verifiedChallenges: 0,
         });
         expect(project({ challenges: [challenge], declaredFalsifiers: new Set() }).verifiedChallenges).toBe(0);
+    });
+
+    it('does not credit a resolution the ledger recorded no run for', () => {
+        // **An account is not the run.** The resolution says what the challenge saw; `verdicts.json` is the ledger's record of
+        // a verifier having run, and only `evidence verify` writes there. A hand-written `challenges.json` — a schema-less
+        // file — could otherwise assert a supported verdict at the current revision and satisfy the floor by itself.
+        const challenge = challengeOf();
+        expect(project({ challenges: [challenge], recordedVerdicts: [] }).verifiedChallenges).toBe(0);
+        expect(project({ challenges: [challenge], recordedVerdicts: [recordedVerdict({ verdict: 'refuted' })] }).verifiedChallenges).toBe(0);
+        expect(project({ challenges: [challenge], recordedVerdicts: [recordedVerdict({ subjectRevision: 'rev:other' })] }).verifiedChallenges).toBe(0);
+        expect(project({ challenges: [challenge] }).verifiedChallenges).toBe(1);
     });
 
     it('credits nothing when the declaration is not supplied at all', () => {

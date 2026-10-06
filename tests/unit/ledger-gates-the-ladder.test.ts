@@ -95,6 +95,11 @@ describe('the ledger gates the ladder', () => {
             command: 'grep -q holds src/a.ts',
             mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
         });
+        // **And the run behind the resolution is recorded**, because the resolution is the challenge's own account of it:
+        // the floor reads the reading the ledger holds, and only `evidence verify` writes those. A fixture that asserted
+        // only the resolution was the shape a hand-written `challenges.json` took — see
+        // `discovery-count-projection.test.ts` for the case that pins it.
+        await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E-falsifier', subjectRevision: subject.subject.revision })]);
         await appendChallenge(root, changeId, {
             id: 'X1', claimId: 'C1', command: 'grep -q holds src/a.ts', failsOn: subject.subject.revision, state: 'withdrawn',
             at: '2026-09-27T00:00:00.000Z',

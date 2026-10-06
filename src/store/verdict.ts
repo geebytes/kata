@@ -55,6 +55,16 @@ export function discoveryProjection(input: {
      * be checked against a declaration is not evidence of anything.
      */
     declaredFalsifiers?: ReadonlySet<string>;
+    /**
+     * The readings the ledger itself recorded, by evidence id.
+     *
+     * **The resolution is the record's own account of a run, and an account is not the run.** With the declaration checked,
+     * a hand-written `challenges.json` resolution still satisfied the floor on its own: it asserted a falsifier id, a
+     * supported verdict and the current revision, and nothing compared that to `verdicts.json` — where only `evidence
+     * verify` can write. The recorded reading has to agree, at the same revision, or the binding is the record certifying
+     * itself.
+     */
+    recordedVerdicts?: readonly EvidenceVerdict[];
 }): { independentChallenges: number; verifiedChallenges: number } {
     const readings = new Map<string, boolean>();
     const current = input.currentRevision;
@@ -68,7 +78,13 @@ export function discoveryProjection(input: {
             && resolution.falsifierEvidenceId === falsifierEvidenceId
             && resolution.verdict === 'supported'
             && typeof resolution.subjectRevision === 'string'
-            && resolution.subjectRevision === current;
+            && resolution.subjectRevision === current
+            // **And the store has to hold the run the resolution describes.** The resolution is the challenge's account of
+            // what it saw; `verdicts.json` is the ledger's record of a verifier having run, and only `evidence verify`
+            // writes there. Requiring both is what stops a hand-written record from certifying itself into the floor.
+            && (input.recordedVerdicts ?? []).some((recorded) => recorded.evidenceId === falsifierEvidenceId
+                && recorded.verdict === 'supported'
+                && recorded.subjectRevision === current);
         const identity = `falsifier:${falsifierEvidenceId}`;
         readings.set(identity, (readings.get(identity) ?? false) || verified);
     }
@@ -330,6 +346,7 @@ export async function ledgerVerdict(input: {
             probes: await readProbes(input.root, input.changeId),
             answers: await readProbeAnswers(input.root, input.changeId),
             currentRevision: ledger.subject.revision,
+            recordedVerdicts: ledger.verdicts,
             declaredFalsifiers: new Set(ledger.evidence
                 .filter((item) => item.type === 'executable_falsifier')
                 .map((item) => item.id)),
