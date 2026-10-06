@@ -1,0 +1,9 @@
+{
+  "taskId": "route-the-wiki-store-through-its-owner",
+  "phase": "archive",
+  "actor": {
+    "id": "kata-agent",
+    "role": "implementer"
+  },
+  "updatedAt": "2026-10-06T12:09:46.357Z"
+}

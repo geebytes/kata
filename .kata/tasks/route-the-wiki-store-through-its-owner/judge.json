@@ -1,0 +1,39 @@
+{
+  "taskId": "route-the-wiki-store-through-its-owner",
+  "result": "PASS",
+  "diffHash": "6b775f9f5606d13dc2db0747f1bfc16d1deb95e52560171b227a621e20f9864e",
+  "revisionId": "revision-68bb45a2a9a176aa",
+  "acceptance": [
+    {
+      "id": "AC-1",
+      "result": "PASS",
+      "evidenceIds": [
+        "evidence-78fe58ca-5aa1-4460-9ec4-74fed8e71793"
+      ]
+    },
+    {
+      "id": "AC-2",
+      "result": "PASS",
+      "evidenceIds": [
+        "evidence-8b873a1e-80f1-42b2-b2ac-c0c58110f587"
+      ]
+    },
+    {
+      "id": "AC-3",
+      "result": "PASS",
+      "evidenceIds": [
+        "evidence-52cfb489-2340-4777-9928-92fab4d9ed1a"
+      ]
+    }
+  ],
+  "evidenceIds": [
+    "evidence-78fe58ca-5aa1-4460-9ec4-74fed8e71793",
+    "evidence-8b873a1e-80f1-42b2-b2ac-c0c58110f587",
+    "evidence-52cfb489-2340-4777-9928-92fab4d9ed1a",
+    "evidence-618543ed-eea6-4e66-a695-af2ca6230f8f"
+  ],
+  "manifestHash": "6c72e91cf7a520f75ca092abe8365ccfdfa2fcd3a870a491734fefae7b660f98",
+  "codeManifestHash": "fe96588b1326588881f3d293d66b9346a72eb72fc32898410cd614ee2b0bf03a",
+  "governanceManifestHash": "d62593de338765502cb5a86db2a6200b96f80d7fa28246dcce492f4dda65aef2",
+  "candidateFreezeSha256": "8d3320af1694639917833455bbbba7807256cd5294a0dd3b0c2f5fb07d846665"
+}

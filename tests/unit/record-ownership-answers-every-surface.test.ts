@@ -200,6 +200,29 @@ describe('record ownership has one answer', () => {
         expect(evidenceDir(inner)).toBe(join(primary, '.kata', 'evidence'));
     });
 
+    it('refuses a nested worktree when Git cannot name its outside-path linked parent', () => {
+        // Git cannot name the inner checkout after its admin marker is broken. The outer checkout is still visibly linked
+        // through its own marker, so path ownership must skip it rather than silently placing a store there.
+        const primary = repo('outside-unnameable-nested');
+        seedTask(primary, 'a-task');
+        writeFileSync(join(primary, 'README.md'), 'primary\n');
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', 'README.md'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        const outer = `${primary}-outer`;
+        const inner = join(outer, '.kata', 'worktrees', 'inner');
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', outer], { cwd: primary });
+        roots.push(outer);
+        mkdirSync(join(outer, '.kata', 'worktrees'), { recursive: true });
+        execFileSync('git', ['worktree', 'add', '-q', '--detach', inner], { cwd: outer });
+        writeFileSync(join(inner, '.git'), 'gitdir: /nonexistent/primary/.git/worktrees/inner\n');
+
+        const owner = recordOwner({ root: inner });
+        expect(owner.worktreeRoot).toBe(inner);
+        expect(owner.ownerRoot).toBeUndefined();
+        expect(() => wikiDir(inner)).toThrow(/owner/i);
+        expect(() => evidenceDir(inner)).toThrow(/owner/i);
+    });
+
     it('answers with the worktree that holds the only copy of a task', () => {
         // **The documented fallback, restored.** `recordsRoot` says it in words — "When nothing else holds the task the
         // worktree is still used, because an unreachable record is worse than a remote one" — and this repository keeps

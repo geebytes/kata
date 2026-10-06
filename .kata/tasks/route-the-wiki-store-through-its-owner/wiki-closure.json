@@ -1,0 +1,9 @@
+{
+  "taskId": "route-the-wiki-store-through-its-owner",
+  "decision": "captured",
+  "reason": "A fixture that supplies a precondition production never supplies tests the fixture: three suites created .kata/tasks/<id>/ inside the worktree, so the owner walk found a task id and the per-caller derivation looked correct, while a real worktree has no such directory and the CLI answered 0 candidates instead of 26. The owner of a bare worktree now comes from the path shape (owningCheckoutOf, written and never wired), which fixes the Wiki store and the evidence store together.",
+  "candidateIds": [
+    "llmwiki-concepts-a-fixture-that-invents-its-precondition"
+  ],
+  "updatedAt": "2026-10-06T07:10:53.112Z"
+}
