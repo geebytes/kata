@@ -542,7 +542,13 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // **The question is the command, across the whole set and not only within one claim.** Two claims resting on the
         // same path produced two records asking one question, so answering it once answered both — repetition counted as
         // independent readings. The set is seeded from what is already stored, so a second `ask` does not pad either.
-        const questions = new Set((await readProbes(options.root, changeId)).map((probe) => probe.command));
+        // **Only a question that is still current counts as already asked.** A stored probe whose revision has moved is not
+        // the question this revision poses: skipping it would leave the moved content with no askable question, and an
+        // answer recorded against the stale record could never count for either revision.
+        const currentRevision = ledger.subject.revision;
+        const questions = new Set((await readProbes(options.root, changeId))
+            .filter((probe) => probe.subjectRevision === currentRevision)
+            .map((probe) => probe.command));
         for (const claim of ledger.claims) {
             const probes = probesFor({ claim, subject: ledger.subject, seed, count, askedAt: nowIso() });
             if (probes.length === 0) {
