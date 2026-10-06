@@ -58,6 +58,14 @@ export type UpstreamSummary = {
   reviewHistoryUnreadable?: boolean;
   /** Why the recorded review could not be read, when it could not be. */
   reviewRecordUnreadable?: string;
+  /**
+   * Why the evidence ledger could not be read, when it could not be.
+   *
+   * Its own field rather than sharing the review record's: the two arrive through one reader, and a status that published
+   * both under `reviewRecordUnreadable` said "the review record is unreadable" about a corrupt `claims.json`. Whoever
+   * reads this has to be able to tell which artefact to repair.
+   */
+  ledgerUnreadable?: string;
   /** @deprecated Projection of `reviewLoop.unreadable_current_revision`; routing never reads it. */
   currentRevisionUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
@@ -231,9 +239,20 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // alongside `reviewFindings: 0` made the same unreadable ledger say both "nobody can decide" and "nothing blocks".
   // The refusal already comes from the single reader used by gates; represent it as one synthetic problem so every count,
   // route and status consumer receives the same answer instead of each inventing a null/zero convention.
+  //
+  // **And it names the artefact it is about.** Both unreadable sources — the evidence ledger and the recorded review —
+  // arrive through that one reader, and publishing them under a single id made the status say "the review record is
+  // unreadable" about a corrupt `claims.json`. Routing was already right (the ledger branch outranks this one); what was
+  // wrong is that whoever has to repair the file could not tell which one it is.
+  const unreadableSource = blockingRead.ok ? null : blockingRead.source;
   const openProblems: ReadonlyArray<MergeBlockingProblem> = blockingRead.ok
     ? blockingRead.openProblems
-    : [{ source: 'claim', id: 'ledger_unreadable', severity: 'blocking', message: blockingRead.why }];
+    : [{
+        source: 'claim',
+        id: unreadableSource === 'ledger' ? 'ledger_unreadable' : 'review_record_unreadable',
+        severity: 'blocking',
+        message: blockingRead.why,
+      }];
   const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
   const reviewLoop = assessReviewLoop({
@@ -280,8 +299,10 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     blockingFindings: problemCounts.blocking,
     majorFindings: problemCounts.major,
     ...(reviewMode ? { reviewMode } : {}),
-    // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it.
-    ...(!blockingRead.ok ? { reviewRecordUnreadable: blockingRead.why } : {}),
+    // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it. Each
+    // source keeps its own field, so the refusal that reaches an operator names the artefact it is about.
+    ...(!blockingRead.ok && blockingRead.source === 'review-record' ? { reviewRecordUnreadable: blockingRead.why } : {}),
+    ...(!blockingRead.ok && blockingRead.source === 'ledger' ? { ledgerUnreadable: blockingRead.why } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),

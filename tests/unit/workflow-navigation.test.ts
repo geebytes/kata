@@ -250,7 +250,10 @@ describe('workflow guidance', () => {
     const upstream = await readUpstreamSummary(root, taskId);
 
     expect(upstream.ledger?.state).toBe('unreadable');
-    expect(upstream.reviewRecordUnreadable).toContain('claims.json');
+    // **And the refusal names the artefact.** `claims.json` is a ledger file, so the reason belongs in the ledger's field;
+    // publishing it as `reviewRecordUnreadable` told whoever has to repair it to look at the wrong record.
+    expect(upstream.ledgerUnreadable).toContain('claims.json');
+    expect(upstream.reviewRecordUnreadable).toBeUndefined();
     // An unavailable problem set is not an empty problem set. The explicit refusal occupies the same ladder the router
     // already uses, so report consumers cannot silently recast this state as "there are zero blocking findings".
     expect(upstream.reviewFindings).toBe(1);
@@ -258,6 +261,23 @@ describe('workflow guidance', () => {
     expect(upstream.majorFindings).toBe(0);
   });
 
+  it('names the review record when the review record is what cannot be read', async () => {
+    const root = await tempRoot();
+    const taskId = 'unreadable-review-record';
+    await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), JSON.stringify({ id: taskId, acceptance: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), JSON.stringify({ taskId, phase: 'review' }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), '{ this is not JSON\n');
+
+    const upstream = await readUpstreamSummary(root, taskId);
+
+    // The other half of the same distinction: this one is a record rather than a ledger file, so it keeps the record's
+    // field. One field for two sources is the state this pair of cases exists to keep out.
+    expect(upstream.reviewRecordUnreadable).toContain('review.json');
+    expect(upstream.ledgerUnreadable).toBeUndefined();
+    expect(upstream.reviewFindings).toBe(1);
+    expect(upstream.blockingFindings).toBe(1);
+  });
   it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {
     const root = await tempRoot();
     const taskId = 'forged-review-approval';
