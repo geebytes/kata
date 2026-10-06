@@ -302,7 +302,11 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // A record that cannot be read is not a record that says nothing: the router has to be able to refuse on it. Each
     // source keeps its own field, so the refusal that reaches an operator names the artefact it is about.
     ...(!blockingRead.ok && blockingRead.source === 'review-record' ? { reviewRecordUnreadable: blockingRead.why } : {}),
-    ...(!blockingRead.ok && blockingRead.source === 'ledger' ? { ledgerUnreadable: blockingRead.why } : {}),
+    // **And the ledger's refusal comes from the ledger's own read, not from whichever reader reached it first.** The
+    // blocking reader short-circuits on the review record, so with *both* artefacts corrupt it returned only the record's
+    // reason — and the ledger's field went missing while `ledger.state` sat right here in the same summary saying
+    // `unreadable`. Reading it from the state makes the two sources independent, which is what naming them was for.
+    ...(ledger.state === 'unreadable' ? { ledgerUnreadable: ledger.reason } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),

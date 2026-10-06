@@ -278,6 +278,23 @@ describe('workflow guidance', () => {
     expect(upstream.reviewFindings).toBe(1);
     expect(upstream.blockingFindings).toBe(1);
   });
+  it('names both sources when both artefacts cannot be read', async () => {
+    const root = await tempRoot();
+    const taskId = 'both-unreadable';
+    await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), JSON.stringify({ id: taskId, acceptance: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), JSON.stringify({ taskId, phase: 'review' }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), '{ this is not JSON\n');
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'review', 'claims.json'), '{ this is not JSON\n');
+
+    const upstream = await readUpstreamSummary(root, taskId);
+
+    // The blocking reader short-circuits on the review record, so the ledger's reason has to come from the ledger's own
+    // state: otherwise the ledger's field goes missing exactly when both files are broken and an operator needs both.
+    expect(upstream.reviewRecordUnreadable).toContain('review.json');
+    expect(upstream.ledgerUnreadable).toContain('claims.json');
+    expect(upstream.reviewFindings).toBe(1);
+  });
   it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {
     const root = await tempRoot();
     const taskId = 'forged-review-approval';
