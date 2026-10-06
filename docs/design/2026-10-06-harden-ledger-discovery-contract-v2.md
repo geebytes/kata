@@ -256,3 +256,28 @@ artifact as F5 — the probes were issued by the installed bundle built from mas
 probe whose command or subject moved is re-asked) is exactly what would have re-issued them. It is invisible once the
 change is merged and the bundle rebuilt, and it is why the probe half of this ledger is not offered as evidence of the
 repair.
+
+### 9.2 The third round: a report is not a decision, and a binding is not a declaration
+
+The third independent round found the same class at two further layers — the surfaces that *report* on a ledger, and the
+decision layer's trust in a record's self-description:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| the reporting surfaces (`status --cost`, `focus`, `challenge list`/`check`, the review request) | each read through a convenience reader that answers `[]`/`null` for a file that exists and cannot be decoded, so a corrupt `probes.json` published `probesAsked: 0`, a corrupt `plan.json` was reported as "no plan has been stored" (with a remedy that overwrites the bytes), and a corrupt `challenges.json` as "no open challenge to check" — while `decide` refused the same files | the cost report publishes `null` counts plus `unreadableArtefacts`; `focus` and the request builder distinguish `unreadable` from `absent`; the `challenge` verb refuses once, naming the files |
+| `challenge add` | two writers in sequence, so an unreadable `claims.json` refused **after** the challenge had been recorded, under a message saying nothing had been written | `recordChallenge` reads both artefacts before writing either, and requires the claim it links to |
+| **a fabricated binding** — the security-relevant one | `discoveryProjection` credited a challenge from its own resolution, so a record naming a falsifier the ledger never declared (schema-less file, hand-repairable, reachable without tooling) satisfied the strict-tier discovery floor | the projection takes the declared falsifier set as an input and credits a binding only when the ledger declares that id; an absent set credits nothing, because a binding that cannot be checked against a declaration is not evidence |
+| `readLedger`'s own view | validated while the scan ran, then rebuilt by an independent `readJson` that coerced whatever it found: a `claims.json` holding an object made `ledger.claims` an object, so `ledger.claims.some(...)` threw inside a command instead of the ledger reporting that the file cannot be read | a document the scan called malformed contributes nothing to the view: the bytes stay, `malformedFiles` names it, and consumers see the absence rather than a shape the file never had |
+
+**Measured after commit `036644f`** (same method):
+
+| mutation | selector | result |
+| --- | --- | --- |
+| the declaration no longer gates the binding | `tests/unit/discovery-count-projection.test.ts` | exit 1 (red) |
+| the cost report counts a convenience-read probe list again | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+| `focus` stops distinguishing an unreadable plan | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+| the challenge is written before the claim list is read | `tests/unit/discovery-floor-fail-closed.test.ts` | exit 1 (red) |
+
+Six cases carry this round in the declared surface. Full suite: 264 files / 1568 tests. The one-decision witness lives at the
+store entry point rather than behind the command, because the verb-level refusal answers first and would otherwise hide
+whether the write itself is one decision — the same trap as witnessing a fix without witnessing the path that reaches it.
