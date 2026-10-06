@@ -267,3 +267,5 @@ The third repair made primary and linked callers resolve one Wiki file, but stri
 The focused RED holds `wiki-durability`'s owner lock and calls `updateWikiRecord` through a linked-worktree root that resolves to the same record path. Before the repair, the linked call acquires `<linked>/.kata/locks/wiki-durability.lock`; after the repair it is refused by the held owner lock. This asserts both write entrypoints through their shared critical section, not a direct lock-only fixture.
 
 The mutation proof removes artefact-path lock-root derivation; the cross-root durability case must redden. This repair does not weaken closure semantics or move any record; it makes the already-single file's locking identity equally single.
+
+**Measured after commit `9883073`:** the focused durability selector is GREEN; replacing artefact-path lock-root derivation with `resolve(callerRoot)` makes its linked writer acquire a second lock and RED; `git checkout -- src/core/locks.ts` restores the committed SHA-256 and GREEN result.
