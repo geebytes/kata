@@ -45,6 +45,69 @@ describe('schema-less ledger artefact read states', () => {
         expect(verdict.kind).toBe('unreadable');
     });
 
+    /**
+     * **The container is not the whole shape.** Every round of review found the same class one layer deeper, and the last
+     * one landed here: the outer container was checked while the elements and the nested fields were not, so a
+     * `resolution: null` reached `discoveryProjection` and threw, a plan set without `paths` reached `focus` and threw, and
+     * a `usage: 42` was handed to consumers as the usage record. The rules below live with the artefact's field spec, so
+     * the scan and every writer apply the same ones.
+     */
+    const wrongElements: Array<{ file: string; content: string; why: string }> = [
+        {
+            file: 'challenges.json',
+            content: `${JSON.stringify([{ id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'now', resolution: null }])}\n`,
+            why: 'a resolution that is not a record',
+        },
+        {
+            file: 'challenges.json',
+            content: `${JSON.stringify([{ id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'now', resolution: { observed: 'exit 0' } }])}\n`,
+            why: 'a resolution with no `at`',
+        },
+        {
+            file: 'plan.json',
+            content: `${JSON.stringify({ tier: 'strict', readingSets: [{ claimId: 'C1' }] })}\n`,
+            why: 'a reading set with no `paths`',
+        },
+        {
+            file: 'plan.json',
+            content: `${JSON.stringify({ tier: 'strict', readingSets: [{ claimId: 'C1', paths: 'src/a.ts' }] })}\n`,
+            why: 'a reading set whose `paths` is not an array',
+        },
+        {
+            file: 'usage.json',
+            content: `${JSON.stringify({ usage: 42 })}\n`,
+            why: 'a usage record that is a number',
+        },
+        {
+            file: 'usage.json',
+            content: `${JSON.stringify({ usage: {}, assuranceHistory: 'zzz' })}\n`,
+            why: 'an assurance history that is a string',
+        },
+    ];
+
+    it.each(wrongElements)('classifies $file as unreadable when it carries $why', async ({ file, content }) => {
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', file), content);
+        const ledger = await readLedger(root, changeId);
+        expect(ledger.malformedFiles).toContain(file);
+        expect((await ledgerVerdict({ root, changeId })).kind).toBe('unreadable');
+    });
+
+    it('reports a policy the reader rejects as an unreadable artefact', async () => {
+        // **A substituted policy is not a read policy.** `policyRejected` was reported in its own field while the view handed
+        // consumers `defaultPolicy()`: a stored ceiling of `security` was delivered as `strict`, the boundary gate never fired
+        // (it reads `malformedFiles`), and `ledger plan` ran and wrote a plan under the substituted rule.
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'policy.json'), `${JSON.stringify({
+            version: 1,
+            ledgerTierCeiling: 'security',
+            bogusField: 'x',
+            tiers: {},
+        })}\n`);
+        const ledger = await readLedger(root, changeId);
+        expect(ledger.policyRejected).not.toBeNull();
+        expect(ledger.malformedFiles).toContain('policy.json');
+        expect((await ledgerVerdict({ root, changeId })).kind).toBe('unreadable');
+    });
+
     it('reports an existing but unreadable history as unreadable, not as an empty one', async () => {
         // `verdict-history.jsonl` is line-delimited, so it is read by its own reader rather than by the container decoder.
         // A file that exists and cannot be read is not a file with nothing in it: only ENOENT is absence, and answering

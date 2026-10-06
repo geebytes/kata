@@ -117,6 +117,19 @@ function decodeSchemaLess(file: string, value: unknown): unknown {
     if (file === FILES.runs) return records<LedgerRun>(file, value, STRING_FIELDS.runs);
     if (file === FILES.usage) {
         if (!isRecord(value)) throw new Error(`${file} must hold an object, not ${describeShape(value)}`);
+        // **The container is not the record.** `usage` is read as the counters the cost report prints and spread back by
+        // the writers, so a number there and a string in `assuranceHistory` were both delivered as though they answered
+        // their types — and `ensureAssurance` spread the string into three fabricated history entries in the store of
+        // record.
+        const shapes: Record<string, FieldShape> = {
+            usage: { kind: 'record' },
+            assurance: { kind: 'string' },
+            assuranceHistory: { kind: 'recordArray' },
+        };
+        for (const [field, shape] of Object.entries(shapes)) {
+            if (value[field] === undefined) continue;
+            checkShape(file, 'document', field, value[field], shape);
+        }
         return value;
     }
     if (file === FILES.plan) return decodePlan(value);
@@ -134,7 +147,16 @@ function decodePlan(value: unknown): unknown {
     const plan = { ...value };
     for (const field of ['readingSets', 'requiredEvidence']) {
         if (plan[field] === undefined) continue;
-        plan[field] = records<Record<string, unknown>>(FILES.plan, plan[field], { required: ['claimId'], optional: [] });
+        // **Required, because the consumers dereference them.** `focus` maps over `set.paths` and the request builder maps
+        // over `entry.types`: a set without `paths` is not a set with nothing in it, it is a record that does not answer
+        // the type the consumer was promised.
+        const requiredShapes: Record<string, FieldShape> = field === 'readingSets'
+            ? { paths: { kind: 'stringArray' } }
+            : { types: { kind: 'stringArray' }, minimumStrength: { kind: 'number' } };
+        const shapes: Record<string, FieldShape> = field === 'readingSets'
+            ? { truncated: { kind: 'boolean' } }
+            : { riskClass: { kind: 'string' } };
+        plan[field] = records<Record<string, unknown>>(FILES.plan, plan[field], { required: ['claimId'], optional: [], shapes, requiredShapes });
     }
     return plan;
 }
@@ -286,7 +308,21 @@ export async function readProbes(root: string, changeId: string): Promise<Probe[
  * unnameable record is not usable, and saying so is what keeps a name a name.
  */
 const STRING_FIELDS = {
-    challenges: { required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'], optional: ['falsifierEvidenceId'], identity: 'id' },
+    challenges: {
+        required: ['id', 'claimId', 'command', 'failsOn', 'state', 'at'],
+        optional: ['falsifierEvidenceId'],
+        identity: 'id',
+        // `resolution` is what the challenge says a run observed, and `discoveryProjection` reads its fields — so `null`
+        // there is not "no resolution yet", it is a record that does not answer the type it declares.
+        shapes: {
+            // `at` is required because `amendChallenge` and the unbind path write it back into a field typed `string`.
+            // `observed` deliberately is not: a terminal record whose observation is absent is the discovery floor's own
+            // refusal ("an attempt that decided nothing"), and that contract belongs to the change that owns it — this
+            // boundary only insists that a resolution *present* answers the type it declares.
+            resolution: { kind: 'record', required: ['at'], optional: ['observed', 'falsifierEvidenceId', 'subjectRevision', 'verdict'] },
+            reproduced: { kind: 'boolean' },
+        },
+    },
     probes: { required: ['id', 'claimId', 'kind', 'path', 'command', 'askedAt'], optional: ['literal', 'prefix', 'subjectRevision'], identity: 'id' },
     answers: { required: ['probeId', 'command', 'observed', 'answeredAt'], optional: ['subjectRevision', 'path', 'expected'], identity: 'probeId' },
     runs: { required: ['at', 'producer', 'diversity'], optional: ['note'], identity: null },
@@ -307,6 +343,64 @@ const STRING_FIELDS = {
  */
 
 /**
+ * **What a field's own type promises, when the container is not enough.**
+ *
+ * The container check was the first boundary and it left the class one layer down: an element could answer "I am an
+ * object with the required strings" while a nested field inside it was `null`, a string or an array. Three review rounds
+ * landed on that — `challenges.json`'s `resolution` reaching `discoveryProjection` as `null`, a plan's reading set with no
+ * `paths`, a `usage.json` whose `usage` was a number and whose `assuranceHistory` was a string that `ensureAssurance`
+ * spread into fabricated records. The shapes are declared beside the string fields so the scan and every writer apply the
+ * same ones, rather than each consumer discovering them by throwing.
+ */
+type FieldShape =
+    | { kind: 'record'; required?: readonly string[]; optional?: readonly string[] }
+    | { kind: 'stringArray' }
+    | { kind: 'recordArray' }
+    | { kind: 'boolean' }
+    | { kind: 'string' }
+    | { kind: 'number' };
+
+function checkShape(file: string, where: string, field: string, value: unknown, shape: FieldShape): void {
+    const bad = (detail: string): never => {
+        throw new Error(`${file} ${where} carries a ${field} that ${detail}`);
+    };
+    if (shape.kind === 'boolean') {
+        if (typeof value !== 'boolean') bad(`is not a boolean (${describeShape(value)})`);
+        return;
+    }
+    if (shape.kind === 'string') {
+        if (typeof value !== 'string') bad(`is not a string (${describeShape(value)})`);
+        return;
+    }
+    if (shape.kind === 'number') {
+        if (typeof value !== 'number') bad(`is not a number (${describeShape(value)})`);
+        return;
+    }
+    if (shape.kind === 'stringArray') {
+        if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+            bad(`is not an array of strings (${describeShape(value)})`);
+        }
+        return;
+    }
+    if (shape.kind === 'recordArray') {
+        if (!Array.isArray(value) || value.some((entry) => !isRecord(entry))) {
+            bad(`is not an array of records (${describeShape(value)})`);
+        }
+        return;
+    }
+    if (!isRecord(value)) bad(`is not a record (${describeShape(value)})`);
+    const record = value as Record<string, unknown>;
+    for (const name of shape.required ?? []) {
+        if (typeof record[name] !== 'string') bad(`has no usable ${name}`);
+    }
+    for (const name of shape.optional ?? []) {
+        if (record[name] !== undefined && typeof record[name] !== 'string') {
+            bad(`carries a ${name} that is not a string`);
+        }
+    }
+}
+
+/**
  * **A record from a schema-less file still has to answer its declared type, and this is where that is enforced.**
  *
  * Three review rounds in a row found the same defect: a consumer trusted the type, dereferenced a field the file did not
@@ -325,7 +419,13 @@ const STRING_FIELDS = {
  * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
  * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
  */
-function records<T>(file: string, value: unknown, fields: { required: readonly string[]; optional: readonly string[] }): T[] {
+function records<T>(file: string, value: unknown, fields: {
+    required: readonly string[];
+    optional: readonly string[];
+    shapes?: Record<string, FieldShape>;
+    /** Fields whose type is more than a string *and* which the consumers dereference, so an absent one is not usable. */
+    requiredShapes?: Record<string, FieldShape>;
+}): T[] {
     // **A wrong container is not an empty document.** `[]` here would make a corrupt file read as "nothing recorded",
     // which is the state this boundary exists to keep apart from "unreadable".
     if (!Array.isArray(value)) throw new Error(`${file} must hold an array, not ${describeShape(value)}`);
@@ -343,6 +443,17 @@ function records<T>(file: string, value: unknown, fields: { required: readonly s
             if (record[field] !== undefined && typeof record[field] !== 'string') {
                 throw new Error(`${file} entry ${index + 1} carries a ${field} that is not a string`);
             }
+        }
+        // **And the fields whose own type is more than a string.** A required string answers its type above; a nested
+        // record, an array or a boolean answers it here, so the artefact is refused rather than handed on for a consumer
+        // to discover by throwing.
+        for (const [field, shape] of Object.entries(fields.shapes ?? {})) {
+            if (record[field] === undefined) continue;
+            checkShape(file, `entry ${index + 1}`, field, record[field], shape);
+        }
+        for (const [field, shape] of Object.entries(fields.requiredShapes ?? {})) {
+            if (record[field] === undefined) throw new Error(`${file} entry ${index + 1} has no usable ${field}`);
+            checkShape(file, `entry ${index + 1}`, field, record[field], shape);
         }
         return record as T;
     });
@@ -719,7 +830,15 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
                 malformedFiles.push('policy.json');
                 malformedReasons.set('policy.json', `does not match review-policy even after the reader filled what it predates and substituted \`sandboxed\` for the check: ${(error as Error).message}`);
             }
-        } else policyRejected = loaded.error;
+        } else {
+            // **A rejected policy is an unreadable artefact, not a substituted one.** It was reported in its own field while
+            // the view handed consumers `defaultPolicy()`: a stored ceiling of `security` was delivered as `strict`, the
+            // boundary gate never fired (it reads `malformedFiles`), and `ledger plan` wrote a plan under the substituted
+            // rule. `ledgerReadability` already treats this state as unreadable, so naming it here makes the two agree.
+            policyRejected = loaded.error;
+            if (!malformedFiles.includes(FILES.policy)) malformedFiles.push(FILES.policy);
+            malformedReasons.set(FILES.policy, `the stored policy could not be loaded: ${loaded.error}`);
+        }
     }
     /**
      * **The scan's verdict governs the view.** These documents are validated while the ledger is scanned, but the view used
