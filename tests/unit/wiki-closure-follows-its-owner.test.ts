@@ -143,6 +143,41 @@ describe('the Wiki closure follows its owner', () => {
         expect(await evaluateWikiClosure(linked, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
     });
 
+    it('evaluates the closure from a worktree nested inside a worktree', async () => {
+        // **The shape the product itself creates.** `kata-cli worktree create` run from inside a linked checkout targets
+        // `<outer>/.kata/worktrees/<id>`, because `resolveWorkspaceRoot()` answers the worktree the command stands in.
+        // The path above that inner checkout is the outer *linked* worktree, so a path-only owner answer sent both the
+        // closure and the candidate set into the outer worktree — the gate then answered `candidate_missing` for a
+        // candidate registered in the checkout that owns the records, while writing the closure into a directory the
+        // archive deletes. Named by the second independent round as F1 (blocking).
+        const { primary, linked } = await fixture();
+        const inner = join(linked, '.kata', 'worktrees', 'inner');
+        await mkdir(join(inner, 'src'), { recursive: true });
+        await writeWikiRecord(primary, {
+            id: candidateId,
+            statement: 'a reading carries the fact it is about',
+            scope: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            kind: 'llmwiki-summary',
+            sourceRefs: ['.llmwiki/concepts/an-observation-that-does-not-name-its-fact.md'],
+            sourceHashes: {},
+            validationTaskId: 'wiki-task',
+            provenance: 'distilled',
+            evidenceIds: ['llmwiki-000000000000'],
+            status: 'candidate',
+            lastVerifiedAt: now,
+            createdAt: now,
+            updatedAt: now,
+        });
+        await writeWikiClosure(inner, 'wiki-task', {
+            decision: 'captured',
+            reason: 'a reading carries the fact it is about',
+            candidateIds: [candidateId],
+        });
+
+        expect(await exists(join(linked, '.kata', 'tasks')), 'the closure did not land in the outer worktree').toBe(false);
+        expect(await evaluateWikiClosure(inner, 'wiki-task')).toMatchObject({ valid: true, decision: 'captured' });
+    });
+
     it('still fails closed for a candidate that was never registered', async () => {
         const { linked } = await fixture();
         await writeWikiClosure(linked, 'wiki-task', {
