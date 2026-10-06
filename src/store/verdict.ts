@@ -174,8 +174,24 @@ export function claimDecisions(ledger: Ledger): ClaimDecision[] {
     }));
 }
 
-/** The claims nothing supports and nobody waived: the one answer every consumer of "what is still open" needs. */
+/**
+ * The claims nothing supports and nobody waived: the one answer every consumer of "what is still open" needs.
+ *
+ * **And it refuses to answer for a ledger that cannot be read.** `openLedgerProblems` asks `ledgerReadability` first, but
+ * the two callers that read this projection directly — the change record's `findings` and the archive gate's "known
+ * problems" — did not, so an unreadable `claims.json` became `findings: []` and `0 problems`: the same `0` meaning "none"
+ * that this whole family of fixes exists to remove, on the gate that decides whether a change may be closed. Asking the
+ * one predicate here closes both call sites without a second copy of the rule.
+ *
+ * `absent` is not a refusal: a ledger nobody wrote has no open claims, and that is a fact. `unreadable` throws, because
+ * there is no array that could honestly stand for it — and the message names the files, so the surface that catches it
+ * can say which one to repair.
+ */
 export function unsupportedClaims(ledger: Ledger): ClaimDecision[] {
+    const readability = ledgerReadability(ledger);
+    if (readability?.kind === 'unreadable') {
+        throw new Error(`cannot list the claims still open: ${readability.detail}`);
+    }
     return claimDecisions(ledger).filter((decision) => decision.state !== 'supported' && decision.state !== 'waived');
 }
 

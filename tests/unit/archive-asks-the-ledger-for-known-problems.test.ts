@@ -86,4 +86,15 @@ describe('the archive gate asks the ledger which problems are known', () => {
         await runCommand('judge', taskId, root, { confirmHostModel: true });
         return root;
     }
+    it('refuses to close a change whose ledger cannot be read, instead of finding no problems', async () => {
+        // **An unreadable ledger is not a ledger without problems.** The archive's known-problem read went straight to
+        // `unsupportedClaims`, which projected a corrupt `claims.json` as `claims: []` and answered zero — the same `0`
+        // meaning "none" that the rest of this family exists to remove, on the gate that decides whether a change may be
+        // closed. It now asks the one readability predicate, and the refusal names the file.
+        const root = await fixture('archive-ledger-unreadable');
+        await writeFile(join(root, '.kata/tasks/archive-ledger-unreadable/review/claims.json'), '{ this is not JSON\n', 'utf8');
+        const refused = await runCommand('archive', 'archive-ledger-unreadable', root, { confirmHostModel: true });
+        expect(refused.success).toBe(false);
+        expect(String(refused.error)).toContain('claims.json');
+    });
 });

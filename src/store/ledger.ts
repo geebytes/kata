@@ -409,15 +409,19 @@ function checkShape(file: string, where: string, field: string, value: unknown, 
  * `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the consumers: a reader added
  * later cannot reintroduce it.
  *
- * Normalization is lossless and conservative. A field that is not a string becomes `''`, which fails the presence tests
- * that already exist — the refusing path — and unknown fields are preserved. An element that is not an object carries no
- * fact to act on and is dropped rather than dereferenced. Nothing is hidden: the file keeps its bytes, and the caller
- * sees the records it can actually use.
+ * **The refusal is the point, and this comment used to describe the opposite.** It claimed a non-string field was coerced
+ * to `''`, a non-object element dropped and a non-array document passed through; the implementation throws for all three,
+ * and has since the three-way state landed. Prose describing a coercion the code does not perform is worse than no prose:
+ * the next reader of this file trusts it. What actually happens, field by field:
  *
- * **What this does not settle:** a document that is not an array at all (`{}`, `42`, `"x"`). It is passed through as the
- * reader read it, which is the behaviour that existed before this normalization — deciding whether a corrupt document is
- * "no records" or "unreadable" is the three-way-state question, and answering it here by returning `[]` would make a
- * corrupt file look empty. It is recorded as its own finding instead of settled in a guard.
+ * - the document must be an array (`must hold an array`);
+ * - every element must be a record (`entry N is not a record`);
+ * - every required field must answer its declared type (`has no usable <field>`), and an optional string field that is
+ *   present must be a string (`carries a <field> that is not a string`);
+ * - fields whose type is more than a string are checked by `checkShape`, required or optional as their consumers need.
+ *
+ * Nothing is coerced and nothing is dropped: the file keeps its bytes, the artefact is named unreadable, and the caller
+ * gets no records rather than records it invented.
  */
 function records<T>(file: string, value: unknown, fields: {
     required: readonly string[];
@@ -500,29 +504,6 @@ function uniqueByName(entries: ReadonlyArray<{ id?: unknown }>, name: unknown): 
     return found;
 }
 
-/**
- * **The elements of a schema-less document that are records at all**, with their fields exactly as the file holds them.
- *
- * This is the narrower half of `records`, and it exists because the two callers want different things. A pure reader
- * wants values it can trust, so it also coerces the declared fields. A read-modify-write path wants to dereference an
- * element and then write the file back: coercing there would rewrite a legacy record's fields as a side effect of an
- * unrelated append, destroying the value that says the file is corrupt, so it filters and preserves instead.
- *
- * **An array is not a record.** The first version of this filter tested `typeof entry === 'object' && entry !== null`,
- * which an array satisfies — so `["x"]` was spread into `{0: 'x'}`, handed out as a `Probe`/`ProbeAnswer` with no
- * `command`, and crashed the report reader the filter was written to protect. An independent round found exactly that,
- * one round after the guard moved here to stop the series. The lesson is recorded rather than remembered: the predicate
- * names what it excludes.
- *
- * A missing file is no records, and a document that is not an array is passed through as read — the pre-existing
- * behaviour, because deciding whether a corrupt document is "no records" or "unreadable" is the three-way-state
- * question and answering it in a guard would make a corrupt file look empty.
- */
-function recordElements(value: unknown): Array<Record<string, unknown>> {
-    if (value === null || value === undefined) return [];
-    if (!Array.isArray(value)) return [];
-    return value.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry));
-}
 
 /**
  * Record an answer, and refuse a second one.
@@ -898,6 +879,19 @@ async function writeJson(root: string, changeId: string, file: string, value: un
         } catch (error) {
             throw new Error(
                 `refusing to write ${file} for ${changeId}: the record would not match ${schemaName}, so nothing that reads it could use it. `
+                + `${(error as Error).message} Nothing was written.`,
+            );
+        }
+    } else if (ARTEFACTS_VALIDATED_THROUGH_THEIR_READER[file] !== undefined) {
+        // **The rule the reader applies is the rule the writer applies.** `policy.json` is validated when the ledger is
+        // scanned, through the schema its reader produces — but it was in neither table `writeJson` consulted, so the one
+        // writer that persists it could store a policy every reader then refuses: a successful return over a record the
+        // reader calls unreadable, which is the shape this boundary exists to prevent.
+        try {
+            validateArtefact(ARTEFACTS_VALIDATED_THROUGH_THEIR_READER[file] as string, value);
+        } catch (error) {
+            throw new Error(
+                `refusing to write ${file} for ${changeId}: the record would not match ${ARTEFACTS_VALIDATED_THROUGH_THEIR_READER[file]}, so nothing that reads it could use it. `
                 + `${(error as Error).message} Nothing was written.`,
             );
         }

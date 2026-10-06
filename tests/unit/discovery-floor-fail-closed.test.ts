@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, writePolicy, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -393,6 +393,16 @@ describe('the writers consume the read boundary instead of answering `[]` for it
         await expect(recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: 'rev:x' })]))
             .rejects.toThrow(/verdicts\.json/);
         await untouched('verdicts.json', before);
+    });
+
+    it('refuses a policy the reader would reject, rather than persisting one', async () => {
+        // **The rule the reader applies is the rule the writer applies.** `policy.json` is validated through the schema its
+        // reader produces, but it was in neither table the single write entry point consulted — so the one writer that
+        // persists it could store a policy every reader then refuses: a successful return over a record the reader calls
+        // unreadable. The unknown field is what an independent round used to demonstrate it.
+        await expect(writePolicy(root, changeId, { version: 1, ledgerTierCeiling: 'security', bogusField: 'x', tiers: {} } as never))
+            .rejects.toThrow(/policy\.json/);
+        await expect(readFile(join(reviewDirOf(), 'policy.json'), 'utf8')).rejects.toThrow(/ENOENT/);
     });
 
     it('refuses to record usage or assurance over a document that is not a record', async () => {
