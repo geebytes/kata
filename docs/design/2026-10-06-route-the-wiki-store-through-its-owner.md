@@ -1,7 +1,7 @@
 # Route the Wiki record store through its owner
 
 **Change:** `route-the-wiki-store-through-its-owner`
-**Status:** implemented and repaired (an independent strict round falsified C1 twice; both shapes are now covered — see Repair)
+**Status:** implemented and repaired twice (two independent strict rounds falsified C1; the second round found three regressions the first repair introduced — see both Repair sections)
 **Profile:** `current_worktree / tdd / strict`
 
 ## Problem
@@ -123,6 +123,30 @@ false sentence in `worktreeContaining`'s docstring is now true rather than delet
 > recognise it then, and does not until this repair — the commit's own message asserted the very disagreement it was
 > fixing, one function over. The detector was fixed; the ownership function it was compared against was not.
 
+## Second repair: the rule, and the three ways the first repair broke it
+
+A second independent strict round (887 s, 62 tool calls) falsified C1 again — three findings, all reproduced by hand before
+being accepted, and **all three regressions introduced by the first repair**, because that repair replaced a task-addressed
+answer with a path answer and dropped two things the file itself states:
+
+| finding | severity | shape | reproduced |
+| --- | --- | --- | --- |
+| F1 | **blocking** | a worktree created **inside** a worktree — which `kata-cli worktree create` produces, because `runWorktreeCommand` resolves `resolveWorkspaceRoot()` (the worktree the command stands in) and `createWorktree` targets `join(worktreesDir(root), taskId)`. `owningCheckoutOf` answered the *outer linked worktree*, and was tried before git, so every record path and both stores resolved there | challenge X3: `wiki candidate` listed the candidate from the primary and answered `[]` from the nested checkout, while `git worktree list` inside it named the primary as `main` |
+| F2 | major | a task whose records exist only under a worktree (the stranded shape three mechanisms exist for). `worktreeOwnerOf` answered a defined checkout that holds no such task, so `recordsRoot`'s documented fallback — "an unreachable record is worse than a remote one" — became dead code for worktree callers | challenge X4: `status --change <id>` from the worktree holding the task's only records read the primary's path and failed with ENOENT |
+| F3 | minor | a checkout whose `.git` marker names a worktree whose admin directory is gone: the gate passed, git returned `[]`, and the stores read the resulting `undefined` as "here", keeping a per-root copy — the fail-open direction this change removes | challenge X5: the primary listed the candidate and the worktree answered `[]` |
+
+**The rule, stated once** (and now asserted rather than described):
+
+1. **A named owner holds the task.** `ownerRoot !== undefined` implies `readdirSync(join(ownerRoot, '.kata', 'tasks', taskId))` succeeds — a wrong owner is worse than `undefined`, because `recordsRoot` has a documented answer for `undefined` and none for a wrong checkout.
+2. **An owner is not a linked worktree.** The path answer walks up past any candidate that is itself a worktree, so a nested worktree resolves to the checkout that owns them both.
+3. **A worktree whose owner cannot be named is refused, not read as "here".** The stores throw a named error; the alternative is a second store under a directory `archive` deletes.
+
+The four changes that implement it: `owningCheckoutOf` walks past linked checkouts (`checkoutAboveWorktrees` keeps the path test, the loop adds rule 2); `recordOwner` asks the task-addressed question whenever a task id is known and falls back to the worktree that holds the task (rule 1); `gitListedWorktreeContaining` falls back to the `.git` marker's own text when git cannot answer (`linkedWorktreeCheckout`, gated on `/.git/worktrees/` so a submodule's marker is not mistaken for one); and both stores refuse on `worktreeRoot !== undefined && ownerRoot === undefined` (rule 3).
+
+**Measured after the repair:** the round's three challenge commands exit **0** — the same commands that exited 1 against the frozen revision — and the ledger's `decide` returns to `pass`.
+
+> **One challenge had to be re-aimed, and the reason is recorded.** X5's original form compared the two answers; the repair changed the worktree's behaviour from *silently answering `[]`* to *refusing by name*, which also makes the comparison fail. The defect is the silent per-root store, so the amended command exits 0 only on the named refusal (`no owner to read`) and 1 on any answer read from inside the worktree. `ledger challenge amend` records the replaced command as an amendment rather than rewriting history.
+
 ## Non-goals
 
 - **No migration and no record moves.** For a repository whose task lives in the caller's checkout the derived directory is
@@ -161,7 +185,11 @@ false sentence in `worktreeContaining`'s docstring is now true rather than delet
   3. restore `ownerRoot = taskId === undefined ? undefined : findOwningCheckout(searchFrom, taskId)` → AC-1's bare-worktree
      case and AC-2 must redden (this is the mutation that would have caught the first, insufficient version);
   4. drop the git shape from `worktreeContaining` → AC-1's `--path` case must redden (this is the mutation that would have
-     caught F1).
+     caught F1);
+  5. stop `owningCheckoutOf` walking past a linked worktree → AC-1's nested case must redden (this is F1's falsifier);
+  6. answer the task-id question from the worktree without asking who holds the task → AC-1's stranded case must redden
+     (F2's falsifier);
+  7. drop the stores' refusal → AC-1's unnameable case must redden (F3's falsifier).
 
 Measured, all four applied against the committed repair and restored byte-identical:
 

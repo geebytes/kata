@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -151,6 +151,79 @@ describe('record ownership has one answer', () => {
         expect(evidenceDir(worktree)).toBe(join(primary, '.kata', 'evidence'));
         // The two surfaces agree again: the task being worked on is held by the same checkout.
         expect(recordsRoot(worktree, 'held')).toBe(primary);
+    });
+
+    it('walks past a linked worktree to the checkout that owns it', () => {
+        // **A worktree can be created inside a worktree, through the product's own command.** `runWorktreeCommand`
+        // resolves `resolveWorkspaceRoot()`, which answers the worktree the command stands in, and `createWorktree`
+        // targets `join(worktreesDir(root), taskId)` — so `kata-cli worktree create` run from a linked checkout makes
+        // `<outer>/.kata/worktrees/<id>`. The path above that checkout is the *outer linked worktree*, not the owner:
+        // measured on the frozen revision as challenge X3, `wiki candidate` listed the candidate from the primary and
+        // answered `[]` from the nested one, while `git worktree list` inside it named the primary as `main` — git was
+        // never consulted, because the path answer was tried first and never checked for being a worktree itself.
+        const primary = repo('nested');
+        seedTask(primary, 'a-task');
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        const outer = join(primary, '.kata', 'worktrees', 'outer');
+        const inner = join(outer, '.kata', 'worktrees', 'inner');
+        execFileSync('git', ['worktree', 'add', '-q', outer, '-b', 'outer'], { cwd: primary });
+        execFileSync('git', ['worktree', 'add', '-q', inner, '-b', 'inner'], { cwd: primary });
+
+        expect(recordOwner({ root: inner }).worktreeRoot, 'the innermost checkout is the one the caller is in').toBe(inner);
+        expect(recordOwner({ root: inner }).ownerRoot, 'and its owner is the checkout that owns both').toBe(primary);
+        expect(wikiDir(inner)).toBe(join(primary, '.kata', 'wiki'));
+        expect(evidenceDir(inner)).toBe(join(primary, '.kata', 'evidence'));
+    });
+
+    it('answers with the worktree that holds the only copy of a task', () => {
+        // **The documented fallback, restored.** `recordsRoot` says it in words — "When nothing else holds the task the
+        // worktree is still used, because an unreachable record is worse than a remote one" — and this repository keeps
+        // three mechanisms for the shape (`worktreeOnlyRecords`, `uniqueCopies`, `worktree recover`). The first repair
+        // replaced the task-addressed branch with a path answer that never asked whether the checkout holds the task, so
+        // a stranded task was read from a checkout with no state for it. Measured on the frozen revision as challenge X4:
+        // `status --change <id>` from the worktree holding the task's only records failed with ENOENT under the primary.
+        const primary = repo('stranded');
+        seedTask(primary, 'held');
+        const worktree = join(primary, '.kata', 'worktrees', 'wt');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'only-here'), { recursive: true });
+        writeFileSync(
+            join(worktree, '.kata', 'tasks', 'only-here', 'current-state.json'),
+            `${JSON.stringify({ taskId: 'only-here', phase: 'implement' })}\n`,
+        );
+
+        const owner = recordOwner({ root: worktree, taskId: 'only-here' });
+        expect(owner.ownerRoot, 'the only checkout holding it is the worktree itself').toBe(worktree);
+        expect(recordsRoot(worktree, 'only-here')).toBe(worktree);
+        // **The invariant every caller relies on**: a named owner holds the task. `ownerRoot` is documented as "the
+        // checkout holding this record", and an answer that fails this is worse than `undefined`, because `undefined`
+        // is the state `recordsRoot` has a documented answer for.
+        expect(readdirSync(join(owner.ownerRoot!, '.kata', 'tasks', 'only-here')).length).toBeGreaterThan(0);
+    });
+
+    it('refuses rather than keeping a per-root store when a worktree cannot be named', () => {
+        // **The one case `worktreeOwnerOf`'s docstring names, and the one the callers could not honour.** A checkout
+        // whose `.git` is a file but whose admin directory is gone is still a linked worktree — the marker says so —
+        // while git cannot answer, so no owner can be named. Reading `undefined` as "here" then keeps a per-root copy
+        // inside the worktree, which is the fail-open direction this change removes. Measured on the frozen revision as
+        // challenge X5: the primary listed the candidate and the worktree answered `[]`.
+        const primary = repo('unnameable');
+        seedTask(primary, 'a-task');
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A'], { cwd: primary });
+        execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: primary });
+        const linked = `${primary}-linked`;
+        execFileSync('git', ['worktree', 'add', '-q', linked, '-b', 'linked'], { cwd: primary });
+        roots.push(linked);
+        // The marker keeps its real shape — `gitdir: <primary>/.git/worktrees/<name>` — while the admin directory it
+        // names is gone, which is what a moved or copied checkout looks like. git then fails, and the marker text is the
+        // only thing left that says this is a linked worktree.
+        writeFileSync(join(linked, '.git'), `gitdir: /nonexistent/primary/.git/worktrees/linked\n`);
+
+        const owner = recordOwner({ root: linked });
+        expect(owner.worktreeRoot, 'the marker still says this checkout is a linked worktree').toBe(linked);
+        expect(owner.ownerRoot, 'and no owner can be named for it').toBeUndefined();
+        expect(() => wikiDir(linked), 'so the store refuses instead of answering "here"').toThrow(/owner/i);
+        expect(() => evidenceDir(linked)).toThrow(/owner/i);
     });
 
     it('says no owner rather than inventing one when the task is nowhere', () => {
