@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, answerProbe } from '../store/ledger.js';
+import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, appendChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlan, appendProbe, readProbes, readProbesState, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -266,9 +266,14 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 ok: true,
                 claim,
                 verdicts: ledger.verdicts.filter((verdict) => claim.evidenceIds.includes(verdict.evidenceId)),
-                ...(historyExists
-                    ? { readings }
-                    : { readingsNote: 'no verdict history has been recorded for this change, so these verdicts cannot be asked whether any of them was reversed — the history was introduced after they were written' }),
+                // **A history that cannot be read is not an empty history.** Publishing `readings: []` for it would say "no
+                // verdict was ever reversed" — a claim about the content — for a file nobody could look at, and the auditor
+                // cannot tell that from a history that genuinely holds none of these verdicts.
+                ...(history.unreadable !== undefined
+                    ? { historyUnreadable: `verdict-history.jsonl exists and could not be read (${history.unreadable}), so whether any of these verdicts was reversed is unknown rather than absent` }
+                    : historyExists
+                        ? { readings }
+                        : { readingsNote: 'no verdict history has been recorded for this change, so these verdicts cannot be asked whether any of them was reversed — the history was introduced after they were written' }),
                 ...(history.malformed > 0 ? { historyMalformed: `${history.malformed} line(s) of the verdict history cannot be parsed` } : {}),
             });
             return;
@@ -546,7 +551,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // the question this revision poses: skipping it would leave the moved content with no askable question, and an
         // answer recorded against the stale record could never count for either revision.
         const currentRevision = ledger.subject.revision;
-        const questions = new Set((await readProbes(options.root, changeId))
+        const storedProbes = await readProbesState(options.root, changeId);
+        if (storedProbes.kind === 'unreadable') {
+            // **The state is known before anything is asked.** Reading through the convenience reader answered `[]` for an
+            // unreadable file and only then reached the writer's refusal, so the refusal escaped as an exception rather
+            // than arriving as the structured refusal every other path produces.
+            fail({ command: 'ledger ask', error: `refusing to ask over ${storedProbes.file}: ${storedProbes.detail}. Nothing was written; repair or replace that file explicitly.` });
+            return;
+        }
+        const questions = new Set((storedProbes.kind === 'usable' ? storedProbes.value : [])
             .filter((probe) => probe.subjectRevision === currentRevision)
             .map((probe) => probe.command));
         for (const claim of ledger.claims) {

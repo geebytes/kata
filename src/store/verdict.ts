@@ -19,22 +19,6 @@ import type { AssuranceLevel, Decision, EvidenceVerdict, Severity, TierName } fr
 import type { Challenge } from '../kernel/types.js';
 import type { Probe, ProbeAnswer } from '../kernel/discovery.js';
 /**
- * How many of the recorded challenges actually ran.
- *
- * The count that feeds the discovery floor used to be "every challenge that is not open, plus every probe answer", and
- * both halves were satisfiable by doing nothing: a challenge whose command is `exit 0` is withdrawn by one check, and an
- * answer was a string nobody compared against the question. So the floor is computed from evidence of a measurement:
- *
- *   - a **terminal** challenge counts when its persisted `resolution.observed` is non-blank; execution is what the
- *     discovery floor proves, while `reproduced` remains historical counterexample information;
- *   - a **probe answer** counts when it records a non-blank command and observation, de-duplicated by the command it ran.
- *     **What this half does not prove, and what the comment here used to claim:** the code does not compare the
- *     observation against the fact the probe asked for (the digest prefix, or the path), because an answer carries neither
- *     the kind nor the path. So an arbitrary observation still counts as one reading. Adding that comparison is a
- *     behaviour change with its own review; until then the honest statement is that this half proves an answer was
- *     recorded, not that it was right.
- */
-/**
  * **The one projection every discovery count is derived from.**
  *
  * Two counts used to be derived independently — `independentChallenges` from a filter over terminal records plus the raw

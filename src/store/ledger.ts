@@ -208,6 +208,40 @@ async function readRecordsForWrite<T>(
     return read.kind === 'usable' ? read.value : [];
 }
 
+/**
+ * A schema-carrying artefact, read for a read-modify-write path — through the same boundary the scan applies.
+ *
+ * `claims.json`, `evidence.json` and `verdicts.json` are validated against their schemas when the ledger is scanned, so a
+ * writer that read them with `readJson` (which answers `null` for absent *and* for unreadable) would accept a document the
+ * reader had already refused and then write over it: the corrupt bytes would be gone, and the append would report success
+ * over them. An absent file is still an empty list; a file that exists and cannot be parsed, or does not answer its
+ * schema, is refused by name.
+ */
+async function readDocumentForWrite<T>(root: string, changeId: string, file: string): Promise<T | undefined> {
+    const schemaName = ARTEFACT_SCHEMAS[file];
+    if (schemaName === undefined) throw new Error(`${file} is read for a write with no schema to read it against`);
+    const refusal = (detail: string): Error => new Error(`refusing to rewrite ${file} for ${changeId}: ${detail}. Nothing was written; repair or replace that file explicitly.`);
+    let raw: string;
+    try {
+        raw = await readFile(join(reviewDir(root, changeId), file), 'utf8');
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw refusal((error as Error).message);
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        throw refusal(`not valid JSON (${(error as Error).message})`);
+    }
+    try {
+        validateArtefact(schemaName, parsed);
+    } catch (error) {
+        throw refusal(`does not match ${schemaName}: ${(error as Error).message}`);
+    }
+    return parsed as T;
+}
+
 export async function appendProbe(root: string, changeId: string, probe: Probe): Promise<Probe> {
     return mutate(root, changeId, async () => {
         const path = join(reviewDir(root, changeId), FILES.probes);
@@ -277,7 +311,7 @@ const STRING_FIELDS = {
  *
  * Three review rounds in a row found the same defect: a consumer trusted the type, dereferenced a field the file did not
  * have, and threw — turning a promised refusal into a crash on every surface that reads the ledger. Guarding each
- * consumer is what produced the series (`verifiedChallengeCount`'s challenge half, its probe half, then
+ * consumer is what produced the series (the challenge half of the discovery count, then its probe half, then
  * `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the consumers: a reader added
  * later cannot reintroduce it.
  *
@@ -816,8 +850,7 @@ export async function writeSubject(root: string, changeId: string, subject: Subj
  */
 export async function restateClaim(root: string, changeId: string, claimId: string, statement: string): Promise<void> {
     await mutate(root, changeId, async () => {
-        const path = join(reviewDir(root, changeId), FILES.claims);
-        const claims = (await readJson<Claim[]>(path)) ?? [];
+        const claims = (await readDocumentForWrite<Claim[]>(root, changeId, FILES.claims)) ?? [];
         const next = claims.map((claim) => (claim.id === claimId
             ? { ...claim, statement, reopens: (claim.reopens ?? 0) + 1 }
             : claim));
@@ -850,8 +883,7 @@ function nowIso(): string {
 export async function appendClaim(root: string, changeId: string, claim: Claim): Promise<Claim> {
     const stamped: Claim = { ...claim, at: claim.at || nowIso(), reopens: claim.reopens ?? 0 };
     return mutate(root, changeId, async () => {
-        const path = join(reviewDir(root, changeId), FILES.claims);
-        const claims = (await readJson<Claim[]>(path)) ?? [];
+        const claims = (await readDocumentForWrite<Claim[]>(root, changeId, FILES.claims)) ?? [];
         const existing = claims.findIndex((entry) => entry.id === stamped.id);
         if (existing >= 0) claims[existing] = stamped;
         else claims.push(stamped);
@@ -874,8 +906,7 @@ export async function appendEvidence(
     evidence: Evidence,
 ): Promise<{ ok: true; item: Evidence; written: boolean } | { ok: false; why: string }> {
     return mutate(root, changeId, async () => {
-        const path = join(reviewDir(root, changeId), FILES.evidence);
-        const items = (await readJson<Evidence[]>(path)) ?? [];
+        const items = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
         const existing = items.find((entry) => entry.id === evidence.id);
         if (existing) {
             const same = JSON.stringify(existing) === JSON.stringify(evidence);
@@ -908,22 +939,44 @@ export async function replaceEvidence(
     reason: string,
 ): Promise<{ replaced: number; droppedVerdicts: string[] }> {
     return mutate(root, changeId, async () => {
-        const evidencePath = join(reviewDir(root, changeId), FILES.evidence);
-        const verdictPath = join(reviewDir(root, changeId), FILES.verdicts);
-        const before = (await readJson<Evidence[]>(evidencePath)) ?? [];
+        const before = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
         const changed = items.filter((item) => {
             const existing = before.find((entry) => entry.id === item.id);
             return existing === undefined || JSON.stringify(existing) !== JSON.stringify(item);
         });
         const changedIds = new Set(changed.map((item) => item.id));
         await writeJson(root, changeId, FILES.evidence, [...items]);
-        const verdicts = (await readJson<EvidenceVerdict[]>(verdictPath)) ?? [];
+        const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
         const kept = verdicts.filter((verdict) => !changedIds.has(verdict.evidenceId));
         const dropped = verdicts.filter((verdict) => changedIds.has(verdict.evidenceId)).map((verdict) => verdict.evidenceId);
         if (dropped.length > 0) await writeJson(root, changeId, FILES.verdicts, kept);
-        const runs = (await readJson<LedgerRun[]>(join(reviewDir(root, changeId), FILES.runs))) ?? [];
+        const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
         runs.push({ at: nowIso(), producer: 'operator', claims: 0, evidence: changed.length, diversity: 'n/a', note: reason });
         await writeJson(root, changeId, FILES.runs, runs);
+        // **A binding this write invalidated is dropped by this write.** `discoveryProjection` credits a challenge from
+        // its own resolution, so a falsifier that stops being an `executable_falsifier` would leave its challenge carrying
+        // credit for a declaration that no longer exists — and no reader can tell that from one that is still declared.
+        // The challenge stays readable and its observation stays recorded; only the binding the demotion invalidated goes.
+        const declaredFalsifiers = new Set(items.filter((item) => item.type === 'executable_falsifier').map((item) => item.id));
+        const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
+        const unboundCount = challenges.filter((challenge) => challenge.falsifierEvidenceId !== undefined
+            && !declaredFalsifiers.has(challenge.falsifierEvidenceId)).length;
+        if (unboundCount > 0) {
+            const rebound = challenges.map((challenge) => {
+                const named = challenge.falsifierEvidenceId;
+                if (named === undefined || declaredFalsifiers.has(named)) return challenge;
+                const unbound: Challenge = { ...challenge };
+                delete unbound.falsifierEvidenceId;
+                if (challenge.resolution !== undefined) {
+                    unbound.resolution = {
+                        at: challenge.resolution.at,
+                        observed: `${challenge.resolution.observed} (unbound: ${named} is no longer an executable_falsifier)`
+                    };
+                }
+                return unbound;
+            });
+            await writeJson(root, changeId, FILES.challenges, rebound);
+        }
         return { replaced: changed.length, droppedVerdicts: dropped };
     });
 }
@@ -946,8 +999,7 @@ export async function replaceEvidence(
  */
 export async function recordVerdicts(root: string, changeId: string, incoming: readonly EvidenceVerdict[]): Promise<number> {
     return mutate(root, changeId, async () => {
-        const path = join(reviewDir(root, changeId), FILES.verdicts);
-        const verdicts = (await readJson<EvidenceVerdict[]>(path)) ?? [];
+        const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
         const prior = new Map(verdicts.map((verdict) => [readingKey(verdict), verdict]));
         for (const verdict of incoming) {
             // **Keyed by the run, not by the evidence.** A run that decides the same item twice is the same observation
@@ -1014,12 +1066,20 @@ function parseJsonLines(text: string): { entries: Record<string, unknown>[]; mal
     return { entries, malformed };
 }
 
-export async function readVerdictHistory(root: string, changeId: string): Promise<{ entries: Record<string, unknown>[]; malformed: number }> {
+export async function readVerdictHistory(
+    root: string,
+    changeId: string,
+): Promise<{ entries: Record<string, unknown>[]; malformed: number; unreadable?: string }> {
     let raw: string;
     try {
         raw = await readFile(join(reviewDir(root, changeId), FILES.verdictHistory), 'utf8');
-    } catch {
-        return { entries: [], malformed: 0 };
+    } catch (error) {
+        // **Only ENOENT is absence.** This reader has its own boundary because the file is line-delimited, and a catch-all
+        // here is the same defect the container decoder was repaired for: a history that exists and cannot be read would be
+        // published as `{ entries: [], malformed: 0 }`, which says "no verdict was ever reversed" — a claim about the
+        // content — for a file nobody could look at. The detail travels so the caller can name it.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { entries: [], malformed: 0 };
+        return { entries: [], malformed: 0, unreadable: (error as Error).message };
     }
     return parseJsonLines(raw);
 }
@@ -1174,8 +1234,7 @@ export async function setUsage(root: string, changeId: string, usage: BudgetUsag
 
 export async function appendRun(root: string, changeId: string, run: LedgerRun): Promise<void> {
     return mutate(root, changeId, async () => {
-        const path = join(reviewDir(root, changeId), FILES.runs);
-        const runs = (await readJson<LedgerRun[]>(path)) ?? [];
+        const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
         runs.push(run);
         await writeJson(root, changeId, FILES.runs, runs);
     });

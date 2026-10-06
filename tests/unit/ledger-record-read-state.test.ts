@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readLedger } from '../../src/store/ledger.js';
+import { readLedger, readVerdictHistory } from '../../src/store/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 
 /**
@@ -43,5 +43,16 @@ describe('schema-less ledger artefact read states', () => {
 
         const verdict = await ledgerVerdict({ root, changeId });
         expect(verdict.kind).toBe('unreadable');
+    });
+
+    it('reports an existing but unreadable history as unreadable, not as an empty one', async () => {
+        // `verdict-history.jsonl` is line-delimited, so it is read by its own reader rather than by the container decoder.
+        // A file that exists and cannot be read is not a file with nothing in it: only ENOENT is absence, and answering
+        // `{ entries: [], malformed: 0 }` for anything else is how a history nobody could look at becomes a claim that no
+        // verdict was ever reversed.
+        await mkdir(join(root, '.kata', 'tasks', changeId, 'review', 'verdict-history.jsonl'), { recursive: true });
+        const read = await readVerdictHistory(root, changeId);
+        expect(read.entries).toEqual([]);
+        expect(read.unreadable).toBeTruthy();
     });
 });

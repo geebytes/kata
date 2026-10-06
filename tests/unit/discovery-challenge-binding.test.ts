@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
+import { discoveryProjection } from '../../src/store/verdict.js';
 
 /**
  * **A challenge is a reproduction of a declared falsifier, not a shell string.**
@@ -196,5 +197,37 @@ describe('a challenge bound to a declared falsifier', () => {
         expect(codesOf(decision)).toContain('challenge_open');
         expect(codesOf(decision)).toContain('discovery_unverified');
         expect(codesOf(decision)).not.toContain('discovery_floor');
+    });
+
+    it('drops the binding when the falsifier it names stops being an executable_falsifier', async () => {
+        // The declaration is what the challenge reproduces, so a correction that turns that falsifier into a plain witness
+        // removes the thing this reading was about. `discoveryProjection` credits a challenge from its own resolution, so
+        // the binding is dropped by the write that invalidated it rather than left for a reader to notice.
+        await declareFalsifier();
+        await ledger(['evidence', 'verify']);
+        await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E1', '--id', 'X1']);
+        await ledger(['challenge', 'check', '--id', 'X1']);
+
+        const before = await readLedger(root, changeId);
+        expect(before.challenges.find((entry) => entry.id === 'X1')?.falsifierEvidenceId).toBe('E1');
+
+        const replacement = join(root, 'replacement.json');
+        await writeFile(replacement, `${JSON.stringify({
+            claims: [],
+            evidence: [
+                { id: 'E1', type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' },
+                { id: 'E2', type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' },
+            ],
+        }, null, 2)}\n`);
+        await ledger(['evidence', 'replace', '--file', replacement, '--reason', 'the falsifier became a witness']);
+
+        const after = await readLedger(root, changeId);
+        const challenge = after.challenges.find((entry) => entry.id === 'X1');
+        expect(challenge?.falsifierEvidenceId).toBeUndefined();
+        expect(challenge?.resolution?.falsifierEvidenceId).toBeUndefined();
+        const projection = discoveryProjection({
+            challenges: after.challenges, probes: [], answers: [], currentRevision: after.subject?.revision ?? null,
+        });
+        expect(projection.verifiedChallenges).toBe(0);
     });
 });

@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { answerProbe, appendChallenge, appendClaim, appendEvidence, freezeSubject, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, resolveChallenge, writeSubject } from '../../src/store/ledger.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, freezeSubject, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
+import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
@@ -314,5 +315,117 @@ describe('the readers of the schema-less ledger files', () => {
         })).resolves.toBeDefined();
         const challenges = await readLedger(root, changeId).then((ledger) => ledger.challenges);
         expect(challenges.map((challenge) => challenge.id)).toEqual(['X1']);
+    });
+
+    it('does not publish an empty reading list for a history that exists and cannot be read', async () => {
+        // The history is line-delimited, so it has its own reader, and a directory where the file should be is the shape
+        // "exists and cannot be read" takes. Publishing `readings: []` for it says "no verdict was ever reversed" — a
+        // claim about the content — for a file nobody could look at, which is the state this boundary exists to keep out.
+        await runLedgerCommand(['policy', '--init'], { root, changeId });
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await appendClaim(root, changeId, makeClaim({ id: 'C1', riskClass: 'consistency', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
+        await mkdir(join(reviewDirOf(), 'verdict-history.jsonl'), { recursive: true });
+        const chunks: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { chunks.push(String(chunk)); return true; });
+        try {
+            await runLedgerCommand(['claim', 'show', 'C1'], { root, changeId });
+        } finally {
+            spy.mockRestore();
+        }
+        const text = chunks.join('');
+        const payload = text.includes('{') ? (JSON.parse(text.slice(text.indexOf('{'))) as Record<string, unknown>) : {};
+        expect(payload.readings).toBeUndefined();
+        expect(String(payload.historyUnreadable)).toContain('verdict-history.jsonl');
+    });
+});
+
+/**
+ * **The writers, at the layer where the boundary has to be consumed.**
+ *
+ * The three-state read is only worth having if every read-modify-write path uses it. A writer that reads through a
+ * convenience reader answering `[]` for "absent or unreadable" replaces the bytes that are the only evidence the file is
+ * corrupt, and reports a successful append over them — so each writer is asserted against an unreadable artefact, byte
+ * for byte. The schema-carrying files are included: `claims.json`, `evidence.json` and `verdicts.json` are validated when
+ * the ledger is scanned, and a writer that accepted a document the scan refuses would be a second answer to the same
+ * question.
+ */
+describe('the writers consume the read boundary instead of answering `[]` for it', () => {
+    const reviewDirOf = (): string => join(root, '.kata', 'tasks', changeId, 'review');
+    const corrupt = async (file: string, content = '{ this is not JSON\n'): Promise<string> => {
+        await mkdir(reviewDirOf(), { recursive: true });
+        await writeFile(join(reviewDirOf(), file), content);
+        return readFile(join(reviewDirOf(), file), 'utf8');
+    };
+    const untouched = async (file: string, before: string): Promise<void> => {
+        expect(await readFile(join(reviewDirOf(), file), 'utf8')).toBe(before);
+    };
+
+    it('refuses to append a run over an unreadable run log, leaving its bytes alone', async () => {
+        const before = await corrupt('runs.json');
+        await expect(appendRun(root, changeId, { at: 'x', producer: 'pi', claims: 0, evidence: 0, diversity: 'n/a' }))
+            .rejects.toThrow(/runs\.json/);
+        await untouched('runs.json', before);
+    });
+
+    it('refuses to append or restate a claim over an unreadable claim list', async () => {
+        const before = await corrupt('claims.json');
+        await expect(appendClaim(root, changeId, makeClaim({ id: 'C1', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] })))
+            .rejects.toThrow(/claims\.json/);
+        await untouched('claims.json', before);
+        await expect(restateClaim(root, changeId, 'C1', 'a statement this ledger never held')).rejects.toThrow(/claims\.json/);
+        await untouched('claims.json', before);
+    });
+
+    it('refuses to append or replace evidence over an unreadable evidence file', async () => {
+        const before = await corrupt('evidence.json');
+        const item = makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' });
+        await expect(appendEvidence(root, changeId, item)).rejects.toThrow(/evidence\.json/);
+        await untouched('evidence.json', before);
+        await expect(replaceEvidence(root, changeId, [item], 'the recorded item was wrong')).rejects.toThrow(/evidence\.json/);
+        await untouched('evidence.json', before);
+    });
+
+    it('refuses to record a verdict over an unreadable verdict file', async () => {
+        const before = await corrupt('verdicts.json');
+        await expect(recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: 'rev:x' })]))
+            .rejects.toThrow(/verdicts\.json/);
+        await untouched('verdicts.json', before);
+    });
+
+    it('refuses a claim list that parses but does not answer its schema', async () => {
+        // Parseable is not usable: the scan refuses this document, so a writer that read it with `readJson` would accept
+        // a state the reader had already called unreadable and then write over it.
+        const before = await corrupt('claims.json', `${JSON.stringify([{ id: 'C1' }], null, 2)}\n`);
+        await expect(appendClaim(root, changeId, makeClaim({ id: 'C2', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] })))
+            .rejects.toThrow(/claims\.json/);
+        await untouched('claims.json', before);
+    });
+
+    it('asks over an unreadable probe list as a refusal rather than reaching a throw', async () => {
+        // The command used the convenience reader, which answers `[]` for an unreadable file, and only then reached the
+        // writer's refusal — so the state was known before anything was asked and was reported as an escaped exception.
+        await runLedgerCommand(['policy', '--init'], { root, changeId });
+        const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+        if (!frozen.ok) throw new Error('the fixture could not freeze its subject');
+        await writeSubject(root, changeId, frozen.subject);
+        await appendClaim(root, changeId, makeClaim({ id: 'C1', riskClass: 'consistency', severity: 'major', evidenceIds: ['E1'], dependsOn: ['path:src/a.ts'] }));
+        await corrupt('probes.json', '{}\n');
+        const chunks: string[] = [];
+        const spy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => { chunks.push(String(chunk)); return true; });
+        let threw: unknown = null;
+        try {
+            await runLedgerCommand(['ask', '--per-claim', '1'], { root, changeId });
+        } catch (error) {
+            threw = error;
+        } finally {
+            spy.mockRestore();
+        }
+        const text = chunks.join('');
+        const payload = text.includes('{') ? (JSON.parse(text.slice(text.indexOf('{'))) as Record<string, unknown>) : {};
+        expect(threw).toBeNull();
+        expect(payload.ok).toBe(false);
+        expect(String(payload.error)).toContain('probes.json');
     });
 });
