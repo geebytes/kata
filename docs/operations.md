@@ -322,7 +322,7 @@ kata-cli ledger status   --change <id> --cost                 # per claim, plus 
   `ask` reaches this state. The ledger does not notice — a stale answer still satisfies the discovery floor — so the refusal
   comes from the rule above, *a verdict does not outlive its content*, applied by a reader. Until this is repaired the only
   in-task mitigation is additive: re-run `ask` with a larger `--per-claim` so fresh ids are appended against the current
-  subject, and answer those. See `design/2026-10-05-probe-answers-outlive-their-revision.md`.
+  subject, and answer those. See `superpowers/reports/2026-10-06-probe-answers-outlive-their-revision.md`.
 
 **Repairing.** A repair changes content, the sealed revision derives from content, and a verdict is bound to the revision
 it was recorded against — so **sealing after each repair buys a round per repair**. Repair everything one revision can
