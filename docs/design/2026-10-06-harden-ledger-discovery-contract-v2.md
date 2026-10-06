@@ -297,3 +297,26 @@ The fourth independent round could not falsify eight of the eleven repairs and f
 Three cases and two assertions carry this round. Full suite: 264 files / 1572 tests.
 
 **What four rounds say about the shape.** Each round found the same class one layer further out — a reader, then a writer, then a report, then the view a report is built from — and each round's fix was one layer up from the previous one: per-reader, then per-decision, then per-verb, and now **one gate at the boundary plus one input to the decision**. The rule that emerged and is worth keeping is not "check the container" but: *an absence and an unreadable file must not be representable by the same value anywhere a decision or a report reads it.*
+
+### 9.4 The fifth round: the container was checked, the elements were not
+
+The fifth independent round could not falsify any of the fourteen repairs in place and found the class one layer in again —
+**inside** the elements: the outer container answered its type while a nested field did not. Its four findings, and the
+single mechanism that now covers them:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| `challenges.resolution: null` (major, AC-1) | the optional nested field had no shape check, so the record passed the scan, `malformedFiles` stayed empty, the boundary gate did not fire, and `discoveryProjection` dereferenced it — a `TypeError` out of `decide`, navigation, repair-entry and distill-gates alike | the field spec carries a **shape** per field (`record`, `stringArray`, `recordArray`, `boolean`, `string`, `number`), checked by the same `records()` the scan and every writer use |
+| a rejected policy (major, AC-1) | `policyRejected` was reported in its own field while the view handed consumers `defaultPolicy()`: a stored ceiling of `security` was delivered as `strict`, and `ledger plan` wrote a plan under the substituted rule | the rejected policy joins `malformedFiles` and `malformedReasons`, so the boundary gate and `status` both name it — the two answers to one question become one |
+| `plan.readingSets[].paths` (minor, AC-1) | `decodePlan` checked only `claimId`, so a set without `paths` reached `focus` and threw | `paths`, `types` and `minimumStrength` are **required shapes**: the consumers dereference them, so an absent one is not a usable record |
+| `usage` fields (minor, AC-1) | only the container was checked: `{"usage": 42}` was delivered as the usage record, and `{"assuranceHistory": "zzz"}` was spread by `ensureAssurance` into three fabricated history entries written back into the store of record | the usage document's fields carry shapes too |
+
+**Measured after commit `2059798`** (same method): removing the resolution shape, the reading-set `paths` requirement, the
+usage field shapes, or the policy's membership in `malformedFiles` each reddens `tests/unit/ledger-record-read-state.test.ts`
+and restoring the file returns the committed SHA-256. Seven cases carry this round. Full suite: 264 files / 1579 tests.
+
+**One deliberate limit, recorded rather than implied.** `resolution.observed` is *not* required: a terminal record whose
+observation is absent is the discovery floor's own refusal ("an attempt that decided nothing"), and that contract belongs to
+the change that owns it. This boundary insists only that a resolution that *is* present answers the type it declares. The
+first attempt required it and broke that change's case — the honest reading of the conflict is that the finer refusal is not
+this change's to take away.
