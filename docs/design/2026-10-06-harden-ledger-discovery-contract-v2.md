@@ -320,3 +320,24 @@ observation is absent is the discovery floor's own refusal ("an attempt that dec
 the change that owns it. This boundary insists only that a resolution that *is* present answers the type it declares. The
 first attempt required it and broke that change's case — the honest reading of the conflict is that the finer refusal is not
 this change's to take away.
+
+### 9.5 The sixth round: the last two consumers, and the write path
+
+The sixth independent round could not falsify the eighteen repairs in place and reported three items — the class's last
+consumer layer, the write path, and a comment that described a coercion the code does not perform:
+
+| finding | what was wrong | repair |
+| --- | --- | --- |
+| the two consumers of `unsupportedClaims` (major, AC-1) | `openLedgerProblems` asks the readability predicate first, but the change record's `findings` and the archive's known-problem read called the projection directly — so an unreadable ledger became `findings: []` and `0 problems` | the projection asks the one predicate itself and refuses with the files named; absence stays a fact (`[]`), not a refusal |
+| `writePolicy` (minor, AC-2) | `policy.json` is validated through its reader's schema, but it was in neither table the single write entry point consulted, so the one writer that persists it could store a policy every reader then refuses | the write entry point validates reader-validated artefacts too |
+| the `records` comment and `recordElements` (nit) | the comment claimed non-string fields were coerced to `''`, non-object elements dropped and non-array documents passed through; the implementation throws for all three. `recordElements` had no callers | the comment describes what the code does; the dead function is gone |
+
+**Measured after commit `0ac0455`:** removing the projection's refusal reddens `tests/unit/ledger-record-read-state.test.ts`;
+removing the write-path validation reddens `tests/unit/discovery-floor-fail-closed.test.ts`; both restore to the committed
+SHA-256. Two cases carry this round. Full suite: 264 files / 1582 tests.
+
+**A note on the round count.** Six rounds found the same class one layer out, and four of them paid for a repair that
+closed a layer rather than the class — the mechanism was right and the sequencing was not. The rule this change leaves
+behind, in the reviewer's own words, is the invariant, not the sites: *an absence and an unreadable file must not be
+representable by the same value anywhere a decision or a report reads it* — and when a round names a class, the class is
+closed in one pass before the next seal, because every partial repair costs a full independent round.
