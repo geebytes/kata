@@ -418,9 +418,12 @@ export function decide(input: DecideInput): Decision {
     }
 
     // 6. Discovery floor: a tier at or above medium must have had at least one independent challenge, and it must
-    //    have actually run. A terminal state alone is only a declaration; `verifiedChallenges` requires the persisted
-    //    non-blank observation produced by that execution. It does not require a current counterexample: that historical
-    //    fact belongs to `reproduced`, while discovery proves an independent attempt to refute.
+    //    have actually run. A terminal state alone is only a declaration; `verifiedChallenges` requires a challenge bound
+    //    to a falsifier the ledger *declares*, whose resolution names that same falsifier at the current revision with a
+    //    `supported` verdict, and for which `verdicts.json` holds a matching supported run — the store's own record that a
+    //    verifier executed. It deliberately does not read `resolution.observed`: that text is written by the party under
+    //    review, so it is audit history rather than a measurement. Nor does it require a current counterexample: that
+    //    historical fact belongs to `reproduced`, while discovery proves an independent attempt to refute.
     if (input.tier !== 'standard' && input.discovery.independentChallenges === 0) {
         reasons.push(reason('discovery_floor', REASON_MESSAGES.discovery_floor.message));
         // **The step, not only the state.** These five refusals were `reasons` non-empty with an empty `deficits` list, which

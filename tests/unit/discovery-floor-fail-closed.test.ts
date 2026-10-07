@@ -69,11 +69,24 @@ async function ledgerWithChallenge(
         dependsOn: ['path:src/a.ts'],
     }));
     await appendEvidence(root, changeId, makeEvidence({ id: 'E1', ref: 'src/a.ts', assertion: 'contains:holds' }));
-    await recordVerdicts(root, changeId, [makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: frozen.subject.revision })]);
+    // **The declared falsifier, because the floor only counts a challenge bound to one.** `E1` above is a `static_witness`,
+    // which `ledgerVerdict` never offers the projection as a declared falsifier, so a fixture with only that item can build
+    // the refusals but not the satisfied state. `E2` is the item a challenge has to name.
+    await appendEvidence(root, changeId, makeEvidence({ id: 'E2', type: 'executable_falsifier' }));
+    await recordVerdicts(root, changeId, [
+        makeVerdict({ evidenceId: 'E1', verdict: 'supported', subjectRevision: frozen.subject.revision }),
+        makeVerdict({ evidenceId: 'E2', verdict: 'supported', subjectRevision: frozen.subject.revision }),
+    ]);
     if (options.stored !== undefined) {
         await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), `${JSON.stringify([options.stored], null, 2)}\n`);
     } else if (challenge !== null) {
-        await appendChallenge(root, changeId, challenge);
+        // The `current` sentinel: a case that wants the satisfied state cannot name the revision before the fixture freezes it,
+        // and a case that wants the *unsatisfied* state needs to be able to pass a stale one. Both are spelled here rather
+        // than by guessing, so no case tests its own guess about which revision it is on.
+        const bound = challenge.resolution?.subjectRevision === 'current'
+            ? { ...challenge, resolution: { ...challenge.resolution, subjectRevision: frozen.subject.revision } }
+            : challenge;
+        await appendChallenge(root, changeId, bound);
     } else if (options.answers === undefined) {
         throw new Error('the fixture must pass a challenge, a record to store, or the answers to store');
     }
@@ -209,12 +222,43 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(verdict.kind === 'unreadable' ? verdict.detail : '').toContain('probe-answers.json');
     });
 
-    it('clears discovery for a terminal record that recorded an observation, without any counterexample history', async () => {
+    it('clears discovery for a terminal challenge that reproduces a declared falsifier, without any counterexample history', async () => {
+        // **The satisfied state, end to end — the half this suite was missing.** A terminal challenge that names the ledger's
+        // declared `executable_falsifier`, whose resolution binds that same falsifier at the frozen revision, and for which
+        // the ledger holds a `supported` recorded verdict, *is* a reading: the floor is met, `discovery_unverified` is not
+        // raised, and `challenge_open` is absent because there is no counterexample history to reproduce.
+        //
+        // The fixture stamps the resolution with the revision it just froze (the `current` sentinel), because that is the only
+        // revision `challenge check` can bind: a fixture that guessed a revision would test its own guess instead.
+        const { codes, deficits } = await ledgerWithChallenge({
+            ...base,
+            falsifierEvidenceId: 'E2',
+            state: 'withdrawn',
+            resolution: {
+                at: '2026-10-05T00:01:00.000Z',
+                observed: 'exit 0 when checked against the frozen revision',
+                falsifierEvidenceId: 'E2',
+                verdict: 'supported',
+                subjectRevision: 'current',
+            },
+        });
+        expect(codes).not.toContain('discovery_floor');
+        expect(codes).not.toContain('discovery_unverified');
+        expect(codes).not.toContain('challenge_open');
+        expect(deficits.filter((entry) => entry.claimId.startsWith('discovery:'))).toEqual([]);
+    });
+
+    it('does not clear discovery for a free-form terminal record, however non-blank its observation', async () => {
+        // The case that used to sit here asserted this *cleared* discovery. It cannot any more, and that is the change: the
+        // observation is free text the reviewed party wrote, so the projection does not read it — a record that names no
+        // declared falsifier is not a reading no matter what its `observed` says. Kept as the regression, because a case
+        // that only asserted the absence of two other codes would stay green if the answer loop came back.
         const { codes } = await ledgerWithChallenge({
             ...base,
             state: 'withdrawn',
             resolution: { at: '2026-10-05T00:01:00.000Z', observed: 'exit 0 when checked against rev:whatever' },
         });
+        expect(codes).toContain('discovery_floor');
         expect(codes).not.toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
     });

@@ -316,9 +316,10 @@ const STRING_FIELDS = {
         // there is not "no resolution yet", it is a record that does not answer the type it declares.
         shapes: {
             // `at` is required because `amendChallenge` and the unbind path write it back into a field typed `string`.
-            // `observed` deliberately is not: a terminal record whose observation is absent is the discovery floor's own
-            // refusal ("an attempt that decided nothing"), and that contract belongs to the change that owns it — this
-            // boundary only insists that a resolution *present* answers the type it declares.
+            // `observed` deliberately is not: the projection does not read it at all — it reads the falsifier binding, the
+            // resolution's verdict and revision, and the recorded run in `verdicts.json` — so a resolution that carries no
+            // observation still answers this type. This boundary only insists that a resolution *present* answers the type it
+            // declares.
             resolution: { kind: 'record', required: ['at'], optional: ['observed', 'falsifierEvidenceId', 'subjectRevision', 'verdict'] },
             reproduced: { kind: 'boolean' },
         },
@@ -405,8 +406,9 @@ function checkShape(file: string, where: string, field: string, value: unknown, 
  *
  * Three review rounds in a row found the same defect: a consumer trusted the type, dereferenced a field the file did not
  * have, and threw — turning a promised refusal into a crash on every surface that reads the ledger. Guarding each
- * consumer is what produced the series (the challenge half of the discovery count, then its probe half, then
- * `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the consumers: a reader added
+ * consumer is what produced the series (the challenge half of the discovery count, then the probe reader — which the floor no
+ * longer consults at all — then `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the
+ * consumers: a reader added later cannot reintroduce it.
  * later cannot reintroduce it.
  *
  * **The refusal is the point, and this comment used to describe the opposite.** It claimed a non-string field was coerced

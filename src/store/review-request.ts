@@ -15,9 +15,11 @@
  * and a request that named them would put the process back inside the criteria — which is the coupling the clean-sheet
  * design exists to remove. The request is a document a person or any tool can act on.
  *
- * **The check on the way back.** `verifyAgainstRequest` compares the plan with what arrived: every required type has at
- * least one evidence item at or above its strength, and every claim the plan names is present in the ledger. A gap is named
- * rather than scored, for the same reason the decision names its reasons. Probe answers are deliberately **not** checked —
+ * **The check on the way back.** `verifyAgainstRequest` compares the plan with what arrived: every claim the request carries
+ * has evidence of a required type at or above its strength, the kernel's own decision on that claim is not a refusal, and the
+ * planned reading set is present. A gap is named rather than scored, for the same reason the decision names its reasons.
+ * Two limits are deliberate: a claim the plan names but the ledger does not hold is dropped when the request is built (the
+ * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
 import { declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
