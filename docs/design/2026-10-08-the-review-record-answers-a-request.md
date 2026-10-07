@@ -31,6 +31,31 @@ The reported record falls in ③: it **binds** the current revision (`revision-4
 still carries the round's findings and `reviewRoute`, and `review-history.jsonl` gained no row. So the recorded result blocks a
 replacement, and the action the refusal names does not clear it.
 
+## 1b. The first draft of this design was wrong, and an existing guard said so
+
+The first version fixed the deadlock at the re-entry layer: re-entering review would archive the recorded round to
+`review-history.jsonl` and write the placeholder, so the remedy the refusal prints ("re-enter review") would clear the record.
+Implementing it turned two existing cases red —
+
+```
+tests/unit/review-cli-io.test.ts:390
+  never rewrites a recorded empty round back into a placeholder when review is re-entered
+  "The recorded round must survive: a placeholder rewrite would erase the declaration."
+```
+
+— and the comment above them records why they exist (F-3): the *result* face had been tightened to "a placeholder is not a
+result" while the *write* face still tested `findings` is empty, so re-entering over a legitimately empty result silently
+replaced it and the `--result-file` guard then allowed a second round over a record that was already recorded. The decision
+they encode is deliberate: **a recorded round is never replaced by the act of re-entering.**
+
+So the re-entry layer is not where this defect lives, and the refusal's remedy sentence was simply out of date. The fix belongs
+at the recording layer, which is what AC-2 does: the record now says **which request it answered**, and a record that answered a
+different one does not block the answer to this one. Measured against the reported chain, that alone releases it — the second
+round's request had a changed subject (the claims had been restated), so it can be recorded without re-entering anything.
+
+AC-1 was re-stated to pin the deliberate decision instead of contradicting it, and the change's contract was re-opened to carry
+the corrected statement (the record had no revision, no ledger and no review record yet, so nothing was discarded).
+
 ## 2. Why the record cannot tell the two rounds apart
 
 A record's binding is content identity only — measured on the record itself, its fields are `revisionId`, `manifestHash`,
