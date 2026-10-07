@@ -66,7 +66,13 @@ export function isResumableWorkflowCommand(command: string): boolean {
 export async function runWorkflowCommand(command: KataCommand, change: string, root: string, platform?: string, argv: string[] = []): Promise<Record<string, unknown>> {
     const waivers = command === 'build' ? await readWaiversFile(argv) : undefined;
     const inputPhase = await readWorkflowPhase(root, change);
-    const boundary = boundaryForCommand(command, inputPhase);
+    // **A recording invocation is not a boundary crossing.** `review --result-file` submits the outcome of a session that
+    // already crossed this boundary, and the crossing consumed the gate — so demanding a gate here refused every result
+    // submission with "review_gate requires an explicit user choice". Measured on the project that reported the re-entry
+    // deadlock, immediately after the re-entry itself was fixed: verify → approve → review --confirm-host-model worked, and
+    // the round's findings could not be written down. The discriminator is what the invocation *does*, not the phase it
+    // runs in: the invocation that opens the phase crosses the boundary, the one that closes it does not.
+    const boundary = boundaryForCommand(command, inputPhase, { recording: resultFileRequested(argv) });
     if (boundary) await requireUserChoiceGate({ root, taskId: change, boundary });
     // hotfix/tweak and Git-Flow preparation can create or inspect an intake task
     // before an implementer handoff exists. They do not mutate an established
@@ -308,7 +314,13 @@ export function roleForCommand(command: KataCommand): HandoffRole {
  * links were fixed: `verify` rebuilt the gate, `gate approve` accepted it, and `review --confirm-host-model` still refused
  * with "requires explicit user confirmation", because this table said there was no boundary to confirm.
  */
-export function boundaryForCommand(command: KataCommand, phase: string | null): UserChoiceBoundary | null {
+export function boundaryForCommand(
+    command: KataCommand,
+    phase: string | null,
+    options: { recording?: boolean } = {},
+): UserChoiceBoundary | null {
+    // A command that records an outcome is finishing work inside a boundary it already crossed, so it asks for nothing.
+    if (options.recording) return null;
     if (command === 'build' && phase === 'plan') return 'implementation_gate';
     if (command === 'review' && (phase === 'hardVerify' || phase === 'review')) return 'review_gate';
     if (command === 'judge' && (phase === 'review' || phase === 'judge')) return 'judge_gate';

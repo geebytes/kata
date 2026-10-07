@@ -122,6 +122,30 @@ instead of being declared fixed.
 reported project's own content, so the state it reached was `review` with a fresh gate — the state this change exists to make
 reachable.
 
+## 5c. The fifth link: the invocation that *closes* the phase is not crossing the boundary
+
+Fixing §5b made re-entry work, and immediately exposed the other half of the same table. Measured on the reported project:
+`verify → gate approve → review --confirm-host-model` succeeded, and then the round's outcome could not be recorded at all —
+
+```
+kata-cli review --result-file tmp/review-result-r11.json
+→ review_gate requires an explicit user choice before continuing
+```
+
+Two invocations of one command in one phase, and the table could not tell them apart. `boundaryForCommand(command, phase)`
+answers "which boundary does this command ask for **in this phase**", and the entry invocation consumed the gate, so the
+invocation that *submits the result* was treated as crossing a boundary that had already been crossed.
+
+The discriminator is what the invocation **does**, not the phase it runs in: the invocation that opens the phase crosses the
+boundary, the one that closes it records the outcome of a session that already crossed. So `boundaryForCommand` takes a
+`recording` option, `runWorkflowCommand` passes `resultFileRequested(argv)`, and a recording invocation asks for no boundary —
+for `review`, `judge` and `archive` alike, since they all have the same two halves.
+
+The regression is pinned as a **chain**, because the defect lived in the join between two invocations and no single-invocation
+test could see it: the entry asks for the boundary, the recording invocation does not, and the recording invocation is driven
+through `runWorkflowCommand` with `--result-file` so the refusal would surface where the operator met it. Falsifier: removing
+the `recording` short-circuit reproduces the reported message verbatim in both cases.
+
 ## 6. Rejected alternatives
 
 - **Change `cmdVerify` to report `hardVerify`.** It would make the table match, by making a command report a phase it did not

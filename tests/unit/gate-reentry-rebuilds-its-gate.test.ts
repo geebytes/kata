@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { boundaryCreatedBy, createUserChoiceGate } from '../../src/workflow/user-choice-gate.js';
-import { boundaryForCommand } from '../../src/cli/workflow.js';
+import { boundaryForCommand, runWorkflowCommand } from '../../src/cli/workflow.js';
 import { gateFixture, type GateFixture } from '../helpers/gate-fixture.js';
 
 /**
@@ -48,6 +48,38 @@ describe('a task in review can re-enter it', () => {
         // The implementation choice belongs to `plan`; a task in `implement` has already made it.
         expect(boundaryForCommand('build', 'implement')).toBeNull();
         expect(boundaryForCommand('verify', 'review')).toBeNull();
+    });
+
+    it('does not treat a recording invocation as a boundary crossing, so a round can be written down', async () => {
+        // The full chain the reported project needed, at the level the refusal happened: the entry invocation asks for the
+        // boundary, the one that submits the result does not. Measured after the re-entry itself was fixed: verify →
+        // approve → review --confirm-host-model worked, and `review --result-file` then demanded a gate the entry had
+        // already consumed, so a round's findings could not be recorded at all.
+        expect(boundaryForCommand('review', 'hardVerify')).toBe('review_gate');
+        expect(boundaryForCommand('review', 'review')).toBe('review_gate');
+        expect(boundaryForCommand('review', 'review', { recording: true })).toBeNull();
+        expect(boundaryForCommand('review', 'hardVerify', { recording: true })).toBeNull();
+        // The other commands that record an outcome behave the same way rather than only `review`.
+        expect(boundaryForCommand('judge', 'judge', { recording: true })).toBeNull();
+        expect(boundaryForCommand('archive', 'archive', { recording: true })).toBeNull();
+    });
+
+    it('submits a result after entering review without being asked for the gate again', async () => {
+        await fixture.consumedGate();
+        // What the CLI does on entry, then what it does when the round's outcome arrives.
+        const entry = boundaryForCommand('review', 'review');
+        expect(entry).toBe('review_gate');
+
+        // The recording invocation goes through the same entry point the CLI uses, so the refusal this change is about
+        // would surface here as a thrown gate error rather than as a later failure.
+        const recorded = await runWorkflowCommand(
+            'review',
+            fixture.taskId,
+            fixture.root,
+            undefined,
+            ['review', '--result-file', 'tmp/does-not-exist.json'],
+        ).catch((error: Error) => error.message);
+        expect(String(recorded)).not.toContain('requires an explicit user choice');
     });
 
     it('replaces a consumed gate with a fresh one, and the fresh one can be answered', async () => {
