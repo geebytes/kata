@@ -161,4 +161,21 @@ describe('a probe answer bound to the question it answers', () => {
         // Nothing was written at all: a refused answer leaves no record behind.
         expect((await readLedger(root, changeId)).recordedFiles).not.toContain('probe-answers.json');
     });
+
+    it('does not call an answer a reading in the note it prints when it asks', async () => {
+        // **The user-visible half of the retirement.** Every other surface in this codebase says an answer is audit history
+        // that satisfies no gate; the note `ledger ask` prints still ended "one question answered twice is one reading",
+        // which is the sentence a reviewer reads to decide what an answer is for. The de-duplication it describes is real
+        // (the same question is not asked twice), so the case asserts that stays true and that the reading claim is gone.
+        await declareClaim();
+        const asked = await ledger(['ask', '--per-claim', '2', '--seed', 'fixed']);
+        const note = String(asked.note ?? '');
+        expect(note).toContain('not asked again');
+        expect(note).not.toMatch(/one question answered twice is one reading/);
+        // The dead reader is gone, not merely unused: a second convenience reader beside the state-returning one is how a
+        // caller that needs the three states ends up with a copy that answers `[]` for a file it could not read.
+        const ledgerModule = await import('../../src/store/ledger.js');
+        expect(Object.keys(ledgerModule)).not.toContain('readProbeAnswers');
+        expect(Object.keys(ledgerModule)).toContain('readProbeAnswersState');
+    });
 });

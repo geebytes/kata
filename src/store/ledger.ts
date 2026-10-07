@@ -547,11 +547,6 @@ export async function readProbeAnswersState(root: string, changeId: string): Pro
     return readArtefact(root, changeId, FILES.probeAnswers, (value) => records<ProbeAnswer>(FILES.probeAnswers, value, STRING_FIELDS.answers));
 }
 
-export async function readProbeAnswers(root: string, changeId: string): Promise<ProbeAnswer[]> {
-    const read = await readProbeAnswersState(root, changeId);
-    return read.kind === 'usable' ? read.value : [];
-}
-
 export type LedgerRun = { at: string; producer: string; claims: number; evidence: number; diversity: string; /** Why this write happened, when it is a correction rather than an addition. */ note?: string };
 
 export type Ledger = {

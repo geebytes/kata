@@ -45,8 +45,17 @@ export type ReviewRequest = {
     /** The one number the brief has always carried: derived from the recorded baseline, `null` when there is none. */
     deadlineToolCalls: number | null;
     claims: ClaimRequest[];
-    /** The probes a reviewer must answer, when any were asked. */
+    /** The probes a reviewer must answer, when any were asked — and only those asking about this revision. */
     probes: Array<{ id: string; claimId: string; command: string }>;
+    /**
+     * **The questions this request did not hand over, because they ask about another revision.**
+     *
+     * A probe keeps the revision it was derived from, so a stored set is a history: when the content moves, a question can
+     * survive whose expected digest no longer describes the file it names. Handing that over asks the reviewer to do work
+     * that cannot succeed. Present only when non-empty, the same shape as `unreadableArtefacts`: an absent field means the
+     * brief withheld nothing, and an entry here means the reviewer is looking at a request built around a hole.
+     */
+    withheldProbes?: Array<{ id: string; claimId: string; subjectRevision: string | null }>;
     note: string;
 };
 
@@ -143,6 +152,24 @@ export async function buildReviewRequest(input: {
     // artefacts that could not be read travel with the request now, so the reviewer sees the state rather than an absence.
     const probesRead = await readProbesState(input.root, input.changeId);
     const probes = probesRead.kind === 'usable' ? probesRead.value : [];
+    // **A request asks about one revision.** A stored question keeps the revision it was derived from, so the set is a
+    // history: the same id can survive a move and ask about a digest the file no longer has — measured, a request built at
+    // `rev:7ea2ab14145fe8c5` still handed the reviewer two questions stored against `rev:93208fecfaab9f0b`, one of them
+    // expecting a prefix the file had lost. A question that cannot be answered truthfully is not handed over, and the
+    // withholding is named rather than silent: an empty `probes` array would otherwise read as "nothing was asked".
+    // The same rule `ledger ask` uses for "already asked": only a question bound to the current revision is current.
+    // Read into a local because the narrowing above is a property access: TypeScript drops it inside a callback, and the
+    // callbacks below are where it is needed.
+    const currentRevision = ledger.subject.revision;
+    const currentProbes = probes.filter((probe) => probe.subjectRevision === currentRevision);
+    const withheldProbes = probes
+        .filter((probe) => probe.subjectRevision !== currentRevision)
+        .map((probe) => ({
+            id: probe.id,
+            claimId: probe.claimId,
+            // `null` is a record written before a probe carried the revision at all: it cannot be shown to be current.
+            subjectRevision: typeof probe.subjectRevision === 'string' ? probe.subjectRevision : null,
+        }));
     const unreadableArtefacts = [...new Set([
         ...(probesRead.kind === 'unreadable' ? [probesRead.file] : []),
         ...ledger.malformedFiles,
@@ -165,7 +192,10 @@ export async function buildReviewRequest(input: {
                 readingSet: readingById.get(claim.id) ?? [],
                 requiredEvidence: requiredById.get(claim.id) ?? { types: [], minimumStrength: 0 },
             })),
-            probes: probes.map((probe) => ({ id: probe.id, claimId: probe.claimId, command: probe.command })),
+            probes: currentProbes.map((probe) => ({ id: probe.id, claimId: probe.claimId, command: probe.command })),
+            // Present only when something was withheld, for the same reason `unreadableArtefacts` is: an absent field means
+            // the brief describes a question set that was fully current.
+            ...(withheldProbes.length === 0 ? {} : { withheldProbes }),
             note: 'the reading set comes from the plan, the deadline from the recorded baseline, and the probes from the ledger; a request carries no platform, session or model, because those are the assurance axis and not a criterion',
         },
     };

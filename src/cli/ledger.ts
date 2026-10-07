@@ -610,7 +610,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             asked,
             repeated,
             skipped,
-            note: 'each probe is answered once; a re-answer is refused, so a reviewer cannot try until something passes. A question already asked — by this run or by an earlier one — is not asked again, because one question answered twice is one reading'
+            note: 'each probe is answered once; a re-answer is refused, so a reviewer cannot try until something passes. A question already asked — by this run or by an earlier one — is not asked again, because one question answered twice is one question. An answer is audit history: it satisfies no gate, so the questions are asked for the record rather than for a count'
         });
         return;
     }

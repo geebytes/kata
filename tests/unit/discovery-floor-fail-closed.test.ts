@@ -296,11 +296,21 @@ describe('the discovery floor keeps refusing what did not run', () => {
     });
 
     it('still reads a legacy resolved challenge, so a pre-existing record is not silently demoted', async () => {
+        // **The positive half this case was missing.** It asserted only that two *other* refusal codes were absent, and a
+        // reader that silently **dropped** the record produces exactly the same codes: a legacy `resolved` record carries no
+        // falsifier, so it is not an attempt either way, and `discovery_floor` is raised in both worlds. Read versus dropped
+        // is what the title claims, so that is what is asserted: the record is in the ledger, the decision is a decision
+        // rather than an unreadable refusal, and the floor still refuses it because nothing declared a defect for it.
         const { codes } = await ledgerWithChallenge({
             ...base,
             state: 'resolved',
             resolution: { at: '2026-10-05T00:01:00.000Z', observed: 'exit 1 when checked against rev:whatever' },
         });
+        const read = await readLedger(root, changeId);
+        expect(read.challenges.map((challenge) => challenge.id)).toContain('X1');
+        const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
+        expect(verdict.kind).toBe('decided');
+        expect(codes).toContain('discovery_floor');
         expect(codes).not.toContain('discovery_unverified');
         expect(codes).not.toContain('challenge_open');
     });

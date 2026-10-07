@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
+import type { Probe } from '../../src/kernel/discovery.js';
 import { appendClaim, appendEvidence, appendProbe, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { createTask } from '../../src/core/task.js';
@@ -25,6 +26,12 @@ import type { Claim } from '../../src/kernel/types.js';
 let root: string;
 const changeId = 'request-fixture';
 
+
+/**
+ * **A record written before a probe carried the revision it asked about.** The reader has to tolerate that shape, so the
+ * fixture has to be able to produce it — the type says the field is required, the artefact has no schema that enforces it.
+ */
+const legacyProbe = (probe: Omit<Probe, 'subjectRevision'>): Probe => probe as Probe;
 async function scratch(): Promise<string> {
     root = await mkdtemp(join(tmpdir(), 'kata-request-'));
     await initLayout(root);
@@ -120,6 +127,44 @@ describe('a review request is handed over and checked, rather than hoped for', (
         for (const word of ['platform', 'sessionid', 'model', 'receipt', 'executor', 'provenance']) {
             expect([...keys], `a request naming ${word} puts the process back inside the criteria`).not.toContain(word);
         }
+    });
+
+    it('withholds a question stored against another revision, and names what it withheld', async () => {
+        // **A request asks about one revision.** The stored question set is a history: a probe keeps the revision it was
+        // derived from, so when the content moves the same id can come back asking about a digest the file no longer has.
+        // Handing that over asks a reviewer to do work that cannot succeed. It is withheld rather than deleted — and named,
+        // because an empty `probes` array would otherwise read as "nothing was asked".
+        const { subjectRevision } = await planned();
+        await appendProbe(root, changeId, {
+            id: 'P2-C1',
+            claimId: 'C1',
+            kind: 'digest-prefix',
+            path: 'src/a.ts',
+            prefix: 'deadbeef',
+            command: 'grep -q deadbeef src/a.ts',
+            askedAt: '2026-09-27T00:00:00.000Z',
+            subjectRevision: 'rev:superseded',
+        });
+        // A legacy record: written before a probe carried the revision it asked about at all. It cannot be shown to be
+        // current, so it is withheld for the same reason, with `null` standing for "this record does not say".
+        await appendProbe(root, changeId, legacyProbe({
+            id: 'P3-C1',
+            claimId: 'C1',
+            kind: 'file-exists',
+            path: 'src/a.ts',
+            command: 'test -f src/a.ts',
+            askedAt: '2026-09-27T00:00:00.000Z',
+        }));
+
+        const built = await buildReviewRequest({ root, changeId });
+        expect(built.ok).toBe(true);
+        if (!built.ok) return;
+        expect(built.request.subjectRevision).toBe(subjectRevision);
+        expect(built.request.probes.map((probe) => probe.id)).toEqual(['P1-C1']);
+        expect(built.request.withheldProbes).toEqual([
+            { id: 'P2-C1', claimId: 'C1', subjectRevision: 'rev:superseded' },
+            { id: 'P3-C1', claimId: 'C1', subjectRevision: null },
+        ]);
     });
 
     it('refuses to hand over anything when no plan has been stored', async () => {
