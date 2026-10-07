@@ -16,8 +16,9 @@
  * design exists to remove. The request is a document a person or any tool can act on.
  *
  * **The check on the way back.** `verifyAgainstRequest` compares the plan with what arrived: every required type has at
- * least one evidence item, the reading set was not exceeded by what the reviewer cited, and the probes were answered. A
- * gap is named rather than scored, for the same reason the decision names its reasons.
+ * least one evidence item at or above its strength, and every claim the plan names is present in the ledger. A gap is named
+ * rather than scored, for the same reason the decision names its reasons. Probe answers are deliberately **not** checked —
+ * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
 import { declaredPaths, freezeSubject, readProbes, readLedger, readPlan, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';

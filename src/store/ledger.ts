@@ -93,7 +93,7 @@ const ARTEFACTS_WITHOUT_A_SCHEMA: Record<string, string> = {
     'challenges.json': 'internal: read through `readLedger` into `Challenge[]` and consumed only by `decide`, which is pure and typed',
     'verdict-history.jsonl': 'line-delimited, not a JSON document: the history is an audit trail appended one entry per line',
     'probes.json': 'internal: derived deterministically from the claims and read only by `ask`/`answer`',
-    'probe-answers.json': 'internal: the reviewer’s own answers, read only by the discovery count',
+    'probe-answers.json': 'internal: the reviewer’s own answers, kept as audit history — no gate reads them, because the discovery counts derive from challenges alone',
     'usage.json': 'internal: two counters the cost report reads, with `null` for anything unmeasured',
     'runs.json': 'internal: the write log the cost report and the quorum read, through `records` like every other file here',
     'plan.json': 'internal: the plan the operator was handed, read back by `focus` through the planner’s own type',
