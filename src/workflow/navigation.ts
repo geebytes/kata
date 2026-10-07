@@ -30,9 +30,24 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, readReviewRoundsState, type ReviewLoopAssessment } from '../quality/repair.js';
-import { readRecordState, usableOrNull } from '../core/record-read.js';
+import { isJsonRecord, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
+type AcceptanceItem = { result?: string; repairScope?: string };
+type AcceptanceRecord = { acceptance?: AcceptanceItem[] };
+
+/**
+ * The status reader consumes `acceptance` immediately below. A JSON object is not necessarily a usable judge/verify
+ * record: its nested collection needs the same shape boundary as the outer record, or a corrupt persisted value reaches
+ * `.filter()` and turns a reportable refusal into a TypeError.
+ */
+function isAcceptanceRecord(value: Record<string, unknown>): value is AcceptanceRecord {
+  const acceptance = value.acceptance;
+  if (acceptance === undefined) return true;
+  return Array.isArray(acceptance) && acceptance.every((item) => isJsonRecord(item)
+    && (item.result === undefined || typeof item.result === 'string')
+    && (item.repairScope === undefined || typeof item.repairScope === 'string'));
+}
 export type UpstreamSummary = {
   currentRevisionId?: string;
   reviewFindings: number;
@@ -293,14 +308,14 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     reviewRounds,
   });
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
-  const judgeRead = await readRecordState<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId));
+  const judgeRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string }>(judgePath(root, taskId), isAcceptanceRecord);
   const judge = mixedRevision
     ? null
     : currentRevisionId
       ? onlyCurrentRevision(usableOrNull(judgeRead), binding)
       : usableOrNull(judgeRead);
   const failedAcceptance = judge?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
-  const verifyRead = await readRecordState<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId));
+  const verifyRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string }>(verifyPath(root, taskId), isAcceptanceRecord);
   const verify = mixedRevision
     ? null
     : currentRevisionId

@@ -65,6 +65,29 @@ describe('every record the summary reads separates absence from unreadable', () 
         });
     }
 
+    for (const { file, field } of [
+        { file: 'judge.json', field: 'judgeUnreadable' },
+        { file: 'verify.json', field: 'verifyUnreadable' },
+    ] as const) {
+        it(`publishes ${file} whose acceptance is not a record array as unreadable`, async () => {
+            await writeFile(join(root, '.kata', 'tasks', taskId, file), `${JSON.stringify({ acceptance: 'not-an-array' })}\n`);
+
+            const upstream = await readUpstreamSummary(root, taskId);
+
+            expect(fieldOf(upstream, field)).toContain(file);
+            expect(upstream.reviewFindings).toBeGreaterThanOrEqual(1);
+        });
+
+        it(`publishes ${file} whose acceptance member is not a record as unreadable`, async () => {
+            await writeFile(join(root, '.kata', 'tasks', taskId, file), `${JSON.stringify({ acceptance: [null] })}\n`);
+
+            const upstream = await readUpstreamSummary(root, taskId);
+
+            expect(fieldOf(upstream, field)).toContain(file);
+            expect(upstream.reviewFindings).toBeGreaterThanOrEqual(1);
+        });
+    }
+
     it('keeps an evidence file it cannot read and names it, instead of dropping it', async () => {
         await writeFile(join(root, '.kata', 'evidence', `${taskId}-hard.json`), '{ this is not JSON\n');
 

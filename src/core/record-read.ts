@@ -17,7 +17,12 @@ export type RecordRead<T> =
     | { kind: 'usable'; value: T }
     | { kind: 'unreadable'; detail: string };
 
-export async function readRecordState<T>(path: string): Promise<RecordRead<T>> {
+/** A caller-defined semantic shape for a JSON object record. */
+export function isJsonRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+export type RecordShape<T extends Record<string, unknown>> = (value: Record<string, unknown>) => value is T;
+export async function readRecordState<T extends Record<string, unknown>>(path: string, shape?: RecordShape<T>): Promise<RecordRead<T>> {
     let raw: string;
     try {
         raw = await readFile(path, 'utf8');
@@ -31,8 +36,11 @@ export async function readRecordState<T>(path: string): Promise<RecordRead<T>> {
     } catch (error) {
         return { kind: 'unreadable', detail: `${basename(path)} is not valid JSON (${(error as Error).message})` };
     }
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    if (!isJsonRecord(parsed)) {
         return { kind: 'unreadable', detail: `${basename(path)} is not a JSON object` };
+    }
+    if (shape !== undefined && !shape(parsed)) {
+        return { kind: 'unreadable', detail: `${basename(path)} has an invalid record shape` };
     }
     return { kind: 'usable', value: parsed as T };
 }

@@ -68,6 +68,11 @@ export async function readRecordState<T>(path: string): Promise<RecordRead<T>>;
 a detail that names the file. This is the vocabulary the family already uses (`ArtefactRead`, `CurrentRevisionRead`,
 `InitiativeReadState`), so no new concept is introduced.
 
+The reader therefore accepts an optional semantic shape guard. A parsed object is only `usable` after that guard accepts it; a
+nested value a consumer will immediately dereference (for example `judge.json.acceptance`) is part of the record's shape,
+not an unchecked payload. This keeps a parseable but malformed record from escaping the reader and crashing a later
+consumer instead of becoming a named refusal.
+
 ### 3.2 The summary publishes each one
 
 `navigation.ts` drops its local `readJsonFile` and reads through `readRecordState`. Each unreadable record is published
@@ -125,7 +130,7 @@ Each row has its own selector, so no two acceptance criteria can collapse into o
 | AC | selector | the mutation that must redden it |
 | --- | --- | --- |
 | AC-1 union | `tests/unit/workflow-navigation.test.ts` | restore `blockingRead.ok ? blockingRead.openProblems : unreadableProblems` |
-| AC-2 three-state reads | `tests/unit/summary-publishes-every-unreadable-record.test.ts` (new) | make `readRecordState` answer `absent` on a parse error |
+| AC-2 three-state reads | `tests/unit/summary-publishes-every-unreadable-record.test.ts` (new) | bypass the acceptance-record semantic guard, so a parseable nested-shape error reaches `.filter()` instead of publishing unreadable |
 | AC-3 both refusals | `tests/unit/both-refusals-are-published.test.ts` (new) | derive `reviewHistoryUnreadable` from the assessment's `kind` again |
 | AC-4 absence and routes | `tests/unit/summary-carries-its-read.test.ts` | publish a refusal for a record that is merely missing |
 
