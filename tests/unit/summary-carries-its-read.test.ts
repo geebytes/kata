@@ -79,6 +79,22 @@ describe('the summary carries its own read into the review reader', () => {
         expect(second.reason).toBe(clean.reason);
         expect(second.reason).not.toBe('unreadable_review_record');
     });
+
+    it('does not turn a record nobody wrote into a refusal, and does not move the route', async () => {
+        // `seed()` writes no judge.json, no verify.json and no evidence files: those are absences, and an absence is a
+        // normal state. A reader that answered "unreadable" for ENOENT would put a refusal on every change in review, and
+        // the route below would change with it — which is why the route is asserted here rather than only the fields.
+        const upstream = await readUpstreamSummary(root, taskId);
+
+        expect(upstream.judgeUnreadable).toBeUndefined();
+        expect(upstream.verifyUnreadable).toBeUndefined();
+        expect(upstream.evidenceUnreadable).toBeUndefined();
+        expect(upstream.taskUnreadable).toBeUndefined();
+        expect(upstream.reviewFindings).toBe(0);
+        // Pinned rather than compared to itself: "the route did not move" is a claim about a value, and this is the value
+        // the summary routes to for this fixture today.
+        expect(suggestCandidateAction('review', upstream).reason).toBe('complete_review_conclusion');
+    });
 });
 
 describe('the summary hands its ledger read to every reader that needs one', () => {

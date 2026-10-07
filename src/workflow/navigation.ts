@@ -30,6 +30,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, readReviewRoundsState, type ReviewLoopAssessment } from '../quality/repair.js';
+import { readRecordState, usableOrNull } from '../core/record-read.js';
 
 
 export type UpstreamSummary = {
@@ -55,6 +56,12 @@ export type UpstreamSummary = {
   /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
   /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
+  /**
+   * Whether the review-round history could not be read.
+   *
+   * Derived from the round read itself, not from `reviewLoop`: that assessment answers one `kind`, so with the pointer and
+   * the round log both unreadable it could only ever report one of them. Routing still reads the assessment, not this.
+   */
   reviewHistoryUnreadable?: boolean;
   /** Why the recorded review could not be read, when it could not be. */
   reviewRecordUnreadable?: string;
@@ -66,7 +73,21 @@ export type UpstreamSummary = {
    * reads this has to be able to tell which artefact to repair.
    */
   ledgerUnreadable?: string;
-  /** @deprecated Projection of `reviewLoop.unreadable_current_revision`; routing never reads it. */
+  /**
+   * Why one of the summary's own records could not be read, when it could not be.
+   *
+   * These were read through a helper that answered `null` for every failure, so a damaged `judge.json` was reported as a
+   * change that had not been judged — the same shape as the ledger's, one reader further out. Each names its artefact.
+   */
+  judgeUnreadable?: string;
+  verifyUnreadable?: string;
+  taskUnreadable?: string;
+  evidenceUnreadable?: string;
+  /**
+   * Why the sealed pointer could not be read, when it could not be.
+   *
+   * Its own read, for the same reason as the round history's: routing reads `reviewLoop`, this field is the fact.
+   */
   currentRevisionUnreadable?: string;
   missingAcceptanceMatrix?: boolean;
   mixedRevisionEvidence?: boolean;
@@ -196,7 +217,14 @@ export type NextAction = {
 
 export async function readUpstreamSummary(root: string, taskId: string): Promise<UpstreamSummary> {
   const evidenceFiles = await listEvidenceFiles(root, taskId);
-  const evidence = await Promise.all(evidenceFiles.map((file) => readJsonFile<{ exitCode?: number; revisionId?: string }>(join(layoutEvidenceDir(root), file))));
+  const evidenceReads = await Promise.all(evidenceFiles.map((file) => readRecordState<{ exitCode?: number; revisionId?: string }>(join(layoutEvidenceDir(root), file))));
+  // The payload for the computations below, and the refusals kept aside: an evidence file that cannot be read is still an
+  // evidence file of this task, and dropping it from the set made `failingEvidence` count a directory the operator could
+  // not reconcile with the one on disk.
+  const evidence = evidenceReads.map((read) => usableOrNull(read));
+  const evidenceUnreadable = evidenceReads
+    .map((read, index) => (read.kind === 'unreadable' ? `${evidenceFiles[index]}: ${read.detail}` : null))
+    .filter((detail): detail is string => detail !== null);
   const revisionIds = [...new Set(evidence.map((item) => item?.revisionId).filter((id): id is string => Boolean(id)))];
   const mixedRevision = revisionIds.length > 1;
   const currentRevisionId = revisionIds.length === 1 ? revisionIds[0] : undefined;
@@ -210,12 +238,15 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   const sealedRead = snapshot.revisionRead;
   const sealed = sealedRead.kind === 'current' ? sealedRead.revision : null;
   const binding = { revisionId: currentRevisionId ?? '', manifestHash: sealed?.manifestHash ?? null };
-  const review = currentRevisionId && !mixedRevision
-    // The shape this file reads is status and evidence: the findings on the record are read by `readBlockingProblems`,
-    // through the reader that binds them to the current revision. Declaring them here too was a second reader waiting to
-    // disagree, and it now reads nothing.
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)), binding)
-    : !mixedRevision ? await readJsonFile<{ status?: string; reviewEvidence?: string }>(reviewPath(root, taskId)) : null;
+  // **The record's payload, and its own read.** This is the `status`/`reviewEvidence` shape only — the findings are read
+  // by `readBlockingProblems`, through the reader that binds them to the current revision, and declaring them here too
+  // would be a second reader waiting to disagree. The read is taken once and reused for both branches below.
+  const reviewRecordRead = await readRecordState<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId));
+  const review = mixedRevision
+    ? null
+    : currentRevisionId
+      ? onlyCurrentRevision(usableOrNull(reviewRecordRead), binding)
+      : usableOrNull(reviewRecordRead);
   // **The severity the ladder routes on comes from the ledger, not from a findings table.**
   //
   // This is the sixth consumer of one question — "which problems are open and severe enough to block" — and it read
@@ -254,26 +285,6 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         reason: ledgerDecision.detail,
         deficits: [] as string[],
       };
-  // **Unreadable is an open blocking state, not an empty projection.** A status that published `ledger: unreadable`
-  // alongside `reviewFindings: 0` made the same unreadable ledger say both "nobody can decide" and "nothing blocks".
-  //
-  // **And every unreadable artefact gets its own problem, under its own name.** The blocking reader refuses on the first
-  // artefact it cannot read, so deriving the published problems from its single `source` left the others unnamed: a pointer
-  // that could not be read borrowed the review record's field, and with both the record and the ledger corrupt only one of
-  // them got an id — while the count said one refusal where there were two. The three facts are independent and all three
-  // are already read here, so each one names itself and none can stand in for another.
-  const unreadableProblems: MergeBlockingProblem[] = [];
-  if (sealedRead.kind === 'unreadable') {
-    unreadableProblems.push({ source: 'claim', id: 'current_revision_unreadable', severity: 'blocking', message: sealedRead.detail });
-  }
-  if (!blockingRead.ok && blockingRead.source === 'review-record') {
-    unreadableProblems.push({ source: 'claim', id: 'review_record_unreadable', severity: 'blocking', message: blockingRead.why });
-  }
-  if (ledger.state === 'unreadable') {
-    unreadableProblems.push({ source: 'claim', id: 'ledger_unreadable', severity: 'blocking', message: ledger.reason });
-  }
-  const openProblems: ReadonlyArray<MergeBlockingProblem> = blockingRead.ok ? blockingRead.openProblems : unreadableProblems;
-  const problemCounts = countFindingsBySeverity(openProblems);
   const reviewRounds = await readReviewRoundsState(root, taskId);
   const reviewLoop = assessReviewLoop({
     currentRevision: sealedRead.kind === 'current'
@@ -282,17 +293,72 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     reviewRounds,
   });
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
-  const judge = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)), binding)
-    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId)) : null;
+  const judgeRead = await readRecordState<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(judgePath(root, taskId));
+  const judge = mixedRevision
+    ? null
+    : currentRevisionId
+      ? onlyCurrentRevision(usableOrNull(judgeRead), binding)
+      : usableOrNull(judgeRead);
   const failedAcceptance = judge?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
-  const verify = currentRevisionId && !mixedRevision
-    ? onlyCurrentRevision(await readJsonFile<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)), binding)
-    : !mixedRevision ? await readJsonFile<{ result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId)) : null;
+  const verifyRead = await readRecordState<{ revisionId?: string; manifestHash?: string; result?: string; acceptance?: Array<{ result?: string; repairScope?: string }> }>(verifyPath(root, taskId));
+  const verify = mixedRevision
+    ? null
+    : currentRevisionId
+      ? onlyCurrentRevision(usableOrNull(verifyRead), binding)
+      : usableOrNull(verifyRead);
   const failedVerifyAcceptance = verify?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const wikiClosure = await evaluateWikiClosure(root, taskId);
-  const task = await readJsonFile<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
+  const taskRead = await readRecordState<{ acceptanceMatrix?: unknown; workflowProfile?: { reviewMode?: string } }>(taskPath(root, taskId));
+  const task = usableOrNull(taskRead);
   const reviewMode = task?.workflowProfile?.reviewMode;
+  // **Unreadable is an open blocking state, not an empty projection.** A status that published `ledger: unreadable`
+  // alongside `reviewFindings: 0` made the same unreadable ledger say both "nobody can decide" and "nothing blocks".
+  //
+  // **And every unreadable artefact gets its own problem, under its own name.** The blocking reader refuses on the first
+  // artefact it cannot read, so deriving the published problems from its single `source` left the others unnamed: a pointer
+  // that could not be read borrowed the review record's field, and with both the record and the ledger corrupt only one of
+  // them got an id — while the count said one refusal where there were two. The facts are independent and all of them are
+  // read here, so each one names itself and none can stand in for another.
+  const unreadableProblems: MergeBlockingProblem[] = [];
+  if (sealedRead.kind === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'current_revision_unreadable', severity: 'blocking', message: sealedRead.detail });
+  }
+  if (reviewRounds.kind === 'unreadable') {
+    // Published from the round read rather than from `assessReviewLoop`, which answers one `kind` and so reported only the
+    // pointer when both were unreadable. Routing still reads the assessment; this is the fact, and it gets its own problem
+    // for the same reason the others do.
+    unreadableProblems.push({ source: 'claim', id: 'round_history_unreadable', severity: 'blocking', message: reviewRounds.detail });
+  }
+  if (!blockingRead.ok && blockingRead.source === 'review-record') {
+    unreadableProblems.push({ source: 'claim', id: 'review_record_unreadable', severity: 'blocking', message: blockingRead.why });
+  }
+  if (ledger.state === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'ledger_unreadable', severity: 'blocking', message: ledger.reason });
+  }
+  // **The summary's own reads are facts of the same kind, and they were the ones with no reader that could tell.** Each was
+  // read through a helper that answered `null` for every failure, so a corrupt record was indistinguishable from a missing
+  // one and nothing was published at all: a damaged `judge.json` said only that this change had not been judged.
+  if (judgeRead.kind === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'judge_unreadable', severity: 'blocking', message: judgeRead.detail });
+  }
+  if (verifyRead.kind === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'verify_unreadable', severity: 'blocking', message: verifyRead.detail });
+  }
+  if (taskRead.kind === 'unreadable') {
+    unreadableProblems.push({ source: 'claim', id: 'task_unreadable', severity: 'blocking', message: taskRead.detail });
+  }
+  for (const detail of evidenceUnreadable) {
+    unreadableProblems.push({ source: 'claim', id: 'evidence_unreadable', severity: 'blocking', message: detail });
+  }
+  // **The union, not a choice.** The blocking reader refuses on the first artefact it cannot read, so asking *whether* it
+  // succeeded decided whether any of the facts above were published at all — and a refusal derived independently of it went
+  // unpublished whenever it had nothing to refuse on. Measured: a corrupt pointer with no `review.json` published
+  // `currentRevisionUnreadable` and `reviewFindings: 0`.
+  const openProblems: ReadonlyArray<MergeBlockingProblem> = [
+    ...(blockingRead.ok ? blockingRead.openProblems : []),
+    ...unreadableProblems,
+  ];
+  const problemCounts = countFindingsBySeverity(openProblems);
 
   return {
     ...(currentRevisionId ? { currentRevisionId } : {}),
@@ -308,6 +374,12 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // reason — and the ledger's field went missing while `ledger.state` sat right here in the same summary saying
     // `unreadable`. Reading it from the state makes the two sources independent, which is what naming them was for.
     ...(ledger.state === 'unreadable' ? { ledgerUnreadable: ledger.reason } : {}),
+    // **And the summary's own reads name themselves too.** A record that cannot be read is not a record that says nothing,
+    // and until now the only thing this status could say about a damaged `judge.json` was that no judgement was recorded.
+    ...(judgeRead.kind === 'unreadable' ? { judgeUnreadable: judgeRead.detail } : {}),
+    ...(verifyRead.kind === 'unreadable' ? { verifyUnreadable: verifyRead.detail } : {}),
+    ...(taskRead.kind === 'unreadable' ? { taskUnreadable: taskRead.detail } : {}),
+    ...(evidenceUnreadable.length > 0 ? { evidenceUnreadable: evidenceUnreadable.join('; ') } : {}),
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
@@ -322,8 +394,12 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
         blockingIds: reviewLoop.blockingIds,
       },
     } : {}),
-    ...(reviewLoop.kind === 'unreadable_current_revision' ? { currentRevisionUnreadable: reviewLoop.detail } : {}),
-    ...(reviewLoop.kind === 'unreadable_round_history' ? { reviewHistoryUnreadable: true } : {}),
+    // **Each refusal comes from its own read.** These two were projections of `reviewLoop.kind`, which answers one value —
+    // so with the pointer and the round log both unreadable only one of them was ever published, and an operator repairing
+    // the first would meet the second on the next command. Routing still reads the assessment (the pointer's route outranks
+    // the round history's); the facts are read from their own sources.
+    ...(sealedRead.kind === 'unreadable' ? { currentRevisionUnreadable: sealedRead.detail } : {}),
+    ...(reviewRounds.kind === 'unreadable' ? { reviewHistoryUnreadable: true } : {}),
     repairScopes: failedAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     verifyRepairScopes: failedVerifyAcceptance.map((item) => item.repairScope).filter((scope): scope is RepairScope => Boolean(scope)),
     // **An unreadable round history is one state, and it is a refusal — not a measurement with a report beside it.**
@@ -759,13 +835,9 @@ function skillToCliVerb(nextSkill: string): string | null {
   return normalized;
 }
 
-async function readJsonFile<T>(path: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(path, 'utf8')) as T;
-  } catch {
-    return null;
-  }
-}
+// **`readJsonFile` was here**, and its whole body was the defect this change closes: `catch { return null }` answered the
+// same value for ENOENT, a parse error and a permission failure, so every one of its callers reported "nothing here" for a
+// file an operator had to repair. `readRecordState` (`core/record-read.ts`) is the reader that tells them apart.
 
 async function listEvidenceFiles(root: string, taskId: string): Promise<string[]> {
   try {
@@ -774,10 +846,13 @@ async function listEvidenceFiles(root: string, taskId: string): Promise<string[]
       .filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
     const matches = await Promise.all(candidates.map(async (file) => ({
       file,
-      evidence: await readJsonFile<{ taskId?: string }>(join(evidenceDirectory, file)),
+      read: await readRecordState<{ taskId?: string }>(join(evidenceDirectory, file)),
     })));
     return matches
-      .filter(({ evidence }) => evidence?.taskId === taskId)
+      // **A file that cannot be read is kept, not dropped.** Its name already attributes it to this task, and dropping it
+      // was the same defect one layer up: the summary reported a set that did not match the directory, with nothing to
+      // reconcile it against. Only an `absent` entry is dropped — a file that vanished between the listing and the read.
+      .filter(({ read }) => read.kind === 'unreadable' || (read.kind === 'usable' && read.value.taskId === taskId))
       .map(({ file }) => file)
       .sort();
   } catch {

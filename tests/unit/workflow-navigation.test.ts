@@ -315,6 +315,23 @@ describe('workflow guidance', () => {
     expect(upstream.reviewRecordUnreadable).toBeUndefined();
     expect(upstream.reviewFindings).toBe(1);
   });
+  it('publishes the pointer refusal even when the blocking reader had nothing to refuse on', async () => {
+    const root = await tempRoot();
+    const taskId = 'pointer-without-record';
+    await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), JSON.stringify({ id: taskId, acceptance: [] }));
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), JSON.stringify({ taskId, phase: 'review' }));
+    // No review.json at all, and a pointer that cannot be read.
+    await writeFile(join(root, '.kata', 'tasks', taskId, 'current-revision.json'), '{ this is not JSON\n');
+
+    const upstream = await readUpstreamSummary(root, taskId);
+
+    expect(upstream.currentRevisionUnreadable).toContain('current-revision.json');
+    // The blocking reader succeeded — on the record that does not exist — so a list derived from *whether* it succeeded
+    // said there was nothing to repair while the same status named the file that has to be repaired.
+    expect(upstream.reviewFindings).toBeGreaterThanOrEqual(1);
+    expect(upstream.blockingFindings).toBeGreaterThanOrEqual(1);
+  });
   it('marks an approval without review evidence invalid and keeps it out of Judge', async () => {
     const root = await tempRoot();
     const taskId = 'forged-review-approval';
