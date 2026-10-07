@@ -92,17 +92,9 @@ export type DecideInput = {
     /**
      * What independently challenged this change, and what actually ran.
      *
-     * `independentChallenges` alone was satisfiable by a challenge whose command was `exit 0`: the count included every
-     * non-open challenge and every probe answer, so a challenge that never failed on anything counted as one, and a probe
-     * answer was a string with no expected value to compare against. `verifiedChallenges` is the half that can be
-     * checked: a **terminal** challenge whose check persisted a non-blank observation — the reproduction is history, not a
-     * requirement that the current revision still fail — or a probe answer that recorded a command and its output. The
-     * decision refuses when it is zero at a tier that requires one, so the floor cannot be met by declaring.
-     *
-     * **The limit, stated where the field is:** a recorded measurement is not a meaningful one. `challenge add --command
-     * 'exit 0'` plus one check now counts, and an arbitrary probe observation counts, because neither the exit code nor the
-     * answer carries anything Kata can judge. Independence and adversarial quality are the reviewer's and the host's
-     * responsibility; this half proves a command ran and was recorded.
+     * Discovery is mutation-backed: only a declared executable-falsifier challenge with a supported recorded verifier run
+     * contributes. Advisory probe answers never contribute because their free-text observation cannot be authenticated by
+     * Kata. The decision refuses when no such reading exists, so the floor cannot be met by declaring.
      */
     discovery: { independentChallenges: number; /** Required, not optional: a caller must decide what it verified, or the floor is met by declaring. */ verifiedChallenges: number };
     quorum?: QuorumReport;

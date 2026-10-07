@@ -1,7 +1,7 @@
 # Kata 探针台账问题报告：答案比它所问的 revision 活得更久
 
 **日期**：2026-10-06
-**状态**：Open — 已有可复现证据；本报告不包含实现或测试修改。
+**状态**：In implementation — F1/F3 已在 master；F2 按 fail-closed 方案实现中，只有 seal、独立审查、archive 后才会 Closed。
 **范围**：Kata 0.2.0；下游项目 `zenmpai` 的 `photo-observation-provider-layer` 在 `strict` tier 下经过 5 轮 review/repair 后的实跑。
 **不把 Wiki / 设计稿当作代码正确性证明**：本报告的「复现」均给出命令与输出；「影响」引用实际被拒绝的批准路径，而不是推断。
 
@@ -119,3 +119,12 @@ kata-cli ledger ask --change <id>
 先修 F1（blocking）——它是「规则与机制不一致」，会让任何经过一轮修复的 strict change 卡在批准前，且只能靠手工改写记录绕开。F3 与 F1 同文件同概念，宜一并收敛。F2 是一个独立决定（需要先定「校验从哪里取 kind/path」），建议单独开，不要与 F1 混在一个验收契约里 —— 那会让「这次改了什么」变模糊。
 
 本报告由下游项目 `zenmpai` 的 dogfooding 产生；原始英文诊断（含完整测量与非破坏性边界）曾落在 `docs/design/2026-10-05-probe-answers-outlive-their-revision.md`，随「不实现、只反馈」的决定并入本报告。
+
+
+## 关闭记录（待独立审查）
+
+- **F1（blocking）**：已由 revision-bound probe/question identity 与 answer binding 修复；旧 revision 的答案不再作为当前问题计入。
+- **F2（major）**：`bind-discovery-observations-to-questions` 移除 `ProbeAnswer` 对 discovery floor 和 approval request 的决定权；free-text `observed` 仅保留为审计历史。floor 只接受当前 revision、已声明 executable falsifier、supported verifier run 三者同时成立的 challenge。
+- **F3（minor）**：两种 discovery count 均由同一 challenge-only projection 导出。
+
+本节不是通过声明：关闭需要该 change 的 mutation evidence、独立 strict review、Judge 与 archive 完成。

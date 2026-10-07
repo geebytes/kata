@@ -19,7 +19,7 @@
  * least one evidence item, the reading set was not exceeded by what the reviewer cited, and the probes were answered. A
  * gap is named rather than scored, for the same reason the decision names its reasons.
  */
-import { declaredPaths, freezeSubject, readProbes, readProbeAnswers, readLedger, readPlan, readPlanState, readProbesState, readProbeAnswersState } from './ledger.js';
+import { declaredPaths, freezeSubject, readProbes, readLedger, readPlan, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
@@ -186,15 +186,7 @@ export async function verifyAgainstRequest(input: {
     if (!built.ok) return { gaps: [{ claimId: null, what: built.why }] };
     const { claimDecisions } = await import('./verdict.js');
     const decisions = new Map(claimDecisions(ledger).map((decision) => [decision.claimId, decision]));
-    // **An unreadable answer list is not an unanswered one.** The convenience reader answers `[]` for a file that exists
-    // and cannot be read, which would make every probe read as a gap — the same defect one layer out, on the side that
-    // decides whether the brief has been answered at all.
-    const answersRead = await readProbeAnswersState(input.root, input.changeId);
-    if (answersRead.kind === 'unreadable') {
-        return { gaps: [{ claimId: null, what: `probe-answers.json exists and cannot be read (${answersRead.detail})` }] };
-    }
-    const answers = answersRead.kind === 'usable' ? answersRead.value : [];
-    const answered = new Set(answers.map((answer) => answer.probeId));
+    // Probe answers are advisory audit history. Approval must never depend on self-reported free text.
     const gaps: RequestGap[] = [];
 
     for (const claimRequest of built.request.claims) {
@@ -236,11 +228,6 @@ export async function verifyAgainstRequest(input: {
                         : `the claim is ${decision.state} (${decision.reasons.map((reason) => reason.code).join(', ') || 'no reason recorded'}), so the evidence the request asked for does not yet support it`,
                 });
             }
-        }
-    }
-    for (const probe of built.request.probes) {
-        if (!answered.has(probe.id)) {
-            gaps.push({ claimId: probe.claimId, what: `the probe ${probe.id} was asked and not answered` });
         }
     }
     return { gaps };

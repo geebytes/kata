@@ -1697,10 +1697,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     };
                 }
                 // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer a request — the claim's own
-                // reading set, the evidence types its tier requires, the deadline, the probes it must answer — and
-                // `ledger request-check` compares what arrived against what was asked. Nothing consumed that check: it was
-                // a command an operator could run and skip, so a change could be approved with its probes unanswered and
-                // a claim whose reading set was never planned. Asking it here is what makes the plan a plan.
+                // Request-check enforces the planned reading and evidence contract. Probes remain advisory history and do not gate approval.
                 const { verifyAgainstRequest } = await import('../store/review-request.js');
                 const requestGaps = (await verifyAgainstRequest({ root, changeId: taskId, sealedRead: approvalRevisionRead })).gaps;
                 if (requestGaps.length > 0) {
@@ -1708,7 +1705,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     return {
                         command: 'review', taskId, phase: 'review', success: false,
                         error: `Review approval requires the review request to be satisfied: ${named.join(' | ')}. `
-                            + 'Run `kata-cli ledger request-check` for the same list, then record what is missing: evidence of the required type, a verdict for it, or the probe answers the request asked for.',
+                            + 'Run `kata-cli ledger request-check` for the same list, then record what is missing: evidence of the required type, a verdict for it, or a missing planned reading set.',
                         diagnostics: {
                             requestGaps,
                             nextAction: nextActionForTask(taskId, '/kata-build', 'implementer', 'satisfy_ledger_deficits'),

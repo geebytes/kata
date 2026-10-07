@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
-import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
+import { appendClaim, appendEvidence, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { createTask } from '../../src/core/task.js';
 import { initLayout } from '../../src/core/layout.js';
@@ -123,18 +123,14 @@ describe('a review request is handed over and checked, rather than hoped for', (
 
     it('names each gap on the way back, by claim, instead of scoring them', async () => {
         const { subjectRevision } = await planned();
-        // Nothing verified, no probe answered: both are gaps and both are named.
-        await appendProbe(root, changeId, {
-            id: 'P1-C1', claimId: 'C1', kind: 'file-exists', path: 'src/a.ts', command: 'test -f src/a.ts', askedAt: 't',
-        });
+        // An unanswered probe is advisory history; only the missing claim evidence is a gap.
         const before = await verifyAgainstRequest({ root, changeId });
-        expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('the probe P1-C1 was asked and not answered');
         // The gap now names the kernel's own state and reason rather than "no supported verdict", so a reader can tell
         // "nothing was checked" from "checked and not enough" — the two instructions these used to conflate.
         expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('the claim is');
 
-        // Answer it and verify the evidence: no gaps, which is the only reading of "the request was satisfied".
-        await answerProbe(root, changeId, { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 't' });
+        // Verify the evidence: no gaps, which is the only reading of "the request was satisfied".
+        // Answers are audit history only; their absence cannot decide request completion.
         // **A verdict the kernel accepts, not one that merely exists.** The fixture used to record a `static_witness`
         // verdict for a claim whose severity requires an executable falsifier, bound to `rev:unknown` rather than to the
         // frozen subject — and the check it was written against asked only whether a supported verdict existed, so the

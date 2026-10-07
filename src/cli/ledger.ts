@@ -633,10 +633,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger answer', error: `no probe ${probeId} has been asked${known.length === 0 ? ' — run `ledger ask` first' : `; asked: ${known.join(', ')}`}` });
             return;
         }
-        // **The answer is about the stored question, so it is recorded from that question.** A caller-supplied command was
-        // the hole: an answer for one probe could be re-recorded against another, and nothing compared the two. The
-        // observation still comes from the reviewer — kata running the command itself would make the probe prove nothing
-        // about whether anyone read the path — but the question it answers is the ledger's, not the caller's.
+        // The answer is recorded against the stored question, but remains advisory audit history rather than gate evidence.
         const supplied = argValue(argv, '--command');
         if (supplied !== undefined && supplied !== probe.command) {
             fail({ command: 'ledger answer', error: `--command does not match the question ${probeId} asks; the answer is recorded against the stored question (asked: ${probe.command})` });
@@ -644,7 +641,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         }
         const observed = argValue(argv, '--observed') ?? '';
         if (observed.trim() === '') {
-            fail({ command: 'ledger answer', error: '--observed <what you saw> is required: a blank observation is not a reading' });
+            fail({ command: 'ledger answer', error: '--observed <what you saw> is required to retain non-blank advisory audit history' });
             return;
         }
         const recorded = await answerProbe(options.root, changeId, {

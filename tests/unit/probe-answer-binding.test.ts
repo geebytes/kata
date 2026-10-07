@@ -100,14 +100,14 @@ describe('a probe answer bound to the question it answers', () => {
         expect(typeof answer?.expected).toBe('string');
     });
 
-    it('counts a bound answer as an executed reading, and a repeated answer for the same question is refused', async () => {
+    it('keeps a bound answer as advisory history, and refuses a repeated answer for the same question', async () => {
         await declareClaim();
         const asked = await ledger(['ask', '--per-claim', '2', '--seed', 'fixed']);
         const ids = asked.asked as string[];
         await answerEverything();
 
         const decision = await ledger(['decide']);
-        expect(codesOf(decision)).not.toContain('discovery_floor');
+        expect(codesOf(decision)).toContain('discovery_floor');
         expect(codesOf(decision)).not.toContain('discovery_unverified');
 
         // Write-once for one exact identity: the same question at the same revision cannot be answered twice.
@@ -119,7 +119,7 @@ describe('a probe answer bound to the question it answers', () => {
         await declareClaim();
         await ledger(['ask', '--per-claim', '2', '--seed', 'fixed']);
         await answerEverything();
-        expect(codesOf(await ledger(['decide']))).not.toContain('discovery_floor');
+        expect(codesOf(await ledger(['decide']))).toContain('discovery_floor');
 
         // The content moves: the same question ids come back asking about different content, so the stored question is
         // refreshed and the old answer no longer describes what this revision asks about.
@@ -132,7 +132,7 @@ describe('a probe answer bound to the question it answers', () => {
         expect(codesOf(decision)).not.toContain('discovery_unverified');
     });
 
-    it('accepts a fresh answer for the moved subject, because it is a different question', async () => {
+    it('accepts a fresh answer for the moved subject as advisory history', async () => {
         await declareClaim();
         await ledger(['ask', '--per-claim', '2', '--seed', 'fixed']);
         await answerEverything();
@@ -143,7 +143,7 @@ describe('a probe answer bound to the question it answers', () => {
         await answerEverything();
 
         const decision = await ledger(['decide']);
-        expect(codesOf(decision)).not.toContain('discovery_floor');
+        expect(codesOf(decision)).toContain('discovery_floor');
         expect(codesOf(decision)).not.toContain('discovery_unverified');
     });
 

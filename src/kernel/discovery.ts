@@ -5,7 +5,7 @@
  * replaced it is a document only a host can author — which is why two strict changes were stuck for a day. The clean-sheet
  * reading is that a reviewer cannot prove its internals, so it should be asked something it can only answer by having
  * looked: a question **generated from the claim's dependency surface**, after the fact, which the reviewer was never told.
- * Answering it is the evidence. `Challenge` already records executable propositions, so a probe is a challenge with two
+ * Answering it is readable audit history. `Challenge` records executable propositions that can satisfy a gate, so a probe has two
  * extra facts: it was **asked** (not authored), and it has an **answer state**.
  *
  * **Generation is deterministic and derived, never hand-written.** A question is drawn from the claim's own paths at a
@@ -14,10 +14,9 @@
  * off-by-one in a digest, a literal that must or must not be present, a file that must exist. A reviewer that never opened
  * that path cannot answer it; one that did cannot fail to.
  *
- * **What it cannot check, said here rather than implied.** A probe answered correctly shows the reviewer read that path at
- * this revision. It does not show the review was independent in the sense of a separate context — that is the assurance
- * axis — and it does not show the reviewer's judgement was any good. It replaces "prove your process" with "show, here, on
- * a question you were not given", which is weaker in one direction and stronger in the only direction that is checkable.
+ * **Trust boundary.** Kata records an answer but cannot authenticate its free-text observation. It therefore cannot prove
+ * the reviewer read the path, nor can the answer decide a gate. Independent context remains the host assurance axis; a
+ * mutation-backed challenge plus a supported verifier run is the repository-side discovery evidence.
  */
 import type { Claim, Subject } from './types.js';
 
@@ -50,7 +49,7 @@ export type Probe = {
 
 export type ProbeAnswer = {
     probeId: string;
-    /** What the reviewer ran and what it observed. Both are recorded: the command is the claim, the exit code the fact. */
+    /** Advisory audit history reported by the reviewer; it is not authenticated gate evidence. */
     command: string;
     observed: string;
     answeredAt: string;

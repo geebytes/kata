@@ -10,7 +10,7 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths, readProbeAnswers, readProbes, type Ledger } from './ledger.js';
+import { readLedger, declaredPaths, type Ledger } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { readingsForRevision } from '../kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
@@ -21,28 +21,19 @@ import type { Probe, ProbeAnswer } from '../kernel/discovery.js';
 /**
  * **The one projection every discovery count is derived from.**
  *
- * Two counts used to be derived independently — `independentChallenges` from a filter over terminal records plus the raw
- * length of the answer list, `verifiedChallenges` from a separate walk that de-duplicated commands — so the same ledger
- * could report two different numbers of the same thing, and duplicate questions or stale answers could inflate one side
- * without the other. Both numbers now come out of one map, so they cannot disagree about the records in front of them.
+ * Both counts come from one map over mutation-backed challenges. A reading counts only when it names a declared
+ * `executable_falsifier`, its persisted resolution binds that same falsifier at the current subject revision, and the
+ * ledger has a matching `supported` verifier verdict. Probe answers remain readable audit history but are deliberately
+ * absent from this projection: self-reported text cannot certify a gate.
  *
- * A reading counts only when it is *bound* to this revision:
- *
- *   - a **challenge** counts when it names a declared `executable_falsifier` and its persisted resolution carries that
- *     same falsifier, the current subject revision, and a `supported` verifier verdict. A free-form command is readable
- *     history and nothing more — `--command 'exit 0'` used to satisfy the floor by being terminal with an observation;
- *   - a **probe answer** counts when a probe frozen to the current revision still asks the same question — same id, same
- *     subject, same canonical command, same path — and the answer records a non-blank observation. An answer to a question
- *     this revision no longer asks, or to a different question under the same id, is not a reading about this content.
- *
- * Identity is the question, not the record: one falsifier or one command answered twice is one reading, however many
- * records carry it. `attempts` is the size of that map — an attempt that has not verified still supports the actionable
- * `discovery_unverified` refusal — while `verified` counts the entries that actually decided something.
+ * Identity is the declared falsifier, not the record: repeated checks of one falsifier remain one reading.
  */
 export function discoveryProjection(input: {
     challenges: readonly Challenge[];
-    answers: readonly ProbeAnswer[];
-    probes: readonly Probe[];
+    /** @deprecated Advisory history; discovery evidence never reads probe answers. */
+    answers?: readonly ProbeAnswer[];
+    /** @deprecated Advisory questions remain in the request but cannot satisfy a gate. */
+    probes?: readonly Probe[];
     currentRevision: string | null;
     /**
      * The falsifiers this ledger actually declares, by id.
@@ -89,22 +80,6 @@ export function discoveryProjection(input: {
         readings.set(identity, (readings.get(identity) ?? false) || verified);
     }
 
-    const currentProbes = new Map<string, Probe>();
-    for (const probe of input.probes) {
-        if (typeof probe.subjectRevision !== 'string' || probe.subjectRevision !== current) continue;
-        currentProbes.set(probe.id, probe);
-    }
-    for (const answer of input.answers) {
-        const probe = currentProbes.get(answer.probeId);
-        // No current question behind the answer: it answers something this revision does not ask.
-        if (probe === undefined) continue;
-        if (answer.subjectRevision !== probe.subjectRevision) continue;
-        if (answer.command !== probe.command) continue;
-        if ((answer.path ?? '') !== probe.path) continue;
-        const identity = `probe:${probe.command}`;
-        const verified = typeof answer.observed === 'string' && answer.observed.trim() !== '';
-        readings.set(identity, (readings.get(identity) ?? false) || verified);
-    }
 
     let verified = 0;
     for (const value of readings.values()) if (value) verified += 1;
@@ -352,15 +327,9 @@ export async function ledgerVerdict(input: {
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         usage: ledger.usage,
         c0Tokens: input.c0Tokens ?? null,
-        // **Discovery counts what was observed, not what was declared.** A terminal challenge contributes only after its
-        // check persisted a non-blank observation, and a probe answer only when it records a command and what that command
-        // printed. Neither half proves the measurement was meaningful — what is deliberately *not* checked is written down
-        // beside the derivation — and `reproduced` remains counterexample history, not a requirement that the current
-        // revision still fail.
+        // Discovery is mutation-backed history only: an advisory probe answer cannot certify a gate.
         discovery: discoveryProjection({
             challenges: ledger.challenges,
-            probes: await readProbes(input.root, input.changeId),
-            answers: await readProbeAnswers(input.root, input.changeId),
             currentRevision: ledger.subject.revision,
             recordedVerdicts: ledger.verdicts,
             declaredFalsifiers: new Set(ledger.evidence

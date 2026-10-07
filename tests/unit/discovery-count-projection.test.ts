@@ -90,8 +90,6 @@ function project(
 ): { independentChallenges: number; verifiedChallenges: number } {
     return discoveryProjection({
         challenges: input.challenges ?? [],
-        probes: input.probes ?? [],
-        answers: input.answers ?? [],
         currentRevision: revision,
         // **The reading the ledger recorded, which the resolution has to agree with.** These cases are about a binding whose
         // run really happened, so the fixture holds one; the case that checks a hand-written resolution passes `[]`.
@@ -149,10 +147,10 @@ describe('the discovery projection', () => {
             .toEqual({ independentChallenges: 1, verifiedChallenges: 1 });
     });
 
-    it('counts one reading when one command is answered twice, on both sides at once', () => {
+    it('credits no discovery reading to matching free-text answers', () => {
         const probes = [probeOf({ id: 'P1-C1' }), probeOf({ id: 'P2-C1' })];
-        const answers = [answerOf({ probeId: 'P1-C1' }), answerOf({ probeId: 'P2-C1' })];
-        expect(project({ probes, answers })).toEqual({ independentChallenges: 1, verifiedChallenges: 1 });
+        const answers = [answerOf({ probeId: 'P1-C1' }), answerOf({ probeId: 'P2-C1', observed: 'the probe expected exists' })];
+        expect(project({ probes, answers })).toEqual({ independentChallenges: 0, verifiedChallenges: 0 });
     });
 
     it('does not count an answer to a question this revision no longer asks', () => {
@@ -171,9 +169,9 @@ describe('the discovery projection', () => {
         expect(project({ probes: [probeOf()], answers: [legacy] })).toEqual({ independentChallenges: 0, verifiedChallenges: 0 });
     });
 
-    it('counts a blank observation as an attempt that verified nothing', () => {
+    it('does not count even a blank answer as discovery', () => {
         expect(project({ probes: [probeOf()], answers: [answerOf({ observed: '   ' })] }))
-            .toEqual({ independentChallenges: 1, verifiedChallenges: 0 });
+            .toEqual({ independentChallenges: 0, verifiedChallenges: 0 });
     });
 
     it('never reports a verified reading without a candidate attempt', () => {

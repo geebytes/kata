@@ -1,4 +1,4 @@
-import { appendClaim, appendEvidence, appendProbe, answerProbe, ensureAssurance, freezeSubject, readLedger, recordVerdicts, writePlan, writePolicy, writeSubject } from '../../src/store/ledger.js';
+import { appendClaim, appendEvidence, ensureAssurance, freezeSubject, readLedger, recordChallenge, recordVerdicts, writePlan, writePolicy, writeSubject } from '../../src/store/ledger.js';
 import { planReview } from '../../src/producers/planner.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { readTask } from '../../src/core/task.js';
@@ -81,29 +81,23 @@ export async function seedLedger(
         producer: { runId: 'fixture-run', actor: 'fixture' },
     })));
     await recordVerdicts(root, taskId, verdicts);
-    // The discovery floor asks for one independent challenge above the standard tier; a probe that was asked and answered
-    // is that challenge in the form this route records.
-    const probeId = 'P-fixture';
-    await appendProbe(root, taskId, {
-        id: probeId,
-        claimId: claims[0]!.id,
-        kind: 'file-exists',
-        path: target,
-        command: `test -f ${target}`,
-        askedAt: new Date().toISOString(),
-        // **Frozen to the revision that asked it.** A question with no revision on it is a legacy record: it stays
-        // readable, and it cannot count as a reading about the content under review — which is what this fixture needs.
-        subjectRevision: frozenAgain.subject.revision,
-    });
-    await answerProbe(root, taskId, {
-        probeId,
-        command: `test -f ${target}`,
-        observed: 'exit 0: the file the claim rests on exists at this revision',
-        answeredAt: new Date().toISOString(),
-        // The answer copies the fact it answers, so the projection can check it against the question rather than trust it.
-        subjectRevision: frozenAgain.subject.revision,
-        path: target,
-        expected: 'exists',
+    // The discovery floor is satisfied only by a current, declared falsifier challenge with a verifier run.
+    const first = claims[0]!;
+    await recordChallenge(root, taskId, {
+        id: 'X-fixture',
+        claimId: first.id,
+        command: `grep -q sealed ${target}`,
+        failsOn: frozenAgain.subject.revision,
+        state: 'withdrawn',
+        at: new Date().toISOString(),
+        falsifierEvidenceId: first.evidenceId,
+        resolution: {
+            at: new Date().toISOString(),
+            observed: 'fixture: the falsifier passed clean, reddened under mutation, and was restored',
+            falsifierEvidenceId: first.evidenceId,
+            subjectRevision: frozenAgain.subject.revision,
+            verdict: 'supported',
+        },
     });
     // **The plan is now part of what an approval needs.** `verifyAgainstRequest` compares what the reviewer was handed
     // with what arrived, and a request is derived from the stored plan — so a change that never planned has no reading
