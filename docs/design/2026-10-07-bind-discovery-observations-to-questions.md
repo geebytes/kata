@@ -85,7 +85,7 @@ own suite — the last one after this section first claimed the class was closed
 | `tests/unit/review-request-is-handed-over.test.ts` | the case asserted "an unanswered probe is not a gap" while the fixture asked no probe, so a restored probe-gap loop was a no-op | the fixture writes a probe; the case asserts the request carries it and that the gap list does not name it |
 | `tests/unit/discovery-count-projection.test.ts` | the `project()` helper kept `probes?`/`answers?` in its type but stopped forwarding them, so every answer case was an assertion about `undefined` | the helper forwards both, so the projection really is handed an answer it must ignore |
 | `tests/unit/discovery-floor-fail-closed.test.ts` (answers) | the case wrote `probe-answers.json` without the `probes.json` that always accompanies it, so an implementation matching an answer to its question read nothing | both records are written, stamped with the revision the fixture froze |
-| `tests/unit/discovery-floor-fail-closed.test.ts` (satisfied state) | the case was titled "clears discovery for a terminal record that recorded an observation" but asserted only the absence of two *other* refusal codes — under the retired semantics it was true, under the new projection a record naming no declared falsifier cannot clear anything, so it stayed green while guarding nothing | split into the state it names: a positive case that a challenge bound to a **declared falsifier** clears the floor (fixture declares `E2`, resolution stamped `current`, asserted to redden when the recorded-verdict conjunct is broken), and a regression that a free-form record does **not** clear it however non-blank its observation |
+| `tests/unit/discovery-floor-fail-closed.test.ts` (satisfied state) | the case was titled "clears discovery for a terminal record that recorded an observation" but asserted only the absence of two *other* refusal codes — under the retired semantics it was true, under the new projection a record naming no declared falsifier cannot clear anything, so it stayed green while guarding nothing | split into the state it names: a positive case that a challenge bound to a **declared falsifier** clears the floor (fixture declares `E2`, resolution stamped `current`; measured to redden under a mutation that makes the recorded-verdict conjunct yield `false`, and under one that stops counting a verified reading at all — **not** under deleting the `.some(...)` call alone, which leaves a bare array that is truthy and which `tsc` rejects anyway), and a regression that a free-form record does **not** clear it however non-blank its observation |
 
 **The falsifier is the historical implementation, not a synthetic one.** `E1` restores the answer-counting block that this change
 deleted, in place, and reddens the projection selector (2 failures); replaying the whole historical defect — the block plus the
@@ -100,6 +100,11 @@ proves only that the test reads the return value, which is why it was replaced.
   bound to a declared falsifier — *does* clear it (reddens when the recorded-verdict conjunct in `discoveryProjection` is broken);
 - `review-request-is-handed-over.test.ts` — an unanswered probe is not an approval gap (`E2`);
 - `probe-answer-binding.test.ts` — the CLI refuses an answer whose command does not match its question (`E4`).
+
+**The suite also had no positive assertion of `discovery_unverified`** — nine cases checked that some *other* refusal code was
+absent, which is how a suite keeps passing after the refusal it is named for stops being reachable, while its own header claimed
+the state was pinned. It now asserts the refusal itself (a challenge naming a declared falsifier with no supported run behind it),
+and that case reddens when the `discovery_unverified` branch in `src/kernel/decide.ts` is disabled.
 
 `C3`'s refusal text was corrected in the same pass: `discovery_unverified` named the bare `challenge check`, which refuses in the
 state that reaches it (a terminal challenge whose resolution is bound to a superseded revision), and claimed the record had no

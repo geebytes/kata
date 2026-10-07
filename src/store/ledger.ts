@@ -1346,8 +1346,9 @@ export async function resolveChallenge(
                 ...(resolution.producer === undefined ? {} : { producer: resolution.producer }),
             },
             // **A reproduction is a fact that is never cleared.** Set the moment a check observes the command failing,
-            // and keep it through resolution and amendment; the discovery floor separately counts terminal, observed
-            // execution, so historical counterexample status is never used as a surrogate for whether a check ran.
+            // and keep it through resolution and amendment; discovery counts a challenge that names a declared falsifier
+            // and carries a supported run at the current revision, so historical counterexample status is never used as a
+            // surrogate for whether a check ran.
             ...(current.reproduced === true || resolution.reproduced === true ? { reproduced: true } : {}),
         };
         await writeJson(root, changeId, FILES.challenges, challenges);

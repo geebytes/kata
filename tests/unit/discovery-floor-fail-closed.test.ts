@@ -10,19 +10,26 @@ import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 /**
  * **What the discovery floor still refuses to accept, from a real ledger to a real decision.**
  *
- * The floor was widened once — a terminal challenge counts because it ran and recorded an observation, not because it once
- * reproduced — and widening a floor is exactly the change that quietly removes the refusals beside it. This suite pins
- * those refusals at the layer that actually decides, rather than at the count alone: a ledger is written to disk, read
- * back, and decided, so a record state that stopped refusing would show up here and not only in a unit fixture.
+ * The floor was widened once — a terminal challenge counted because it ran and recorded an observation, not because it once
+ * reproduced — and widening a floor is exactly the change that quietly removes the refusals beside it. That rule has since
+ * been **retired and replaced**: a free-text observation cannot be authenticated, so the projection does not read
+ * `resolution.observed` at all, and a reading now requires a challenge bound to a falsifier the ledger declares, with a
+ * supported verifier run recorded at the current revision. This suite pins the resulting states at the layer that actually
+ * decides, rather than at the count alone: a ledger is written to disk, read back, and decided, so a record state that
+ * stopped refusing would show up here and not only in a unit fixture.
  *
- * Three states must stay closed, and one must stay open:
+ * Four states must stay closed, and one must stay open:
  *
  *   - an **open** counterexample still blocks through `challenge_open`, and is not counted as discovery;
  *   - a check that **timed out** leaves the challenge open, so it blocks the same way — an unresolved measurement is not
  *     a completed one;
- *   - a **terminal** record whose observation is blank proves nothing ran, so it refuses through `discovery_unverified`
- *     with a deficit naming the command that would fix it;
- *   - a terminal record with a recorded observation clears discovery, including a legacy `resolved` one.
+ *   - a **declared falsifier** that was challenged but has no supported run behind it — no resolution, a stale revision, a
+ *     `refuted` verdict, or no matching record in `verdicts.json` — refuses through `discovery_unverified` ("something was
+ *     declared and nothing supports it"), with a deficit naming the command that would fix it;
+ *   - a record naming **no declared falsifier** is not an attempt at all, so it refuses through `discovery_floor` ("record
+ *     one") however non-blank its observation, and the deficit names `--falsifier`;
+ *   - a terminal challenge that **does** reproduce a declared falsifier at the frozen revision clears discovery — the one
+ *     satisfied state, and the reason the three refusals above can be told apart from a broken projection.
  *
  * Deliberately not asserted here: the overall verdict. The tier's other demands (risk-class coverage, assurance) are
  * other suites' subjects, and coupling this one to them would make a discovery-floor regression look like a coverage
@@ -194,6 +201,19 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('challenge_open');
         const deficit = deficits.find((entry) => entry.claimId === 'discovery:independent_challenge');
         expect(deficit?.need).toContain('--falsifier');
+    });
+
+    it('refuses through discovery_unverified when a declared falsifier was challenged and no run supports it', async () => {
+        // **The positive assertion this suite was missing.** Every other case here checks that some *other* code is absent,
+        // which is how a suite keeps passing after the refusal it is named for stops being reachable. This one asserts the
+        // refusal itself, in the state that produces it: a challenge naming the ledger's declared falsifier is an attempt,
+        // and with no resolution behind it there is no supported run — so the refusal is `discovery_unverified` ("something
+        // was declared and nothing supports it"), not `discovery_floor` ("record one"), and the deficit names the id to run.
+        const { codes, deficits } = await ledgerWithChallenge({ ...base, falsifierEvidenceId: 'E2', state: 'withdrawn' });
+        expect(codes).toContain('discovery_unverified');
+        expect(codes).not.toContain('discovery_floor');
+        const deficit = deficits.find((entry) => entry.claimId === 'discovery:verified_challenge');
+        expect(deficit?.need).toContain('challenge check --id');
     });
 
     it('refuses an answer whose observation key is absent, naming the artefact instead of inventing a blank one', async () => {

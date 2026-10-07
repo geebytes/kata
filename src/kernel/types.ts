@@ -262,9 +262,10 @@ export type Challenge = {
     /**
      * Whether this counterexample was ever observed to reproduce.
      *
-     * This is durable history about the challenge, not discovery-floor eligibility. A passing terminal check still
-     * records an executed independent attempt through `resolution.observed`; when a check finds a non-zero exit, this
-     * field preserves that counterexample fact after a later fix makes the command pass.
+     * This is durable history about the challenge, not discovery-floor eligibility. A terminal check is an executed attempt
+     * because it names a falsifier the ledger declares and carries a supported run at the current revision — the projection
+     * does not read `resolution.observed`, which is free text the reviewed party wrote. When a check finds a non-zero exit,
+     * this field preserves that counterexample fact after a later fix makes the command pass.
      */
     reproduced?: boolean;
 };
