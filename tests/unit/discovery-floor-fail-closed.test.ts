@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, writePolicy, ledgerReport, readLedger, readPlan, readProbeAnswers, readProbes, readVerdictHistory, recordVerdicts, replaceEvidence, resolveChallenge, restateClaim, writeSubject } from '../../src/store/ledger.js';
+import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, writePolicy, readLedger, recordVerdicts, replaceEvidence, restateClaim, writeSubject } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
@@ -55,7 +55,7 @@ afterEach(async () => {
  */
 async function ledgerWithChallenge(
     challenge: Parameters<typeof appendChallenge>[2] | null,
-    options: { stored?: unknown; answers?: unknown[]; runs?: unknown[] } = {},
+    options: { stored?: unknown; answers?: unknown[] } = {},
 ): Promise<{ codes: string[]; deficits: Array<{ claimId: string; need: string }> }> {
     const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
     expect(frozen.ok).toBe(true);
@@ -77,10 +77,9 @@ async function ledgerWithChallenge(
     } else if (options.answers === undefined) {
         throw new Error('the fixture must pass a challenge, a record to store, or the answers to store');
     }
-    // The run log is schema-less too, and the quorum reads it.
-    if (options.runs !== undefined) {
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'runs.json'), `${JSON.stringify(options.runs, null, 2)}\n`);
-    }
+    // **The run log is written by the case that needs it, not by an option here.** This helper used to take a `runs` list and
+    // write `runs.json` for it, but no call site ever passed one after the run-log reader cases moved to `writeArtefact` — a
+    // declared input nothing supplies, which is the same defect as a negative about an input the code never receives.
     // The same shape question for the probe half, which reads a second schema-less artefact — and **the question that answer
     // answered**. A real ledger never holds an answer without its probe (`ask` writes the probe, `answer` writes the answer),
     // so a fixture that writes only the answers invents a state production never supplies, and any implementation that
@@ -144,9 +143,14 @@ describe('the discovery floor keeps refusing what did not run', () => {
 
     it('refuses an answered probe as a reading, so answering one cannot clear the floor', async () => {
         // The probe half of the same boundary. An answer is free text the reviewed party wrote, so the floor reads no
-        // answer at all: a ledger whose only "reading" is a full answer still has to record a bound falsifier challenge.
-        // This case is what keeps the `answers` plumbing honest — without it the fixture option is dead and a restored
-        // answer loop would pass unnoticed.
+        // answer at all: a ledger whose only "reading" is a full answer, with the question it answered written beside it,
+        // still has to record a bound falsifier challenge.
+        //
+        // **What this case does and does not catch, stated so it is not over-claimed.** Its declared falsifier is `E3`, the
+        // floor's own refusal, and that mutation reddens it. The answer-specific restoration — the deleted counting block
+        // *plus* the caller that fed it `probes`/`answers` — also reddens it, but only as a two-site replay, because
+        // production no longer passes those inputs at all. The single-site half of that defect is guarded by `E1` in
+        // `discovery-count-projection.test.ts`, where the projection is handed an answer directly. See design §3.4.
         const { codes, deficits } = await ledgerWithChallenge(null, {
             answers: [{
                 probeId: 'P1-C1',
