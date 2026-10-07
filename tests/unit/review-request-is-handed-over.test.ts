@@ -98,7 +98,7 @@ async function planned(): Promise<{ subjectRevision: string }> {
 
 describe('a review request is handed over and checked, rather than hoped for', () => {
     it('carries the plan, the deadline and the probes — and none of the assurance axis', async () => {
-        const { subjectRevision } = await planned();
+    await planned();
         const built = await buildReviewRequest({ root, changeId });
         expect(built.ok).toBe(true);
         if (!built.ok) return;
@@ -162,7 +162,7 @@ describe('a review request is handed over and checked, rather than hoped for', (
     });
 
     it('refuses a lower strength where the plan asked for a higher one', async () => {
-        const { subjectRevision } = await planned();
+    await planned();
         // The claim holds only a static witness while the plan requires a falsifier: a gap, named with both sides.
         await appendEvidence(root, changeId, makeEvidence({ id: 'E2', type: 'static_witness', ref: 'src/a.ts', assertion: 'contains:holds' }));
         const dir = root;
