@@ -48,14 +48,18 @@ describe('platform adapter golden output', () => {
     });
   });
 
-  it('declares Pi capabilities without hooks, subagents, or rules', () => {
+  it('declares Pi capabilities without hooks or rules, and with sub-agents', () => {
     // Pi has no declarative PreToolUse hook and no "rules" file concept; skills
     // + AGENTS.md context carry the Kata contract. Global scope targets Pi's
     // native config dir, consistent with every other platform adapter.
+    //
+    // **`subAgents: true`, corrected rather than copied.** The declaration said `false` while this repository dispatched
+    // `kata-reviewer` and `kata-implementer` on pi every round — a flag nothing read, so nothing contradicted it. The
+    // agent definitions and their directory are checked against it now (`tests/unit/agent-definitions-carry-no-protocol`).
     expect(platformCapabilities.pi).toEqual({
       skills: true,
       hooks: false,
-      subAgents: false,
+      subAgents: true,
       modelSelection: true,
     });
   });

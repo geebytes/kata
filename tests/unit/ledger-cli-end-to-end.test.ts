@@ -181,6 +181,7 @@ describe('the ledger verbs', () => {
         expect(String(frozen.revision)).toMatch(/^rev:[0-9a-f]{16}$/);
         expect(frozen.paths).toBe(1);
 
+        process.exitCode = 0;
         const refused = await ledger(['freeze', '--paths', 'src/a.ts,src/gone.ts']);
         expect(refused.ok).toBe(false);
         expect(String(refused.error)).toContain('src/gone.ts');
@@ -206,6 +207,10 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
 
         // Before any evidence is verified the claim is unsupported, and the deficit says what is missing.
+        // **The reset is what makes the two assertions below read their own calls.** Without it `process.exitCode` may
+        // already be 1 from an earlier refusal in this case, and the assertion passes whether or not this command refused
+        // — measured: the same shape left a case green while the guard it asserted about was deleted.
+        process.exitCode = 0;
         const pending = await ledger(['decide']);
         expect(pending.verdict).toBe('insufficient');
         expect(process.exitCode).toBe(1);
@@ -348,6 +353,7 @@ describe('the ledger verbs', () => {
     it('refuses a waiver with no reason, because the gate would refuse it anyway', async () => {
         await ledger(['freeze']);
         await ledger(claimArgv());
+        process.exitCode = 0;
         const refused = await ledger(['claim', 'waive', 'C1']);
         expect(refused.ok).toBe(false);
         expect(String(refused.error)).toContain('--reason');

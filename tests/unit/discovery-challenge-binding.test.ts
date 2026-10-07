@@ -94,10 +94,12 @@ const codesOf = (output: Record<string, unknown>): string[] =>
 describe('a challenge bound to a declared falsifier', () => {
     it('records the falsifier, the subject it ran against and the verifier outcome', async () => {
         await declareFalsifier();
+        process.exitCode = 0;
         const added = await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E1', '--id', 'X1']);
         expect(process.exitCode).toBe(0);
         expect(added.challenge).toMatchObject({ id: 'X1', claimId: 'C1', falsifierEvidenceId: 'E1' });
 
+        process.exitCode = 0;
         const checked = await ledger(['challenge', 'check', '--id', 'X1']);
         expect(process.exitCode).toBe(0);
         expect(checked.outcomes).toHaveLength(1);
@@ -147,10 +149,12 @@ describe('a challenge bound to a declared falsifier', () => {
     it('refuses a falsifier the claim does not name, an item that is not a falsifier, and a challenge with neither form', async () => {
         await declareFalsifier();
 
+        process.exitCode = 0;
         await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E404', '--id', 'X1']);
         expect(process.exitCode).toBe(1);
 
         // `E2` is a static witness: it has no mutation to inject, so no falsifier run exists to bind.
+        process.exitCode = 0;
         await ledger(['challenge', 'add', '--claim', 'C1', '--falsifier', 'E2', '--id', 'X2']);
         expect(process.exitCode).toBe(1);
 

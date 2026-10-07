@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { evidenceDir, initLayout, recordOwner, recordsRoot, wikiDir, wikiRecordPath } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
@@ -85,20 +85,59 @@ describe('the owner rule covers evidence, and the tracked set agrees with it', (
         expect(wikiDir(linked)).toBe(join(primary, '.kata', 'wiki'));
     });
 
-    it('the .gitignore whitelist and the record files agree, measured against git itself', async () => {
-        // The repository carries the whitelist; the check asks git what it would add, so the answer cannot drift from the
-        // rules the way a hand-written list of expected names would.
+    /**
+     * **A repository this case builds, because the one it was reading is not an artefact.**
+     *
+     * These two cases used to hard-code this checkout's path and ask git about *it* — so their answer was whatever the live
+     * index happened to hold. Measured twice in one session: with another session's `.kata` records staged, `git add -An`
+     * printed nothing and the case failed; with another session's transient lock file removed mid-scan, `execFileSync` threw
+     * `fatal: 无法对 …/holder.json 执行 stat`. The seal runs the suite, so a concurrent session could block any change's
+     * seal — which is how it presented: a seal that failed for a reason no code in the change explained.
+     *
+     * What stays real is the subject: the repository's own tracked `.gitignore` is copied in, and the fixture writes one path
+     * per kind, because a fixture with no admitted path would make both cases pass on an empty answer — which is exactly how
+     * the first failure hid.
+     */
+    async function whitelistedRepository(): Promise<{ root: string; listed: string }> {
+        const root = await mkdtemp(join(tmpdir(), 'kata-whitelist-'));
+        roots.push(root);
+        await writeFile(join(root, '.gitignore'), await readFile(new URL('../../.gitignore', import.meta.url), 'utf8'));
+        const paths = [
+            '.kata/tasks/fixture/task.json',
+            '.kata/wiki/fixture.json',
+            '.kata/worktrees/fixture/marker',
+            '.kata/runtime/fixture.json',
+            '.kata/locks/fixture.lock',
+            '.kata/evidence/fixture.json',
+        ];
+        for (const path of paths) {
+            await mkdir(dirname(join(root, path)), { recursive: true });
+            await writeFile(join(root, path), '{}\n');
+        }
         const { execFileSync } = await import('node:child_process');
-        const repoRoot = '/data/work/ahaeureka/k2skills/kata';
-        const listed = execFileSync('git', ['add', '-An', '.kata/'], { cwd: repoRoot, encoding: 'utf8' });
+        execFileSync('git', ['init', '-q'], { cwd: root });
+        return { root, listed: execFileSync('git', ['add', '-An', '.kata/'], { cwd: root, encoding: 'utf8' }) };
+    }
 
-        // Every admitted path must be a record the repository intends to carry: the trace under `.kata/tasks/<id>/` or the
-        // knowledge under `.kata/wiki/`. Machinery (worktrees, runtime, locks, evidence) must never be admitted.
-        const admitted = listed
+    /** git's dry-run answer, as the paths it would add under `.kata/`. */
+    function admittedPaths(listed: string): string[] {
+        return listed
             .split('\n')
             .map((line) => line.replace(/^add '/, '').replace(/'$/, ''))
             .filter((line) => line.startsWith('.kata/'));
+    }
+
+    it('the .gitignore whitelist and the record files agree, measured against git itself', async () => {
+        // The whitelist under test is the repository's; what git is asked about is a repository this case built, so the
+        // answer is a function of the fixture rather than of whatever another session has staged in this checkout.
+        const { listed } = await whitelistedRepository();
+        const admitted = admittedPaths(listed);
         expect(admitted.length).toBeGreaterThan(0);
+
+        // Every admitted path must be a record the repository intends to carry: the trace under `.kata/tasks/<id>/` or the
+        // knowledge under `.kata/wiki/`. Machinery (worktrees, runtime, locks, evidence) must never be admitted.
+        expect(admitted).toContain('.kata/tasks/fixture/task.json');
+        expect(admitted).toContain('.kata/wiki/fixture.json');
 
         const machinery = admitted.filter(
             (path) =>
@@ -108,9 +147,6 @@ describe('the owner rule covers evidence, and the tracked set agrees with it', (
                 || path.startsWith('.kata/evidence/'),
         );
         expect(machinery, 'machinery must not be admitted by the whitelist').toEqual([]);
-
-        const admittedTraces = admitted.filter((path) => path.startsWith('.kata/tasks/'));
-        expect(admittedTraces.length).toBeGreaterThan(0);
     });
 
     it('the two tables that must agree are actually compared', async () => {
@@ -126,14 +162,9 @@ describe('the owner rule covers evidence, and the tracked set agrees with it', (
         //
         // They therefore *disagree* for records on purpose. What must hold is that the disagreement is total and named:
         // every path git admits under `.kata/` is excluded from identity, and nothing else under `.kata/` is admitted.
-        const { execFileSync } = await import('node:child_process');
         const { isIgnoredRepositoryPath } = await import('../../src/core/repository-identity.js');
-        const repoRoot = '/data/work/ahaeureka/k2skills/kata';
-        const listed = execFileSync('git', ['add', '-An', '.kata/'], { cwd: repoRoot, encoding: 'utf8' });
-        const admitted = listed
-            .split('\n')
-            .map((line) => line.replace(/^add '/, '').replace(/'$/, ''))
-            .filter((line) => line.startsWith('.kata/'));
+        const { listed } = await whitelistedRepository();
+        const admitted = admittedPaths(listed);
 
         expect(admitted.length).toBeGreaterThan(0);
         const admittedButCountedAsChange = admitted.filter((path) => !isIgnoredRepositoryPath(path));

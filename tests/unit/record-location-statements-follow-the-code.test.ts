@@ -18,7 +18,13 @@ import { join } from 'node:path';
  *
  * Deleting any of those facts reddens a case here. That is the property the previous check lacked.
  */
-const root = '/data/work/ahaeureka/k2skills/kata';
+/**
+ * **Resolved from this file's own location, not from a path into one checkout.** The first version named
+ * `/data/work/ahaeureka/k2skills/kata` outright, so the check only ran where that directory exists — the same defect the
+ * live-checkout guard in `tests-do-not-read-the-live-task-store.test.ts` now flags, and the same reason the seal's snapshot
+ * could not carry it.
+ */
+const root = new URL('../..', import.meta.url).pathname;
 const read = (path: string): string => readFileSync(join(root, path), 'utf8');
 
 /** The sentence a file renders, so a check cannot pass on a comment that merely quotes the old wording. */

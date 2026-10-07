@@ -8,6 +8,11 @@ export type PlatformDefinition = {
   name: string;
   skillsDir: string;
   globalSkillsDir?: string;
+  /**
+   * The directory holding this platform's sub-agent definitions, when it declares `subAgents` support. Absent means kata
+   * does not know where they live — which the guard reports rather than skipping.
+   */
+  agentsDir?: string;
   detectionPaths?: string[];
   rulesDir?: string;
   rulesBaseDir?: string;
@@ -128,9 +133,12 @@ export const platformDefinitions: readonly PlatformDefinition[] = [
     name: 'Pi',
     skillsDir: '.agents',
     globalSkillsDir: '.agents',
+    // **`subAgents: true`, because this repository dispatches them on pi today.** It said `false` while `kata-reviewer` and
+    // `kata-implementer` were dispatched here every round — a declaration nothing consumed, so nothing contradicted it.
+    agentsDir: '.pi/agents',
     detectionPaths: ['.agents/skills', '.pi'],
     modelSelectionInstruction: 'Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。',
-    capabilities: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+    capabilities: { skills: true, hooks: false, subAgents: true, modelSelection: true },
   },
   {
     id: 'generic',
@@ -179,6 +187,28 @@ export function platformConfigDir(platform: Platform, scope: InstallScope, baseR
     if (envDir && baseRoot === envDir) return '';
   }
   return platformSkillsDir(platform, scope);
+}
+
+/**
+ * Where a platform keeps its sub-agent definitions, or `null` when it declares none.
+ *
+ * This is the consumer the `subAgents` capability never had: the flag was declared for eight platforms and read by nothing,
+ * so the agent definitions were hand-copied everywhere and managed nowhere. A platform that claims sub-agent support without
+ * naming a directory still answers `null`, and the guard reports it rather than skipping it silently.
+ */
+export function platformAgentsDir(platform: Platform, scope: InstallScope): string | null {
+  const definition = platformDefinitionById[platform];
+  if (definition.agentsDir === undefined) return null;
+  if (scope === 'global') {
+    const envDir = resolvePlatformGlobalDir(platform);
+    if (envDir) return `${envDir}/agents`;
+  }
+  return definition.agentsDir;
+}
+
+export function platformAgentPath(platform: Platform, scope: InstallScope, agentId: string): string | null {
+  const dir = platformAgentsDir(platform, scope);
+  return dir === null ? null : `${dir}/${agentId}.md`;
 }
 
 export function platformSkillPath(platform: Platform, scope: InstallScope, commandId: string, baseRoot?: string): string {

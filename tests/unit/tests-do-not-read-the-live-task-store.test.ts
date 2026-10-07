@@ -49,6 +49,27 @@ const READS_TASK_STATE = [
 ];
 
 /**
+ * **A test must not read the live checkout either.**
+ *
+ * The rule above covers the governed store; this one covers the same defect from the other side — **the state of the
+ * checkout the suite happens to be running in**. It bit twice in one session, in
+ * `tests/unit/owner-rule-covers-evidence-and-trace.test.ts`, which hard-coded this repository's path and asked git about it:
+ * with another session's `.kata` records staged, `git add -An` printed nothing and the case failed (`expected 0 to be
+ * greater than 0`); with another session's transient lock file removed between git's scan and its `stat`, `execFileSync`
+ * threw `fatal: 无法对 …/holder.json 执行 stat`. Because the seal runs the suite, a concurrent session could block **any**
+ * change's seal — which is how it presented: a seal that failed for a reason no code in the change explained.
+ *
+ * What a case may read instead is its own fixture: a temp root it built, or a tracked file resolved from the file's own
+ * location rather than from an absolute path into one machine's checkout.
+ */
+const READS_LIVE_CHECKOUT = [
+    // An absolute path into somebody's checkout: the workspace of whoever ran the suite, not the fixture this case built.
+    /(['"`])\/(?:data|home|app|Users|opt)\/[^'"`]*\1/,
+    // git asked about a directory given as a literal, rather than about the fixture root this case built.
+    /exec(?:File)?Sync\(\s*['"]git['"][^)]*cwd:\s*['"`]/,
+];
+
+/**
  * **A fixture may not fabricate the revision identity the seal is supposed to produce.**
  *
  * This class bit three times in one change, in three drafts of the same case, and each draft asserted a different wrong
@@ -335,6 +356,47 @@ describe('a test does not read the live task store', () => {
         ];
         for (const [index, example] of examples.entries()) {
             expect(READS_TASK_STATE[index]!.test(example), `pattern ${index} does not match its own example`).toBe(true);
+        }
+    });
+
+    it('finds no test that reads the live checkout it happens to be running in', async () => {
+        const offenders: string[] = [];
+        for (const file of await testFiles(TESTS)) {
+            // Same exclusion as the scan above, for the same reason: this file holds one sample line per pattern.
+            if (file.endsWith('tests-do-not-read-the-live-task-store.test.ts')) continue;
+            // **Comments are blanked first**, the same way the revision-identity rule above reads a file: a sentence *about*
+            // a hard-coded path is not a read of it, and this change's own note explains the defect by naming the path.
+            const text = withoutComments(await readFile(file, 'utf8'));
+            for (const [index, line] of text.split('\n').entries()) {
+                if (READS_LIVE_CHECKOUT.some((pattern) => pattern.test(line))) {
+                    offenders.push(`${file.replace(TESTS, 'tests/')}:${index + 1}`);
+                }
+            }
+        }
+        expect(
+            offenders,
+            'a test must measure its own fixture: an absolute path into one checkout, or git asked about it, makes the case a '
+            + 'function of whatever another session has staged — and the seal runs this suite',
+        ).toEqual([]);
+    });
+
+    it('the live-checkout patterns match their own examples, and clear a fixture', () => {
+        const mustMatch = [
+            "const root = '/data/work/ahaeureka/k2skills/kata';",
+            "execFileSync('git', ['add', '-An', '.kata/'], { cwd: '/data/work/ahaeureka/k2skills/kata' });",
+        ];
+        for (const example of mustMatch) {
+            expect(READS_LIVE_CHECKOUT.some((pattern) => pattern.test(example)), `no pattern matches: ${example}`).toBe(true);
+        }
+        // The shapes a case is *supposed* to use: a fixture root it built, and git asked about that root.
+        const mustNotMatch = [
+            "const root = await mkdtemp(join(tmpdir(), 'kata-whitelist-'));",
+            "execFileSync('git', ['init', '-q'], { cwd: root });",
+            "const root = new URL('../..', import.meta.url).pathname;",
+            "expect(join(root, '.kata', 'tasks')).toContain('.kata/tasks');",
+        ];
+        for (const example of mustNotMatch) {
+            expect(READS_LIVE_CHECKOUT.some((pattern) => pattern.test(example)), `a fixture is flagged: ${example}`).toBe(false);
         }
     });
 });

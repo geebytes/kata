@@ -186,7 +186,7 @@ describe('Kata platform installer', () => {
                 expect.objectContaining({ platform: 'roocode', scope: 'project', capabilities: expect.objectContaining({ skills: true }) }),
                 expect.objectContaining({ platform: 'gemini', scope: 'project', capabilities: expect.objectContaining({ hooks: true }) }),
                 expect.objectContaining({ platform: 'github-copilot', scope: 'project', capabilities: expect.objectContaining({ skills: true }) }),
-                expect.objectContaining({ platform: 'pi', scope: 'project', capabilities: expect.objectContaining({ skills: true, hooks: false, subAgents: false, modelSelection: true }) }),
+                expect.objectContaining({ platform: 'pi', scope: 'project', capabilities: expect.objectContaining({ skills: true, hooks: false, subAgents: true, modelSelection: true }) }),
                 expect.objectContaining({ platform: 'generic', scope: 'project', capabilities: expect.objectContaining({ hooks: false }) }),
             ]),
         );

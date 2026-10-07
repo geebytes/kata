@@ -468,7 +468,7 @@ export const platformCapabilities: Record<Platform, PlatformCapabilities> = {
     roocode: { skills: true, hooks: false, subAgents: false, modelSelection: true },
     gemini: { skills: true, hooks: true, subAgents: true, modelSelection: true },
     'github-copilot': { skills: true, hooks: true, subAgents: true, modelSelection: true },
-    pi: { skills: true, hooks: false, subAgents: false, modelSelection: true },
+    pi: { skills: true, hooks: false, subAgents: true, modelSelection: true },
     generic: { skills: true, hooks: false, subAgents: false, modelSelection: false },
 };
 
