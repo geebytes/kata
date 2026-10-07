@@ -112,7 +112,10 @@ describe('a review request is handed over and checked, rather than hoped for', (
         // What it must carry: the claim's own reading set, the tier's evidence requirement, the number, and the questions.
         expect(built.request.claims[0]?.readingSet).toEqual(['src/a.ts']);
         expect(built.request.claims[0]?.requiredEvidence.types).toEqual(['executable_falsifier']);
-        expect(built.request.probes.map((probe) => probe.id)).toEqual(['P1-C1']);
+        // The **whole** entry, not just its id: the command is the question a reviewer is handed, and an id-only assertion
+        // stayed green while `command: ''` was injected (measured by an independent round), so a request could carry blank
+        // questions and every declared selector passed.
+        expect(built.request.probes).toEqual([{ id: 'P1-C1', claimId: 'C1', command: 'test -f src/a.ts' }]);
         expect(built.request.deadlineToolCalls).toBe(200);
         // What it must not: the assurance axis as **fields**. A substring check on the document would find these words in
         // the note that denies them, so the assertion is over the key set — which is what a reader of the request acts on.
@@ -160,7 +163,8 @@ describe('a review request is handed over and checked, rather than hoped for', (
         expect(built.ok).toBe(true);
         if (!built.ok) return;
         expect(built.request.subjectRevision).toBe(subjectRevision);
-        expect(built.request.probes.map((probe) => probe.id)).toEqual(['P1-C1']);
+        // The kept question travels whole, command included — the withheld ones are asserted by name and revision below.
+        expect(built.request.probes).toEqual([{ id: 'P1-C1', claimId: 'C1', command: 'test -f src/a.ts' }]);
         expect(built.request.withheldProbes).toEqual([
             { id: 'P2-C1', claimId: 'C1', subjectRevision: 'rev:superseded' },
             { id: 'P3-C1', claimId: 'C1', subjectRevision: null },
@@ -184,6 +188,8 @@ describe('a review request is handed over and checked, rather than hoped for', (
         // the question — asserted first, so the negative below is about a probe that exists rather than about an empty list.
         const before = await verifyAgainstRequest({ root, changeId });
         const beforeGaps = before.gaps.map((gap) => gap.what).join(' | ');
+        // "By claim" is half the title, so it is asserted: a gap that names no claim is a gap a reader cannot route.
+        expect(before.gaps.map((gap) => gap.claimId)).toEqual(['C1']);
         expect(beforeGaps).not.toContain('P1-C1');
         // The gap now names the kernel's own state and reason rather than "no supported verdict", so a reader can tell
         // "nothing was checked" from "checked and not enough" — the two instructions these used to conflate.

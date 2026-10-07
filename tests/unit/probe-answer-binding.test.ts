@@ -97,7 +97,11 @@ describe('a probe answer bound to the question it answers', () => {
         const answer = answers.find((entry) => entry.probeId === ids[0]);
         const subject = (await readLedger(root, changeId)).subject?.revision;
         expect(answer).toMatchObject({ subjectRevision: subject, path: 'src/a.ts' });
-        expect(typeof answer?.expected).toBe('string');
+        // **By value, not by type.** `typeof expected === 'string'` was satisfied by `expected: ''` (measured by an
+        // independent round), so the assertion is the fact the answer copies: the question's own prefix or literal.
+        const probes = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'probes.json'), 'utf8')) as Array<{ id: string; prefix?: string; literal?: string }>;
+        const askedProbe = probes.find((probe) => probe.id === ids[0]);
+        expect(answer?.expected).toBe(askedProbe?.prefix ?? askedProbe?.literal ?? 'exists');
     });
 
     it('keeps a bound answer as advisory history, and refuses a repeated answer for the same question', async () => {
