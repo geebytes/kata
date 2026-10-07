@@ -113,7 +113,10 @@ Do this:
    kata-cli ledger decide --change <task-id>          # pass | fail | insufficient, with the reasons
    ```
 2. Issue the review request. It carries the claim's reading set, the evidence type and strength that claim requires, a
-   numeric deadline, and the probes a reader must answer — and it deliberately carries no platform, session, model or
+   numeric deadline, and the questions the reader is asked — `probes`, plus `withheldProbes` when the ledger holds
+   questions bound to another revision. **Only `probes` is an obligation**: a withheld question is history that cannot
+   describe the content under review, so the request does not hand it over and its presence is not a finding. A request with
+   `probes: []` and a populated `withheldProbes` is complete. And it deliberately carries no platform, session, model or
    receipt, because assurance is a separate axis:
    ```bash
    kata-cli ledger run --change <task-id> --out request.json
@@ -137,11 +140,12 @@ Do this:
    Kata records none of this: the request carries no platform, session or model, and how the round was launched is
    organizational process rather than a checked criterion. The check above is about the round existing, not about what
    kata believes about it.
-4. **A probe is not a quiz.** `ledger answer` records the command that was run and what it printed, and a probe is answered once — so a wrong answer cannot be retried until something passes. Answering from having read the revision is
-   the only way to get them right:
+4. **Answer the questions the request handed you, and only those.** `ledger answer` records the command that was run and
+   what it printed, and a question is answered once — so a wrong answer cannot be retried until something passes. Answering
+   from having read the revision is the only way to get them right. The request's `probes` is the list; a question it
+   withheld asks about another revision and is not yours to answer, and `ledger ask` reporting nothing new is not a gap:
    ```bash
-   kata-cli ledger ask --change <task-id>              # the probes this ledger asks, derived from its own claims
-   kata-cli ledger answer --change <task-id> --probe <id> --command "<what you ran>" --observed "<what it printed>"
+   kata-cli ledger answer --change <task-id> --probe <id> --observed "<what it printed>"
    ```
 5. **Record what you found as evidence, not as a claim about yourself.** A counterexample is a challenge the author has to
    answer, and it is recorded as one; it is withdrawn only when the ledger can see that it does not reproduce:

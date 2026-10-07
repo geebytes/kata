@@ -314,15 +314,15 @@ kata-cli ledger status   --change <id> --cost                 # per claim, plus 
   (`inline` runs the checks and is `observed`; `file` reads results recorded elsewhere and is `relayed`), and the approval
   record states the limit plainly: *the ledger records what was verified, not who wrote the claims*.
 
-- **A probe set is asked once and cannot be refreshed.** `ledger ask` derives its questions from the frozen subject, but a
-  probe's id is positional (`P<n>-<claim>`) and `appendProbe` never replaces an existing one — so once a reading-set file
-  moves, the stored question keeps asking about content the revision no longer has, while `ledger answer` refuses a second
-  answer for that id. The derivation is right and the write is discarded, and `ask` still reports that it asked. Because a
-  repair round moves exactly the files a claim's reading set names, a strict change that repairs anything after its first
-  `ask` reaches this state. The ledger does not notice — a stale answer still satisfies the discovery floor — so the refusal
-  comes from the rule above, *a verdict does not outlive its content*, applied by a reader. Until this is repaired the only
-  in-task mitigation is additive: re-run `ask` with a larger `--per-claim` so fresh ids are appended against the current
-  subject, and answer those. See `superpowers/reports/2026-10-06-probe-answers-outlive-their-revision.md`.
+- **A probe set is a history, and a request hands over only its current part.** This was a defect, and it is now repaired in
+  three places that have to be read together: `ledger ask` refreshes a question whose content has moved (identity is the
+  command *and* the subject revision, not the positional id), `ledger answer` copies the fact it answers (revision, path,
+  expected value, canonical command), and `buildReviewRequest` hands a reviewer **only** the questions bound to the revision
+  the request names, naming the rest in `withheldProbes`. A question stored against an older revision is therefore not an
+  obligation: it cannot be answered truthfully, the request does not offer it, and reporting it as unmet is a finding about
+  the brief rather than about the change. See
+  `superpowers/reports/2026-10-06-probe-answers-outlive-their-revision.md` for the measurements and
+  `design/2026-10-08-finish-the-retired-answer-semantics.md` for the repair.
 
 **Repairing.** A repair changes content, the sealed revision derives from content, and a verdict is bound to the revision
 it was recorded against — so **sealing after each repair buys a round per repair**. Repair everything one revision can

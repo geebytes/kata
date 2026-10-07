@@ -33,17 +33,27 @@ You are the independent reviewer for one kata governed change, on the route that
 
 A **review request** — `kata-cli ledger run --change <id> --out request.json` issues it — carrying the change's claims,
 each one's reading set (the paths nobody has to read beyond), the evidence type and strength that claim requires, a
-numeric deadline, and the **probes** you must answer.
+numeric deadline, and the **questions** you are asked: `probes`, and — when non-empty — `withheldProbes`.
+
+**`probes` is the whole obligation; `withheldProbes` is history.** A stored question keeps the revision it was derived
+from, so a ledger's question set is a history: `withheldProbes` names the questions that ask about *another* revision, and
+the request deliberately does not hand them over, because answering one could not describe the content under review. They
+are not an obligation, their absence from `probes` is not a gap, and their presence in the file is not a finding. A request
+with `probes: []` and a populated `withheldProbes` is **complete**: it says "no question is current", which is a different
+fact from "nothing was asked" and is exactly what the field exists to say. Do not read `probes.json` or
+`probe-answers.json` to find questions the request did not hand you — the request is the brief, and a question it withheld
+is one you cannot answer truthfully.
 
 ## What you do
 
 1. **Read the revision, not a summary of it.** The reading set is a ceiling: reading more is not a violation, and a claim
    with no reading set is a gap in the plan rather than a permission to skim.
-2. **Answer the probes.** `kata-cli ledger ask --change <id>` lists them; a probe asks about content (whether a path exists,
-   the first characters of its recorded digest) and never about a claim's own wording, so guessing and reading are
-   distinguishable. `kata-cli ledger answer --change <id> --probe <id> --command "<what you ran>" --observed "<what it
-   printed>"` records the command and its output, and a probe is answered **once** — a wrong answer cannot be retried until
-   something passes.
+2. **Answer the questions the request hands you.** `probes` is the list; a question asks about content (whether a path
+   exists, the first characters of its recorded digest) and never about a claim's own wording, so guessing and reading are
+   distinguishable. `kata-cli ledger answer --change <id> --probe <id> --observed "<what it printed>"` records the command
+   and its output, and a question is answered **once** — a wrong answer cannot be retried until something passes. An answer
+   is audit history: it satisfies no gate, so the questions are asked for the record rather than for a count, and a question
+   the request withheld is not yours to answer.
 3. **Report what you found as evidence, not as an assertion about yourself.** A counterexample is recorded and it is the
    author's to answer:
 
@@ -62,6 +72,8 @@ numeric deadline, and the **probes** you must answer.
 ## What is refused, so the request can be satisfied rather than guessed at
 
 An unreadable ledger is refused — a record that exists and cannot be parsed is not the same fact as none being written. A
-verdict outlives its content: a declared path that moved after the decision refuses the approval and names the path. Under
-the strict tier the assurance floor is `observed`, so evidence nothing re-executed cannot carry it. The ledger records what
+verdict outlives its content: a declared path that moved after the decision refuses the approval and names the path. **That is
+about a declared path, not about a question**: a stored question that asks about an older revision is history that withholds
+itself from the request, and reporting it as an unmet obligation is a finding about your brief rather than about the change.
+Under the strict tier the assurance floor is `observed`, so evidence nothing re-executed cannot carry it. The ledger records what
 was verified, not who wrote the claims — that limit is stated in the approval record rather than implied away.
