@@ -81,9 +81,29 @@ async function ledgerWithChallenge(
     if (options.runs !== undefined) {
         await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'runs.json'), `${JSON.stringify(options.runs, null, 2)}\n`);
     }
-    // The same shape question for the probe half, which reads a second schema-less artefact.
+    // The same shape question for the probe half, which reads a second schema-less artefact — and **the question that answer
+    // answered**. A real ledger never holds an answer without its probe (`ask` writes the probe, `answer` writes the answer),
+    // so a fixture that writes only the answers invents a state production never supplies, and any implementation that
+    // matches an answer to its question reads nothing here: the case would stay green under the very defect it guards.
     if (options.answers !== undefined) {
-        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'), `${JSON.stringify(options.answers, null, 2)}\n`);
+        // Both records are stamped with the revision the fixture just froze, because that is the only revision `ask` ever
+        // writes and the only one `answer` ever copies. An answer bound to some other revision is not a reading about this
+        // content under *any* implementation, so leaving it stale would make this fixture unfalsifiable.
+        const answers: Array<Record<string, unknown>> = (options.answers as Array<Record<string, unknown>>).map((answer) => ({
+            ...answer,
+            subjectRevision: frozen.subject.revision,
+        }));
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probe-answers.json'), `${JSON.stringify(answers, null, 2)}\n`);
+        const probes = answers.map((answer) => ({
+            id: answer.probeId,
+            claimId: answer.claimId ?? 'C1',
+            kind: 'file-exists',
+            path: answer.path ?? 'src/a.ts',
+            command: answer.command,
+            askedAt: '2026-10-05T00:00:00.000Z',
+            subjectRevision: answer.subjectRevision,
+        }));
+        await writeFile(join(root, '.kata', 'tasks', changeId, 'review', 'probes.json'), `${JSON.stringify(probes, null, 2)}\n`);
     }
 
     // The tier is named rather than classified: the discovery floor is a strict-tier rule, and letting the fixture's

@@ -99,6 +99,12 @@ function project(
         // declares — the default is "the one these cases name", and the case that checks an undeclared id passes its own
         // set. An absent set credits nothing, which is asserted separately.
         declaredFalsifiers: input.declaredFalsifiers ?? new Set(['E1']),
+        // **Handed the answers on purpose.** The property these cases assert is that the projection credits nothing for a
+        // matching free-text answer — and a projection that is never given an answer cannot be shown to ignore one. These
+        // two lines are the whole falsifier: delete them and every answer case here becomes a tautology about `undefined`,
+        // which is exactly how this suite went vacuous once already.
+        probes: input.probes ?? [],
+        answers: input.answers ?? [],
     });
 }
 

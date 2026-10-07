@@ -439,8 +439,12 @@ export function decide(input: DecideInput): Decision {
         reasons.push(reason('discovery_unverified', REASON_MESSAGES.discovery_unverified.message));
         deficits.push({
             claimId: 'discovery:verified_challenge',
-            need: 'run the recorded challenge and let it record its observation (`kata-cli ledger challenge check`); a challenge '
-                + 'with no terminal observation verifies nothing',
+            // **The remedy names the id, because the bare verb refuses in the state that reaches here.** A challenge that is
+            // already terminal (checked against a revision that has since moved) leaves nothing for `challenge check` to
+            // pick up, so "run the recorded challenge" has to say *which* record to run — and the record does carry a
+            // terminal observation, which is why this deficit is about the measurement being stale, not about it missing.
+            need: 're-run the recorded challenge against the current revision and let it persist a fresh observation '
+                + '(`kata-cli ledger challenge check --id <challenge-id>`); a resolution bound to another revision verifies nothing',
         });
     }
 
