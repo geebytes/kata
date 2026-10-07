@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { answerProbe, appendChallenge, appendClaim, appendEvidence, appendRun, ensureAssurance, freezeSubject, recordChallenge, setUsage, writePolicy, readLedger, recordVerdicts, replaceEvidence, restateClaim, writeSubject } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { ledgerVerdict } from '../../src/store/verdict.js';
+import { defaultPolicy } from '../../src/kernel/policy.js';
 import { makeClaim, makeEvidence, makeVerdict } from '../helpers/review.js';
 
 /**
@@ -151,7 +152,12 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('discovery_unverified');
     });
 
-    it('treats a timed-out check as unresolved, so it blocks like any other open counterexample', async () => {
+    it('blocks a counterexample a check left unresolved, whatever its observation says', async () => {
+        // **What this case can and cannot hold.** The record is stored `open` and the word "timed out" sits in
+        // `resolution.observed` — a field the projection deliberately never reads — so this case pins the *state* the floor
+        // acts on, not the transition that produces it. An independent round made `challenge check` treat every outcome as a
+        // resolution and this case stayed green, which is why the transition is asserted separately below by running the real
+        // command against a real timeout.
         const { codes } = await ledgerWithChallenge({
             ...base,
             state: 'open',
@@ -159,6 +165,31 @@ describe('the discovery floor keeps refusing what did not run', () => {
         });
         expect(codes).toContain('challenge_open');
         expect(codes).not.toContain('discovery_unverified');
+    });
+
+    it('leaves a challenge open when its own check times out, so a timeout is not a resolution', async () => {
+        // **The transition, run end to end.** `challenge check` measures the command under the policy's own wall budget and
+        // derives the state from the exit code, so a check that never finishes has to come back *open*: an unresolved
+        // measurement is not a completed one. Nothing asserted this — the suite's header claimed it and no case reached it
+        // (found by an independent round) — so the fixture writes a 300 ms budget and a command that sleeps, then runs the
+        // command a reviewer would run.
+        const policy = defaultPolicy();
+        await writePolicy(root, changeId, { ...policy, budgets: { ...policy.budgets, maxWallMs: 300 } });
+        await ledgerWithChallenge({ ...base, state: 'open', command: 'sleep 5' });
+
+        await runLedgerCommand(['challenge', 'check'], { root, changeId });
+
+        const stored = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'challenges.json'), 'utf8')) as Array<Record<string, unknown>>;
+        const resolution = (stored[0]?.resolution ?? {}) as Record<string, unknown>;
+        expect(stored[0]?.state).toBe('open');
+        // The observation names the budget that was exceeded, because "it timed out" and "it exited non-zero" are different
+        // measurements and the record is what a reader has to repair from.
+        expect(String(resolution.observed ?? '')).toContain('timed out after 300');
+
+        const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
+        expect(verdict.kind).toBe('decided');
+        if (verdict.kind !== 'decided') return;
+        expect(verdict.decision.reasons.map((reason) => reason.code)).toContain('challenge_open');
     });
 
     it('refuses an answered probe as a reading, so answering one cannot clear the floor', async () => {
@@ -424,15 +455,24 @@ describe('the readers of the schema-less ledger files', () => {
         expect(await readFile(join(reviewDirOf(), 'challenges.json'), 'utf8')).toBe(before);
     });
 
-    it('refuses to append an answer to an unreadable answer list, and says so instead of throwing', async () => {
+    it('refuses to append an answer to an unreadable answer list, naming the file instead of throwing', async () => {
         await writeArtefact('probe-answers.json', `${JSON.stringify([{ probeId: 42, command: 'x', observed: 'y', answeredAt: 'z' }], null, 2)}\n`);
         const before = await readFile(join(reviewDirOf(), 'probe-answers.json'), 'utf8');
         const recorded = await answerProbe(root, changeId, { probeId: 'P1-C1', command: 'test -f src/a.ts', observed: 'exit 0', answeredAt: 'x' });
         expect(recorded.ok).toBe(false);
+        // **"Says so" has to be asserted, or the title is a claim about a message nothing reads.** An independent round set the
+        // refusal's `why` to an empty string and this case stayed green: `ok === false` and the untouched bytes say a write was
+        // refused, not that the refusal names what to repair.
+        if (recorded.ok) throw new Error('the write was accepted');
+        expect(recorded.why).toContain('probe-answers.json');
         expect(await readFile(join(reviewDirOf(), 'probe-answers.json'), 'utf8')).toBe(before);
     });
 
-    it('creates a valid document when the artefact is absent, and does not confuse that with unreadable', async () => {
+    it('creates a valid document when the artefact is absent, rather than refusing as it does for an unreadable one', async () => {
+        // **The absent direction, and only it.** The title's second clause names a distinction this fixture cannot exercise:
+        // nothing here is unreadable, so an implementation that answered `[]` for an unreadable artefact would leave this case
+        // green (an independent round measured exactly that). The other direction is the sibling above, which is why the title
+        // now says which one it holds.
         await expect(appendChallenge(root, changeId, {
             id: 'X1', claimId: 'C1', command: 'true', failsOn: 'rev:x', state: 'open', at: 'x',
         })).resolves.toBeDefined();

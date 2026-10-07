@@ -45,6 +45,11 @@ async function ledger(argv: string[]): Promise<Record<string, unknown>> {
         chunks.push(String(chunk));
         return true;
     });
+    // **Each assertion about an exit code is about *that* call.** `process.exitCode` is process-wide state: a `decide` that
+    // refuses leaves it at 1, and a later successful command does not clear it — so `expect(process.exitCode).toBe(1)` after a
+    // re-answer passed while the write-once guard was deleted (found by an independent round). Resetting before the call is
+    // what makes the value afterwards a fact about this invocation rather than about the last one that happened to fail.
+    process.exitCode = 0;
     try {
         await runLedgerCommand(argv, { root, changeId });
     } finally {
