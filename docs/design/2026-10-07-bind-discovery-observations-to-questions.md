@@ -74,6 +74,35 @@ The report resolution must identify:
 - F2: answers are advisory and cannot satisfy the floor or request approval;
 - F3: both discovery counts derive from the same challenge-only projection.
 
+### 3.4 The negatives have to be falsifiable, which took two review rounds to get right
+
+Removing an input from a decision removes it from every test that fed that input too, and a test that asserts a negative about an
+input the code under test never receives is a tautology. Two review rounds found three instances of this in this change's own
+suite:
+
+| Where | Why it was vacuous | What it is now |
+| --- | --- | --- |
+| `tests/unit/review-request-is-handed-over.test.ts` | the case asserted "an unanswered probe is not a gap" while the fixture asked no probe, so a restored probe-gap loop was a no-op | the fixture writes a probe; the case asserts the request carries it and that the gap list does not name it |
+| `tests/unit/discovery-count-projection.test.ts` | the `project()` helper kept `probes?`/`answers?` in its type but stopped forwarding them, so every answer case was an assertion about `undefined` | the helper forwards both, so the projection really is handed an answer it must ignore |
+| `tests/unit/discovery-floor-fail-closed.test.ts` | the case wrote `probe-answers.json` without the `probes.json` that always accompanies it, so an implementation matching an answer to its question read nothing | both records are written, stamped with the revision the fixture froze |
+
+**The falsifier is the historical implementation, not a synthetic one.** `E1` restores the answer-counting block that this change
+deleted, in place, and reddens the projection selector (2 failures); replaying the whole historical defect — the block plus the
+caller that passed `probes`/`answers` into it — reddens both selectors. A mutation that forces `return { independentChallenges: 1 }`
+proves only that the test reads the return value, which is why it was replaced.
+
+**What each selector guards, stated so a later reader does not over-claim:**
+
+- `discovery-count-projection.test.ts` — the projection ignores answers *even when handed them* (`E1`);
+- `discovery-floor-fail-closed.test.ts` — the floor refuses, and an answered probe does not clear it (`E3` for the refusal itself;
+  the answer half reddens only under the full historical replay, because the production caller no longer supplies answers at all);
+- `review-request-is-handed-over.test.ts` — an unanswered probe is not an approval gap (`E2`);
+- `probe-answer-binding.test.ts` — the CLI refuses an answer whose command does not match its question (`E4`).
+
+`C3`'s refusal text was corrected in the same pass: `discovery_unverified` named the bare `challenge check`, which refuses in the
+state that reaches it (a terminal challenge whose resolution is bound to a superseded revision), and claimed the record had no
+terminal observation when it does. It now names `challenge check --id <challenge-id>` and says the measurement is stale.
+
 ## 4. Tests and falsifiers
 
 | AC | Selector | Reversible falsifier |
