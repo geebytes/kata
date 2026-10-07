@@ -187,9 +187,16 @@ describe('a probe answer bound to the question it answers', () => {
         // Not a snapshot of the retired sentence: **no reading claim at all**, however worded. A regex on the exact old
         // wording passes for a re-worded one (an independent round found that), and the word is what the retirement is about.
         expect(note).not.toMatch(/\breading\b/);
-        // **Every** short reader, not just the one this change set out to remove: an independent round found `readProbes` and
-        // `readPlan` still answering `[]`/`null` for an artefact they could not decode — the same shape, in the same module,
-        // with the state-returning twin used by every real caller. The assertion is a set, so a third cannot appear quietly.
+        // **Every** short reader this module has, not just the one this change set out to remove: an independent round found
+        // `readProbes` and `readPlan` still answering `[]`/`null` for an artefact they could not decode — the same shape, in
+        // the same module, with the state-returning twin used by every real caller.
+        //
+        // **What this can and cannot hold, stated because a set of three names reads as a rule.** It holds for these three
+        // names: they must be absent and their state-returning twins present. It does **not** catch a *newly added* short
+        // reader under a fourth name — measured by an independent round, which added `readEvidence` answering `[]` for an
+        // unreadable artefact and left this case green. Catching that needs a rule about the shape (a reader that answers an
+        // empty value for an unreadable artefact), not a list of names; until such a rule exists, the names below are the
+        // ones this change removed.
         const ledgerModule = await import('../../src/store/ledger.js');
         const exports = Object.keys(ledgerModule);
         for (const short of ['readProbeAnswers', 'readProbes', 'readPlan']) {

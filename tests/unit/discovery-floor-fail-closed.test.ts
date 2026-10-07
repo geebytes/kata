@@ -713,10 +713,29 @@ describe('a report over an unreadable ledger names the artefact instead of answe
         // **A partial view is what produced the false answers.** `claims: []`, `evidence: []` and `subject: null` are claims
         // about content for a file nobody could look at, so a verb that reports on, decides from or writes to the ledger stops
         // at one gate — `status` is the exception, because naming the state is its job.
+        //
+        // **"Every" is asserted as every, not as one example.** This case used to run `claim list` and then `status`, so a
+        // per-verb exemption added to the gate (measured: exempting `focus`) left it green while the exemption handed a
+        // partial view to a verb the gate exists for. The list below is the verbs that read or decide from this ledger, and
+        // each one has to refuse on its own.
         await corrupt('claims.json', '{}\n');
-        const list = await run(['claim', 'list']);
-        expect(list.state).toBe('ledger-unreadable');
-        expect(String(list.error)).toContain('claims.json');
+        const verbs: string[][] = [
+            ['claim', 'list'],
+            ['evidence', 'list'],
+            ['challenge', 'list'],
+            ['plan'],
+            ['focus'],
+            ['decide'],
+            ['run'],
+            ['request-check'],
+            ['ask'],
+        ];
+        for (const argv of verbs) {
+            const refusal = await run(argv);
+            expect(refusal.state, `ledger ${argv.join(' ')} did not stop at the partial-view gate`).toBe('ledger-unreadable');
+            expect(String(refusal.error), `ledger ${argv.join(' ')} refused without naming the file`).toContain('claims.json');
+        }
+        // The one verb whose job is to report that state, and it names the file rather than reporting an absence.
         const status = await run(['status']);
         expect(status.ok).toBe(true);
         expect(status.unreadableArtefacts).toContain('claims.json');
