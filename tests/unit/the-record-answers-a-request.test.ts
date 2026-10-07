@@ -14,8 +14,9 @@ import { currentStatePath, reviewPath, taskDir } from '../../src/core/layout.js'
  * second round was refused, because the record's binding is content identity only (`revisionId`, the manifest hashes, the
  * frozen candidate) and the request it answered was nowhere in it.
  *
- * These two guards pin the two halves: a record that answered **another** request does not block, and a record that answered
- * **this** one still does.
+ * This guard pins the half that releases a blocked round: a record that answered **another** request does not block the
+ * answer to this one. The same-request refusal and its remedy live in `the-refusal-names-the-reachable-remedy.test.ts`,
+ * because two criteria that name one test file collapse into one check and one of them then has no evidence.
  */
 const NOW = '2026-10-08T00:00:00.000Z';
 const taskId = 'record-answers-a-request';
@@ -96,18 +97,6 @@ describe('the record answers the request it was made for', () => {
         expect(record.findings?.map((finding) => finding.id)).toEqual(['R9-F1']);
         // The replacement names the request it answered, so the next round can tell the same way.
         expect(record.subjectRevision).toBe('rev:bbbb11111111bbbb');
-    });
-
-    it('still refuses a second result for the same request, so a recorded round is not silently replaced', async () => {
-        await recordedRound('rev:bbbb11111111bbbb');
-        await freezeSubject('rev:bbbb11111111bbbb');
-
-        const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
-        expect(recorded.success).toBe(false);
-        // And the refusal names a remedy that works in the state it fires from: the chain, not just "re-enter".
-        expect(String(recorded.error)).toContain('kata-cli verify');
-        expect(String(recorded.error)).toContain('kata-cli gate approve');
-        expect(String(recorded.error)).toContain('--confirm-host-model');
     });
 
     it('keeps blocking when the record predates the subject binding, because we cannot know what it answered', async () => {
