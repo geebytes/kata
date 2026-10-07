@@ -409,7 +409,6 @@ function checkShape(file: string, where: string, field: string, value: unknown, 
  * consumer is what produced the series (the challenge half of the discovery count, then the probe reader — which the floor no
  * longer consults at all — then `distinctProbeCount`), so the guard belongs where the type is claimed rather than at the
  * consumers: a reader added later cannot reintroduce it.
- * later cannot reintroduce it.
  *
  * **The refusal is the point, and this comment used to describe the opposite.** It claimed a non-string field was coerced
  * to `''`, a non-object element dropped and a non-array document passed through; the implementation throws for all three,

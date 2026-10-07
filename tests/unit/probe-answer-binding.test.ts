@@ -73,12 +73,16 @@ async function declareClaim(): Promise<void> {
 const codesOf = (output: Record<string, unknown>): string[] =>
     (output.reasons as Array<{ code: string }>).map((reason) => reason.code);
 
-/** Answer every question the ledger currently asks, the way a reviewer would. */
+/** Answer every question the ledger currently asks, the way a reviewer would — and check that each answer was accepted. */
 async function answerEverything(): Promise<void> {
     const stored = await readLedger(root, changeId);
     const probes = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'probes.json'), 'utf8')) as Array<{ id: string }>;
     for (const probe of probes) {
         await ledger(['answer', '--probe', probe.id, '--observed', 'exit 0']);
+        // **The half three titles claimed and nothing asserted.** Mutating `answerProbe` to refuse every answer left the
+        // three cases that say an answer is saved, accepted and written still green (found by an independent round), because
+        // they read only the refusal codes — which are invariant to answer state. A refused answer is a different fact.
+        expect(process.exitCode, `answering ${probe.id} was refused`).toBe(0);
     }
     expect(stored.subject).not.toBeNull();
 }
@@ -166,7 +170,7 @@ describe('a probe answer bound to the question it answers', () => {
         expect((await readLedger(root, changeId)).recordedFiles).not.toContain('probe-answers.json');
     });
 
-    it('does not call an answer a reading in the note it prints when it asks', async () => {
+    it('does not call an answer a reading in the note it prints, and publishes no short reader beside its state-returning twin', async () => {
         // **The user-visible half of the retirement.** Every other surface in this codebase says an answer is audit history
         // that satisfies no gate; the note `ledger ask` prints still ended "one question answered twice is one reading",
         // which is the sentence a reviewer reads to decide what an answer is for. The de-duplication it describes is real
@@ -178,7 +182,6 @@ describe('a probe answer bound to the question it answers', () => {
         // Not a snapshot of the retired sentence: **no reading claim at all**, however worded. A regex on the exact old
         // wording passes for a re-worded one (an independent round found that), and the word is what the retirement is about.
         expect(note).not.toMatch(/\breading\b/);
-        // The dead reader is gone, not merely unused: a second convenience reader beside the state-returning one is how a
         // **Every** short reader, not just the one this change set out to remove: an independent round found `readProbes` and
         // `readPlan` still answering `[]`/`null` for an artefact they could not decode — the same shape, in the same module,
         // with the state-returning twin used by every real caller. The assertion is a set, so a third cannot appear quietly.
