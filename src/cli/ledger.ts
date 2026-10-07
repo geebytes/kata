@@ -564,11 +564,14 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         const repeated: Array<{ claimId: string; command: string }> = [];
         const skipped: Array<{ claimId: string; why: string }> = [];
         // **The question is the command, across the whole set and not only within one claim.** Two claims resting on the
-        // same path produced two records asking one question, so answering it once answered both — repetition counted as
-        // independent readings. The set is seeded from what is already stored, so a second `ask` does not pad either.
+        // **The question is the command, across the whole set and not only within one claim.** Two claims resting on the
+        // same path produced two records asking one question, so answering it once answered both — and a duplicated question
+        // would have been counted as two. (Answers are audit history now and satisfy no gate, but the de-duplication stays:
+        // the rate this feeds is a count of distinct questions, and repetition is not a second reading there either.) The
+        // set is seeded from what is already stored, so a second `ask` does not pad either.
         // **Only a question that is still current counts as already asked.** A stored probe whose revision has moved is not
         // the question this revision poses: skipping it would leave the moved content with no askable question, and an
-        // answer recorded against the stale record could never count for either revision.
+        // answer recorded against the stale record says nothing about the content under review.
         const currentRevision = ledger.subject.revision;
         const storedProbes = await readProbesState(options.root, changeId);
         if (storedProbes.kind === 'unreadable') {

@@ -74,17 +74,18 @@ The report resolution must identify:
 - F2: answers are advisory and cannot satisfy the floor or request approval;
 - F3: both discovery counts derive from the same challenge-only projection.
 
-### 3.4 The negatives have to be falsifiable, which took two review rounds to get right
+### 3.4 The negatives have to be falsifiable, which took four review rounds to get right
 
 Removing an input from a decision removes it from every test that fed that input too, and a test that asserts a negative about an
-input the code under test never receives is a tautology. Two review rounds found three instances of this in this change's own
-suite:
+input the code under test never receives is a tautology. **Four** review rounds found **four** instances of this in this change's
+own suite — the last one after this section first claimed the class was closed, which is why the section says four:
 
 | Where | Why it was vacuous | What it is now |
 | --- | --- | --- |
 | `tests/unit/review-request-is-handed-over.test.ts` | the case asserted "an unanswered probe is not a gap" while the fixture asked no probe, so a restored probe-gap loop was a no-op | the fixture writes a probe; the case asserts the request carries it and that the gap list does not name it |
 | `tests/unit/discovery-count-projection.test.ts` | the `project()` helper kept `probes?`/`answers?` in its type but stopped forwarding them, so every answer case was an assertion about `undefined` | the helper forwards both, so the projection really is handed an answer it must ignore |
-| `tests/unit/discovery-floor-fail-closed.test.ts` | the case wrote `probe-answers.json` without the `probes.json` that always accompanies it, so an implementation matching an answer to its question read nothing | both records are written, stamped with the revision the fixture froze |
+| `tests/unit/discovery-floor-fail-closed.test.ts` (answers) | the case wrote `probe-answers.json` without the `probes.json` that always accompanies it, so an implementation matching an answer to its question read nothing | both records are written, stamped with the revision the fixture froze |
+| `tests/unit/discovery-floor-fail-closed.test.ts` (satisfied state) | the case was titled "clears discovery for a terminal record that recorded an observation" but asserted only the absence of two *other* refusal codes — under the retired semantics it was true, under the new projection a record naming no declared falsifier cannot clear anything, so it stayed green while guarding nothing | split into the state it names: a positive case that a challenge bound to a **declared falsifier** clears the floor (fixture declares `E2`, resolution stamped `current`, asserted to redden when the recorded-verdict conjunct is broken), and a regression that a free-form record does **not** clear it however non-blank its observation |
 
 **The falsifier is the historical implementation, not a synthetic one.** `E1` restores the answer-counting block that this change
 deleted, in place, and reddens the projection selector (2 failures); replaying the whole historical defect — the block plus the
@@ -94,8 +95,9 @@ proves only that the test reads the return value, which is why it was replaced.
 **What each selector guards, stated so a later reader does not over-claim:**
 
 - `discovery-count-projection.test.ts` — the projection ignores answers *even when handed them* (`E1`);
-- `discovery-floor-fail-closed.test.ts` — the floor refuses, and an answered probe does not clear it (`E3` for the refusal itself;
-  the answer half reddens only under the full historical replay, because the production caller no longer supplies answers at all);
+- `discovery-floor-fail-closed.test.ts` — the floor refuses (`E3`), an answered probe does not clear it (reddens only under the
+  full historical replay, because the production caller no longer supplies answers at all), and the satisfied state — a challenge
+  bound to a declared falsifier — *does* clear it (reddens when the recorded-verdict conjunct in `discoveryProjection` is broken);
 - `review-request-is-handed-over.test.ts` — an unanswered probe is not an approval gap (`E2`);
 - `probe-answer-binding.test.ts` — the CLI refuses an answer whose command does not match its question (`E4`).
 
@@ -124,7 +126,7 @@ declared surface. Two of them were introduced by the repairs themselves (a `rm` 
 fixture option with no caller). The class is real, and it is larger than this change:
 
 `npx tsc --noEmit --noUnusedLocals --noUnusedParameters 2>&1 | grep -cE 'error TS(6133|6192)'` reports **284** such findings on the
-tree this change seals (`258` `TS6133` + `26` `TS6192`), including about twenty-five in `src/workflow/orchestrator.ts` and seven in
+tree this change seals (`258` `TS6133` + `26` `TS6192`), of which **34** are in `src/workflow/orchestrator.ts` and **7** in
 `src/store/ledger.ts`. The number is a property of the tree, not a fixed fact — re-run the command rather than quoting it. The
 project's `typecheck` script does not enable the flag, so CI has never held this line.
 
