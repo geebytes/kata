@@ -113,6 +113,10 @@ terminal observation when it does. It now names `challenge check --id <challenge
 
 The final verification additionally runs the full test suite and typecheck. The independent strict reviewer receives the frozen 11-path surface and must try to make an answer, rather than a bound challenge, pass the floor or approval.
 
+
+## 5. Rejected alternative
+
+A receipt-bound `observed` field was rejected for this change because no current host contract attests individual command output. A record authored through the Kata CLI would be indistinguishable from the original self-report. Fail-closed removal of decision power is the only complete repair that stays inside the existing trust boundary.
 ## 6. The boundary of the hygiene class, stated so it is not over-claimed
 
 Four review rounds kept finding one more instance of the same class — declared plumbing nothing supplies — in this change's own
@@ -127,7 +131,3 @@ This change therefore does the bounded thing rather than adopting the flag: it r
 that a review named** (the four test files and the `readPlan` import in `src/store/review-request.ts`), and it records the rest as
 a repository-wide concern outside this change's AC. Adopting `noUnusedLocals` for the whole repository is a separate change; doing
 it here would churn files this change has no behavioural reason to touch.
-
-## 5. Rejected alternative
-
-A receipt-bound `observed` field was rejected for this change because no current host contract attests individual command output. A record authored through the Kata CLI would be indistinguishable from the original self-report. Fail-closed removal of decision power is the only complete repair that stays inside the existing trust boundary.
