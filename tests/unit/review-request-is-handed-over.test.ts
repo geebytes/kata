@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
-import { appendClaim, appendEvidence, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
+import { appendClaim, appendEvidence, appendProbe, ensureAssurance, freezeSubject, writePolicy, writeSubject, recordVerdicts, writePlan } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { createTask } from '../../src/core/task.js';
 import { initLayout } from '../../src/core/layout.js';
@@ -76,6 +76,17 @@ async function planned(): Promise<{ subjectRevision: string }> {
         command: 'grep -q holds src/a.ts',
         mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' },
     }));
+    // **A question the reviewer was actually asked.** The fixture has to carry one: a case that asserts "an unanswered probe
+    // is not a gap" is vacuous when the request holds no probe, because the loop it guards would be a no-op.
+    await appendProbe(dir, changeId, {
+        id: 'P1-C1',
+        claimId: 'C1',
+        kind: 'file-exists',
+        path: 'src/a.ts',
+        command: 'test -f src/a.ts',
+        askedAt: '2026-09-27T00:00:00.000Z',
+        subjectRevision,
+    });
     await writePlan(dir, changeId, {
         tier: 'standard',
         readingSets: [{ claimId: 'C1', paths: ['src/a.ts'], truncated: false }],
@@ -94,6 +105,7 @@ describe('a review request is handed over and checked, rather than hoped for', (
         // What it must carry: the claim's own reading set, the tier's evidence requirement, the number, and the questions.
         expect(built.request.claims[0]?.readingSet).toEqual(['src/a.ts']);
         expect(built.request.claims[0]?.requiredEvidence.types).toEqual(['executable_falsifier']);
+        expect(built.request.probes.map((probe) => probe.id)).toEqual(['P1-C1']);
         expect(built.request.deadlineToolCalls).toBe(200);
         // What it must not: the assurance axis as **fields**. A substring check on the document would find these words in
         // the note that denies them, so the assertion is over the key set — which is what a reader of the request acts on.
@@ -123,14 +135,17 @@ describe('a review request is handed over and checked, rather than hoped for', (
 
     it('names each gap on the way back, by claim, instead of scoring them', async () => {
         const { subjectRevision } = await planned();
-        // An unanswered probe is advisory history; only the missing claim evidence is a gap.
+        // An unanswered probe is advisory history; only the missing claim evidence is a gap. The request really does carry
+        // the question — asserted first, so the negative below is about a probe that exists rather than about an empty list.
         const before = await verifyAgainstRequest({ root, changeId });
+        const beforeGaps = before.gaps.map((gap) => gap.what).join(' | ');
+        expect(beforeGaps).not.toContain('P1-C1');
         // The gap now names the kernel's own state and reason rather than "no supported verdict", so a reader can tell
         // "nothing was checked" from "checked and not enough" — the two instructions these used to conflate.
-        expect(before.gaps.map((gap) => gap.what).join(' | ')).toContain('the claim is');
+        expect(beforeGaps).toContain('the claim is');
 
-        // Verify the evidence: no gaps, which is the only reading of "the request was satisfied".
-        // Answers are audit history only; their absence cannot decide request completion.
+        // Verify the evidence: no gaps, which is the only reading of "the request was satisfied" — while the probe stays
+        // unanswered, because an answer is audit history and its absence cannot decide request completion.
         // **A verdict the kernel accepts, not one that merely exists.** The fixture used to record a `static_witness`
         // verdict for a claim whose severity requires an executable falsifier, bound to `rev:unknown` rather than to the
         // frozen subject — and the check it was written against asked only whether a supported verdict existed, so the

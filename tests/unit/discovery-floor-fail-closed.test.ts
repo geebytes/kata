@@ -122,6 +122,27 @@ describe('the discovery floor keeps refusing what did not run', () => {
         expect(codes).not.toContain('discovery_unverified');
     });
 
+    it('refuses an answered probe as a reading, so answering one cannot clear the floor', async () => {
+        // The probe half of the same boundary. An answer is free text the reviewed party wrote, so the floor reads no
+        // answer at all: a ledger whose only "reading" is a full answer still has to record a bound falsifier challenge.
+        // This case is what keeps the `answers` plumbing honest — without it the fixture option is dead and a restored
+        // answer loop would pass unnoticed.
+        const { codes, deficits } = await ledgerWithChallenge(null, {
+            answers: [{
+                probeId: 'P1-C1',
+                command: 'test -f src/a.ts',
+                observed: 'exit 0',
+                answeredAt: '2026-10-05T00:01:00.000Z',
+                subjectRevision: 'rev:whatever',
+                path: 'src/a.ts',
+                expected: 'exists',
+            }],
+        });
+        expect(codes).toContain('discovery_floor');
+        expect(codes).not.toContain('discovery_unverified');
+        expect(deficits.find((entry) => entry.claimId === 'discovery:independent_challenge')?.need).toContain('--falsifier');
+    });
+
     it('names the floor for a free-form terminal record, because it is not an attempt at all', async () => {
         // The free form is a record, not a reproduction: nothing declared a defect for it to be sensitive to, so it is not
         // an attempt this revision can verify. `discovery_floor` ("record one") is the honest remedy, and the deficit names

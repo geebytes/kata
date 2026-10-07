@@ -397,7 +397,7 @@ export const REASON_MESSAGES: Record<ReasonCode, { message: string; whoActs: 'au
         whoActs: 'policy-owner',
     },
     discovery_unverified: {
-        message: 'No challenge or probe with a recorded observation ran, so nothing here was independently read.',
+        message: 'A challenge was recorded but no verifier run supports it, so nothing here was independently read.',
         whoActs: 'author',
     },
     same_actor: {

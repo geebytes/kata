@@ -20,7 +20,7 @@
  * rather than scored, for the same reason the decision names its reasons. Probe answers are deliberately **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
-import { declaredPaths, freezeSubject, readProbes, readLedger, readPlan, readPlanState, readProbesState } from './ledger.js';
+import { declaredPaths, freezeSubject, readLedger, readPlan, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
