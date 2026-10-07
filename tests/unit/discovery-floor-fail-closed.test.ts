@@ -308,6 +308,10 @@ describe('the discovery floor keeps refusing what did not run', () => {
         });
         const read = await readLedger(root, changeId);
         expect(read.challenges.map((challenge) => challenge.id)).toContain('X1');
+        // **Not demoted, not only read.** The title claims the record keeps its standing, and "it is in the list" does not say
+        // that: a reader that rewrote a legacy `resolved` to `withdrawn` passes the line above (an independent round found
+        // exactly that), so the state it was written with is asserted too.
+        expect(read.challenges.find((challenge) => challenge.id === 'X1')?.state).toBe('resolved');
         const verdict = await ledgerVerdict({ root, changeId, tier: 'strict' });
         expect(verdict.kind).toBe('decided');
         expect(codes).toContain('discovery_floor');
@@ -390,7 +394,7 @@ describe('the readers of the schema-less ledger files', () => {
         expect(challenges.map((challenge) => challenge.id)).toEqual(['X1']);
     });
 
-    it('reads the run log through the same boundary, so a corrupt entry cannot stop the decision', async () => {
+    it('reads the run log through the same boundary, so a corrupt entry is refused by name rather than dereferenced', async () => {
         // `runs.json` is listed as schema-less beside the others. Its array element is the discriminating case: it
         // declares no identity field, so an element that is not a record reaches the container check.
         await writeArtefact('runs.json', `${JSON.stringify([null, { at: 'x', producer: 'pi', claims: 1, evidence: 1, diversity: 'prompt_strategy' }], null, 2)}\n`);

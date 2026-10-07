@@ -175,11 +175,20 @@ describe('a probe answer bound to the question it answers', () => {
         const asked = await ledger(['ask', '--per-claim', '2', '--seed', 'fixed']);
         const note = String(asked.note ?? '');
         expect(note).toContain('not asked again');
-        expect(note).not.toMatch(/one question answered twice is one reading/);
+        // Not a snapshot of the retired sentence: **no reading claim at all**, however worded. A regex on the exact old
+        // wording passes for a re-worded one (an independent round found that), and the word is what the retirement is about.
+        expect(note).not.toMatch(/\breading\b/);
         // The dead reader is gone, not merely unused: a second convenience reader beside the state-returning one is how a
-        // caller that needs the three states ends up with a copy that answers `[]` for a file it could not read.
+        // **Every** short reader, not just the one this change set out to remove: an independent round found `readProbes` and
+        // `readPlan` still answering `[]`/`null` for an artefact they could not decode — the same shape, in the same module,
+        // with the state-returning twin used by every real caller. The assertion is a set, so a third cannot appear quietly.
         const ledgerModule = await import('../../src/store/ledger.js');
-        expect(Object.keys(ledgerModule)).not.toContain('readProbeAnswers');
-        expect(Object.keys(ledgerModule)).toContain('readProbeAnswersState');
+        const exports = Object.keys(ledgerModule);
+        for (const short of ['readProbeAnswers', 'readProbes', 'readPlan']) {
+            expect(exports).not.toContain(short);
+        }
+        for (const stateful of ['readProbeAnswersState', 'readProbesState', 'readPlanState']) {
+            expect(exports).toContain(stateful);
+        }
     });
 });

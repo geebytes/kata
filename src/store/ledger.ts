@@ -288,10 +288,10 @@ export async function readProbesState(root: string, changeId: string): Promise<A
     return readArtefact(root, changeId, FILES.probes, (value) => records<Probe>(FILES.probes, value, STRING_FIELDS.probes));
 }
 
-export async function readProbes(root: string, changeId: string): Promise<Probe[]> {
-    const read = await readProbesState(root, changeId);
-    return read.kind === 'usable' ? read.value : [];
-}
+// **`readProbes` lived here.** It was the convenience twin of `readProbesState`, answering `[]` for a `probes.json` that
+// exists and cannot be read — the same shape this change removed for `readProbeAnswers`, and the reason that removal is not
+// finished while a sibling keeps the habit: a caller reaching for the short reader gets "nothing was asked" for a file it
+// could not decode. Every caller that needs probes reads `readProbesState`.
 
 /**
  * **The string fields each schema-less artefact declares.** Coercing exactly these is what makes a reader's type honest:
@@ -697,10 +697,9 @@ export async function readPlanState(root: string, changeId: string): Promise<Art
     return readArtefact(root, changeId, FILES.plan, (value) => decodePlan(value));
 }
 
-export async function readPlan(root: string, changeId: string): Promise<unknown | null> {
-    const read = await readPlanState(root, changeId);
-    return read.kind === 'usable' ? read.value : null;
-}
+// **`readPlan` lived here.** Its twin `readPlanState` is what every caller reads, because a corrupt `plan.json` and a
+// missing one are different facts (see the note at the call site in `review-request.ts`). The short reader answered `null`
+// for both, which is the class this change exists to finish.
 
 export async function readLedger(root: string, changeId: string): Promise<Ledger> {
     const dir = reviewDir(root, changeId);
