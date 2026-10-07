@@ -1885,8 +1885,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         }
 
         if (!options.confirmHostModel) {
+            // **The phase the task holds, not the phase this branch assumed.** Reported from another checkout: the refusal
+            // said `hardVerify` while `current-state.json` said `review`, so the operator's next step (the remedy for a
+            // *stale* gate) was the wrong one. Every other return in this file reports what it read.
             return {
-                command: 'review', taskId, phase: 'hardVerify', success: false,
+                command: 'review', taskId, phase: (await readCurrentState(root, taskId)).phase, success: false,
                 error: 'Review requires explicit user confirmation at the review trust boundary.',
                 diagnostics: { requiresUserConfirmation: true, trustBoundary: 'review_gate' },
             };
@@ -1959,7 +1962,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
         }
         return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
-    } catch (error) { return { command: 'review', taskId, phase: 'hardVerify', success: false, error: `Review transition failed: ${(error as Error).message}` }; }
+    } catch (error) { return { command: 'review', taskId, phase: (await readCurrentState(root, taskId)).phase, success: false, error: `Review transition failed: ${(error as Error).message}` }; }
 }
 
 

@@ -56,7 +56,10 @@ async function gate(): Promise<Record<string, unknown> | null> {
 
 describe('each boundary knows which command creates it', () => {
     it('names exactly the command and phase that produce it, because the refusal reads the same table', () => {
-        expect(GATE_CREATED_BY.review_gate).toEqual({ command: 'verify', phase: 'hardVerify' });
+        // **No phase on `review_gate`**: a successful verify creates this boundary whichever phase it entered from. Keying
+        // it on `hardVerify` made the rebuild instruction inert for a task already in `review` — the deadlock reproduced in
+        // `tests/unit/gate-reentry-rebuilds-its-gate.test.ts`.
+        expect(GATE_CREATED_BY.review_gate).toEqual({ command: 'verify' });
         expect(GATE_CREATED_BY.judge_gate).toEqual({ command: 'review', phase: 'review' });
         // And the two directions agree: asking by phase and command returns the boundary the table maps to it.
         expect(boundaryCreatedBy('hardVerify', 'verify')).toBe('review_gate');

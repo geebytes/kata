@@ -15,11 +15,20 @@ export type UserChoiceBoundary = 'implementation_gate' | 'review_gate' | 'judge_
  * the creation rule was an inline chain, and the remedy appeared nowhere, so a refused gate said only that it was "not
  * bound" — which is true, and leaves the reader to discover the fixing command from experience.
  */
-export const GATE_CREATED_BY: Record<UserChoiceBoundary, { command: string; phase: string }> = {
+/**
+ * Which command creates which boundary, and — only where the phase genuinely distinguishes it — the phase it is created in.
+ *
+ * **`review_gate` carries no phase, and that is the fix for a measured deadlock.** The entry used to read
+ * `{ command: 'verify', phase: 'hardVerify' }`, and `boundaryCreatedBy` matches on the phase a command *reports* — while
+ * `cmdVerify` reports the phase it *entered* with. So a verify run from a task already in `review` reported `review`, found
+ * no entry, and never recreated the gate: the remedy every refusal prints ("run the command that creates this boundary's
+ * gate") was inert in exactly the state that needed it, and the only way out was `build --seal`, which mints a revision for
+ * content that did not change. A successful `verify` is what creates this boundary, whichever phase it entered from.
+ */
+export const GATE_CREATED_BY: Record<UserChoiceBoundary, { command: string; phase?: string }> = {
     // `design` moves a task into `plan`, and that is where the implementation gate is created.
     implementation_gate: { command: 'design', phase: 'plan' },
-    // A passing `verify` in `hardVerify` creates the review gate; re-running it is also what rebuilds one.
-    review_gate: { command: 'verify', phase: 'hardVerify' },
+    review_gate: { command: 'verify' },
     // An approving `review` creates the judge gate.
     judge_gate: { command: 'review', phase: 'review' },
     // A `judge` that returns creates the archive gate.
@@ -28,8 +37,11 @@ export const GATE_CREATED_BY: Record<UserChoiceBoundary, { command: string; phas
 
 /** The boundary a finished command creates, or nothing when that command concludes no boundary. */
 export function boundaryCreatedBy(phase: string, command: string, approving = false): UserChoiceBoundary | null {
-    for (const [boundary, entry] of Object.entries(GATE_CREATED_BY) as Array<[UserChoiceBoundary, { command: string; phase: string }]>) {
-        if (entry.phase !== phase || entry.command !== command) continue;
+    for (const [boundary, entry] of Object.entries(GATE_CREATED_BY) as Array<[UserChoiceBoundary, { command: string; phase?: string }]>) {
+        // A boundary with no phase is created by the command's success alone: the honest condition for a boundary whose
+        // creating command does not conclude a phase transition.
+        if (entry.command !== command) continue;
+        if (entry.phase !== undefined && entry.phase !== phase) continue;
         // The judge gate is created only by an approving review: a review that records findings opens a repair, not a gate.
         if (boundary === 'judge_gate' && !approving) continue;
         return boundary;
@@ -142,7 +154,13 @@ export async function approveUserChoiceGate(input: {
   // The caller's id when it names one; otherwise the sealed revision, so "current" means the same thing here as it does
   // in every other gate. The content identity is the second, broader binding.
   assertRevision(gate, input.revisionId, identity);
-  if (gate.consumedAt) throw new Error(`User choice gate ${input.boundary} has already been consumed.`);
+  // **The same remedy sentence the stale branch prints.** A consumed gate is the normal state after a phase command
+  // succeeded, and the way forward is not guessable: the gate has to be *recreated*, by the command whose success creates
+  // this boundary. Reported from another checkout: this branch answered "has already been consumed" and stopped, so the
+  // operator had nothing to act on.
+  if (gate.consumedAt) {
+    throw new Error(`User choice gate ${input.boundary} has already been consumed. ${gateRebuildInstruction(input.boundary)}`);
+  }
   gate.choice = input.choice;
   gate.approvedAt = new Date().toISOString();
   await writeFile(pathFor(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}\n`);
