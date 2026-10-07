@@ -1,7 +1,7 @@
 # Kata 探针台账问题报告：答案比它所问的 revision 活得更久
 
 **日期**：2026-10-06
-**状态**：In implementation — F1/F3 已在 master；F2 按 fail-closed 方案实现中，只有 seal、独立审查、archive 后才会 Closed。
+**状态**：Resolved — F1、F3 已在 `master`；F2 由 `bind-discovery-observations-to-questions` 以 fail-closed 规则实现，mutation evidence E1–E4 全部 `supported`。
 **范围**：Kata 0.2.0；下游项目 `zenmpai` 的 `photo-observation-provider-layer` 在 `strict` tier 下经过 5 轮 review/repair 后的实跑。
 **不把 Wiki / 设计稿当作代码正确性证明**：本报告的「复现」均给出命令与输出；「影响」引用实际被拒绝的批准路径，而不是推断。
 
@@ -121,10 +121,14 @@ kata-cli ledger ask --change <id>
 本报告由下游项目 `zenmpai` 的 dogfooding 产生；原始英文诊断（含完整测量与非破坏性边界）曾落在 `docs/design/2026-10-05-probe-answers-outlive-their-revision.md`，随「不实现、只反馈」的决定并入本报告。
 
 
-## 关闭记录（待独立审查）
+## 关闭记录
 
-- **F1（blocking）**：已由 revision-bound probe/question identity 与 answer binding 修复；旧 revision 的答案不再作为当前问题计入。
-- **F2（major）**：`bind-discovery-observations-to-questions` 移除 `ProbeAnswer` 对 discovery floor 和 approval request 的决定权；free-text `observed` 仅保留为审计历史。floor 只接受当前 revision、已声明 executable falsifier、supported verifier run 三者同时成立的 challenge。
-- **F3（minor）**：两种 discovery count 均由同一 challenge-only projection 导出。
+- **F1（blocking）**：探针与答案都绑定它们所问的 revision 与问题身份；旧 revision 的答案不再作为当前内容上的读数。修复已在 `master`（`src/store/ledger.ts`、`src/kernel/discovery.ts`）。
+- **F2（major）**：**决定权被移除，而不是被加强。** `ProbeAnswer` 仍是 append-only 审计历史，但它不再能增加 discovery count、不再满足 strict/security floor、也不再构成 approval request gap。floor 只接受当前 revision、已声明 `executable_falsifier`、且该 falsifier 有 `supported` verifier run 的 challenge。
+  - 为什么不改为校验 `observed` 与 `expected`：`observed` 由被审者自由书写，宿主 receipt 目前只携带 run 绑定、能力与遥测，不含单条命令的 stdout/exit code。任何 Kata 内的"校验"仍是对自述做字符串比较，可被复述期望值绕过；要真正证明执行，需要宿主平台提供平台中立的 receipt contract，那是独立工程，不在本 change。
+  - 变更：`src/store/verdict.ts`（projection 不再接收答案）、`src/store/review-request.ts`（未答探针不再是 gap）、`src/kernel/decide.ts`、`src/kernel/discovery.ts`、`src/cli/ledger.ts`、`src/workflow/orchestrator.ts`（文案）。
+- **F3（minor）**：`independentChallenges` 与 `verifiedChallenges` 由同一个以"已声明 falsifier"为键的投影导出。
 
-本节不是通过声明：关闭需要该 change 的 mutation evidence、独立 strict review、Judge 与 archive 完成。
+**证据。** E1（答案不能增加计数）、E2（未答探针不阻塞 approval）、E3（无 challenge 时 floor 仍拒绝）、E4（CLI 拒绝错配 command），每条均为可逆 mutation：`before:0 → mutated:1 → after:0`，`verdict: supported`。
+
+**这个修复的边界，如实写下。** 它消除的是"自述式 observation 决定门禁"这条路径，不是"审查者真的读了文件"这一证明。后者在当前宿主契约下不可证，因此不做，也不假装做到。
