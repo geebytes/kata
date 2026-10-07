@@ -1511,10 +1511,23 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 ...(typeof existing.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: existing.record.candidateFreezeSha256 } : {}),
             };
             const placeholder = isReviewPlaceholder(existing.record);
-            if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding)) {
+            // **A record answers a request, not only a revision.** The binding above is content identity; the ledger's
+            // subject — the claim set and plan the request was built from — is the question the round answered. When the
+            // request changed without the code changing (claims restated, a new plan), the recorded result answered a
+            // *different* question and must not block the answer to this one. Measured in another checkout: a round's
+            // result was recorded, the request moved on, a second independent round found two majors, and recording them
+            // was refused — with a remedy ("re-enter review") that the record's own binding made inert.
+            //
+            // A record with no `subjectRevision` keeps blocking: it was written before this change, we cannot know what it
+            // answered, and pretending to know is how a stale result would pass as a current one.
+            const currentSubject = (await readLedger(root, taskId).catch(() => undefined))?.subject?.revision;
+            const answeredSameRequest = typeof existing.record.subjectRevision !== 'string'
+                || currentSubject === undefined
+                || existing.record.subjectRevision === currentSubject;
+            if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && answeredSameRequest) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: 'A review result is already recorded for this revision. Re-enter review before recording a replacement.',
+                    error: 'A review result is already recorded for this revision, for the same request. Re-enter review before recording a replacement — and if the gate was already consumed, recreate it first with `kata-cli verify`, then `kata-cli gate approve`, then `kata-cli review --confirm-host-model`.',
                 };
             }
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
@@ -1524,7 +1537,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -1842,7 +1855,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // **The approval lands atomically and under the task lock.** It was a bare `writeFile`, so a crash could
             // leave a half-written `review.json` — the artefact the archive gate reads to decide whether a change was
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
-            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
+            const approvalSubject = (await readLedger(root, taskId).catch(() => undefined))?.subject?.revision;
+            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {
                 await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes, lock);
                 // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
@@ -1936,8 +1950,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                     } else if (isReviewPlaceholder(previous)) {
                         await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
-                    }
-                } catch (error) {
+                    }                } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
                     await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                 }
