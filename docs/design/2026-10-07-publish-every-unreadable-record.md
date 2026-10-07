@@ -132,6 +132,18 @@ Each row has its own selector, so no two acceptance criteria can collapse into o
 `tests/unit/workflow-navigation.test.ts` already carries the four refusal cases from the predecessor (isolated ledger,
 isolated record, isolated pointer, both-broken) and gains the pointer-without-record case.
 
+**Measured after commit `cfb21e6`** — each mutation applied to the committed source, its own selector run, the file restored
+and its SHA-256 re-checked, then the selector re-run:
+
+| mutation | mutated selector | reddened | restored byte-identical | baseline green |
+| --- | --- | --- | --- | --- |
+| M1 AC-1 union | `workflow-navigation.test.ts` | yes (exit 1) | yes | yes |
+| M2 AC-2 parse-error-as-absent | `summary-publishes-every-unreadable-record.test.ts` | yes (exit 1) | yes | yes |
+| M3 AC-3 history-from-assessment | `both-refusals-are-published.test.ts` | yes (exit 1) | yes | yes |
+| M4 AC-4 absence-as-refusal | `summary-carries-its-read.test.ts` | yes (exit 1) | yes | yes |
+
+Full suite at that commit: 267 files / 1614 tests; `tsc --noEmit` clean.
+
 ## 5. Verification notes
 
 - The whole suite and `tsc --noEmit` must pass; the summary's existing routing behaviour is pinned by
