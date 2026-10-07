@@ -94,6 +94,34 @@ and `tsc --noEmit`.
 | `src/workflow/orchestrator.ts` | `change-lifecycle-reconciliation` (hardVerify) — declared with `--allow-ownership-conflicts`, recorded as an audit fact |
 | `tests/unit/gate-reentry-rebuilds-its-gate.test.ts`, this design | free |
 
+## 5b. The fourth link, found by running the recovery on the reported project
+
+The three defects above were fixed, the bundle was rebuilt, and the recovery was run in the reported checkout. The gate was
+rebuilt by `verify` and accepted by `gate approve` — and `review --confirm-host-model` **still refused**, with the correct
+phase this time ("Review requires explicit user confirmation"), while holding a fresh, approved gate.
+
+The link is `boundaryForCommand` (`src/cli/workflow.ts:301-307`), the second table keyed on a phase:
+
+```ts
+if (command === 'review' && phase === 'hardVerify') return 'review_gate';
+```
+
+`runWorkflowCommand` derives the confirmation from that boundary being non-null
+(`confirmHostModel: boundary !== null`, `:132`), so a task already in `review` had no boundary to confirm and could never
+re-enter the phase it was sitting in. The rule the table was missing is the one the fix states: **a command asks for its
+boundary when it is about to cross it and when it is already there** — `review` from `hardVerify` or `review`, `judge` from
+`review` or `judge`, `archive` from `judge`, `distill` or `archive`. `build` keeps its single phase: the implementation choice
+belongs to `plan`, and a task in `implement` has already made it.
+
+This is the same class as the other three — a surface keyed on a phase it assumed — and it is why the change's AC-1 says
+"can re-enter review without minting a revision": the property is only true once both tables agree with it. Found by running
+the reported path end to end rather than by reading it, which is the reason the recovery was executed against the real project
+instead of being declared fixed.
+
+**Also measured while recovering:** the ledger's `evidence replace` refused nothing and the verification PASSed on the
+reported project's own content, so the state it reached was `review` with a fresh gate — the state this change exists to make
+reachable.
+
 ## 6. Rejected alternatives
 
 - **Change `cmdVerify` to report `hardVerify`.** It would make the table match, by making a command report a phase it did not

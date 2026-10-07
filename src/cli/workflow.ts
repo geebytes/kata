@@ -298,11 +298,21 @@ export function roleForCommand(command: KataCommand): HandoffRole {
     return 'implementer';
 }
 
+/**
+ * The boundary a command asks for, given the phase the task is in.
+ *
+ * **A command asks for its boundary when it is about to cross it *and* when it is already there.** The second half is what
+ * the reported deadlock came down to: `review` mapped to `review_gate` only in `hardVerify`, and `confirmHostModel` is
+ * derived from this boundary being non-null (see the options assembled in `runWorkflowCommand`) — so a task sitting in
+ * `review` could never re-enter it, even holding a fresh, approved gate. Measured in another checkout after the other three
+ * links were fixed: `verify` rebuilt the gate, `gate approve` accepted it, and `review --confirm-host-model` still refused
+ * with "requires explicit user confirmation", because this table said there was no boundary to confirm.
+ */
 export function boundaryForCommand(command: KataCommand, phase: string | null): UserChoiceBoundary | null {
     if (command === 'build' && phase === 'plan') return 'implementation_gate';
-    if (command === 'review' && phase === 'hardVerify') return 'review_gate';
-    if (command === 'judge' && phase === 'review') return 'judge_gate';
-    if (command === 'archive' && (phase === 'judge' || phase === 'distill')) return 'archive_gate';
+    if (command === 'review' && (phase === 'hardVerify' || phase === 'review')) return 'review_gate';
+    if (command === 'judge' && (phase === 'review' || phase === 'judge')) return 'judge_gate';
+    if (command === 'archive' && (phase === 'judge' || phase === 'distill' || phase === 'archive')) return 'archive_gate';
     return null;
 }
 

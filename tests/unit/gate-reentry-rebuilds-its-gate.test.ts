@@ -9,6 +9,7 @@ import {
     createUserChoiceGate,
 } from '../../src/workflow/user-choice-gate.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { boundaryForCommand } from '../../src/cli/workflow.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, userChoiceGatePath } from '../../src/core/layout.js';
 
@@ -96,6 +97,22 @@ describe('the boundary table answers from the command, not from the phase it ass
         expect(fresh?.choice).toBeUndefined();
         await approveUserChoiceGate({ root, taskId, boundary: 'review_gate', choice: 'continue_current' });
         expect((await gate())?.choice).toBe('continue_current');
+    });
+});
+
+describe('the command asks for its boundary in the phase it is already in', () => {
+    it('asks for the review gate from review, which is what the confirmation is derived from', () => {
+        // `confirmHostModel` is `boundary !== null`: no boundary means no confirmation, which is why a task in `review`
+        // refused with "requires explicit user confirmation" while holding an approved gate.
+        expect(boundaryForCommand('review', 'hardVerify')).toBe('review_gate');
+        expect(boundaryForCommand('review', 'review')).toBe('review_gate');
+        // The other commands keep their conditions, including the phase they are already in.
+        expect(boundaryForCommand('judge', 'review')).toBe('judge_gate');
+        expect(boundaryForCommand('judge', 'judge')).toBe('judge_gate');
+        expect(boundaryForCommand('archive', 'archive')).toBe('archive_gate');
+        expect(boundaryForCommand('build', 'plan')).toBe('implementation_gate');
+        expect(boundaryForCommand('build', 'implement')).toBeNull();
+        expect(boundaryForCommand('verify', 'review')).toBeNull();
     });
 });
 
