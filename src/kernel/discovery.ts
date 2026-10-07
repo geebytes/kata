@@ -97,9 +97,11 @@ function surfacesOf(claim: Claim, subject: Subject): string[] {
  * empty gets no probes — and that is reported by the caller rather than padded, because a padded probe would be a question
  * nobody can answer from looking.
  *
- * **Distinct, because the count is what the discovery floor reads.** Measured on a real change: asking two questions per
+ * **Distinct, because a repeated question is not a second reading.** Measured on a real change: asking two questions per
  * claim produced six probes of which three were duplicates — `P1-AC-1` and `P2-AC-1` carried the same kind, the same path
- * and therefore the same command — so the floor was satisfied by answering the same question twice. A count that can be
+ * and therefore the same command — and a duplicated question would have let one answer be counted as two. (The floor no
+ * longer reads probe answers at all — a free-text answer cannot be authenticated, so it is audit history — but the rate
+ * this feeds is still a count of distinct questions, because repetition is not a second reading there either.) A count
  * inflated by repetition is not a count of independent readings, which is the one thing this mechanism exists to supply;
  * the draws advance past a question already asked, and a claim whose surface cannot supply the number asked for simply
  * gets fewer, which the caller reports.

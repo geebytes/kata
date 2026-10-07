@@ -1691,10 +1691,11 @@ export async function ledgerReport(root: string, changeId: string): Promise<Ledg
             // counts are `null` and the artefact is named instead.
             probeResponseRate: probes.kind === 'usable' && answers.kind === 'usable'
                 ? responseRate({
-                    // **Distinct questions on every count, so the rate and the floor read the same denominator.** A stored
-                    // probe list can hold the same question twice — a hand-written ledger, or one recorded before the
-                    // generator was de-duplicated — and the rate is the quantity the discovery floor reads, so counting
-                    // records rather than questions would let repetition raise it.
+                    // **Distinct questions, because repetition is not a second reading.** A stored probe list can hold the same
+                    // question twice — a hand-written ledger, or one recorded before the generator was de-duplicated — and
+                    // counting records rather than questions would let repetition raise the rate. This number is **reporting
+                    // only**: the discovery floor reads the challenge projection, never this rate (see the note on
+                    // `probe-answers.json` above).
                     asked: distinctProbeCount(probes.value),
                     answered: distinctProbeCount(answers.value),
                 })

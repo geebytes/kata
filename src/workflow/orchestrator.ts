@@ -1696,8 +1696,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         },
                     };
                 }
-                // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer a request — the claim's own
-                // Request-check enforces the planned reading and evidence contract. Probes remain advisory history and do not gate approval.
+                // **The handshake is a gate, not a printout.** `ledger run` hands a reviewer the claim's own reading set and
+                // evidence requirement, and this is the check that what came back satisfies them. Probes are advisory history
+                // and are deliberately not part of it: their free-text answers cannot be authenticated, so they cannot gate.
                 const { verifyAgainstRequest } = await import('../store/review-request.js');
                 const requestGaps = (await verifyAgainstRequest({ root, changeId: taskId, sealedRead: approvalRevisionRead })).gaps;
                 if (requestGaps.length > 0) {

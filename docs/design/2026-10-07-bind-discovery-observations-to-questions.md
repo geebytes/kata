@@ -46,7 +46,7 @@ from every gate input.
 
 `discoveryProjection` keeps one derivation for `independentChallenges` and `verifiedChallenges`, but it no longer receives or reads probe answers for either count.
 
-A candidate contributes only when all existing challenge-side predicates hold:
+A challenge counts as an **attempt** (`independentChallenges`) once predicate 1 holds — it names a declared `executable_falsifier`; that is the same split the projection always had, and it is what lets `discovery_unverified` say "something was declared and no run supports it" instead of "nothing was challenged". It counts as a **verified reading** (`verifiedChallenges`) only when all three hold:
 
 1. it names a declared `executable_falsifier`;
 2. its resolution binds the same falsifier and the current subject revision;
@@ -111,7 +111,7 @@ terminal observation when it does. It now names `challenge check --id <challenge
 | AC-2 | `tests/unit/review-request-is-handed-over.test.ts` | restore the unanswered-probe gap; an otherwise complete request with no answer must fail |
 | AC-3 | `tests/unit/discovery-floor-fail-closed.test.ts` | make a free-text answer reach `ledgerVerdict`; a strict ledger with no bound verifier challenge must incorrectly pass and the test must fail |
 
-The final verification additionally runs the full test suite and typecheck. The independent strict reviewer receives the frozen 11-path surface and must try to make an answer, rather than a bound challenge, pass the floor or approval.
+The final verification additionally runs the full test suite and typecheck. The independent strict reviewer receives the frozen **19-path** surface (`17` of which this change edited; `tests/e2e/workflow-resume.test.ts` and `tests/unit/installer.test.ts` are declared because the shared fixture they use changed) and must try to make an answer, rather than a bound challenge, pass the floor or approval.
 
 
 ## 5. Rejected alternative
@@ -123,9 +123,10 @@ Four review rounds kept finding one more instance of the same class — declared
 declared surface. Two of them were introduced by the repairs themselves (a `rm` left on a line the repair edited, an `answers`
 fixture option with no caller). The class is real, and it is larger than this change:
 
-`npx tsc --noEmit --noUnusedLocals --noUnusedParameters` reports **262** `TS6133`/`TS6192` findings on this repository's baseline,
-including roughly twenty-five in `src/workflow/orchestrator.ts` and seven in `src/store/ledger.ts`. The project's `typecheck`
-script does not enable the flag, so CI has never held this line.
+`npx tsc --noEmit --noUnusedLocals --noUnusedParameters 2>&1 | grep -cE 'error TS(6133|6192)'` reports **284** such findings on the
+tree this change seals (`258` `TS6133` + `26` `TS6192`), including about twenty-five in `src/workflow/orchestrator.ts` and seven in
+`src/store/ledger.ts`. The number is a property of the tree, not a fixed fact — re-run the command rather than quoting it. The
+project's `typecheck` script does not enable the flag, so CI has never held this line.
 
 This change therefore does the bounded thing rather than adopting the flag: it removes the instances **on lines it touched or
 that a review named** (the four test files and the `readPlan` import in `src/store/review-request.ts`), and it records the rest as
