@@ -105,7 +105,14 @@ const executableFalsifier: EvidenceVerifier = {
     verifier: 'producers/verifiers#executable-falsifier',
     verify: async (evidence, context) => {
         if (evidence.type !== 'executable_falsifier') throw new Error('falsifier verifier received another type');
-        const before = await context.run(evidence.command);
+        let before = await context.run(evidence.command);
+        if (before.code !== 0) {
+            // **A failing `before` may be measuring somebody else's injection.** The tree is re-measured under the lock before
+            // the failure is reported: a concurrent cycle holds the file injected for its whole window, so a run that reads
+            // it there reports `the check was already failing before any mutation` — the misdiagnosis this change exists to
+            // remove. Only the failure path pays for the re-measurement.
+            before = await withVerificationLock(context.root, evidence.mutation.file, () => context.run(evidence.command));
+        }
         if (before.code !== 0) {
             return makeVerdict({
                 evidence,
