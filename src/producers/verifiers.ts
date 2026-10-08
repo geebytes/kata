@@ -9,7 +9,7 @@
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
-import { UnrestoredMutation, withVerificationLock } from '../store/verify-context.js';
+import { UnrestoredMutation, clearMutation, recordMutation, withVerificationLock } from '../store/verify-context.js';
 
 function makeVerdict(input: {
     evidence: Evidence;
@@ -157,6 +157,8 @@ const executableFalsifier: EvidenceVerifier = {
                     // operator reading a verdict would not know to look at the tree.
                     throw new UnrestoredMutation(`the mutation injected into ${evidence.mutation.file} could not be restored, so the checkout is not as it was found: the file holds content this run did not write`);
                 }
+                // The file is back: there is nothing left to repair.
+                await clearMutation(context.root, evidence.mutation.file);
             });
             if (mutated === undefined) throw new Error(`the mutation on ${evidence.mutation.file} never ran`);
             const after = await context.run(evidence.command);
@@ -183,7 +185,12 @@ const executableFalsifier: EvidenceVerifier = {
         } catch (error) {
             // A tree that still holds the injected defect fails the run; only a check that could not run is a verdict.
             if (error instanceof UnrestoredMutation) throw error;
-            await context.writeText(evidence.mutation.file, original);
+            // The fallback restore runs **inside** the lock: an error path that writes the file after the lock is released
+            // is a restore racing every other cycle on that file.
+            await withVerificationLock(context.root, evidence.mutation.file, async () => {
+                await context.writeText(evidence.mutation.file, original);
+                await clearMutation(context.root, evidence.mutation.file);
+            });
             return makeVerdict({
                 evidence,
                 context,

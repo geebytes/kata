@@ -34,21 +34,52 @@ describe('evidence verification is serialized per file', () => {
 
         await Promise.all([section('A'), section('B')]);
 
-        // Serialized: the second section starts only after the first has finished.
-        expect(events).toEqual(['A:enter', 'A:injected', 'A:exit', 'B:enter', 'B:injected', 'B:exit']);
+        // **Serialized means "never two inside at once", not "A first".** A fixed-order assertion was flaky (~20% measured by
+        // an independent round) because acquisition is a `mkdir` race — and that flakiness made `ledger evidence verify`
+        // report the check as already failing. Exclusivity is the property the mechanism actually promises.
+        let inside = 0;
+        let peak = 0;
+        for (const event of events) {
+            if (event.endsWith(':enter')) inside += 1;
+            if (event.endsWith(':exit')) inside -= 1;
+            peak = Math.max(peak, inside);
+        }
+        expect(peak).toBe(1);
         expect(content).toBe(original);
+    });
+
+    it('treats two spellings of one file as one file', async () => {
+        // An independent round reproduced the whole hazard through an alias: `a.ts` and `./a.ts` hashed to two different
+        // locks, so two cycles interleaved on one file and left the injected defect behind while both reported success.
+        const root = await mkdtemp(join(tmpdir(), 'kata-serialize-'));
+        let inside = 0;
+        let peak = 0;
+        const section = (spelling: string) => withVerificationLock(root, spelling, async () => {
+            inside += 1;
+            peak = Math.max(peak, inside);
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            inside -= 1;
+        });
+        await Promise.all([section('a.ts'), section('./a.ts')]);
+        expect(peak).toBe(1);
     });
 
     it('lets two sections on different files overlap', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-serialize-'));
-        const events: string[] = [];
+        // A barrier, not a timing guess: each section waits for the other to be inside. With a per-file lock both get in; a
+        // global lock would leave one waiting and the case would fail on its own timeout.
+        let inside = 0;
+        let releaseBoth: () => void = () => {};
+        const bothInside = new Promise<void>((resolve) => { releaseBoth = resolve; });
         const section = (file: string, name: string) => withVerificationLock(root, file, async () => {
-            events.push(`${name}:enter`);
-            await new Promise((resolve) => setTimeout(resolve, 10));
-            events.push(`${name}:exit`);
+            inside += 1;
+            if (inside === 2) releaseBoth();
+            await Promise.race([
+                bothInside,
+                new Promise((_, reject) => setTimeout(() => reject(new Error(`${name} waited for the other file's lock: the lock is not per file`)), 2000)),
+            ]);
         });
         await Promise.all([section('a.ts', 'A'), section('b.ts', 'B')]);
-        // Both entered before either left: the lock is per file, not global.
-        expect(events.slice(0, 2).sort()).toEqual(['A:enter', 'B:enter']);
+        expect(inside).toBe(2);
     });
 });

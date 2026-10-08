@@ -144,9 +144,22 @@ function insideWorkspace(realRoot: string, resolved: string): boolean {
 export class UnrestoredMutation extends Error {}
 
 export async function withVerificationLock<T>(root: string, relativePath: string, action: () => Promise<T>): Promise<T> {
+    // **The key is the resolved location, not the spelling.** An independent round reproduced the whole hazard through an
+    // alias: `a.ts` and `./a.ts` hashed to two different locks, so two cycles interleaved on one file and left the injected
+    // defect behind while both reported success.
+    const absolute = resolve(root, relativePath);
+    const real = (() => {
+        try {
+            return realpathSync(absolute);
+        } catch {
+            return absolute;
+        }
+    })();
+    const key = hashContent(real).slice(0, 16);
     const lockDir = join(root, '.kata', 'locks');
     await mkdir(lockDir, { recursive: true });
-    const lockPath = join(lockDir, `verify-${hashContent(relativePath).slice(0, 16)}.lock`);
+    const lockPath = join(lockDir, `verify-${key}.lock`);
+    const journalPath = join(lockDir, `verify-${key}.journal.json`);
     const deadline = Date.now() + 60_000;
     for (;;) {
         try {
@@ -154,15 +167,45 @@ export async function withVerificationLock<T>(root: string, relativePath: string
             break;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            // **A lock whose holder died is not a lock.** The cycle writes a journal before injecting, so a leftover lock
+            // with a journal is a crashed run: reclaim it and repair the file from the journal rather than waiting for a
+            // holder that no longer exists (measured by an independent round: SIGKILL mid-cycle left both the injected
+            // defect and a lock that was never released).
+            if (existsSync(journalPath)) {
+                await rm(lockPath, { recursive: true, force: true });
+                continue;
+            }
             if (Date.now() > deadline) throw new Error(`another verification run has held the lock on ${relativePath} for over a minute; nothing was injected by this run`);
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
     }
     try {
+        // Recover a crash's leftovers **before** the caller reads the file, so the check runs against the real content.
+        if (existsSync(journalPath)) {
+            const journal = JSON.parse(await readFile(journalPath, 'utf8')) as { file: string; original: string };
+            await writeFile(join(root, journal.file), journal.original);
+            await rm(journalPath, { force: true });
+        }
         return await action();
     } finally {
         await rm(lockPath, { recursive: true, force: true });
     }
+}
+
+/**
+ * Record what is about to be mutated, so a run that dies mid-cycle can be repaired by the next one.
+ */
+export async function recordMutation(root: string, relativePath: string, original: string): Promise<void> {
+    const lockDir = join(root, '.kata', 'locks');
+    await mkdir(lockDir, { recursive: true });
+    const key = hashContent(resolve(root, relativePath)).slice(0, 16);
+    await writeFile(join(lockDir, `verify-${key}.journal.json`), JSON.stringify({ file: relativePath, original }));
+}
+
+/** The injection is over: there is nothing left to repair. */
+export async function clearMutation(root: string, relativePath: string): Promise<void> {
+    const key = hashContent(resolve(root, relativePath)).slice(0, 16);
+    await rm(join(root, '.kata', 'locks', `verify-${key}.journal.json`), { force: true });
 }
 
 export function buildContext(
