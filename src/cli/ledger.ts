@@ -934,6 +934,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             policy: ledger.policy,
             tier: plannedTier,
             changedPaths: changed.length > 0 ? changed : Object.keys(current.pathDigests),
+            // The seed's material is the declared path set: the diff against the frozen snapshot is what moved, not what the
+            // sampling is over.
+            contentPaths: Object.keys(current.pathDigests),
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
         });
         // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read

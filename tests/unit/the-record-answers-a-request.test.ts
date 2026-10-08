@@ -177,10 +177,16 @@ describe('the identity does not depend on itself', () => {
         const { defaultPolicy } = await import('../../src/kernel/policy.js');
         const policy = defaultPolicy();
         const claim = { id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major', dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0 };
-        const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts'] };
+        const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts'], contentPaths: ['subject.ts', 'other.ts'] };
         const first = planReview({ ...base, subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
         const second = planReview({ ...base, subject: { revision: `rev:${'b'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
-        expect(second).toEqual(first);
+        expect(second.sampling).toEqual(first.sampling);
+        // **And the diff must not move the sampling either.** `changedPaths` is the diff against the frozen snapshot, so a
+        // partial content change would write a seed over the subset while the next plan wrote one over every path — the plan
+        // moved, the subject moved with it, and a recorded round was released by a bare re-plan. An independent round measured
+        // exactly that, and this guard was blind to it because it declared a single path.
+        const partial = planReview({ ...base, changedPaths: ['subject.ts'], subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
+        expect(partial.sampling).toEqual(first.sampling);
     });
 });
 

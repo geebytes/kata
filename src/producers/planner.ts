@@ -63,6 +63,15 @@ export function planReview(input: {
     policy: Policy;
     tier: TierName;
     changedPaths: readonly string[];
+    /**
+     * **The declared path set, which the sampling seed is derived from.** `changedPaths` is the diff against the frozen
+     * snapshot, so deriving the seed from it made the plan a function of the frozen snapshot as well as of the content: a
+     * partial content change wrote a seed over the subset while the next plan on an unchanged ledger wrote one over every
+     * path — the plan moved, the declared subject moved with it, and a recorded round that answered the current question was
+     * released by a bare re-plan (measured by an independent round, with the guard blind to it because it declared one path).
+     * The seed is about the content the sampling is over, so it is derived from the path set and never from the diff.
+     */
+    contentPaths?: readonly string[];
     c0Tokens?: number | null;
 }): ReviewPlan {
     const tierInfo = tierPolicy(input.policy, input.tier);
@@ -99,7 +108,8 @@ export function planReview(input: {
     // `subject.revision`, while the subject hashes the plan — a fixed-point equation with no solution: `ledger plan` was
     // never idempotent and re-running it released a recorded round that answered the current question (both measured by an
     // independent round). The changed paths are what the sampling is over, so they are what the seed is derived from.
-    const samplingSeed = `${[...input.changedPaths].sort().join(',')}:${input.changedPaths.length}`;
+    const seedPaths = [...(input.contentPaths ?? input.changedPaths)].sort();
+    const samplingSeed = `${seedPaths.join(',')}:${seedPaths.length}`;
     const sampling = {
         seed: samplingSeed,
         rate: input.policy.sampling.rate,
