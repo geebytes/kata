@@ -160,10 +160,18 @@ command runs). Consequences, each of them a case in the AC-4 selector:
 **Falsifier for the class:** disable the comparison in the dispatcher and every writer case in the AC-4 selector reddens at
 once. **Falsifier for the prose:** restore the old paragraph and the AC-1 selector's documentation guard reddens.
 
-**What round 3 also confirmed:** E1–E9 all `supported`; every declared selector and every case inside them reddens under a
-single-point mutation (it reported the one spread that was reachable but undeclared, which this revision removes); R1-F1's
-repair still holds; and the ledger itself decided `pass` while the review decided `fail` — because the fifth writer's drift is
-invisible to the ledger's own claims, which is exactly why an independent round is the instrument and not the ledger.
+**What round 3 also confirmed:** E1–E9 all `supported`; every declared selector reddens under a single-point mutation (the
+round reported the one spread that was reachable but undeclared, which this revision removes); R1-F1's repair still holds; and
+the ledger itself decided `pass` while the review decided `fail` — because the fifth writer's drift is invisible to the
+ledger's own claims, which is exactly why an independent round is the instrument and not the ledger.
+
+**Where "every case" was an overclaim, corrected by round 4.** Not every *case* reddens under one mutation, and saying so was
+wrong of this document. Of the AC-4 selector's nine cases, six redden together under the class-level mutation (the five
+writers and the refusal path), and the three controls do not: two of them (`evidenceIds`-only submission, `claim waive`)
+redden only under a mutation that makes the report fire unconditionally, and the third — "nothing frozen" — needs *two*
+changes, because with no subject both the dispatcher's comparison (`null !== null`) and `movedQuestionFields`' own guard are
+inert. Its single falsifier is removing that guard, which is a mutation of this change's code, so the case does have one; what
+was wrong was the blanket claim, not the case.
 
 ## The second independent round, and what it changed
 
