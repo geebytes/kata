@@ -62,6 +62,14 @@ async function freezeSubject(revision: string): Promise<void> {
     );
 }
 
+/** A frozen subject with the digests the case wants, which is what a partial-change comparison needs. */
+async function freezeSubjectWith(revision: string, pathDigests: Record<string, string>): Promise<void> {
+    await writeFile(
+        join(taskDir(root, taskId), 'review', 'subject.json'),
+        `${JSON.stringify({ revision, pathDigests, declaredPaths: Object.keys(pathDigests) })}\n`,
+    );
+}
+
 async function recordedRound(subjectRevision?: string): Promise<string> {
     const { revision } = await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
     await writeFile(
@@ -174,22 +182,34 @@ describe('the plan does not depend on the frozen snapshot', () => {
         // bare re-plan moved plan.json and therefore the declared subject (rev:c1a8fc622c9f44c1 → rev:ddd1bdda07ff9f30),
         // releasing a recorded round that answered the current question — measured by an independent round. The comparison is
         // now against the sealed revision's content, which freezing does not move.
+        //
+        // The fixture declares **two** paths and makes the frozen subject disagree about exactly one of them: with a single
+        // path the changed subset always equals the whole set and the guard is blind to the difference (the same blindness
+        // that let the previous two rounds through).
         const { runLedgerCommand } = await import('../../src/cli/ledger.js');
         const { readPlanState } = await import('../../src/store/ledger.js');
-        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
-        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
+        const { createTaskRevisionIfChanged, readCurrentTaskRevisionState } = await import('../../src/workflow/revision.js');
+        await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'task.json'),
+            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
+        );
+        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
+        const sealed = await readCurrentTaskRevisionState(root, taskId);
+        const sealedDigests = sealed.kind === 'current' ? (sealed.revision as { pathDigests?: Record<string, string> }).pathDigests ?? {} : {};
 
         const planNow = async () => {
             await runLedgerCommand(['plan', '--change', taskId], { root, changeId: taskId } as never);
             const state = await readPlanState(root, taskId);
             return state.kind === 'usable' ? JSON.stringify(state.value) : `unreadable: ${state.kind}`;
         };
-        await freezeSubject(`rev:${'1'.repeat(16)}`);
-        const first = await planNow();
-        // The frozen subject moves — a different revision and a different digest — and the plan must not care.
-        await freezeSubject(`rev:${'2'.repeat(16)}`);
-        const second = await planNow();
-        expect(second).toBe(first);
+        // A frozen subject that disagrees about one of the two paths — the partial-change shape.
+        await freezeSubjectWith(`rev:${'1'.repeat(16)}`, { ...sealedDigests, 'subject.ts': 'f'.repeat(64) });
+        const withFrozenDisagreement = await planNow();
+        // No frozen subject at all: nothing to compare against, so every declared path is the changed set.
+        await rm(join(taskDir(root, taskId), 'review', 'subject.json'), { force: true });
+        const withoutFrozenSubject = await planNow();
+        expect(withFrozenDisagreement).toBe(withoutFrozenSubject);
     });
 });
 
