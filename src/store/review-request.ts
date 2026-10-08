@@ -187,7 +187,7 @@ export async function buildReviewRequest(input: {
         request: {
             version: 1,
             changeId: input.changeId,
-            subjectRevision: ledger.subject.revision,
+            subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
             tier: plan.tier ?? 'unknown',
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
             // Present only when something could not be read: an absent field means the brief describes a ledger that was

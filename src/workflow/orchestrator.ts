@@ -1521,7 +1521,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // A record with no `subjectRevision` keeps blocking: it was written before this change, we cannot know what it
             // answered, and pretending to know is how a stale result would pass as a current one.
             const ledgerNow = await readLedger(root, taskId).catch(() => undefined);
-            const currentSubject = ledgerNow?.subjectAsDeclared?.revision ?? ledgerNow?.subject?.revision;
+            // **No fallback when the ledger is readable but its question is not.** The fallback to the frozen subject made
+            // an unreadable `claims.json` release a recorded round (measured by an independent round: `success=true,
+            // historyRows=1`): a question we cannot derive is not a question that moved, and the fail-closed answer is to
+            // keep blocking.
+            const currentSubject = ledgerNow === undefined
+                ? undefined
+                : ledgerNow.subjectAsDeclared?.revision;
             const answeredSameRequest = typeof existing.record.subjectRevision !== 'string'
                 || currentSubject === undefined
                 || existing.record.subjectRevision === currentSubject;
@@ -1537,8 +1543,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         ledgerNow?.subject?.claimsDigest === undefined
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'
-                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review — the entry archives the old record — and record the new round.'
-                                : 'A second round needs a different request: restate a claim (`kata-cli ledger restate`) or change the plan, then re-freeze (`kata-cli ledger freeze`) so the request is built from the new question. Re-entering review does not clear a recorded round, so it is not offered as a remedy here.'
+                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review (which supersedes the old record) and record the new round — the record path archives it when it replaces it.'
+                                : 'A second round needs a different request: restate a claim (`kata-cli ledger claim restate`) or change the plan, then re-freeze (`kata-cli ledger freeze`) so the request is built from the new question. Re-entering review does not clear a recorded round, so it is not offered as a remedy here.'
                     }`,
                 };
             }

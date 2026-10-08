@@ -197,8 +197,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger freeze', error: 'no paths to freeze: declare ownedPaths on the task or pass --paths' });
             return;
         }
-        const claimsAtFreeze = (await readLedger(options.root, options.changeId)).claims;
-        const frozen = await freezeSubject({ root: options.root, paths, ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze }) });
+        // **The write path and the read path derive the identity the same way.** The command used to pass the claims only,
+        // while `subjectAsDeclared` also hashes the plan — so a freshly frozen subject could never equal the declared one,
+        // and every comparison built on "did the question move" was permanently unequal (measured by an independent round:
+        // frozen `rev:9c38…` vs declared `rev:159a…`, and the discovery deficit could not be cleared by any re-freeze).
+        const claimsAtFreeze = (await readLedger(options.root, changeId)).claims;
+        const planAtFreeze = await readPlanState(options.root, changeId);
+        const planDigestAtFreeze = planAtFreeze.kind === 'usable' ? hashContent(JSON.stringify(planAtFreeze.value)) : undefined;
+        const frozen = await freezeSubject({
+            root: options.root,
+            paths,
+            ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze, ...(planDigestAtFreeze === undefined ? {} : { planDigest: planDigestAtFreeze }) }),
+        });
         if (!frozen.ok) {
             fail({ command: 'ledger freeze', error: frozen.error, unreadable: frozen.unreadable });
             return;

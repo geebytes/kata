@@ -850,7 +850,7 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
          * two, and the answer cannot come from the frozen copy alone: measured, a restated claim left the frozen subject
          * byte-identical, so an answer to the old question kept reading as an answer to the new one.
          */
-        subjectAsDeclared: subjectForProjection === null || malformedFiles.includes(FILES.claims)
+        subjectAsDeclared: subjectForProjection === null || malformedFiles.includes(FILES.claims) || malformedFiles.includes(FILES.plan)
             // **An unreadable claim set is not an empty question.** Deriving the declared subject from `[]` produced a
             // subject that released a record and stamped the release with a value derived from no claims at all, while every
             // other ledger verb refused the same ledger through the malformed gate — measured by an independent round.
@@ -867,7 +867,13 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
         // cannot see a projection computed from different content than the readings it is compared against.
         ...(() => {
             const readings = verdictsRaw;
-            return { readings, verdicts: projectVerdicts(readings, { currentRevision: subjectForProjection?.revision ?? null }) };
+            // **The verdicts projection asks the same question as everything else.** It read the frozen revision while the
+            // claim projection read the declared one, so one reading had two answers in one module: an independent round
+            // measured `projectionStillCurrent=true` beside `claimState="stale"` after a plan-only change.
+            const declared = subjectForProjection === null || malformedFiles.includes(FILES.claims) || malformedFiles.includes(FILES.plan)
+                ? null
+                : subjectOf(subjectForProjection.pathDigests, subjectForProjection.declaredPaths, claimsForProjection, planDigest);
+            return { readings, verdicts: projectVerdicts(readings, { currentRevision: declared?.revision ?? subjectForProjection?.revision ?? null }) };
         })(),
         challenges: (await artefact(FILES.challenges, (value) => records<Challenge>(FILES.challenges, value, STRING_FIELDS.challenges))) ?? [],
         usage: usage?.usage ?? {},
