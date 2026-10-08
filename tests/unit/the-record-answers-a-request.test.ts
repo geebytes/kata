@@ -167,6 +167,32 @@ describe('the question-bearing identity settles', () => {
     });
 });
 
+describe('the plan does not depend on the frozen snapshot', () => {
+    it('plans the same thing whatever the frozen subject says', async () => {
+        // **The frozen subject carries the identity, so the plan must not be measured against it.** Comparing against it made
+        // the plan a function of a snapshot the plan itself moves: with several declared paths, a partial edit followed by a
+        // bare re-plan moved plan.json and therefore the declared subject (rev:c1a8fc622c9f44c1 → rev:ddd1bdda07ff9f30),
+        // releasing a recorded round that answered the current question — measured by an independent round. The comparison is
+        // now against the sealed revision's content, which freezing does not move.
+        const { runLedgerCommand } = await import('../../src/cli/ledger.js');
+        const { readPlanState } = await import('../../src/store/ledger.js');
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts'], checkIds: [] });
+
+        const planNow = async () => {
+            await runLedgerCommand(['plan', '--change', taskId], { root, changeId: taskId } as never);
+            const state = await readPlanState(root, taskId);
+            return state.kind === 'usable' ? JSON.stringify(state.value) : `unreadable: ${state.kind}`;
+        };
+        await freezeSubject(`rev:${'1'.repeat(16)}`);
+        const first = await planNow();
+        // The frozen subject moves — a different revision and a different digest — and the plan must not care.
+        await freezeSubject(`rev:${'2'.repeat(16)}`);
+        const second = await planNow();
+        expect(second).toBe(first);
+    });
+});
+
 describe('the identity does not depend on itself', () => {
     it('plans the same thing whatever the identity is, so planning cannot move the identity', async () => {
         // **A fixed-point equation has no solution.** The plan's sampling seed used to embed `subject.revision`, and the

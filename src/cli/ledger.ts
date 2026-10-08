@@ -19,6 +19,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
 import { verifyAll } from '../producers/verifiers.js';
+import { readCurrentTaskRevisionState } from '../workflow/revision.js';
 import type { EvidenceAdapter, VerifyContext } from '../producers/port.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
@@ -908,12 +909,21 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         }
         const current = computed.subject;
         const subject = ledger.subject;
-        const changed = subject === null
+        // **What changed is measured against the sealed revision, not against the frozen subject.** The frozen subject
+        // carries the identity, and the identity hashes the plan, so comparing against it made the plan a function of a
+        // snapshot that the plan itself moves: with several declared paths, a partial edit followed by a bare re-plan moved
+        // plan.json and therefore the declared subject (`rev:c1a8fc622c9f44c1` → `rev:ddd1bdda07ff9f30`), releasing a
+        // recorded round that answered the current question (measured by an independent round). The sealed revision's
+        // content is a plain content fact — freezing does not move it — so this comparison is stable across re-plans, and
+        // "what changed" now means "what changed since the last accepted state", which is what the risk decision is about.
+        const sealedNow = await readCurrentTaskRevisionState(options.root, changeId);
+        const sealedDigests = sealedNow.kind === 'current'
+            ? (sealedNow.revision as { pathDigests?: Record<string, string> }).pathDigests ?? null
+            : null;
+        const changed = sealedDigests === null
             ? Object.keys(current.pathDigests)
             : (() => {
-                // Both sides are `Subject` here: the branch above is what makes the left one non-null, and `current` comes
-                // from the frozen computation. `as never` hid that the comparison was even type-checked.
-                const diff = diffSubjects(subject, current);
+                const diff = diffSubjects({ revision: 'rev:sealed', pathDigests: sealedDigests }, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });
