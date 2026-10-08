@@ -246,6 +246,35 @@ describe('the plan does not depend on the seal pointer', () => {
     });
 });
 
+describe('an unreadable seal pointer is refused, not treated as absent', () => {
+    it('leaves the plan alone when the sealed revision cannot be read', async () => {
+        // **A corrupt pointer is not "nothing was sealed".** Folding `unreadable` into the absent branch silently fell back
+        // to every declared path, which moved the plan and the declared subject with no refusal — the opposite of what an
+        // unreadable claims.json or plan.json does. The refusal is asserted by its effect: the plan file is not rewritten.
+        const { runLedgerCommand } = await import('../../src/cli/ledger.js');
+        const { readPlanState } = await import('../../src/store/ledger.js');
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        const { currentRevisionPath } = await import('../../src/core/layout.js');
+        await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'task.json'),
+            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
+        );
+        await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
+        await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n');
+        const planNow = async () => {
+            await runLedgerCommand(['plan', '--change', taskId], { root, changeId: taskId } as never);
+            const state = await readPlanState(root, taskId);
+            return state.kind === 'usable' ? JSON.stringify(state.value) : `unreadable: ${state.kind}`;
+        };
+        const before = await planNow();
+        // The pointer is damaged, not missing.
+        await writeFile(currentRevisionPath(root, taskId), '{ this is not a revision');
+        const after = await planNow();
+        expect(after).toBe(before);
+    });
+});
+
 describe('the identity does not depend on itself', () => {
     it('plans the same thing whatever the identity is, so planning cannot move the identity', async () => {
         // **A fixed-point equation has no solution.** The plan's sampling seed used to embed `subject.revision`, and the
