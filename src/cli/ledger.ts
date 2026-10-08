@@ -7,6 +7,7 @@
  * carries the whole review.
  */
 import { readFile, writeFile } from 'node:fs/promises';
+import { hashContent } from '../core/hash.js';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
@@ -104,7 +105,15 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     // nobody performed. So a freeze before any claim keeps the older semantics — the subject speaks for the content — and
     // the next freeze, which the flow performs once claims exist, carries the question.
     const claimsAtFreeze = (await readLedger(input.root, input.changeId)).claims;
-    const frozen = await freezeSubject({ root: input.root, paths, ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze }) });
+    // **The plan is part of the question**, so a freeze hashes it when it can be read: changing what the request asks for
+    // then moves the subject, which is what makes a record that answered the old request stop speaking for this one.
+    const planNow = await readPlanState(input.root, input.changeId);
+    const planDigest = planNow.kind === 'usable' ? hashContent(JSON.stringify(planNow.value)) : undefined;
+    const frozen = await freezeSubject({
+        root: input.root,
+        paths,
+        ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze, ...(planDigest === undefined ? {} : { planDigest }) }),
+    });
     return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 

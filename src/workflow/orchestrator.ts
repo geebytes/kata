@@ -1548,7 +1548,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // recorded when the recorded one answered a different request; without this the earlier conclusion —
                     // with its findings and its route — would vanish with no trace, which is the silent replacement AC-1
                     // forbids. Measured by an independent round: `release success=true | history rows=0`.
-                    if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && !answeredSameRequest) {
+                    // **Any recorded round being replaced is archived**, not only one that answered another request: a
+                    // record whose content moved is superseded just as surely, and the branch that handles that case wrote
+                    // no row at all (measured by an independent round: `success=true history=0`).
+                    if (!placeholder && Object.keys(existingRecord).length > 0
+                        && (!bindsToRevision(existingRecord, binding) || !answeredSameRequest)) {
                         await appendFile(
                             join(taskDir(root, taskId), 'review-history.jsonl'),
                             JSON.stringify({
@@ -1971,8 +1975,14 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
                             const historyEntry = JSON.stringify({
                                 revisionId: previous.revisionId,
+                                ...(typeof (previous as { subjectRevision?: unknown }).subjectRevision === 'string'
+                                    ? { subjectRevision: (previous as { subjectRevision?: string }).subjectRevision }
+                                    : {}),
                                 findings: previous.findings,
                                 status: previous.status ?? 'pending',
+                                // **One row shape for one history file.** The release path names what superseded the row; the
+                                // entry path left those fields out, so a reader could not tell the two apart.
+                                supersededBy: (entryBinding as { subjectRevision?: string }).subjectRevision ?? '',
                                 archivedAt: new Date().toISOString(),
                             }) + '\n';
                             await appendFile(historyPath, historyEntry, 'utf8');

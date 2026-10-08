@@ -6,6 +6,7 @@
  * written the moment they exist, so there is no last step to lose. Reading reports which files exist, so "nothing was
  * recorded" is a visible state rather than an empty list.
  */
+import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
@@ -832,6 +833,11 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     // about another one, and it is the same value the caller receives as `subject`.
     const subjectForProjection = validated(FILES.subject, await readJson<Subject>(join(dir, FILES.subject)));
     const claimsForProjection = validated(FILES.claims, (await readJson<Claim[]>(join(dir, FILES.claims))) ?? []) ?? [];
+    // The plan is read as bytes: it is the request's shape (reading sets, required evidence), and any change to it changes
+    // what the round is asked to answer.
+    const planDigest = await readFile(join(dir, FILES.plan), 'utf8')
+        .then((text) => createHash('sha256').update(JSON.stringify(JSON.parse(text))).digest('hex').slice(0, 16))
+        .catch(() => undefined);
     return {
         changeId,
         dir,
@@ -844,13 +850,16 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
          * two, and the answer cannot come from the frozen copy alone: measured, a restated claim left the frozen subject
          * byte-identical, so an answer to the old question kept reading as an answer to the new one.
          */
-        subjectAsDeclared: subjectForProjection === null
+        subjectAsDeclared: subjectForProjection === null || malformedFiles.includes(FILES.claims)
+            // **An unreadable claim set is not an empty question.** Deriving the declared subject from `[]` produced a
+            // subject that released a record and stamped the release with a value derived from no claims at all, while every
+            // other ledger verb refused the same ledger through the malformed gate — measured by an independent round.
             ? null
             // Only a freeze that hashed the question can be compared question-to-question; one that did not keeps speaking
             // for whatever is declared, which is the behaviour every reader had before this change.
             : subjectForProjection.claimsDigest === undefined
                 ? subjectForProjection
-                : subjectOf(subjectForProjection.pathDigests, subjectForProjection.declaredPaths, claimsForProjection),
+                : subjectOf(subjectForProjection.pathDigests, subjectForProjection.declaredPaths, claimsForProjection, planDigest),
         policy,
         claims: claimsForProjection,
         evidence: validated(FILES.evidence, (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? []) ?? [],
@@ -934,6 +943,17 @@ async function mutate<T>(root: string, changeId: string, action: () => Promise<T
  * question at all — measured, that is exactly what made every ledger frozen before this change look drifted. A subject that
  * hashed a question keeps being compared question-to-question.
  */
+/**
+ * The one derivation of "which question is this ledger about".
+ *
+ * **Two answers to this in one module is the defect an independent round found**: the claim projection read the subject as
+ * declared (so a restated claim's evidence read stale) while the ledger verdict, the verdicts projection and quorum read the
+ * frozen one (so the same evidence still counted as current). Every staleness question asks this function.
+ */
+export function declaredSubjectRevision(ledger: { subjectAsDeclared?: { revision: string } | null; subject?: { revision: string } | null }): string | null {
+    return ledger.subjectAsDeclared?.revision ?? ledger.subject?.revision ?? null;
+}
+
 export function claimsForContentComparison(
     subject: { claimsDigest?: string } | null | undefined,
     claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
@@ -950,6 +970,8 @@ export async function freezeSubject(input: {
      * exists to remove. Every production caller passes it; a fixture that never restates a claim may omit it.
      */
     claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[];
+    /** The plan as it stands, so the question covers what the request asks for and not only what the claims say. */
+    planDigest?: string;
 }): Promise<
     { ok: true; subject: Subject } | { ok: false; error: string; unreadable: string[] }
 > {
@@ -991,7 +1013,7 @@ export async function freezeSubject(input: {
     // notice it. Keeping the declaration is what lets drift be measured against the surface that was declared.
     // **The questions as declared at the freeze are part of the identity**, so a later restatement makes the frozen
     // subject visibly different from what is declared now — the difference every staleness check is about.
-    return { ok: true, subject: subjectOf(digests, input.paths, input.claims) };
+    return { ok: true, subject: subjectOf(digests, input.paths, input.claims, input.planDigest) };
 }
 
 /**

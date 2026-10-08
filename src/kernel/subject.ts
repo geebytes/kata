@@ -32,24 +32,31 @@ export const KERNEL_BANNED_BUILTINS: readonly string[] = [
  * to the old question as an answer to the new one. What a claim asks is its id, its statement and what it depends on; the
  * rest of a claim (severity, status, counters) is bookkeeping about the answer, not part of the question.
  */
-function questionOf(claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[]): string {
-    return [...claims]
+function questionOf(
+    claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+    planDigest?: string,
+): string {
+    // **The plan is part of the question.** A request's reading sets and required evidence come from `plan.json`, so
+    // changing the plan changes what is being asked while the claims stand still — measured by an independent round: the
+    // request changed, the subject did not, and a record that answered the old request kept blocking.
+    return `${planDigest ?? ''}\u0002${[...claims]
         .sort((a, b) => a.id.localeCompare(b.id))
         .map((claim) => `${claim.id}\u0000${claim.statement}\u0000${[...(claim.dependsOn ?? [])].sort().join(',')}`)
-        .join('\n');
+        .join('\n')}`;
 }
 
 /** A stable revision id from a digest map: the same content yields the same id, byte for byte. */
 export function revisionOf(
     pathDigests: Record<string, string>,
     claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+    planDigest?: string,
 ): string {
     const canonical = Object.keys(pathDigests)
         .sort()
         .map((path) => `${path}\u0000${pathDigests[path] ?? ''}`)
         .join('\n');
     // The question is hashed with the content, so a restatement moves the revision and every binding that names it says so.
-    const material = claims === undefined ? canonical : `${canonical}\n\u0001${questionOf(claims)}`;
+    const material = claims === undefined ? canonical : `${canonical}\n\u0001${questionOf(claims, planDigest)}`;
     return `rev:${createHash('sha256').update(material).digest('hex').slice(0, 16)}`;
 }
 
@@ -57,18 +64,22 @@ export function subjectOf(
     pathDigests: Record<string, string>,
     declaredPaths?: readonly string[],
     claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+    planDigest?: string,
 ): Subject {
     return {
-        revision: revisionOf(pathDigests, claims),
+        revision: revisionOf(pathDigests, claims, planDigest),
         pathDigests,
         ...(declaredPaths === undefined ? {} : { declaredPaths: [...declaredPaths].sort() }),
-        ...(claims === undefined ? {} : { claimsDigest: digestOfQuestion(claims) }),
+        ...(claims === undefined ? {} : { claimsDigest: digestOfQuestion(claims, planDigest) }),
     };
 }
 
 /** The question's own digest, so a subject can say whether it ever hashed one. */
-export function digestOfQuestion(claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[]): string {
-    return createHash('sha256').update(questionOf(claims)).digest('hex').slice(0, 16);
+export function digestOfQuestion(
+    claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+    planDigest?: string,
+): string {
+    return createHash('sha256').update(questionOf(claims, planDigest)).digest('hex').slice(0, 16);
 }
 
 export type SubjectDiff = { changed: string[]; added: string[]; removed: string[]; unchanged: string[] };

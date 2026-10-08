@@ -10,7 +10,7 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths, type Ledger } from './ledger.js';
+import { readLedger, declaredPaths, type Ledger, declaredSubjectRevision } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { readingsForRevision } from '../kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
@@ -298,7 +298,7 @@ export async function ledgerVerdict(input: {
     // reading is how a reading this ledger calls `stale` became a reviewer, measured by an independent review on a real
     // flow. `readingsForRevision` is the kernel's one derivation of that region, so the quorum and the projection cannot
     // answer "which readings are about this revision" differently.
-    const { records, unattributed } = groupByProducer(readingsForRevision(ledger.readings, ledger.subject?.revision ?? null));
+    const { records, unattributed } = groupByProducer(readingsForRevision(ledger.readings, declaredSubjectRevision(ledger)));
     const quorum: QuorumReport | undefined = chainQuorum({
         records,
         unattributed,
@@ -330,7 +330,7 @@ export async function ledgerVerdict(input: {
         // Discovery is mutation-backed history only: an advisory probe answer cannot certify a gate.
         discovery: discoveryProjection({
             challenges: ledger.challenges,
-            currentRevision: ledger.subject.revision,
+            currentRevision: declaredSubjectRevision(ledger) ?? '',
             recordedVerdicts: ledger.verdicts,
             declaredFalsifiers: new Set(ledger.evidence
                 .filter((item) => item.type === 'executable_falsifier')

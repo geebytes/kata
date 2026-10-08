@@ -144,3 +144,31 @@ describe('the record answers the request it was made for', () => {
         expect(String(recorded.error)).toContain('already recorded');
     });
 });
+
+describe('the plan is part of the question', () => {
+    it('moves the subject when only the plan changed, so the request and the identity agree', async () => {
+        // The request's reading sets and required evidence come from `plan.json`; changing the plan changes what is asked
+        // while the claims and the content stand still. Measured by an independent round: `subjectMoved=false
+        // requestChanged=true`, and the record that answered the old request kept blocking.
+        const { appendClaim, freezeSubject: freezeThroughStore, writeSubject, writePlan, readLedger: read } = await import('../../src/store/ledger.js');
+        const { hashContent } = await import('../../src/core/hash.js');
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0,
+        });
+        const planOf = (types: string[]) => ({
+            version: 1,
+            claims: [{ claimId: 'C1', requiredEvidence: [{ types, minimumStrength: 2 }], readingSet: ['subject.ts'] }],
+        });
+        const planDigest = async () => hashContent(JSON.stringify(JSON.parse(await readFile(join(taskDir(root, taskId), 'review', 'plan.json'), 'utf8'))));
+
+        await writePlan(root, taskId, planOf(['static_witness']) as never);
+        const first = await freezeThroughStore({ root, paths: ['subject.ts'], claims: (await read(root, taskId)).claims, planDigest: await planDigest() });
+        if (first.ok) await writeSubject(root, taskId, first.subject);
+        const before = (await read(root, taskId)).subjectAsDeclared?.revision;
+
+        await writePlan(root, taskId, planOf(['executable_falsifier']) as never);
+        const after = (await read(root, taskId)).subjectAsDeclared?.revision;
+        expect(after).not.toBe(before);
+    });
+});
