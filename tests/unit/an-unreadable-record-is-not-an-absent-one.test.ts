@@ -195,3 +195,38 @@ describe('a damaged record cannot remove a claim, and cannot be reported as an u
         await expect(previewScopeChange(root, changeId, [], ['shared.ts'])).rejects.toThrow(/cannot decide whether the added paths conflict/);
     });
 });
+
+/**
+ * **Two more folds of the same class, both found by round 3 as notes.**
+ *
+ * One of them is a gate in disguise: `mutateTaskArtefact` handed a callback `''` for an artefact that exists and cannot be
+ * read, and a callback that ignores `current` — `writeChangeRecord` writes fixed bytes — replaced a governance record nobody
+ * could read with a fresh one. The other is reporting only: the ledger's scan already named a damaged `plan.json`, but with
+ * **no reason**, so an operator reading `malformedReasons` learned nothing.
+ */
+describe('a record that cannot be read is not handed to a writer as empty', () => {
+    it('refuses to mutate an artefact it cannot read, naming it', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-mutate-unreadable-'));
+        roots.push(root);
+        const taskId = 'mutate-unreadable';
+        const artefact = join(root, '.kata', 'tasks', taskId, 'change-record.json');
+        await mkdir(artefact, { recursive: true });
+        const { mutateTaskArtefact } = await import('../../src/core/state.js');
+        await expect(mutateTaskArtefact(root, taskId, artefact, async () => 'replaced\n'))
+            .rejects.toThrow(/cannot read .*change-record\.json before mutating it/);
+    });
+
+    it('names why a damaged plan cannot be compared, not just that it is malformed', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-plan-reason-'));
+        roots.push(root);
+        const taskId = 'plan-reason';
+        const dir = join(root, '.kata', 'tasks', taskId, 'review');
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'plan.json'), '{not json}\n');
+        const { readLedger } = await import('../../src/store/ledger.js');
+        const ledger = await readLedger(root, taskId);
+        expect(ledger.malformedFiles).toContain('plan.json');
+        // The scan named the file but not the reason; an operator reading the ledger has to be able to tell what to fix.
+        expect(String(ledger.malformedReasons?.['plan.json'] ?? '')).toMatch(/cannot be read, so the request it describes cannot be compared/);
+    });
+});

@@ -70,17 +70,31 @@ describe('a crashed cycle leaves a repair note', () => {
         await rm(root, { recursive: true, force: true });
     });
 
-    it('refuses to repair a path outside the workspace', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'kata-outside-'));
-        await writeFile(join(root, 'a.ts'), 'const x = 2;\n');
-        await writeFile(join(root, 'outside.txt'), 'untouched\n');
-        const note = await killedCycleNote(root, 'a.ts', 'const x = 1;\n', 'const x = 2;\n');
+    it('repairs the cycle\'s own file and never the path a note names', async () => {
+        // **Round 3 measured that this case was insensitive, and it was right for a reason worth keeping.** The version
+        // before it wrote a note whose `file` was `../outside.txt` and asserted that nothing was written there — but the
+        // repair writes the *cycle's* path (`relativePath`), never the note's `file`, so no single-point mutation of the
+        // production code could make that assertion fail: it was a comment with a test's syntax, the fourth in this change.
+        //
+        // What is load-bearing is the property that made it insensitive: **a note cannot redirect the repair.** The note is
+        // written by a killed run and read by the next one, so if its `file` were trusted as the write target, a corrupted
+        // or hostile note would aim the repair at any path in the workspace. Here the note names a *different, real* file,
+        // and the repair must still restore the cycle's own.
+        const root = await mkdtemp(join(tmpdir(), 'kata-note-redirect-'));
+        const original = 'const x = 1;\n';
+        const injected = 'const x = 2;\n';
+        const otherContent = 'const other = 1;\n';
+        await writeFile(join(root, 'a.ts'), injected);
+        await writeFile(join(root, 'other.ts'), otherContent);
+        const note = await killedCycleNote(root, 'a.ts', original, injected);
         const locks = join(root, '.kata', 'locks');
-        // The note names a path outside the workspace: the repair is contained, so nothing is written there.
-        await writeFile(join(locks, note), JSON.stringify({ file: '../outside.txt', original: 'PWNED\n' }));
+        // The note is found by its name (which encodes `a.ts`), but its `file` field points elsewhere. The repair must
+        // restore *a.ts* — the file the cycle mutated — and must never treat the note's own `file` as the write target.
+        await writeFile(join(locks, note), JSON.stringify({ file: 'other.ts', original }));
 
         await withVerificationWindow(root, 'a.ts', async () => 'ran');
-        expect(await readFile(join(root, 'outside.txt'), 'utf8')).toBe('untouched\n');
+        expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe(original);
+        expect(await readFile(join(root, 'other.ts'), 'utf8')).toBe(otherContent);
         await rm(root, { recursive: true, force: true });
     });
 });

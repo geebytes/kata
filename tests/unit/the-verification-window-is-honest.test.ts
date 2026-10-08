@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -249,8 +249,66 @@ describe('a restore never writes through a link', () => {
             mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' },
         };
 
-        await expect(verifyAll([item], context)).rejects.toThrow(/refusing to write a\.ts/);
+        // **The refusal names the fact, and it is the identity rule that fires.** The path still resolves to a regular
+        // file — `b.ts` — so a "is this a link?" test alone would let the write through; what stops it is that this run
+        // mutated a different file.
+        await expect(verifyAll([item], context)).rejects.toThrow(/is no longer in the file this run mutated/);
         // **The file the cycle never named is untouched.** This is the harm the refusal exists for.
         expect(await readFile(join(root, peer), 'utf8')).toBe(peerContent);
+    });
+});
+
+/**
+ * **Two more shapes that move the file without moving the path — measured by round 3.**
+ *
+ * The direct-symlink case above is caught by "is the target still a regular file?". These two are not: a **hard link** is a
+ * regular file (whose inode is shared with a peer, so the write lands in the peer), and a **symlinked parent directory** keeps
+ * the final component a regular file while `lstat` follows the intermediate link. Both were measured producing a `supported`
+ * verdict beside a file the run never named.
+ *
+ * The rule that closes both is the identity the cycle mutated: the restore writes back to *that* file or the run fails.
+ */
+describe('a restore writes only to the file the cycle mutated', () => {
+    const swapCheck = (command: string) => ({
+        id: 'EA',
+        type: 'executable_falsifier' as const,
+        command,
+        mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
+    });
+
+    it('refuses when a peer is hard-linked over the target', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-hardlink-restore-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        const peerContent = 'const b = 1;\n';
+        await writeFile(join(root, 'a.ts'), clean);
+        await writeFile(join(root, 'b.ts'), peerContent);
+        const context = buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'a.ts': 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+
+        // The check reddens under the injected defect and lands its result by making its target a second name for `b.ts`.
+        await expect(verifyAll([swapCheck(`sh -c 'if grep -q "const x = 2" a.ts; then ln -f b.ts a.ts; exit 1; fi; exit 0'`)], context))
+            .rejects.toThrow(/is no longer in the file this run mutated/);
+        expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe(peerContent);
+    });
+
+    it('refuses when the parent directory is swapped for a symlink', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-parentlink-restore-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        const otherContent = 'const other = 1;\n';
+        await mkdir(join(root, 'sub'), { recursive: true });
+        await mkdir(join(root, 'other'), { recursive: true });
+        await writeFile(join(root, 'sub', 'a.ts'), clean);
+        await writeFile(join(root, 'other', 'a.ts'), otherContent);
+        const context = buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'sub/a.ts': 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+        const item = {
+            id: 'EA',
+            type: 'executable_falsifier' as const,
+            command: `sh -c 'if grep -q "const x = 2" sub/a.ts; then rm -rf sub && ln -s other sub; exit 1; fi; exit 0'`,
+            mutation: { file: 'sub/a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
+        };
+
+        await expect(verifyAll([item], context)).rejects.toThrow(/is no longer in the file this run mutated/);
+        expect(await readFile(join(root, 'other', 'a.ts'), 'utf8')).toBe(otherContent);
     });
 });

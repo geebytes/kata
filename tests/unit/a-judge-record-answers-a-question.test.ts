@@ -166,3 +166,51 @@ describe('every reader of a judge record binds it to the question it answered', 
         expect(authorization.authorized).toBe(false);
     });
 });
+
+/**
+ * **A binding that cannot be checked is not a binding that holds — round 3's major, at every reader.**
+ *
+ * Each of the six readers wrote the same `record.subjectRevision && current && record.subjectRevision !== current` chain, and
+ * `&&` short-circuits: when the *current* question cannot be derived (a damaged `review/subject.json`, a `claims.json` nobody
+ * can read), the comparison is skipped and the record is accepted. Measured by round 3: a Judge PASS stamped
+ * `rev:earlier-question` was refused with a readable subject and **accepted** once the subject was corrupted — the binding
+ * silently disappeared, in the permissive direction, at all six sites at once.
+ *
+ * One derivation answers it now (`questionBinding` / `answersCurrentQuestion`), and `unknown` is refused.
+ */
+describe('a question that cannot be derived refuses rather than accepts', () => {
+    it('refuses a stale Judge PASS once the frozen subject is damaged', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-damaged-subject-'));
+        roots.push(root);
+        const taskId = 'damaged-subject';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'archive' });
+        await writeFile(join(root, 'subject.ts'), 'export const current = true;\n');
+        const { appendClaim, freezeSubject, readLedger, writeSubject } = await import('../../src/store/ledger.js');
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'current question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: '2026-10-08T00:00:00.000Z', reopens: 0,
+        });
+        const frozen = await freezeSubject({ root, paths: ['subject.ts'], claims: (await readLedger(root, taskId)).claims });
+        if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', diffHash: 'a'.repeat(64), subjectRevision: 'rev:earlier-question', acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+
+        // With a readable question the record is refused for answering another one.
+        const readable = await checkPromotionProvenance(root, {
+            id: 'record', statement: 'validated fact', scope: [], kind: 'implementation-note', sourceRefs: [], sourceHashes: {},
+            validationTaskId: taskId, evidenceIds: ['E1'], status: 'candidate', lastVerifiedAt: '', createdAt: '', updatedAt: '',
+        });
+        expect(readable.failures).toContainEqual(expect.objectContaining({ reason: 'validation_task_question_moved' }));
+
+        // **Now the question cannot be derived.** The record still carries one, so the answer must be a refusal — not the
+        // silence the `&&` chain produced.
+        await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'review', 'subject.json'), '{not json}\n');
+        const damaged = await checkPromotionProvenance(root, {
+            id: 'record', statement: 'validated fact', scope: [], kind: 'implementation-note', sourceRefs: [], sourceHashes: {},
+            validationTaskId: taskId, evidenceIds: ['E1'], status: 'candidate', lastVerifiedAt: '', createdAt: '', updatedAt: '',
+        });
+        expect(damaged.ok).toBe(false);
+        expect(damaged.failures).toContainEqual(expect.objectContaining({ reason: 'validation_task_question_moved' }));
+    });
+});

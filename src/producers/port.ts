@@ -38,6 +38,19 @@ export type VerifyContext = {
      * own envelope.
      */
     windowDeadlineMs?: number;
+    /**
+     * **Which file a path currently resolves to**, as `dev`+`ino` — or `null` when there is nothing there.
+     *
+     * Optional because it is a property of a real filesystem: a context that answers reads and writes from memory has no
+     * inode to report, and every shape this guards (a hard link, a symlinked parent directory) is a shape such a context
+     * cannot have. A context that *does* touch the filesystem must supply it, which is what `buildContext` does.
+     *
+     * The mutation cycle uses it to keep one promise: **the restore writes back to the file the cycle mutated, or the run
+     * fails.** A path is not a promise about which file the bytes land in — a check that replaces its own target, hard-links
+     * a peer over it, or swaps a parent directory for a symlink all change that while the path stays the same, and an
+     * independent round measured each one leaving a `supported` verdict beside a file the run never named.
+     */
+    identity?: (relativePath: string) => Promise<string | null>;
 };
 
 /** One evidence type, decided. `verifier` names the deciding party, recorded in the verdict for audit. */

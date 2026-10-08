@@ -32,7 +32,7 @@ import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entr
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReviewMode, readReviewRecord } from './review-read.js';
-import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
+import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
@@ -2170,7 +2170,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
     }
     const currentDiffHash = await computeDiffHash(root);
     const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
-    if (review.subjectRevision && currentSubjectRevision && review.subjectRevision !== currentSubjectRevision) {
+    if (!answersCurrentQuestion(questionBinding(review.subjectRevision, currentSubjectRevision))) {
         return {
             command: 'judge', taskId, phase: 'review', success: false,
             error: `Judge cannot record a judgement for the current question: Review answered ${review.subjectRevision}, but the current declared question is ${currentSubjectRevision}. Re-run /kata-review for the current question.`,

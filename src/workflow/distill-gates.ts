@@ -9,7 +9,7 @@ import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.
 import { readReviewDecisionSnapshot } from './revision.js';
 import { readBlockingProblems, readReviewRecord } from './review-read.js';
 
-import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
+import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 /**
  * Whether a task may enter distill.
  *
@@ -139,7 +139,7 @@ export async function evaluateJudgePass(input: {
     const judge = await readValidatedOptional<JudgeResult>('judge-result', judgePath(input.root, input.taskId));
     if (!judge || judge.taskId !== input.taskId || judge.result !== 'PASS') return { passed: false, reason: 'not_passed' };
     const currentSubjectRevision = declaredSubjectRevision(await readLedger(input.root, input.taskId));
-    if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+    if (!answersCurrentQuestion(questionBinding(judge.subjectRevision, currentSubjectRevision))) {
         return { passed: false, reason: 'stale_subject' };
     }
     if (input.freshEvidence?.revisionId) {

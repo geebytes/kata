@@ -457,6 +457,7 @@ export function buildContext(
             }
             await writeFile(absolute, content, 'utf8');
         },
+        identity: async (relativePath: string) => fileIdentity(root, relativePath),
         now,
         producer: () => options.producer,
         ...(options.windowDeadlineMs === undefined ? {} : { windowDeadlineMs: options.windowDeadlineMs }),

@@ -287,7 +287,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // so one decision read them twice — the same defect the pointer's read was fixed for, left on the ledger. The read is
   // taken here (dynamically, because `store/ledger` reaches `core/state` which reaches the distill gate that calls this
   // module) and handed to both.
-  const { declaredSubjectRevision, readLedger } = await import('../store/ledger.js');
+  const { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } = await import('../store/ledger.js');
   const ledgerInHand = await readLedger(root, taskId);
   const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
   // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
@@ -324,7 +324,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
       ? onlyCurrentRevision(usableOrNull(judgeRead), binding)
       : usableOrNull(judgeRead);
   const currentSubjectRevision = declaredSubjectRevision(ledgerInHand);
-  const judgeStaleSubject = rawJudge?.subjectRevision && currentSubjectRevision && rawJudge.subjectRevision !== currentSubjectRevision
+  const judgeStaleSubject = rawJudge && !answersCurrentQuestion(questionBinding(rawJudge.subjectRevision, currentSubjectRevision))
     ? rawJudge.subjectRevision
     : undefined;
   const judge = judgeStaleSubject ? null : rawJudge;

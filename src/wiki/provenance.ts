@@ -5,7 +5,7 @@ import { computeFileHash, type WikiRecord } from './record.js';
 import { readWikiClosure, writeWikiClosure, type WikiClosure } from './closure.js';
 import { readRecordedEvidence } from '../quality/evidence.js';
 import { judgePath as layoutJudgePath, currentStatePath as layoutCurrentStatePath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
-import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
+import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 
 export interface CandidateInput {
   statement: string;
@@ -32,7 +32,7 @@ export async function proposeFromPassedTask(root: string, taskId: string, input:
   // judgement of this content, and this reader used to accept it on `taskId` and `result` alone — the same gap the review
   // record closed, one reader over.
   const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
-  if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+  if (!answersCurrentQuestion(questionBinding(judge.subjectRevision, currentSubjectRevision))) {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} Judge answered ${judge.subjectRevision}, not its current declared question (${currentSubjectRevision})`);
   }
 
@@ -94,7 +94,7 @@ export async function distillPassedTaskKnowledge(root: string, taskId: string): 
     return { decision: 'deferred', candidateIds: [], records: [], reason: 'Judge PASS is required before Wiki distillation' };
   }
   const declared = declaredSubjectRevision(await readLedger(root, taskId));
-  if (judge.subjectRevision && declared && judge.subjectRevision !== declared) {
+  if (!answersCurrentQuestion(questionBinding(judge.subjectRevision, declared))) {
     return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} Judge answered ${judge.subjectRevision}, not its current declared question (${declared})` };
   }
 

@@ -6,7 +6,7 @@ import { readCurrentTaskRevision } from '../workflow/revision.js';
 import { computeFileHash } from './record.js';
 import type { WikiRecord } from './record.js';
 
-import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
+import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 /**
  * Whether a candidate's provenance actually holds up, checked when it would become authoritative.
  *
@@ -43,7 +43,10 @@ async function judgePassedFor(root: string, taskId: string): Promise<{ passed: b
     }
     if (!judge) return { passed: null };
     const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
-    if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+    // **A binding that cannot be checked is not a binding that holds.** The `&&` chain here short-circuited to "no
+    // comparison needed" when the current question could not be derived, so a damaged `subject.json` turned a stale PASS
+    // into a promotable one — measured by an independent round at six sites with this shape.
+    if (!answersCurrentQuestion(questionBinding(judge.subjectRevision, currentSubjectRevision))) {
         return { passed: false, subjectRevision: judge.subjectRevision };
     }
     return { passed: judge.result === 'PASS' };

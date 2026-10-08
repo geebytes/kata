@@ -5,7 +5,7 @@ import type { TaskRevision } from './revision.js';
 import { commitReviewDecision, readReviewDecisionSnapshot, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
-import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
+import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
@@ -331,7 +331,7 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     // field stays readable, exactly as the other judge readers treat it: not knowing what it answered is not the same fact
     // as knowing it answered something else.
     const declared = declaredSubjectRevision(await readLedger(root, taskId));
-    const judgeAnswersCurrentQuestion = !judge.subjectRevision || !declared || judge.subjectRevision === declared;
+    const judgeAnswersCurrentQuestion = answersCurrentQuestion(questionBinding(judge.subjectRevision, declared));
     const judgeRepairable = judge.result === 'FAIL'
         && judgeAnswersCurrentQuestion
         && failedAcceptance.length > 0

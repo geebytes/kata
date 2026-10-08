@@ -835,9 +835,20 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     const claimsForProjection = validated(FILES.claims, (await readJson<Claim[]>(join(dir, FILES.claims))) ?? []) ?? [];
     // The plan is read as bytes: it is the request's shape (reading sets, required evidence), and any change to it changes
     // what the round is asked to answer.
-    const planDigest = await readFile(join(dir, FILES.plan), 'utf8')
-        .then((text) => createHash('sha256').update(JSON.stringify(JSON.parse(text))).digest('hex').slice(0, 16))
-        .catch(() => undefined);
+    // **A plan nobody can read is not a plan nobody wrote.** `.catch(() => undefined)` made a damaged `plan.json` the same
+    // `undefined` as a ledger that has not been planned, so the comparison that asks "has the request changed" answered
+    // against a plan it could not see — the fold an independent round found here, in the same direction as the others: the
+    // damage disappears instead of being named. ENOENT stays `undefined` (there is no plan yet); anything else joins the
+    // scan's malformed set, which is what every reader of this ledger already consults before deciding anything.
+    let planDigest: string | undefined;
+    try {
+        planDigest = createHash('sha256').update(JSON.stringify(JSON.parse(await readFile(join(dir, FILES.plan), 'utf8')))).digest('hex').slice(0, 16);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            if (!malformedFiles.includes(FILES.plan)) malformedFiles.push(FILES.plan);
+            malformedReasons.set(FILES.plan, `cannot be read, so the request it describes cannot be compared: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     return {
         changeId,
         dir,
@@ -958,6 +969,37 @@ async function mutate<T>(root: string, changeId: string, action: () => Promise<T
  */
 export function declaredSubjectRevision(ledger: { subjectAsDeclared?: { revision: string } | null; subject?: { revision: string } | null }): string | null {
     return ledger.subjectAsDeclared?.revision ?? ledger.subject?.revision ?? null;
+}
+
+/**
+ * **Does a record answer the question the task is asking now?** One derivation, four answers.
+ *
+ * This shape was written six times by hand — `record.subjectRevision && current && record.subjectRevision !== current` — and
+ * an independent round falsified it: when the *current* question cannot be derived (a damaged `subject.json`, a `claims.json`
+ * nobody can read), the `&&` chain short-circuits to "no comparison needed" and the record is accepted. Measured: a Judge
+ * PASS stamped `rev:earlier-question` was refused with a readable subject and **accepted** with the same record once the
+ * subject was corrupted — the binding silently disappeared, in the permissive direction, at six sites at once.
+ *
+ * The four answers are the four facts, and no caller may collapse them:
+ *
+ * - `unbound` — the record carries no question (legacy). Not knowing what it answered is not knowing it answered something
+ *   else, so this stays acceptable everywhere, exactly as it did before the field existed.
+ * - `same` — it answered this question.
+ * - `moved` — it answered a different one.
+ * - `unknown` — the record carries a question and the current one **cannot be derived**. Fail closed: a binding that cannot
+ *   be checked is not a binding that holds, and the reader that used to accept here was the one the round measured.
+ */
+export type QuestionBinding = 'unbound' | 'same' | 'moved' | 'unknown';
+
+export function questionBinding(recordSubjectRevision: string | undefined | null, currentSubjectRevision: string | undefined | null): QuestionBinding {
+    if (typeof recordSubjectRevision !== 'string' || recordSubjectRevision === '') return 'unbound';
+    if (typeof currentSubjectRevision !== 'string' || currentSubjectRevision === '') return 'unknown';
+    return recordSubjectRevision === currentSubjectRevision ? 'same' : 'moved';
+}
+
+/** Whether the binding permits acting on the record: `unbound` and `same` do; `moved` and `unknown` do not. */
+export function answersCurrentQuestion(binding: QuestionBinding): boolean {
+    return binding === 'unbound' || binding === 'same';
 }
 
 /**

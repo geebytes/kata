@@ -241,7 +241,18 @@ export async function mutateTaskArtefact(
     const write = async () => {
         // The read happens inside the lock. A helper that only locked the write would leave the read-modify-write window
         // open — which is the window this exists to close (L3-09).
-        const current = await readFile(path, 'utf8').catch(() => '');
+        // **An artefact that cannot be read is not an artefact that is empty.** `.catch(() => '')` handed the callback an
+        // empty string for a file that exists and cannot be parsed, so a callback that ignores `current` — `writeChangeRecord`
+        // writes fixed bytes — replaced a damaged governance record with a fresh one and the damage was never named. ENOENT
+        // is still `''`: a new artefact is created from nothing, which is what "empty" means here.
+        let current = '';
+        try {
+            current = await readFile(path, 'utf8');
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                throw new Error(`cannot read ${path} before mutating it, so the mutation would replace a record nobody could read: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
         const content = await mutate(current);
         await writeFileAtomic(path, content);
     };
