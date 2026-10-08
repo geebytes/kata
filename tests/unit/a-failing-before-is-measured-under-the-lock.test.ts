@@ -35,8 +35,11 @@ describe('a failing before is measured under the lock', () => {
         const firstItem = { id: 'E1', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
         const secondItem = { id: 'E2', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
 
+        // **The second cycle is started while the first holds the file injected**, which is the whole point: its `before` run
+        // reads the tree there and fails, and that failure is what must not be believed. The first cycle injects at about
+        // 30 ms (its own `before` run), so the second starts just after that.
         const first = verifyAll([firstItem], context);
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 35));
         const second = verifyAll([secondItem], context);
         const outcomes = await Promise.allSettled([first, second]);
         const verdicts = outcomes.flatMap((outcome) => (outcome.status === 'fulfilled' ? outcome.value : []));
