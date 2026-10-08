@@ -230,3 +230,73 @@ would have caught). Doing it here first is the reason the round should not have 
 ### 7.5 Measured result
 
 `282 files / 1679 tests` PASS, `tsc --noEmit` clean, `dist/` rebuilt.
+
+## 8. Round 1's findings, and what the repair changed
+
+The independent round **failed the change** (1 blocking, 2 major, 4 minor, 1 note) and falsified its central clause. It is
+recorded here in full because the design's own §7.1 and §7.2 were both wrong in the same way: they described mechanisms
+whose class was wider than the sites they fixed.
+
+### 8.1 The blocking finding: the key was taken before the window was held (F1)
+
+`withVerificationWindow` derived `lockKeyFor` — the file's `dev`+`ino` — **before** `mkdir(lockDir)` established exclusivity.
+A check that lands its result with `mv` (an ordinary formatter, and the change's own comment calls it ordinary) moves the
+inode inside the window, so a second cycle derived a *different* key, took a lock nobody held, and ran concurrently. It then
+found the first cycle's journal by file name, restored the first cycle's original mid-flight, and the first cycle reported
+`refuted … the check did not redden under its own defect` about a perfectly sensitive check — measured deterministically.
+
+This is the **third** time in this mechanism that the key was not the thing it was supposed to name: a spelling (fixed by
+`realpath`), a name for a file with several (fixed by `dev`+`ino`), and now an identity derived at a moment when the file was
+still somebody else's to change. The repair is not another key — it is an **order and a pair**:
+
+- the **path** lock (the resolved path) is taken first. It is what the cycle mutates and restores, and a check cannot change
+  it by replacing its target;
+- the **identity** lock (`dev`+`ino`, the alias-collapsing key) is derived *inside* that lock and held for the window.
+
+Each cycle holds one path lock and waits for at most one identity lock, so the wait-for graph has no cycle. The journal is
+now named by the **path** key, which is why a note nobody can parse is still attributable — and therefore quarantineable,
+which is what §7.1's F4 comment claimed and did not do.
+
+### 8.2 The class was wider than the sites (F2, F3, F6)
+
+Seven more sites folded damage into absence, and two more readers of the judge record never bound it to the question it
+answered:
+
+| Site | What it said | What was true |
+|---|---|---|
+| `readTaskCandidate` | `intake`, under a comment claiming corruption was surfaced | the state file could not be read |
+| the candidate listing | the task was absent | it could not be read, and it vanished from the only place that would have shown it |
+| `runOrientCommand` | a phase from an older handoff packet | the state record could not be read |
+| `src/cli/workflow.ts` | no next-action suggestion | the upstream summary could not be read |
+| `src/store/baseline.ts` | "unmeasured" (the same as a change with no records) | the ledger file could not be read |
+| `createHandoff` | a raw JSON syntax error | a schema-governed record was parsed by hand |
+| `orchestrator.ts:1242` | the full check set, silently | the task record could not be read |
+| `proposeFromPassedTask`, `distillPassedTaskKnowledge` | a PASS is a PASS | it answered a superseded question |
+| `authorizeJudgeRepair` | a FAIL authorizes repair | it answered a superseded question |
+
+`src/core/state.ts` gains `readCurrentStateOr` (three states, ENOENT only for `absent`) and `src/core/task.ts` the named
+`UnreadableTaskRecord`, so a refusal carries the task and the file. The listing keeps its promise not to drop a task: it
+lists it with `phase: 'unreadable'` and the reason.
+
+### 8.3 The amended counterexample (X1), and why amending was the honest move
+
+Round 1's challenge X1 recorded the defect correctly, but its **acceptance condition was satisfiable only by the defect**: it
+awaited the second cycle to completion *while the first was parked inside its window*, which only a cycle that fails to
+exclude the first can do. On the repaired tree it times out with no false reading — measured. So the challenge was amended
+(`kata-cli ledger challenge amend`, which keeps the original command and the reason in the record) to assert the same
+property in a form a correct implementation can satisfy: the first reading stays `supported`, the second cycle is either
+served after it or refused by name, the file ends clean. The amended command was then measured **both ways**: it fails on the
+pre-fix tree with `expected 'refuted' to be 'supported'` and passes on the repaired one.
+
+### 8.4 Guards, and the third insensitive fixture
+
+Seven cases were added to the four existing selectors, plus a quarantine case, and each was shown to redden under its own
+single-point mutation (recorded in §7.4's table for the first batch; the second batch is M-AC1c, M-AC2c, M-AC4e–g, M-AC3c–e).
+One of them — *"a stale FAIL authorizes a repair"* — **did not redden** on the first attempt: its fixture used
+`repairScope: 'implementation'`, which is not a scope a Judge FAIL can authorize, so the branch under test was never
+reached. That is the third time in this change that a guard did not reach the code it named, and the same class the wiki page
+`a-test-that-never-reaches-the-code` records. The fixture now uses `failing_evidence`, and the mutation reddens.
+
+The two challenge commands were then re-run and both **withdrawn** (`code: 0`), and `ledger decide` reports six claims, all
+supported, with only the independent-challenge deficit remaining — which only a new round can supply.
+

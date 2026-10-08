@@ -112,3 +112,31 @@ describe('the cycle identity is derived once and carried', () => {
         expect(await journalsIn(root)).toEqual([]);
     });
 });
+
+/**
+ * **A note nobody can read is quarantined, and that is only possible because its name carries the path.**
+ *
+ * The comment claiming this was false when an independent round read it: the discovery matched a note by the path it names,
+ * and an unparseable note has no path to name — so it was dropped before the repair loop could remove it, leaked forever, and
+ * was re-parsed on every window entry. The note is now named by the path key, which is what makes it attributable without
+ * being parseable.
+ */
+describe('a note nobody can read is attributable and quarantined', () => {
+    it('removes an unparseable note instead of leaking it', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-key-quarantine-'));
+        roots.push(root);
+        const file = 'a.ts';
+        await writeFile(join(root, file), original);
+
+        // The name a cycle would have written, holding bytes no reader can parse — what a killed write leaves behind.
+        let key = '';
+        await withVerificationWindow(root, file, async (window) => { key = window.pathKey; });
+        const locks = join(root, '.kata', 'locks');
+        await writeFile(join(locks, `verify-${key}.journal.json`), '{not json}\n');
+
+        // The next cycle runs normally, and the unreadable note is gone: quarantined, not blocking the file forever.
+        await withVerificationWindow(root, file, async () => 'ran');
+        expect(await journalsIn(root)).toEqual([]);
+        expect(await readFile(join(root, file), 'utf8')).toBe(original);
+    });
+});
