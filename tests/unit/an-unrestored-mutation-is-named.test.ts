@@ -32,6 +32,9 @@ async function contextWith(overrides: Partial<VerifyContext> & { files: Record<s
         // path in the temp root; these cases put their files in a map instead, so the inherited reader would answer `null`
         // for every path and the cycle would refuse for a reason the case is not about.
         identity: async () => 'mem:1',
+        // This context stores its target in `files`, not at the real root inherited from buildContext; retain the optional
+        // preflight contract only for contexts that model its filesystem.
+        mutationWriteRefusal: undefined,
         readText: async (path: string) => files[path] ?? null,
         writeText: async (path: string, content: string) => { files[path] = content; },
         run: async () => ({ code: 0, stdout: '', stderr: '', timedOut: false }),

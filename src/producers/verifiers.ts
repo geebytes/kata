@@ -145,6 +145,20 @@ const executableFalsifier: EvidenceVerifier = {
                     });
                 }
 
+                // **Refuse before the journal and before injection.** A target that was already hard-linked cannot be used as
+                // an evidence mutation: even a perfectly honest check would temporarily rewrite its peer. `writeText` also
+                // enforces this rule, but learning it there used to route through the restore path and report an
+                // `UnrestoredMutation` although this run had written nothing. The preflight makes the boundary explicit.
+                const mutationRefusal = await context.mutationWriteRefusal?.(evidence.mutation.file);
+                if (mutationRefusal !== undefined && mutationRefusal !== null) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'inconclusive',
+                        observed: `the mutation cannot start on ${evidence.mutation.file}: ${mutationRefusal}`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
                 // **The journal is written by the production path**, which it was not: the helper was imported and never
                 // called, so a killed run left a defect with no repair note and the next run waited out the lock instead of
                 // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0). It is

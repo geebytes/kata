@@ -19,6 +19,12 @@ export type VerifyContext = {
     run: (command: string) => Promise<CommandOutcome>;
     readText: (relativePath: string) => Promise<string | null>;
     exists: (relativePath: string) => Promise<boolean>;
+    /**
+     * Returns the concrete filesystem reason a mutation write cannot safely start, or `null` when the named target is an
+     * admissible write target. This is separate from `writeText`: a refusal before injection is not an unrestored mutation.
+     * Optional so memory-backed test contexts remain a valid transport implementation.
+     */
+    mutationWriteRefusal?: (relativePath: string) => Promise<string | null>;
     writeText: (relativePath: string, content: string) => Promise<void>;
     now: () => string;
     /**

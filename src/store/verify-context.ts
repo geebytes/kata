@@ -504,6 +504,11 @@ export function buildContext(
                 return false;
             }
         },
+        mutationWriteRefusal: async (relativePath: string) => {
+            if (containedPath(root, relativePath) === null) return `${relativePath} is outside the workspace root`;
+            const target = writeTargetFor(root, relativePath);
+            return target.ok ? null : target.why;
+        },
         writeText: async (relativePath: string, content: string) => {
             const absolute = containedPath(root, relativePath);
             if (absolute === null) {

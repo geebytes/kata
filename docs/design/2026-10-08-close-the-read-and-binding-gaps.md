@@ -300,3 +300,33 @@ reached. That is the third time in this change that a guard did not reach the co
 The two challenge commands were then re-run and both **withdrawn** (`code: 0`), and `ledger decide` reports six claims, all
 supported, with only the independent-challenge deficit remaining — which only a new round can supply.
 
+
+## 9. C+ verification boundary (approved after round 5)
+
+The verifier executes an arbitrary shell command in the real checkout. No in-place mutation protocol can prove the checkout
+is unchanged against a command that is itself an adversary with the same filesystem authority: it can rename an ancestor,
+replace topology after inspection, keep a detached writer alive, or modify unrelated paths after the cycle's last read.
+Rounds 1–5 measured that this is not a theoretical distinction. We therefore preserve the existing **fail-closed mechanics**
+for observable unsafe targets, but state the admissibility boundary explicitly rather than publish a broader promise than the
+mechanism can prove.
+
+An executable falsifier is admissible only when all of the following are true:
+
+1. at injection, its target is a single-name regular file and every component from the checkout root to that target is a
+   non-link directory; otherwise the verifier returns a named `inconclusive` **before** writing or journaling;
+2. the command does not rename, remove, replace, or link the target or any of its ancestors while the verification cycle is
+   active; it does not launch a writer that can outlive the command; and it does not intentionally alter files other than the
+   declared target;
+3. the command does not try to alter the verifier's out-of-tree control state. The state was moved to the OS temporary
+   directory precisely because the command may edit every path inside the checkout.
+
+This is **not** a waiver for an observed defect. It is the declared limit of a real-checkout evidence method. A target that is
+already hard-linked is now refused before injection (not misreported as `UnrestoredMutation` after no write occurred), and
+link/non-regular targets remain refused at both the restore and crash-repair doors. Under the boundary, `supported` means the
+cycle restored and settled the declared target after an admissible command; it never claims that an arbitrary shell command
+could not change a different checkout path.
+
+The alternatives were considered explicitly. Copy-based mutation would remove this class, but changes the meaning of
+`supported` from a result about the checkout to a result about a faithful replica; it requires an additional proof that the
+command does not read the live checkout (some existing commands do). That is a gate-semantic redesign and belongs to the
+successor change, not a silent alteration of this change's certified method.

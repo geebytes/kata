@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -386,5 +386,26 @@ describe('a green run that rewrites its target is named, not reported', () => {
             mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
         };
         await expect(verifyAll([item], context)).rejects.toThrow(/checkout is not as it was found/);
+    });
+});
+
+
+/** A pre-existing hard link is an inadmissible mutation target, not an unrestored mutation. */
+describe('a pre-existing hard-linked target is refused before injection', () => {
+    it('names the target condition without leaving a journal or attempting a restore', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-preexisting-hardlink-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        await writeFile(join(root, 'a.ts'), clean);
+        await link(join(root, 'a.ts'), join(root, 'b.ts'));
+        const context = buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'a.ts': 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+        const item = { id: 'EA', type: 'executable_falsifier' as const, command: `grep -q "const x = 2" a.ts && exit 1 || exit 0`, mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' } };
+
+        const [verdict] = await verifyAll([item], context);
+        expect(verdict.verdict).toBe('inconclusive');
+        expect(verdict.observed).toContain('cannot start');
+        expect(verdict.observed).toContain('hard-linked');
+        expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe(clean);
+        expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe(clean);
     });
 });
