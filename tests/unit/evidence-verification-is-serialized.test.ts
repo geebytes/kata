@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp } from 'node:fs/promises';
+import { link, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withVerificationLock } from '../../src/store/verify-context.js';
@@ -61,6 +61,25 @@ describe('evidence verification is serialized per file', () => {
             inside -= 1;
         });
         await Promise.all([section('a.ts'), section('./a.ts')]);
+        expect(peak).toBe(1);
+    });
+
+    it('treats a hard link to one file as the same file', async () => {
+        // A hard link shares the inode and has its own path, so a key derived from a *name* leaves the two unserialized: an
+        // independent round drove two cycles on `a.ts` and its hard link and the injected defect stayed on disk while both
+        // verdicts read `supported`.
+        const root = await mkdtemp(join(tmpdir(), 'kata-serialize-'));
+        await writeFile(join(root, 'a.ts'), 'const x = 1;\n');
+        await link(join(root, 'a.ts'), join(root, 'hard.ts'));
+        let inside = 0;
+        let peak = 0;
+        const section = (name: string) => withVerificationLock(root, name, async () => {
+            inside += 1;
+            peak = Math.max(peak, inside);
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            inside -= 1;
+        });
+        await Promise.all([section('a.ts'), section('hard.ts')]);
         expect(peak).toBe(1);
     });
 

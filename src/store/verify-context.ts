@@ -152,15 +152,18 @@ export class UnrestoredMutation extends Error {}
  */
 function lockKeyFor(root: string, relativePath: string): string {
     const absolute = resolve(root, relativePath);
-    let real = absolute;
-    let inode = '';
     try {
-        real = realpathSync(absolute);
-        inode = String(statSync(real).ino);
+        // **The identity is the file's inode, not a name for it.** An earlier version hashed `realpath + inode`, which still
+        // distinguished two names for one physical file: a hard link shares the inode but has its own realpath, so two
+        // overlapping cycles on `a.ts` and its hard link took two locks and left the injected defect on disk with both
+        // verdicts `supported` (measured by an independent round, which reproduced exactly the hazard this change removes).
+        // `dev` + `ino` is what "the same file" means to the filesystem, so that is the key.
+        const stat = statSync(realpathSync(absolute));
+        return hashContent(`${stat.dev}\u0000${stat.ino}`).slice(0, 16);
     } catch {
         // The file may not exist yet; the resolved path is the best identity available.
+        return hashContent(absolute).slice(0, 16);
     }
-    return hashContent(`${real}\u0000${inode}`).slice(0, 16);
 }
 
 /** Whether the process that took a lock is still there. `EPERM` means it exists and is not ours. */
