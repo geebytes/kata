@@ -107,8 +107,7 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     const claimsAtFreeze = (await readLedger(input.root, input.changeId)).claims;
     // **The plan is part of the question**, so a freeze hashes it when it can be read: changing what the request asks for
     // then moves the subject, which is what makes a record that answered the old request stop speaking for this one.
-    const planNow = await readPlanState(input.root, input.changeId);
-    const planDigest = planNow.kind === 'usable' ? hashContent(JSON.stringify(planNow.value)) : undefined;
+    const planDigest = await planDigestOf(input.root, input.changeId);
     const frozen = await freezeSubject({
         root: input.root,
         paths,
