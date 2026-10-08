@@ -233,6 +233,43 @@ export type CurrentRevisionRead =
  * `readValidatedOptional` already distinguishes the two — ENOENT is `null`, anything else rethrows — so the three states
  * were always available; they were just not the *return type*. They are now, and every consumer decides.
  */
+/**
+ * **The content the change is measured against: the most recent stored content that is not the current content.**
+ *
+ * Pointing at "the current seal" is what made the plan a function of seal state: sealing content that was already reviewed
+ * reuses the revision, so the pointer moved to a state equal to the current content, the changed set fell back to every
+ * declared path, and the plan — and with it the declared subject — moved for a reason that was neither content nor
+ * declaration. An independent round measured the released recorded round that followed. A revision equal to the current
+ * content is the same state, not a reference, so it is skipped.
+ */
+export async function mostRecentDifferentContent(
+  root: string,
+  taskId: string,
+  currentDigests: Record<string, string>,
+): Promise<Record<string, string> | null> {
+  let names: string[];
+  try {
+    names = await readdir(revisionsDir(root, taskId));
+  } catch {
+    return null;
+  }
+  const same = (left: Record<string, string>, right: Record<string, string>): boolean => {
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
+  };
+  const candidates: TaskRevision[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const read = await readValidatedOptional<TaskRevision>('revision', join(revisionsDir(root, taskId), name));
+    if (read !== null && read.pathDigests !== undefined) candidates.push(read);
+  }
+  candidates.sort((left, right) => (left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0));
+  for (const candidate of candidates) {
+    if (!same(candidate.pathDigests as Record<string, string>, currentDigests)) return candidate.pathDigests as Record<string, string>;
+  }
+  return null;
+}
+
 export async function readCurrentTaskRevisionState(root: string, taskId: string): Promise<CurrentRevisionRead> {
   try {
     const revision = await readValidatedOptional<TaskRevision>('revision', currentRevisionPath(root, taskId));

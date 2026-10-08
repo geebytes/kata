@@ -19,7 +19,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
 import { verifyAll } from '../producers/verifiers.js';
-import { readCurrentTaskRevisionState } from '../workflow/revision.js';
+import { mostRecentDifferentContent, readCurrentTaskRevisionState } from '../workflow/revision.js';
 import type { EvidenceAdapter, VerifyContext } from '../producers/port.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
@@ -916,14 +916,26 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // recorded round that answered the current question (measured by an independent round). The sealed revision's
         // content is a plain content fact — freezing does not move it — so this comparison is stable across re-plans, and
         // "what changed" now means "what changed since the last accepted state", which is what the risk decision is about.
+        // **The reference is the most recent stored content that is not this content.** Sealing content that was already
+        // reviewed reuses the revision (a content-bound id), so pointing at "the current seal" made the reference move for a
+        // reason that is neither content nor declaration: the changed set flipped from the delta to the all-paths fallback,
+        // the plan and the declared subject moved with it, and a recorded round that answered the current question was
+        // released (measured by an independent round). A revision whose content equals the current content is not a
+        // reference — it is the same state — so it is skipped, and a no-op seal no longer moves anything.
         const sealedNow = await readCurrentTaskRevisionState(options.root, changeId);
-        const sealedDigests = sealedNow.kind === 'current'
-            ? (sealedNow.revision as { pathDigests?: Record<string, string> }).pathDigests ?? null
-            : null;
-        const changed = sealedDigests === null
+        if (sealedNow.kind === 'unreadable') {
+            fail({
+                command: 'ledger plan',
+                error: `the sealed revision cannot be read, so what changed since it cannot be measured: ${sealedNow.detail}`,
+                remedy: 'repair or replace .kata/tasks/<id>/current-revision.json, then plan again',
+            });
+            return;
+        }
+        const reference = await mostRecentDifferentContent(options.root, changeId, current.pathDigests);
+        const changed = reference === null
             ? Object.keys(current.pathDigests)
             : (() => {
-                const diff = diffSubjects({ revision: 'rev:sealed', pathDigests: sealedDigests }, current);
+                const diff = diffSubjects({ revision: 'rev:reference', pathDigests: reference }, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });

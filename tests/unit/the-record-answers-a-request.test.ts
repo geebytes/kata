@@ -213,6 +213,39 @@ describe('the plan does not depend on the frozen snapshot', () => {
     });
 });
 
+describe('the plan does not depend on the seal pointer', () => {
+    it('plans the same thing after a seal over content that was already reviewed', async () => {
+        // **Sealing content that was already reviewed reuses the revision, so pointing at "the current seal" made the
+        // reference move for a reason that is neither content nor declaration.** The changed set flipped from the delta to
+        // the all-paths fallback, plan.json moved, the declared subject moved with it (rev:497eed1b9cb63a13 →
+        // rev:94fe02d13260191a) and a recorded round that answered the current question was released — measured by an
+        // independent round. The reference is now the most recent stored content that is not the current content, so a seal
+        // over the same content is not a reference at all.
+        const { runLedgerCommand } = await import('../../src/cli/ledger.js');
+        const { readPlanState } = await import('../../src/store/ledger.js');
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', taskId, 'task.json'),
+            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
+        );
+        const seal = () => createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
+        await seal();
+        const planNow = async () => {
+            await runLedgerCommand(['plan', '--change', taskId], { root, changeId: taskId } as never);
+            const state = await readPlanState(root, taskId);
+            return state.kind === 'usable' ? JSON.stringify(state.value) : `unreadable: ${state.kind}`;
+        };
+        // One path changes, so the reference has a delta to measure.
+        await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n');
+        const beforeSeal = await planNow();
+        // The seal catches up with the content — the no-op-from-the-reviewer's-view case.
+        await seal();
+        const afterSeal = await planNow();
+        expect(afterSeal).toBe(beforeSeal);
+    });
+});
+
 describe('the identity does not depend on itself', () => {
     it('plans the same thing whatever the identity is, so planning cannot move the identity', async () => {
         // **A fixed-point equation has no solution.** The plan's sampling seed used to embed `subject.revision`, and the
