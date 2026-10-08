@@ -14,8 +14,8 @@ import {
 } from '../core/layout.js';
 import { recover, requiresRecovery } from '../core/recovery.js';
 import { addTaskRelation, findKataRelations, readTaskRelations, resolveTerminalTask } from '../core/relations.js';
-import { orderedPhases, readCurrentState, type Phase } from '../core/state.js';
-import { readTask } from '../core/task.js';
+import { orderedPhases, readCurrentState, readCurrentStateOr, type Phase, type StateRecord } from '../core/state.js';
+import { readTask, UnreadableTaskRecord } from '../core/task.js';
 import { readActiveHookTask, activateHookTask, deactivateHookTask, type ActiveHookTask } from '../hooks/runtime.js';
 import {
     activeRoleForPhase,
@@ -489,10 +489,40 @@ export async function listTaskCandidates(root: string): Promise<TaskCandidate[]>
         return [];
     }
     const branch = currentGitBranch(root) ?? undefined;
-    const candidates = [];
+    const candidates: TaskCandidate[] = [];
     for (const entry of entries.sort()) {
-        const candidate = await readTaskCandidate(root, entry).catch(() => null);
-        if (!candidate) continue;
+        const candidate: TaskCandidate | Error = await readTaskCandidate(root, entry).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+        // **A task this process cannot read is not a task that is not there.** Dropping it made a damaged record
+        // indistinguishable from an absent directory at the surface an operator reads to decide what to do next; the entry
+        // now carries the refusal so the listing can say which task it could not read and why.
+        if (candidate instanceof UnreadableTaskRecord) {
+            candidates.push({
+                taskId: candidate.taskId,
+                title: candidate.taskId,
+                // Not a phase of the workflow, and deliberately so: the listing says the task could not be read rather than
+                // assigning it one. `phase` is the field an operator filters on, so a lie here is what makes the damage
+                // invisible.
+                phase: 'unreadable',
+                nextSkill: '/kata',
+                suggestedRole: 'implementer',
+                suggestedReason: 'unreadable_record' as NextActionReason,
+                priority: -1,
+                upstream: {
+                    reviewFindings: 0,
+                    blockingFindings: 0,
+                    majorFindings: 0,
+                    failedAcceptance: 0,
+                    failedVerifyAcceptance: 0,
+                    repairScopes: [],
+                    verifyRepairScopes: [],
+                    evidenceFiles: [],
+                    failingEvidence: 0,
+                    unreadable: candidate.message,
+                },
+            });
+            continue;
+        }
+        if (candidate instanceof Error) throw candidate;
         if (branch && candidate.branch && candidate.branch !== branch) continue;
         candidates.push(candidate);
     }
@@ -505,10 +535,16 @@ export async function readTaskCandidate(root: string, taskId: string): Promise<T
     if (terminal.taskId !== taskId) {
         throw new Error(`Task ${taskId} is redirected to ${terminal.taskId}`);
     }
-    // Validated like every other reader of this file. A corrupt state is surfaced here rather than falling back to
-    // `intake`, which would present a task mid-review as one that has not started.
-    const state = await readCurrentState(root, taskId).catch(() => null);
-    const phase = state?.phase ?? 'intake';
+    // **A corrupt state is surfaced, which is what this comment used to claim and the line under it did not do.**
+    // `readCurrentState(...).catch(() => null)` made a parse or schema error in `current-state.json` the same `null` as a
+    // task that never entered a phase, so a task mid-review was presented as `intake` — an independent round measured
+    // exactly that, and read the comment above it as evidence the collapse was intended. `absent` still means `intake`,
+    // because a task that has not started has no phase; `unreadable` is a different fact and it is named.
+    const state = await readCurrentStateOr(root, taskId);
+    if (state.kind === 'unreadable') {
+        throw new UnreadableTaskRecord(taskId, currentStatePath(root, taskId), state.reason);
+    }
+    const phase = state.kind === 'current' ? state.state.phase : 'intake';
     const upstream = await readUpstreamSummary(root, taskId);
     const suggestion = suggestCandidateAction(phase, upstream);
     return {
@@ -543,8 +579,17 @@ export async function runOrientCommand(argv: string[]): Promise<Record<string, u
     const handoff = await createHandoff(root, change, role);
     const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...(args.platform ? { platform: args.platform } : {}) });
     const taskContext = await readTaskContext(root, change);
-    const state = await readCurrentState(root, change).catch(() => null) as Record<string, unknown> | null;
-    const phase = (typeof state?.phase === 'string' ? state.phase : handoff.fromPhase) as Phase;
+    // **`orient` is the packet every governed step starts from, so it must not guess the phase.** The state is three-state
+    // here for the same reason it is in `readTaskCandidate`: a task that never entered a phase falls back to the handoff's
+    // `fromPhase`, and a record that exists and cannot be read refuses by name instead of borrowing a phase from a packet
+    // written earlier.
+    const stateRead = await readCurrentStateOr(root, change);
+    if (stateRead.kind === 'unreadable') {
+        throw new UnreadableTaskRecord(change, currentStatePath(root, change), stateRead.reason);
+    }
+    // Typed through the reader rather than cast: the packet carries the state record as it was validated.
+    const state: StateRecord | null = stateRead.kind === 'current' ? stateRead.state : null;
+    const phase = (state?.phase ?? handoff.fromPhase) as Phase;
     const upstream = await readUpstreamSummary(root, change);
     const suggestion = suggestCandidateAction(phase, upstream);
     const phaseNextSkill = nextSkillForPhase(phase);

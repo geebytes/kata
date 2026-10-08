@@ -24,7 +24,7 @@ import { recordMutation, withVerificationWindow, type VerificationWindow } from 
 async function killedCycleKey(root: string, file: string, original: string, injected: string): Promise<string> {
     let key = '';
     await expect(withVerificationWindow(root, file, async (window: VerificationWindow) => {
-        key = window.key;
+        key = window.pathKey;
         await recordMutation(window, original, injected);
         throw new Error('killed before the restore');
     })).rejects.toThrow('killed before the restore');
@@ -42,7 +42,7 @@ describe('a crashed cycle leaves a repair note', () => {
         // re-created here because a killed process never reaches the `finally` that would have removed it.
         const key = await killedCycleKey(root, 'a.ts', original, injected);
         const locks = join(root, '.kata', 'locks');
-        const lockDir = join(locks, `verify-${key}.lock`);
+        const lockDir = join(locks, `verify-path-${key}.lock`);
         await mkdir(lockDir, { recursive: true });
         // A holder that is gone: the pid is not running, so the lock is reclaimable.
         await writeFile(join(lockDir, 'holder.json'), JSON.stringify({ pid: 999_999, startedAt: '2026-10-08T00:00:00.000Z' }));
@@ -58,7 +58,7 @@ describe('a crashed cycle leaves a repair note', () => {
         await writeFile(join(root, 'a.ts'), 'const x = 1;\n');
         const key = await killedCycleKey(root, 'a.ts', 'const x = 1;\n', 'const x = 2;\n');
         const locks = join(root, '.kata', 'locks');
-        const lockDir = join(locks, `verify-${key}.lock`);
+        const lockDir = join(locks, `verify-path-${key}.lock`);
         await mkdir(lockDir, { recursive: true });
         await writeFile(join(lockDir, 'holder.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
 

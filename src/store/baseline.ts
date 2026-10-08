@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { taskDir } from '../core/layout.js';
-import { readLedger } from './ledger.js';
+import { readLedger, type Ledger } from './ledger.js';
 
 /**
  * **The change-level baseline six acceptance items were waiting for.**
@@ -72,6 +72,14 @@ export interface BaselineReport {
     measures: string;
     /** Changes present on disk with neither a ledger nor an adversarial record, named rather than skipped silently. */
     unmeasured: string[];
+    /**
+     * Ledgers that exist and could not be read, with the reason.
+     *
+     * Separate from `unmeasured`, which is the honest "no records on either route": a change whose ledger file is damaged
+     * also has no measured figures, and reporting the two as one fact would be the instrument committing the very mistake it
+     * exists to detect. Present only when there is something to report.
+     */
+    unreadableLedgers?: Array<{ changeId: string; reason: string }>;
 }
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -122,10 +130,20 @@ export async function buildBaseline(root: string): Promise<BaselineReport> {
     const retired: RetiredCost[] = [];
     const ledgerRoute: LedgerCost[] = [];
     const unmeasured: string[] = [];
+    const unreadableLedgers: Array<{ changeId: string; reason: string }> = [];
 
     for (const changeId of ids) {
         const passes = await retiredPasses(root, changeId);
-        const ledger = await readLedger(root, changeId).catch(() => null);
+        // **A ledger that cannot be read is not a change without one.** `readLedger` already reports malformed *members*
+        // inside the ledger it returns; this catch is for the reader failing outright, and the fact is carried rather than
+        // folded — otherwise a damaged ledger and a change that never recorded one arrive as the same "unmeasured".
+        let ledger: Ledger | null = null;
+        let ledgerUnreadable: string | null = null;
+        try {
+            ledger = await readLedger(root, changeId);
+        } catch (error) {
+            ledgerUnreadable = error instanceof Error ? error.message : String(error);
+        }
         const hasLedger = Boolean(ledger && ledger.claims.length > 0);
 
         if (passes.length > 0) {
@@ -152,6 +170,8 @@ export async function buildBaseline(root: string): Promise<BaselineReport> {
                 revisions: await sealedRevisionCount(root, changeId),
                 tokensUnreported,
             });
+        } else if (ledgerUnreadable !== null) {
+            unreadableLedgers.push({ changeId, reason: ledgerUnreadable });
         } else if (!hasLedger) {
             // Named rather than skipped: a change with neither route's records is a fact about the corpus, and a baseline
             // that quietly omitted it would report a mean over a population it never stated.
@@ -222,5 +242,6 @@ export async function buildBaseline(root: string): Promise<BaselineReport> {
             + 'kernel. A cost comparison between the two routes compares different kinds of evidence, and the figures here '
             + 'are not interchangeable.',
         unmeasured,
+        ...(unreadableLedgers.length > 0 ? { unreadableLedgers } : {}),
     };
 }

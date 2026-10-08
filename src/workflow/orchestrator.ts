@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { containedPath } from '../store/verify-context.js';
-import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type UpstreamCoverage } from '../core/task.js';
+import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type TaskRecord, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
@@ -41,7 +41,7 @@ import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
 import { ensureWorkspaceHygiene } from '../core/layout.js';
-import { readTask } from '../core/task.js';
+import { readTask, UnreadableTaskRecord } from '../core/task.js';
 import type { CheckProgressEvent } from '../quality/evidence.js';
 import { buildChangeRecord, writeChangeRecord } from '../quality/change-record.js';
 import { currentStatePath, evidenceDir, judgePath, repairPath, reviewPath as layoutReviewPath, taskDir, taskPath, verifyPath } from '../core/layout.js';
@@ -425,6 +425,22 @@ export async function sealProgressWriter(
  * the defect this file's history is largely made of. Returns an empty list for a change with no ledger, because a record
  * about a change that predates the ledger has no problems to report from it.
  */
+/**
+ * The task record, with damage refused rather than folded into absence.
+ *
+ * `readTask` is the strict reader; a caller that only wants "the matrix if there is one" used to wrap it in
+ * `.catch(() => null)`, which turned a damaged record into an absent one at a surface that then silently widened what it ran.
+ * Absence is still `null` — a task record always exists in practice, but the tolerant read is the honest way to say it — and
+ * anything else is named.
+ */
+async function readTaskOrRefuse(root: string, taskId: string): Promise<TaskRecord | null> {
+    try {
+        return await readValidatedOptional<TaskRecord>('task', taskPath(root, taskId));
+    } catch (error) {
+        throw new UnreadableTaskRecord(taskId, taskPath(root, taskId), error instanceof Error ? error.message : String(error));
+    }
+}
+
 async function ledgerClaimsForRecord(root: string, taskId: string): Promise<Array<{ id: string; severity: string; status: string }>> {
     const { readLedger } = await import('../store/ledger.js');
     const { unsupportedClaims } = await import('../store/verdict.js');
@@ -1239,11 +1255,14 @@ async function deriveSealRelevantChecks(
     const surface = await changeSurfaceAgainstWorkspace(root, base);
     if (surface.status !== 'available') return {};
 
-    const task = await readTask(root, taskId).catch(() => null);
+    // **A task record that cannot be read must not silently widen the check set.** `readTask(...).catch(() => null)` made a
+    // damaged `task.json` the same `null` as an absent one, and both reached the derivation as `matrix: undefined`, so the
+    // full set ran and nothing said why — a conservative fallback is still a decision made from a record nobody read.
+    const task = await readTaskOrRefuse(root, taskId);
     const { deriveRelevantChecks } = await import('../quality/relevant-checks.js');
     const derivation = deriveRelevantChecks({
         root,
-        matrix: (task as { acceptanceMatrix?: import('../core/task.js').AcceptanceMatrix } | null)?.acceptanceMatrix,
+        matrix: task?.acceptanceMatrix,
         changedPaths: surface.changedPaths,
         full: checks,
     });

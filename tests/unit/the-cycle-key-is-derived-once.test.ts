@@ -101,7 +101,7 @@ describe('the cycle identity is derived once and carried', () => {
         let key = '';
         let journalDuring = '';
         await withVerificationWindow(root, file, async (window) => {
-            key = window.key;
+            key = window.pathKey;
             await recordMutation(window, original, injected);
             journalDuring = (await journalsIn(root))[0] ?? '';
             await clearMutation(window);

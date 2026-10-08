@@ -5,6 +5,7 @@ import { computeFileHash, type WikiRecord } from './record.js';
 import { readWikiClosure, writeWikiClosure, type WikiClosure } from './closure.js';
 import { readRecordedEvidence } from '../quality/evidence.js';
 import { judgePath as layoutJudgePath, currentStatePath as layoutCurrentStatePath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 
 export interface CandidateInput {
   statement: string;
@@ -22,10 +23,17 @@ export type DistillKnowledgeResult =
 export async function proposeFromPassedTask(root: string, taskId: string, input: CandidateInput): Promise<WikiRecord[]> {
   const judgePath = layoutJudgePath(root, taskId);
   const judgeRaw = await readFile(judgePath, 'utf8');
-  const judge = JSON.parse(judgeRaw) as { taskId: string; result: string };
+  const judge = JSON.parse(judgeRaw) as { taskId: string; result: string; subjectRevision?: string };
 
   if (judge.taskId !== taskId || judge.result !== 'PASS') {
     throw new Error(`Cannot generate Wiki candidate: task ${taskId} has not passed Judge (result: ${judge.result})`);
+  }
+  // **The PASS has to be about the question the task now asks.** A judgement that answered a superseded question is not a
+  // judgement of this content, and this reader used to accept it on `taskId` and `result` alone — the same gap the review
+  // record closed, one reader over.
+  const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
+  if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+    throw new Error(`Cannot generate Wiki candidate: task ${taskId} Judge answered ${judge.subjectRevision}, not its current declared question (${currentSubjectRevision})`);
   }
 
   const statePath = layoutCurrentStatePath(root, taskId);
@@ -73,9 +81,21 @@ export async function distillPassedTaskKnowledge(root: string, taskId: string): 
   const task = await readTask(root, taskId).catch((error: unknown) => ({ error }));
   if ('error' in task) return { decision: 'deferred', candidateIds: [], records: [], reason: 'task artifact is missing or unreadable' };
 
-  const judge = await readJson<{ taskId: string; result: string }>(root, `.kata/tasks/${taskId}/judge.json`).catch(() => null);
+  // **Absent, damaged and stale are three facts, and this is the archive/distill boundary.** The read used to fold all
+  // three into `deferred('Judge PASS is required…')`, so a `judge.json` nobody could parse read as a task that had not been
+  // judged, and a PASS that answered an earlier question read as a current one.
+  let judge: { taskId?: string; result?: string; subjectRevision?: string } | null;
+  try {
+    judge = await readJson<{ taskId?: string; result?: string; subjectRevision?: string }>(root, `.kata/tasks/${taskId}/judge.json`);
+  } catch (error) {
+    return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} has a judge record that cannot be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
   if (!judge || judge.taskId !== taskId || judge.result !== 'PASS') {
     return { decision: 'deferred', candidateIds: [], records: [], reason: 'Judge PASS is required before Wiki distillation' };
+  }
+  const declared = declaredSubjectRevision(await readLedger(root, taskId));
+  if (judge.subjectRevision && declared && judge.subjectRevision !== declared) {
+    return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} Judge answered ${judge.subjectRevision}, not its current declared question (${declared})` };
   }
 
   const state = await readJson<{ phase: string }>(root, `.kata/tasks/${taskId}/current-state.json`).catch(() => null);

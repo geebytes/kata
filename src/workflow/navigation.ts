@@ -59,6 +59,13 @@ export type UpstreamSummary = {
   judgeResult?: string;
   /** Judge record answered a different declared question and is not current. */
   judgeStaleSubject?: string;
+  /**
+   * A record this summary could not read, named rather than folded into the field it would have filled.
+   *
+   * The summary is what routing and status read, so a damaged record that arrived as "no ledger" or "no summary" would be a
+   * fact about the reader reported as a fact about the change. Present only when there is something to report.
+   */
+  unreadable?: string;
   verifyResult?: string;
   failedAcceptance: number;
   failedVerifyAcceptance: number;

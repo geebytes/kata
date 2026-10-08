@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -140,4 +140,76 @@ describe('the window is exclusive and honest to observers', () => {
         // With the window released the same run is ordinary: the mechanism refuses to answer only while it must.
         expect((await verifyAll([item], context))[0].verdict).toBe('supported');
     });
+});
+
+/**
+ * **A cycle that replaces its own target must still exclude the next one.**
+ *
+ * Round 1's blocking finding, in the form a correct implementation can satisfy. The window key used to be derived *before*
+ * the window was held, and it was the file's inode; a check that lands its result with `mv` — an ordinary formatter — moved
+ * the inode in between, so the next cycle derived a different key, took a lock nobody held, and ran concurrently. It then
+ * found the first cycle's journal by file name, restored the first cycle's original mid-flight, and the first cycle reported
+ * `refuted … the check did not redden under its own defect` about a check that is perfectly sensitive.
+ *
+ * The reviewer's own probe could not be satisfied by any correct implementation (it awaited the second cycle to completion
+ * while the first was parked inside its window, which only a cycle that does not exclude the first can do), so the same
+ * property is asserted here directly: the first reading stays `supported`, and the second cycle is either served after it or
+ * told by name.
+ */
+describe('a cycle that replaces its own target still excludes the next one', () => {
+    it('keeps the first reading supported and serves or names the second cycle', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-inode-move-'));
+        roots.push(root);
+        const file = 'a.ts';
+        const moved = 'const a = 1;\nconst b = 1;\n';
+        await writeFile(join(root, file), moved);
+
+        let signalInjected: () => void = () => {};
+        const injected = new Promise<void>((resolve) => { signalInjected = resolve; });
+        const contextFor = (label: string, windowDeadlineMs: number, onMutated?: () => Promise<void>) => {
+            let calls = 0;
+            return {
+                root,
+                subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { [file]: 'a'.repeat(64) } },
+                windowDeadlineMs,
+                run: async () => {
+                    calls += 1;
+                    if (calls === 2 && onMutated) await onMutated();
+                    const content = await readFile(join(root, file), 'utf8');
+                    return { code: content.includes('= 2;') ? 1 : 0, stdout: label, stderr: '', timedOut: false };
+                },
+                now: () => '2026-10-08T00:00:00.000Z',
+                producer: () => `fixture-${label}`,
+                readText: async (path: string) => (path === file ? await readFile(join(root, file), 'utf8') : null),
+                writeText: async (path: string, content: string) => { if (path === file) await writeFile(join(root, file), content); },
+            } as unknown as VerifyContext;
+        };
+
+        const first = verifyAll(
+            [{ id: 'EA', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const a = 1;', replace: 'const a = 2;' } }],
+            contextFor('A', 5_000, async () => {
+                // The atomic replace: same path, new inode, inside this cycle's own window.
+                const temp = join(root, '.replacement-a.ts');
+                await writeFile(temp, await readFile(join(root, file), 'utf8'));
+                await rename(temp, join(root, file));
+                signalInjected();
+                await new Promise((resolve) => setTimeout(resolve, 300));
+            }),
+        );
+        await injected;
+        const second = verifyAll(
+            [{ id: 'EB', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const b = 1;', replace: 'const b = 2;' } }],
+            contextFor('B', 2_000),
+        );
+
+        const [firstSettled, secondSettled] = await Promise.allSettled([first, second]);
+        expect(firstSettled.status).toBe('fulfilled');
+        if (firstSettled.status === 'fulfilled') expect(firstSettled.value[0].verdict).toBe('supported');
+        if (secondSettled.status === 'rejected') {
+            expect(String(secondSettled.reason)).toContain('a verification window is live');
+        } else {
+            expect(secondSettled.value[0].verdict).toBe('supported');
+        }
+        expect(await readFile(join(root, file), 'utf8')).toBe(moved);
+    }, 15_000);
 });

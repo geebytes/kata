@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { judge } from '../../src/quality/judge.js';
 import { readUpstreamSummary } from '../../src/workflow/navigation.js';
+import { writeTaskRecord } from '../helpers/task-fixture.js';
 import { checkPromotionProvenance } from '../../src/wiki/provenance-gate.js';
 
 const roots: string[] = [];
@@ -98,3 +99,70 @@ describe('a judge record answers a question', () => {
         });
         expect(provenance).toMatchObject({ ok: false, failures: [expect.objectContaining({ reason: 'validation_task_judge_unreadable' })] });
     });
+
+/**
+ * **Every reader of a judge record, not only the ones that were easy to find.**
+ *
+ * Round 1 found three more: `proposeFromPassedTask` and `distillPassedTaskKnowledge` (the archive/distill boundary) checked
+ * only `taskId` and `result`, and `authorizeJudgeRepair` opened a repair on a FAIL that answered a question the task no
+ * longer asks. The first two also folded an unreadable `judge.json` into "not judged", which is the AC-4 collapse at the
+ * same read.
+ */
+describe('every reader of a judge record binds it to the question it answered', () => {
+    /**
+     * A task whose declared question is frozen, so a judge record can be compared against it.
+     *
+     * `claims: false` leaves the ledger with no claims at all. That is not decoration: the repair authorization below is
+     * also reachable through the *ledger's* deficits, which is a separate and legitimate route, so a fixture with an open
+     * claim would be authorized by the ledger and would prove nothing about the judge record.
+     */
+    const withCurrentQuestion = async (root: string, taskId: string, options: { claims?: boolean } = {}) => {
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'archive' });
+        await writeFile(join(root, 'subject.ts'), 'export const current = true;\n');
+        const { appendClaim, freezeSubject, readLedger, writeSubject } = await import('../../src/store/ledger.js');
+        if (options.claims !== false) {
+            await appendClaim(root, taskId, {
+                id: 'C1', statement: 'current question', riskClass: 'consistency', severity: 'major',
+                dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: '2026-10-08T00:00:00.000Z', reopens: 0,
+            });
+        }
+        const frozen = await freezeSubject({ root, paths: ['subject.ts'], claims: (await readLedger(root, taskId)).claims });
+        if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+    };
+
+    it('defers wiki distillation when the PASS answered an earlier question', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-wiki-stale-judge-'));
+        roots.push(root);
+        const taskId = 'wiki-stale-judge';
+        await withCurrentQuestion(root, taskId);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', subjectRevision: 'rev:earlier-question', acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+        const { distillPassedTaskKnowledge } = await import('../../src/wiki/provenance.js');
+        const result = await distillPassedTaskKnowledge(root, taskId);
+        expect(result.decision).toBe('deferred');
+        // Narrowed before the field is read: the union says `reason` exists only on the deferred arm, so the assertion
+        // reads the arm it just asserted rather than the whole union.
+        expect(result.decision === 'deferred' ? result.reason : '').toMatch(/not its current declared question/);
+    });
+
+    it('refuses to propose a wiki candidate from a PASS that answered an earlier question', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-wiki-propose-stale-'));
+        roots.push(root);
+        const taskId = 'wiki-propose-stale';
+        await withCurrentQuestion(root, taskId);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', subjectRevision: 'rev:earlier-question', acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+        const { proposeFromPassedTask } = await import('../../src/wiki/provenance.js');
+        await expect(proposeFromPassedTask(root, taskId, { statement: 's', scope: [], kind: 'implementation-note', sourceRefs: [], sourceHashes: {} })).rejects.toThrow(/not its current declared question/);
+    });
+
+    it('refuses to open a judge repair from a FAIL that answered an earlier question', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-judge-repair-stale-'));
+        roots.push(root);
+        const taskId = 'judge-repair-stale';
+        await withCurrentQuestion(root, taskId, { claims: false });
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'FAIL', subjectRevision: 'rev:earlier-question', acceptance: [{ id: 'AC-1', result: 'FAIL', repairScope: 'failing_evidence' }] })}\n`);
+        const { authorizeJudgeRepair } = await import('../../src/workflow/repair-entry.js');
+        const authorization = await authorizeJudgeRepair(root, taskId);
+        expect(authorization.authorized).toBe(false);
+    });
+});

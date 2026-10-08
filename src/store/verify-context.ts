@@ -154,25 +154,47 @@ export class UnrestoredMutation extends Error {}
 export class VerificationWindowLive extends Error {}
 
 /**
- * One key per physical file, shared by the lock and the journal.
+ * **The path's identity, and the file's identity — two keys, because they answer two different questions.**
  *
- * `realpath` collapses spellings and symlinks; the inode collapses hard links, which a path cannot. An independent round
- * measured both holes: `a.ts` and `./a.ts` took two locks, and two hard links to one inode took two locks, each pair
- * interleaving on one file.
+ * An independent round measured three holes in this mechanism in a row, and each one was the same mistake in a new place:
+ * a lock key that is not the thing it is supposed to name.
+ *
+ * 1. `a.ts` and `./a.ts` took two locks — the key was a *spelling*. Fixed by resolving the path.
+ * 2. Two hard links to one inode took two locks — the key was a *name* for a file that has several. Fixed by keying on
+ *    `dev`+`ino`.
+ * 3. And then: a check that replaces its own target — an ordinary `mv`, which the comment in `producers/verifiers.ts` calls
+ *    how a formatter lands its result — moves the inode **inside** the window, and the key was derived *before* the window
+ *    was held. A second cycle therefore derived a different key, took a different lock, and ran concurrently: it found the
+ *    first cycle's journal by file name, restored the first cycle's original mid-flight, and the first cycle reported
+ *    `refuted … the check did not redden under its own defect` about a perfectly sensitive check.
+ *
+ * Neither key alone is enough, and that is not a compromise — they name two facts that both have to hold:
+ *
+ * - `pathKey` (the resolved path) is what the cycle **mutates and restores**. It is stable for the whole window even when
+ *   the inode moves, and it is the key the *lock* is taken on first.
+ * - `identityKey` (`dev`+`ino`, derived **inside** that lock) is what collapses every other name that reaches the same
+ *   physical file — a hard link, a symlinked directory — so mutating one of them cannot go unnoticed by the other.
+ *
+ * The lock order is what makes the pair deadlock-free: the path lock is always taken first and each cycle holds exactly one
+ * path lock and waits for at most one identity lock, so there is no cycle in the wait-for graph.
  */
-function lockKeyFor(root: string, relativePath: string): string {
+function pathKeyFor(root: string, relativePath: string): string {
     const absolute = resolve(root, relativePath);
     try {
-        // **The identity is the file's inode, not a name for it.** An earlier version hashed `realpath + inode`, which still
-        // distinguished two names for one physical file: a hard link shares the inode but has its own realpath, so two
-        // overlapping cycles on `a.ts` and its hard link took two locks and left the injected defect on disk with both
-        // verdicts `supported` (measured by an independent round, which reproduced exactly the hazard this change removes).
-        // `dev` + `ino` is what "the same file" means to the filesystem, so that is the key.
-        const stat = statSync(realpathSync(absolute));
-        return hashContent(`${stat.dev}\u0000${stat.ino}`).slice(0, 16);
+        return hashContent(realpathSync(absolute)).slice(0, 16);
     } catch {
         // The file may not exist yet; the resolved path is the best identity available.
         return hashContent(absolute).slice(0, 16);
+    }
+}
+
+/** The file's identity at the moment it is asked for: `dev`+`ino`, or `null` when there is no file to identify. */
+function identityKeyFor(root: string, relativePath: string): string | null {
+    try {
+        const stat = statSync(realpathSync(resolve(root, relativePath)));
+        return hashContent(`${stat.dev}\u0000${stat.ino}`).slice(0, 16);
+    } catch {
+        return null;
     }
 }
 
@@ -187,43 +209,55 @@ function holderAlive(pid: number): boolean {
 }
 
 /**
- * **The window a verification cycle runs in, and the identity it was opened under.**
+ * **The window a verification cycle runs in, and the two identities it was opened under.**
  *
- * The key is derived **once**, at the window's entry, and carried in this object through every step of the cycle: the
- * journal write, the repair the next entry performs, and the clear. It used to be recomputed at each of those three sites
- * from the file as it stood *then*, so a check that replaces its target atomically — an ordinary `mv` — moved the inode
- * inside the window and the clear then looked for a journal under a name nobody had written. Measured by an independent
- * round: a killed run's defect was never repaired (its journal was an orphan) and every successful cycle left a stale
- * journal behind while reporting success.
+ * Both keys are derived **once** and carried in this object through every step of the cycle: the journal write, the repair
+ * the next entry performs, and the clear. They used to be recomputed at each of those three sites from the file as it stood
+ * *then*, so a check that replaces its target atomically — an ordinary `mv` — moved the inode inside the window and the
+ * clear then looked for a journal under a name nobody had written. Measured by an independent round: a killed run's defect
+ * was never repaired (its journal was an orphan) and every successful cycle left a stale journal while reporting success.
+ *
+ * The journal is named by the **path** key, which is the one identity a check cannot invalidate by replacing its own target
+ * — so a note is findable by name alone, and a note whose bytes nobody can read is still attributable to the file it is
+ * about and can be quarantined rather than leaking forever.
  */
 export interface VerificationWindow {
     readonly root: string;
     readonly file: string;
-    /** Derived at entry from the file's identity; carried, never recomputed inside the cycle. */
-    readonly key: string;
+    /** The resolved path's identity: what the cycle mutates and restores, and what names its journal. */
+    readonly pathKey: string;
+    /** The physical file's identity, derived inside the path lock; `null` when there was no file to identify. */
+    readonly identityKey: string | null;
 }
 
 const locksDirFor = (root: string): string => join(root, '.kata', 'locks');
-const lockDirFor = (root: string, key: string): string => join(locksDirFor(root), `verify-${key}.lock`);
-const journalFor = (root: string, key: string): string => join(locksDirFor(root), `verify-${key}.journal.json`);
-
+const pathLockDirFor = (root: string, pathKey: string): string => join(locksDirFor(root), `verify-path-${pathKey}.lock`);
+const identityLockDirFor = (root: string, identityKey: string): string => join(locksDirFor(root), `verify-id-${identityKey}.lock`);
+const journalFor = (root: string, pathKey: string): string => join(locksDirFor(root), `verify-${pathKey}.journal.json`);
 /**
- * Every note a cycle may have left, found **by the file it names** rather than by a key recomputed now.
+ * Every note a cycle may have left for this file, found **by name first and by the path it names second**.
  *
- * A journal records the path it is about, so it stays findable after the inode moved — which is the point of AC-2: the
- * identity is stable *within* a cycle, and the repair a later cycle performs is keyed on the file, not on an identity that
- * the crash itself may have invalidated.
+ * The name carries the path key, which is the one identity a check cannot invalidate by replacing its own target — so a
+ * note is findable by name alone. The second test (`note.file === relativePath`) is what makes a note written under another
+ * spelling of the same file, or by an older scheme, still reachable: it costs one read and closes a case the name alone
+ * would miss. An unreadable note is returned too, because "cannot be attributed" and "cannot be read" are different facts
+ * and only the first would justify ignoring it — and ignoring it is how a note leaks forever.
  */
-async function journalPathsFor(root: string, relativePath: string): Promise<string[]> {
+async function journalPathsFor(root: string, relativePath: string, pathKey: string): Promise<string[]> {
     let names: string[];
     try {
         names = await readdir(locksDirFor(root));
     } catch {
         return [];
     }
+    const byName = `verify-${pathKey}.journal.json`;
     const found: string[] = [];
     for (const name of names.filter((entry) => entry.endsWith('.journal.json'))) {
         const path = join(locksDirFor(root), name);
+        if (name === byName) {
+            found.push(path);
+            continue;
+        }
         const note = await readFile(path, 'utf8').then((text) => JSON.parse(text) as { file?: unknown }).catch(() => null);
         if (note?.file === relativePath) found.push(path);
     }
@@ -234,11 +268,15 @@ async function journalPathsFor(root: string, relativePath: string): Promise<stri
  * **A killed run's defect is repaired by the next run, whatever happened to the inode.**
  *
  * The repair is contained (an uncontained path wrote outside the workspace) and applies only where the injected bytes are
- * still present (a stale journal overwrote good content) — both measured by an independent round, and both kept. A journal
- * nobody can read is quarantined by removal rather than blocking the file forever.
+ * still present (a stale journal overwrote good content) — both measured by an independent round, and both kept.
+ *
+ * A note that **nobody can read** is quarantined by removal rather than blocking the file forever. That sentence was false
+ * when an independent round read it: the discovery above dropped an unparseable note before this loop could remove it, so it
+ * leaked and was re-parsed on every window entry. It is true now because the note's *name* carries the path key, so a note
+ * that cannot be parsed can still be attributed to the file it is about.
  */
-async function repairFromJournals(root: string, relativePath: string): Promise<void> {
-    for (const path of await journalPathsFor(root, relativePath)) {
+async function repairFromJournals(root: string, relativePath: string, pathKey: string): Promise<void> {
+    for (const path of await journalPathsFor(root, relativePath, pathKey)) {
         const note = await readFile(path, 'utf8').then((text) => JSON.parse(text) as { original?: unknown; injectedHash?: unknown }).catch(() => null);
         if (note !== null && typeof note.original === 'string') {
             let target: string | null = null;
@@ -281,23 +319,58 @@ export async function withVerificationWindow<T>(
     action: (window: VerificationWindow) => Promise<T>,
     options?: { deadlineMs?: number },
 ): Promise<T> {
-    // **Derived once, here.** Every step below uses this key: nothing inside the cycle asks the filesystem again, because
-    // the file the cycle is mutating is exactly the file whose identity it must not re-derive mid-flight.
-    const key = lockKeyFor(root, relativePath);
-    const window: VerificationWindow = { root, file: relativePath, key };
-    const lockDir = lockDirFor(root, key);
     await mkdir(locksDirFor(root), { recursive: true });
     const deadline = Date.now() + (options?.deadlineMs ?? 60_000);
+
+    // **The path lock comes first, and it is the one the cycle's own life depends on.** It is keyed on the resolved path,
+    // which a check cannot change by replacing its target — so no second cycle can slip past it while this one is inside,
+    // however the file's inode moves underneath.
+    const pathKey = pathKeyFor(root, relativePath);
+    const pathLockDir = pathLockDirFor(root, pathKey);
+    await acquireLock(pathLockDir, relativePath, deadline);
+
+    let identityLockDir: string | null = null;
+    try {
+        // **The identity is derived here, inside the path lock — not before it.** That ordering is the whole of the third
+        // hole an independent round found: deriving it at the window's entry meant the key was taken while the file could
+        // still be somebody else's to change, and a check that lands its result with `mv` moved the inode between the
+        // derivation and the acquisition, so the next cycle derived a *different* key and took a lock nobody held.
+        const identityKey = identityKeyFor(root, relativePath);
+        if (identityKey !== null) {
+            identityLockDir = identityLockDirFor(root, identityKey);
+            // The alias lock: every other name that reaches this same physical file — a hard link, a path through a
+            // symlinked directory — derives this key too, so mutating one of them cannot go unnoticed by the other.
+            await acquireLock(identityLockDir, relativePath, deadline);
+        }
+        const window: VerificationWindow = { root, file: relativePath, pathKey, identityKey };
+        try {
+            // The repair runs inside both locks: a note from a killed run is restored before this cycle reads anything.
+            await repairFromJournals(root, relativePath, pathKey);
+            return await action(window);
+        } finally {
+            if (identityLockDir !== null) await rm(identityLockDir, { recursive: true, force: true });
+        }
+    } finally {
+        await rm(pathLockDir, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Take one directory lock, waiting for a live holder and reclaiming a dead one.
+ *
+ * `mkdir` is atomic, so this holds across processes and not only across promises. A lock is reclaimed **only when its
+ * holder is gone**: reclaiming on the mere presence of a journal stole live locks — a healthy cycle has a journal for its
+ * whole window — and the two runs then interleaved (measured: `peak=2`). Liveness is the question, so liveness is what is
+ * asked. Waiting past the deadline is refused by name rather than converted into a verdict.
+ */
+async function acquireLock(lockDir: string, relativePath: string, deadline: number): Promise<void> {
     for (;;) {
         try {
             await mkdir(lockDir);
             await writeFile(join(lockDir, 'holder.json'), JSON.stringify({ pid: process.pid, file: relativePath, startedAt: new Date().toISOString() }));
-            break;
+            return;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-            // **A lock is reclaimed only when its holder is gone.** Reclaiming on the mere presence of a journal stole live
-            // locks — a healthy cycle has a journal for its whole window — and the two runs then interleaved (measured:
-            // `peak=2`). Liveness is the question, so liveness is what is asked.
             const holder = await readFile(join(lockDir, 'holder.json'), 'utf8').then((text) => JSON.parse(text) as { pid?: number }).catch(() => null);
             const dead = holder?.pid === undefined ? false : !holderAlive(holder.pid);
             if (dead) {
@@ -306,19 +379,13 @@ export async function withVerificationWindow<T>(
             }
             if (Date.now() > deadline) {
                 // **Told, not handed a verdict.** This is the fact an observer needs: a verification holds this file mutated
-                // right now, so nothing measured here describes the artifact.
+                // right now, so nothing measured now describes the artifact.
                 throw new VerificationWindowLive(
                     `a verification window is live on ${relativePath}: another run holds it past this run's deadline, so nothing measured now is evidence about the artifact`,
                 );
             }
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
-    }
-    try {
-        await repairFromJournals(root, relativePath);
-        return await action(window);
-    } finally {
-        await rm(lockDir, { recursive: true, force: true });
     }
 }
 
@@ -331,14 +398,16 @@ export async function withVerificationWindow<T>(
 export async function recordMutation(window: VerificationWindow, original: string, injected: string): Promise<void> {
     await mkdir(locksDirFor(window.root), { recursive: true });
     await writeFile(
-        journalFor(window.root, window.key),
+        // Named by the **path** key: the one identity a check cannot invalidate by replacing its own target, so the note this
+        // cycle writes and the note this cycle clears are the same file even when the inode moves mid-window.
+        journalFor(window.root, window.pathKey),
         JSON.stringify({ file: window.file, original, injectedHash: hashContent(injected) }),
     );
 }
 
 /** The injection is over: there is nothing left to repair. */
 export async function clearMutation(window: VerificationWindow): Promise<void> {
-    await rm(journalFor(window.root, window.key), { force: true });
+    await rm(journalFor(window.root, window.pathKey), { force: true });
 }
 
 export function buildContext(

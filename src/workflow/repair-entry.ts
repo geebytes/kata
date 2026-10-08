@@ -5,6 +5,7 @@ import type { TaskRevision } from './revision.js';
 import { commitReviewDecision, readReviewDecisionSnapshot, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 import { appendReviewRound, type RepairPayload } from '../quality/repair.js';
 import { bindsToRevision, currentRevisionIdentity } from './verdict-binding.js';
 import { verifyPath, reviewPath, judgePath } from '../core/layout.js';
@@ -309,7 +310,7 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
 /** judge: a judge FAIL with repairable scopes, or a superseded sealed revision. */
 export async function authorizeJudgeRepair(root: string, taskId: string): Promise<RepairAuthorization> {
     const entryPhase: RepairEntryPhase = 'judge';
-    const judgeRead = await readArtefactOrDenial<{ result?: string; acceptance?: JudgeAcceptanceResult[] }>(
+    const judgeRead = await readArtefactOrDenial<{ result?: string; acceptance?: JudgeAcceptanceResult[]; subjectRevision?: string }>(
         entryPhase,
         'judge-result',
         judgePath(root, taskId),
@@ -325,7 +326,14 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
     }
 
     const failedAcceptance = (judge.acceptance ?? []).filter((criterion) => criterion.result === 'FAIL');
+    // **A FAIL that answered a question the task no longer asks authorizes nothing.** The reader here accepted any FAIL with
+    // a repairable scope, so a judgement about superseded content opened a repair on current content. A record without the
+    // field stays readable, exactly as the other judge readers treat it: not knowing what it answered is not the same fact
+    // as knowing it answered something else.
+    const declared = declaredSubjectRevision(await readLedger(root, taskId));
+    const judgeAnswersCurrentQuestion = !judge.subjectRevision || !declared || judge.subjectRevision === declared;
     const judgeRepairable = judge.result === 'FAIL'
+        && judgeAnswersCurrentQuestion
         && failedAcceptance.length > 0
         && failedAcceptance.every((criterion) => isRepairableScope(criterion.repairScope, repairableJudgeScopes));
     // **The baseline is written from this snapshot, not from a second read.** The revision decided on here is the one

@@ -242,6 +242,24 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 export async function readTask(root: string, taskId: string): Promise<TaskRecord> {
   return readValidated<TaskRecord>('task', taskPath(root, taskId));
 }
+
+/**
+ * **A record that exists and cannot be read is not an absent one, and a caller has to be able to tell.**
+ *
+ * It lives beside the reader whose damage it names, and it carries the task and the file rather than a bare message: the
+ * remedy is always "look at that file", and the identity is what lets a caller that has to keep going — the candidate
+ * listing, which must not drop a task because one record is damaged — say *which* task it could not read.
+ *
+ * The class exists because an independent round found three readers folding the two facts into one: `readTaskCandidate`
+ * reported a task mid-review as `intake`, `runOrientCommand` took the phase from an older handoff packet, and the check
+ * derivation silently widened to the full set. In each case a fact about the reader was reported as a fact about the change.
+ */
+export class UnreadableTaskRecord extends Error {
+  constructor(readonly taskId: string, readonly path: string, readonly reason: string) {
+    super(`task '${taskId}' has a record that cannot be read (${path}): ${reason}`);
+    this.name = 'UnreadableTaskRecord';
+  }
+}
 // **`stampEngineVersion` was deleted: it was a second implementation of one write.** `core/state.ts` stamps the version
 // inside `withTaskLock` (`stampEngineUnlocked`, called as a task advances), and this copy stamped `task.engine` without the
 // lock — one fact, two derivations, and the unused one could have raced the used one. The wiring check reported it as having

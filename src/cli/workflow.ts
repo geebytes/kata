@@ -173,7 +173,16 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
         const plan = inspectGitFlow(root, result.taskId, undefined, gitFlowBranchKindForCommand(command));
         workflowProfile = await updateGitFlowProfile(root, result.taskId, toGitFlowState(plan));
     }
-    const upstream = await readUpstreamSummary(root, result.taskId).catch(() => null);
+    // **A summary that cannot be read is not a summary that says nothing.** The catch made the two the same `null`, so a
+    // damaged record silently removed the next-action suggestion — the one thing this command exists to produce — and the
+    // caller had no way to tell that from a task with nothing to suggest.
+    let upstream: Awaited<ReturnType<typeof readUpstreamSummary>> | null = null;
+    let upstreamUnreadable: string | null = null;
+    try {
+        upstream = await readUpstreamSummary(root, result.taskId);
+    } catch (error) {
+        upstreamUnreadable = error instanceof Error ? error.message : String(error);
+    }
     const suggestion = workflowProfile ? null : upstream ? suggestCandidateAction(result.phase, upstream) : null;
     const gitFlowPending = workflowProfile?.gitFlow?.status === 'pending_confirmation';
     const gitFlowManualCommand = workflowProfile?.gitFlow?.installation?.status !== 'installed'
@@ -262,6 +271,9 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
             }
             : {}),
         ...(upstream ? { upstream } : {}),
+        // Named when it happens: the suggestion above is absent for two different reasons and the caller has to be able to
+        // tell "nothing to suggest" from "the records that would have suggested something could not be read".
+        ...(upstreamUnreadable !== null ? { upstreamUnreadable } : {}),
         ...(shouldAskUser
             ? { askUser: statusActionPrompts(suggestion ?? { nextSkill: phaseNextSkill, role: phaseFallbackAction(result.phase).role, reason: workflowNextReason(result.phase) }) }
             : {}),

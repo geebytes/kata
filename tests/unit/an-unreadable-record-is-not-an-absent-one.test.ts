@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mostRecentDifferentContent } from '../../src/workflow/revision.js';
+import { writeTaskRecord } from '../helpers/task-fixture.js';
 import { revisionsDir } from '../../src/core/layout.js';
 
 /**
@@ -100,5 +101,51 @@ describe('a damaged record is not an absent one, at every site that reads one', 
         expect(await readChangeRecord(root, taskId)).toBeNull();
         await writeFile(join(root, '.kata', 'tasks', taskId, 'change-record.json'), '{ "taskId": "change-record-site" }\n');
         await expect(readChangeRecord(root, taskId)).rejects.toThrow(/change-record\.json/);
+    });
+});
+
+/**
+ * **The same collapse, one layer up: the surfaces an operator reads to decide what to do next.**
+ *
+ * Round 1 found three readers of `current-state.json` folding a parse/schema error into "no state": `readTaskCandidate`
+ * reported a task mid-review as `intake` under a comment claiming corruption was surfaced, `runOrientCommand` took the phase
+ * from an older handoff packet, and the candidate listing dropped the task entirely. Each presented "I could not read this"
+ * as a fact about the workflow, and the listing's version is the worst of the three: the task vanishes from the only place
+ * that would have shown it.
+ */
+describe('a damaged state is not an absent one at the surfaces that decide what to do next', () => {
+    const damagedState = async (root: string, taskId: string) => {
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'review' });
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), '{not json}\n');
+    };
+
+    it('refuses to present a task whose current-state.json cannot be read as intake', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-state-read-'));
+        roots.push(root);
+        await damagedState(root, 'mid-review');
+        const { readTaskCandidate } = await import('../../src/cli/tasks.js');
+        await expect(readTaskCandidate(root, 'mid-review')).rejects.toThrow(/cannot be read/);
+    });
+
+    it('names the task it cannot read in the candidate listing instead of dropping it', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-state-list-'));
+        roots.push(root);
+        await damagedState(root, 'mid-review');
+        const { listTaskCandidates } = await import('../../src/cli/tasks.js');
+        const listed = await listTaskCandidates(root);
+        // Present, and saying why — not absent, which is what a dropped entry says.
+        expect(listed.map((task) => task.taskId)).toContain('mid-review');
+        expect(listed.find((task) => task.taskId === 'mid-review')?.phase).toBe('unreadable');
+        expect(listed.find((task) => task.taskId === 'mid-review')?.upstream.unreadable).toMatch(/cannot be read/);
+    });
+
+    it('refuses to build an orient packet from a phase it could not read', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-state-orient-'));
+        roots.push(root);
+        await damagedState(root, 'mid-review');
+        const { runOrientCommand } = await import('../../src/cli/tasks.js');
+        // `orient` is the packet every governed step starts from; a phase borrowed from an older handoff is a guess.
+        await expect(runOrientCommand(['--change', 'mid-review', '--root', root])).rejects.toThrow(/cannot be read/);
     });
 });

@@ -1,8 +1,9 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Phase, Actor } from '../core/state.js';
+import { readCurrentStateOr, type Phase, type Actor } from '../core/state.js';
 import { buildGuardInstructions, profileGuardInstructions } from '../policy/guard-instructions.js';
 import type { WorkflowProfile } from '../core/workflow-profile.js';
+import { UnreadableTaskRecord } from '../core/task.js';
 import { taskPath, currentStatePath, evidenceDir as evidenceDirPath, handoffDir, handoffReceiptPath } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
 import type { HandoffReceipt } from './context-fabric.js';
@@ -38,8 +39,18 @@ export async function createHandoff(
     workflowProfile?: WorkflowProfile;
   };
 
-  const stateRaw = await readFile(currentStatePath(root, taskId), 'utf8');
-  const state = JSON.parse(stateRaw) as { phase: Phase };
+  // **The state record is read through its validated reader, not parsed by hand.** A raw `JSON.parse` here reported a
+  // damaged record as a JSON syntax error from a module whose subject is handoff packets, and it accepted any shape the
+  // schema would have refused. Damage is named now, and it names the file: a caller that has to decide what to do next can
+  // tell "this task has no state yet" from "this task's state cannot be read".
+  const stateRead = await readCurrentStateOr(root, taskId);
+  if (stateRead.kind === 'unreadable') {
+    throw new UnreadableTaskRecord(taskId, currentStatePath(root, taskId), stateRead.reason);
+  }
+  if (stateRead.kind === 'absent') {
+    throw new Error(`task '${taskId}' has no state record yet (${currentStatePath(root, taskId)}), so no handoff packet can describe it`);
+  }
+  const state = stateRead.state;
 
   const evidenceDir = evidenceDirPath(root);
   let evidenceIds: string[] = [];

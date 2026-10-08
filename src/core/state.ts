@@ -404,6 +404,34 @@ export async function readCurrentState(root: string, taskId: string): Promise<St
     return readValidated<StateRecord>('workflow-state-record', layoutCurrentStatePath(root, taskId));
 }
 
+/**
+ * **The state as a reader needs it: three answers, not two.**
+ *
+ * `readCurrentState` is for writers, which have no business proceeding on a damaged record and should hear about it as an
+ * error. A *reader* needs the same distinction without the exception, because it has to decide what to say: `absent` is a
+ * task that never entered a phase, and `unreadable` is a record somebody wrote and this process cannot parse or validate.
+ *
+ * An independent round found three readers of this file collapsing the second into the first — `readTaskCandidate` reported
+ * a task mid-review as `intake` under a comment claiming the opposite, `runOrientCommand` took the phase from the handoff
+ * packet, and the candidate listing dropped the task entirely. All three presented "I could not read this" as a fact about
+ * the workflow, which is the class this change exists to remove.
+ */
+export type StateRead =
+    | { kind: 'absent' }
+    | { kind: 'current'; state: StateRecord }
+    | { kind: 'unreadable'; reason: string };
+
+export async function readCurrentStateOr(root: string, taskId: string): Promise<StateRead> {
+    try {
+        return { kind: 'current', state: await readCurrentState(root, taskId) };
+    } catch (error) {
+        const cause = (error as { cause?: unknown }).cause;
+        // Only `ENOENT` is absence. A record that exists and cannot be read is a fact about the record, and it is named.
+        if (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
+        return { kind: 'unreadable', reason: error instanceof Error ? error.message : String(error) };
+    }
+}
+
 async function assertAcceptanceIds(root: string, taskId: string): Promise<void> {
     const task = JSON.parse(await readFile(taskPath(root, taskId), 'utf8')) as TaskRecordOnDisk;
     if (!task.acceptance?.length || task.acceptance.some((criterion) => !/^AC-[0-9]+$/.test(criterion.id ?? ''))) {
