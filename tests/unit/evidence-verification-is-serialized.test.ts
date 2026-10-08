@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { link, mkdtemp, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withVerificationLock } from '../../src/store/verify-context.js';
+import { verifyAll } from '../../src/producers/verifiers.js';
+import type { VerifyContext } from '../../src/producers/port.js';
 
 /**
  * **Two runs that mutate one file cannot interleave.**
@@ -81,6 +83,29 @@ describe('evidence verification is serialized per file', () => {
         });
         await Promise.all([section('a.ts'), section('hard.ts')]);
         expect(peak).toBe(1);
+    });
+
+    it('leaves the file as it was found when two cycles overlap on one file', async () => {
+        // The hazard the lock alone did not close: the original is read before the lock, so a run that waits while another
+        // injects used to capture the injected content as its own original and write it back — the defect stayed on disk
+        // while both runs reported success (an independent round reproduced it 12/12).
+        const root = await mkdtemp(join(tmpdir(), 'kata-overlap-'));
+        const file = 'a.ts';
+        const clean = 'const x = 1;\n';
+        await writeFile(join(root, file), clean);
+        const context = {
+            root,
+            subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { [file]: 'a'.repeat(64) } },
+            run: async () => { await new Promise((resolve) => setTimeout(resolve, 10)); return { code: 0, stdout: '', stderr: '', timedOut: false }; },
+            now: () => '2026-10-08T00:00:00.000Z',
+            producer: () => 'fixture',
+            readText: async (path: string) => (path === file ? await readFile(join(root, file), 'utf8') : null),
+            writeText: async (path: string, content: string) => { if (path === file) await writeFile(join(root, file), content); },
+        } as unknown as VerifyContext;
+        const item = { id: 'E1', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
+
+        await Promise.all([verifyAll([item], context), verifyAll([item], context)]);
+        expect(await readFile(join(root, file), 'utf8')).toBe(clean);
     });
 
     it('lets two sections on different files overlap', async () => {

@@ -144,6 +144,15 @@ const executableFalsifier: EvidenceVerifier = {
                 // **The journal is written by the production path**, which it was not: the helper was imported and never
                 // called, so a killed run left a defect with no repair note and the next run waited out the lock instead of
                 // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0).
+                // **What was read outside the lock is checked against what is here now.** The original used to be read
+                // before the lock was taken, so a run that waited while another injected captured the *injected* content as
+                // its own original and wrote that back as its restore — leaving the defect on disk while both runs reported
+                // success (measured by an independent round, reproduced 12/12). Nothing is injected unless the file is still
+                // what this run read; otherwise the check could not run, which is what `inconclusive` means.
+                const current = await context.readText(evidence.mutation.file);
+                if (current !== original) {
+                    throw new Error(`the file changed while this run waited for its lock, so nothing was injected by this run`);
+                }
                 const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
                 await recordMutation(context.root, evidence.mutation.file, original, injected);
                 await context.writeText(evidence.mutation.file, injected);
