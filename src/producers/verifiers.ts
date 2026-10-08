@@ -143,7 +143,14 @@ const executableFalsifier: EvidenceVerifier = {
             await withVerificationLock(context.root, evidence.mutation.file, async () => {
                 await context.writeText(evidence.mutation.file, original.replace(evidence.mutation.find, evidence.mutation.replace));
                 mutated = await context.run(evidence.command);
-                await context.writeText(evidence.mutation.file, original);
+                // **Every way a restore can fail is the same fact.** The write may throw (the path became un-writable) or
+                // it may land as something else (another run wrote in between); both leave the tree holding a defect this
+                // run put there, and neither is a statement about the check.
+                try {
+                    await context.writeText(evidence.mutation.file, original);
+                } catch (error) {
+                    throw new UnrestoredMutation(`the mutation injected into ${evidence.mutation.file} could not be restored, so the checkout is not as it was found: ${(error as Error).message}`);
+                }
                 const restored = await context.readText(evidence.mutation.file);
                 if (restored !== original) {
                     // A verdict describes the check; a tree that still holds the injected defect is a different fact, and an

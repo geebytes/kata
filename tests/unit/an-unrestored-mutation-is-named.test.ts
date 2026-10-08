@@ -36,19 +36,24 @@ async function contextWith(overrides: Partial<VerifyContext> & { files: Record<s
 }
 
 describe('an unrestored mutation is named', () => {
-    it('fails the run and names the file when the restore did not take', async () => {
+    it('fails the run and names the file when the restore write does not land', async () => {
+        // The smallest real reproduction of "the restore cannot be trusted": the second write is the restore, and it fails.
+        // The run must fail and name the file — a verdict about the check would hide a tree that still holds the defect.
         const files: Record<string, string> = { 'a.ts': 'const x = 1;\n' };
         let writes = 0;
         const context = await contextWith({
             files,
             writeText: async (path: string, content: string) => {
                 writes += 1;
-                // The second write is the restore; make it land as something else, which is what an interleaved run did.
-                files[path] = writes === 2 ? 'const tampered = true;\n' : content;
+                if (writes === 2) throw new Error('the path became un-writable');
+                files[path] = content;
             },
         });
 
-        expect(await verifyAll([item], context)).toEqual('SHOW');
+        const failure = await verifyAll([item], context).then(() => undefined, (error: Error) => error);
+        expect(String(failure?.message)).toContain('could not be restored');
+        expect(String(failure?.message)).toContain('a.ts');
+        expect(String(failure?.message)).toContain('un-writable');
     });
 
     it('leaves a normal cycle alone: the file is back to its original bytes', async () => {
