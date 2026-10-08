@@ -177,7 +177,7 @@ describe('the identity does not depend on itself', () => {
         const { defaultPolicy } = await import('../../src/kernel/policy.js');
         const policy = defaultPolicy();
         const claim = { id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major', dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0 };
-        const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts'], contentPaths: ['subject.ts', 'other.ts'] };
+        const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts', 'other.ts'], contentPaths: ['subject.ts', 'other.ts'] };
         const first = planReview({ ...base, subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
         const second = planReview({ ...base, subject: { revision: `rev:${'b'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
         expect(second.sampling).toEqual(first.sampling);
