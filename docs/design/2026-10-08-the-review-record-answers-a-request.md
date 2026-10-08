@@ -56,6 +56,37 @@ round's request had a changed subject (the claims had been restated), so it can 
 AC-1 was re-stated to pin the deliberate decision instead of contradicting it, and the change's contract was re-opened to carry
 the corrected statement (the record had no revision, no ledger and no review record yet, so nothing was discarded).
 
+## 1c. The review round refuted the first fix: the subject is content-addressed
+
+The independent round (`review.json`, R1-F1 blocking) reproduced the reported case against the **real** freeze chain and showed
+that `subjectRevision` cannot carry the question at all:
+
+```
+freezeSubject → restateClaim (statement changed) → freeze
+  subject before = rev:758a09916721daa8
+  subject after  = rev:758a09916721daa8      ← unchanged, while the question changed
+  second --result-file → refused, "already recorded ... for the same request"
+```
+
+`subjectRevision` is `rev:<digest of the frozen path digests>` (`src/kernel/subject.ts`), so it answers "which content", never
+"which question". The AC-2 guard could not see this because its fixture **hand-writes `subject.json`** with a revision
+inconsistent with its own `pathDigests`, bypassing the freeze chain — the same "a check that cannot fail" class this repository
+keeps finding. R1-F4 is the same defect one layer down: an evidence verdict compares `subjectRevision` too, so a restated claim
+keeps its old evidence and still reads `supported` (`restateClaim` only increments `reopens`, which staleness never reads).
+
+**Chosen direction (user decision, option 1): the subject identity covers the question, not only the content.** Concretely:
+
+1. `freezeSubject` computes the revision over the declared paths **and** the claim set as declared at that moment (each claim's
+   id, statement and dependencies), so a restatement produces a different subject.
+2. Staleness is judged against the subject **as declared now**, not the frozen copy: the frozen one says what was asked, the
+   recomputed one says what is asked, and a difference is exactly "the question moved".
+3. Consequences accepted: every existing ledger whose claims were restated after its freeze will read stale and must be
+   re-verified; the review record's release path (R1-F3) and the refusal message (R1-F2) are fixed in the same pass, and
+   `review-history.jsonl` gets the superseded conclusion before it is replaced.
+4. R1-F5/R1-F6 (judge and verify records carry no question binding; the approval path writes `subjectRevision` with no reader)
+   are the same family and are carried by the same mechanism once the identity exists; they are fixed or recorded here rather
+   than left as an implicit gap.
+
 ## 2. Why the record cannot tell the two rounds apart
 
 A record's binding is content identity only — measured on the record itself, its fields are `revisionId`, `manifestHash`,
