@@ -85,10 +85,12 @@ describe('evidence verification is serialized per file', () => {
         expect(peak).toBe(1);
     });
 
-    it('leaves the file as it was found when two cycles overlap on one file', async () => {
-        // The hazard the lock alone did not close: the original is read before the lock, so a run that waits while another
-        // injects used to capture the injected content as its own original and write it back — the defect stayed on disk
-        // while both runs reported success (an independent round reproduced it 12/12).
+    it('leaves the file as it was found when a second cycle waits on the first', async () => {
+        // **The hazard the lock alone did not close, at controlled timing.** The original is read *before* the lock, so a run
+        // that reads while another is inside captures the *injected* content as its own original and writes it back as its
+        // restore — the defect stays on disk while both runs report success (an independent round reproduced it 12/12 with a
+        // check that reads its target and then runs long, which is what a real slow suite does). The second cycle is started
+        // while the first is inside its window, so the interleaving is arranged rather than hoped for.
         const root = await mkdtemp(join(tmpdir(), 'kata-overlap-'));
         const file = 'a.ts';
         const clean = 'const x = 1;\n';
@@ -96,15 +98,22 @@ describe('evidence verification is serialized per file', () => {
         const context = {
             root,
             subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { [file]: 'a'.repeat(64) } },
-            run: async () => { await new Promise((resolve) => setTimeout(resolve, 10)); return { code: 0, stdout: '', stderr: '', timedOut: false }; },
+            // Long enough that the second cycle's read lands inside this one's window.
+            run: async () => { await new Promise((resolve) => setTimeout(resolve, 40)); return { code: 0, stdout: '', stderr: '', timedOut: false }; },
             now: () => '2026-10-08T00:00:00.000Z',
             producer: () => 'fixture',
             readText: async (path: string) => (path === file ? await readFile(join(root, file), 'utf8') : null),
             writeText: async (path: string, content: string) => { if (path === file) await writeFile(join(root, file), content); },
         } as unknown as VerifyContext;
-        const item = { id: 'E1', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
+        // Two *different* mutations, so neither run bails out on "the mutation site is gone" and the interleaving is real:
+        // the first injects `x = 2`, the second is looking for `x = 2` and finds the first's injection.
+        const firstItem = { id: 'E1', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
+        const secondItem = { id: 'E2', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 2;', replace: 'const x = 3;' } };
 
-        await Promise.all([verifyAll([item], context), verifyAll([item], context)]);
+        const first = verifyAll([firstItem], context);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        const second = verifyAll([secondItem], context);
+        await Promise.all([first, second]);
         expect(await readFile(join(root, file), 'utf8')).toBe(clean);
     });
 

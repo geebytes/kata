@@ -9,7 +9,7 @@
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
-import { UnrestoredMutation, clearMutation, recordMutation, withVerificationLock } from '../store/verify-context.js';
+import { MutationNotAttempted, UnrestoredMutation, clearMutation, recordMutation, withVerificationLock } from '../store/verify-context.js';
 
 function makeVerdict(input: {
     evidence: Evidence;
@@ -151,7 +151,7 @@ const executableFalsifier: EvidenceVerifier = {
                 // what this run read; otherwise the check could not run, which is what `inconclusive` means.
                 const current = await context.readText(evidence.mutation.file);
                 if (current !== original) {
-                    throw new Error(`the file changed while this run waited for its lock, so nothing was injected by this run`);
+                    throw new MutationNotAttempted(`the file changed while this run waited for its lock, so nothing was injected by this run`);
                 }
                 const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
                 await recordMutation(context.root, evidence.mutation.file, original, injected);
@@ -198,7 +198,7 @@ const executableFalsifier: EvidenceVerifier = {
             return makeVerdict({ evidence, context, verdict: 'supported', observed, verifier: executableFalsifier.verifier });
         } catch (error) {
             // A tree that still holds the injected defect fails the run; only a check that could not run is a verdict.
-            if (error instanceof UnrestoredMutation) throw error;
+            if (error instanceof UnrestoredMutation || error instanceof MutationNotAttempted) throw error;
             // The fallback restore runs **inside** the lock: an error path that writes the file after the lock is released
             // is a restore racing every other cycle on that file.
             await withVerificationLock(context.root, evidence.mutation.file, async () => {

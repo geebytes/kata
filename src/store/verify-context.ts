@@ -144,6 +144,13 @@ function insideWorkspace(realRoot: string, resolved: string): boolean {
 export class UnrestoredMutation extends Error {}
 
 /**
+ * **Nothing was injected, and that is not something to "repair".** A run that finds the file changed while it waited for its
+ * lock must not write its captured original back: that original may be another run's injection, and writing it back is how
+ * the defect survived on disk while both runs reported success (measured by an independent round, 12/12).
+ */
+export class MutationNotAttempted extends Error {}
+
+/**
  * One key per physical file, shared by the lock and the journal.
  *
  * `realpath` collapses spellings and symlinks; the inode collapses hard links, which a path cannot. An independent round
