@@ -145,6 +145,28 @@ describe('the record answers the request it was made for', () => {
     });
 });
 
+describe('the question-bearing identity settles', () => {
+    it('does not move on a second freeze, so a record cannot be released by freezing repeatedly', async () => {
+        // An independent round found that in the questionless state the printed remedy (re-freeze) releases a same-question
+        // record, because the identity genuinely moves once when the subject learns to carry the question. That transition is
+        // intended — and it must be **once**: if a freeze kept moving the identity, "re-freeze" would be a way to discard a
+        // recorded round at will.
+        const { appendClaim, freezeSubject: freezeThroughStore, writeSubject, planDigestOf, readLedger: read } = await import('../../src/store/ledger.js');
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0,
+        });
+        const freezeOnce = async () => {
+            const frozen = await freezeThroughStore({ root, paths: ['subject.ts'], claims: (await read(root, taskId)).claims, planDigest: await planDigestOf(root, taskId) });
+            if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+            return (await read(root, taskId)).subjectAsDeclared?.revision;
+        };
+        const first = await freezeOnce();
+        const second = await freezeOnce();
+        expect(second).toBe(first);
+    });
+});
+
 describe('the plan is part of the question', () => {
     it('moves the subject when only the plan changed, so the request and the identity agree', async () => {
         // The request's reading sets and required evidence come from `plan.json`; changing the plan changes what is asked
