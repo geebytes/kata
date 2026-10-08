@@ -11,6 +11,7 @@ import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
+import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -1131,7 +1132,7 @@ export async function freezeSubject(input: {
         // (`openspec/changes/<id>` is one), and reading such a path as a file reported it as unreadable — which is how a
         // migration stopped on a declaration that was entirely correct. The walk skips only what is never content.
         if (stats.isDirectory()) {
-            const walked = await walkFiles(join(input.root, path));
+            const walked = await walkFiles(join(input.root, path), path.replace(/\/+$/, ''));
             for (const file of walked) digests[`${path}/${file}`] = hashContent(await readFile(join(input.root, path, file)));
             continue;
         }
@@ -1166,15 +1167,28 @@ export async function freezeSubject(input: {
  * reports nothing it cannot read — an unreadable file becomes a missing digest, which the caller's comparison then reports
  * as an added or removed path rather than as "unchanged".
  */
-async function walkFiles(absolute: string, prefix = '', depth = 0): Promise<string[]> {
+async function walkFiles(absolute: string, repositoryPath: string, localPrefix = '', depth = 0): Promise<string[]> {
     if (depth > 8) return [];
     const entries = await readdir(absolute, { withFileTypes: true });
     const found: string[] = [];
     for (const entry of entries) {
-        if (entry.name === '.git' || entry.name === 'node_modules') continue;
-        const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
-        if (entry.isDirectory()) found.push(...await walkFiles(join(absolute, entry.name), relative, depth + 1));
-        else if (entry.isFile()) found.push(relative);
+        // Two names for the same entry, because they answer two different questions: `repositoryChild` is what the
+        // content predicate is asked (it is stated in repository coordinates), `localChild` is what the caller records
+        // (it is relative to the declared directory). Collapsing them was measured: the recorded keys came out doubled
+        // (`src/pkg/src/pkg/mod.ts`) and the freeze refused every path as unreadable.
+        const repositoryChild = `${repositoryPath}/${entry.name}`;
+        const localChild = localPrefix === '' ? entry.name : `${localPrefix}/${entry.name}`;
+        // **A path that is not content cannot be recorded as content by either enumerator.** This walk used to decide the
+        // question itself, with two string comparisons, while the revision identity's walk asked
+        // `isIgnoredRepositoryPath` — so a declared directory recorded `__pycache__/*.pyc`, `.pytest_cache`, `dist` and
+        // every other build artefact the identity already excludes. Measured: `verify` runs the acceptance commands,
+        // running a Python suite rewrites `.pyc`, and `ledger run` — which sits between `verify` and `review` — then
+        // refused with "the frozen subject describes content that has moved", so no review request could be produced.
+        // One predicate, two consumers: `prefix` is the repository-relative path, so this asks exactly the question the
+        // identity walk asks, in the same coordinate system.
+        if (isIgnoredRepositoryPath(repositoryChild)) continue;
+        if (entry.isDirectory()) found.push(...await walkFiles(join(absolute, entry.name), repositoryChild, localChild, depth + 1));
+        else if (entry.isFile()) found.push(localChild);
     }
     return found;
 }
