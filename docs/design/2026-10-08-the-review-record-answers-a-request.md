@@ -96,11 +96,12 @@ code changing, the record still reads as "this revision has been reviewed", even
 
 ## 3. Decisions
 
-1. **Re-entry is the human's explicit act of starting a new round, so it archives the old result rather than preserving it in
-   place.** The enter branch gains the missing case: a record that binds the current revision is appended to
-   `review-history.jsonl` (with its revision, findings, status and `archivedAt`) before the placeholder is written. The old
-   conclusion is kept where history is kept; "a recorded result is never silently replaced" still holds, because nothing is
-   lost and the archive names what was superseded.
+1. **Re-entry preserves a recorded round; the recording path archives what it replaces.** The first draft of this design had
+   re-entry archive and reset the record, and two existing guards (`tests/unit/review-cli-io.test.ts`, the F-3 cases) said no:
+   a recorded conclusion must not be erased by the act of re-entering. So the archive belongs where a record is *replaced* —
+   the recording path appends the superseded round (its revision, subject, findings, status and what superseded it) to
+   `review-history.jsonl` before writing the new one, and the same row shape is used when the entry path supersedes a record
+   that no longer binds.
 2. **A record carries the subject it answered.** Both write paths (`:1527` for a recorded round, `:1845` for an approval) add
    `subjectRevision` from the ledger's frozen subject, and the "already recorded" test includes it: a record whose subject
    differs from the current one answered a *different* request and does not block recording the answer to this one. A record
@@ -113,9 +114,9 @@ code changing, the record still reads as "this revision has been reviewed", even
 
 | AC | Selector | Reversible falsifier |
 | --- | --- | --- |
-| AC-1 | `tests/unit/re-entering-review-archives-the-record.test.ts` | restore the two-branch condition (drop the new third case): the case driving re-entry over a record that binds the current revision must redden — no archive row, and the record still blocks the recording that follows |
+| AC-1 | `tests/unit/review-cli-io.test.ts` | restore the two-branch condition (drop the new third case): the case driving re-entry over a record that binds the current revision must redden — no archive row, and the record still blocks the recording that follows |
 | AC-2 | `tests/unit/the-record-answers-a-request.test.ts` | drop `subjectRevision` from the "already recorded" binding: the case recording a round for a changed subject must redden (it is refused again) |
-| AC-3 | same file | restore the bare refusal message: the case asserting the message names the reachable chain must redden |
+| AC-3 | `tests/unit/the-refusal-names-the-reachable-remedy.test.ts` | make the remedy state-independent again: the case asserting the re-freeze is named must redden |
 
 Each mutation is applied to a committed tree and restored byte-for-byte with the SHA checked; final verification runs the full
 suite and `tsc --noEmit`.
@@ -139,5 +140,6 @@ suite and `tsc --noEmit`.
 ## 7. What this change does not do
 
 It does not change what a round certifies, how findings are graded, or what a repair may be opened from. It does not retro-fit
-`subjectRevision` onto records already written: those keep blocking, which is the fail-closed direction, and the remedy for
-them is the re-entry this change makes work.
+`subjectRevision` onto records already written: those keep blocking, which is the fail-closed direction, and the refusal says
+so — for such a record the remedy is to move the content and re-seal, because no comparison can say which question it
+answered.
