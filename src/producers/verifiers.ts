@@ -141,7 +141,12 @@ const executableFalsifier: EvidenceVerifier = {
             // back — leaving a defect in the checkout with only a verdict as the signal. Measured by an independent round.
             let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
             await withVerificationLock(context.root, evidence.mutation.file, async () => {
-                await context.writeText(evidence.mutation.file, original.replace(evidence.mutation.find, evidence.mutation.replace));
+                // **The journal is written by the production path**, which it was not: the helper was imported and never
+                // called, so a killed run left a defect with no repair note and the next run waited out the lock instead of
+                // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0).
+                const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
+                await recordMutation(context.root, evidence.mutation.file, original, injected);
+                await context.writeText(evidence.mutation.file, injected);
                 mutated = await context.run(evidence.command);
                 // **Every way a restore can fail is the same fact.** The write may throw (the path became un-writable) or
                 // it may land as something else (another run wrote in between); both leave the tree holding a defect this

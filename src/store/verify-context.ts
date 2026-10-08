@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
@@ -143,19 +143,38 @@ function insideWorkspace(realRoot: string, resolved: string): boolean {
  */
 export class UnrestoredMutation extends Error {}
 
-export async function withVerificationLock<T>(root: string, relativePath: string, action: () => Promise<T>): Promise<T> {
-    // **The key is the resolved location, not the spelling.** An independent round reproduced the whole hazard through an
-    // alias: `a.ts` and `./a.ts` hashed to two different locks, so two cycles interleaved on one file and left the injected
-    // defect behind while both reported success.
+/**
+ * One key per physical file, shared by the lock and the journal.
+ *
+ * `realpath` collapses spellings and symlinks; the inode collapses hard links, which a path cannot. An independent round
+ * measured both holes: `a.ts` and `./a.ts` took two locks, and two hard links to one inode took two locks, each pair
+ * interleaving on one file.
+ */
+function lockKeyFor(root: string, relativePath: string): string {
     const absolute = resolve(root, relativePath);
-    const real = (() => {
-        try {
-            return realpathSync(absolute);
-        } catch {
-            return absolute;
-        }
-    })();
-    const key = hashContent(real).slice(0, 16);
+    let real = absolute;
+    let inode = '';
+    try {
+        real = realpathSync(absolute);
+        inode = String(statSync(real).ino);
+    } catch {
+        // The file may not exist yet; the resolved path is the best identity available.
+    }
+    return hashContent(`${real}\u0000${inode}`).slice(0, 16);
+}
+
+/** Whether the process that took a lock is still there. `EPERM` means it exists and is not ours. */
+function holderAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+}
+
+export async function withVerificationLock<T>(root: string, relativePath: string, action: () => Promise<T>): Promise<T> {
+    const key = lockKeyFor(root, relativePath);
     const lockDir = join(root, '.kata', 'locks');
     await mkdir(lockDir, { recursive: true });
     const lockPath = join(lockDir, `verify-${key}.lock`);
@@ -164,14 +183,16 @@ export async function withVerificationLock<T>(root: string, relativePath: string
     for (;;) {
         try {
             await mkdir(lockPath);
+            await writeFile(join(lockPath, 'holder.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
             break;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-            // **A lock whose holder died is not a lock.** The cycle writes a journal before injecting, so a leftover lock
-            // with a journal is a crashed run: reclaim it and repair the file from the journal rather than waiting for a
-            // holder that no longer exists (measured by an independent round: SIGKILL mid-cycle left both the injected
-            // defect and a lock that was never released).
-            if (existsSync(journalPath)) {
+            // **A lock is reclaimed only when its holder is gone.** Reclaiming on the mere presence of a journal stole live
+            // locks — a healthy cycle has a journal for its whole window — and the two runs then interleaved (measured:
+            // `peak=2`). Liveness is the question, so liveness is what is asked.
+            const holder = await readFile(join(lockPath, 'holder.json'), 'utf8').then((text) => JSON.parse(text) as { pid?: number }).catch(() => null);
+            const dead = holder?.pid === undefined ? false : !holderAlive(holder.pid);
+            if (dead) {
                 await rm(lockPath, { recursive: true, force: true });
                 continue;
             }
@@ -180,10 +201,31 @@ export async function withVerificationLock<T>(root: string, relativePath: string
         }
     }
     try {
-        // Recover a crash's leftovers **before** the caller reads the file, so the check runs against the real content.
-        if (existsSync(journalPath)) {
-            const journal = JSON.parse(await readFile(journalPath, 'utf8')) as { file: string; original: string };
-            await writeFile(join(root, journal.file), journal.original);
+        const raw = await readFile(journalPath, 'utf8').catch(() => null);
+        if (raw !== null) {
+            let journal: { file?: string; original?: string; injectedHash?: string } | null = null;
+            try {
+                journal = JSON.parse(raw) as { file?: string; original?: string; injectedHash?: string };
+            } catch {
+                // A journal nobody can read must not block the file forever: it is quarantined by removal and the run goes on.
+                journal = null;
+            }
+            if (journal?.file !== undefined && typeof journal.original === 'string') {
+                // **Contained, and only where the injected bytes are still present.** An uncontained path wrote outside the
+                // workspace, and a stale journal overwrote good content — both measured by an independent round.
+                let target: string | null = null;
+                try {
+                    target = containedPath(root, journal.file);
+                } catch {
+                    target = null;
+                }
+                if (target !== null) {
+                    const current = await readFile(target, 'utf8').catch(() => null);
+                    const stillInjected = current !== null
+                        && (journal.injectedHash === undefined || hashContent(current) === journal.injectedHash);
+                    if (stillInjected) await writeFile(target, journal.original);
+                }
+            }
             await rm(journalPath, { force: true });
         }
         return await action();
@@ -194,18 +236,22 @@ export async function withVerificationLock<T>(root: string, relativePath: string
 
 /**
  * Record what is about to be mutated, so a run that dies mid-cycle can be repaired by the next one.
+ *
+ * The journal carries the injected content's digest as well as the original, so recovery applies only to a file that still
+ * holds what this run wrote — a stale journal cannot overwrite good content.
  */
-export async function recordMutation(root: string, relativePath: string, original: string): Promise<void> {
+export async function recordMutation(root: string, relativePath: string, original: string, injected: string): Promise<void> {
     const lockDir = join(root, '.kata', 'locks');
     await mkdir(lockDir, { recursive: true });
-    const key = hashContent(resolve(root, relativePath)).slice(0, 16);
-    await writeFile(join(lockDir, `verify-${key}.journal.json`), JSON.stringify({ file: relativePath, original }));
+    await writeFile(
+        join(lockDir, `verify-${lockKeyFor(root, relativePath)}.journal.json`),
+        JSON.stringify({ file: relativePath, original, injectedHash: hashContent(injected) }),
+    );
 }
 
 /** The injection is over: there is nothing left to repair. */
 export async function clearMutation(root: string, relativePath: string): Promise<void> {
-    const key = hashContent(resolve(root, relativePath)).slice(0, 16);
-    await rm(join(root, '.kata', 'locks', `verify-${key}.journal.json`), { force: true });
+    await rm(join(root, '.kata', 'locks', `verify-${lockKeyFor(root, relativePath)}.journal.json`), { force: true });
 }
 
 export function buildContext(
