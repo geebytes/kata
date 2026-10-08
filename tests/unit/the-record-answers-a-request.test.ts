@@ -167,6 +167,23 @@ describe('the question-bearing identity settles', () => {
     });
 });
 
+describe('the identity does not depend on itself', () => {
+    it('plans the same thing whatever the identity is, so planning cannot move the identity', async () => {
+        // **A fixed-point equation has no solution.** The plan's sampling seed used to embed `subject.revision`, and the
+        // subject hashes the plan, so planning moved the identity and the identity moved the plan: `ledger plan` was never
+        // idempotent (three runs on an unchanged ledger produced three declared subjects) and merely re-running it released a
+        // recorded round that answered the current question. An independent round measured both faces of it.
+        const { planReview } = await import('../../src/producers/planner.js');
+        const { defaultPolicy } = await import('../../src/store/ledger.js');
+        const policy = defaultPolicy();
+        const claim = { id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major', dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0 };
+        const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts'] };
+        const first = planReview({ ...base, subject: { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
+        const second = planReview({ ...base, subject: { revision: `rev:${'b'.repeat(16)}`, pathDigests: { 'subject.ts': 'a'.repeat(64) } } as never });
+        expect(second).toEqual(first);
+    });
+});
+
 describe('the plan is part of the question', () => {
     it('moves the subject when only the plan changed, so the request and the identity agree', async () => {
         // The request's reading sets and required evidence come from `plan.json`; changing the plan changes what is asked
