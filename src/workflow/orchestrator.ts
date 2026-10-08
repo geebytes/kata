@@ -1520,18 +1520,37 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             //
             // A record with no `subjectRevision` keeps blocking: it was written before this change, we cannot know what it
             // answered, and pretending to know is how a stale result would pass as a current one.
-            const currentSubject = (await readLedger(root, taskId).catch(() => undefined))?.subject?.revision;
+            const ledgerNow = await readLedger(root, taskId).catch(() => undefined);
+            const currentSubject = ledgerNow?.subjectAsDeclared?.revision ?? ledgerNow?.subject?.revision;
             const answeredSameRequest = typeof existing.record.subjectRevision !== 'string'
                 || currentSubject === undefined
                 || existing.record.subjectRevision === currentSubject;
             if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && answeredSameRequest) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: 'A review result is already recorded for this revision, for the same request. Re-enter review before recording a replacement — and if the gate was already consumed, recreate it first with `kata-cli verify`, then `kata-cli gate approve`, then `kata-cli review --confirm-host-model`.',
+                    error: 'A review result is already recorded for this revision, for this request. A second round needs a different request: restate a claim (`kata-cli ledger restate`) or let the content move and re-seal — re-entering review does not clear a recorded round, so it is not offered as a remedy here.',
                 };
             }
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
             const recordPath = layoutReviewPath(root, taskId);
+                    // **The conclusion being replaced is archived, not overwritten.** The release path lets a new round be
+                    // recorded when the recorded one answered a different request; without this the earlier conclusion —
+                    // with its findings and its route — would vanish with no trace, which is the silent replacement AC-1
+                    // forbids. Measured by an independent round: `release success=true | history rows=0`.
+                    if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && !answeredSameRequest) {
+                        await appendFile(
+                            join(taskDir(root, taskId), 'review-history.jsonl'),
+                            JSON.stringify({
+                                revisionId: existing.record.revisionId,
+                                ...(typeof existing.record.subjectRevision === 'string' ? { subjectRevision: existing.record.subjectRevision } : {}),
+                                findings: existing.record.findings,
+                                status: existing.record.status ?? 'pending',
+                                supersededBy: currentSubject,
+                                archivedAt: new Date().toISOString(),
+                            }) + '\n',
+                            'utf8',
+                        );
+                    }
             const committed = await commitReviewDecision(root, taskId, resultSnapshot, async (lock) => {
                 await mutateTaskArtefact(
                     root,

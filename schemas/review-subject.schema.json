@@ -21,6 +21,11 @@
         "minLength": 8
       }
     },
+    "claimsDigest": {
+      "type": "string",
+      "minLength": 8,
+      "description": "Present when the freeze hashed the questions (each claim's id, statement and dependencies) as well as the content. Absent on subjects frozen before the field existed: such a subject answered 'which content', and inventing a question for it would let a stale answer pass as a current one."
+    },
     "declaredPaths": {
       "type": "array",
       "items": {

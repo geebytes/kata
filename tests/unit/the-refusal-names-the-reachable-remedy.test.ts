@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { readLedger } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, reviewPath, taskDir } from '../../src/core/layout.js';
 
@@ -88,15 +89,22 @@ async function writeResultFile(): Promise<string> {
 
 describe('the refusal names a reachable remedy', () => {
     it('still refuses a second result for the same request, so a recorded round is not silently replaced', async () => {
-        await recordedRound('rev:bbbb11111111bbbb');
+        // The recorded round names the subject **as the ledger derives it**, which is what a real record carries; the
+        // earlier fixture hand-wrote a revision inconsistent with its own digests, and an independent round showed that
+        // this bypassed the chain the defect lives in.
         await freezeSubject('rev:bbbb11111111bbbb');
+        const derived = (await readLedger(root, taskId)).subjectAsDeclared?.revision;
+        expect(derived).toBeDefined();
+        await recordedRound(derived);
 
         const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
         expect(recorded.success).toBe(false);
-        // And the refusal names a remedy that works in the state it fires from: the chain, not just "re-enter".
-        expect(String(recorded.error)).toContain('kata-cli verify');
-        expect(String(recorded.error)).toContain('kata-cli gate approve');
-        expect(String(recorded.error)).toContain('--confirm-host-model');
+        // And the refusal names a remedy that works in the state it fires from. The chain this used to print
+        // (verify → gate approve → re-enter) was inert: re-entry deliberately preserves a recorded round (F-3), so the
+        // refusal repeated verbatim after an operator ran it — measured by an independent round.
+        expect(String(recorded.error)).toContain('restate a claim');
+        expect(String(recorded.error)).toContain('re-entering review does not clear');
+        expect(String(recorded.error)).not.toContain('--confirm-host-model');
     });
 
 });

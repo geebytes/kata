@@ -552,6 +552,7 @@ export type Ledger = {
     changeId: string;
     dir: string;
     subject: Subject | null;
+    subjectAsDeclared: Subject | null;
     policy: Policy;
     claims: Claim[];
     evidence: Evidence[];
@@ -830,12 +831,28 @@ export async function readLedger(root: string, changeId: string): Promise<Ledger
     // Read once, used twice: the subject is what the projection needs to tell a reading about this revision from a reading
     // about another one, and it is the same value the caller receives as `subject`.
     const subjectForProjection = validated(FILES.subject, await readJson<Subject>(join(dir, FILES.subject)));
+    const claimsForProjection = validated(FILES.claims, (await readJson<Claim[]>(join(dir, FILES.claims))) ?? []) ?? [];
     return {
         changeId,
         dir,
         subject: subjectForProjection,
+        /**
+         * **The subject as declared now**, which is not the frozen one once a claim is restated.
+         *
+         * The frozen subject says what was asked at the freeze; this says what is asked. Every staleness question — is this
+         * verdict still about this question, does this recorded result still speak for this request — is a comparison of the
+         * two, and the answer cannot come from the frozen copy alone: measured, a restated claim left the frozen subject
+         * byte-identical, so an answer to the old question kept reading as an answer to the new one.
+         */
+        subjectAsDeclared: subjectForProjection === null
+            ? null
+            // Only a freeze that hashed the question can be compared question-to-question; one that did not keeps speaking
+            // for whatever is declared, which is the behaviour every reader had before this change.
+            : subjectForProjection.claimsDigest === undefined
+                ? subjectForProjection
+                : subjectOf(subjectForProjection.pathDigests, subjectForProjection.declaredPaths, claimsForProjection),
         policy,
-        claims: validated(FILES.claims, (await readJson<Claim[]>(join(dir, FILES.claims))) ?? []) ?? [],
+        claims: claimsForProjection,
         evidence: validated(FILES.evidence, (await readJson<Evidence[]>(join(dir, FILES.evidence))) ?? []) ?? [],
         // **One read, two views.** The document is read once; the projection is derived from those bytes, so a caller
         // cannot see a projection computed from different content than the readings it is compared against.
@@ -909,7 +926,31 @@ async function mutate<T>(root: string, changeId: string, action: () => Promise<T
     return withTaskLock(root, changeId, action);
 }
 
-export async function freezeSubject(input: { root: string; paths: readonly string[] }): Promise<
+/**
+ * The claims to re-freeze with when the question is *not* what is being compared.
+ *
+ * **A content-drift check must not compare questions.** It re-derives the freeze from the declaration and asks whether the
+ * content moved; passing the current claims there would report "the content has moved" for a subject that never hashed a
+ * question at all — measured, that is exactly what made every ledger frozen before this change look drifted. A subject that
+ * hashed a question keeps being compared question-to-question.
+ */
+export function claimsForContentComparison(
+    subject: { claimsDigest?: string } | null | undefined,
+    claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+): readonly { id: string; statement: string; dependsOn?: readonly string[] }[] | undefined {
+    return subject?.claimsDigest === undefined ? undefined : claims;
+}
+
+export async function freezeSubject(input: {
+    root: string;
+    paths: readonly string[];
+    /**
+     * The questions as declared at the freeze. **Optional in the signature, required for the property**: a subject that
+     * hashes only the content cannot tell a restated claim from an unchanged one, which is the defect this parameter
+     * exists to remove. Every production caller passes it; a fixture that never restates a claim may omit it.
+     */
+    claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[];
+}): Promise<
     { ok: true; subject: Subject } | { ok: false; error: string; unreadable: string[] }
 > {
     const unreadable: string[] = [];
@@ -948,7 +989,9 @@ export async function freezeSubject(input: { root: string; paths: readonly strin
     // **The declaration travels with the freeze.** `digests` is the expansion of `paths`, so it cannot be inverted; a
     // file added inside a declared directory afterwards is not one of its keys, and re-freezing those keys could not
     // notice it. Keeping the declaration is what lets drift be measured against the surface that was declared.
-    return { ok: true, subject: subjectOf(digests, input.paths) };
+    // **The questions as declared at the freeze are part of the identity**, so a later restatement makes the frozen
+    // subject visibly different from what is declared now — the difference every staleness check is about.
+    return { ok: true, subject: subjectOf(digests, input.paths, input.claims) };
 }
 
 /**
@@ -1563,7 +1606,7 @@ export async function ledgerDrift(root: string, changeId: string): Promise<{
     // report "unchanged" about a directory that grew. A subject frozen before `declaredPaths` existed falls back to its
     // digest keys — the best surface that revision recorded — and that fallback is named rather than silent.
     const declared = ledger.subject.declaredPaths ?? Object.keys(ledger.subject.pathDigests);
-    const frozen = await freezeSubject({ root, paths: declared });
+    const frozen = await freezeSubject({ root, paths: declared, ...(claimsForContentComparison(ledger.subject, ledger.claims) === undefined ? {} : { claims: ledger.claims }) });
     if (!frozen.ok) {
         return { changed: [], added: [], removed: [], unreadable: frozen.unreadable, subjectRevision: ledger.subject.revision };
     }

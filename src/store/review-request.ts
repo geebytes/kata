@@ -22,7 +22,7 @@
  * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
-import { declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
+import { claimsForContentComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
@@ -99,7 +99,14 @@ export async function buildReviewRequest(input: {
     // roll-up compares two snapshots taken at the same moment and can never see a later edit. What the request has to
     // speak for is the content as it is now, so the freeze is re-derived from the declaration and compared — the same
     // measurement `ledger plan` and `ledger status` already make, so the three cannot disagree about drift.
-    const current = await freezeSubject({ root: input.root, paths: await declaredPaths(input.root, input.changeId) });
+    const ledgerForDrift = await readLedger(input.root, input.changeId);
+    const current = await freezeSubject({
+        root: input.root,
+        paths: await declaredPaths(input.root, input.changeId),
+        ...(claimsForContentComparison(ledgerForDrift.subject, ledgerForDrift.claims) === undefined
+            ? {}
+            : { claims: claimsForContentComparison(ledgerForDrift.subject, ledgerForDrift.claims) }),
+    });
     if (!current.ok) {
         return { ok: false, why: `the declared paths cannot be read, so a request cannot speak for the content: ${current.error}` };
     }

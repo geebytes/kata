@@ -99,6 +99,14 @@ export type Subject = {
     pathDigests: Record<string, string>;
     /** The paths as declared, before directory expansion. Absent on subjects frozen before the field existed. */
     declaredPaths?: string[];
+    /**
+     * Present when the freeze hashed the questions as well as the content.
+     *
+     * **Its absence is a fact, not a gap to fill.** A subject frozen before this field existed answered "which content", and
+     * inventing a question for it now would let a stale answer pass as a current one; the readers therefore treat a subject
+     * without it as speaking for whatever question is declared, exactly as they did before.
+     */
+    claimsDigest?: string;
 };
 
 /** A dependency entry is either a path this claim rests on, or another claim it builds on. Prefixes keep them apart. */

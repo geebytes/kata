@@ -23,21 +23,52 @@ export const KERNEL_BANNED_BUILTINS: readonly string[] = [
     'node:module',
 ];
 
+/**
+ * The questions a subject is about, canonicalised.
+ *
+ * **A subject is about a question, not only about content.** Measured by an independent review: a claim was restated — the
+ * question changed, the code did not — and the subject revision stayed identical, because it hashed the path digests alone.
+ * Every consumer that compares subjects (evidence staleness, the review record's binding) therefore kept treating an answer
+ * to the old question as an answer to the new one. What a claim asks is its id, its statement and what it depends on; the
+ * rest of a claim (severity, status, counters) is bookkeeping about the answer, not part of the question.
+ */
+function questionOf(claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[]): string {
+    return [...claims]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((claim) => `${claim.id}\u0000${claim.statement}\u0000${[...(claim.dependsOn ?? [])].sort().join(',')}`)
+        .join('\n');
+}
+
 /** A stable revision id from a digest map: the same content yields the same id, byte for byte. */
-export function revisionOf(pathDigests: Record<string, string>): string {
+export function revisionOf(
+    pathDigests: Record<string, string>,
+    claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+): string {
     const canonical = Object.keys(pathDigests)
         .sort()
         .map((path) => `${path}\u0000${pathDigests[path] ?? ''}`)
         .join('\n');
-    return `rev:${createHash('sha256').update(canonical).digest('hex').slice(0, 16)}`;
+    // The question is hashed with the content, so a restatement moves the revision and every binding that names it says so.
+    const material = claims === undefined ? canonical : `${canonical}\n\u0001${questionOf(claims)}`;
+    return `rev:${createHash('sha256').update(material).digest('hex').slice(0, 16)}`;
 }
 
-export function subjectOf(pathDigests: Record<string, string>, declaredPaths?: readonly string[]): Subject {
+export function subjectOf(
+    pathDigests: Record<string, string>,
+    declaredPaths?: readonly string[],
+    claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+): Subject {
     return {
-        revision: revisionOf(pathDigests),
+        revision: revisionOf(pathDigests, claims),
         pathDigests,
         ...(declaredPaths === undefined ? {} : { declaredPaths: [...declaredPaths].sort() }),
+        ...(claims === undefined ? {} : { claimsDigest: digestOfQuestion(claims) }),
     };
+}
+
+/** The question's own digest, so a subject can say whether it ever hashed one. */
+export function digestOfQuestion(claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[]): string {
+    return createHash('sha256').update(questionOf(claims)).digest('hex').slice(0, 16);
 }
 
 export type SubjectDiff = { changed: string[]; added: string[]; removed: string[]; unchanged: string[] };

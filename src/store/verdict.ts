@@ -142,7 +142,7 @@ export function claimDecisions(ledger: Ledger): ClaimDecision[] {
             reusedEvidence: new Set(),
             policy: ledger.policy,
             challenges: ledger.challenges,
-            subjectRevision: ledger.subject?.revision ?? '',
+            subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject?.revision ?? '',
         }),
         severity: claim.severity,
         statement: claim.statement,
@@ -345,7 +345,7 @@ export async function ledgerVerdict(input: {
         tier,
         claims: ledger.claims.length,
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
-        subjectRevision: ledger.subject.revision,
+        subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
         decision,
     };
 }

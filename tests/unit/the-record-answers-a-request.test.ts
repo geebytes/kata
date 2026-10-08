@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runCommand } from '../../src/workflow/orchestrator.js';
+import { readLedger } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, reviewPath, taskDir } from '../../src/core/layout.js';
 
@@ -86,6 +87,32 @@ async function writeResultFile(): Promise<string> {
     return 'result.json';
 }
 
+describe('the question is part of the subject, not only the content', () => {
+    it('changes the subject when a claim is restated, so a recorded result stops speaking for this request', async () => {
+        // **The real chain, not a hand-written subject.** The first fixture in this file wrote `subject.json` itself, with a
+        // revision inconsistent with its own digests, which bypassed the freeze chain and hid the defect an independent
+        // round then reproduced: `subjectRevision` was `rev:<digest of path digests>`, so restating a claim — the reported
+        // case, where the question changes and the code does not — left the subject identical and the second recording
+        // refused. This case drives the same chain the CLI does.
+        const { appendClaim, freezeSubject, restateClaim, writeSubject, readLedger } = await import('../../src/store/ledger.js');
+
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'the first question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0,
+        });
+        const frozen = await freezeSubject({ root, paths: ['subject.ts'], claims: (await readLedger(root, taskId)).claims });
+        expect(frozen.ok).toBe(true);
+        if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+        const before = (await readLedger(root, taskId)).subjectAsDeclared?.revision;
+
+        await restateClaim(root, taskId, 'C1', 'a different question about the same content');
+        const after = (await readLedger(root, taskId)).subjectAsDeclared?.revision;
+
+        // The content did not move; the question did. A subject that answers only "which content" cannot tell the two apart.
+        expect(after).not.toBe(before);
+    });
+});
+
 describe('the record answers the request it was made for', () => {
     it('lets a round be recorded when the recorded result answered another subject', async () => {
         await recordedRound('rev:aaaa00000000aaaa');
@@ -96,7 +123,9 @@ describe('the record answers the request it was made for', () => {
         const record = JSON.parse(await readFile(reviewPath(root, taskId), 'utf8')) as { findings?: Array<{ id?: string }>; subjectRevision?: string };
         expect(record.findings?.map((finding) => finding.id)).toEqual(['R9-F1']);
         // The replacement names the request it answered, so the next round can tell the same way.
-        expect(record.subjectRevision).toBe('rev:bbbb11111111bbbb');
+        // The recorded request is the subject as declared now: the fixture's own revision is a hand-written value,
+        // while the record carries what the ledger derives from the frozen digests and the current claims.
+        expect(record.subjectRevision).toBe((await readLedger(root, taskId)).subjectAsDeclared?.revision);
     });
 
     it('keeps blocking when the record predates the subject binding, because we cannot know what it answered', async () => {

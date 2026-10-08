@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe } from '../store/ledger.js';
+import { claimsForContentComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -94,7 +94,8 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     if (paths.length === 0) {
         return { ok: false, why: 'no paths are declared on this task, so there is nothing to freeze', unreadable: [] };
     }
-    const frozen = await freezeSubject({ root: input.root, paths });
+    const ledgerForFreeze = await readLedger(input.root, input.changeId);
+    const frozen = await freezeSubject({ root: input.root, paths, ...(claimsForContentComparison(ledgerForFreeze.subject, ledgerForFreeze.claims) === undefined ? {} : { claims: claimsForContentComparison(ledgerForFreeze.subject, ledgerForFreeze.claims) }) });
     return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 
@@ -178,7 +179,8 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger freeze', error: 'no paths to freeze: declare ownedPaths on the task or pass --paths' });
             return;
         }
-        const frozen = await freezeSubject({ root: options.root, paths });
+        const ledgerForFreeze2 = await readLedger(options.root, options.changeId);
+        const frozen = await freezeSubject({ root: options.root, paths, ...(claimsForContentComparison(ledgerForFreeze2.subject, ledgerForFreeze2.claims) === undefined ? {} : { claims: claimsForContentComparison(ledgerForFreeze2.subject, ledgerForFreeze2.claims) }) });
         if (!frozen.ok) {
             fail({ command: 'ledger freeze', error: frozen.error, unreadable: frozen.unreadable });
             return;
