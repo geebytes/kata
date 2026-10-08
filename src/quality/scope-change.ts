@@ -96,7 +96,19 @@ export async function previewScopeChange(
     const added = [...after].filter((path) => !before.has(path)).sort();
     const removed = [...before].filter((path) => !after.has(path)).sort();
     const { findOwnershipConflicts } = await import('../workflow/revision.js');
-    const conflicts = added.length > 0 ? await findOwnershipConflicts(root, taskId, added).catch(() => []) : [];
+    // **`[]` is the answer that admits the addition, so it is the one answer a failure must not produce.** The catch read
+    // "could not compute the conflicts" as "there are none", and `recordScopeChange` then accepted a path another change owns
+    // without `--allow-ownership-conflicts` — measured by an independent round: with a readable sibling record the conflict
+    // was found, with that record corrupted it was `[]`. Damage folded into absence in the permissive direction is the worst
+    // direction this class takes, so the failure is named and the caller refuses.
+    let conflicts: Awaited<ReturnType<typeof findOwnershipConflicts>> = [];
+    if (added.length > 0) {
+        try {
+            conflicts = await findOwnershipConflicts(root, taskId, added);
+        } catch (error) {
+            throw new Error(`cannot decide whether the added paths conflict with another change, so the addition cannot be admitted: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     return { added, removed, conflicts, empty: added.length === 0 && removed.length === 0 };
 }
 

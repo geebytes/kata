@@ -93,22 +93,22 @@ describe('the cycle identity is derived once and carried', () => {
         expect(await journalsIn(root)).toEqual([]);
     });
 
-    it('clears the journal the cycle itself wrote, under the key it wrote it with', async () => {
+    it('writes and clears the same note even when its target is replaced mid-window', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-key-same-'));
         roots.push(root);
         const file = 'a.ts';
         await writeFile(join(root, file), original);
-        let key = '';
         let journalDuring = '';
         await withVerificationWindow(root, file, async (window) => {
-            key = window.pathKey;
             await recordMutation(window, original, injected);
             journalDuring = (await journalsIn(root))[0] ?? '';
+            // **The inode moves between the write and the clear**, which is what a check landing its result with `mv` does.
+            await replaceAtomically(root, file, original);
             await clearMutation(window);
         });
-        // The name is derived from the window's key, so "the journal this cycle wrote" and "the journal this cycle cleared"
-        // are the same file by construction rather than by a repeated derivation that can disagree.
-        expect(journalDuring).toBe(`verify-${key}.journal.json`);
+        // The note's name comes from the file's *path*, so "the note this cycle wrote" and "the note this cycle cleared" are
+        // the same file by construction: nothing the check does to the target can move it.
+        expect(journalDuring).toMatch(/^verify-[0-9a-f]{16}\.journal\.json$/);
         expect(await journalsIn(root)).toEqual([]);
     });
 });
@@ -118,8 +118,9 @@ describe('the cycle identity is derived once and carried', () => {
  *
  * The comment claiming this was false when an independent round read it: the discovery matched a note by the path it names,
  * and an unparseable note has no path to name — so it was dropped before the repair loop could remove it, leaked forever, and
- * was re-parsed on every window entry. The note is now named by the path key, which is what makes it attributable without
- * being parseable.
+ * was re-parsed on every window entry. The note is now named by the path it is about, which is what makes it attributable
+ * without being parseable — and a second round then showed the *name* has to be stable too, which is why it is the path and
+ * not a key derived from the file.
  */
 describe('a note nobody can read is attributable and quarantined', () => {
     it('removes an unparseable note instead of leaking it', async () => {
@@ -128,11 +129,17 @@ describe('a note nobody can read is attributable and quarantined', () => {
         const file = 'a.ts';
         await writeFile(join(root, file), original);
 
-        // The name a cycle would have written, holding bytes no reader can parse — what a killed write leaves behind.
-        let key = '';
-        await withVerificationWindow(root, file, async (window) => { key = window.pathKey; });
+        // **The name a cycle would have written, holding bytes no reader can parse** — what a killed write leaves behind.
+        // The name is taken from disk rather than recomputed, so this guard cannot pass by computing the same wrong name
+        // the code computes.
+        let note = '';
+        await withVerificationWindow(root, file, async (window) => {
+            await recordMutation(window, original, injected);
+            note = (await journalsIn(root))[0] ?? '';
+            await clearMutation(window);
+        });
         const locks = join(root, '.kata', 'locks');
-        await writeFile(join(locks, `verify-${key}.journal.json`), '{not json}\n');
+        await writeFile(join(locks, note), '{not json}\n');
 
         // The next cycle runs normally, and the unreadable note is gone: quarantined, not blocking the file forever.
         await withVerificationWindow(root, file, async () => 'ran');

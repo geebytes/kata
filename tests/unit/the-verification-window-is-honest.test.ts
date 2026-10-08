@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { verifyAll } from '../../src/producers/verifiers.js';
+import { buildContext } from '../../src/store/verify-context.js';
 import { withVerificationWindow } from '../../src/store/verify-context.js';
 import type { VerifyContext } from '../../src/producers/port.js';
 
@@ -212,4 +213,44 @@ describe('a cycle that replaces its own target still excludes the next one', () 
         }
         expect(await readFile(join(root, file), 'utf8')).toBe(moved);
     }, 15_000);
+});
+
+/**
+ * **A cycle may replace its own target; it may not turn it into a door into somebody else's file.**
+ *
+ * Round 2's blocking finding, and the one case in this family that needs no concurrency at all. The restore write goes
+ * through the path and `writeFile` follows symlinks, so a check that swaps its target for a link to another file makes the
+ * restore land in *that* file: measured, a cycle on `a.ts` reported `supported` while `b.ts` — a file it never named — was
+ * overwritten with the cycle's original content, and `a.ts` was left as a symlink.
+ *
+ * **The context is the real one** (`buildContext`), and the swap is done by the check's own shell command. The first
+ * version of this case drove a synthetic context, which overrides `writeText` — so the guard it was written for was never
+ * reached and the case passed for the wrong reason. That is the third time in this change a fixture stood in the way of the
+ * code it was measuring.
+ */
+describe('a restore never writes through a link', () => {
+    it('refuses to restore into the file a swapped-in symlink points at', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-symlink-restore-'));
+        roots.push(root);
+        const file = 'a.ts';
+        const peer = 'b.ts';
+        const clean = 'const x = 1;\n';
+        const peerContent = 'const b = 1;\n';
+        await writeFile(join(root, file), clean);
+        await writeFile(join(root, peer), peerContent);
+
+        // The check reddens under the injected defect, and lands its result by making its own target a link to `b.ts`. On the
+        // opening run the file still holds the original, so it exits 0 and the cycle proceeds.
+        const context = buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { [file]: 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+        const item = {
+            id: 'EA',
+            type: 'executable_falsifier' as const,
+            command: `sh -c 'if grep -q "const x = 2" a.ts; then rm -f a.ts && ln -s b.ts a.ts; exit 1; fi; exit 0'`,
+            mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' },
+        };
+
+        await expect(verifyAll([item], context)).rejects.toThrow(/refusing to write a\.ts/);
+        // **The file the cycle never named is untouched.** This is the harm the refusal exists for.
+        expect(await readFile(join(root, peer), 'utf8')).toBe(peerContent);
+    });
 });

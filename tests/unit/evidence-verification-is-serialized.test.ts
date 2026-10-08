@@ -122,22 +122,26 @@ describe('evidence verification is serialized per file', () => {
         expect(await readFile(join(root, file), 'utf8')).toBe(clean);
     });
 
-    it('lets two sections on different files overlap', async () => {
+    it('serializes two sections on different files too, and both still complete', async () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-serialize-'));
-        // A barrier, not a timing guess: each section waits for the other to be inside. With a per-file lock both get in; a
-        // global lock would leave one waiting and the case would fail on its own timeout.
+        // **The exclusion is the repository's, and this case is why.** A per-file lock was the earlier design, and an
+        // independent round broke it three times in a row — a spelling, an inode, a symlink — because "the same file" is not
+        // a name a check cannot change. Serializing different files costs concurrency nothing asks for; `verifyAll` runs its
+        // items one at a time inside a run anyway, so the only overlap here was between two CLI invocations.
+        await writeFile(join(root, 'a.ts'), 'const x = 1;\n');
+        await writeFile(join(root, 'b.ts'), 'const y = 1;\n');
         let inside = 0;
-        let releaseBoth: () => void = () => {};
-        const bothInside = new Promise<void>((resolve) => { releaseBoth = resolve; });
-        const section = (file: string, name: string) => withVerificationWindow(root, file, async () => {
+        let peak = 0;
+        const section = (file: string) => withVerificationWindow(root, file, async () => {
             inside += 1;
-            if (inside === 2) releaseBoth();
-            await Promise.race([
-                bothInside,
-                new Promise((_, reject) => setTimeout(() => reject(new Error(`${name} waited for the other file's lock: the lock is not per file`)), 2000)),
-            ]);
+            peak = Math.max(peak, inside);
+            await new Promise((resolve) => setTimeout(resolve, 15));
+            inside -= 1;
         });
-        await Promise.all([section('a.ts', 'A'), section('b.ts', 'B')]);
-        expect(inside).toBe(2);
+        await Promise.all([section('a.ts'), section('b.ts')]);
+        expect(peak).toBe(1);
+        // Both completed, and neither was refused: the cost of the repository lock is serialization, not starvation.
+        expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe('const x = 1;\n');
+        expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe('const y = 1;\n');
     });
 });

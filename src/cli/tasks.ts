@@ -579,15 +579,15 @@ export async function runOrientCommand(argv: string[]): Promise<Record<string, u
     const handoff = await createHandoff(root, change, role);
     const contextPacket = await createContextPacket({ root, taskId: change, fromRole: role, toRole: role, ...(args.platform ? { platform: args.platform } : {}) });
     const taskContext = await readTaskContext(root, change);
-    // **`orient` is the packet every governed step starts from, so it must not guess the phase.** The state is three-state
-    // here for the same reason it is in `readTaskCandidate`: a task that never entered a phase falls back to the handoff's
-    // `fromPhase`, and a record that exists and cannot be read refuses by name instead of borrowing a phase from a packet
-    // written earlier.
+    // **`orient` must not guess the phase, and the refusal it relies on is not its own.** The state is read three ways for
+    // the same reason it is in `readTaskCandidate`: a task that never entered a phase falls back to the handoff's `fromPhase`,
+    // and a record that exists and cannot be read refuses by name.
+    //
+    // There used to be a second `if (stateRead.kind === 'unreadable') throw` here, and an independent round showed it could
+    // not fail: `createHandoff` above reads the same record through the same reader and refuses first, so deleting this arm
+    // changed nothing observable — a guard that cannot fail is a comment with a test's syntax, and this one was mine. The
+    // refusal is derived once, in the reader's callers that come first; this function reads the state only to pick a phase.
     const stateRead = await readCurrentStateOr(root, change);
-    if (stateRead.kind === 'unreadable') {
-        throw new UnreadableTaskRecord(change, currentStatePath(root, change), stateRead.reason);
-    }
-    // Typed through the reader rather than cast: the packet carries the state record as it was validated.
     const state: StateRecord | null = stateRead.kind === 'current' ? stateRead.state : null;
     const phase = (state?.phase ?? handoff.fromPhase) as Phase;
     const upstream = await readUpstreamSummary(root, change);

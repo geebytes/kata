@@ -149,3 +149,49 @@ describe('a damaged state is not an absent one at the surfaces that decide what 
         await expect(runOrientCommand(['--change', 'mid-review', '--root', root])).rejects.toThrow(/cannot be read/);
     });
 });
+
+/**
+ * **Two more readers of a record, found by an independent round after the first five were fixed.**
+ *
+ * Both are the same fold with the same consequence as the ones above, and one of them is the worst direction this class
+ * takes: a corrupt sibling record made an ownership claim disappear, so a scope addition was admitted without the flag that
+ * exists to make shared ownership an explicit decision.
+ */
+describe('a damaged record cannot remove a claim, and cannot be reported as an unknown', () => {
+    it('names the state record it cannot read at the wiki distill boundary', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-wiki-state-'));
+        roots.push(root);
+        const taskId = 'wiki-state';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'archive' });
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), '{not json}\n');
+        const { distillPassedTaskKnowledge } = await import('../../src/wiki/provenance.js');
+        const result = await distillPassedTaskKnowledge(root, taskId);
+        // `deferred` either way — what must differ is that the *reason* names the record rather than reporting an unknown.
+        expect(result.decision).toBe('deferred');
+        expect(result.decision === 'deferred' ? result.reason : '').toMatch(/cannot be read/);
+    });
+
+    it('refuses a scope change when a sibling ownership claim cannot be read', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-scope-conflict-'));
+        roots.push(root);
+        const changeId = 'admitter';
+        const sibling = 'owner';
+        await mkdir(join(root, '.kata', 'tasks', changeId), { recursive: true });
+        await mkdir(join(root, '.kata', 'tasks', sibling), { recursive: true });
+        await writeTaskRecord(root, { id: changeId, phase: 'plan' });
+        await writeTaskRecord(root, { id: sibling, phase: 'plan', ownedPaths: ['shared.ts'] });
+        const { previewScopeChange } = await import('../../src/quality/scope-change.js');
+        const { writeFile: write } = await import('node:fs/promises');
+
+        // **With a readable sibling the conflict is found** — so the case measures a difference, not just a refusal.
+        const readable = await previewScopeChange(root, changeId, [], ['shared.ts']);
+        expect(readable.conflicts).toEqual([{ taskId: sibling, path: 'shared.ts' }]);
+
+        // **With the sibling's record damaged the claim must not vanish.** It used to: `[]` meant "no conflict", and the
+        // caller admitted the addition.
+        await write(join(root, '.kata', 'tasks', sibling, 'task.json'), '{not json}\n');
+        await expect(previewScopeChange(root, changeId, [], ['shared.ts'])).rejects.toThrow(/cannot decide whether the added paths conflict/);
+    });
+});

@@ -98,9 +98,17 @@ export async function distillPassedTaskKnowledge(root: string, taskId: string): 
     return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} Judge answered ${judge.subjectRevision}, not its current declared question (${declared})` };
   }
 
-  const state = await readJson<{ phase: string }>(root, `.kata/tasks/${taskId}/current-state.json`).catch(() => null);
-  if (!state || (state.phase !== 'distill' && state.phase !== 'archive')) {
-    return { decision: 'deferred', candidateIds: [], records: [], reason: `Task must be in distill or archive phase before Wiki distillation (current: ${state?.phase ?? 'unknown'})` };
+  // **The sibling of the judge read above, and it had the same fold.** `.catch(() => null)` made a state record that cannot
+  // be parsed the same `null` as a task that has no state, so the decision said `current: unknown` and the reason for that
+  // unknown was lost — an independent round read the two reads side by side and only one of them named the damage.
+  let state: { phase?: string } | null;
+  try {
+    state = await readJson<{ phase?: string }>(root, `.kata/tasks/${taskId}/current-state.json`);
+  } catch (error) {
+    return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} has a state record that cannot be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (state.phase !== 'distill' && state.phase !== 'archive') {
+    return { decision: 'deferred', candidateIds: [], records: [], reason: `Task must be in distill or archive phase before Wiki distillation (current: ${state.phase ?? 'unknown'})` };
   }
 
   const design = await readText(root, `.kata/tasks/${taskId}/design.md`);

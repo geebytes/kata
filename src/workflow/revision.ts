@@ -586,7 +586,12 @@ export async function findOwnershipConflicts(
       try {
         const state = JSON.parse(await readFile(join(tasksRoot, terminal.taskId, 'current-state.json'), 'utf8')) as { phase?: string };
         if (state.phase === 'archive') continue;
-      } catch { /* legacy task without state remains an active ownership claim */ }
+      } catch {
+        // **Only "this task is archived" removes a claim, and a record nobody can read does not say that.** Swallowing the
+        // error here is the fail-closed direction on purpose: the claim stands, so the caller sees the conflict and has to
+        // decide about it explicitly. (An independent round flagged this catch as part of the fold below; it is not — the
+        // fold was the *outer* one, which turned an unreadable `task.json` into "no conflicts".)
+      }
       const task = JSON.parse(await readFile(join(tasksRoot, otherTaskId, 'task.json'), 'utf8')) as { ownedPaths?: string[] };
       for (const path of normalizeOwnedPaths(root, task.ownedPaths ?? [])) {
         // Directory-granularity overlap is the cheap test and the common case; when two claims do overlap, the conflict
@@ -596,7 +601,14 @@ export async function findOwnershipConflicts(
         const shared = await sharedOwnedFiles(root, normalized, path);
         if (shared.length > 0) conflicts.push(...shared.map((file) => ({ taskId: otherTaskId, path: file })));
       }
-    } catch { /* non-task directory */ }
+    } catch (error) {
+      // **A directory that is not a task is skipped; a task whose record cannot be read is not.** The bare catch treated both
+      // as "nothing to see", which is the same fold one level up: an unreadable `task.json` made the sibling's ownership
+      // claim invisible and the addition was admitted. Only `ENOENT` (a stray directory) is skipped now.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new Error(`cannot read the ownership claim of task '${otherTaskId}': ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
   return conflicts;
 }
