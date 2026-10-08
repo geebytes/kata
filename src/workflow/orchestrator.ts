@@ -1528,7 +1528,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && answeredSameRequest) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
-                    error: 'A review result is already recorded for this revision, for this request. A second round needs a different request: restate a claim (`kata-cli ledger restate`) or let the content move and re-seal — re-entering review does not clear a recorded round, so it is not offered as a remedy here.',
+                    // **The remedy is assembled from the state it fires in.** The previous message named one action for every
+                    // state, and in two of them that action cannot clear the condition: a record written before the request
+                    // binding existed answers no question we can compare, and a subject that never hashed the question does
+                    // not move when a claim is restated. Measured by an independent round: both states repeated the refusal
+                    // verbatim after the printed remedy was run.
+                    error: `A review result is already recorded for this revision, for this request. ${
+                        ledgerNow?.subject?.claimsDigest === undefined
+                            ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
+                            : typeof existing.record.subjectRevision !== 'string'
+                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review — the entry archives the old record — and record the new round.'
+                                : 'A second round needs a different request: restate a claim (`kata-cli ledger restate`) or change the plan, then re-freeze (`kata-cli ledger freeze`) so the request is built from the new question. Re-entering review does not clear a recorded round, so it is not offered as a remedy here.'
+                    }`,
                 };
             }
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));

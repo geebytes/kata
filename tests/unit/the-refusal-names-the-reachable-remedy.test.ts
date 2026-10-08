@@ -48,6 +48,25 @@ beforeEach(async () => {
     );
 });
 
+/**
+ * A subject frozen through the **real chain**, so it carries the question.
+ *
+ * The hand-written subject beside this helper is the shape an independent round proved could hide a defect: it bypasses the
+ * freeze, so it never hashed a question and every state that depends on one became untestable.
+ */
+async function freezeWithQuestion(): Promise<string> {
+    const { appendClaim, freezeSubject: freezeThroughStore, writeSubject } = await import('../../src/store/ledger.js');
+    if ((await readLedger(root, taskId)).claims.length === 0) {
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0,
+        });
+    }
+    const frozen = await freezeThroughStore({ root, paths: ['subject.ts'], claims: (await readLedger(root, taskId)).claims });
+    if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+    return (await readLedger(root, taskId)).subjectAsDeclared?.revision ?? '';
+}
+
 /** A frozen ledger subject, which is what the review request is derived from. */
 async function freezeSubject(revision: string): Promise<void> {
     await writeFile(
@@ -88,13 +107,35 @@ async function writeResultFile(): Promise<string> {
 }
 
 describe('the refusal names a reachable remedy', () => {
+    it('names the re-freeze when the subject never hashed the question', async () => {
+        // The state an independent round measured as unremedied: a subject written before the question was part of the
+        // identity, where restating a claim cannot move anything. Frozen the old way on purpose — this is the legacy shape.
+        await freezeSubject('rev:cccc22222222cccc');
+        await recordedRound((await readLedger(root, taskId)).subjectAsDeclared?.revision);
+
+        const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
+        expect(recorded.success).toBe(false);
+        expect(String(recorded.error)).toContain('does not carry the question');
+        expect(String(recorded.error)).toContain('kata-cli ledger freeze');
+    });
+
+    it('names re-sealing when the record predates the request binding', async () => {
+        // The other measured state: a record with no subjectRevision, where no comparison can say what it answered.
+        await freezeWithQuestion();
+        await recordedRound();
+
+        const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
+        expect(recorded.success).toBe(false);
+        expect(String(recorded.error)).toContain('predates the request binding');
+        expect(String(recorded.error)).toContain('re-seal');
+    });
+
     it('still refuses a second result for the same request, so a recorded round is not silently replaced', async () => {
         // The recorded round names the subject **as the ledger derives it**, which is what a real record carries; the
         // earlier fixture hand-wrote a revision inconsistent with its own digests, and an independent round showed that
         // this bypassed the chain the defect lives in.
-        await freezeSubject('rev:bbbb11111111bbbb');
-        const derived = (await readLedger(root, taskId)).subjectAsDeclared?.revision;
-        expect(derived).toBeDefined();
+        const derived = await freezeWithQuestion();
+        expect(derived).not.toBe('');
         await recordedRound(derived);
 
         const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
@@ -103,7 +144,7 @@ describe('the refusal names a reachable remedy', () => {
         // (verify → gate approve → re-enter) was inert: re-entry deliberately preserves a recorded round (F-3), so the
         // refusal repeated verbatim after an operator ran it — measured by an independent round.
         expect(String(recorded.error)).toContain('restate a claim');
-        expect(String(recorded.error)).toContain('re-entering review does not clear');
+        expect(String(recorded.error)).toContain('does not clear a recorded round');
         expect(String(recorded.error)).not.toContain('--confirm-host-model');
     });
 
