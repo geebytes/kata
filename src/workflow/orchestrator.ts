@@ -1468,7 +1468,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
                         throw new Error('declaredCoverage must be a non-empty list of the claim ids that were read and found sound');
                     }
-                    const known = new Set((await readLedger(root, taskId)).claims.map((claim) => claim.id));
+                    const coverageLedger = await readLedger(root, taskId);
+                    // **Name the file that is actually unreadable.** A ledger whose `claims.json` cannot be read holds no
+                    // claims, so the coverage check used to report "this ledger does not hold C1" — a true sentence about a
+                    // ledger nobody could read, and a misleading one about the round's declaration (measured by an
+                    // independent round).
+                    const unreadableClaims = (coverageLedger as { malformedFiles?: string[] }).malformedFiles?.includes('claims.json') === true;
+                    if (unreadableClaims) {
+                        throw new Error('claims.json cannot be read, so no declaration of coverage can be checked against it; repair the record rather than restating the declaration');
+                    }
+                    const known = new Set(coverageLedger.claims.map((claim) => claim.id));
                     const unknown = (coverage as string[]).filter((claimId) => !known.has(claimId));
                     if (unknown.length > 0) {
                         throw new Error(`declaredCoverage names ${unknown.join(', ')}, which this ledger does not hold; the declaration must name the claims that were read`);
