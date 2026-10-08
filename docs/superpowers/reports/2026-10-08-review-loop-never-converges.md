@@ -1,8 +1,10 @@
 # Kata 迭代收敛问题报告：收敛探测器对「修复轮必换 revision」结构性失明
 
 **日期**：2026-10-08
-**状态**：Open — 五条均有可复现证据（源码行号 + 实跑记录 + 实测计数）；本报告不包含实现或测试修改。
-**范围**：Kata 0.2.0；下游项目 `zenmpai` 的 change `photo-observation-production-hardening` 在 `strict` tier 下经过 **12 轮 review/repair** 后的实跑。
+**状态**：Open — 六条均有可复现证据（源码行号 + 实跑记录 + 实测计数）；本报告不包含实现或测试修改。
+
+**修订**：第二次提交补入 **F6**。F1 只覆盖「停滞探测器看不见」；而**同一套 revision 作用域也用在 finding 上，它关掉的是阻塞门禁本身** —— 那是这 14 轮循环之所以无界的直接机制。附录的数字口径同时修正为引用落盘记录（原为对话摘要）。
+**范围**：Kata 0.2.0；下游项目 `zenmpai` 的 change `photo-observation-production-hardening` 在 `strict` tier 下经过 **14 轮 review/repair** 后的实跑。
 **不把 Wiki / 设计稿当作代码正确性证明**：本报告每条结论都给出源码行号或盘上记录；「影响」引用实际发生的路由与服务输出，不做推断。
 
 ## 摘要
@@ -28,15 +30,18 @@ const scopedRounds = input.reviewRounds.rounds.filter((round) => roundBoundTo(ro
 
 后果不是「门禁算错」，而是**工作流缺少一个它自己声称拥有的反馈信号**。协议要求每一轮由人读一遍结论并决定是否继续；当轮次成本恒定、而唯一的自动探测器恒报「无当前轮次」时，是否收尾只能靠人自己发现「我们已经在同一个 533 行区间里转了 9 轮」。
 
+**同一套作用域还有第二个消费点，而且它更关键。** 轮次过滤只影响探测器；**finding 也被按当前 revision 过滤**（`record.boundToCurrentRevision ? record.findings : []`），于是每轮 reseal 会把**上一轮的全部 finding 移出阻塞集** —— `reviewFindings` / `blockingFindings` 归零，`navigation.ts:636/645` 的修复路由不再触发。见 **F6**：这是「没有任何东西会强制人注意到第 N 轮」的另一半，而且是更强的一半。
+
 ## 本次直接复现
 
 | ID | 严重度 | 问题 | 影响 |
 |---|---|---|---|
-| F1 | blocking | 收敛探测把轮次限定在当前 revision，而修复轮必换 revision | 探测器恒报 `no_current_rounds`，`escalating` 永不触发；12 轮里没有一次自动提示「已停滞」 |
+| F1 | blocking | 收敛探测把轮次限定在当前 revision，而修复轮必换 revision | 探测器恒报 `no_current_rounds`，`escalating` 永不触发；14 轮里没有一次自动提示「已停滞」 |
 | F2 | major | 没有承载「声明闭包」的字段 | 负向判据的闭包内泄漏与真缺陷同权，severity 无法锚定到验收项 |
 | F3 | major | claim 的 `statement` 文本参与身份摘要 | 改一句 docstring 作废该 claim 名下**全部**可执行证据，强制重新 freeze + verify |
 | F4 | major | `failingEvidence` 只数 `exitCode !== 0` | 「不许出现 X」这类负向判据无法被记录成通过，实测被迫改写成正向形式 |
 | F5 | minor | `severity` 是无定义自由枚举，且 strict 下 `major` 无条件强制修复轮 | 循环的出口条件退化为「复核者选择把一切判成 minor」 |
+| F6 | blocking | **finding 也按当前 revision 过滤**，而修复轮必换 revision | 每轮 reseal 把上一轮 finding 移出阻塞集：`blockingFindings` 归零、修复路由不再触发；14 轮后任务显示 `reviewFindings: 0` 并只需一次 `--approve` 即可进 judge |
 
 ### F1 — 收敛探测器对「修复轮必换 revision」失明
 
@@ -99,6 +104,72 @@ kata-cli status --change photo-observation-production-hardening
 
 第 1 条是唯一同时覆盖「修复轮换 revision」与「同一缺陷复发」这一般情形的；第 3 条可以与它叠加（可测性是前提）。
 
+### F6 — finding 也按当前 revision 过滤，于是每轮修复都把阻塞记录清空
+
+F1 说的是**轮次历史**被 revision 作用域过滤 —— 那只影响停滞探测器。**同一套作用域还有第二个消费点，它在阻塞门禁本身：**
+
+```ts
+// src/workflow/review-read.ts —— readBlockingProblems()
+const findings = record.boundToCurrentRevision ? record.findings : [];
+return { ..., openProblems: openProblemsOf({ findings, claims }), ... };
+```
+
+`reviewFindings` 就是 `openProblems.length`。而 `--seal` 每轮修复都产出**新 revision**（封印 = 内容摘要绑定），于是 `boundToCurrentRevision` 立刻为假、`findings` 被清空，路由规则随即不再触发：
+
+```ts
+// src/workflow/navigation.ts:636
+if (phase === 'review' && upstream.blockingFindings > 0) → /kata-build
+// src/workflow/navigation.ts:645
+if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFindings > 0) → /kata-build
+```
+
+**复现（本 change，14 轮之后）。**
+
+```
+$ kata-cli status --change photo-observation-production-hardening
+currentRevisionId   revision-5779c4c3d5a2e753
+reviewFindings      0
+blockingFindings    0
+majorFindings       0
+reviewReady         false
+verifyResult        PASS
+askUser             ["Review 尚未形成绑定当前 revision 的显式结论和审查证据；
+                      请以 /kata-review --approve --review-evidence <summary> 记录结论"]
+```
+
+也就是说这个**已经走过 14 轮、记录过 3 条 `major` 的任务，在任何一次 `--approve` 之后就能进 judge**，而状态里没有任何数字提示「它曾经反复不通过」。
+
+审计轨迹**没有丢** —— 每轮 finding 都在盘上：
+
+```
+$ cat .kata/tasks/photo-observation-production-hardening/review-history.jsonl | ...
+revision-5fdb218f07f229db   5 条
+revision-6ebac09696f16fa2   5 条
+revision-d70e642a434db387   9 条
+revision-9b775d3d36574f55   7 条   （1 major）
+revision-5f360c062b6920c8   8 条   （1 major）
+revision-494df8848779c923   6 条   （1 major）
+```
+
+（另有逐 revision 的 `change-record-revision-*.json`，本任务 19 份。）
+
+**根因：被判掉的是「驱动路由的计数」，而真正需要被看见的是「跨 revision 的复发模式」。** 两者不等价：
+
+- 「一个 verdict 不能比它的内容活得久」——这条规则本身是**对的**（内容变了，旧判决自然失效，F1 与 F6 都建立在它上面）；
+- 但把这条规则**只**用于「当前 revision 的开放问题数」，就等于宣称「修过一轮就算清零」。于是同一个缺陷族在相邻 revision 上复发多少次，都不进入任何计数器。
+
+本任务实测符合这个结构：同一类缺陷在 round 8 / 9 / 10 / 11 / 12 / 13 / 14 反复出现，其中 6 轮的 finding **全部是上一轮修复自己引入的**，而 `blockingFindings` 每一轮都归零。
+
+**为什么这不是使用错误。** `--seal` 产出新 revision 是协议核心，修复必须重新封印才能重新验证 —— 与 F1 同理。把「换主体」当成「问题已解决」，是判据把契约行为误读成了内容变更。
+
+**缺失的回归。** 一条用例：同一 change 上依次产出 revision A（一轮 review 记 2 条 `major`）与 revision B（再次 review 记同 2 条 `major`），断言状态里存在一个**跨 revision 的读数**——例如「连续 n 轮未减少的 finding 集合」——并且在该读数达到阈值时路由进入升级而不是 `repair_strict_major_findings`。
+
+**关闭条件。** 与 F1 应作为一个决定处理，因为它们是**同一作用域的两处消费点**：只修 F1 会让探测器能看见停滞（好），但只要 F6 还在，`blockingFindings` 就继续每轮归零 —— 于是「看得见」与「会阻断面」之间仍然脱节。可行方向：
+
+1. 在 F1 的跨 revision 聚合之上再暴露一个**跨 revision 的开放问题集合**（例如按 finding id 的复发计数），让 `status` 与路由都能读到它；
+2. 或者保留 per-revision 的阻塞语义（它对「内容是否仍成立」是正确的），但**额外**要求：一个 finding id 在连续 N 个 revision 上复发即计入停滞，无论它当前绑在哪个 revision 上。
+
+
 ### F2 — 没有承载「声明闭包」的字段
 
 **复现。** 下游项目的 `AGENTS.md` 有成文规则：
@@ -118,7 +189,7 @@ kata-cli status --change photo-observation-production-hardening
 
 **根因。** 一个**负向分类器** claim（「这类形状不允许」）的本质是「判据的闭包之外还有东西」。工作流要求复核者尝试证伪，于是复核者每次都能找出一条闭包外的形状；而因为它无处声明「这条落在我声明的闭包之外」，它只能表现为一个普通 finding，再由复核者**自由选择** severity。
 
-**影响实测。** 在 12 轮、62 条 finding 里，验收结论（AC-1..AC-8）**一次都没有变过** —— 12 次 `verify` 全部 PASS。后期多轮 finding 集中在同一条判据的边界措辞上，被记成 `major` 的有 5 次，每次都触发一轮必做的修复。**闭环的出口条件是「复核者选择把一切判成 minor」，而不是「验收项已达成」。**
+**影响实测。** 落盘的 40 条 finding（6 条记录，见附录口径说明）里，验收结论（AC-1..AC-8）**一次都没有变过** —— 14 次 `verify` 全部 PASS。后期多轮 finding 集中在同一条判据的边界措辞上，被记成 `major` 的有 5 次，每次都触发一轮必做的修复。**闭环的出口条件是「复核者选择把一切判成 minor」，而不是「验收项已达成」。**
 
 **缺失的回归。** 一条用例：claim 声明了闭包、finding 标记落于闭包内、且无 blocker 时，路由**不得**进入强制修复轮。
 
@@ -132,7 +203,7 @@ kata-cli status --change photo-observation-production-hardening
 
 ### F3 — claim 的 `statement` 文本参与身份摘要
 
-**复现。** 12 轮里我执行 `kata-cli ledger claim restate` **8 次**（每次为改一句边界措辞）。每次 restate 之后：
+**复现。** 下游在 14 轮里执行 `kata-cli ledger claim restate` 十余次，只为改一句边界措辞。每次 restate 之后：
 
 ```bash
 kata-cli ledger freeze --change <id>        # 重新冻结 subject
@@ -144,7 +215,7 @@ kata-cli orient → handoff create → acknowledge  # 重新拿 receipt
 
 **根因。** claim 身份把**散文**与**可执行证据**摘要在一起。而 claimed 的可执行证据（falsifier 的 command / mutation / expect）在这些措辞改动里**一次都没变过**。
 
-**影响。** 「改一句 docstring」的边际成本 = 一次完整 freeze + 7 条 falsifier 重跑 + 一套 handoff 循环 + 一次 seal。这一项是**时间**成本的主因：12 轮里每轮都要付一次。
+**影响。** 「改一句 docstring」的边际成本 = 一次完整 freeze + 7 条 falsifier 重跑 + 一套 handoff 循环 + 一次 seal。这一项是**时间**成本的主因：14 轮里每轮都要付一次。
 
 **缺失的回归。** 一条用例：只改 `statement` 文本（不改 command / mutation / expect）之后，`evidence verify` 的既有 verdict 仍有效或至少**只需重跑受影响的 claim**。
 
@@ -200,7 +271,7 @@ if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFinding
 
 **根因。** 没有任何机制把 severity 锚定到**验收项是否因此不成立**。一条「守卫的边界措辞与实现闭包不符」的 finding 与一条「生产行为错误」的 finding，都可以被记成 `major`，都强制一轮修复。
 
-**影响。** 这是 F1 之外使循环**无上界**的另一半：即使探测器能看见停滞，只要复核者继续把闭包类 finding 判成 `major`，路由就继续要求修复。两者叠加的结果就是本 change 的 12 轮。
+**影响。** 这是 F1 之外使循环**无上界**的另一半：即使探测器能看见停滞，只要复核者继续把闭包类 finding 判成 `major`，路由就继续要求修复。两者叠加的结果就是本 change 的 14 轮。
 
 **缺失的回归。** 一条用例：`major` finding 若指向**已声明闭包内**的形状，路由不进入强制修复。
 
@@ -208,7 +279,7 @@ if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFinding
 
 ## 建议
 
-**先修 F1（blocking）+ F4（一行）。** F1 是「声明了收敛探测却不工作」，属于规则与机制不一致；F4 是纯粹的计数错误且修复成本最低。两者都不改变协议语义。
+**先修 F1 + F6（均为 blocking）+ F4（一行）。** F1 与 F6 是**同一 revision 作用域的两处消费点**，必须一并处理，否则只修好「看得见」而没修好「会阻断」；两者都属于「声明了机制却不工作」这一类。F4 是纯粹的计数错误且修复成本最低。三者都不改变协议语义。
 
 **F2 与 F5 应作为一个决定一并处理**，不要拆开：它们是同一个缺失概念的两面（severity 无法锚定，因为闭包无处声明）。建议先决定「闭包声明放在 claim 上还是在规则 docstring 上」，再动 schema —— 后者会影响下游项目如何写守卫。
 
@@ -220,20 +291,25 @@ if (phase === 'review' && blockingSeverities.length > 1 && upstream.majorFinding
 
 | 项 | 值 |
 |---|---|
-| review/repair 轮次 | 12 |
-| 累计 finding | 62（最高级别：`major` 出现在 round 7/9/10/11） |
-| `verify` 结果 | **12 次全部 PASS**，AC-1..AC-8 从未变过 |
-| `review-rounds.jsonl` 记录 | 10 条，9 条 `blockingCount: null` |
-| `status` 收敛读数 | `{"kind":"no_current_rounds"}`（12 轮之后） |
+| review/repair 轮次 | 14 |
+| `verify` 结果 | **每次全部 PASS**，AC-1..AC-8 从未变过 |
+| `review-rounds.jsonl` 记录 | **10 条**，9 条 `blockingCount: null` |
+| `review-history.jsonl` 记录 | **6 条 / 40 条 finding**（含 3 条 `major`） |
+| `change-record-revision-*.json` | 19 份（逐 revision 留档） |
+| `status` 收敛读数 | `{"kind":"no_current_rounds"}`；`reviewFindings: 0`（14 轮之后） |
+| 累计 finding（落盘口径） | 40 条（见下「口径说明」） |
 | 被争的判据所在文件 | `tests/architecture/test_photo_observation_boundaries.py`，1521 行（其中约 533 行服务于被争的三处判据） |
 | 同期交付物 | 生产代码 3,633 行 + 生产测试 4,806 行 |
 
-也就是说：**约 6% 的变更吃掉了 12 轮复核，而验收契约自始至终没有被推翻过一次。** 这个比例本身就是 F1 缺失收敛信号所掩盖的东西。
+也就是说：**约 6% 的变更吃掉了 14 轮复核，而验收契约自始至终没有被推翻过一次。** 这个比例本身就是 F1 与 F6 共同掩盖的东西。
+
+**口径说明（第二次提交修正）。** 本报告初版写「12 轮 / 62 条」，那个数字取自下游会话的**对话摘要**，不是盘上记录 —— 与本报告自身「每条结论都给可复现证据」的标准不符，故更正为落盘口径：`review-rounds.jsonl` 10 条轮次、`review-history.jsonl` 6 条记录共 40 条 finding。差额来自**下游的操作疏漏**：第 4/5/6/7/8/10/11 轮的 finding 只在对话里报告过，**没有通过 `review --result-file` 落盘**，因此不进 `review-history.jsonl`。这不影响 F1/F6 的结论（两者的证据是「作用域把已落盘的记录也过滤掉了」，不是 finding 总数），但**它本身是 F6 的一个注脚**：一个只按当前 revision 计数的门禁，连「这个任务一共被记过多少条 finding」都不会让人看见。
 
 ## 边界：本报告不主张的
 
-- 不主张 kata 造成了这 12 轮。产生它们的是下游把「对所有违规形状都必须变红」写成了验收项 —— 一个静态分析无法满足的无界全称；而项目自己的 `AGENTS.md` 已写明正解（声明边界、收窄可判定域），执行者没有照做。**kata 的缺陷是没能让这件事被看见，不是让它发生。**
+- 不主张 kata 造成了这 14 轮。产生它们的是下游把「对所有违规形状都必须变红」写成了验收项 —— 一个静态分析无法满足的无界全称；而项目自己的 `AGENTS.md` 已写明正解（声明边界、收窄可判定域），执行者没有照做。**kata 的缺陷是没能让这件事被看见，不是让它发生。**
 - 不主张 severity 应该由算法自动判定。F2/F5 的改法是要求 severity **带上它的依据**（闭包内/外，或点名一条因此不成立的验收项），不是替复核者做判断。
+- 不主张把 `boundToCurrentRevision` 去掉。那条规则对「判决是否仍成立」是正确的；F6 要的是**在它之外另有一个跨 revision 的复发读数**，不是取消它。
 - 未验证：`review-rounds.jsonl` 里 9 条 `blockingCount: null` 的**写入路径**（是提交结论时未携带计数，还是某条分支漏写）—— 这决定了 F1 关闭条件第 3 条是「补写」还是「修读取」。本报告只证明这些记录**不携带可测计数**且因此无法参与 `escalating` 判定。
 
 ## 与本仓已有任务的关系（供维护者定位）
