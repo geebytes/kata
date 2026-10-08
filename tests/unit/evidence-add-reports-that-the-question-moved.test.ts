@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,11 +9,14 @@ import { writeTaskRecord } from '../helpers/task-fixture.js';
 /**
  * **The drift is reported where it is created — by every writer that can create it.**
  *
- * Four commands move the declared question: `ledger evidence add` (it writes the submission's claims), `ledger claim add`,
- * `ledger claim restate` and `ledger plan` (the plan is half of the question). Learning about the move at `decide` — after the
- * reading has been taken, stamped and ignored — is learning it too late, so each of them reports it. The first version wired
- * only `evidence add`; an independent round measured the other three as silent, which falsified this criterion's own
- * universal clause.
+ * **Five** commands move the declared question: `ledger evidence add` (it writes the submission's claims), `ledger claim add`,
+ * `ledger claim restate`, `ledger plan` (the plan is half of the question) and `ledger policy --set-file` (a floor change
+ * writes `policy-floor:` claims). Learning about the move at `decide` — after the reading has been taken, stamped and ignored
+ * — is learning it too late, so each of them reports it.
+ *
+ * The first version wired one writer and round 1 measured the others; the second wired four and round 2 measured
+ * `policy --set-file`. That is why the report is no longer emitted at the writers at all: the dispatcher compares the
+ * declared revision before and after the command, so *whether* it moved is answered once and no writer can forget.
  *
  * The controls matter as much as the assertions: a submission that only fills in `evidenceIds` does **not** move the question
  * (`evidenceIds` is bookkeeping about the answer, not part of it), and a claim added while nothing is frozen cannot move a
@@ -150,7 +153,7 @@ describe('evidence add reports a question it moved', () => {
         const declared = (await readLedger(root, changeId)).subjectAsDeclared?.revision ?? '';
         expect(declared).not.toBe(frozen);
         expect(result.questionMoved).toMatchObject({ frozen, declared });
-        expect(String(result.questionMovedNote)).toContain('claim just added');
+        expect(String(result.questionMovedNote)).toContain('this command moved the question');
     });
 
     it('reports it from `claim restate`, where the content never moves at all', async () => {
@@ -176,6 +179,40 @@ describe('evidence add reports a question it moved', () => {
         const declared = (await readLedger(root, changeId)).subjectAsDeclared?.revision ?? '';
         expect(declared).not.toBe(frozen);
         expect(result.questionMoved).toMatchObject({ frozen, declared });
+    });
+
+    it('reports it from `policy --set-file`, which writes floor claims nobody asked for by name', async () => {
+        // The fifth writer, found by round 3 after the other four were wired: a floor change writes `policy-floor:` claims
+        // through the same `appendClaim` every other writer uses, and the claims are not in the file the operator edited.
+        const frozen = (await readLedger(root, changeId)).subject?.revision ?? '';
+        const policyPath = join(root, '.kata', 'tasks', changeId, 'review', 'policy.json');
+        const policy = JSON.parse(await readFile(policyPath, 'utf8')) as { riskFloors?: Record<string, unknown> };
+        policy.riskFloors = { 'src/quality/**': { floor: 'high', riskClasses: ['consistency'] } };
+        const file = await submit('policy', policy);
+
+        const result = await ledger(['policy', '--set-file', file]);
+
+        expect(result.ok).toBe(true);
+        expect((result.floorClaims ?? []) as string[]).toContain('policy-floor:src/quality/**');
+        const declared = (await readLedger(root, changeId)).subjectAsDeclared?.revision ?? '';
+        expect(declared).not.toBe(frozen);
+        expect(result.questionMoved).toMatchObject({ frozen, declared });
+    });
+
+    it('says nothing when the command moved nothing', async () => {
+        // **The other half of the property, and the reason the report is computed from the effect.** `claim waive` writes
+        // the ledger and moves no question, and a pure read on an already-stale ledger must not claim it moved anything —
+        // otherwise the report becomes noise, and a report that fires always is one nobody reads.
+        await ledger(['claim', 'add', '--id', 'C2', '--statement', 'the second question holds', '--risk-class', 'boundary', '--severity', 'major']);
+        const stale = (await ledger(['status'])).subject;
+        expect(stale).toBeTruthy();
+
+        const waived = await ledger(['claim', 'waive', 'C2', '--reason', 'a fixture waiver']);
+        expect(waived.ok).toBe(true);
+        expect(waived.questionMoved).toBeUndefined();
+        // A pure read, on a ledger that is already stale: it did not move anything.
+        const read = await ledger(['status', '--cost']);
+        expect(read.questionMoved).toBeUndefined();
     });
 
     it('says nothing from `claim add` while nothing is frozen', async () => {

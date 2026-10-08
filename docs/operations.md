@@ -311,11 +311,13 @@ kata-cli ledger status   --change <id> --cost                 # per claim, plus 
   the paths that moved.
 - **A reading is refused when the question moved.** `ledger evidence verify` and a bound `ledger challenge check` stamp their
   reading with the subject **as frozen**, while the discovery projection compares the subject **as declared now** — so when a
-  claim is declared after the freeze (or a claim is restated, or the plan changes) a reading can only ever be recorded, ignored
-  and re-taken into the same ignored value. Both commands refuse in that state, name the two revisions and name the remedy
-  that clears it: `ledger freeze` (which re-derives the subject from the declaration), then the same command again. The write
-  that creates the drift — `ledger evidence add`, which writes a submission's claims — reports it in the same breath, so the
-  operator learns it where it happens rather than from a `decide` that cannot be satisfied.
+  claim is declared after the freeze (or a claim is restated, or the plan changes, or a floor change writes its
+  `policy-floor:` claim) a reading can only ever be recorded, ignored and re-taken into the same ignored value. Both commands
+  refuse in that state, name the two revisions and name the remedy that clears it: `ledger freeze` (which re-derives the
+  subject from the declaration), then the same command again. **Any** ledger command that moves the question reports it in the
+  same breath — the report is computed from the declared revision before and after the command, not at the writers, because
+  there are five of them and two review rounds each found the one a per-site wiring had missed. The operator therefore learns
+  it where it happens rather than from a `decide` that cannot be satisfied.
 - **An unreadable ledger is not an absent one.** Something written and unparseable decides nothing; a ledger nobody wrote
   never claimed to. The two are reported apart.
 - **A non-pass routes to the deficits.** The ladder names `satisfy_ledger_deficits`, and the kernel's own reason codes say

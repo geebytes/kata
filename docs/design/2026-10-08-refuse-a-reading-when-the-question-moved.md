@@ -137,6 +137,34 @@ claims to close. Each is repaired here, and each repair has its own falsifier (r
   Recorded, not repaired: probes are advisory history the request may withhold and no gate reads them. It becomes a real
   instance the day a probe answer becomes a gate input.
 
+## The third independent round: the report moves to one place
+
+Round 3 (`adversarial`, `revision-0319ec82de95205d`) returned **fail** on the same class, one layer further out, and it was
+right: **`ledger policy --set-file` is a fifth writer.** A floor change writes `policy-floor:<pattern>` claims through the
+same `appendClaim` every other writer uses, so it moves the declared question — and it reported nothing. The round proved it
+with an executable reproduction (`rev:5a81669e28cccad7` → `rev:d3f22d8fca430097`, no `questionMoved`), enumerated every
+command that can move the question, and confirmed the four that were wired. It also found the prose that still called
+`ledger evidence add` "the write that creates the drift", and the test comment claiming there are four writers.
+
+**The repair is structural, not a sixth call site.** Whether a command moved the question is a property of the command's
+*effect*, so it is now answered once: `runLedgerCommand` reads `declaredSubjectRevision` before the dispatch and after it,
+and attaches the report to whatever the command emitted (the family's output goes through one door, which buffers while a
+command runs). Consequences, each of them a case in the AC-4 selector:
+
+- a writer added later cannot forget to report, because there is nothing to remember;
+- a refusal cannot hide a move the command already made (round 1's R1-F2), because the report is attached to every payload;
+- a pure read on an already-stale ledger reports **nothing** — it did not move anything — which is what keeps the report from
+  becoming noise, and a `claim waive` (which writes the ledger and moves no question) is the control for it;
+- the per-site spreads are gone, so there is no second derivation of the same report to drift.
+
+**Falsifier for the class:** disable the comparison in the dispatcher and every writer case in the AC-4 selector reddens at
+once. **Falsifier for the prose:** restore the old paragraph and the AC-1 selector's documentation guard reddens.
+
+**What round 3 also confirmed:** E1–E9 all `supported`; every declared selector and every case inside them reddens under a
+single-point mutation (it reported the one spread that was reachable but undeclared, which this revision removes); R1-F1's
+repair still holds; and the ledger itself decided `pass` while the review decided `fail` — because the fifth writer's drift is
+invisible to the ledger's own claims, which is exactly why an independent round is the instrument and not the ledger.
+
 ## The second independent round, and what it changed
 
 Round 2 (`adversarial`, `revision-a617472f79438117`) returned **fail**, and its verdict is the one this change had been
@@ -147,10 +175,9 @@ earning: *the R1-F1 repair could not be falsified, but the R1-F2 and R1-F3 repai
   which falsifies this change's own C4, whose first clause is *every* surface. Measured by the round: after a freeze,
   `claim add --id C2` moved the subject from `rev:5a81669e28cccad7` to `rev:a26738391e1e586d` and printed only
   `[ok, command, claim]`; `claim restate` likewise. **Repair:** one derivation, five call sites, and the note now names its
-  cause (`the claim just added` / `the restated claim` / `the plan just stored` / `the claims just written`) because more than
-  one writer can produce the move. **Guards:** three new cases in the AC-4 selector, one per writer, plus a control that a
-  claim added while nothing is frozen reports nothing. **Falsifiers:** removing the spread from any one of the three reddens
-  exactly that case (three mutations, run).
+  cause. **Guards:** three new cases in the AC-4 selector, one per writer, plus a control that a claim added while nothing is
+  frozen reports nothing. **Falsifiers:** removing the spread from any one of the three reddens exactly that case (three
+  mutations, run).
 - **R2-F1 (minor) — the class was still open in prose.** The flags table and the example block had been corrected to
   `--paths`, and the paragraph between them still said `--path`, repeated; `ledger freeze` reads only `--paths`, so following
   the prose silently re-freezes the declared paths. **Repair:** the paragraph now names `--paths a,b`. **Guard:** the AC-1
