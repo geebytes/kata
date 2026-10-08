@@ -1549,7 +1549,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // not move when a claim is restated. Measured by an independent round: both states repeated the refusal
                     // verbatim after the printed remedy was run.
                     error: `A review result is already recorded for this revision, for this request. ${
-                        ledgerNow?.subject?.claimsDigest === undefined
+                        ledgerNow !== undefined && ledgerNow.subjectAsDeclared === null
+                            ? 'The ledger holds a record that cannot be read (its claims or its plan), so nothing can be derived from it and every command is refused until it is readable: repair or replace that file explicitly, then re-freeze.'
+                            : ledgerNow?.subject?.claimsDigest === undefined
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'
                                 ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review (which supersedes the old record) and record the new round — the record path archives it when it replaces it.'

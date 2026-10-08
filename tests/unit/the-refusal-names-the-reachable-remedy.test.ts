@@ -107,6 +107,24 @@ async function writeResultFile(): Promise<string> {
 }
 
 describe('the refusal names a reachable remedy', () => {
+    it('names repairing the record when the ledger cannot be read at all', async () => {
+        // The fail-closed state this change added: an unreadable claims.json means nothing can be derived, and every command
+        // the other states name is refused by the malformed gate — measured by an independent round, which found the
+        // refusal still printing "restate a claim … then re-freeze" in exactly this state.
+        const derived = await freezeWithQuestion();
+        await recordedRound(derived);
+        await writeFile(join(taskDir(root, taskId), 'review', 'claims.json'), '{ not json');
+        // No declared coverage: with an unreadable claim set the coverage check refuses first, and that refusal is its own
+        // fact (it names the file). This case is about the recording refusal, so it declares nothing.
+        const path = join(root, 'result-no-coverage.json');
+        await writeFile(path, `${JSON.stringify({ taskId, status: 'pending', findings: RESULT.findings }, null, 2)}\n`);
+
+        const recorded = await runCommand('review', taskId, root, { reviewResultFile: 'result-no-coverage.json' });
+        expect(recorded.success).toBe(false);
+        expect(String(recorded.error)).toContain('cannot be read');
+        expect(String(recorded.error)).toContain('repair or replace that file');
+    });
+
     it('names the re-freeze when the subject never hashed the question', async () => {
         // The state an independent round measured as unremedied: a subject written before the question was part of the
         // identity, where restating a claim cannot move anything. Frozen the old way on purpose — this is the legacy shape.
