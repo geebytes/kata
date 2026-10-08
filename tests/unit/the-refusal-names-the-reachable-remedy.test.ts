@@ -119,7 +119,11 @@ describe('the refusal names a reachable remedy', () => {
         const recorded = await runCommand('review', taskId, root, { reviewResultFile: 'result-no-coverage-2.json' });
         expect(recorded.success).toBe(false);
         expect(String(recorded.error)).toContain('challenges.json');
-        expect(String(recorded.error)).not.toContain('restate a claim');
+        // It names the set, and it names the whole chain: repairing the file does not move an unchanged question, so the
+        // round is released only after the question moves (measured by an independent round, which ran exactly the printed
+        // steps and was refused again).
+        expect(String(recorded.error)).toContain('cannot be read (challenges.json)');
+        expect(String(recorded.error)).toContain('restate a claim');
     });
 
     it('names repairing the record when the ledger cannot be read at all', async () => {

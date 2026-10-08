@@ -1558,7 +1558,10 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         ledgerNow === undefined
                             ? 'The ledger cannot be read at all, so nothing can be derived from it: repair or replace the unreadable record, then re-freeze.'
                             : (ledgerNow as { malformedFiles?: string[] }).malformedFiles?.length
-                                ? `The ledger holds a record that cannot be read (${((ledgerNow as { malformedFiles?: string[] }).malformedFiles ?? []).join(', ')}), so no ledger verb will proceed until it is readable: repair or replace that file explicitly, then re-freeze.`
+                                ? (() => {
+                                    const files = (ledgerNow as { malformedFiles?: string[] }).malformedFiles ?? [];
+                                    return `The ledger holds ${files.length === 1 ? 'a record' : 'records'} that cannot be read (${files.join(', ')}), so no ledger verb will proceed until ${files.length === 1 ? 'it is' : 'they are'} readable: repair or replace ${files.length === 1 ? 'that file' : 'those files'} explicitly, then re-freeze — and if the question itself has not changed, the re-freeze alone will not release this round: restate a claim (\`kata-cli ledger claim restate\`) or change the plan first. If repairing them does not help, the directory holding the ledger is the unreadable thing — check that it exists and is a directory.`;
+                                })()
                             : ledgerNow?.subject?.claimsDigest === undefined
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'
