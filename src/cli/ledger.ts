@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe } from '../store/ledger.js';
+import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -512,12 +512,24 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 evidence: read.submission.evidence.length,
                 diversity: argValue(argv, '--diversity') ?? 'none',
             });
+            // **The drift is reported where it is created.** The claims in a submission are written as claims, so a
+            // submission that declares a claim the freeze did not know about moves the declared question — and from then on
+            // every reading is refused until the subject is re-frozen. Saying so here is the difference between an operator
+            // learning it now and learning it from a `decide` that cannot be satisfied.
+            const question = frozenQuestionState(await readLedger(options.root, changeId));
             outputResult({
                 ok: true,
                 command: 'ledger evidence add',
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
+                ...(question?.moved === true
+                    ? {
+                        questionMoved: { frozen: question.frozen, declared: question.declared },
+                        remedy: question.remedy,
+                        questionMovedNote: 'the claims just written moved the question this ledger declares, so readings are refused until the subject is re-frozen against the declaration',
+                    }
+                    : {}),
             });
             return;
         }
@@ -541,6 +553,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         if (action === 'verify') {
             if (!ledger.subject) {
                 fail({ command: 'ledger evidence verify', error: 'the subject is not frozen: run `ledger freeze` first' });
+                return;
+            }
+            // **A reading is stamped with the frozen question, so a moved question makes every reading worthless.** The
+            // verdicts this command writes carry `ledger.subject`'s revision while the discovery projection compares the
+            // declared one, so in this state the reading is recorded, ignored, and re-running stamps the same ignored value
+            // again — the fixed point measured end to end. Refusing names the state and the one remedy that clears it.
+            const moved = questionMovedRefusal(ledger);
+            if (moved !== null) {
+                fail({ command: 'ledger evidence verify', error: moved, questionMoved: frozenQuestionState(ledger) });
                 return;
             }
             const only = argValue(argv, '--id');
@@ -792,6 +813,14 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         if (action === 'check') {
             if (!ledger.subject) {
                 fail({ command: 'ledger challenge check', error: 'the subject is not frozen: run `ledger freeze` first' });
+                return;
+            }
+            // **The same state, the same remedy, the same refusal.** This door stamps `ledger.subject` exactly as `evidence
+            // verify` does, so when the question has moved it would write a resolution the projection cannot credit — and the
+            // deficit's own instruction would send the operator back here, to a command that cannot change the state.
+            const movedHere = questionMovedRefusal(ledger);
+            if (movedHere !== null) {
+                fail({ command: 'ledger challenge check', error: movedHere, questionMoved: frozenQuestionState(ledger) });
                 return;
             }
             const only = argValue(argv, '--id');

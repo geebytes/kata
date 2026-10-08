@@ -972,6 +972,63 @@ export function declaredSubjectRevision(ledger: { subjectAsDeclared?: { revision
 }
 
 /**
+ * **The state a reading is taken in: is the frozen question still the declared one?**
+ *
+ * One derivation, because the two halves of this fact were being computed by two different parts of the program and they
+ * disagreed. `evidence verify` and a bound `challenge check` build their context from `ledger.subject` — the subject **as
+ * frozen** — so every verdict and every resolution is stamped with the frozen revision; the discovery projection compares
+ * against the subject **as declared now** (`subjectAsDeclared`). When a claim is declared after the freeze the two differ,
+ * and then the write path can only ever produce a reading bound to a question the decision does not ask: the reading is
+ * recorded, ignored, and re-running it stamps the same ignored value again. Measured end to end on this repository —
+ * `claim add C1 → freeze → evidence add (declares C2) → verify → challenge check ×2 → decide` reported
+ * `discovery_unverified` forever, and the deficit's own instruction ("re-run the recorded challenge") could not change it.
+ *
+ * `null` means there is nothing to compare: no frozen subject (nothing has been frozen yet) or no derivable declared one
+ * (an unreadable claim set or plan, which every verb already refuses through `malformedFiles`). A legacy subject that never
+ * hashed a question keeps the fallback where the declared subject *is* the frozen one, so those ledgers never read as moved.
+ */
+export type FrozenQuestionState = {
+    /** The question the subject was frozen against. */
+    frozen: string;
+    /** The question the ledger declares now. */
+    declared: string;
+    moved: boolean;
+    /**
+     * Present only when `moved`: the commands that clear the state, in the order they have to run. One text, so every
+     * refusal and every report names the same remedy — the defect this change repairs was a refusal naming a command that
+     * could not change anything.
+     */
+    remedy?: string;
+};
+
+export function frozenQuestionState(ledger: {
+    changeId: string;
+    subject?: { revision: string } | null;
+    subjectAsDeclared?: { revision: string } | null;
+}): FrozenQuestionState | null {
+    const frozen = ledger.subject?.revision ?? null;
+    const declared = ledger.subjectAsDeclared?.revision ?? null;
+    if (frozen === null || declared === null) return null;
+    if (frozen === declared) return { frozen, declared, moved: false };
+    return {
+        frozen,
+        declared,
+        moved: true,
+        remedy: `kata-cli ledger freeze --change ${ledger.changeId} --path <p>… (re-freeze against the question declared now, which also re-derives the content digests), then run the command you were refused again`,
+    };
+}
+
+/**
+ * **The refusal a reading gets when the question has moved, or `null` when it may be taken.** One text for `evidence
+ * verify` and for a bound `challenge check`, because the state and the remedy are the same fact at both doors.
+ */
+export function questionMovedRefusal(ledger: { changeId: string; subject?: { revision: string } | null; subjectAsDeclared?: { revision: string } | null }): string | null {
+    const state = frozenQuestionState(ledger);
+    if (state === null || !state.moved) return null;
+    return `the question this ledger declares now (${state.declared}) is not the one the subject was frozen against (${state.frozen}), so a reading taken here would be stamped with a question the decision does not ask and would never be credited. Nothing was run. Re-freeze the subject against the declaration, then take the reading: ${state.remedy ?? ''}`;
+}
+
+/**
  * **Does a record answer the question the task is asking now?** One derivation, four answers.
  *
  * This shape was written six times by hand — `record.subjectRevision && current && record.subjectRevision !== current` — and
