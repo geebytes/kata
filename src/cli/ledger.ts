@@ -94,8 +94,17 @@ async function currentSubject(input: LedgerCommandOptions): Promise<
     if (paths.length === 0) {
         return { ok: false, why: 'no paths are declared on this task, so there is nothing to freeze', unreadable: [] };
     }
-    const ledgerForFreeze = await readLedger(input.root, input.changeId);
-    const frozen = await freezeSubject({ root: input.root, paths, ...(claimsForContentComparison(ledgerForFreeze.subject, ledgerForFreeze.claims) === undefined ? {} : { claims: claimsForContentComparison(ledgerForFreeze.subject, ledgerForFreeze.claims) }) });
+    // **A freeze always hashes the question.** The earlier version asked the stored subject whether it had hashed one, and
+    // passed the claims only then — a one-way ratchet: no ledger ever acquired the field, so the release this change exists
+    // for was unreachable in production (measured by an independent round: 25/25 subject.json in the repo had no
+    // `claimsDigest`, including this change's own, and `subjectAsDeclared === subject` held always). Writing is the place
+    // that creates the fact; only *comparisons* have to accommodate subjects that predate it.
+    // **A freeze hashes the question when there is one to hash.** An empty claim set is not a question: hashing it would
+    // make the subject move the moment the first claim arrives, which the reporting surface would read as a reopening
+    // nobody performed. So a freeze before any claim keeps the older semantics — the subject speaks for the content — and
+    // the next freeze, which the flow performs once claims exist, carries the question.
+    const claimsAtFreeze = (await readLedger(input.root, input.changeId)).claims;
+    const frozen = await freezeSubject({ root: input.root, paths, ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze }) });
     return frozen.ok ? { ok: true, subject: frozen.subject } : { ok: false, why: frozen.error, unreadable: frozen.unreadable };
 }
 
@@ -179,8 +188,8 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             fail({ command: 'ledger freeze', error: 'no paths to freeze: declare ownedPaths on the task or pass --paths' });
             return;
         }
-        const ledgerForFreeze2 = await readLedger(options.root, options.changeId);
-        const frozen = await freezeSubject({ root: options.root, paths, ...(claimsForContentComparison(ledgerForFreeze2.subject, ledgerForFreeze2.claims) === undefined ? {} : { claims: claimsForContentComparison(ledgerForFreeze2.subject, ledgerForFreeze2.claims) }) });
+        const claimsAtFreeze = (await readLedger(options.root, options.changeId)).claims;
+        const frozen = await freezeSubject({ root: options.root, paths, ...(claimsAtFreeze.length === 0 ? {} : { claims: claimsAtFreeze }) });
         if (!frozen.ok) {
             fail({ command: 'ledger freeze', error: frozen.error, unreadable: frozen.unreadable });
             return;
