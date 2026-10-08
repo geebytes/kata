@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { claimsForContentComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe } from '../store/ledger.js';
+import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';

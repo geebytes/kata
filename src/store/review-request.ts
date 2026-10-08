@@ -22,7 +22,7 @@
  * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
-import { claimsForContentComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
+import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
@@ -103,9 +103,7 @@ export async function buildReviewRequest(input: {
     const current = await freezeSubject({
         root: input.root,
         paths: await declaredPaths(input.root, input.changeId),
-        ...(claimsForContentComparison(ledgerForDrift.subject, ledgerForDrift.claims) === undefined
-            ? {}
-            : { claims: claimsForContentComparison(ledgerForDrift.subject, ledgerForDrift.claims) }),
+        ...questionForComparison(ledgerForDrift.subject, ledgerForDrift.claims, await planDigestOf(input.root, input.changeId)),
     });
     if (!current.ok) {
         return { ok: false, why: `the declared paths cannot be read, so a request cannot speak for the content: ${current.error}` };

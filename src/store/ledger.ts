@@ -960,6 +960,31 @@ export function declaredSubjectRevision(ledger: { subjectAsDeclared?: { revision
     return ledger.subjectAsDeclared?.revision ?? ledger.subject?.revision ?? null;
 }
 
+/**
+ * The question to re-derive with, for a comparison against a stored subject.
+ *
+ * **A comparison must derive the same material the freeze wrote**, or it reports drift that never happened: the freeze now
+ * hashes the claims *and* the plan, so a comparison that passed only the claims declared "the content has moved" for a
+ * subject that had not moved at all (measured while repairing the round-3 finding). A subject that never hashed a question
+ * keeps being compared on content alone, which is what every ledger frozen before the field existed has to fall back to.
+ */
+export function questionForComparison(
+    subject: { claimsDigest?: string } | null | undefined,
+    claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
+    planDigest: string | undefined,
+): { claims?: readonly { id: string; statement: string; dependsOn?: readonly string[] }[]; planDigest?: string } {
+    if (subject?.claimsDigest === undefined) return {};
+    return { claims, ...(planDigest === undefined ? {} : { planDigest }) };
+}
+
+/**
+ * The plan's digest, derived one way so the write path and the read path cannot disagree.
+ */
+export async function planDigestOf(root: string, changeId: string): Promise<string | undefined> {
+    const plan = await readPlanState(root, changeId);
+    return plan.kind === 'usable' ? createHash('sha256').update(JSON.stringify(plan.value)).digest('hex').slice(0, 16) : undefined;
+}
+
 export function claimsForContentComparison(
     subject: { claimsDigest?: string } | null | undefined,
     claims: readonly { id: string; statement: string; dependsOn?: readonly string[] }[],
@@ -1634,7 +1659,7 @@ export async function ledgerDrift(root: string, changeId: string): Promise<{
     // report "unchanged" about a directory that grew. A subject frozen before `declaredPaths` existed falls back to its
     // digest keys — the best surface that revision recorded — and that fallback is named rather than silent.
     const declared = ledger.subject.declaredPaths ?? Object.keys(ledger.subject.pathDigests);
-    const frozen = await freezeSubject({ root, paths: declared, ...(claimsForContentComparison(ledger.subject, ledger.claims) === undefined ? {} : { claims: ledger.claims }) });
+    const frozen = await freezeSubject({ root, paths: declared, ...questionForComparison(ledger.subject, ledger.claims, await planDigestOf(root, changeId)) });
     if (!frozen.ok) {
         return { changed: [], added: [], removed: [], unreadable: frozen.unreadable, subjectRevision: ledger.subject.revision };
     }
