@@ -60,7 +60,7 @@ describe('delta surface follows the change', () => {
         const first = await runCommand('build', 'delta-task', root, { seal: true, checks: [{ id: 'typecheck', kind: 'typecheck', name: 'typecheck', command: 'true', expectExitCode: 0 }] });
         if (!first.success) throw new Error(`seal refused: ${first.error} :: ${JSON.stringify(first.diagnostics)}`);
         expect(first.success).toBe(true);
-        const base = await readTaskRevision(root, 'delta-task', first.diagnostics?.revisionId as string);
+        const base = (await readTaskRevision(root, 'delta-task', first.diagnostics?.revisionId as string))!;
         expect(base).toBeTruthy();
 
         // Now change a file outside ownership, and ask for the surface against the base.
@@ -120,7 +120,7 @@ describe('delta surface follows the change', () => {
         });
         await runCommand('design', 'added-task', root);
         const first = await runCommand('build', 'added-task', root, { seal: true, checks: [{ id: 'typecheck', kind: 'typecheck', name: 'typecheck', command: 'true', expectExitCode: 0 }] });
-        const base = await readTaskRevision(root, 'added-task', first.diagnostics?.revisionId as string);
+        const base = (await readTaskRevision(root, 'added-task', first.diagnostics?.revisionId as string))!;
         expect(base).toBeTruthy();
 
         // A new file, committed - so `git status` reports nothing and the base has no digest for it.

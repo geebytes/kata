@@ -35,7 +35,10 @@ export async function freshPassingTestEvidence(
     for (const envelope of evidence) {
         if (envelope.kind !== 'test' || envelope.exitCode !== 0) continue;
         if (envelope.revisionId) {
+            // An evidence envelope naming a revision that is not stored cannot be the archive's evidence; damage in the
+            // store is reported by the read rather than folded into this skip.
             const revision = await readTaskRevision(root, taskId, envelope.revisionId);
+            if (revision === null) continue;
             // **The one predicate every consumer asks**, rather than `!== 'current'` spelled out here: a second spelling is
             // what let `orchestrator.ts` keep the two-state question and answer `declaration-moved` differently (rba7-f2).
             // `declaration-moved` is not current: evidence bound to a revision whose surface the task has outgrown cannot be

@@ -126,7 +126,9 @@ export async function runRevisionCommand(argv: string[]): Promise<Record<string,
         };
     }
 
-    const base = await readTaskRevision(root, taskId, since).catch(() => null);
+    // **Absence is `null` inside the read; damage is not.** The catch-all here turned a corrupt base revision into "no
+    // base", which silently changed what the delta is measured against.
+    const base = await readTaskRevision(root, taskId, since);
     const surface = base
         ? await changeSurface(root, base, revision)
         : revision.pathDigests

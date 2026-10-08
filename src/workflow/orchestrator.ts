@@ -1265,7 +1265,10 @@ async function cmdVerify(
     const evidence = await readTaskEvidence(root, taskId, options);
     const scopeHashes = await currentScopeHashes(root, evidence);
     const revisionId = revisionIdForEvidence(evidence);
-    const revision = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
+    // `undefined` keeps its meaning ("the evidence names no revision"); a revision that is not stored reads as absent,
+    // and damage is reported by the read.
+    const stored = revisionId ? await readTaskRevision(root, taskId, revisionId) : undefined;
+    const revision = stored ?? undefined;
     // With the task id, so a revision whose declaration the task has since outgrown reads as `declaration-moved` rather than
     // `current` — the status payload is where an operator learns which of the two happened.
     const status = revision ? await revisionStatus(root, revision, taskId) : undefined;

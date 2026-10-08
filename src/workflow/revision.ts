@@ -107,7 +107,10 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   // commit, leaving `kind: 'committed'` beside a pointer naming different content (measured). Taking the lock here makes
   // the two writers mutually exclusive, so the commit observes either the old pointer or the new one, never both.
   const write = async (): Promise<{ revision: TaskRevision; reused: boolean }> => {
-  const existing = await readTaskRevision(input.root, input.taskId, id).catch(() => null);
+  // **A stored revision that cannot be read must not be reused as an identity, and must not be silently replaced.** The
+  // catch-all answered "no such revision" for a corrupt record, so the seal that followed overwrote it — the one artefact
+  // whose purpose is to be immutable. Absence is `null` (see `readTaskRevision`); damage is reported.
+  const existing = await readTaskRevision(input.root, input.taskId, id);
   if (existing) {
     // Identical content: the same revision, with any newly acknowledged conflicts folded in.
     const revision: TaskRevision = {
@@ -211,8 +214,21 @@ export function contentSnapshotHash(contentDigests: Record<string, string>): str
   return hashContent(JSON.stringify(ordered.map((path) => [path, contentDigests[path]])));
 }
 
-export async function readTaskRevision(root: string, taskId: string, revisionId: string): Promise<TaskRevision> {
-  return JSON.parse(await readFile(revisionPath(root, taskId, revisionId), 'utf8')) as TaskRevision;
+/**
+ * **Absence is not damage.** This read used to be a bare `JSON.parse(await readFile(...))`, so a revision that does not
+ * exist yet — the ordinary case, because the seal asks whether this content-bound id is already stored — threw ENOENT, and
+ * every caller wrapped it in `.catch(() => null)` to mean "not there". That catch then also swallowed a corrupt record, so
+ * the distinction had to be made here, once: ENOENT is `null`, anything else is reported.
+ */
+export async function readTaskRevision(root: string, taskId: string, revisionId: string): Promise<TaskRevision | null> {
+  let raw: string;
+  try {
+    raw = await readFile(revisionPath(root, taskId, revisionId), 'utf8');
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ENOENT') return null;
+    throw error;
+  }
+  return JSON.parse(raw) as TaskRevision;
 }
 
 /** What a reader knows about the current revision: three facts, and no fourth. */

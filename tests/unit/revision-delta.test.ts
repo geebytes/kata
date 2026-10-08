@@ -134,7 +134,7 @@ describe('the change surface between revisions', () => {
 
         // **And the historic file is untouched** — same id, still snapshot-less, still readable by whatever named it.
         // What stopped is its use as the current identity, not its existence.
-        const historic = await readTaskRevision(root, 'delta-task', historicId);
+        const historic = (await readTaskRevision(root, 'delta-task', historicId))!;
         expect(historic.id).toBe(historicId);
         expect(historic.contentDigests).toBeUndefined();
         expect((await readCurrentTaskRevision(root, 'delta-task'))?.id).toBe(seal.revision.id);
@@ -165,7 +165,7 @@ describe('the change surface between revisions', () => {
         expect(reused).toEqual([false, false, false]);
         expect(ids).not.toContain(historicId);
         // And the historic record is untouched: snapshot-less, same id, still readable by whatever bound to it.
-        const historic = await readTaskRevision(root, 'delta-task', historicId);
+        const historic = (await readTaskRevision(root, 'delta-task', historicId))!;
         expect(historic.id).toBe(historicId);
         expect(historic.contentDigests).toBeUndefined();
     });
