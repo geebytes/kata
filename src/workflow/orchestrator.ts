@@ -1549,8 +1549,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // not move when a claim is restated. Measured by an independent round: both states repeated the refusal
                     // verbatim after the printed remedy was run.
                     error: `A review result is already recorded for this revision, for this request. ${
-                        ledgerNow !== undefined && ledgerNow.subjectAsDeclared === null
-                            ? 'The ledger holds a record that cannot be read (its claims or its plan), so nothing can be derived from it and every command is refused until it is readable: repair or replace that file explicitly, then re-freeze.'
+                        // **Keyed on the malformed set, not on one consequence of it.** The first version of this branch asked
+                        // whether the *question* was underivable, which only happens for `claims.json` and `plan.json` — so
+                        // every other unreadable artefact (`challenges.json`, `evidence.json`, `verdicts.json`,
+                        // `policy.json`, a bad line in `verdict-history.jsonl`) still printed the generic remedy, whose
+                        // commands the one malformed gate refuses. An independent round measured exactly that, one file
+                        // over from the state this branch was written for.
+                        ledgerNow === undefined
+                            ? 'The ledger cannot be read at all, so nothing can be derived from it: repair or replace the unreadable record, then re-freeze.'
+                            : (ledgerNow as { malformedFiles?: string[] }).malformedFiles?.length
+                                ? `The ledger holds a record that cannot be read (${((ledgerNow as { malformedFiles?: string[] }).malformedFiles ?? []).join(', ')}), so no ledger verb will proceed until it is readable: repair or replace that file explicitly, then re-freeze.`
                             : ledgerNow?.subject?.claimsDigest === undefined
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'

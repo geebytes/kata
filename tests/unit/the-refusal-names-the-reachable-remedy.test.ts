@@ -107,6 +107,21 @@ async function writeResultFile(): Promise<string> {
 }
 
 describe('the refusal names a reachable remedy', () => {
+    it('names the unreadable artefact even when the question is still derivable', async () => {
+        // The state an independent round found one file over: a malformed `challenges.json` leaves the question derivable, so
+        // a branch keyed on the question printed the generic remedy while the malformed gate refused its commands.
+        const derived = await freezeWithQuestion();
+        await recordedRound(derived);
+        await writeFile(join(taskDir(root, taskId), 'review', 'challenges.json'), '{ not json');
+        const path = join(root, 'result-no-coverage-2.json');
+        await writeFile(path, `${JSON.stringify({ taskId, status: 'pending', findings: RESULT.findings }, null, 2)}\n`);
+
+        const recorded = await runCommand('review', taskId, root, { reviewResultFile: 'result-no-coverage-2.json' });
+        expect(recorded.success).toBe(false);
+        expect(String(recorded.error)).toContain('challenges.json');
+        expect(String(recorded.error)).not.toContain('restate a claim');
+    });
+
     it('names repairing the record when the ledger cannot be read at all', async () => {
         // The fail-closed state this change added: an unreadable claims.json means nothing can be derived, and every command
         // the other states name is refused by the malformed gate — measured by an independent round, which found the
