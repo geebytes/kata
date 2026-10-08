@@ -11,7 +11,7 @@ import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
-import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
+import { listRepositoryFiles } from '../core/repository-identity.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -1132,8 +1132,24 @@ export async function freezeSubject(input: {
         // (`openspec/changes/<id>` is one), and reading such a path as a file reported it as unreadable — which is how a
         // migration stopped on a declaration that was entirely correct. The walk skips only what is never content.
         if (stats.isDirectory()) {
-            const walked = await walkFiles(join(input.root, path), path.replace(/\/+$/, ''));
-            for (const file of walked) digests[`${path}/${file}`] = hashContent(await readFile(join(input.root, path, file)));
+            // **The identity's own enumeration, not a second one.** Asking `isIgnoredRepositoryPath` was still a second
+            // walk: the identity's filters a third way the predicate does not (`gitIgnoredPaths`, the repository's own
+            // declaration), it has no depth cap, and it speaks in repository coordinates while this one built keys from the
+            // raw declaration. Measured by an independent round: a git-ignored file under a declared directory was recorded
+            // by the ledger and excluded by identity — so editing it moved the frozen subject, and `ledger run`, which sits
+            // between `verify` and `review`, refused with "content that has moved": the reported defect, in another form.
+            // A file ten levels deep was invisible for the same reason (the cap was eight). The declared path is normalised
+            // once, and the key is built from that, so `src/pkg/` no longer records `src/pkg//mod.ts`.
+            const declared = path.replace(/\/+$/, '');
+            for (const file of await listRepositoryFiles(input.root, { under: declared })) {
+                const local = declared === '' ? file : file.slice(declared.length + 1);
+                const key = `${declared}/${local}`;
+                try {
+                    digests[key] = hashContent(await readFile(join(input.root, file)));
+                } catch {
+                    unreadable.push(key);
+                }
+            }
             continue;
         }
         try {
@@ -1141,6 +1157,16 @@ export async function freezeSubject(input: {
         } catch {
             unreadable.push(path);
         }
+    }
+    if (input.paths.length > 0 && Object.keys(digests).length === 0) {
+        // **A declaration that covers nothing is a declaration problem, not a schema problem.** Measured: declaring `dist`
+        // expanded to no paths and the operator got `$.pathDigests must NOT have fewer than 1 properties` — a message about
+        // the record, naming nothing about the declaration that produced it.
+        return {
+            ok: false,
+            error: `the declared paths hold no content to freeze: ${input.paths.join(', ')} — a directory that is itself never content expands to nothing, and a file under one has to be declared by name`,
+            unreadable: [],
+        };
     }
     if (unreadable.length > 0) {
         // The lesson from the identity-policy defect: a path this walker cannot read must not be written as a sentinel,
@@ -1159,39 +1185,7 @@ export async function freezeSubject(input: {
     return { ok: true, subject: subjectOf(digests, input.paths, input.claims, input.planDigest) };
 }
 
-/**
- * Every file under a directory, relative to it.
- *
- * Deliberately not the identity policy's walk: that one exists for revision identity and skips whatever it is told to
- * skip, while this one answers "what does this declaration hold", so it skips only directories that are never content and
- * reports nothing it cannot read — an unreadable file becomes a missing digest, which the caller's comparison then reports
- * as an added or removed path rather than as "unchanged".
- */
-async function walkFiles(absolute: string, repositoryPath: string, localPrefix = '', depth = 0): Promise<string[]> {
-    if (depth > 8) return [];
-    const entries = await readdir(absolute, { withFileTypes: true });
-    const found: string[] = [];
-    for (const entry of entries) {
-        // Two names for the same entry, because they answer two different questions: `repositoryChild` is what the
-        // content predicate is asked (it is stated in repository coordinates), `localChild` is what the caller records
-        // (it is relative to the declared directory). Collapsing them was measured: the recorded keys came out doubled
-        // (`src/pkg/src/pkg/mod.ts`) and the freeze refused every path as unreadable.
-        const repositoryChild = `${repositoryPath}/${entry.name}`;
-        const localChild = localPrefix === '' ? entry.name : `${localPrefix}/${entry.name}`;
-        // **A path that is not content cannot be recorded as content by either enumerator.** This walk used to decide the
-        // question itself, with two string comparisons, while the revision identity's walk asked
-        // `isIgnoredRepositoryPath` — so a declared directory recorded `__pycache__/*.pyc`, `.pytest_cache`, `dist` and
-        // every other build artefact the identity already excludes. Measured: `verify` runs the acceptance commands,
-        // running a Python suite rewrites `.pyc`, and `ledger run` — which sits between `verify` and `review` — then
-        // refused with "the frozen subject describes content that has moved", so no review request could be produced.
-        // One predicate, two consumers: `prefix` is the repository-relative path, so this asks exactly the question the
-        // identity walk asks, in the same coordinate system.
-        if (isIgnoredRepositoryPath(repositoryChild)) continue;
-        if (entry.isDirectory()) found.push(...await walkFiles(join(absolute, entry.name), repositoryChild, localChild, depth + 1));
-        else if (entry.isFile()) found.push(localChild);
-    }
-    return found;
-}
+
 
 export async function writeSubject(root: string, changeId: string, subject: Subject): Promise<void> {
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.subject, subject));

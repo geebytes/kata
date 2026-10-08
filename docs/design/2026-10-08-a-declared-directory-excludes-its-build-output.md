@@ -66,6 +66,40 @@ for a project whose deliverable happens to live under `dist/`. That is already t
 those names all along); this change makes the ledger stop disagreeing with it rather than inventing a new exclusion. A
 deliverable under such a name is still declarable as a file.
 
+## The first independent round: one predicate was still a second walk
+
+Round 1 (`adversarial`, `revision-dad8093cca7a7cce`) returned **fail** with three majors, and the first two are the same
+finding twice: **the identity walk is not a predicate.** It filters three ways, and the repair only adopted one of them.
+
+| what the identity walk does | what the repaired expansion did | measured consequence |
+|---|---|---|
+| consults the repository's own git declaration (`gitIgnoredPaths`, `repository-identity.ts:147`, used at `:194`) | nothing | a git-ignored file under a declared directory was recorded as content, so editing it moved the frozen subject — the reported defect, in another form |
+| has no depth cap | stopped at depth 8 | a source file ten levels down was invisible, so editing real code moved nothing |
+| speaks in repository coordinates | built keys from the raw declaration | declaring `src/pkg/` recorded `src/pkg//mod.ts` |
+
+And the third major is about the guard: `the-two-enumerations-agree` **never invoked the identity walk** — it compared the
+ledger against `isIgnoredRepositoryPath`, so it could not fail when the two *enumerations* drifted. Its title named two
+enumerations; its body called one. That is this repository's recurring finding, and it was in the guard written to prevent
+exactly this.
+
+**The repair is to stop enumerating in the ledger at all.** The declared-directory expansion now calls
+`listRepositoryFiles(root, { under })` — the identity's own walk, the same one the revision manifest uses — and removes
+`walkFiles` entirely. Consequences, each with its own case:
+
+- git-ignored paths, cache names, build output, tool state and deep paths are excluded or included exactly as identity says,
+  because there is only one answer;
+- keys are built from the normalised declaration, in the coordinates the walk speaks;
+- a declaration that expands to nothing says so (`the declared paths hold no content to freeze: …`) instead of failing on
+  `$.pathDigests must NOT have fewer than 1 properties` — a message about the record, naming nothing about the declaration;
+- the guard calls the walk: `recorded === await listRepositoryFiles(root, { under })`, with preconditions that the fixture
+  really holds a git-ignored file and a ten-level-deep file, so a fixture that stopped exercising the rule cannot make it
+  pass.
+
+**The lesson, recorded because it is the third time in this repository's recent history.** "One predicate, two consumers"
+was still two consumers: a predicate is not an enumeration. If a second place must agree with a first, it has to *call* the
+first — copying its filter, or asking the part of it that looks like a rule, leaves the rest of the first one's behaviour
+unshared. The guard has to call the same thing too, or it certifies agreement with a proxy.
+
 ## Acceptance criteria
 
 | AC | What it asserts | Selector |
@@ -98,10 +132,11 @@ Each mutation was applied to production code, the selector run, and the file res
   `[...diff.changed, ...diff.added]`, in `src/store/review-request.ts`, which is declared for exactly this): reddens AC-4's
   deleted-file case for the right reason (`expected … to contain 'src/pkg/extra.ts'`).
 
-**What M-caches-3 taught, and what it changed.** AC-3's property follows from AC-1's exclusion, and AC-4 is a control rather
-than a claim about new behaviour — so two of the four acceptance criteria do not have a mutation *of their own* that fails for
-their own reason. That is stated here rather than papered over with a mutation that reddens for an unrelated cause, and the
-declared surface grew by one file (`src/store/review-request.ts`) so that AC-4's drift half could be shown to fail at all.
+**Where a criterion has no mutation of its own, said precisely (corrected by round 1).** AC-4 *does* have one — M-caches-5
+reddens its deleted-file case for its own reason (`toContain('src/pkg/extra.ts')`), and an earlier version of this paragraph
+claimed otherwise. AC-3 is the one without: E4 and E1/E3 all move the same policy, so what reddens the sampling case is a
+shared mutation, not an AC-3-specific one. That is stated here rather than papered over with a mutation that reddens for an
+unrelated cause.
 
 **A mutation that leaves a selector green is a finding about the selector**, not a passing test — this repository has paid for
 that repeatedly, so each one is run before the round is dispatched and recorded here.

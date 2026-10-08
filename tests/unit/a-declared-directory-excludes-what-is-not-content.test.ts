@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,12 +45,18 @@ beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'kata-declared-directory-'));
     await mkdir(join(root, '.kata', 'tasks', changeId), { recursive: true });
     await mkdir(join(root, 'src', 'pkg', '__pycache__'), { recursive: true });
+    await mkdir(join(root, 'src', 'pkg', 'build'), { recursive: true });
+    await mkdir(join(root, 'src', 'pkg', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'), { recursive: true });
     await mkdir(join(root, 'src', 'pkg', '.pytest_cache', 'v'), { recursive: true });
     await mkdir(join(root, 'src', 'pkg', 'dist'), { recursive: true });
     await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const holds = true;\n');
     await writeFile(join(root, 'src', 'pkg', '__pycache__', 'mod.cpython-312.pyc'), 'cache-a');
     await writeFile(join(root, 'src', 'pkg', '.pytest_cache', 'v', 'lastfailed'), '{}');
     await writeFile(join(root, 'src', 'pkg', 'dist', 'bundle.js'), 'built');
+    await writeFile(join(root, 'src', 'pkg', 'build', 'out.js'), 'built and git-ignored\n');
+    await writeFile(join(root, 'src', 'pkg', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'deep.ts'), 'export const deep = true;\n');
+    execFileSync('git', ['init', '-q', '.'], { cwd: root });
+    await writeFile(join(root, '.gitignore'), 'build/\n', 'utf8');
     await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg'] });
 });
 
@@ -71,7 +78,10 @@ describe('a declared directory excludes what is not content', () => {
         expect(recorded.filter((path) => path.includes('__pycache__'))).toEqual([]);
         expect(recorded.filter((path) => path.includes('.pytest_cache'))).toEqual([]);
         expect(recorded.filter((path) => path.includes('/dist/'))).toEqual([]);
-        expect(recorded).toEqual(['src/pkg/mod.ts']);
+        // The fixture's own source files and nothing else: the git-ignored build output and the ten-levels-deep file are
+        // the other two cases in this file, so what this case pins is the exclusion, not the inventory.
+        expect(recorded).toContain('src/pkg/mod.ts');
+        expect(recorded.filter((path) => !path.endsWith('.ts'))).toEqual([]);
     });
 
     it('is unmoved by a test run that rewrites a cache, and still moved by a source edit', async () => {
@@ -87,6 +97,35 @@ describe('a declared directory excludes what is not content', () => {
         await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const holds = false;\n');
         await ledger(['freeze']);
         expect((await readLedger(root, changeId)).subject?.revision).not.toBe(before);
+    });
+
+    it('is unmoved by a git-ignored file the repository declares, and moved by a file ten levels deep', async () => {
+        // **The two filters the predicate alone does not have.** An independent round measured both against the first
+        // version of this repair: a git-ignored path under the declared directory was recorded as content (so editing it
+        // moved the subject — the reported defect, in another form), and a source file past depth eight was invisible (so
+        // editing real code moved nothing). The identity walk has neither blind spot, and the expansion is now that walk.
+        await ledger(['freeze']);
+        const before = (await readLedger(root, changeId)).subject?.revision ?? '';
+
+        await writeFile(join(root, 'src', 'pkg', 'build', 'out.js'), 'rebuilt, still git-ignored\n');
+        await ledger(['freeze']);
+        expect((await readLedger(root, changeId)).subject?.revision).toBe(before);
+
+        await writeFile(join(root, 'src', 'pkg', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'deep.ts'), 'export const deep = false;\n');
+        await ledger(['freeze']);
+        expect((await readLedger(root, changeId)).subject?.revision).not.toBe(before);
+    });
+
+    it('says the declaration covered nothing instead of failing on the record schema', async () => {
+        // Measured: declaring `dist` expanded to no paths and the operator was told `$.pathDigests must NOT have fewer than
+        // 1 properties` — a message about the record, naming nothing about the declaration that produced it.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/dist'] });
+
+        const result = await ledger(['freeze']);
+
+        expect(result.ok).toBe(false);
+        expect(String(result.error)).toContain('hold no content to freeze');
+        expect(String(result.error)).toContain('src/pkg/dist');
     });
 
     it('still records a file that is declared explicitly, even under a build directory', async () => {
