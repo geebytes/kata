@@ -174,7 +174,7 @@ describe('the identity does not depend on itself', () => {
         // idempotent (three runs on an unchanged ledger produced three declared subjects) and merely re-running it released a
         // recorded round that answered the current question. An independent round measured both faces of it.
         const { planReview } = await import('../../src/producers/planner.js');
-        const { defaultPolicy } = await import('../../src/store/ledger.js');
+        const { defaultPolicy } = await import('../../src/kernel/policy.js');
         const policy = defaultPolicy();
         const claim = { id: 'C1', statement: 'the question', riskClass: 'consistency', severity: 'major', dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: NOW, reopens: 0 };
         const base = { claims: [claim as never], policy, tier: 'strict' as never, changedPaths: ['subject.ts'] };
