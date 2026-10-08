@@ -202,8 +202,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // and every comparison built on "did the question move" was permanently unequal (measured by an independent round:
         // frozen `rev:9c38…` vs declared `rev:159a…`, and the discovery deficit could not be cleared by any re-freeze).
         const claimsAtFreeze = (await readLedger(options.root, changeId)).claims;
-        const planAtFreeze = await readPlanState(options.root, changeId);
-        const planDigestAtFreeze = planAtFreeze.kind === 'usable' ? hashContent(JSON.stringify(planAtFreeze.value)) : undefined;
+        // **One derivation, or the write path and the read path disagree.** This site hashed the plan itself while
+        // `planDigestOf` — the derivation the read side uses — truncates to sixteen characters, so a freshly frozen subject
+        // could never equal the declared one and every question-moved comparison was permanently unequal (measured: stored
+        // `64b6e27f…` vs derived `24e92997…`). The freeze asks the same function the comparison asks.
+        const planDigestAtFreeze = await planDigestOf(options.root, changeId);
         const frozen = await freezeSubject({
             root: options.root,
             paths,
