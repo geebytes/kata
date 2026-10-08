@@ -183,7 +183,10 @@ const executableFalsifier: EvidenceVerifier = {
             });
             if (mutated === undefined) throw new Error(`the mutation on ${evidence.mutation.file} never ran`);
             const after = await context.run(evidence.command);
-            const observed = JSON.stringify({ before: before.code, mutated: mutated.code, after: after.code });
+            // **A reading that does not say what it ran is not a reading.** Every falsifier persisted the same
+            // `{"before":0,"mutated":1,"after":0}`, so four readings were indistinguishable in the store and a later reader
+            // could not tell which mutation produced which — the same family as a record that does not carry its question.
+            const observed = JSON.stringify({ evidence: evidence.id, file: evidence.mutation.file, before: before.code, mutated: mutated.code, after: after.code });
             if (mutated.code === 0) {
                 return makeVerdict({
                     evidence,

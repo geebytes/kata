@@ -273,7 +273,13 @@ export async function mostRecentDifferentContent(
       return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
     }
   }
-  candidates.sort((left, right) => (left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0));
+  // **A tie must not be resolved by the filesystem.** With `createdAt` alone, two revisions sealed inside the same
+  // millisecond resolved by `readdir` order, which differs between filesystems (ext4 hash order vs a sorted tmpfs), so the
+  // reference — and therefore the plan and the declared subject — could differ per host. The revision id is the secondary
+  // key, so the same store always names the same reference.
+  candidates.sort((left, right) => (left.createdAt < right.createdAt ? 1
+    : left.createdAt > right.createdAt ? -1
+      : left.id < right.id ? 1 : left.id > right.id ? -1 : 0));
   for (const candidate of candidates) {
     if (!same(candidate.pathDigests as Record<string, string>, currentDigests)) {
       return { kind: 'found', digests: candidate.pathDigests as Record<string, string> };
