@@ -1,7 +1,9 @@
 # Kata 迭代收敛问题报告：收敛探测器对「修复轮必换 revision」结构性失明
 
 **日期**：2026-10-08
-**状态**：Open — 六条均有可复现证据（源码行号 + 实跑记录 + 实测计数）；本报告不包含实现或测试修改。
+**状态**：Open — 七条均有可复现证据（源码行号 + 实跑记录 + 实测计数）；本报告不包含实现或测试修改。
+
+**修订**：第三次提交补入 **F7**（在 `guard-the-property-not-the-proxy` 上复现）：CLI 自己打印的 review 收尾阶梯**不可执行** —— 第一步跨过 `review_gate` 并把它标记为 consumed，第二步（同一边界）又要求它，而 consumed 的 gate 无法重新批准；根因是 `recording` 判据只豁免了 `--result-file`，没有豁免 `--approve`。
 
 **修订**：第二次提交补入 **F6**。F1 只覆盖「停滞探测器看不见」；而**同一套 revision 作用域也用在 finding 上，它关掉的是阻塞门禁本身** —— 那是这 14 轮循环之所以无界的直接机制。附录的数字口径同时修正为引用落盘记录（原为对话摘要）。
 **范围**：Kata 0.2.0；下游项目 `zenmpai` 的 change `photo-observation-production-hardening` 在 `strict` tier 下经过 **14 轮 review/repair** 后的实跑。
@@ -247,6 +249,69 @@ failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'num
 **关闭条件。** 计数读 `passed`；若无 `passed` 则读 `expectExitCode` 与 `exitCode` 的比较。**一行改动**。
 
 **当前缓解（仅绕开，不改门禁）**：把检查改写成等价的**正向形式** `bash -c '! grep …'`（exit 0 = 声明成立）。判据强度不变（有违规即 exit 1，违规行进日志），但依赖了那个失效字段的替代路径。
+
+### F7 — review 收尾阶梯的两步里，第二步要求第一步已经消耗掉的那张 gate
+
+**状态**：Open，2026-10-08 在 `zenmpai` 的 strict change `guard-the-property-not-the-proxy` 上实跑复现（Kata `/app/kata` 0.2.0，commit `2468205`）。
+
+**影响**：CLI **自己打印**的收尾阶梯不可执行 —— 照做的人会卡在一条没有出路的拒绝信息上，而 review 结论写不进去。
+
+**复现。** 实现与硬验证完成后，`nextAction.pauseInstruction` 打印的是（`src/workflow/navigation.ts:793`）：
+
+```text
+进入 review 后要跑两条命令：`kata-cli review --change <id>` 先把相位推进 review，
+`kata-cli review --change <id> --approve` 在相位推进前会被拒绝。
+```
+
+而 `followUpCommand`（`navigation.ts:788`）给的正是第二条：
+
+```text
+kata-cli review --change <id> --approve --review-evidence "<...>"
+```
+
+实测序列：
+
+```bash
+kata-cli gate approve --boundary review_gate --choice continue_current   # ✓ approved
+kata-cli review --change <id> --confirm-host-model                       # ✓ phase: hardVerify → review
+kata-cli review --change <id> --approve --review-evidence "<...>"        # ✗ review_gate requires an explicit user choice before continuing
+kata-cli gate approve --boundary review_gate --choice continue_current   # ✗ User choice gate review_gate has already been consumed. <rebuild instruction>
+```
+
+第一步跨过边界时把 gate 标记为 `consumed`，第二步命中**同一边界**又要求它，而 consumed 的 gate 无法重新批准 —— `approveUserChoiceGate`（`src/workflow/user-choice-gate.ts:167-169`）在 `gate.consumedAt` 存在时直接抛错，只给「由创建该边界的命令重建」这条指示，而对 `review_gate` 而言重建命令是 `verify`（重跑一次 verify + 重新 approve 才能继续）。于是**阶梯的第二条永远不可能在第一条之后成功**。
+
+**根因（源码）。** `src/cli/workflow.ts:70-73` 已经把「记录不是跨界」这条规则写对了，但判据只认一种记录形态：
+
+```ts
+const boundary = boundaryForCommand(command, inputPhase, { recording: resultFileRequested(argv) });
+```
+
+而 `boundaryForCommand`（`src/cli/workflow.ts:329-341`）在非 recording 时对 `phase === 'review'` 返回 `review_gate`。因此：
+
+- `review --result-file <file>` → `recording: true` → 不需要 gate ✓（这条路径下游实测可用）；
+- `review --approve --review-evidence <...>` → `recording: false` → 要求 gate ✗ —— 而它**同样是**「把已经跨过边界的会话结论写下来」，不是又一次跨界。
+
+同一处判据覆盖了一半：它豁免了 findings 的记录，没有豁免 approval 的记录。
+
+**为什么这不是使用者漏了一步。** 阶梯文本、`followUpCommand` 与 `pauseInstruction` 都是 CLI 自己给的；`--for-task`（把选择记到任务级、后续边界复用）确实是可行的替代，但**阶梯文本没有提到它**，而 `--for-task` 的语义是「别再问同一个人同一个问题」，与「记录结论不是跨界」是两件事。使用者按打印出来的两条命令操作，得到的是一个无法自洽的固定点。
+
+**建议修复（任选其一，建议 A）。**
+
+- **A（推荐）**：把 `--approve`（带 `--review-evidence` 的 review 调用）纳入 recording 判据 —— 它与 `--result-file` 一样只写结论，不打开相位。判据应基于「这次调用是否**打开**这个边界」，而不是基于它带的是哪个 flag 名字：`review --change <id>`（无结论参数）跨界，带 `--result-file` 或 `--approve --review-evidence` 的都是记录。
+- **B**：保持现状，但把阶梯改成**单条**命令 —— 即打印 `kata-cli review --change <id> --confirm-host-model --approve --review-evidence "<...>"`（实测这一条能一次完成跨界 + 记录，因为它把两次动作放进同一次调用，gate 只被要求一次），并说明「先 `review` 再 `review --approve`」在未加 `--for-task` 时会失败。
+- **C（仅作配套）**：在阶梯文本里补上 `gate approve --for-task`，让任务级选择覆盖后续边界。
+
+**必需回归测试。**
+
+1. `gate approve` → `review --confirm-host-model` → `review --approve --review-evidence <...>`：第二条必须成功（或按 B 的改法，阶梯只给单条命令且该命令成功）。
+2. 断言 consumed 的 gate 上运行 `--approve` 的失败信息**包含可执行出路**（重建命令 + 是否需要 `--for-task`），而不是只报「已被消耗」。
+3. `--result-file` 的既有豁免必须保持（`recording` 判据扩展后不得把它弄坏）。
+4. 反例夹具：真正**打开**边界的那条调用（`review --change <id>`，不带任何结论参数）仍然必须要求 gate —— 豁免不得扩散成「review 相位内一切调用都免检」。
+
+**非主张。**
+
+- 不主张取消 review_gate 或让 approval 免于人工确认：需要的是把「记录结论」与「跨界」分开，而不是让 approval 不再需要人。
+- 不主张下游的做法（重跑 `verify` 重建 gate、再单次 `--confirm-host-model --approve`）是正解 —— 它只是可用，且要求使用者自己从源码里推出这条路径。这与 F1/F6 是同一族缺陷：**正确的规则写在一处，而消费它的地方只认一半。**
 
 ### F5 — `severity` 是无定义自由枚举，且 `major` 无条件强制修复轮
 
