@@ -102,8 +102,12 @@ export async function currentRevisionIdentityFrom(
         throw new Error(`The revision this decision is about cannot be read: ${read.detail}`);
     }
     const revision = read.kind === 'current' ? read.revision : null;
-    const { readTask } = await import('../core/task.js');
-    const task = await readTask(root, taskId).catch(() => null);
+    const { readValidatedOptional } = await import('../core/schema.js');
+    const { taskPath } = await import('../core/layout.js');
+    // **A damaged `task.json` is not an absent one.** The catch-all here answered `null`, and the line below substituted
+    // `{}` for it — so a corrupt record produced a *different* identity (empty surfaces) that then refused every verdict
+    // for a reason that named none of this. The tolerant reader answers `null` for ENOENT only and reports the rest.
+    const task = await readValidatedOptional<import('../core/task.js').TaskRecord>('task', taskPath(root, taskId));
     const surfaces = surfaceDigests(revision, task ?? {});
     // §7.4: the freeze identity is delegated to one producer. Recomputing it here from a private guess at `node` and
     // `reviewPolicyHash` would mint a *different* identity for the same candidate, and every verdict would then refuse
@@ -111,9 +115,10 @@ export async function currentRevisionIdentityFrom(
     const { candidateFreezeHashFor } = await import('../quality/review-ir.js');
     // The read this identity was derived from is handed to the freeze-hash producer: reading the same non-atomic file
     // again could yield a *second* state, and the identity would then describe two things at once.
-    const freezeHash = task
-        ? await candidateFreezeHashFor(root, taskId, 'review', read).catch(() => undefined)
-        : undefined;
+    // **And the second catch-all at the same site is gone with the first.** `.catch(() => undefined)` turned a refusal
+    // from the freeze-hash producer into the *same* "no freeze hash" an absent task produces, which is the substitution
+    // this file was fixed for one line above — leaving it here would have kept the weaker identity reachable.
+    const freezeHash = task ? await candidateFreezeHashFor(root, taskId, 'review', read) : undefined;
     return {
         revisionId: revision?.id ?? null,
         manifestHash: revision?.manifestHash ?? null,

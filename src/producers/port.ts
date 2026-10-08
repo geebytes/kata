@@ -29,6 +29,15 @@ export type VerifyContext = {
      * different producing runs, so a reading cannot be re-submitted to look like agreement.
      */
     producer: () => VerdictProducer;
+    /**
+     * How long a verification cycle waits for the exclusive window on the file it mutates.
+     *
+     * **A bound the caller may set, and the fact it produces when it expires.** A run that cannot get the window is told so
+     * by name (`VerificationWindowLive`) instead of being handed a verdict about a tree another cycle is holding mutated —
+     * so this is not a retry knob but the point at which the mechanism refuses to answer. Omitted, the mechanism uses its
+     * own envelope.
+     */
+    windowDeadlineMs?: number;
 };
 
 /** One evidence type, decided. `verifier` names the deciding party, recorded in the verdict for audit. */

@@ -29,6 +29,11 @@
       "type": "string",
       "minLength": 1
     },
+    "subjectRevision": {
+      "description": "The declared ledger question this Judge record answered; absent on legacy records.",
+      "type": "string",
+      "minLength": 1
+    },
     "manifestHash": {
       "type": "string"
     },

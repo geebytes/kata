@@ -19,6 +19,8 @@ export interface JudgeInput {
   taskId: string;
   /** The caller's own read of the current revision, when it has one: the stamp must not re-read a non-atomic file. */
   revisionRead?: import('../workflow/revision.js').CurrentRevisionRead;
+  /** The declared request this judgement answers; absent only on legacy direct callers. */
+  subjectRevision?: string;
   /** The caller's task-lock capability when this judge is committed as a review decision. */
   lock?: TaskLock;
   acceptance: AcceptanceCriterion[];
@@ -104,6 +106,8 @@ export interface JudgeResult {
   result: 'PASS' | 'FAIL';
   diffHash: string;
   revisionId?: string;
+  /** The declared request this judgement answered. */
+  subjectRevision?: string;
   acceptance: JudgeAcceptanceResult[];
   evidenceIds?: string[];
 }
@@ -138,6 +142,7 @@ export async function judge(input: JudgeInput): Promise<JudgeResult> {
     result: adequacy.acceptance.every((criterion) => criterion.result === 'PASS') ? 'PASS' : 'FAIL',
     diffHash: input.currentDiffHash,
     ...(revisionIds[0] ? { revisionId: revisionIds[0] } : {}),
+    ...(input.subjectRevision ? { subjectRevision: input.subjectRevision } : {}),
     // L2-02: the Judge does not re-derive the match — one evaluator, one answer, which is why the ladder is shared
     // with verify. Each FAIL that only a test can close carries its repair owner.
     acceptance: adequacy.acceptance.map((criterion) => {

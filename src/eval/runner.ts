@@ -5,6 +5,7 @@ import { readStateEvents, type Actor } from '../core/state.js';
 import { readCurrentTaskRevisionState } from '../workflow/revision.js';
 import { collectEvidence, runWithConcurrency, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { judge } from '../quality/judge.js';
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 import { readWikiRecords } from '../wiki/store.js';
 import { runCommand } from '../workflow/orchestrator.js';
 import { computeMetrics, type EvaluationRun, type EvaluationMetrics } from './metrics.js';
@@ -290,6 +291,7 @@ async function runFixture(
     }
     const revision = revisionRead.kind === 'current' ? revisionRead.revision : null;
     const scopeHashes = new Map(evidence.map((item) => [item.id, revision?.manifestHash ?? item.scope?.hash ?? '']));
+    const subjectRevision = declaredSubjectRevision(await readLedger(root, fixture.id));
     const judgeResult = await judge({
       root,
       taskId: fixture.id,
@@ -297,6 +299,7 @@ async function runFixture(
       evidence,
         currentDiffHash: evidence[0]?.diffHash ?? '',
       currentScopeHashes: scopeHashes,
+      ...(subjectRevision ? { subjectRevision } : {}),
     });
     steps.push('judge');
 

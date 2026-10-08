@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
 import { hashContent } from '../core/hash.js';
@@ -144,11 +144,14 @@ function insideWorkspace(realRoot: string, resolved: string): boolean {
 export class UnrestoredMutation extends Error {}
 
 /**
- * **Nothing was injected, and that is not something to "repair".** A run that finds the file changed while it waited for its
- * lock must not write its captured original back: that original may be another run's injection, and writing it back is how
- * the defect survived on disk while both runs reported success (measured by an independent round, 12/12).
+ * **A verification is holding this file mutated right now, so a reading taken here is not evidence.**
+ *
+ * The exclusive window is what stops two cycles from interleaving; this error is what a run is told when it cannot get one.
+ * It exists so that fact is never converted into a verdict: a run that read a tree another cycle had injected would report
+ * `refuted … the check was already failing before any mutation` — a statement about the *check* derived from a tree it does
+ * not own, which is the misdiagnosis this whole mechanism exists to remove.
  */
-export class MutationNotAttempted extends Error {}
+export class VerificationWindowLive extends Error {}
 
 /**
  * One key per physical file, shared by the lock and the journal.
@@ -183,64 +186,139 @@ function holderAlive(pid: number): boolean {
     }
 }
 
-export async function withVerificationLock<T>(root: string, relativePath: string, action: () => Promise<T>): Promise<T> {
+/**
+ * **The window a verification cycle runs in, and the identity it was opened under.**
+ *
+ * The key is derived **once**, at the window's entry, and carried in this object through every step of the cycle: the
+ * journal write, the repair the next entry performs, and the clear. It used to be recomputed at each of those three sites
+ * from the file as it stood *then*, so a check that replaces its target atomically — an ordinary `mv` — moved the inode
+ * inside the window and the clear then looked for a journal under a name nobody had written. Measured by an independent
+ * round: a killed run's defect was never repaired (its journal was an orphan) and every successful cycle left a stale
+ * journal behind while reporting success.
+ */
+export interface VerificationWindow {
+    readonly root: string;
+    readonly file: string;
+    /** Derived at entry from the file's identity; carried, never recomputed inside the cycle. */
+    readonly key: string;
+}
+
+const locksDirFor = (root: string): string => join(root, '.kata', 'locks');
+const lockDirFor = (root: string, key: string): string => join(locksDirFor(root), `verify-${key}.lock`);
+const journalFor = (root: string, key: string): string => join(locksDirFor(root), `verify-${key}.journal.json`);
+
+/**
+ * Every note a cycle may have left, found **by the file it names** rather than by a key recomputed now.
+ *
+ * A journal records the path it is about, so it stays findable after the inode moved — which is the point of AC-2: the
+ * identity is stable *within* a cycle, and the repair a later cycle performs is keyed on the file, not on an identity that
+ * the crash itself may have invalidated.
+ */
+async function journalPathsFor(root: string, relativePath: string): Promise<string[]> {
+    let names: string[];
+    try {
+        names = await readdir(locksDirFor(root));
+    } catch {
+        return [];
+    }
+    const found: string[] = [];
+    for (const name of names.filter((entry) => entry.endsWith('.journal.json'))) {
+        const path = join(locksDirFor(root), name);
+        const note = await readFile(path, 'utf8').then((text) => JSON.parse(text) as { file?: unknown }).catch(() => null);
+        if (note?.file === relativePath) found.push(path);
+    }
+    return found;
+}
+
+/**
+ * **A killed run's defect is repaired by the next run, whatever happened to the inode.**
+ *
+ * The repair is contained (an uncontained path wrote outside the workspace) and applies only where the injected bytes are
+ * still present (a stale journal overwrote good content) — both measured by an independent round, and both kept. A journal
+ * nobody can read is quarantined by removal rather than blocking the file forever.
+ */
+async function repairFromJournals(root: string, relativePath: string): Promise<void> {
+    for (const path of await journalPathsFor(root, relativePath)) {
+        const note = await readFile(path, 'utf8').then((text) => JSON.parse(text) as { original?: unknown; injectedHash?: unknown }).catch(() => null);
+        if (note !== null && typeof note.original === 'string') {
+            let target: string | null = null;
+            try {
+                target = containedPath(root, relativePath);
+            } catch {
+                target = null;
+            }
+            if (target !== null) {
+                const current = await readFile(target, 'utf8').catch(() => null);
+                const stillInjected = current !== null
+                    && (typeof note.injectedHash !== 'string' || hashContent(current) === note.injectedHash);
+                if (stillInjected) await writeFile(target, note.original);
+            }
+        }
+        await rm(path, { force: true });
+    }
+}
+
+/**
+ * **The whole verification cycle runs in one exclusive window.**
+ *
+ * Two properties, and they are the two halves of AC-1:
+ *
+ * 1. **Exclusive.** Nothing else runs a step of a cycle on this file while this one is inside — including this cycle's own
+ *    opening and closing checks, which used to run *outside* the lock. Measured by an independent round: a closing check
+ *    taken outside the window landed inside another cycle's injection and downgraded a valid evidence item to
+ *    `inconclusive … the tree was not restored to green` while the checkout was byte-identical to clean.
+ * 2. **Honest to observers.** A run that cannot get the window is told so by name (`VerificationWindowLive`) instead of
+ *    being handed a verdict about a tree it does not own. The caller must propagate it; converting it into a verdict is the
+ *    same misdiagnosis wearing the mechanism's clothes.
+ *
+ * The lock is a directory (`mkdir` is atomic), so it holds across processes and not only across promises, and a lock is
+ * reclaimed only when its holder is gone — reclaiming on the mere presence of a journal stole live locks and let the two
+ * runs interleave (measured: `peak=2`).
+ */
+export async function withVerificationWindow<T>(
+    root: string,
+    relativePath: string,
+    action: (window: VerificationWindow) => Promise<T>,
+    options?: { deadlineMs?: number },
+): Promise<T> {
+    // **Derived once, here.** Every step below uses this key: nothing inside the cycle asks the filesystem again, because
+    // the file the cycle is mutating is exactly the file whose identity it must not re-derive mid-flight.
     const key = lockKeyFor(root, relativePath);
-    const lockDir = join(root, '.kata', 'locks');
-    await mkdir(lockDir, { recursive: true });
-    const lockPath = join(lockDir, `verify-${key}.lock`);
-    const journalPath = join(lockDir, `verify-${key}.journal.json`);
-    const deadline = Date.now() + 60_000;
+    const window: VerificationWindow = { root, file: relativePath, key };
+    const lockDir = lockDirFor(root, key);
+    await mkdir(locksDirFor(root), { recursive: true });
+    const deadline = Date.now() + (options?.deadlineMs ?? 60_000);
     for (;;) {
         try {
-            await mkdir(lockPath);
-            await writeFile(join(lockPath, 'holder.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+            await mkdir(lockDir);
+            await writeFile(join(lockDir, 'holder.json'), JSON.stringify({ pid: process.pid, file: relativePath, startedAt: new Date().toISOString() }));
             break;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
             // **A lock is reclaimed only when its holder is gone.** Reclaiming on the mere presence of a journal stole live
             // locks — a healthy cycle has a journal for its whole window — and the two runs then interleaved (measured:
             // `peak=2`). Liveness is the question, so liveness is what is asked.
-            const holder = await readFile(join(lockPath, 'holder.json'), 'utf8').then((text) => JSON.parse(text) as { pid?: number }).catch(() => null);
+            const holder = await readFile(join(lockDir, 'holder.json'), 'utf8').then((text) => JSON.parse(text) as { pid?: number }).catch(() => null);
             const dead = holder?.pid === undefined ? false : !holderAlive(holder.pid);
             if (dead) {
-                await rm(lockPath, { recursive: true, force: true });
+                await rm(lockDir, { recursive: true, force: true });
                 continue;
             }
-            if (Date.now() > deadline) throw new Error(`another verification run has held the lock on ${relativePath} for over a minute; nothing was injected by this run`);
+            if (Date.now() > deadline) {
+                // **Told, not handed a verdict.** This is the fact an observer needs: a verification holds this file mutated
+                // right now, so nothing measured here describes the artifact.
+                throw new VerificationWindowLive(
+                    `a verification window is live on ${relativePath}: another run holds it past this run's deadline, so nothing measured now is evidence about the artifact`,
+                );
+            }
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
     }
     try {
-        const raw = await readFile(journalPath, 'utf8').catch(() => null);
-        if (raw !== null) {
-            let journal: { file?: string; original?: string; injectedHash?: string } | null = null;
-            try {
-                journal = JSON.parse(raw) as { file?: string; original?: string; injectedHash?: string };
-            } catch {
-                // A journal nobody can read must not block the file forever: it is quarantined by removal and the run goes on.
-                journal = null;
-            }
-            if (journal?.file !== undefined && typeof journal.original === 'string') {
-                // **Contained, and only where the injected bytes are still present.** An uncontained path wrote outside the
-                // workspace, and a stale journal overwrote good content — both measured by an independent round.
-                let target: string | null = null;
-                try {
-                    target = containedPath(root, journal.file);
-                } catch {
-                    target = null;
-                }
-                if (target !== null) {
-                    const current = await readFile(target, 'utf8').catch(() => null);
-                    const stillInjected = current !== null
-                        && (journal.injectedHash === undefined || hashContent(current) === journal.injectedHash);
-                    if (stillInjected) await writeFile(target, journal.original);
-                }
-            }
-            await rm(journalPath, { force: true });
-        }
-        return await action();
+        await repairFromJournals(root, relativePath);
+        return await action(window);
     } finally {
-        await rm(lockPath, { recursive: true, force: true });
+        await rm(lockDir, { recursive: true, force: true });
     }
 }
 
@@ -250,24 +328,23 @@ export async function withVerificationLock<T>(root: string, relativePath: string
  * The journal carries the injected content's digest as well as the original, so recovery applies only to a file that still
  * holds what this run wrote — a stale journal cannot overwrite good content.
  */
-export async function recordMutation(root: string, relativePath: string, original: string, injected: string): Promise<void> {
-    const lockDir = join(root, '.kata', 'locks');
-    await mkdir(lockDir, { recursive: true });
+export async function recordMutation(window: VerificationWindow, original: string, injected: string): Promise<void> {
+    await mkdir(locksDirFor(window.root), { recursive: true });
     await writeFile(
-        join(lockDir, `verify-${lockKeyFor(root, relativePath)}.journal.json`),
-        JSON.stringify({ file: relativePath, original, injectedHash: hashContent(injected) }),
+        journalFor(window.root, window.key),
+        JSON.stringify({ file: window.file, original, injectedHash: hashContent(injected) }),
     );
 }
 
 /** The injection is over: there is nothing left to repair. */
-export async function clearMutation(root: string, relativePath: string): Promise<void> {
-    await rm(join(root, '.kata', 'locks', `verify-${lockKeyFor(root, relativePath)}.journal.json`), { force: true });
+export async function clearMutation(window: VerificationWindow): Promise<void> {
+    await rm(journalFor(window.root, window.key), { force: true });
 }
 
 export function buildContext(
     root: string,
     subject: Subject,
-    options: { timeoutMs: number; producer: VerdictProducer; onRefusal?: (what: string) => void; now?: () => string },
+    options: { timeoutMs: number; producer: VerdictProducer; onRefusal?: (what: string) => void; now?: () => string; windowDeadlineMs?: number },
 ): VerifyContext {
     const now = options.now ?? (() => new Date().toISOString());
     return {
@@ -316,5 +393,6 @@ export function buildContext(
         },
         now,
         producer: () => options.producer,
+        ...(options.windowDeadlineMs === undefined ? {} : { windowDeadlineMs: options.windowDeadlineMs }),
     };
 }

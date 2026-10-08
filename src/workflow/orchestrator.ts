@@ -32,7 +32,7 @@ import { assertRepairBaselineStillCurrent, authorizeRepair } from './repair-entr
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReviewMode, readReviewRecord } from './review-read.js';
-import { readLedger } from '../store/ledger.js';
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
@@ -431,6 +431,23 @@ async function ledgerClaimsForRecord(root: string, taskId: string): Promise<Arra
     const ledger = await readLedger(root, taskId);
     // One derivation: `unsupportedClaims` assembles the kernel's input, exactly as the ladder and the archive gate do.
     return unsupportedClaims(ledger).map((claim) => ({ id: claim.claimId, severity: claim.severity, status: 'open' }));
+}
+
+/**
+ * The change record as the verify envelope reports it: the record itself, or the *name* of the file that could not be read.
+ *
+ * **Absent and damaged are two facts, and this is the consumer that had to keep them apart.** The reader answers `null`
+ * for a task that never sealed and throws for drift; wrapping that call in `.catch(() => null)` here collapsed the two
+ * again, one layer above the reader that was just fixed for it. A field that is present only when there is something to
+ * report is the shape this envelope already uses for a ledger it could not read.
+ */
+async function changeRecordForDiagnostics(root: string, taskId: string): Promise<{ changeRecord?: unknown; changeRecordUnreadable?: string }> {
+    try {
+        const record = await readChangeRecord(root, taskId);
+        return record ? { changeRecord: record } : {};
+    } catch (error) {
+        return { changeRecordUnreadable: error instanceof Error ? error.message : String(error) };
+    }
 }
 
 async function cmdBuild(
@@ -1401,7 +1418,12 @@ async function cmdVerify(
             // numbers, and until this line nothing ever read one: an audited artefact with a writer and no reader, which is
             // the shape the wiring check reports and the shape `readChangeRecord` existed for. Reported here so an operator
             // can see what the record says about the revision under verification.
-            changeRecord: await readChangeRecord(root, taskId).catch(() => null),
+            //
+            // **And the reader is not re-collapsed at its consumer.** `.catch(() => null)` here undid the reader's own
+            // three states: a damaged `change-record.json` and a task that never sealed arrived as the same `null`, so the
+            // operator was told "no record" about a file they could not read. The refusal is published under its own name
+            // instead, which is the same shape the ledger and the judge records already use on this envelope.
+            ...(await changeRecordForDiagnostics(root, taskId)),
             implementationReady,
             governanceReady: wikiClosure.valid,
             ...(matrixGaps.length > 0 ? { acceptanceMatrixDeclarationGaps: matrixGaps } : {}),
@@ -2118,7 +2140,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
             error: `Judge cannot be decided: ${judgeRecord.why}`,
         };
     }
-    const review = judgeRecord.record as { status?: string; reviewEvidence?: string; revisionId?: string };
+    const review = judgeRecord.record as { status?: string; reviewEvidence?: string; revisionId?: string; subjectRevision?: string };
     if (review.status !== 'approved' || !review.reviewEvidence?.trim()) {
         return {
             command: 'judge', taskId, phase: 'review', success: false,
@@ -2128,6 +2150,14 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         };
     }
     const currentDiffHash = await computeDiffHash(root);
+    const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
+    if (review.subjectRevision && currentSubjectRevision && review.subjectRevision !== currentSubjectRevision) {
+        return {
+            command: 'judge', taskId, phase: 'review', success: false,
+            error: `Judge cannot record a judgement for the current question: Review answered ${review.subjectRevision}, but the current declared question is ${currentSubjectRevision}. Re-run /kata-review for the current question.`,
+            diagnostics: { reviewSubjectRevision: review.subjectRevision, currentSubjectRevision },
+        };
+    }
     const evidence = await readTaskEvidence(root, taskId, options);
     // **No `findings` input.** The judge used to take the round-shaped findings table and fail a criterion whose id a
     // blocking finding named. That table has no producer on this route — a claim's severity and evidence decide the same
@@ -2156,6 +2186,7 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
         matrix: task.acceptanceMatrix,
         reviewMode: task.workflowProfile?.reviewMode,
         revisionRead: judgeSnapshot.revisionRead,
+        ...(currentSubjectRevision ? { subjectRevision: currentSubjectRevision } : {}),
         lock,
     }));
     if (committed.kind !== 'committed') {

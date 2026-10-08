@@ -10,6 +10,7 @@ import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/
 import { assessReviewLoop, reviewProgress } from '../../src/quality/repair.js';
 import { describeBlockingProblems, isOpenFinding, type MergeBlockingProblem } from '../../src/quality/review-ladder.js';
 import { makeClaim } from '../helpers/review.js';
+import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
  * The bar a mode has was not readable from the refusal.
@@ -29,10 +30,9 @@ let root: string;
 const changeId = 'bar-fixture';
 
 async function writeTask(reviewMode: string): Promise<void> {
-    await writeFile(
-        join(root, '.kata', 'tasks', changeId, 'task.json'),
-        `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode } }, null, 2)}\n`,
-    );
+    // Through the shared fixture writer: a hand-rolled record that omitted `phase` is refused by every reader that tells
+    // drift from absence, and these cases are about the approval rather than about the fixture's shape.
+    await writeTaskRecord(root, { id: changeId, phase: 'review', ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode } });
 }
 
 beforeEach(async () => {

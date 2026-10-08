@@ -6,6 +6,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, reviewPath, taskDir } from '../../src/core/layout.js';
+import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
  * **A review record answers a request, and the request is not the revision.**
@@ -38,10 +39,9 @@ beforeEach(async () => {
     process.chdir(root);
     await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
     await writeFile(join(root, 'subject.ts'), 'export const version = 1;\n');
-    await writeFile(
-        join(root, '.kata', 'tasks', taskId, 'task.json'),
-        `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-    );
+    // Through the shared fixture writer: a hand-rolled record that omitted `phase` is refused by every reader that tells
+    // drift from absence, so the case would fail for the fixture's reason rather than the code's.
+    await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts'], at: NOW });
     await writeFile(
         currentStatePath(root, taskId),
         `${JSON.stringify({ taskId, phase: 'review', actor: { id: 'fixture', role: 'reviewer' }, updatedAt: NOW })}\n`,

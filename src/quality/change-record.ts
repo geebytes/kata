@@ -324,5 +324,8 @@ export async function writeChangeRecord(root: string, taskId: string, record: Ch
 
 /** The record a task's latest sealed revision produced, or null when none has been written. */
 export async function readChangeRecord(root: string, taskId: string): Promise<ChangeRecord | null> {
-    return readValidatedOptional<ChangeRecord>('change-record', changeRecordPath(root, taskId)).catch(() => null);
+    // **A damaged record is not an absent one.** The catch-all made an unparseable `change-record.json` answer the same
+    // `null` as a task that never sealed, so the reader that exists to be read back could not tell an operator which of the
+    // two they had. `readValidatedOptional` answers `null` for ENOENT only and reports drift by name.
+    return readValidatedOptional<ChangeRecord>('change-record', changeRecordPath(root, taskId));
 }

@@ -13,6 +13,7 @@ import { readReviewRoundsState, reviewRoundsPath } from '../../src/quality/repai
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
+import { taskRecord } from '../helpers/task-fixture.js';
 
 /**
  * Every gate distinguishes a file that was never written from one that was
@@ -125,7 +126,9 @@ describe('review artefact read states', () => {
         const root = await rootWithReview();
         await writeFile(
             join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
+            // The record satisfies the store's schema: a hand-rolled one that omitted `phase` was refused by every reader
+            // that tells drift from absence, which is why these cases failed for the fixture's reason.
+            `${JSON.stringify(taskRecord({ id: taskId, phase: 'review', title: 'Artefact reads' }), null, 2)}\n`,
         );
         await writeFile(join(root, 'subject.ts'), 'export const revision = 1;\n');
         await writeFile(
@@ -161,7 +164,7 @@ describe('review artefact read states', () => {
             const root = await rootWithReview();
             await writeFile(
                 join(root, '.kata', 'tasks', taskId, 'task.json'),
-                `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
+                `${JSON.stringify(taskRecord({ id: taskId, phase: 'review', title: 'Artefact reads' }), null, 2)}\n`,
             );
             await writeFile(
                 join(root, '.kata', 'tasks', taskId, 'current-state.json'),
@@ -281,7 +284,7 @@ describe('review artefact read states', () => {
         await writeFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), '{}');
         await writeFile(
             join(root, '.kata', 'tasks', changeId, 'task.json'),
-            `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+            `${JSON.stringify(taskRecord({ id: changeId, phase: 'review', ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }), null, 2)}\n`,
         );
 
         // The reader must not throw, and the refusal must name itself on the summary.
@@ -355,7 +358,9 @@ describe('review artefact read states', () => {
         // be present and valid or the command fails before reaching the field under test.
         await writeFile(
             join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'Artefact reads', acceptance: [{ id: 'AC-1', statement: 'x' }] })}\n`,
+            // The record satisfies the store's schema: a hand-rolled one that omitted `phase` was refused by every reader
+            // that tells drift from absence, which is why these cases failed for the fixture's reason.
+            `${JSON.stringify(taskRecord({ id: taskId, phase: 'review', title: 'Artefact reads' }), null, 2)}\n`,
         );
         await writeFile(
             join(root, '.kata', 'tasks', taskId, 'current-state.json'),
@@ -430,7 +435,7 @@ describe('review artefact read states', () => {
         await writeFile(join(root, 'src', 'a.ts'), 'holds\n', 'utf8');
         await writeFile(
             join(root, '.kata', 'tasks', changeId, 'task.json'),
-            `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+            `${JSON.stringify(taskRecord({ id: changeId, phase: 'review', ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }), null, 2)}\n`,
         );
         // **The revision has to be sealed, or none of the assertions below can be reached.** Without it the assessment
         // answers `not_applicable`, the route comes from elsewhere, and every `not.toBe(...)` here passes for a reason
@@ -489,7 +494,7 @@ describe('review artefact read states', () => {
         await writeFile(join(root, 'src', 'a.ts'), 'holds\n', 'utf8');
         await writeFile(
             join(root, '.kata', 'tasks', changeId, 'task.json'),
-            `${JSON.stringify({ id: changeId, ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }, null, 2)}\n`,
+            `${JSON.stringify(taskRecord({ id: changeId, phase: 'review', ownedPaths: ['src/a.ts'], workflowProfile: { reviewMode: 'strict' } }), null, 2)}\n`,
         );
         // **The refused state has to be reachable, or the name asserts nothing.** This case sealed no revision, so the
         // assessment answered `not_applicable` and the route came from the ledger: the *order* its name claims was never

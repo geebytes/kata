@@ -9,6 +9,7 @@ import { bindsToRevision, currentRevisionIdentityFrom } from './verdict-binding.
 import { readReviewDecisionSnapshot } from './revision.js';
 import { readBlockingProblems, readReviewRecord } from './review-read.js';
 
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 /**
  * Whether a task may enter distill.
  *
@@ -121,7 +122,7 @@ export async function evaluateReviewClearance(
 export interface JudgePass {
     passed: boolean;
     revisionId?: string;
-    reason?: 'not_passed' | 'no_evidence' | 'failing_acceptance' | 'stale_judgement' | 'evidence_not_accepted';
+    reason?: 'not_passed' | 'no_evidence' | 'failing_acceptance' | 'stale_judgement' | 'stale_subject' | 'evidence_not_accepted';
 }
 
 /**
@@ -137,6 +138,10 @@ export async function evaluateJudgePass(input: {
 }): Promise<JudgePass> {
     const judge = await readValidatedOptional<JudgeResult>('judge-result', judgePath(input.root, input.taskId));
     if (!judge || judge.taskId !== input.taskId || judge.result !== 'PASS') return { passed: false, reason: 'not_passed' };
+    const currentSubjectRevision = declaredSubjectRevision(await readLedger(input.root, input.taskId));
+    if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+        return { passed: false, reason: 'stale_subject' };
+    }
     if (input.freshEvidence?.revisionId) {
         // The id is the revision the fresh evidence was sealed under; the content fields come from the current revision,
         // because a re-seal of unchanged content issues a new id and the content is what a verdict is really about.

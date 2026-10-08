@@ -9,7 +9,7 @@
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
-import { MutationNotAttempted, UnrestoredMutation, clearMutation, recordMutation, withVerificationLock } from '../store/verify-context.js';
+import { UnrestoredMutation, VerificationWindowLive, clearMutation, recordMutation, withVerificationWindow } from '../store/verify-context.js';
 
 function makeVerdict(input: {
     evidence: Evidence;
@@ -105,68 +105,63 @@ const executableFalsifier: EvidenceVerifier = {
     verifier: 'producers/verifiers#executable-falsifier',
     verify: async (evidence, context) => {
         if (evidence.type !== 'executable_falsifier') throw new Error('falsifier verifier received another type');
-        let before = await context.run(evidence.command);
-        if (before.code !== 0) {
-            // **A failing `before` may be measuring somebody else's injection.** The tree is re-measured under the lock before
-            // the failure is reported: a concurrent cycle holds the file injected for its whole window, so a run that reads
-            // it there reports `the check was already failing before any mutation` — the misdiagnosis this change exists to
-            // remove. Only the failure path pays for the re-measurement.
-            before = await withVerificationLock(context.root, evidence.mutation.file, () => context.run(evidence.command));
-        }
-        if (before.code !== 0) {
-            return makeVerdict({
-                evidence,
-                context,
-                verdict: 'refuted',
-                // **Named, because a reader has to classify this case and prose matching is not a derivation.** The verdict
-                // is `refuted` — the evidence item is not valid — but the *cause* is that the check could not be evaluated
-                // at all, and that is a different fact from a claim being false. `ledger replay` reads this marker to split
-                // "the record no longer holds" from "the record can no longer be checked": the same sentence used to be
-                // matched by hand, and a reworded message would have silently moved every such item into the wrong bucket.
-                observed: `${CHECK_CANNOT_RUN} ${outcomeLine(before)}`,
-                verifier: executableFalsifier.verifier,
-            });
-        }
-
-        const original = await context.readText(evidence.mutation.file);
-        if (original === null) {
-            return makeVerdict({ evidence, context, verdict: 'inconclusive', observed: `${evidence.mutation.file} does not exist`, verifier: executableFalsifier.verifier });
-        }
-        if (!original.includes(evidence.mutation.find)) {
-            return makeVerdict({
-                evidence,
-                context,
-                verdict: 'inconclusive',
-                observed: `the mutation site is gone from ${evidence.mutation.file}, so this check can no longer be reddened`,
-                verifier: executableFalsifier.verifier,
-            });
-        }
-
+        // **The whole cycle is one window.** Everything below — the opening check, the read, the journal, the injection, the
+        // mutated run, the restore, and the closing check — happens inside a single exclusive window on this file, and the
+        // window's identity is derived once and carried. Both halves were measured by an independent round: a closing check
+        // taken outside the window landed inside another cycle's injection and downgraded a valid item to `inconclusive …
+        // the tree was not restored to green` while the checkout was clean, and a key recomputed at each site let a check
+        // that replaces its target atomically orphan its own journal.
         try {
-            // **The inject/run/restore window is held on the file it mutates, and the restore proves itself.** Two runs on
-            // one file used to interleave — the second read the first's injected content as its original and wrote that
-            // back — leaving a defect in the checkout with only a verdict as the signal. Measured by an independent round.
-            let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
-            await withVerificationLock(context.root, evidence.mutation.file, async () => {
+            // The caller's bound, if it set one, is the bound the window is opened under — one number, one place.
+            return await withVerificationWindow(context.root, evidence.mutation.file, async (window) => {
+                const before = await context.run(evidence.command);
+                if (before.code !== 0) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'refuted',
+                        // **Named, because a reader has to classify this case and prose matching is not a derivation.** The
+                        // verdict is `refuted` — the evidence item is not valid — but the *cause* is that the check could not
+                        // be evaluated at all, and that is a different fact from a claim being false. `ledger replay` reads
+                        // this marker to split "the record no longer holds" from "the record can no longer be checked": the
+                        // same sentence used to be matched by hand, and a reworded message would have silently moved every
+                        // such item into the wrong bucket.
+                        observed: `${CHECK_CANNOT_RUN} ${outcomeLine(before)}`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
+
+                const original = await context.readText(evidence.mutation.file);
+                if (original === null) {
+                    return makeVerdict({ evidence, context, verdict: 'inconclusive', observed: `${evidence.mutation.file} does not exist`, verifier: executableFalsifier.verifier });
+                }
+                if (!original.includes(evidence.mutation.find)) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'inconclusive',
+                        observed: `the mutation site is gone from ${evidence.mutation.file}, so this check can no longer be reddened`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
+
                 // **The journal is written by the production path**, which it was not: the helper was imported and never
                 // called, so a killed run left a defect with no repair note and the next run waited out the lock instead of
-                // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0).
-                // **What was read outside the lock is checked against what is here now.** The original used to be read
-                // before the lock was taken, so a run that waited while another injected captured the *injected* content as
-                // its own original and wrote that back as its restore — leaving the defect on disk while both runs reported
-                // success (measured by an independent round, reproduced 12/12). Nothing is injected unless the file is still
-                // what this run read; otherwise the check could not run, which is what `inconclusive` means.
-                const current = await context.readText(evidence.mutation.file);
-                if (current !== original) {
-                    throw new MutationNotAttempted(`the file changed while this run waited for its lock, so nothing was injected by this run`);
-                }
+                // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0). It is
+                // written under the window's own key, so the cycle that clears it is looking under the name it wrote.
                 const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
-                await recordMutation(context.root, evidence.mutation.file, original, injected);
-                await context.writeText(evidence.mutation.file, injected);
-                mutated = await context.run(evidence.command);
-                // **Every way a restore can fail is the same fact.** The write may throw (the path became un-writable) or
-                // it may land as something else (another run wrote in between); both leave the tree holding a defect this
-                // run put there, and neither is a statement about the check.
+                await recordMutation(window, original, injected);
+                let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
+                let failure: unknown;
+                try {
+                    await context.writeText(evidence.mutation.file, injected);
+                    mutated = await context.run(evidence.command);
+                } catch (error) {
+                    failure = error;
+                }
+                // **Every way a restore can fail is the same fact.** The write may throw (the path became un-writable) or it
+                // may land as something else (another run wrote in between); both leave the tree holding a defect this run
+                // put there, and neither is a statement about the check.
                 try {
                     await context.writeText(evidence.mutation.file, original);
                 } catch (error) {
@@ -179,42 +174,44 @@ const executableFalsifier: EvidenceVerifier = {
                     throw new UnrestoredMutation(`the mutation injected into ${evidence.mutation.file} could not be restored, so the checkout is not as it was found: the file holds content this run did not write`);
                 }
                 // The file is back: there is nothing left to repair.
-                await clearMutation(context.root, evidence.mutation.file);
-            });
-            if (mutated === undefined) throw new Error(`the mutation on ${evidence.mutation.file} never ran`);
-            const after = await context.run(evidence.command);
-            // **A reading that does not say what it ran is not a reading.** Every falsifier persisted the same
-            // `{"before":0,"mutated":1,"after":0}`, so four readings were indistinguishable in the store and a later reader
-            // could not tell which mutation produced which — the same family as a record that does not carry its question.
-            const observed = JSON.stringify({ evidence: evidence.id, file: evidence.mutation.file, before: before.code, mutated: mutated.code, after: after.code });
-            if (mutated.code === 0) {
-                return makeVerdict({
-                    evidence,
-                    context,
-                    verdict: 'refuted',
-                    observed: `${observed} — the check did not redden under its own defect`,
-                    verifier: executableFalsifier.verifier,
-                });
-            }
-            if (after.code !== 0) {
-                return makeVerdict({
-                    evidence,
-                    context,
-                    verdict: 'inconclusive',
-                    observed: `${observed} — the tree was not restored to green`,
-                    verifier: executableFalsifier.verifier,
-                });
-            }
-            return makeVerdict({ evidence, context, verdict: 'supported', observed, verifier: executableFalsifier.verifier });
+                await clearMutation(window);
+                if (failure !== undefined) throw failure;
+                if (mutated === undefined) throw new Error(`the mutation on ${evidence.mutation.file} never ran`);
+                // **The closing check is inside the window too.** Outside it, this run could measure another cycle's
+                // injection and report the tree as unrepaired while the tree was clean.
+                const after = await context.run(evidence.command);
+                // **A reading that does not say what it ran is not a reading.** Every falsifier persisted the same
+                // `{"before":0,"mutated":1,"after":0}`, so four readings were indistinguishable in the store and a later
+                // reader could not tell which mutation produced which — the same family as a record that does not carry its
+                // question.
+                const observed = JSON.stringify({ evidence: evidence.id, file: evidence.mutation.file, before: before.code, mutated: mutated.code, after: after.code });
+                if (mutated.code === 0) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'refuted',
+                        observed: `${observed} — the check did not redden under its own defect`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
+                if (after.code !== 0) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'inconclusive',
+                        observed: `${observed} — the tree was not restored to green`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
+                return makeVerdict({ evidence, context, verdict: 'supported', observed, verifier: executableFalsifier.verifier });
+            }, { deadlineMs: context.windowDeadlineMs });
         } catch (error) {
+            // **A live window is not a verdict.** The mechanism tells this run that another cycle holds the file mutated;
+            // converting that into `inconclusive` would hand a verdict about a tree this run does not own, which is the
+            // misdiagnosis the window exists to remove. It propagates, and the run fails.
+            if (error instanceof VerificationWindowLive) throw error;
             // A tree that still holds the injected defect fails the run; only a check that could not run is a verdict.
-            if (error instanceof UnrestoredMutation || error instanceof MutationNotAttempted) throw error;
-            // The fallback restore runs **inside** the lock: an error path that writes the file after the lock is released
-            // is a restore racing every other cycle on that file.
-            await withVerificationLock(context.root, evidence.mutation.file, async () => {
-                await context.writeText(evidence.mutation.file, original);
-                await clearMutation(context.root, evidence.mutation.file);
-            });
+            if (error instanceof UnrestoredMutation) throw error;
             return makeVerdict({
                 evidence,
                 context,

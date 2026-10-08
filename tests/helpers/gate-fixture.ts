@@ -5,6 +5,7 @@ import { approveUserChoiceGate, consumeUserChoiceGate, createUserChoiceGate } fr
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, userChoiceGatePath } from '../../src/core/layout.js';
 
+import { writeTaskRecord } from './task-fixture.js';
 /**
  * **A task in `review`, which is the state the reported deadlock could not leave.**
  *
@@ -30,10 +31,9 @@ export async function gateFixture(taskId = 'gate-reentry'): Promise<GateFixture>
     const root = await mkdtemp(join(tmpdir(), 'kata-gate-reentry-'));
     await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
     await writeFile(join(root, 'subject.ts'), 'export const version = 1;\n');
-    await writeFile(
-        join(root, '.kata', 'tasks', taskId, 'task.json'),
-        `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-    );
+    // Through the shared fixture writer: the record has to satisfy the store's schema, or every reader that tells drift
+    // from absence refuses it before the state under test is reached.
+    await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts'], at: NOW });
     // Written through the layout's own path helper, so the fixture cannot invent a location the code does not use.
     await writeFile(
         currentStatePath(root, taskId),

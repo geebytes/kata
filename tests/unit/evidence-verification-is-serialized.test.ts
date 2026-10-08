@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { link, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { withVerificationLock } from '../../src/store/verify-context.js';
+import { withVerificationWindow } from '../../src/store/verify-context.js';
 import { verifyAll } from '../../src/producers/verifiers.js';
 import type { VerifyContext } from '../../src/producers/port.js';
 
@@ -23,7 +23,7 @@ describe('evidence verification is serialized per file', () => {
         const original = content;
         const events: string[] = [];
 
-        const section = (name: string) => withVerificationLock(root, file, async () => {
+        const section = (name: string) => withVerificationWindow(root, file, async () => {
             events.push(`${name}:enter`);
             const read = content;
             await new Promise((resolve) => setTimeout(resolve, 10));
@@ -56,7 +56,7 @@ describe('evidence verification is serialized per file', () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-serialize-'));
         let inside = 0;
         let peak = 0;
-        const section = (spelling: string) => withVerificationLock(root, spelling, async () => {
+        const section = (spelling: string) => withVerificationWindow(root, spelling, async () => {
             inside += 1;
             peak = Math.max(peak, inside);
             await new Promise((resolve) => setTimeout(resolve, 15));
@@ -75,7 +75,7 @@ describe('evidence verification is serialized per file', () => {
         await link(join(root, 'a.ts'), join(root, 'hard.ts'));
         let inside = 0;
         let peak = 0;
-        const section = (name: string) => withVerificationLock(root, name, async () => {
+        const section = (name: string) => withVerificationWindow(root, name, async () => {
             inside += 1;
             peak = Math.max(peak, inside);
             await new Promise((resolve) => setTimeout(resolve, 15));
@@ -113,10 +113,12 @@ describe('evidence verification is serialized per file', () => {
         const first = verifyAll([firstItem], context);
         await new Promise((resolve) => setTimeout(resolve, 15));
         const second = verifyAll([secondItem], context);
-        // The waiting cycle **refuses** rather than injecting from content it did not write, so it settles by rejecting: what
-        // matters is that the file is as it was found and that no run restored somebody else's injection.
+        // **The waiting cycle is no longer handed a verdict about a tree it does not own.** It waits for the window and then
+        // reads the file as this run left it, so its mutation site is simply gone: `inconclusive`, on the site, not on a
+        // tree. What must hold either way is that no run restored somebody else's injection and the file is as it was found.
         const outcomes = await Promise.allSettled([first, second]);
-        expect(outcomes.some((outcome) => outcome.status === 'rejected')).toBe(true);
+        const verdicts = outcomes.flatMap((outcome) => (outcome.status === 'fulfilled' ? outcome.value : []));
+        expect(verdicts.some((verdict) => verdict.observed.includes('not restored to green') || verdict.observed.includes('already failing before any mutation'))).toBe(false);
         expect(await readFile(join(root, file), 'utf8')).toBe(clean);
     });
 
@@ -127,7 +129,7 @@ describe('evidence verification is serialized per file', () => {
         let inside = 0;
         let releaseBoth: () => void = () => {};
         const bothInside = new Promise<void>((resolve) => { releaseBoth = resolve; });
-        const section = (file: string, name: string) => withVerificationLock(root, file, async () => {
+        const section = (file: string, name: string) => withVerificationWindow(root, file, async () => {
             inside += 1;
             if (inside === 2) releaseBoth();
             await Promise.race([

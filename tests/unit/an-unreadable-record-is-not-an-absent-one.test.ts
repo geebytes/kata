@@ -61,3 +61,44 @@ describe('the reference does not depend on directory order', () => {
         expect(fromFirst).toEqual({ kind: 'found', digests: { 'a.ts': DIGESTS['revision-bbbbbbbbbbbbbbbb'] } });
     });
 });
+
+/**
+ * **One case per site, because a catch-all is per site.** Each of these three readers wrapped its read in
+ * `.catch(() => null)`, so a damaged record answered the same value as a missing one — and the consumers below each
+ * turned that answer into a *weaker* fact: no freeze hash in an identity, empty surfaces in a decision binding, and
+ * "this change produced no record". The measurement is the same in all three: write a record that cannot be parsed and
+ * require the reader to name it rather than shrug.
+ */
+async function taskRoot(taskId: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'kata-unreadable-site-'));
+    roots.push(root);
+    await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+    return root;
+}
+
+describe('a damaged record is not an absent one, at every site that reads one', () => {
+    it('refuses to derive a freeze hash from a task record it cannot read', async () => {
+        const taskId = 'freeze-hash-site';
+        const root = await taskRoot(taskId);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), '{ "id": "freeze-hash-site" }\n');
+        const { candidateFreezeHashFor } = await import('../../src/quality/review-ir.js');
+        await expect(candidateFreezeHashFor(root, taskId, 'review')).rejects.toThrow(/task\.json/);
+    });
+
+    it('refuses to derive a decision identity from a task record it cannot read', async () => {
+        const taskId = 'identity-site';
+        const root = await taskRoot(taskId);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'task.json'), '{ "id": "identity-site" }\n');
+        const { currentRevisionIdentityFrom } = await import('../../src/workflow/verdict-binding.js');
+        await expect(currentRevisionIdentityFrom({ kind: 'absent' }, root, taskId)).rejects.toThrow(/task\.json/);
+    });
+
+    it('refuses to call a damaged change record an absent one', async () => {
+        const taskId = 'change-record-site';
+        const root = await taskRoot(taskId);
+        const { readChangeRecord } = await import('../../src/quality/change-record.js');
+        expect(await readChangeRecord(root, taskId)).toBeNull();
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'change-record.json'), '{ "taskId": "change-record-site" }\n');
+        await expect(readChangeRecord(root, taskId)).rejects.toThrow(/change-record\.json/);
+    });
+});

@@ -6,6 +6,7 @@ import { readCurrentTaskRevision } from '../workflow/revision.js';
 import { computeFileHash } from './record.js';
 import type { WikiRecord } from './record.js';
 
+import { declaredSubjectRevision, readLedger } from '../store/ledger.js';
 /**
  * Whether a candidate's provenance actually holds up, checked when it would become authoritative.
  *
@@ -23,7 +24,7 @@ import type { WikiRecord } from './record.js';
  *   3. does the record name at least one piece of evidence? (an authoritative claim with nothing behind it).
  */
 export interface ProvenanceFailure {
-    reason: 'unknown_validation_task' | 'validation_task_not_passed' | 'source_hash_mismatch' | 'source_missing' | 'no_evidence';
+    reason: 'unknown_validation_task' | 'validation_task_not_passed' | 'validation_task_judge_unreadable' | 'validation_task_question_moved' | 'source_hash_mismatch' | 'source_missing' | 'no_evidence';
     detail?: string;
 }
 
@@ -33,10 +34,19 @@ export interface ProvenanceCheck {
 }
 
 /** The Judge verdict a validation task left, or `null` when it left none. */
-async function judgePassedFor(root: string, taskId: string): Promise<boolean | null> {
-    const judge = await readValidatedOptional<{ result?: string }>('judge-result', judgePath(root, taskId)).catch(() => null);
-    if (!judge) return null;
-    return judge.result === 'PASS';
+async function judgePassedFor(root: string, taskId: string): Promise<{ passed: boolean | null; subjectRevision?: string; unreadable?: string }> {
+    let judge: { result?: string; subjectRevision?: string } | null;
+    try {
+        judge = await readValidatedOptional<{ result?: string; subjectRevision?: string }>('judge-result', judgePath(root, taskId));
+    } catch (error) {
+        return { passed: null, unreadable: error instanceof Error ? error.message : String(error) };
+    }
+    if (!judge) return { passed: null };
+    const currentSubjectRevision = declaredSubjectRevision(await readLedger(root, taskId));
+    if (judge.subjectRevision && currentSubjectRevision && judge.subjectRevision !== currentSubjectRevision) {
+        return { passed: false, subjectRevision: judge.subjectRevision };
+    }
+    return { passed: judge.result === 'PASS' };
 }
 
 /** Whether a task directory exists at all: `llmwiki-ingest` names none. */
@@ -62,11 +72,15 @@ export async function checkPromotionProvenance(root: string, record: WikiRecord)
             detail: `'${record.validationTaskId}' is not a kata task; only a task's candidate can be promoted`,
         });
     } else {
-        const passed = await judgePassedFor(root, record.validationTaskId);
-        if (passed !== true) {
+        const judge = await judgePassedFor(root, record.validationTaskId);
+        if (judge.passed !== true) {
             failures.push({
-                reason: 'validation_task_not_passed',
-                detail: `task '${record.validationTaskId}' has ${passed === null ? 'no Judge result' : 'not passed Judge'}`,
+                reason: judge.unreadable ? 'validation_task_judge_unreadable' : judge.subjectRevision ? 'validation_task_question_moved' : 'validation_task_not_passed',
+                detail: judge.unreadable
+                    ? `task '${record.validationTaskId}' Judge record is unreadable: ${judge.unreadable}`
+                    : judge.subjectRevision
+                        ? `task '${record.validationTaskId}' Judge answered ${judge.subjectRevision}, not its current declared question`
+                        : `task '${record.validationTaskId}' has ${judge.passed === null ? 'no Judge result' : 'not passed Judge'}`,
             });
         }
     }

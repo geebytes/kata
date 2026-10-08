@@ -268,9 +268,14 @@ export async function candidateFreezeHashFor(
      */
     revisionRead?: CurrentRevisionRead,
 ): Promise<string | undefined> {
-    const { readTask } = await import('../core/task.js');
+    const { readValidatedOptional } = await import('../core/schema.js');
+    const { taskPath } = await import('../core/layout.js');
     const { readCurrentTaskRevision } = await import('../workflow/revision.js');
-    const task = await readTask(root, taskId).catch(() => null);
+    // **A damaged `task.json` is not an absent one.** This read used to be wrapped in `.catch(() => null)`, so an
+    // unparseable record answered the same `undefined` as a task that was never written — and the caller turned that into
+    // an identity with *no* freeze hash, i.e. a weaker binding produced by damage. The tolerant reader answers `null` for
+    // ENOENT only and reports everything else by name.
+    const task = await readValidatedOptional<TaskRecord>('task', taskPath(root, taskId));
     if (!task) return undefined;
     // **One file, one read.** When a caller has already established what the revision is, asking again can answer
     // differently (the pointer is written non-atomically) and silently assemble an identity out of two states — measured:

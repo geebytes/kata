@@ -6,6 +6,7 @@ import { runCommand } from '../../src/workflow/orchestrator.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { currentStatePath, reviewPath, taskDir } from '../../src/core/layout.js';
+import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
  * **A review record answers a request, and the request is not the revision.**
@@ -38,10 +39,9 @@ beforeEach(async () => {
     process.chdir(root);
     await mkdir(join(root, '.kata', 'tasks', taskId, 'review'), { recursive: true });
     await writeFile(join(root, 'subject.ts'), 'export const version = 1;\n');
-    await writeFile(
-        join(root, '.kata', 'tasks', taskId, 'task.json'),
-        `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-    );
+    // Through the shared fixture writer: a hand-rolled record that omitted `phase` is refused by every reader that tells
+    // drift from absence, so the case would fail for the fixture's reason rather than the code's.
+    await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts'], at: NOW });
     await writeFile(
         currentStatePath(root, taskId),
         `${JSON.stringify({ taskId, phase: 'review', actor: { id: 'fixture', role: 'reviewer' }, updatedAt: NOW })}\n`,
@@ -190,10 +190,7 @@ describe('the plan does not depend on the frozen snapshot', () => {
         const { readPlanState } = await import('../../src/store/ledger.js');
         const { createTaskRevisionIfChanged, readCurrentTaskRevisionState } = await import('../../src/workflow/revision.js');
         await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-        );
+        await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts', 'other.ts'], at: NOW });
         await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
         const sealed = await readCurrentTaskRevisionState(root, taskId);
         const sealedDigests = sealed.kind === 'current' ? (sealed.revision as { pathDigests?: Record<string, string> }).pathDigests ?? {} : {};
@@ -225,10 +222,7 @@ describe('the plan does not depend on the seal pointer', () => {
         const { readPlanState } = await import('../../src/store/ledger.js');
         const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
         await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-        );
+        await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts', 'other.ts'], at: NOW });
         const seal = () => createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
         await seal();
         const planNow = async () => {
@@ -256,10 +250,7 @@ describe('an unreadable seal pointer is refused, not treated as absent', () => {
         const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
         const { currentRevisionPath } = await import('../../src/core/layout.js');
         await writeFile(join(root, 'other.ts'), 'export const other = 1;\n');
-        await writeFile(
-            join(root, '.kata', 'tasks', taskId, 'task.json'),
-            `${JSON.stringify({ id: taskId, title: 'T', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['subject.ts', 'other.ts'], createdAt: NOW, updatedAt: NOW })}\n`,
-        );
+        await writeTaskRecord(root, { id: taskId, phase: 'review', ownedPaths: ['subject.ts', 'other.ts'], at: NOW });
         await createTaskRevisionIfChanged({ root, taskId, ownedPaths: ['subject.ts', 'other.ts'], checkIds: [] });
         await writeFile(join(root, 'subject.ts'), 'export const version = 2;\n');
         const planNow = async () => {

@@ -57,6 +57,8 @@ export type UpstreamSummary = {
   reviewReady?: boolean;
   invalidReviewApproval?: boolean;
   judgeResult?: string;
+  /** Judge record answered a different declared question and is not current. */
+  judgeStaleSubject?: string;
   verifyResult?: string;
   failedAcceptance: number;
   failedVerifyAcceptance: number;
@@ -278,7 +280,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // so one decision read them twice — the same defect the pointer's read was fixed for, left on the ledger. The read is
   // taken here (dynamically, because `store/ledger` reaches `core/state` which reaches the distill gate that calls this
   // module) and handed to both.
-  const { readLedger } = await import('../store/ledger.js');
+  const { declaredSubjectRevision, readLedger } = await import('../store/ledger.js');
   const ledgerInHand = await readLedger(root, taskId);
   const blockingRead = await readBlockingProblems(root, taskId, sealedRead, ledgerInHand);
   // **The new path's verdict, asked in one place.** `ledgerVerdict` is also what the CLI's `decide` verb calls, so the
@@ -308,12 +310,17 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     reviewRounds,
   });
   const invalidReviewApproval = review?.status === 'approved' && !review.reviewEvidence?.trim();
-  const judgeRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string }>(judgePath(root, taskId), isAcceptanceRecord);
-  const judge = mixedRevision
+  const judgeRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string; subjectRevision?: string }>(judgePath(root, taskId), isAcceptanceRecord);
+  const rawJudge = mixedRevision
     ? null
     : currentRevisionId
       ? onlyCurrentRevision(usableOrNull(judgeRead), binding)
       : usableOrNull(judgeRead);
+  const currentSubjectRevision = declaredSubjectRevision(ledgerInHand);
+  const judgeStaleSubject = rawJudge?.subjectRevision && currentSubjectRevision && rawJudge.subjectRevision !== currentSubjectRevision
+    ? rawJudge.subjectRevision
+    : undefined;
+  const judge = judgeStaleSubject ? null : rawJudge;
   const failedAcceptance = judge?.acceptance?.filter((item) => item.result === 'FAIL') ?? [];
   const verifyRead = await readRecordState<AcceptanceRecord & { revisionId?: string; manifestHash?: string; result?: string }>(verifyPath(root, taskId), isAcceptanceRecord);
   const verify = mixedRevision
@@ -398,6 +405,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     reviewReady: review?.status === 'approved' && Boolean(review.reviewEvidence?.trim()),
     ...(invalidReviewApproval ? { invalidReviewApproval: true } : {}),
     ...(judge?.result ? { judgeResult: judge.result } : {}),
+    ...(judgeStaleSubject ? { judgeStaleSubject } : {}),
     ...(verify?.result ? { verifyResult: verify.result } : {}),
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
