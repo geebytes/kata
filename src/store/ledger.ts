@@ -982,6 +982,9 @@ export function questionForComparison(
  */
 export async function planDigestOf(root: string, changeId: string): Promise<string | undefined> {
     const plan = await readPlanState(root, changeId);
+    // One derivation, and no special case: the cycle this used to be part of was broken at its source — the plan's sampling
+    // seed embedded the subject revision while the subject hashes the plan — so the plan is now a function of the content
+    // alone and hashing all of it is what "the plan the request asks for" means.
     return plan.kind === 'usable' ? createHash('sha256').update(JSON.stringify(plan.value)).digest('hex').slice(0, 16) : undefined;
 }
 

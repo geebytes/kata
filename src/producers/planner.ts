@@ -95,7 +95,11 @@ export function planReview(input: {
 
     // The sampled audit: a fraction of the low-risk work is promoted afterwards, drawn from the subject and the path set
     // so the same change draws the same sample and the classifier's own error rate can be measured rather than assumed.
-    const samplingSeed = `${input.subject.revision}:${input.changedPaths.length}`;
+    // **The seed comes from the content, not from the identity the plan helps define.** It used to embed
+    // `subject.revision`, while the subject hashes the plan — a fixed-point equation with no solution: `ledger plan` was
+    // never idempotent and re-running it released a recorded round that answered the current question (both measured by an
+    // independent round). The changed paths are what the sampling is over, so they are what the seed is derived from.
+    const samplingSeed = `${[...input.changedPaths].sort().join(',')}:${input.changedPaths.length}`;
     const sampling = {
         seed: samplingSeed,
         rate: input.policy.sampling.rate,
