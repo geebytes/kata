@@ -126,6 +126,13 @@ describe('the record answers the request it was made for', () => {
         // The recorded request is the subject as declared now: the fixture's own revision is a hand-written value,
         // while the record carries what the ledger derives from the frozen digests and the current claims.
         expect(record.subjectRevision).toBe((await readLedger(root, taskId)).subjectAsDeclared?.revision);
+        // And the conclusion it replaced is kept, named, where history is kept: AC-1 forbids a silent replacement, and an
+        // independent round measured exactly that (`release success=true | history rows=0`) before this was written.
+        const history = JSON.parse(
+            (await readFile(join(taskDir(root, taskId), 'review-history.jsonl'), 'utf8')).trim().split('\n').at(-1) ?? '{}',
+        ) as { findings?: Array<{ id?: string }>; supersededBy?: string };
+        expect(history.findings?.map((finding) => finding.id)).toEqual(['R8-F1']);
+        expect(history.supersededBy).toBe(record.subjectRevision);
     });
 
     it('keeps blocking when the record predates the subject binding, because we cannot know what it answered', async () => {
