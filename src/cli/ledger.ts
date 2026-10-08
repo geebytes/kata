@@ -19,7 +19,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
 import { verifyAll } from '../producers/verifiers.js';
-import { mostRecentDifferentContent, readCurrentTaskRevisionState } from '../workflow/revision.js';
+import { mostRecentDifferentContent } from '../workflow/revision.js';
 import type { EvidenceAdapter, VerifyContext } from '../producers/port.js';
 import { createInlineAdapter } from '../assurance/adapters/inline-adapter.js';
 import { createFileAdapter } from '../assurance/adapters/file-adapter.js';
@@ -922,20 +922,19 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
         // the plan and the declared subject moved with it, and a recorded round that answered the current question was
         // released (measured by an independent round). A revision whose content equals the current content is not a
         // reference — it is the same state — so it is skipped, and a no-op seal no longer moves anything.
-        const sealedNow = await readCurrentTaskRevisionState(options.root, changeId);
-        if (sealedNow.kind === 'unreadable') {
+        const referenceRead = await mostRecentDifferentContent(options.root, changeId, current.pathDigests);
+        if (referenceRead.kind === 'unreadable') {
             fail({
                 command: 'ledger plan',
-                error: `the sealed revision cannot be read, so what changed since it cannot be measured: ${sealedNow.detail}`,
-                remedy: 'repair or replace .kata/tasks/<id>/current-revision.json, then plan again',
+                error: `the stored revisions cannot be read, so what changed since the last one cannot be measured: ${referenceRead.detail}`,
+                remedy: 'repair or replace .kata/tasks/<id>/revisions/, then plan again',
             });
             return;
         }
-        const reference = await mostRecentDifferentContent(options.root, changeId, current.pathDigests);
-        const changed = reference === null
+        const changed = referenceRead.kind === 'absent'
             ? Object.keys(current.pathDigests)
             : (() => {
-                const diff = diffSubjects({ revision: 'rev:reference', pathDigests: reference }, current);
+                const diff = diffSubjects({ revision: 'rev:reference', pathDigests: referenceRead.digests }, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
         const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });

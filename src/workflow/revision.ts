@@ -246,12 +246,18 @@ export async function mostRecentDifferentContent(
   root: string,
   taskId: string,
   currentDigests: Record<string, string>,
-): Promise<Record<string, string> | null> {
+): Promise<{ kind: 'found'; digests: Record<string, string> } | { kind: 'absent' } | { kind: 'unreadable'; detail: string }> {
   let names: string[];
   try {
     names = await readdir(revisionsDir(root, taskId));
-  } catch {
-    return null;
+  } catch (error) {
+    // **A store that cannot be read is not a store that holds nothing.** Returning "no reference" here would fall back to
+    // every declared path and move the plan and the declared subject for a reason that is neither content nor declaration —
+    // the same fail-open shape an unreadable seal pointer had. Only a directory that is genuinely not there means "nothing
+    // was ever sealed".
+    const code = (error as { code?: string }).code;
+    if (code === 'ENOENT') return { kind: 'absent' };
+    return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
   }
   const same = (left: Record<string, string>, right: Record<string, string>): boolean => {
     const keys = Object.keys(left);
@@ -260,14 +266,20 @@ export async function mostRecentDifferentContent(
   const candidates: TaskRevision[] = [];
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
-    const read = await readValidatedOptional<TaskRevision>('revision', join(revisionsDir(root, taskId), name));
-    if (read !== null && read.pathDigests !== undefined) candidates.push(read);
+    try {
+      const read = await readValidatedOptional<TaskRevision>('revision', join(revisionsDir(root, taskId), name));
+      if (read !== null && read.pathDigests !== undefined) candidates.push(read);
+    } catch (error) {
+      return { kind: 'unreadable', detail: error instanceof Error ? error.message : String(error) };
+    }
   }
   candidates.sort((left, right) => (left.createdAt < right.createdAt ? 1 : left.createdAt > right.createdAt ? -1 : 0));
   for (const candidate of candidates) {
-    if (!same(candidate.pathDigests as Record<string, string>, currentDigests)) return candidate.pathDigests as Record<string, string>;
+    if (!same(candidate.pathDigests as Record<string, string>, currentDigests)) {
+      return { kind: 'found', digests: candidate.pathDigests as Record<string, string> };
+    }
   }
-  return null;
+  return { kind: 'absent' };
 }
 
 export async function readCurrentTaskRevisionState(root: string, taskId: string): Promise<CurrentRevisionRead> {

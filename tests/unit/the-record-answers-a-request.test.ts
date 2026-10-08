@@ -268,8 +268,11 @@ describe('an unreadable seal pointer is refused, not treated as absent', () => {
             return state.kind === 'usable' ? JSON.stringify(state.value) : `unreadable: ${state.kind}`;
         };
         const before = await planNow();
-        // The pointer is damaged, not missing.
-        await writeFile(currentRevisionPath(root, taskId), '{ this is not a revision');
+        // The store is damaged, not missing: `revisions/` is replaced by a file, so reading it fails for a reason that is
+        // not ENOENT. A store that cannot be read must not read as a store that holds nothing.
+        const { revisionsDir } = await import('../../src/core/layout.js');
+        await rm(revisionsDir(root, taskId), { recursive: true, force: true });
+        await writeFile(revisionsDir(root, taskId), 'not a directory');
         const after = await planNow();
         expect(after).toBe(before);
     });
