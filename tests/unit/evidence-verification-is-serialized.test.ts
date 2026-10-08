@@ -113,7 +113,10 @@ describe('evidence verification is serialized per file', () => {
         const first = verifyAll([firstItem], context);
         await new Promise((resolve) => setTimeout(resolve, 15));
         const second = verifyAll([secondItem], context);
-        await Promise.all([first, second]);
+        // The waiting cycle **refuses** rather than injecting from content it did not write, so it settles by rejecting: what
+        // matters is that the file is as it was found and that no run restored somebody else's injection.
+        const outcomes = await Promise.allSettled([first, second]);
+        expect(outcomes.some((outcome) => outcome.status === 'rejected')).toBe(true);
         expect(await readFile(join(root, file), 'utf8')).toBe(clean);
     });
 
