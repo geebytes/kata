@@ -9,6 +9,7 @@
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
+import { UnrestoredMutation, withVerificationLock } from '../store/verify-context.js';
 
 function makeVerdict(input: {
     evidence: Evidence;
@@ -135,9 +136,22 @@ const executableFalsifier: EvidenceVerifier = {
         }
 
         try {
-            await context.writeText(evidence.mutation.file, original.replace(evidence.mutation.find, evidence.mutation.replace));
-            const mutated = await context.run(evidence.command);
-            await context.writeText(evidence.mutation.file, original);
+            // **The inject/run/restore window is held on the file it mutates, and the restore proves itself.** Two runs on
+            // one file used to interleave — the second read the first's injected content as its original and wrote that
+            // back — leaving a defect in the checkout with only a verdict as the signal. Measured by an independent round.
+            let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
+            await withVerificationLock(context.root, evidence.mutation.file, async () => {
+                await context.writeText(evidence.mutation.file, original.replace(evidence.mutation.find, evidence.mutation.replace));
+                mutated = await context.run(evidence.command);
+                await context.writeText(evidence.mutation.file, original);
+                const restored = await context.readText(evidence.mutation.file);
+                if (restored !== original) {
+                    // A verdict describes the check; a tree that still holds the injected defect is a different fact, and an
+                    // operator reading a verdict would not know to look at the tree.
+                    throw new UnrestoredMutation(`the mutation injected into ${evidence.mutation.file} could not be restored, so the checkout is not as it was found: the file holds content this run did not write`);
+                }
+            });
+            if (mutated === undefined) throw new Error(`the mutation on ${evidence.mutation.file} never ran`);
             const after = await context.run(evidence.command);
             const observed = JSON.stringify({ before: before.code, mutated: mutated.code, after: after.code });
             if (mutated.code === 0) {
@@ -160,6 +174,8 @@ const executableFalsifier: EvidenceVerifier = {
             }
             return makeVerdict({ evidence, context, verdict: 'supported', observed, verifier: executableFalsifier.verifier });
         } catch (error) {
+            // A tree that still holds the injected defect fails the run; only a check that could not run is a verdict.
+            if (error instanceof UnrestoredMutation) throw error;
             await context.writeText(evidence.mutation.file, original);
             return makeVerdict({
                 evidence,

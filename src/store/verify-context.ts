@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
+import { hashContent } from '../core/hash.js';
 import type { VerifyContext } from '../producers/port.js';
 import type { Subject, VerdictProducer } from '../kernel/types.js';
 
@@ -121,6 +122,47 @@ function realContainedPath(root: string, absolute: string): boolean {
 function insideWorkspace(realRoot: string, resolved: string): boolean {
     const inside = relative(realRoot, resolved).replaceAll('\\', '/');
     return (inside === '' || (!inside.startsWith('..') && !isAbsolute(inside)));
+}
+
+/**
+ * A cross-process critical section keyed on the file a check is about to mutate.
+ *
+ * **The verification cycle is not re-entrant on one file.** It reads the original, injects the defect, runs the check and
+ * writes the original back — so two overlapping runs on the same file interleave exactly as one would fear: the second
+ * reads the first's *injected* content as its original and writes that back, leaving a defect in the checkout with only a
+ * verdict as the signal (measured by an independent round: `git diff` non-empty after two concurrent reads of the same
+ * check, and the next run reporting `refuted … the check was already failing before any mutation`).
+ *
+ * The lock is per file, not global: two checks that touch different files still overlap, and the two that touch the same
+ * one cannot. It is a directory lock (`mkdir` is atomic), so it holds across processes and not only across promises.
+ */
+/**
+ * **The tree is not as it was found, and that is not a verdict.** A check that could not run is `inconclusive`; a checkout
+ * that still holds the injected defect is a broken repository, and an operator reading a verdict has no reason to look at
+ * the tree. This error is thrown past the verifiers so the run fails loudly.
+ */
+export class UnrestoredMutation extends Error {}
+
+export async function withVerificationLock<T>(root: string, relativePath: string, action: () => Promise<T>): Promise<T> {
+    const lockDir = join(root, '.kata', 'locks');
+    await mkdir(lockDir, { recursive: true });
+    const lockPath = join(lockDir, `verify-${hashContent(relativePath).slice(0, 16)}.lock`);
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+        try {
+            await mkdir(lockPath);
+            break;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+            if (Date.now() > deadline) throw new Error(`another verification run has held the lock on ${relativePath} for over a minute; nothing was injected by this run`);
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+    }
+    try {
+        return await action();
+    } finally {
+        await rm(lockPath, { recursive: true, force: true });
+    }
 }
 
 export function buildContext(
