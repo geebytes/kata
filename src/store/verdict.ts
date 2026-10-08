@@ -308,7 +308,15 @@ export async function ledgerVerdict(input: {
     });
 
     const decision = decide({
-        subject: ledger.subject,
+        // **The decision asks the question the ledger declares now, not the one it was frozen against.** Handing the
+        // frozen subject here made the decision and the report answer differently about the same reading: `claimDecisions`
+        // and `discoveryProjection` compare against `subjectAsDeclared`, while `evaluateClaim` — reached through this call
+        // — compared against the frozen revision. Measured by an independent round: after `claim restate`, `status --cost`
+        // reported the claim `stale` and `decide --tier standard` reported `pass, reasons: []` for the same ledger, so a
+        // reading that answered a question the ledger no longer asks was credited below the discovery floor.
+        // `declaredSubjectRevision` is the one derivation of "which question", and the content digests are the same either
+        // way — the declared subject is the frozen digests plus the question as declared now — so no content moves with this.
+        subject: ledger.subjectAsDeclared ?? ledger.subject,
         claims: ledger.claims,
         evidence: ledger.evidence,
         verdicts: ledger.verdicts,

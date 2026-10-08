@@ -1014,7 +1014,12 @@ export function frozenQuestionState(ledger: {
         frozen,
         declared,
         moved: true,
-        remedy: `kata-cli ledger freeze --change ${ledger.changeId} --path <p>… (re-freeze against the question declared now, which also re-derives the content digests), then run the command you were refused again`,
+        // **The remedy is written as the command that works, not as the command that reads well.** The first version of
+        // this string said `--path <p>…`, and `ledger freeze` reads only `--paths` (comma-separated) — so an operator who
+        // followed it literally got a silent freeze of the task's declared paths and a flag that was ignored. An
+        // independent round measured it. The bare command is the right remedy anyway: the state is "the subject is frozen
+        // against another question", and `ledger freeze` re-derives it from the declaration as it stands.
+        remedy: `kata-cli ledger freeze --change ${ledger.changeId} (re-freezes the declared paths against the question declared now; pass --paths a,b to freeze a different set), then run the command you were refused again`,
     };
 }
 

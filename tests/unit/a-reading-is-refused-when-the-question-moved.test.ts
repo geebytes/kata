@@ -105,6 +105,22 @@ describe('a reading is refused when the question moved', () => {
         expect(result.questionMoved).toMatchObject({ frozen, declared });
     });
 
+    it('names a remedy the command it names actually reads', async () => {
+        // **A remedy that cannot be followed is the defect this change repairs, one layer up.** The first version of the
+        // refusal said `--path <p>…`, while `ledger freeze` reads only `--paths` (comma-separated) — so an operator who
+        // copied the remedy got a silent freeze of the task's declared paths and a flag that was ignored. An independent
+        // round measured it, and the same wrong flag was in the operations table's example.
+        await movedQuestion();
+
+        const error = String((await ledger(['evidence', 'verify'])).error);
+
+        expect(error).toContain(`kata-cli ledger freeze --change ${changeId}`);
+        // Every flag it names must be one the verb reads: `--paths` is real, and `--path` — in any form, with any value —
+        // is silently ignored by `ledger freeze`. The negative lookahead is the whole assertion: it fails for `--path `,
+        // for `--path <p>`, and for any other spelling, while `--paths` passes.
+        expect(error).not.toMatch(/--path(?![s])/);
+    });
+
     it('records no verdict, so the refused reading cannot be mistaken for a taken one', async () => {
         await movedQuestion();
 

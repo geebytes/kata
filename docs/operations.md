@@ -21,7 +21,7 @@
 | `kata-cli next <change>` | Show next Comet action |
 | `kata-cli eval <manifest>` | Run evaluation from manifest |
 | `kata-cli baseline [--platform <p>] [--language en\|zh] [--change <id>]` | Measure rendered payload bytes/tokens and the authoritative read sizes before a phase runs |
-| `kata-cli ledger freeze --change <id> --path <p>...` | Freeze the **subject** — the content the decision will be about — by digest |
+| `kata-cli ledger freeze --change <id> [--paths a,b]` | Freeze the **subject** — the content the decision will be about — by digest |
 | `kata-cli ledger claim add \| waive \| list` | Declare what the change must prove, with the severity that decides how strong its evidence must be |
 | `kata-cli ledger evidence add \| verify \| replace` | Attach evidence and let a verifier decide it by running it; `executable_falsifier` must declare the mutation that reddens it |
 | `kata-cli ledger plan` / `kata-cli ledger focus` | Plan what a review should read, then narrow that to the claims whose dependencies actually moved |
@@ -291,10 +291,13 @@ evidence. `ledger decide` is the verdict the gates read, and it is a pure functi
 same way twice, and **a spent budget is never a pass**.
 
 ```bash
-kata-cli ledger freeze   --change <id> --path src/a.ts --path docs/spec.md
+kata-cli ledger freeze   --change <id> --paths src/a.ts,docs/spec.md   # a comma list; without it the declared paths are frozen
 kata-cli ledger claim    add --change <id> --id C1 --statement "..." --severity major --risk-class consistency --depends-on path:src/a.ts
-kata-cli ledger evidence add --change <id> --id E1 --type executable_falsifier --claim C1 \
-    --command "grep -q holds src/a.ts" --mutation-file src/a.ts --find holds --replace broken
+kata-cli ledger evidence add --change <id> --file submission.json        # claims and evidence arrive as one document
+#   submission.json: { "claims": [{ "id": "C1", "statement": "...", "riskClass": "consistency", "severity": "major",
+#                                  "dependsOn": ["path:src/a.ts"], "evidenceIds": ["E1"] }],
+#                      "evidence": [{ "id": "E1", "type": "executable_falsifier", "command": "grep -q holds src/a.ts",
+#                                     "mutation": { "file": "src/a.ts", "find": "holds", "replace": "broken" } }] }
 kata-cli ledger evidence verify --change <id>                 # runs it: before / mutated / after
 kata-cli ledger decide   --change <id>                        # pass | fail | insufficient, with reasons
 kata-cli ledger status   --change <id> --cost                 # per claim, plus what each route cost

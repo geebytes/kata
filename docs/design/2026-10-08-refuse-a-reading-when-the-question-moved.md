@@ -104,6 +104,43 @@ the test, and both are recorded because they are the failure mode this repositor
   for that: the frozen subject must keep a `claimsDigest`, and it must equal the declared one. (That mutation is not the
   remedy's path — the CLI freeze hashes the question itself — which is why the falsifier for AC-3 targets the freeze branch.)
 
+## The first independent round, and what it changed
+
+Round 1 (`adversarial`, `revision-6841dd6ab2340850`) returned **fail**: E1–E4 all `supported`, all four declared selectors
+reddened under their declared single-point mutation, no green selector — and three findings, all in the class this change
+claims to close. Each is repaired here, and each repair has its own falsifier (run, not assumed):
+
+- **R1-F1 (major) — the decision asked a different question from the report.** `ledgerVerdict` handed `decide` the subject
+  **as frozen** (`subject: ledger.subject`), so the kernel compared every reading against the frozen revision while
+  `claimDecisions` and `discoveryProjection` compared against the declared one. Measured: after `claim restate`,
+  `ledger status --cost` reported the claim `stale` and `ledger decide --tier standard` reported **`pass, reasons: []`** for
+  the same ledger — a reading that answered another question, credited. Under `strict` the reading was still accepted at the
+  claim layer; only the discovery floor kept it from a pass. **Repair:** the decision asks the question the ledger declares
+  (`subject: ledger.subjectAsDeclared ?? ledger.subject`); the content digests are the same either way, so nothing about the
+  content moves with it. **Guard:** `tests/unit/the-decision-asks-the-question-the-ledger-declares.test.ts` — a control (no
+  drift ⇒ `pass`) plus two ways for the question to move (a restated claim; a plan that changed under the same claims).
+  **Falsifier:** hand back the frozen subject → two of three cases redden.
+- **R1-F2 (minor) — a refusal hid the move the command had just made.** The claims are written before the evidence, so a
+  submission whose evidence write is refused has still moved the question; `evidence add` reported only the evidence conflict.
+  **Repair:** one derivation (`movedQuestionFields`) spread into both the success result and the refusal, so the two cannot
+  describe the same ledger differently. **Guard:** a third case in the AC-4 selector that drives the failure path.
+  **Falsifier:** drop the spread from the refusal → that case reddens.
+- **R1-F3 (minor) — the remedy named a flag that does not exist.** The refusal (and the new operations bullet, and the
+  pre-existing example block) said `--path <p>…`, while `ledger freeze` reads only `--paths` (comma-separated): following the
+  remedy literally silently freezes the task's declared paths. Measured: `ledger freeze --path /nonexistent` → `ok=true`, and
+  the documented `evidence add --id … --command …` example → `--file <submission.json> is required`. **Repair:** the remedy
+  names the bare command (which is the correct remedy — the state is the frozen question, and `ledger freeze` re-derives it
+  from the declaration) and mentions `--paths a,b` only for a different set; the operations example now shows commands that
+  were run and work. **Guard:** an assertion that the refusal names no `--path` in any form (negative lookahead, so `--paths`
+  passes). **Falsifier:** restore the old string → that case reddens.
+- **R1-F4 (note) — `ledger ask` is a third surface stamping the frozen subject** and does not refuse in the drifted state.
+  Recorded, not repaired: probes are advisory history the request may withhold and no gate reads them. It becomes a real
+  instance the day a probe answer becomes a gate input.
+
+**Not repaired here, and why.** The deeper cause behind R1-F3 is that an unknown flag is silently ignored by every ledger
+verb (`--path` was accepted and dropped). That is argument parsing across the whole CLI rather than this change's mechanism,
+so it is recorded as a successor rather than half-fixed inside a ledger repair.
+
 ## Ownership
 
 `src/cli/ledger.ts`, `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded

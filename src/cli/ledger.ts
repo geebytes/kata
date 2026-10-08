@@ -40,6 +40,21 @@ function fail(payload: Record<string, unknown>): void {
 }
 
 /**
+ * **The one shape both `evidence add` paths report a moved question in**, so the success path and the refusal cannot
+ * describe the same ledger differently — and so a refusal cannot hide a move the command itself just made by writing the
+ * submission's claims. Empty when nothing moved, which is why callers spread it unconditionally.
+ */
+function movedQuestionFields(ledger: Awaited<ReturnType<typeof readLedger>>): Record<string, unknown> {
+    const question = frozenQuestionState(ledger);
+    if (question?.moved !== true) return {};
+    return {
+        questionMoved: { frozen: question.frozen, declared: question.declared },
+        remedy: question.remedy,
+        questionMovedNote: 'the claims just written moved the question this ledger declares, so readings are refused until the subject is re-frozen against the declaration',
+    };
+}
+
+/**
  * The retired assurance floors a document *as offered* carries.
  *
  * It reads the raw value rather than the loaded policy, because the reader fills a retired floor with the current default
@@ -501,7 +516,12 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             for (const item of read.submission.evidence) {
                 const added = await appendEvidence(options.root, changeId, item);
                 if (!added.ok) {
-                    fail({ command: 'ledger evidence add', error: added.why });
+                    // **A refusal must not hide the change this command already made.** The claims above are written
+                    // before the evidence is, so a submission whose evidence is refused has *still* moved the question —
+                    // and reporting only the evidence conflict sent the operator to fix that while the ledger stayed in
+                    // the state where no reading counts. Measured by an independent round: `evidence add` returned
+                    // ok=false with no `questionMoved`, and the next `evidence verify` refused with the moved question.
+                    fail({ command: 'ledger evidence add', error: added.why, ...movedQuestionFields(await readLedger(options.root, changeId)) });
                     return;
                 }
             }
@@ -515,21 +535,15 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             // **The drift is reported where it is created.** The claims in a submission are written as claims, so a
             // submission that declares a claim the freeze did not know about moves the declared question — and from then on
             // every reading is refused until the subject is re-frozen. Saying so here is the difference between an operator
-            // learning it now and learning it from a `decide` that cannot be satisfied.
-            const question = frozenQuestionState(await readLedger(options.root, changeId));
+            // learning it now and learning it from a `decide` that cannot be satisfied. One derivation for both paths:
+            // this one and the refusal above, so the two cannot report the move differently.
             outputResult({
                 ok: true,
                 command: 'ledger evidence add',
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
-                ...(question?.moved === true
-                    ? {
-                        questionMoved: { frozen: question.frozen, declared: question.declared },
-                        remedy: question.remedy,
-                        questionMovedNote: 'the claims just written moved the question this ledger declares, so readings are refused until the subject is re-frozen against the declaration',
-                    }
-                    : {}),
+                ...movedQuestionFields(await readLedger(options.root, changeId)),
             });
             return;
         }

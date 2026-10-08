@@ -112,4 +112,28 @@ describe('evidence add reports a question it moved', () => {
         // And the reading this submission was about is still takeable: no refusal follows from binding evidence.
         expect((await ledger(['evidence', 'verify'])).ok).toBe(true);
     });
+
+    it('still reports the move when a later write in the same submission is refused', async () => {
+        // **A refusal must not hide the change the command already made.** The claims are written before the evidence, so
+        // a submission whose evidence write is refused has *still* moved the question — and reporting only the evidence
+        // conflict sent the operator to fix that while the ledger stayed in the state where no reading counts. Measured by
+        // an independent round: `evidence add` returned ok=false with no `questionMoved`, and the next `evidence verify`
+        // refused with the moved question.
+        const frozen = (await readLedger(root, changeId)).subject?.revision ?? '';
+        await submit('first', { claims: [], evidence: [falsifier] });
+        expect((await ledger(['evidence', 'add', '--file', join(root, 'first.json')])).ok).toBe(true);
+
+        // The same evidence id again, with different content: write-once refuses it — after the claim below is written.
+        const file = await submit('conflicting', {
+            claims: [declaredClaim('C2')],
+            evidence: [{ ...falsifier, command: 'grep -q "holds = true" src/a.ts # a different check' }],
+        });
+        const result = await ledger(['evidence', 'add', '--file', file]);
+
+        expect(result.ok).toBe(false);
+        const declared = (await readLedger(root, changeId)).subjectAsDeclared?.revision ?? '';
+        expect(declared).not.toBe(frozen);
+        expect(result.questionMoved).toMatchObject({ frozen, declared });
+        expect(String(result.remedy)).toContain(`kata-cli ledger freeze --change ${changeId}`);
+    });
 });
