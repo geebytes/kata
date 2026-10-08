@@ -150,19 +150,6 @@ const executableFalsifier: EvidenceVerifier = {
                 // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0). It is
                 // written under the window's own key, so the cycle that clears it is looking under the name it wrote.
                 const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
-                // **The file this cycle mutates, by identity, taken before the injection.**
-                //
-                // The restore writes through the path, and a path is not a promise about *which* file the bytes land in: a
-                // check that replaces its own target — the ordinary `mv` — moves the inode, and two other shapes move it
-                // without touching the final component at all: a **hard link** (a regular file whose inode is shared with
-                // another name, so `isPlainFile` says yes and the write lands in the peer) and a **symlinked parent
-                // directory** (`lstat` follows the intermediate link, so the final component still looks like a file while
-                // the write goes somewhere else). An independent round measured both, each producing a `supported` verdict
-                // beside a file the run never named holding the cycle's content.
-                //
-                // So the cycle remembers the identity it mutated and writes only if the path still resolves to it. That is
-                // the whole rule: **the restore goes back to the file the cycle changed, or the run fails.**
-                const mutatedIdentity = context.identity ? await context.identity(evidence.mutation.file) : null;
                 await recordMutation(window, original, injected);
                 let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
                 let failure: unknown;
@@ -175,15 +162,6 @@ const executableFalsifier: EvidenceVerifier = {
                 // **Every way a restore can fail is the same fact.** The write may throw (the path became un-writable) or it
                 // may land as something else (another run wrote in between); both leave the tree holding a defect this run
                 // put there, and neither is a statement about the check.
-                // Only a context that touches a real filesystem can answer this, and only such a context can produce the
-                // shapes it guards. Where it can answer, a mismatch is a refusal; where it cannot, the write itself still
-                // refuses a target that is not a regular file (`buildContext.writeText`).
-                const restoreIdentity = context.identity ? await context.identity(evidence.mutation.file) : null;
-                if (context.identity && (mutatedIdentity === null || restoreIdentity === null || mutatedIdentity !== restoreIdentity)) {
-                    // **Named, and nothing is written.** The bytes would land in a file this run never mutated — a peer's
-                    // inode through a hard link, or whatever a swapped-in directory symlink points at.
-                    throw new UnrestoredMutation(`the mutation injected into ${evidence.mutation.file} is no longer in the file this run mutated (the path now resolves to ${restoreIdentity ?? 'nothing'}, the run mutated ${mutatedIdentity ?? 'nothing'}), so restoring would write into a file this run never named; the checkout is not as it was found`);
-                }
                 try {
                     await context.writeText(evidence.mutation.file, original);
                 } catch (error) {
@@ -202,6 +180,16 @@ const executableFalsifier: EvidenceVerifier = {
                 // **The closing check is inside the window too.** Outside it, this run could measure another cycle's
                 // injection and report the tree as unrepaired while the tree was clean.
                 const after = await context.run(evidence.command);
+                // **And the tree must still be as this run found it when the cycle ends.** A check whose green run rewrites
+                // its own target — a formatter landing its result — left that rewrite behind while the cycle reported
+                // `supported` (measured by an independent round: the trailing newline was gone). The promise is about the
+                // checkout, not about the verdict, so the file is read once more and a difference is named rather than
+                // reported as a reading. A check that normalises the file does it on the opening run too, so `original` is
+                // already its output and this comparison does not refuse an honest formatter.
+                const settled = await context.readText(evidence.mutation.file);
+                if (settled !== original) {
+                    throw new UnrestoredMutation(`the checkout is not as it was found: ${evidence.mutation.file} does not hold the content this run restored (a check that rewrites its own target on a green run leaves that rewrite behind)`);
+                }
                 // **A reading that does not say what it ran is not a reading.** Every falsifier persisted the same
                 // `{"before":0,"mutated":1,"after":0}`, so four readings were indistinguishable in the store and a later
                 // reader could not tell which mutation produced which — the same family as a record that does not carry its

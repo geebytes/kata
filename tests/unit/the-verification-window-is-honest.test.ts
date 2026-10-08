@@ -249,10 +249,9 @@ describe('a restore never writes through a link', () => {
             mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' },
         };
 
-        // **The refusal names the fact, and it is the identity rule that fires.** The path still resolves to a regular
-        // file — `b.ts` — so a "is this a link?" test alone would let the write through; what stops it is that this run
-        // mutated a different file.
-        await expect(verifyAll([item], context)).rejects.toThrow(/is no longer in the file this run mutated/);
+        // **The refusal names the fact.** The write would land in `b.ts` through the link, so the restore refuses before
+        // writing anything: `refusing to write a.ts: a.ts is a symbolic link, …`.
+        await expect(verifyAll([item], context)).rejects.toThrow(/refusing to write a\.ts: a\.ts is a symbolic link/);
         // **The file the cycle never named is untouched.** This is the harm the refusal exists for.
         expect(await readFile(join(root, peer), 'utf8')).toBe(peerContent);
     });
@@ -287,7 +286,7 @@ describe('a restore writes only to the file the cycle mutated', () => {
 
         // The check reddens under the injected defect and lands its result by making its target a second name for `b.ts`.
         await expect(verifyAll([swapCheck(`sh -c 'if grep -q "const x = 2" a.ts; then ln -f b.ts a.ts; exit 1; fi; exit 0'`)], context))
-            .rejects.toThrow(/is no longer in the file this run mutated/);
+            .rejects.toThrow(/refusing to write a\.ts: a\.ts has 2 names/);
         expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe(peerContent);
     });
 
@@ -308,7 +307,84 @@ describe('a restore writes only to the file the cycle mutated', () => {
             mutation: { file: 'sub/a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
         };
 
-        await expect(verifyAll([item], context)).rejects.toThrow(/is no longer in the file this run mutated/);
+        await expect(verifyAll([item], context)).rejects.toThrow(/refusing to write sub\/a\.ts: sub is a symbolic link/);
         expect(await readFile(join(root, 'other', 'a.ts'), 'utf8')).toBe(otherContent);
+    });
+});
+
+/**
+ * **A legitimate check that lands its result with an atomic replace still verifies — and this case exists because it stopped
+ * doing so.**
+ *
+ * Round 4 measured the regression the previous repair introduced: the cycle compared the target's `dev`+`ino` before and
+ * after the mutation and refused on any change, so a formatter-shaped check (`cp a.ts .tmp && mv .tmp a.ts`) threw
+ * `UnrestoredMutation`, **left the injected defect on disk**, and failed the whole run. A rule that breaks honest evidence is
+ * worse than the hole it closes, so the rule is now about the path and the file it reaches (no symlink in the chain, a regular
+ * file, one name) and never about an identity derived earlier. The two cases that appeared to cover this passed only because
+ * their synthetic context omitted the seam — the same shape as three other guards in this change.
+ */
+describe('an honest check may replace its own target', () => {
+    const withRealContext = async (root: string, file: string) =>
+        buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { [file]: 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+
+    it('verifies a check that lands its result with an atomic rename', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-legit-mv-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        await writeFile(join(root, 'a.ts'), clean);
+        const item = {
+            id: 'EA',
+            type: 'executable_falsifier' as const,
+            command: `sh -c 'if grep -q "const x = 2" a.ts; then cp a.ts .tmp && mv .tmp a.ts && exit 1; fi; exit 0'`,
+            mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
+        };
+        const verdicts = await verifyAll([item], await withRealContext(root, 'a.ts'));
+        expect(verdicts[0].verdict).toBe('supported');
+        // **The checkout is as it was found.** The regression left the injected defect here.
+        expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe(clean);
+    });
+
+    it('verifies a check that deletes and recreates its target', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-legit-recreate-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        await writeFile(join(root, 'a.ts'), clean);
+        const item = {
+            id: 'EA',
+            type: 'executable_falsifier' as const,
+            command: `sh -c 'if grep -q "const x = 2" a.ts; then cat a.ts > .keep && rm a.ts && mv .keep a.ts && exit 1; fi; exit 0'`,
+            mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
+        };
+        const verdicts = await verifyAll([item], await withRealContext(root, 'a.ts'));
+        expect(verdicts[0].verdict).toBe('supported');
+        expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe(clean);
+    });
+});
+
+/**
+ * **The checkout is as the run found it when the cycle ends — not just when the restore lands.**
+ *
+ * Round 4's note: the closing check runs inside the window, but nothing re-read the file afterwards, so a check whose green
+ * run rewrites its own target left that rewrite behind while the cycle reported `supported` (measured: the trailing newline
+ * was gone). A formatter that normalises the file does it on the opening run as well, so `original` is already its output and
+ * this refusal does not catch an honest check.
+ */
+describe('a green run that rewrites its target is named, not reported', () => {
+    it('refuses when the checkout differs from what the cycle restored', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-settled-'));
+        roots.push(root);
+        const clean = 'const x = 1;\n';
+        await writeFile(join(root, 'a.ts'), clean);
+        const context = buildContext(root, { revision: `rev:${'a'.repeat(16)}`, pathDigests: { 'a.ts': 'a'.repeat(64) } }, { timeoutMs: 10_000, producer: 'fixture' as never });
+        const item = {
+            id: 'EA',
+            type: 'executable_falsifier' as const,
+            // Every run appends to its own target, so the closing run leaves a change behind: the tree is no longer as it
+            // was found. The opening run's append is part of `original` (it is read after that run), which is why an honest
+            // normaliser is not caught by this refusal.
+            command: `sh -c 'printf "// touched\\n" >> a.ts; if grep -q "const x = 2" a.ts; then exit 1; fi; exit 0'`,
+            mutation: { file: 'a.ts', find: 'const x = 1;', replace: 'const x = 2;' },
+        };
+        await expect(verifyAll([item], context)).rejects.toThrow(/checkout is not as it was found/);
     });
 });

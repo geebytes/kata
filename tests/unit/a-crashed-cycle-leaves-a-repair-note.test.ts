@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { recordMutation, withVerificationWindow, type VerificationWindow } from '../../src/store/verify-context.js';
+import { recordMutation, verificationLocksDir, withVerificationWindow, type VerificationWindow } from '../../src/store/verify-context.js';
 
 /**
  * **A run that dies mid-cycle leaves a repair note, not a broken checkout.**
@@ -26,7 +26,7 @@ async function killedCycleNote(root: string, file: string, original: string, inj
         await recordMutation(window, original, injected);
         throw new Error('killed before the restore');
     })).rejects.toThrow('killed before the restore');
-    const notes = (await readdir(join(root, '.kata', 'locks'))).filter((name) => name.endsWith('.journal.json'));
+    const notes = (await readdir(verificationLocksDir(root))).filter((name) => name.endsWith('.journal.json'));
     expect(notes).toHaveLength(1);
     return notes[0] as string;
 }
@@ -40,7 +40,7 @@ describe('a crashed cycle leaves a repair note', () => {
         // **The leftovers a killed run leaves, written by the production path.** The journal is the one the cycle itself
         // wrote; the lock is re-created here because a killed process never reaches the `finally` that would have removed it.
         const note = await killedCycleNote(root, 'a.ts', original, injected);
-        const locks = join(root, '.kata', 'locks');
+        const locks = verificationLocksDir(root);
         // The lock is the repository's now: one cycle at a time, with no per-file key to re-derive.
         const lockDir = join(locks, 'verify-repository.lock');
         await mkdir(lockDir, { recursive: true });
@@ -57,7 +57,7 @@ describe('a crashed cycle leaves a repair note', () => {
         const root = await mkdtemp(join(tmpdir(), 'kata-live-'));
         await writeFile(join(root, 'a.ts'), 'const x = 1;\n');
         await killedCycleNote(root, 'a.ts', 'const x = 1;\n', 'const x = 2;\n');
-        const locks = join(root, '.kata', 'locks');
+        const locks = verificationLocksDir(root);
         const lockDir = join(locks, 'verify-repository.lock');
         await mkdir(lockDir, { recursive: true });
         await writeFile(join(lockDir, 'holder.json'), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
@@ -87,7 +87,7 @@ describe('a crashed cycle leaves a repair note', () => {
         await writeFile(join(root, 'a.ts'), injected);
         await writeFile(join(root, 'other.ts'), otherContent);
         const note = await killedCycleNote(root, 'a.ts', original, injected);
-        const locks = join(root, '.kata', 'locks');
+        const locks = verificationLocksDir(root);
         // The note is found by its name (which encodes `a.ts`), but its `file` field points elsewhere. The repair must
         // restore *a.ts* — the file the cycle mutated — and must never treat the note's own `file` as the write target.
         await writeFile(join(locks, note), JSON.stringify({ file: 'other.ts', original }));
@@ -126,7 +126,54 @@ describe('a repair never writes through a link', () => {
         await withVerificationWindow(root, 'a.ts', async () => 'ran');
         // The file the note is *not* about is untouched, and the note is gone: quarantined, not replayed through a link.
         expect(await readFile(join(root, peer), 'utf8')).toBe(peerContent);
-        expect((await readdir(join(root, '.kata', 'locks'))).filter((name) => name.endsWith('.journal.json'))).toEqual([]);
+        expect((await readdir(verificationLocksDir(root))).filter((name) => name.endsWith('.journal.json'))).toEqual([]);
+        await rm(root, { recursive: true, force: true });
+    });
+});
+
+/**
+ * **The repair door has the rule too — round 4 found it did not.**
+ *
+ * The restore was fixed and the repair was not, so the same defect stayed alive at the other door: a killed run's note landed
+ * `const x = 1;` in `other/a.ts` while `sub/` was a symlink to `other/`, and in `b.ts` when `a.ts` had been hard-linked to it.
+ * Both doors now call one rule (`writeTargetFor`), so a fix at one of them cannot leave the other behind.
+ */
+describe('a repair refuses a target that is a link or has another name', () => {
+    it('leaves the file behind a symlinked parent alone', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-repair-parent-'));
+        const original = 'const x = 1;\n';
+        const injected = 'const x = 2;\n';
+        const otherContent = injected;
+        await mkdir(join(root, 'sub'), { recursive: true });
+        await mkdir(join(root, 'other'), { recursive: true });
+        await writeFile(join(root, 'sub', 'a.ts'), injected);
+        await writeFile(join(root, 'other', 'a.ts'), otherContent);
+        const note = await killedCycleNote(root, 'sub/a.ts', original, injected);
+        // The parent becomes a link to `other/`, and the note's name still matches the path it is about.
+        await rm(join(root, 'sub'), { recursive: true, force: true });
+        await symlink('other', join(root, 'sub'));
+
+        await withVerificationWindow(root, 'sub/a.ts', async () => 'ran');
+        expect(await readFile(join(root, 'other', 'a.ts'), 'utf8')).toBe(otherContent);
+        expect((await readdir(verificationLocksDir(root))).filter((name) => name.endsWith('.journal.json'))).toEqual([]);
+        await rm(root, { recursive: true, force: true });
+    });
+
+    it('leaves a hard-linked peer alone', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-repair-hardlink-'));
+        const original = 'const x = 1;\n';
+        const injected = 'const x = 2;\n';
+        const peerContent = injected;
+        await writeFile(join(root, 'a.ts'), injected);
+        await writeFile(join(root, 'b.ts'), peerContent);
+        const note = await killedCycleNote(root, 'a.ts', original, injected);
+        // `a.ts` becomes a second name for `b.ts`'s inode: a regular file with two names.
+        await rm(join(root, 'a.ts'), { force: true });
+        await link(join(root, 'b.ts'), join(root, 'a.ts'));
+
+        await withVerificationWindow(root, 'a.ts', async () => 'ran');
+        expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe(peerContent);
+        expect((await readdir(verificationLocksDir(root))).filter((name) => name.endsWith('.journal.json'))).toEqual([]);
         await rm(root, { recursive: true, force: true });
     });
 });

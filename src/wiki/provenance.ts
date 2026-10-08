@@ -105,13 +105,26 @@ export async function distillPassedTaskKnowledge(root: string, taskId: string): 
   try {
     state = await readJson<{ phase?: string }>(root, `.kata/tasks/${taskId}/current-state.json`);
   } catch (error) {
+    // **`ENOENT` is absence, and absence is not damage.** Naming a missing state record as unreadable was the same fold
+    // facing the other way — an independent round's own fixture showed it: a task with no `current-state.json` reported
+    // "cannot be read" instead of "not in a distillable phase".
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { decision: 'deferred', candidateIds: [], records: [], reason: `Task must be in distill or archive phase before Wiki distillation (current: unknown)` };
+    }
     return { decision: 'deferred', candidateIds: [], records: [], reason: `task ${taskId} has a state record that cannot be read: ${error instanceof Error ? error.message : String(error)}` };
   }
   if (state.phase !== 'distill' && state.phase !== 'archive') {
     return { decision: 'deferred', candidateIds: [], records: [], reason: `Task must be in distill or archive phase before Wiki distillation (current: ${state.phase ?? 'unknown'})` };
   }
 
-  const design = await readText(root, `.kata/tasks/${taskId}/design.md`);
+  // A design that cannot be read is a refusal with its reason, not a decision taken from an empty design — the same shape
+  // as the two reads above it.
+  let design: string;
+  try {
+    design = await readText(root, `.kata/tasks/${taskId}/design.md`);
+  } catch (error) {
+    return { decision: 'deferred', candidateIds: [], records: [], reason: error instanceof Error ? error.message : String(error) };
+  }
   const sourceRefs = await sourceRefsForTask(root, taskId, task.ownedPaths ?? []);
   const sourceHashes = await hashSources(root, sourceRefs).catch(() => null);
   if (!sourceHashes) {
@@ -156,11 +169,19 @@ async function readJson<T>(root: string, path: string): Promise<T> {
   return JSON.parse(await readFile(join(root, path), 'utf8')) as T;
 }
 
+/**
+ * **An artefact that exists and cannot be read is not an empty one.** The catch answered `''` for every failure, so a damaged
+ * `design.md` was decided as an empty design (`not_applicable`) instead of being named — the same fold this file's state read
+ * was fixed for, one function above. `ENOENT` still answers `''`: this helper is asked about artefacts that are optional, and
+ * "no design has been written" is what empty means here. Anything else is reported, because a decision taken from a file
+ * nobody could read is a decision about the wrong thing.
+ */
 async function readText(root: string, path: string): Promise<string> {
   try {
     return await readFile(join(root, path), 'utf8');
-  } catch {
-    return '';
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return '';
+    throw new Error(`${path} exists and cannot be read: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

@@ -230,3 +230,37 @@ describe('a record that cannot be read is not handed to a writer as empty', () =
         expect(String(ledger.malformedReasons?.['plan.json'] ?? '')).toMatch(/cannot be read, so the request it describes cannot be compared/);
     });
 });
+
+/**
+ * **Two more permissive folds, both found by round 4.**
+ *
+ * `findOwnershipConflicts` answered `[]` when the task store could not be listed — the answer that admits a scope addition
+ * without `--allow-ownership-conflicts` — and the wiki distill boundary read a damaged `design.md` as an empty design.
+ */
+describe('an unreadable store or design is not an empty one', () => {
+    it('refuses to decide ownership conflicts when the task store cannot be listed', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-store-unreadable-'));
+        roots.push(root);
+        // `.kata/tasks` is a file, so listing it cannot succeed for a reason that is not "there are no tasks".
+        await mkdir(join(root, '.kata'), { recursive: true });
+        await writeFile(join(root, '.kata', 'tasks'), 'not a directory\n');
+        const { findOwnershipConflicts } = await import('../../src/workflow/revision.js');
+        await expect(findOwnershipConflicts(root, 'any', ['shared.ts'])).rejects.toThrow(/cannot list the task store/);
+    });
+
+    it('names a design that cannot be read instead of deciding from an empty one', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-design-unreadable-'));
+        roots.push(root);
+        const taskId = 'design-unreadable';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'distill' });
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'current-state.json'), `${JSON.stringify({ taskId, phase: 'distill' })}\n`);
+        // A directory where the design should be: present, and unreadable as a file.
+        await mkdir(join(root, '.kata', 'tasks', taskId, 'design.md'), { recursive: true });
+        const { distillPassedTaskKnowledge } = await import('../../src/wiki/provenance.js');
+        const result = await distillPassedTaskKnowledge(root, taskId);
+        expect(result.decision).toBe('deferred');
+        expect(result.decision === 'deferred' ? result.reason : '').toMatch(/design\.md exists and cannot be read/);
+    });
+});

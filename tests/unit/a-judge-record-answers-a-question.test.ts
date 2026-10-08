@@ -214,3 +214,36 @@ describe('a question that cannot be derived refuses rather than accepts', () => 
         expect(damaged.failures).toContainEqual(expect.objectContaining({ reason: 'validation_task_question_moved' }));
     });
 });
+
+/**
+ * **A damaged question field is not an absent one — round 4 measured the difference.**
+ *
+ * `questionBinding` asked `typeof recordSubjectRevision !== 'string'` for "this record predates the field", so a record whose
+ * `subjectRevision` was the number `42` — damaged, not missing — read as `unbound` and was **accepted**: the round measured
+ * `readUpstreamSummary` publishing `judgeResult: "PASS"` for it. Only the field's absence means "written before the field
+ * existed"; any other non-string is damage, and damage refuses.
+ */
+describe('a question field of the wrong type refuses', () => {
+    it('does not publish a judgement whose question field is not a string', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-typed-question-'));
+        roots.push(root);
+        const taskId = 'typed-question';
+        await mkdir(join(root, '.kata', 'tasks', taskId), { recursive: true });
+        await writeTaskRecord(root, { id: taskId, phase: 'review' });
+        await writeFile(join(root, 'subject.ts'), 'export const current = true;\n');
+        const { appendClaim, freezeSubject, readLedger, writeSubject } = await import('../../src/store/ledger.js');
+        await appendClaim(root, taskId, {
+            id: 'C1', statement: 'current question', riskClass: 'consistency', severity: 'major',
+            dependsOn: ['path:subject.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: '2026-10-08T00:00:00.000Z', reopens: 0,
+        });
+        const frozen = await freezeSubject({ root, paths: ['subject.ts'], claims: (await readLedger(root, taskId)).claims });
+        if (frozen.ok) await writeSubject(root, taskId, frozen.subject);
+        // A judgement that answers *something*, recorded as a number rather than a revision string.
+        await writeFile(join(root, '.kata', 'tasks', taskId, 'judge.json'), `${JSON.stringify({ taskId, result: 'PASS', diffHash: 'a'.repeat(64), subjectRevision: 42, acceptance: [{ id: 'AC-1', result: 'PASS' }] })}\n`);
+
+        const summary = await readUpstreamSummary(root, taskId);
+        // The record answered a question and the answer cannot be compared: it must not be published as current.
+        expect(summary.judgeResult).toBeUndefined();
+        expect(summary.judgeStaleSubject).toBeDefined();
+    });
+});

@@ -1573,6 +1573,10 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             //
             // A record with no `subjectRevision` keeps blocking: it was written before this change, we cannot know what it
             // answered, and pretending to know is how a stale result would pass as a current one.
+            // **A damaged ledger does not reach this fold.** An earlier guard in this path already refuses with
+            // `claims.json cannot be read, so no declaration of coverage can be checked against it` — measured by driving the
+            // command with a corrupted `claims.json`, which never reaches the line below. The catch stays as the belt it is,
+            // and the guard that actually fires is the one under test.
             const ledgerNow = await readLedger(root, taskId).catch(() => undefined);
             // **No fallback when the ledger is readable but its question is not.** The fallback to the frozen subject made
             // an unreadable `claims.json` release a recorded round (measured by an independent round: `success=true,
@@ -1961,6 +1965,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // **The approval lands atomically and under the task lock.** It was a bare `writeFile`, so a crash could
             // leave a half-written `review.json` — the artefact the archive gate reads to decide whether a change was
             // reviewed — and two concurrent commands could interleave with the review transition beside it.
+            // Reached only with a ledger the earlier guards accepted, so the catch is a belt rather than a fold a damaged
+            // ledger can reach (see the note above).
             const approvalSubject = (await readLedger(root, taskId).catch(() => undefined))?.subject?.revision;
             const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {

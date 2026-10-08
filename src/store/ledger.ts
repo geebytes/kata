@@ -991,8 +991,12 @@ export function declaredSubjectRevision(ledger: { subjectAsDeclared?: { revision
  */
 export type QuestionBinding = 'unbound' | 'same' | 'moved' | 'unknown';
 
-export function questionBinding(recordSubjectRevision: string | undefined | null, currentSubjectRevision: string | undefined | null): QuestionBinding {
-    if (typeof recordSubjectRevision !== 'string' || recordSubjectRevision === '') return 'unbound';
+export function questionBinding(recordSubjectRevision: unknown, currentSubjectRevision: string | undefined | null): QuestionBinding {
+    // **Absent and damaged are different answers.** An earlier version asked `typeof !== 'string'`, so a record whose field
+    // was a number — damaged rather than missing — read as `unbound` and was accepted; an independent round measured a Judge
+    // PASS published for such a record. Only the field's *absence* means "this record predates the field".
+    if (recordSubjectRevision === undefined || recordSubjectRevision === null) return 'unbound';
+    if (typeof recordSubjectRevision !== 'string' || recordSubjectRevision === '') return 'unknown';
     if (typeof currentSubjectRevision !== 'string' || currentSubjectRevision === '') return 'unknown';
     return recordSubjectRevision === currentSubjectRevision ? 'same' : 'moved';
 }

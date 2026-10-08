@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { link, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withVerificationWindow } from '../../src/store/verify-context.js';
@@ -143,5 +143,44 @@ describe('evidence verification is serialized per file', () => {
         // Both completed, and neither was refused: the cost of the repository lock is serialization, not starvation.
         expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe('const x = 1;\n');
         expect(await readFile(join(root, 'b.ts'), 'utf8')).toBe('const y = 1;\n');
+    });
+});
+
+/**
+ * **The window's own state is not inside the tree the check may write — round 4's second blocking finding.**
+ *
+ * The lock and the journal used to live at `<root>/.kata/locks`. A verified check runs in that tree and may edit it, so a check
+ * that removed the directory made the next cycle's `mkdir` succeed: the round measured `peak=2`, both cycles reporting
+ * `supported` with the injected defect left on disk, and a variant where the second cycle reported a false
+ * `refuted … did not redden under its own defect`. A mechanism that keeps its exclusion inside the directory it is excluding
+ * excludes nothing.
+ *
+ * The state now lives under the system temp directory, keyed on the repository's real path. This case has the first cycle's
+ * body delete the old location, which is what the round's counterexample did.
+ */
+describe('a check cannot delete the window out from under the mechanism', () => {
+    it('still excludes a second cycle when the check removes the old lock directory', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'kata-lock-deleted-'));
+        await writeFile(join(root, 'a.ts'), 'const x = 1;\n');
+        let inside = 0;
+        let peak = 0;
+        const first = withVerificationWindow(root, 'a.ts', async () => {
+            inside += 1;
+            peak = Math.max(peak, inside);
+            // What the round's check did: remove the directory the window used to keep its state in.
+            await rm(join(root, '.kata', 'locks'), { recursive: true, force: true });
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            inside -= 1;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        const second = withVerificationWindow(root, 'a.ts', async () => {
+            inside += 1;
+            peak = Math.max(peak, inside);
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            inside -= 1;
+        });
+        await Promise.all([first, second]);
+        expect(peak).toBe(1);
+        await rm(root, { recursive: true, force: true });
     });
 });

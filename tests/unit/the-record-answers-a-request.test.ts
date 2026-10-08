@@ -319,3 +319,22 @@ describe('the plan is part of the question', () => {
         expect(after).not.toBe(before);
     });
 });
+
+/**
+ * **A damaged ledger is refused before the fold that would release a recorded round — and the refusal names the file.**
+ *
+ * Round 4 flagged `readLedger(root, taskId).catch(() => undefined)` twice as a fold that could release a recorded result. I
+ * tried to close it and could not construct a path where the fold is reachable: an earlier guard in this command refuses with
+ * `claims.json cannot be read, so no declaration of coverage can be checked against it`, which is measured here. The change
+ * was reverted rather than kept unfalsifiable — what is asserted is the guard that actually fires.
+ */
+describe('a damaged ledger refuses instead of releasing a recorded round', () => {
+    it('refuses to record a replacement when the ledger cannot be read, naming the file', async () => {
+        await recordedRound();
+        // The ledger is present and cannot be parsed: not "no ledger", which is what the fold answered.
+        await writeFile(join(taskDir(root, taskId), 'review', 'claims.json'), '{not json}\n');
+        const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
+        expect(recorded.success).toBe(false);
+        expect(String(recorded.error)).toMatch(/claims\.json cannot be read/);
+    });
+});

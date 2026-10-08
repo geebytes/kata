@@ -575,7 +575,17 @@ export async function findOwnershipConflicts(
 ): Promise<Array<{ taskId: string; path: string }>> {
   const tasksRoot = tasksDir(root);
   let entries: string[] = [];
-  try { entries = await readdir(tasksRoot); } catch { return []; }
+  try {
+    entries = await readdir(tasksRoot);
+  } catch (error) {
+    // **Only "there is no task store yet" means there are no conflicts.** A bare catch made an unreadable `.kata/tasks` the
+    // same `[]` as a repository with no tasks — and `[]` is the answer that admits a scope addition without
+    // `--allow-ownership-conflicts`, so the fold was in the permissive direction at the very function that reports conflicts.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new Error(`cannot list the task store, so ownership conflicts cannot be decided: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return [];
+  }
   const normalized = normalizeOwnedPaths(root, ownedPaths);
   const conflicts: Array<{ taskId: string; path: string }> = [];
   for (const otherTaskId of entries.filter((id) => id !== taskId)) {

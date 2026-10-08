@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { runProcess } from '../process/run.js';
@@ -185,15 +186,6 @@ export function verificationLockDir(root: string): string {
     return join(locksDirFor(root), 'verify-repository.lock');
 }
 
-/** The file's identity at this moment: `dev`+`ino`, or `null` when there is nothing to identify. */
-export function fileIdentity(root: string, relativePath: string): string | null {
-    try {
-        const stat = statSync(resolve(root, relativePath));
-        return `${stat.dev}\u0000${stat.ino}`;
-    } catch {
-        return null;
-    }
-}
 
 /**
  * **Whether this path is still a plain file, or whether something replaced it with a link.**
@@ -204,12 +196,60 @@ export function fileIdentity(root: string, relativePath: string): string | null 
  * as a symlink. A cycle may replace its own target with another regular file (an ordinary `mv`); it may not turn it into a
  * door into somebody else's.
  */
-export function isPlainFile(root: string, relativePath: string): boolean {
-    try {
-        return lstatSync(resolve(root, relativePath)).isFile();
-    } catch {
-        return false;
+/**
+ * **The one rule for "may this write land here", stated once and used by every door.**
+ *
+ * Two rounds found the same defect twice because it was written twice: the restore refused a target that was not a regular
+ * file while the killed run's **repair** checked only the final component, so a note could still land in `other/a.ts` through a
+ * symlinked parent or in `b.ts` through a hard link (measured). A rule that lives at one door is a rule the other door does
+ * not have, so it lives here and both callers use it.
+ *
+ * The rule is about **the path and the file it reaches**, never about an identity the cycle derived earlier. An earlier
+ * version compared `dev`+`ino` before and after the mutation and refused on any change — which refused the ordinary case an
+ * independent round then measured: a check that lands its result with `mv` (a formatter) changes the inode, so the restore
+ * refused, the injected defect stayed on disk, and an honest check failed the whole run. A rule that breaks honest evidence is
+ * worse than the hole it closes.
+ *
+ * What is refused, and why each one is a way for the bytes to land somewhere the run never named:
+ *
+ * - **a component of the path is a symbolic link** — the write follows it, so it lands wherever the link points (measured
+ *   with a swapped parent directory);
+ * - **the target is not a regular file** — a device, a directory, a socket, or a link at the final component;
+ * - **the target has more than one name** (`nlink > 1`) — a hard link shares the inode, so writing through one name rewrites
+ *   the other (measured: `b.ts` held the cycle's original content after a check hard-linked it over `a.ts`).
+ *
+ * What is allowed: an in-place write, an atomic replace, a delete-and-recreate, a truncate, a `chmod` — every ordinary way a
+ * check lands its own result at the path it was told to mutate. All of them leave the path pointing at one file with one name.
+ */
+export type WriteTarget = { ok: true } | { ok: false; why: string };
+
+export function writeTargetFor(root: string, relativePath: string): WriteTarget {
+    const absolute = resolve(root, relativePath);
+    const rootAbsolute = resolve(root);
+    // Every component between the root and the file, then the file itself: a link anywhere in the chain redirects the write.
+    const parts = relative(rootAbsolute, absolute).split(/[\\/]+/).filter((part) => part !== '' && part !== '.');
+    let walked = rootAbsolute;
+    for (const part of parts) {
+        walked = join(walked, part);
+        let stat;
+        try {
+            stat = lstatSync(walked);
+        } catch {
+            // The file the cycle mutated is gone (a check may delete and recreate it only as the last step, and the restore
+            // has not run yet): there is nothing to write into, so this is a refusal rather than a silent no-op.
+            return { ok: false, why: `${relativePath} does not exist (nothing at ${relative(rootAbsolute, walked)})` };
+        }
+        if (stat.isSymbolicLink()) {
+            return { ok: false, why: `${relative(rootAbsolute, walked)} is a symbolic link, so a write through ${relativePath} would land wherever it points` };
+        }
+        if (walked === absolute) {
+            if (!stat.isFile()) return { ok: false, why: `${relativePath} is not a regular file` };
+            if (stat.nlink > 1) return { ok: false, why: `${relativePath} has ${stat.nlink} names (it is hard-linked), so a write through it would rewrite the other name` };
+        } else if (!stat.isDirectory()) {
+            return { ok: false, why: `${relative(rootAbsolute, walked)} is in the middle of the path and is not a directory` };
+        }
     }
+    return { ok: true };
 }
 
 /** Whether the process that took a lock is still there. `EPERM` means it exists and is not ours. */
@@ -241,7 +281,29 @@ export interface VerificationWindow {
     readonly file: string;
 }
 
-const locksDirFor = (root: string): string => join(root, '.kata', 'locks');
+/**
+ * **The window's own state lives outside the tree the check may write.**
+ *
+ * The lock and the journal used to sit at `<root>/.kata/locks`, which is inside the tree the verified command runs in and may
+ * edit. An independent round measured the consequence: a check that removed that directory made the next cycle's `mkdir`
+ * succeed, so two cycles ran at once (`peak=2`), both reported `supported`, and the injected defect stayed on disk — and a
+ * variant made the second cycle report a false `refuted … did not redden under its own defect`. A mechanism that keeps its
+ * exclusion inside the directory it is excluding cannot exclude anything; the directory is keyed on the repository's real
+ * path so two checkouts do not share a window, and it is not a path a check has any reason to name.
+ */
+const locksDirFor = (root: string): string => join(tmpdir(), 'kata-verify-locks', hashContent(realpathOf(root)).slice(0, 16));
+
+/** Where this repository's window state lives. Exported so a guard can look at the real directory instead of guessing it. */
+export const verificationLocksDir = (root: string): string => locksDirFor(root);
+
+/** The repository's real path, or its resolved path when it does not exist yet. */
+function realpathOf(root: string): string {
+    try {
+        return realpathSync(root);
+    } catch {
+        return resolve(root);
+    }
+}
 /** The journal's name, derived from the file the cycle is about — stable for the whole window by construction. */
 const journalNameFor = (relativePath: string): string => `verify-${hashContent(relativePath).slice(0, 16)}.journal.json`;
 const journalFor = (root: string, relativePath: string): string => join(locksDirFor(root), journalNameFor(relativePath));
@@ -289,16 +351,18 @@ async function repairFromJournals(root: string, relativePath: string): Promise<v
     for (const path of await journalPathsFor(root, relativePath)) {
         const note = await readFile(path, 'utf8').then((text) => JSON.parse(text) as { original?: unknown; injectedHash?: unknown }).catch(() => null);
         if (note !== null && typeof note.original === 'string') {
-            // **The repair refuses a link too.** A killed run's note names a path, and if that path is now a symlink the
-            // repair would write through it into a file the note is not about — the same clobber the restore is guarded
-            // against, arriving by the other door.
-            if (isPlainFile(root, relativePath)) {
-                const target = containedPath(root, relativePath);
-                if (target !== null) {
-                    const current = await readFile(target, 'utf8').catch(() => null);
+            // **The repair asks the same question the restore asks, through the same rule.** It used to test only the final
+            // component, so a killed run's note still landed in `other/a.ts` through a symlinked parent and in `b.ts` through
+            // a hard link — the defect the restore had just been fixed for, alive at the other door. Both call
+            // `writeTargetFor`; there is no second copy of the rule to fall behind.
+            const target = writeTargetFor(root, relativePath);
+            if (target.ok) {
+                const absolute = containedPath(root, relativePath);
+                if (absolute !== null) {
+                    const current = await readFile(absolute, 'utf8').catch(() => null);
                     const stillInjected = current !== null
                         && (typeof note.injectedHash !== 'string' || hashContent(current) === note.injectedHash);
-                    if (stillInjected) await writeFile(target, note.original);
+                    if (stillInjected) await writeFile(absolute, note.original);
                 }
             }
         }
@@ -452,12 +516,12 @@ export function buildContext(
             // reported `supported` while `b.ts`, a file it never named, was overwritten with the cycle's original content.
             // Putting the refusal here rather than in the verifier keeps it true for every writer, and keeps it out of the
             // context seam a fixture may replace.
-            if (!isPlainFile(root, relativePath)) {
-                throw new Error(`refusing to write ${relativePath}: it is not a regular file (something replaced it with a link or a device), so the write would land somewhere this run never named`);
+            const target = writeTargetFor(root, relativePath);
+            if (!target.ok) {
+                throw new Error(`refusing to write ${relativePath}: ${target.why}`);
             }
             await writeFile(absolute, content, 'utf8');
         },
-        identity: async (relativePath: string) => fileIdentity(root, relativePath),
         now,
         producer: () => options.producer,
         ...(options.windowDeadlineMs === undefined ? {} : { windowDeadlineMs: options.windowDeadlineMs }),

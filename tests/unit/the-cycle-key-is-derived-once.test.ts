@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { clearMutation, recordMutation, withVerificationWindow } from '../../src/store/verify-context.js';
+import { clearMutation, recordMutation, verificationLocksDir, withVerificationWindow } from '../../src/store/verify-context.js';
 import { verifyAll } from '../../src/producers/verifiers.js';
 import type { VerifyContext } from '../../src/producers/port.js';
 
@@ -27,8 +27,7 @@ const original = 'const x = 1;\n';
 const injected = 'const x = 2;\n';
 
 const journalsIn = async (root: string): Promise<string[]> => {
-    const dir = join(root, '.kata', 'locks');
-    return (await readdir(dir).catch(() => [])).filter((name) => name.endsWith('.journal.json'));
+    return (await readdir(verificationLocksDir(root)).catch(() => [])).filter((name) => name.endsWith('.journal.json'));
 };
 
 /** Replace a file the way a check that rewrites its own target does: same path, new inode. */
@@ -138,7 +137,7 @@ describe('a note nobody can read is attributable and quarantined', () => {
             note = (await journalsIn(root))[0] ?? '';
             await clearMutation(window);
         });
-        const locks = join(root, '.kata', 'locks');
+        const locks = verificationLocksDir(root);
         await writeFile(join(locks, note), '{not json}\n');
 
         // The next cycle runs normally, and the unreadable note is gone: quarantined, not blocking the file forever.
