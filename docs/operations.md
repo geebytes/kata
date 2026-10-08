@@ -283,7 +283,7 @@ history. The design record is `docs/design/2026-09-26-decoupled-round-protocol.m
 route as it runs.
 
 **A subject, claims, evidence, a decision.** `ledger freeze` takes the content the decision will be about
-(`--path`, repeated; a directory expands to the files it holds) and records a digest per path. `ledger claim add` declares
+(`--paths a,b`, a comma list; a directory expands to the files it holds, and the expansion asks the identity's own content predicate, so build output is not content) and records a digest per path. `ledger claim add` declares
 what must be proven, and the claim's **severity decides the evidence strength it needs** — a `blocking` claim cannot rest on
 a static witness. `ledger evidence add` attaches evidence; `ledger evidence verify` runs it and records a verdict, and a
 command-type check must declare the **mutation** that makes it fail, because a check that cannot be reddened is not

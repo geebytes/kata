@@ -137,6 +137,35 @@ claims to close. Each is repaired here, and each repair has its own falsifier (r
   Recorded, not repaired: probes are advisory history the request may withhold and no gate reads them. It becomes a real
   instance the day a probe answer becomes a gate input.
 
+## The second independent round, and what it changed
+
+Round 2 (`adversarial`, `revision-a617472f79438117`) returned **fail**, and its verdict is the one this change had been
+earning: *the R1-F1 repair could not be falsified, but the R1-F2 and R1-F3 repairs closed the instance rather than the class.*
+
+- **R2-F2 (major) — three more writers move the question and none of them said so.** `movedQuestionFields` was wired into
+  `evidence add` alone, while `ledger claim add`, `ledger claim restate` and `ledger plan` each move the declared question —
+  which falsifies this change's own C4, whose first clause is *every* surface. Measured by the round: after a freeze,
+  `claim add --id C2` moved the subject from `rev:5a81669e28cccad7` to `rev:a26738391e1e586d` and printed only
+  `[ok, command, claim]`; `claim restate` likewise. **Repair:** one derivation, five call sites, and the note now names its
+  cause (`the claim just added` / `the restated claim` / `the plan just stored` / `the claims just written`) because more than
+  one writer can produce the move. **Guards:** three new cases in the AC-4 selector, one per writer, plus a control that a
+  claim added while nothing is frozen reports nothing. **Falsifiers:** removing the spread from any one of the three reddens
+  exactly that case (three mutations, run).
+- **R2-F1 (minor) — the class was still open in prose.** The flags table and the example block had been corrected to
+  `--paths`, and the paragraph between them still said `--path`, repeated; `ledger freeze` reads only `--paths`, so following
+  the prose silently re-freezes the declared paths. **Repair:** the paragraph now names `--paths a,b`. **Guard:** the AC-1
+  selector reads `docs/operations.md`, slices the ledger section, asserts the slice really is that section, and asserts no
+  `--path` in any form. **Falsifier:** restore the old paragraph → that case reddens.
+- **R2-F3 (note) — two latent sites, recorded not repaired.** `orchestrator.ts:1970` stamps a review record with the frozen
+  `subjectRevision` while `:2178` compares it against the declared one — unreachable while the ledger tier floor is `strict`
+  (the round reached the precondition only by forcing `--tier standard`, which the approval path never passes); and
+  `ledger status` (plain) prints the frozen revision while the same verb's `--cost` derives from the declared one. Both are
+  successors, and the second is a reporting inconsistency rather than a gate.
+
+**What round 2 also confirmed.** E1–E6 all `supported`; every declared selector and every case inside them could be reddened
+by a single-point mutation (14/14, with the round constructing its own mutations for the controls); and R1-F1's repair held
+under its attempts — the decision chain now derives the question once.
+
 **Not repaired here, and why.** The deeper cause behind R1-F3 is that an unknown flag is silently ignored by every ledger
 verb (`--path` was accepted and dropped). That is argument parsing across the whole CLI rather than this change's mechanism,
 so it is recorded as a successor rather than half-fixed inside a ledger repair.

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -119,6 +119,24 @@ describe('a reading is refused when the question moved', () => {
         // is silently ignored by `ledger freeze`. The negative lookahead is the whole assertion: it fails for `--path `,
         // for `--path <p>`, and for any other spelling, while `--paths` passes.
         expect(error).not.toMatch(/--path(?![s])/);
+    });
+
+    it('documents a remedy the operator can follow, in prose as well as in the examples', async () => {
+        // **The same defect one layer out.** The first repair fixed the refusal string, the flags table and the example
+        // block — and left the paragraph between them saying `--path`, repeated. An independent round measured that
+        // following that paragraph silently re-freezes the task's declared paths instead of the set the operator chose, so
+        // the guard has to cover the prose the operator actually reads, not just the command strings.
+        const operations = await readFile(join(process.cwd(), 'docs', 'operations.md'), 'utf8');
+        const start = operations.indexOf('A subject, claims, evidence, a decision.');
+        const end = operations.indexOf('**What the gate refuses**');
+        expect(start).toBeGreaterThan(0);
+        expect(end).toBeGreaterThan(start);
+        const ledgerSection = operations.slice(start, end);
+
+        // The section really is the one under test, so this cannot pass by slicing nothing.
+        expect(ledgerSection).toContain('ledger freeze');
+        expect(ledgerSection).toContain('--paths src/a.ts,docs/spec.md');
+        expect(ledgerSection).not.toMatch(/--path(?![s])/);
     });
 
     it('records no verdict, so the refused reading cannot be mistaken for a taken one', async () => {

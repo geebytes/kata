@@ -44,13 +44,13 @@ function fail(payload: Record<string, unknown>): void {
  * describe the same ledger differently — and so a refusal cannot hide a move the command itself just made by writing the
  * submission's claims. Empty when nothing moved, which is why callers spread it unconditionally.
  */
-function movedQuestionFields(ledger: Awaited<ReturnType<typeof readLedger>>): Record<string, unknown> {
+function movedQuestionFields(ledger: Awaited<ReturnType<typeof readLedger>>, cause: string): Record<string, unknown> {
     const question = frozenQuestionState(ledger);
     if (question?.moved !== true) return {};
     return {
         questionMoved: { frozen: question.frozen, declared: question.declared },
         remedy: question.remedy,
-        questionMovedNote: 'the claims just written moved the question this ledger declares, so readings are refused until the subject is re-frozen against the declaration',
+        questionMovedNote: `${cause} moved the question this ledger declares, so readings are refused until the subject is re-frozen against the declaration`,
     };
 }
 
@@ -405,6 +405,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 changed: true,
                 previous: target.statement,
                 note: 'the claim was restated; its existing readings are reviewed by their own binding, and the statement itself is re-read against its evidence',
+                ...movedQuestionFields(await readLedger(options.root, changeId), 'the restated claim'),
             });
             return;
         }
@@ -445,7 +446,11 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 reopens: 0,
             };
             await appendClaim(options.root, changeId, claim);
-            outputResult({ ok: true, command: 'ledger claim add', claim });
+            // **A writer that can move the question says so, like the others.** `movedQuestionFields` was wired into
+            // `evidence add` alone, and an independent round measured the gap: `claim add`, `claim restate` and `ledger plan`
+            // each change the declared question and each reported nothing, so the operator learned it from the *next*
+            // command — a refusal — rather than where it was created.
+            outputResult({ ok: true, command: 'ledger claim add', claim, ...movedQuestionFields(await readLedger(options.root, changeId), 'the claim just added') });
             return;
         }
         fail({ command: 'ledger claim', error: `unknown action "${action}"` });
@@ -521,7 +526,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                     // and reporting only the evidence conflict sent the operator to fix that while the ledger stayed in
                     // the state where no reading counts. Measured by an independent round: `evidence add` returned
                     // ok=false with no `questionMoved`, and the next `evidence verify` refused with the moved question.
-                    fail({ command: 'ledger evidence add', error: added.why, ...movedQuestionFields(await readLedger(options.root, changeId)) });
+                    fail({ command: 'ledger evidence add', error: added.why, ...movedQuestionFields(await readLedger(options.root, changeId), 'the claims just written') });
                     return;
                 }
             }
@@ -543,7 +548,7 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
-                ...movedQuestionFields(await readLedger(options.root, changeId)),
+                ...movedQuestionFields(await readLedger(options.root, changeId), 'the claims just written'),
             });
             return;
         }
@@ -1014,6 +1019,9 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
             plan,
             stored: 'plan.json',
             envelope: envelopeFor(ledger.policy),
+            // The plan is half of the question, so a re-plan can move it on its own — and it did, silently, until an
+            // independent round measured it.
+            ...movedQuestionFields(await readLedger(options.root, changeId), 'the plan just stored'),
         });
         return;
     }
