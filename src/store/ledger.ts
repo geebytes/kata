@@ -1148,7 +1148,7 @@ export async function freezeSubject(input: {
         // the record, naming nothing about the declaration that produced it.
         return {
             ok: false,
-            error: `the declared paths hold no content to freeze: ${input.paths.join(', ')} — a directory that is itself never content expands to nothing, and a file under one has to be declared by name`,
+            error: `the declared paths hold no content to freeze: ${input.paths.join(', ')} — the declaration covers no files: an empty directory, or one whose contents are all never content (a file under such a name has to be declared by name)`,
             unreadable: [],
         };
     }

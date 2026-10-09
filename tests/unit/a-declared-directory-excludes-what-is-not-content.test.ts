@@ -124,7 +124,7 @@ describe('a declared directory excludes what is not content', () => {
         const result = await ledger(['freeze']);
 
         expect(result.ok).toBe(false);
-        expect(String(result.error)).toContain('covers nothing to freeze');
+        expect(String(result.error)).toContain('the declaration covers no files');
         expect(String(result.error)).toContain('src/pkg/dist');
     });
 
@@ -139,7 +139,7 @@ describe('a declared directory excludes what is not content', () => {
         const result = await ledger(['freeze']);
 
         expect(result.ok).toBe(false);
-        expect(String(result.error)).toContain('hold no content to freeze');
+        expect(String(result.error)).toContain('the declaration covers no files');
         expect(String(result.error)).toContain('src/pkg/empty');
     });
 

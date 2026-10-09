@@ -153,6 +153,34 @@ an empty expansion is a refusal here because a subject with no paths cannot sati
 paths a declaration covers, in which coordinates, after which canonicalisation — is one answer, and it is the shared
 function's.
 
+## The fourth independent round: the guard was comparing a proxy, again
+
+Round 4 (`adversarial`, `revision-bd5417edfdb8f783`) returned **fail** on C2 with one major and two minors, and the major is
+the same sentence the design document had already written about round 1: *the guard certifies agreement with a proxy.*
+
+- **F1 (major).** The plain-directory case compared the ledger with `listRepositoryFiles(root, { under })` — **the same
+  function the ledger calls, with default options** — so a mutation in *how the ledger calls it* was invisible. Measured:
+  adding `maxFileBytes: maxTreeHashFileBytes` to the ledger's call left the file 19/19 green, while a declared directory
+  holding a 3 MB file recorded a set the seal does not, and editing that file left the frozen subject byte-identical.
+  **Repair:** the reference is now `computePathDigests` (the seal), and the fixture holds a 3 MB file so a budget applied on
+  one side only changes that side's set. The mutation reddens **three** cases by assertion.
+- **F2 (minor).** E4 reddened a *precondition* of the comparison rather than the comparison. A depth cap inside the walk
+  moves both sides of every equality assertion — the seal reads the same function — so no equality can catch it. **Repair:**
+  the depth probe is its own case, asking the shared derivation directly, so E4 reddens by assertion in a case whose title is
+  about depth.
+- **F3 (minor).** The empty-expansion refusal misnamed its cause for a plain empty directory. **Repair:** the message now
+  says *the declaration covers no files: an empty directory, or one whose contents are all never content*.
+
+**And a hole I found myself while this round was running** (in a scratch copy, because editing the checkout would have voided
+its readings): every case in the guard declared **one** path, so a mutation expanding only the first declaration stayed green
+(9/9). A subject that covers one of several declared paths is this change's defect in its plainest form. The guard now has a
+two-declaration case; that mutation reddens it by assertion.
+
+**The falsifier audit the round was asked for** (it is now part of dispatch preparation, after round 3 found E3 reddening
+because it did not parse): every falsifier parses; E1, E2, E3, E5, E6, E7 redden for their own reason and their legal
+equivalents redden identically; E4 was the one wrong-reason case and is repaired above. Two new falsifiers cover the two
+guard gaps (the call shape, and the first-declaration-only expansion).
+
 ## Acceptance criteria
 
 | AC | What it asserts | Selector |

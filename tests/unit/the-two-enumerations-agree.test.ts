@@ -29,6 +29,8 @@ const chunks: string[] = [];
 
 /** The tree both enumerations are asked about: two real files, and one path per name the identity table excludes. */
 const REAL = ['src/pkg/mod.ts', 'src/pkg/nested/deep.ts'];
+/** Larger than the tree-hash budget, so a cap applied on one side only changes that side's set. */
+const OVERSIZED = 'src/pkg/big.bin';
 /** Ten levels down: the ledger's own walk stopped at eight, and the identity walk has no cap. */
 const DEEP = 'src/pkg/a/b/c/d/e/f/g/h/i/deep.ts';
 /** Excluded by the repository's git declaration, not by the built-in table. */
@@ -66,9 +68,10 @@ beforeEach(async () => {
     previousExitCode = process.exitCode;
     root = await mkdtemp(join(tmpdir(), 'kata-two-enumerations-'));
     await mkdir(join(root, '.kata', 'tasks', changeId), { recursive: true });
-    for (const path of [...REAL, ...NOT_CONTENT, ...DECLARED_IGNORED, DEEP]) {
+    for (const path of [...REAL, ...NOT_CONTENT, ...DECLARED_IGNORED, DEEP, OVERSIZED]) {
         await mkdir(dirname(join(root, path)), { recursive: true });
-        await writeFile(join(root, path), `content of ${path}\n`);
+        // One file above the tree-hash budget, so a size cap applied to one consumer only is visible.
+        await writeFile(join(root, path), path === OVERSIZED ? 'x'.repeat(3_000_000) : `content of ${path}\n`);
     }
     // **The filter the predicate does not have.** The identity walk reads what the repository itself declares ignored; a
     // second walk that only asked the predicate recorded these as content, which is how the reported defect survived the
@@ -90,21 +93,48 @@ describe('the two enumerations agree on what is content', () => {
         for (const path of REAL) expect(isIgnoredRepositoryPath(path), path).toBe(false);
     });
 
-    it('records exactly what the identity walk returns, under a declared directory', async () => {
-        // The two enumerations, side by side. `listRepositoryFiles` is the identity's own walk — the same one the revision
-        // manifest uses — so this fails the moment the ledger's expansion answers differently, for any reason at all.
-        const identity = (await listRepositoryFiles(root, { under: 'src/pkg' })).sort();
-
-        // Preconditions, so a fixture that stopped exercising the rule cannot make this pass: the walk sees the deep file
-        // and does not see the git-ignored ones.
-        expect(identity).toContain(DEEP);
-        for (const path of DECLARED_IGNORED) expect(identity, path).not.toContain(path);
-        expect(identity).toContain('src/pkg/mod.ts');
+    it('records exactly what the seal records, under a declared directory', async () => {
+        // **The reference is the seal, not the walk.** The first version compared the ledger with
+        // `listRepositoryFiles(root, { under })` — the same function the ledger calls, with default options — so a mutation
+        // in *how the ledger calls it* was invisible. Measured by an independent round: adding
+        // `maxFileBytes: maxTreeHashFileBytes` to the ledger's call left this file 19/19 green, while a declared directory
+        // holding a 3 MB file recorded a set the seal does not — and editing that file left the frozen subject
+        // byte-identical. `computePathDigests` is the derivation that must agree, and it is not a proxy for anything.
+        const sealed = await computePathDigests(root, ['src/pkg']);
 
         expect((await ledger(['freeze'])).ok).toBe(true);
         const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
 
-        expect(recorded).toEqual(identity);
+        expect(recorded).toEqual(Object.keys(sealed).sort());
+        // The oversized file is what makes the call-shape mutation visible: without it, a budget applied on one side only
+        // cannot change either set.
+        expect(recorded).toContain(OVERSIZED);
+    });
+
+    it('sees a path deeper than the walk a declared directory used to have, asked directly', async () => {
+        // **Why this is its own case.** A depth cap inside the walk moves *both* sides of every comparison — the seal reads
+        // the same function — so no equality assertion can catch it; what catches it is asking the shared derivation
+        // directly, which is what this does. E4 reddens here, by assertion, in a case whose title is about depth.
+        const walked = await listRepositoryFiles(root, { under: 'src/pkg' });
+
+        expect(walked).toContain(DEEP);
+        expect(DEEP.split('/').length).toBeGreaterThan(11);
+    });
+
+    it('covers every declaration, not only the first', async () => {
+        // Every other case in this file declares one path, so a mutation that expands only the first declaration stayed
+        // green (measured in a scratch copy: 9/9 pass). A subject that covers one of several declared paths is this
+        // change's defect in its plainest form — the others can be edited without moving the subject.
+        await mkdir(join(root, 'src', 'other'), { recursive: true });
+        await writeFile(join(root, 'src', 'other', 'thing.ts'), 'export const thing = 1;\n');
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg', 'src/other'] });
+
+        const sealed = await computePathDigests(root, ['src/pkg', 'src/other']);
+        expect((await ledger(['freeze'])).ok).toBe(true);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
+
+        expect(recorded).toEqual(Object.keys(sealed).sort());
+        expect(recorded).toContain('src/other/thing.ts');
     });
 
     it('canonicalises the declaration the way the seal does, so a non-canonical one records the same paths', async () => {
