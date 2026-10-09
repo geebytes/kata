@@ -219,6 +219,13 @@ claimed otherwise. AC-3 is the one without: E4 and E1/E3 all move the same polic
 shared mutation, not an AC-3-specific one. That is stated here rather than papered over with a mutation that reddens for an
 unrelated cause.
 
+- **Round 5 — two compile-valid mutations that filtered `.json`** (one on the ledger's side of the comparison, one inside the
+  seal's `computePathDigests`): both left all 21 cases green, because every fixture declared a directory or a file inside an
+  ignored one, and the only `.json` in the tree was git-ignored. The fixture now carries plainly declared files of four
+  extensions (`data.json`, `README.md`, `helper.py`, `notes.txt`), declares two of them as files, and puts a `.json` in the
+  second declaration; both mutations now redden by assertion (E10, E11). The lesson is narrower than "add more files": a
+  comparison is only as strong as the *kinds* its fixture carries, and a per-extension filter is the same defect in miniature.
+
 **A mutation that leaves a selector green is a finding about the selector**, not a passing test — this repository has paid for
 that repeatedly, so each one is run before the round is dispatched and recorded here.
 

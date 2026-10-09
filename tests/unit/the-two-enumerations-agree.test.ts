@@ -28,7 +28,16 @@ let previousExitCode: number | string | null | undefined;
 const chunks: string[] = [];
 
 /** The tree both enumerations are asked about: two real files, and one path per name the identity table excludes. */
-const REAL = ['src/pkg/mod.ts', 'src/pkg/nested/deep.ts'];
+/**
+ * The tree both enumerations are asked about: real files of **several extensions**, and one path per name the identity
+ * table excludes.
+ *
+ * The extensions are load-bearing. Round 5 measured two compile-valid mutations — filtering `.json` out of the ledger's
+ * expansion, and filtering it out of the seal's — that left all 21 cases green, because the fixture's only `.json` was a
+ * git-ignored file *inside* a directory and no `.json` was ever a plainly declared source. A per-extension filter on either
+ * side of the comparison is exactly the "second list" this change removes, so the fixture has to carry one of each kind.
+ */
+const REAL = ['src/pkg/mod.ts', 'src/pkg/nested/deep.ts', 'src/pkg/data.json', 'src/pkg/README.md', 'src/pkg/helper.py', 'src/pkg/notes.txt'];
 /** Larger than the tree-hash budget, so a cap applied on one side only changes that side's set. */
 const OVERSIZED = 'src/pkg/big.bin';
 /** Ten levels down: the ledger's own walk stopped at eight, and the identity walk has no cap. */
@@ -127,6 +136,8 @@ describe('the two enumerations agree on what is content', () => {
         // change's defect in its plainest form — the others can be edited without moving the subject.
         await mkdir(join(root, 'src', 'other'), { recursive: true });
         await writeFile(join(root, 'src', 'other', 'thing.ts'), 'export const thing = 1;\n');
+        // A second extension in the second declaration, so a per-extension filter cannot hide behind a single-extension fixture.
+        await writeFile(join(root, 'src', 'other', 'data.json'), '{ "thing": 1 }\n');
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg', 'src/other'] });
 
         const sealed = await computePathDigests(root, ['src/pkg', 'src/other']);
@@ -135,6 +146,23 @@ describe('the two enumerations agree on what is content', () => {
 
         expect(recorded).toEqual(Object.keys(sealed).sort());
         expect(recorded).toContain('src/other/thing.ts');
+        expect(recorded).toContain('src/other/data.json');
+    });
+
+    it('records a plainly declared file whatever its extension', async () => {
+        // **Round 5's two majors.** Both were compile-valid mutations that filtered `.json` — one on the ledger's side of the
+        // comparison, one on the seal's — and both stayed green, because every fixture declared either a directory or a file
+        // inside an ignored one, and the only `.json` was git-ignored. A per-extension filter is the same defect in a smaller
+        // shape: a declared source file stops being content, so editing it leaves the frozen subject byte-identical. Asking
+        // both derivations for a plainly declared file of each kind is what makes that mutation fail.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/data.json', 'src/pkg/helper.py'] });
+
+        const sealed = await computePathDigests(root, ['src/pkg/data.json', 'src/pkg/helper.py']);
+        expect((await ledger(['freeze'])).ok).toBe(true);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
+
+        expect(recorded).toEqual(Object.keys(sealed).sort());
+        expect(recorded).toEqual(['src/pkg/data.json', 'src/pkg/helper.py']);
     });
 
     it('canonicalises the declaration the way the seal does, so a non-canonical one records the same paths', async () => {
