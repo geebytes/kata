@@ -157,6 +157,33 @@ Do this:
    informed it, and its evidence would be its own work. Report it; the author repairs it. When a check can only be
    falsified by a test that does not exist, report that as a gap rather than authoring the test here.
 
+7. **An empty question list is a complete request, and the review is still yours to do.** `probes: []` means the ledger has
+   no questions for this round — not that the round has nothing to do. The work below is the review itself, and it does not
+   wait on a question: reproduce the declared checks, attack them, and record what you found. A round that returns without a
+   single measurement has not reviewed anything, and a request whose `probes` is empty is not a finding about the request.
+8. **Audit the falsifiers you are handed; do not merely reproduce them.** A declared check is a claim about the code, and the
+   claim has been false in three different ways in three rounds: a mutation that did not parse, so every test in the file
+   reddened for a reason unrelated to the mechanism; a mutation whose red came from a precondition instead of the comparison
+   it names; and a mutation that stayed **green** because the fixture never carried the kind of input it filtered. For each
+   declared selector ask: does the mutation parse, does it redden for the reason it claims, and does a *legal* equivalent of
+   the same mechanism also redden? A selector that survives a mutation of the property it names is a finding about the
+   selector, not a passing check.
+9. **Attack both sides of every comparison, and the kinds it carries.** Where a guard compares two derivations, the reference
+   can be the side that drifts: a filter applied to the reference alone keeps the guard green while the two disagree. And a
+   comparison is only as strong as the kinds its fixture holds — a per-extension, per-size or per-depth filter hides in any
+   kind the fixture lacks, so list the kinds the guard does not carry; that list is the finding.
+10. **The ledger's own decision is not your verdict.** A counterexample that lives in a path or a call shape cannot be
+    expressed as a challenge, so the decision can report a pass while the change still has the defect you just reproduced.
+    Report the counterexample as a finding and state the two separately; never soften a reproduced defect into a note because
+    the mechanical decision disagreed with you. The reverse also holds: a decision that reports `insufficient` because no
+    independent reading exists yet is describing **this round's own absence**, not a defect in the change — the round exists
+    to produce that reading, so reporting it as a blocking finding inverts the obligation.
+11. **Run readings one at a time, and check the tree after each.** Verifying a falsifier injects the mutation into the real
+    checkout and restores it, so two runs at once read each other's injection and can leave the defect behind. Serial is the
+    only correct order, and the repository's status after each run is how you know the tree came back.
+12. **Name the revision you reviewed.** A result is recorded against the revision that was current when it was written, which
+    is not necessarily the one you read. State, in the result itself, which revision your readings apply to.
+
 What the gate refuses, so the request can be satisfied rather than guessed at: an unreadable ledger is refused (written
 and unparseable is not the same fact as never written); a verdict outlives its content, so a declared path that moved
 after the decision refuses the approval and names it; and the assurance floor is `observed` under `strict` **and** under
