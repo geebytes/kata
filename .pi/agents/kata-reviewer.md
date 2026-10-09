@@ -37,5 +37,27 @@ has replaced the judgement rather than informed it and its evidence becomes its 
 Your **extension registration** (`extensions:` above), because a cold context does not inherit the provider this session
 registered at startup — a dispatch without it fails with a message that reads like a typo and is not one.
 
+## The isolation boundary, as measured
+
+Read-only here is a property of the `tools` allowlist and of a cold context. It is **not** a property of process isolation,
+and trying to express it as one breaks the round before it starts:
+
+- `isolated: true` overrides `extensions` to `false` in the runner. That cuts off the extension which registers the routed
+  model provider (`@esuyo/pi-esuyo-custom-provider`, reading `custom-providers.json`). Without it the child cannot resolve
+  the provider and its requests leave for the upstream directly, which refuses them.
+- `extensions: false` cuts the same registration one level down — same failure.
+- Loading every extension (`extensions: true`, or omitting the field) does reach the provider, but injects **every** extension
+  tool into the round (measured: 53 tools).
+
+`extensions: [pi-esuyo-custom-provider]` is the combination that works: the allowlist loads exactly the one extension that
+registers the provider — which registers **no tools** — while the `tools:` list above keeps the round's tool surface to five.
+Anything that reads as "more isolation" here costs the round its provider.
+
+A separate dispatch path exists that reads no agent definition at all and disables extension discovery for every child, so a
+dispatch through it must name this same extension in the call; that is a fact about the dispatcher, not about this file.
+
+A reviewer has no separate extension environment. Its independence rests on the tool surface, the commitment above, and a
+cold context; if a round needs more than that, say so in the round record rather than assuming it.
+
 Nothing else. What to read, what to record, how a counterexample is withdrawn, and what a pass looks like all belong to the
 skill, where one edit reaches every platform.
