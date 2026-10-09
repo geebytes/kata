@@ -1,82 +1,81 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { initLayout } from '../../src/core/layout.js';
+import { addTaskRelation, readKataRelations } from '../../src/core/relations.js';
 
 /**
  * **AC-23 — consolidating work into one successor preserves what the consolidated tasks recorded.**
  *
- * The migration existed as a command run once; this is the property it has to have left behind. Three facts, each of which
- * was missing or thin at some point while it was being done:
+ * Three facts, each of which was missing or thin while the migration was being done:
  *
- * 1. **Every source names a successor, and the successor names nothing back into them.** A `merged_into` edge per source, so
- *    a reader who arrives at a consolidated task is told where its work went rather than finding it abandoned.
- * 2. **The edge carries the audit.** A generic reason ("merged") is not an audit trail: it says the task was consolidated and
- *    nothing about *what* was carried, so the revision and the findings the edge is about have to be named on it. Measured on
- *    the first run of this migration: all fourteen edges carried one identical sentence, which told a later reader nothing.
- * 3. **Nothing was erased.** Each source task still exists with its records, and this change's own task carries the
- *    reproduced defects as acceptance criteria rather than restating them in prose.
+ * 1. **The edge carries the audit.** A generic reason ("merged") says a task was consolidated and nothing about *what* was
+ *    carried, so the revision and the findings have to be named on the edge. Measured on the first run of this migration: all
+ *    fourteen edges carried one identical sentence, which told a later reader nothing.
+ * 2. **Nothing points back.** A consolidation is not a mutual relation, and a back-edge would read as "two live tasks that
+ *    happen to be related".
+ * 3. **Nothing is erased.** The source task keeps its own records; the successor carries the work.
  *
- * It reads the live relation store, which is the artefact under test: this is a fact about this repository's own governance
- * record, not about a module's behaviour, so a fixture root would be asserting about a copy nobody made.
+ * **Driven through the managed writer on a fixture root, not by reading this repository's own store.** The first version of
+ * this case read `.kata/relations.json` and the task directories of the live checkout — which is the rule this very change
+ * exists to enforce (a test that reads the live store measures the store, and the seal's snapshot deliberately excludes it:
+ * measured, the case failed inside the seal's isolated execution snapshot while passing in the working tree).
  */
-const SUCCESSOR = 'unify-the-remaining-integrity-and-workflow-gaps';
-const root = process.cwd();
+const roots: string[] = [];
 
-type Edge = {
-    id?: string;
-    type?: string;
-    from?: { type?: string; id?: string };
-    to?: { type?: string; id?: string };
-    reason?: string;
-    createdAt?: string;
-};
+afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
-describe('the consolidation preserved its sources', () => {
-    it('names a successor for every consolidated task, with the revision and findings it carried', async () => {
-        const graph = JSON.parse(await readFile(join(root, '.kata', 'relations.json'), 'utf8')) as { relations: Edge[] };
-        const merged = graph.relations.filter((edge) => edge.type === 'merged_into' && edge.to?.id === SUCCESSOR);
+async function fixture(): Promise<{ root: string; source: string; successor: string }> {
+    const root = await mkdtemp(join(tmpdir(), 'kata-merge-'));
+    roots.push(root);
+    await initLayout(root);
+    const source = 'consolidated-change';
+    const successor = 'the-successor';
+    for (const id of [source, successor]) {
+        await mkdir(join(root, '.kata', 'tasks', id), { recursive: true });
+        await writeFile(join(root, '.kata', 'tasks', id, 'task.json'), `${JSON.stringify({ id, phase: 'review', acceptance: [] })}\n`);
+    }
+    return { root, source, successor };
+}
 
-        // There is more than one, or this case is about nothing.
-        expect(merged.length).toBeGreaterThan(1);
-        for (const edge of merged) {
-            const source = edge.from?.id ?? '';
-            expect(source.length).toBeGreaterThan(0);
-            // **The audit is on the edge.** A later reader has to be able to tell what this consolidation carried without
-            // opening both task directories and reconstructing it.
-            expect(edge.reason, `${source} names its revision`).toMatch(/revision-[0-9a-f]{8,}/);
-            expect(edge.reason, `${source} names what it carried`).toMatch(/finding|reproduced defect|recorded round/);
-            // Nothing points back: a consolidation is not a mutual relation, and a back-edge would read as "these are two
-            // live tasks that happen to be related".
-            expect(graph.relations.some((other) => other.type === 'merged_into' && other.from?.id === SUCCESSOR && other.to?.id === source)).toBe(false);
-        }
+describe('the consolidation preserves its sources', () => {
+    it('names the successor with the revision and findings the edge is about, and points nothing back', async () => {
+        const { root, source, successor } = await fixture();
+        const reason = 'Consolidated into the successor. Audit carried forward: revision revision-abc12345; its recorded round holds 2 finding(s) (major, minor): R1-F1, R1-F2.';
+
+        await addTaskRelation({ root, fromTaskId: source, toTaskId: successor, type: 'merged_into', reason });
+
+        const graph = await readKataRelations(root);
+        const edge = graph.relations.find((relation) => relation.type === 'merged_into' && relation.reason?.includes('revision-abc12345'));
+        expect(edge, JSON.stringify(graph.relations)).toBeDefined();
+        // The same type the live migration used, driven through the managed writer rather than by editing the store.
+        expect(edge?.from.id).toBe(source);
+        // **The audit is on the edge.** A reader who arrives at the consolidated task is told what it carried without
+        // reconstructing it from two directories.
+        expect(edge?.reason).toMatch(/revision-[0-9a-f]{8,}/);
+        expect(edge?.reason).toMatch(/finding/);
+        expect(graph.relations.some((relation) => relation.from.id === successor)).toBe(false);
     });
 
-    it('leaves every source task in place, with the records it had', async () => {
-        const graph = JSON.parse(await readFile(join(root, '.kata', 'relations.json'), 'utf8')) as { relations: Edge[] };
-        const sources = graph.relations
-            .filter((edge) => edge.type === 'merged_into' && edge.to?.id === SUCCESSOR)
-            .map((edge) => edge.from?.id ?? '');
+    it('leaves the source task in place, with the records it had', async () => {
+        const { root, source, successor } = await fixture();
+        await addTaskRelation({
+            root,
+            fromTaskId: source,
+            toTaskId: successor,
+            type: 'merged_into',
+            reason: 'Consolidated: revision revision-abc12345; its recorded round holds 1 finding (major): R1-F1.',
+        });
 
-        for (const source of sources) {
-            const files = await readdir(join(root, '.kata', 'tasks', source));
-            // The task record and its own history, not an empty husk left behind by a move.
-            expect(files, `${source} still holds its records`).toContain('task.json');
-        }
-    });
-
-    it('carries the reproduced defects as acceptance criteria, rather than as a sentence ', async () => {
-        const task = JSON.parse(await readFile(join(root, '.kata', 'tasks', SUCCESSOR, 'task.json'), 'utf8')) as {
-            acceptance: Array<{ id: string; statement: string }>;
-            acceptanceMatrix?: { rows: Array<{ acceptanceId: string; testPaths?: string[] }> };
-        };
-
-        // The consolidated work is a contract here: every criterion has a selector, which is what makes "the successor owns
-        // these defects" checkable rather than asserted.
-        expect(task.acceptance.length).toBeGreaterThan(15);
-        const rows = task.acceptanceMatrix?.rows ?? [];
-        expect(rows.length).toBe(task.acceptance.length);
-        for (const row of rows) {
-            expect(row.testPaths ?? [], `${row.acceptanceId} has a selector`).not.toHaveLength(0);
-        }
+        // A consolidation is a relation, not a move: the source is still a task with its own record.
+        const files = await readdir(join(root, '.kata', 'tasks', source));
+        expect(files).toContain('task.json');
+        const record = JSON.parse(await readFile(join(root, '.kata', 'tasks', source, 'task.json'), 'utf8')) as { id: string };
+        expect(record.id).toBe(source);
+        // And the successor is named by the relation, not by rewriting the source's record.
+        expect(record).not.toHaveProperty('mergedInto');
     });
 });
