@@ -285,7 +285,16 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             return;
         }
         await writeSubject(options.root, changeId, frozen.subject);
-        emit({ ok: true, command: 'ledger freeze', revision: frozen.subject.revision, paths: paths.length });
+        // **The report the design promised is in the payload.** A declaration root that is itself never content (a build
+        // directory, a cache directory) is honoured — its files are recorded — and naming it here is how the operator learns
+        // that what they declared will move the subject when the build runs.
+        emit({
+            ok: true,
+            command: 'ledger freeze',
+            revision: frozen.subject.revision,
+            paths: paths.length,
+            ...(frozen.neverContent.length > 0 ? { neverContent: frozen.neverContent } : {}),
+        });
         return;
     }
 

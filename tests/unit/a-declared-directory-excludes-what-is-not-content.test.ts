@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
+import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
@@ -119,13 +120,35 @@ describe('a declared directory excludes what is not content', () => {
     it('says the declaration covered nothing instead of failing on the record schema', async () => {
         // Measured: declaring `dist` expanded to no paths and the operator was told `$.pathDigests must NOT have fewer than
         // 1 properties` — a message about the record, naming nothing about the declaration that produced it.
+        //
+        // **The seal's answer for the same declaration is asserted here too.** This is the *second* shape where the ledger
+        // and the seal deliberately differ (the first being a sentinel declaration), and an independent round measured that
+        // only the ledger's side of it was ever exercised — so the difference was stated in the design and asserted nowhere.
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/dist'] });
 
         const result = await ledger(['freeze']);
+        const sealed = await computePathDigests(root, ['src/pkg/dist']);
 
-        expect(result.ok).toBe(false);
+        expect(Object.keys(sealed)).toEqual([]); // the seal answers with no paths at all …
+        expect(result.ok).toBe(false); // … and the ledger refuses by name, which is the stated difference
         expect(String(result.error)).toContain('the declaration covers no files');
         expect(String(result.error)).toContain('src/pkg/dist');
+    });
+
+    it('names a declaration root that is itself never content, instead of honouring it silently', async () => {
+        // **Round 7's second finding.** Round 3 settled that a declaration is the operator's own statement, so a build
+        // directory's files are recorded either way; what was missing is the report the design promised —
+        // `declaredContentPaths` returned `neverContent`, and the freeze dropped it, so an operator who declared `dist/`
+        // could not learn from the payload that build output would move their subject.
+        // The declaration mixes the two: a build root (never content, so its expansion is empty) and a source file, which
+        // is what a real `ownedPaths` looks like when a change touches both.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/dist', 'src/pkg/mod.ts'] });
+
+        const result = await ledger(['freeze']);
+
+        expect(result.ok).toBe(true);
+        expect(await digests()).toEqual(['src/pkg/mod.ts']);
+        expect(result.neverContent).toEqual(['src/pkg/dist']);
     });
 
     it('says a directory that holds nothing holds nothing', async () => {

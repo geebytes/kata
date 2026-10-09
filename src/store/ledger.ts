@@ -1117,7 +1117,8 @@ export async function freezeSubject(input: {
     /** The plan as it stands, so the question covers what the request asks for and not only what the claims say. */
     planDigest?: string;
 }): Promise<
-    { ok: true; subject: Subject } | { ok: false; error: string; unreadable: string[] }
+    | { ok: true; subject: Subject; neverContent: string[] }
+    | { ok: false; error: string; unreadable: string[] }
 > {
     const unreadable: string[] = [];
     const digests: Record<string, string> = {};
@@ -1177,7 +1178,16 @@ export async function freezeSubject(input: {
     // notice it. Keeping the declaration is what lets drift be measured against the surface that was declared.
     // **The questions as declared at the freeze are part of the identity**, so a later restatement makes the frozen
     // subject visibly different from what is declared now — the difference every staleness check is about.
-    return { ok: true, subject: subjectOf(digests, input.paths, input.claims, input.planDigest) };
+    //
+    // **A declaration root that is itself never content is reported, not silently honoured.** Round 3 settled that the
+    // declaration is the operator's own statement, so its files are recorded either way; round 7 then measured that the
+    // report the design promised did not exist — `declaredContentPaths` returned `neverContent` and this function dropped
+    // it, so an operator who declared `dist/` could not learn from the payload that build output would move their subject.
+    return {
+        ok: true,
+        subject: subjectOf(digests, input.paths, input.claims, input.planDigest),
+        neverContent: classification.neverContent,
+    };
 }
 
 

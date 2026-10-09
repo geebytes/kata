@@ -29,14 +29,15 @@ const chunks: string[] = [];
 
 /** The tree both enumerations are asked about: two real files, and one path per name the identity table excludes. */
 /**
- * The tree both enumerations are asked about, and **the expectation, written down**.
+ * The tree both enumerations are asked about, and a **sample** of the kinds — not the authority, which is the generator below.
  *
  * Rounds 5 and 6 measured the same failure four times: a compile-valid one-sided filter keyed on an extension, a name shape
  * or a size left every declared selector green, because the fixture did not happen to carry that kind. Adding one kind per
  * round does not converge — a filter keyed on a kind nobody thought of still passes, and a comparison that only asks the
  * other derivation moves *with* the filter when it is applied inside the shared traversal. So the kinds are a table and the
- * answer is written here: `CONTENT` is what a correct freeze must record, and both consumers are asked for it. A filter on
- * either side, or inside the traversal itself, fails against this list.
+ * answer is written here for a sample of kinds. Round 7 showed what a list cannot do: it is finite, so a filter keyed on a kind
+ * the list omits escapes every assertion in this file. `CONTENT` remains because it names the shapes worth reading in a
+ * failure message — the oracle that has to hold is `generatedTree`, which writes the tree and returns its own names.
  */
 const CONTENT = [
     'src/pkg/mod.ts', // the ordinary case
@@ -135,6 +136,51 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
     vi.restoreAllMocks();
 });
+
+
+/**
+ * **The kinds are generated, not enumerated.** `CONTENT` above is a readable *sample*: a list of names is always finite, so a
+ * filter keyed on a kind nobody listed walks through every assertion in this file. Round 7 said exactly that after defeating
+ * the list with `.rs`, a name-length test, `.yaml`, and a reversed sort. What closes it is not a longer list but an oracle the
+ * code cannot move with: this generator writes the files and returns their names, so the expected set comes from the test's
+ * own act of writing rather than from any derivation under test. Seeds are fixed — `Math.random` is not used — so a failure
+ * reports the same tree every run.
+ */
+function mulberry32(seed: number): () => number {
+    let state = seed >>> 0;
+    return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/** Kinds a filter can key on. Each dimension is drawn per file, so their combination is what the generator covers. */
+const STEMS = ['plain', 'mod', 'x', 'short', 'very-long-name-deliberately-over-thirty-characters-wide', 'a file with spaces', 'ünïcode', 'ÜPPER', 'digits123', 'dash-name', 'dot.name', 'under_score'];
+const EXTENSIONS = ['ts', 'json', 'md', 'txt', 'py', 'rs', 'yaml', 'yml', 'go', 'rb', 'sh', 'css', 'map', 'lock', 'mjs', 'cjs', 'vue', 'svg', 'proto', '', 'TS', 'DATA', 'tar.gz', 'd.ts'];
+
+function generatedTree(seed: number, root: string): string[] {
+    const random = mulberry32(seed);
+    const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+    const written: string[] = [];
+    const count = 24;
+    for (let index = 0; index < count; index += 1) {
+        const depth = 1 + Math.floor(random() * 12);
+        const segments = [`gen`, `s${seed}`];
+        for (let level = 1; level < depth; level += 1) segments.push(random() < 0.1 ? 'looks.like.ts' : `d${level}`);
+        const stem = pick(STEMS);
+        const extension = pick(EXTENSIONS);
+        const dotfile = random() < 0.15 ? '.' : '';
+        const name = `${dotfile}${stem}${extension === '' ? '' : `.${extension}`}`;
+        const path = [...segments, `${index}-${name}`].join('/');
+        written.push(path);
+    }
+    // The boundary shapes are generated too, because a size cap is a kind like any other.
+    written.push(`gen/s${seed}/empty${seed}.ts`, `gen/s${seed}/at-budget${seed}.bin`);
+    return written;
+}
 
 describe('the two enumerations agree on what is content', () => {
     it('the fixture exercises the rule: the identity table rejects every path that is not content', () => {
@@ -311,5 +357,50 @@ describe('the two enumerations agree on what is content', () => {
 
         expect(recorded).toEqual((await listRepositoryFiles(root, { under: 'src/pkg' })).sort());
         expect(recorded.filter((path) => path.includes('//'))).toEqual([]);
+    });
+
+    it('records every kind the tree holds, because the expectation is what the test wrote and not what the code derives', async () => {
+        // The oracle is the generator's own list. Nothing here asks `listRepositoryFiles`, `computePathDigests` or
+        // `declaredContentPaths` what should be there — a filter inside either side of the comparison can move those answers,
+        // and it cannot move the list of files this test just wrote. `Object.keys` is used deliberately: it is insertion
+        // order, so a reversal of the walk's sort — invisible to a `.sort()`ed comparison — fails here.
+        for (const seed of [1, 2, 3, 4, 5, 6]) {
+            const declared = `gen/s${seed}`;
+            const expected = generatedTree(seed, root);
+            for (const path of expected) {
+                await mkdir(dirname(join(root, path)), { recursive: true });
+                if (path.includes('/empty')) await writeFile(join(root, path), '');
+                else if (path.includes('/at-budget')) await writeFile(join(root, path), 'x'.repeat(2_000_000));
+                else await writeFile(join(root, path), `content ${seed} of ${path}\n`);
+            }
+            await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: [declared] });
+
+            expect((await ledger(['freeze', '--paths', declared])).ok, `seed ${seed}`).toBe(true);
+            const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {});
+
+            expect(recorded.length, `seed ${seed}`).toBe(expected.length);
+            for (const path of expected) expect(recorded, `seed ${seed}`).toContain(path);
+            expect(recorded, `seed ${seed}`).toEqual([...expected].sort((left, right) => left.localeCompare(right)));
+        }
+    });
+
+    it('is unmoved by a filter keyed on a kind the sample list never named', async () => {
+        // Round 7's mutation, as a guard: a one-sided delete keyed on `.rs` after the seal's call left every selector green,
+        // because `CONTENT` carried no `.rs`. Here `.rs` is one of the extensions the generator draws, so the recorded set
+        // loses a file the test wrote and the case fails without anything having to be enumerated in advance.
+        const declared = 'gen/s7';
+        const expected: string[] = [];
+        for (let index = 0; index < 8; index += 1) {
+            const path = `${declared}/${index}.${index % 2 === 0 ? 'rs' : 'ts'}`;
+            await mkdir(dirname(join(root, path)), { recursive: true });
+            await writeFile(join(root, path), `content ${index}\n`);
+            expected.push(path);
+        }
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: [declared] });
+
+        expect((await ledger(['freeze', '--paths', declared])).ok).toBe(true);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {});
+
+        expect(recorded).toEqual([...expected].sort((left, right) => left.localeCompare(right)));
     });
 });

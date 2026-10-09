@@ -268,6 +268,35 @@ non-ASCII name, a name with spaces, a case variant, an empty file, a nested kept
 a file exactly at it, a hard link, a path twelve segments deep, a git-ignored file, a nested git-ignored directory, a file
 excluded through `.git/info/exclude`, a FIFO, a broken symlink, and the set of names the identity table excludes.
 
+### Round 7: the expectation has to come from outside the code under test
+
+Round 7 accepted change #1 and #2 above and then defeated #2 on its own terms. `CONTENT` is a **finite** oracle, so the
+guard's discriminating power is exactly the kinds it lists: a one-sided `delete` keyed on `.rs` after the seal's call left the
+ledger recording `[b.ts]` while the seal returned `[a.rs, b.ts]`, with all four selectors at 22/22. Shared filters escaped the
+same way — `.rs` inside the traversal, a name-length test, `.yaml`, and a reversed walk sort (invisible because both
+assertions sorted) — because the fixture carried none of those kinds. Writing the expectation down had made the bound
+*visible*, not smaller.
+
+The repair is not a longer list, it is an oracle the code cannot move:
+
+- **Generated kinds.** `generatedTree(seed)` draws 26 files per seed across twelve stems (spaces, non-ASCII, uppercase,
+  digits, over-long names, dotted names, underscores), twenty-four extensions (including multi-dot, uppercase, and none at
+  all), depths from one to twelve, dotfiles, an empty file and a file exactly at the tree-hash budget — over six seeds. A
+  filter keyed on a kind has to match **no** generated kind to escape, which is a very different bar from "no listed kind".
+- **The expectation is what the test wrote.** The assertion is against the generator's own return value, never against
+  `listRepositoryFiles`, `computePathDigests` or `declaredContentPaths` — machinery a filter inside either side of the
+  comparison can move. `Object.keys` (insertion order) is compared, so a reversed sort fails too.
+- **`CONTENT` is now described as what it is**: a readable sample that names the shapes worth reading, not the authority.
+
+Measured after the repair: round 7's exact repro (one-sided `.rs` delete) fails two cases; a shared `.rs` filter fails two; a
+name-length filter fails one.
+
+Round 7 also found two smaller things, both repaired rather than argued away: the `neverContent` report the design promised
+did not exist (`declaredContentPaths` returned it and `freezeSubject` dropped it), so `ledger freeze` now names a declaration
+root that is itself never content; and C2 said "one deliberate difference" while the design stated two (a sentinel
+declaration, and a declaration covering no content) — the second is now asserted on **both** sides, the seal's empty answer
+and the ledger's named refusal, because an unasserted difference is a sentence rather than a rule.
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by
