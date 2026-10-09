@@ -1121,7 +1121,6 @@ export async function freezeSubject(input: {
     | { ok: false; error: string; unreadable: string[] }
 > {
     const unreadable: string[] = [];
-    const digests: Record<string, string> = {};
     // **Every declaration goes through the shared enumeration, including the ones that are neither a directory nor a
     // file.** This loop used to stat first and branch itself, which meant a FIFO never reached the function that knows how to
     // classify it and fell through to `readFile` — measured: `ledger freeze` hung on a declared pipe instead of refusing it,
@@ -1162,8 +1161,12 @@ export async function freezeSubject(input: {
     } catch (error) {
         return { ok: false, error: (error as Error).message, unreadable: [] };
     }
-    Object.assign(digests, sealed);
-    if (input.paths.length > 0 && Object.keys(digests).length === 0) {
+    // **There is no seam to filter.** Round 8 measured what the previous shape cost: `Object.assign(digests, sealed)`
+    // followed by one `for … delete` line left the ledger recording a set the seal did not, with every selector green,
+    // because no fixture can carry every kind a filter might key on (its `.pyc` case was the defect this change exists
+    // for). Removing the local map removes the place such a line would go: the recorded digests *are* the seal's own
+    // return value, which is asserted structurally by `the-recorded-digests-are-the-seals-map.test.ts`.
+    if (input.paths.length > 0 && Object.keys(sealed).length === 0) {
         // **A declaration that covers nothing is a declaration problem, not a schema problem.** Measured: declaring `dist`
         // expanded to no paths and the operator got `$.pathDigests must NOT have fewer than 1 properties` — a message about
         // the record, naming nothing about the declaration that produced it.
@@ -1185,7 +1188,7 @@ export async function freezeSubject(input: {
     // it, so an operator who declared `dist/` could not learn from the payload that build output would move their subject.
     return {
         ok: true,
-        subject: subjectOf(digests, input.paths, input.claims, input.planDigest),
+        subject: subjectOf(sealed, input.paths, input.claims, input.planDigest),
         neverContent: classification.neverContent,
     };
 }

@@ -159,7 +159,15 @@ function mulberry32(seed: number): () => number {
 
 /** Kinds a filter can key on. Each dimension is drawn per file, so their combination is what the generator covers. */
 const STEMS = ['plain', 'mod', 'x', 'short', 'very-long-name-deliberately-over-thirty-characters-wide', 'a file with spaces', 'ünïcode', 'ÜPPER', 'digits123', 'dash-name', 'dot.name', 'under_score'];
-const EXTENSIONS = ['ts', 'json', 'md', 'txt', 'py', 'rs', 'yaml', 'yml', 'go', 'rb', 'sh', 'css', 'map', 'lock', 'mjs', 'cjs', 'vue', 'svg', 'proto', '', 'TS', 'DATA', 'tar.gz', 'd.ts'];
+const EXTENSIONS = [
+    'ts', 'json', 'md', 'txt', 'py', 'rs', 'yaml', 'yml', 'go', 'rb', 'sh', 'css', 'map', 'lock', 'mjs', 'cjs', 'vue', 'svg',
+    'proto', '', 'TS', 'DATA', 'tar.gz', 'd.ts',
+    // **The kinds a filter is most tempting on.** Round 8 defeated this generator with `.pyc` — the very case this change
+    // exists for — because it was not among the extensions drawn. A list cannot be completed (that is the finding), so these
+    // are witnesses for the readable failure message; the property itself is enforced structurally by
+    // `the-recorded-digests-are-the-seals-map.test.ts`, which fails on a filter of any kind.
+    'pyc', 'exe', 'o', 'obj', 'class', 'log', 'min.js', '.hidden',
+];
 
 function generatedTree(seed: number, root: string): string[] {
     const random = mulberry32(seed);

@@ -297,6 +297,43 @@ root that is itself never content; and C2 said "one deliberate difference" while
 declaration, and a declaration covering no content) — the second is now asserted on **both** sides, the seal's empty answer
 and the ledger's named refusal, because an unasserted difference is a sentence rather than a rule.
 
+### Round 8: no fixture can witness every kind, so the property is enforced structurally
+
+Round 8 reproduced round 7's shape with one substitution — `.pyc` in place of `.rs` — and defeated both the generated oracle and
+the shared-traversal case:
+
+```
+Object.assign(digests, sealed);
+for (const key of Object.keys(digests)) if (key.endsWith('.pyc')) delete digests[key];
+```
+
+With a tree holding `mod.ts`, `thing.pyc` and `tool.exe`, the ledger recorded `[mod.ts, tool.exe]` while the seal returned all
+three, and **all 25 declared selector cases passed**. Its reading of the cause is the one that matters: the generator's
+`EXTENSIONS` was itself a list, and `.pyc` — the case this whole change exists for — was not on it. `C2` had claimed the guard
+"does not depend on a filter's kind being enumerated", which was an over-claim; the design's weaker sentence ("a filter has to
+match no generated kind") was the true one.
+
+That is the end of the road for witnesses: for **any** finite fixture, a filter keyed on a kind outside it escapes, and the
+kinds are unbounded. So the property is now enforced where it cannot be stepped around, and stated for what it is:
+
+1. **The seam is gone.** `freezeSubject` keeps no map of its own: the value handed to `subjectOf` is the value
+   `computePathDigests` returned. There is no longer a line for a filter to be added to.
+2. **A structural guard holds that shape.** `tests/unit/the-recorded-digests-are-the-seals-map.test.ts` parses
+   `src/store/ledger.ts`, finds `freezeSubject`, and asserts that the identifier given to `subjectOf` is the one the seal's call
+   was bound to, and that the body contains nothing that could alter an object — no `delete`, no `Object.assign`, no assignment
+   into a property or element. Measured: a `.pyi` filter (a kind no fixture witnesses) leaves all four behavioural selectors at
+   25/25 **and fails this guard**; a `.rs` filter fails the behavioural cases as well. Reintroducing the seam fails here
+   whatever kind it keys on, which is the property no behavioural test can hold.
+3. **`C2` now says what is true.** "The ledger records the seal's content set itself rather than a second expansion of it… the
+   structural guard is what makes the property independent of that list" — the claim no longer asserts something the fixtures
+   cannot deliver.
+4. `EXTENSIONS` gained `.pyc`, `.exe`, `.o`, `.obj`, `.class`, `.log`, `.min.js` and a leading-dot name, as witnesses for the
+   readable failure message rather than as the property.
+
+The general lesson, written here because it cost three rounds: **a guard that compares two derivations can only witness the
+kinds its fixture carries; if the property must hold for all kinds, enforce the shape of the code, not the answer for a list of
+inputs.**
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by
