@@ -229,6 +229,16 @@ unrelated cause.
 **A mutation that leaves a selector green is a finding about the selector**, not a passing test — this repository has paid for
 that repeatedly, so each one is run before the round is dispatched and recorded here.
 
+## What the rounds taught about this guard
+
+Five rounds of independent review found the same shape five times, each one level deeper: a separate ignore table; a walk that
+looked like the identity's but rebuilt its own keys; a normalisation the seal applied and the ledger did not; a falsifier that
+was a syntax error; a comparison against a proxy instead of the seal; and finally a fixture that carried only one kind of
+declaration, so a per-extension filter on either side stayed green. The guard now compares the ledger's freeze against
+`computePathDigests` — the seal's own expansion — over a tree that holds plain files of four extensions, a plainly declared
+file of each kind, a second declaration, a git-ignored path, a path deeper than any cap, a file above the tree-hash budget, a
+sentinel, and a symlink. Each of those payloads exists because a round showed the guard was silent without it.
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by
