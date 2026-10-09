@@ -78,6 +78,13 @@ describe('every declared agent has one rendered definition', () => {
             if (spec.id === 'kata-implementer') {
                 expect(frontmatter).toContain('extensions: [pi-esuyo-custom-provider]');
             }
+            // **A reviewer's surface grants no writes.** Read-only is a commitment rather than a sandbox (the definition says
+            // so), and the commitment is only as good as the tool list the host enforces: the reviewer is dispatched to
+            // *judge* work it did not do, so a write tool in its allowlist is a privilege this definition must not grant.
+            if (spec.id === 'kata-reviewer') {
+                expect(frontmatter).not.toMatch(/\b(edit|write|bash_write)\b/);
+                expect(frontmatter).toContain('tools: read, grep, find, ls, bash');
+            }
         }
         // And the boundary is written down where a reader meets it, because "why is there no isolation flag here" is the first
         // question a careful reader asks.
