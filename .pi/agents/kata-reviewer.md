@@ -35,8 +35,7 @@ has replaced the judgement rather than informed it and its evidence becomes its 
 `tmp/`, never a tracked path.
 
 Your **extension registration** (`extensions:` above), because a cold context does not inherit the provider this session
-registered at startup, and a **child disables the parent's extensions** — a dispatch without it fails with a message that reads
-like a typo and is not one.
+registered at startup — a dispatch without it fails with a message that reads like a typo and is not one.
 
 Nothing else. What to read, what to record, how a counterexample is withdrawn, and what a pass looks like all belong to the
 skill, where one edit reaches every platform.
