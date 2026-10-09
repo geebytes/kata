@@ -134,6 +134,25 @@ sentinels for a declaration it cannot read; the ledger refuses such a declaratio
 pre-existing (a sentinel is indistinguishable from a deleted file at the ledger's readers), and it is the one place where the
 two expansions answer differently.
 
+## The third independent round: three more, and one about my own falsifiers
+
+Round 3 (`adversarial`, `revision-636c49466287aa5e`) returned **fail** on C2 — the two enumerations still disagreed — and it
+found something worse than a code defect: **one of my falsifiers was invalid.**
+
+| finding | measured | repair |
+|---|---|---|
+| a git-ignored directory as the declaration **root**: the seal records its content, the ledger refused it | `seal = [src/pkg/build/out.js]`, `ledger = ERROR never content` — and the guard stayed green, so my "the only deliberate difference is the sentinel" claim was false | the filter is for what a declaration **silently pulls in**; a declaration is the operator's own statement, and the identity has always honoured it without a cap or a filter. The ledger now records what the seal records and **reports** the never-content root in the freeze payload |
+| a declared **FIFO** made `ledger freeze` **hang** | the loop stat-ed first and branched itself, so a non-dir/file fell through to `readFile`, which blocks on a pipe with no writer — no refusal at all | every declaration goes through `declaredContentPaths`, which classifies it as unreadable; one call, no branch of the ledger's own |
+| a backslash declaration (`src\pkg`) was reported unreadable | the raw spelling was stat-ed before the canonicalisation the seal applies first | same repair |
+| **E3 was a syntax error** | `--id E3` was `supported` because the module failed to transform; the legal equivalent mutation left every case green, so the "canonicalises" assertion was not load-bearing | E3 is now a **legal** mutation of `normalizeDeclaredPaths`, and the guard asks that function directly (`normalizeDeclaredPaths(root, ['..'])` must throw, `['./src/pkg', 'src/pkg/']` must be `['src/pkg']`) — it reddens **by assertion**, 26 ms |
+| E4 reddens a precondition, not the comparison | recorded | stated in the falsifier table rather than left implicit |
+
+**What is still different between the two, stated precisely (the previous claim was too broad).** Two differences, not one:
+the seal records `[missing]`/`[unsupported]` sentinels for a declaration it cannot read where the ledger refuses by name, and
+an empty expansion is a refusal here because a subject with no paths cannot satisfy its own schema. Everything else — which
+paths a declaration covers, in which coordinates, after which canonicalisation — is one answer, and it is the shared
+function's.
+
 ## Acceptance criteria
 
 | AC | What it asserts | Selector |

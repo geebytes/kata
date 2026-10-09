@@ -1120,55 +1120,26 @@ export async function freezeSubject(input: {
 > {
     const unreadable: string[] = [];
     const digests: Record<string, string> = {};
-    for (const path of [...input.paths].sort()) {
-        let stats: Awaited<ReturnType<typeof stat>>;
+    // **Every declaration goes through the shared enumeration, including the ones that are neither a directory nor a
+    // file.** This loop used to stat first and branch itself, which meant a FIFO never reached the function that knows how to
+    // classify it and fell through to `readFile` — measured: `ledger freeze` hung on a declared pipe instead of refusing it,
+    // and a backslash declaration (`src\\pkg`) was reported unreadable because the raw spelling was stat-ed before the
+    // canonicalisation that the seal applies first. One call answers all of it.
+    let expansion: Awaited<ReturnType<typeof declaredContentPaths>>;
+    try {
+        expansion = await declaredContentPaths(input.root, input.paths);
+    } catch (error) {
+        // **A refusal, not a crash.** The canonicalisation refuses a declaration that resolves outside the repository, and
+        // that refusal has to arrive as a named state the operator can act on rather than as a thrown error from inside a
+        // freeze.
+        return { ok: false, error: (error as Error).message, unreadable: [] };
+    }
+    unreadable.push(...expansion.unreadable);
+    for (const covered of expansion.paths) {
         try {
-            stats = await stat(join(input.root, path));
+            digests[covered] = hashContent(await readFile(join(input.root, covered)));
         } catch {
-            unreadable.push(path);
-            continue;
-        }
-        // **A declared directory is a set of files, not one unreadable path.** Task declarations name directories
-        // (`openspec/changes/<id>` is one), and reading such a path as a file reported it as unreadable — which is how a
-        // migration stopped on a declaration that was entirely correct. The walk skips only what is never content.
-        if (stats.isDirectory() || stats.isFile()) {
-            // **The declaration's own enumeration, shared with the revision identity.** Not a walk of this file's own and
-            // not a key rebuilt by slicing: `declaredContentPaths` normalises the declaration the way the seal does, expands
-            // a directory through the identity's walk (the repository's git declaration included, no depth cap, repository
-            // coordinates) and returns the paths the walk names. Measured, twice, by independent rounds: a second key
-            // construction gave `./src/pkg/sted/deep.ts` for `src/pkg/nested/deep.ts`, collapsed four distinct files onto two
-            // keys — so editing a source file left the frozen subject byte-identical — and left a git-ignored declaration
-            // root's build output recorded as content.
-            let expansion: Awaited<ReturnType<typeof declaredContentPaths>>;
-            try {
-                expansion = await declaredContentPaths(input.root, [path]);
-            } catch (error) {
-                // **A refusal, not a crash.** The canonicalisation refuses a declaration that resolves outside the
-                // repository, and that refusal has to arrive as a named state the operator can act on rather than as a
-                // thrown error from deep inside a freeze.
-                return { ok: false, error: (error as Error).message, unreadable: [] };
-            }
-            if (expansion.neverContent.length > 0) {
-                return {
-                    ok: false,
-                    error: `this declaration is itself never content, so it covers nothing to freeze: ${expansion.neverContent.join(', ')} — a path the repository does not count as content cannot be frozen as one; declare the files you mean, or a directory that holds them`,
-                    unreadable: [],
-                };
-            }
-            unreadable.push(...expansion.unreadable);
-            for (const covered of expansion.paths) {
-                try {
-                    digests[covered] = hashContent(await readFile(join(input.root, covered)));
-                } catch {
-                    unreadable.push(covered);
-                }
-            }
-            continue;
-        }
-        try {
-            digests[path] = hashContent(await readFile(join(input.root, path)));
-        } catch {
-            unreadable.push(path);
+            unreadable.push(covered);
         }
     }
     if (input.paths.length > 0 && unreadable.length === 0 && Object.keys(digests).length === 0) {

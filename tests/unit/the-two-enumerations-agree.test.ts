@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
-import { isIgnoredRepositoryPath, listRepositoryFiles } from '../../src/core/repository-identity.js';
+import { isIgnoredRepositoryPath, listRepositoryFiles, normalizeDeclaredPaths } from '../../src/core/repository-identity.js';
 import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
@@ -123,6 +123,17 @@ describe('the two enumerations agree on what is content', () => {
         expect(recorded.filter((path) => path.startsWith('./'))).toEqual([]);
     });
 
+    it('canonicalises and refuses in the shared derivation itself, where both consumers read it', async () => {
+        // **Round 3's third major, answered at the root.** The first version of this falsifier replaced a line of
+        // `normalizeDeclaredPaths` with something that did not parse, so it reddened every test in the file for a reason
+        // that had nothing to do with canonicalisation — and the legal equivalent it should have been stayed green, because
+        // the property looked structural from the freeze side. It is not structural here: the shared derivation is a
+        // function with a contract, and this asks it directly.
+        expect(() => normalizeDeclaredPaths(root, ['..'])).toThrow(/inside the repository/);
+        expect(() => normalizeDeclaredPaths(root, ['/etc/passwd'])).toThrow(/inside the repository/);
+        expect(normalizeDeclaredPaths(root, ['./src/pkg', 'src/pkg/'])).toEqual(['src/pkg']);
+    });
+
     it('refuses a declaration that resolves outside the repository, as the seal does', async () => {
         // Measured: `..` was accepted and the walk went outside the repository (`../oob.txt` recorded), while
         // `normalizeOwnedPaths` refuses it for the revision.
@@ -134,19 +145,50 @@ describe('the two enumerations agree on what is content', () => {
         expect(String(result.error)).toContain('must be inside the repository');
     });
 
-    it('refuses a directory whose root is never content, instead of recording its build output', async () => {
-        // **The third round's third major.** The walk asks the git declaration of the entries it stands on, not of the root
-        // it was handed, so a git-ignored *directory* declared as the root had its output recorded as content — a rebuild
-        // then moved the frozen subject, which is the reported defect for a declaration root instead of a file inside one.
+    it('records what the seal records for a never-content root, and says what was declared', async () => {
+        // **Round 3's first major, resolved the other way round.** Refusing a git-ignored directory *root* put the ledger and
+        // the seal at odds for that input: the seal records what the operator declared (owned-path hashing has no filter or
+        // cap), the ledger refused it, and the guard could not see the disagreement. The filter is for what a declaration
+        // *silently* pulls in; a declaration is the operator's own statement. So the expansion matches the seal and the
+        // declaration is *reported*, which is how the operator learns that build output they named will move the subject.
         await mkdir(join(root, 'src', 'pkg', 'build'), { recursive: true });
         await writeFile(join(root, 'src', 'pkg', 'build', 'out.js'), 'built\n');
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/build'] });
 
+        const sealed = await computePathDigests(root, ['src/pkg/build']);
+        const result = await ledger(['freeze']);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
+
+        expect(result.ok).toBe(true);
+        expect(recorded).toEqual(Object.keys(sealed).sort());
+        expect(recorded).toEqual(['src/pkg/build/out.js']);
+    });
+
+    it('refuses a declaration that is neither a file nor a directory, instead of hanging on it', async () => {
+        // **Round 3's second major.** The freeze stat-ed first and branched itself, so a FIFO never reached the function that
+        // classifies it and fell through to `readFile`, which blocks on a pipe that has no writer: `ledger freeze` hung with
+        // no refusal at all. One call now answers every declaration, so this is a named refusal like any other unreadable
+        // one — and the seal's own answer for the same input is a sentinel, which is the difference the design states.
+        execFileSync('mkfifo', [join(root, 'src', 'pkg', 'pipe')]);
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/pipe'] });
+
         const result = await ledger(['freeze']);
 
         expect(result.ok).toBe(false);
-        expect(String(result.error)).toContain('never content');
-        expect(String(result.error)).toContain('src/pkg/build');
+        expect(String(result.error)).toContain('cannot be read');
+        expect(String(result.error)).toContain('src/pkg/pipe');
+    });
+
+    it('canonicalises a declaration before looking for it, as the seal does', async () => {
+        // Measured: a backslash declaration (`src\\pkg`) was reported unreadable, because the raw spelling was stat-ed before
+        // the canonicalisation the seal applies first — so a declaration the seal accepts was refused here.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src\\pkg'] });
+
+        const result = await ledger(['freeze']);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
+
+        expect(result.ok).toBe(true);
+        expect(recorded).toEqual((await listRepositoryFiles(root, { under: 'src/pkg' })).sort());
     });
 
     it('keys a declaration with a trailing slash in the same coordinates the walk uses', async () => {

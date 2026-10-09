@@ -266,6 +266,13 @@ export function normalizeDeclaredPaths(root: string, declared: readonly string[]
  * — but *which paths a declaration covers* is one answer, and it is the walk's: a directory expands to the paths
  * `listRepositoryFiles` returns for it (the repository's own git declaration included, no depth cap, repository
  * coordinates), and a file is itself.
+ *
+ * **The filter applies to what the walk descends into, never to what was declared.** A declaration is the operator's own
+ * statement about their change, and the identity has always honoured it without a cap or a filter ("owned-path hashing reads
+ * what it is responsible for"); the walk's exclusions are for what a declaration *silently* pulls in. An independent round
+ * measured the difference this makes: refusing a git-ignored directory *root* put the ledger and the seal at odds for that
+ * input, while expanding it keeps them equal and reports the declaration as `neverContent` so the operator can see what they
+ * declared.
  */
 export async function declaredContentPaths(
     root: string,
@@ -282,15 +289,8 @@ export async function declaredContentPaths(
             entry = null;
         }
         if (entry?.isDirectory()) {
-            // A *directory* whose root is never content is not an expansion question. Measured: declaring a git-ignored build
-            // directory recorded its output as content, so a rebuild moved the frozen subject — the defect this whole change
-            // is about, for a declaration root instead of a file inside one. The walk only asks this of entries it stands on,
-            // so the root has to be asked here. A *file* is asked nothing: declaring a file is a statement about that file,
-            // and a deliverable under `dist/` is still declarable by name.
-            if (isIgnoredRepositoryPath(declaration) || await isDeclaredIgnored(root, declaration)) {
-                neverContent.push(declaration);
-                continue;
-            }
+            // Reported, not refused: the operator declared this root, and the identity records what it declared.
+            if (isIgnoredRepositoryPath(declaration) || await isDeclaredIgnored(root, declaration)) neverContent.push(declaration);
             for (const path of await listRepositoryFiles(root, { under: declaration })) paths.add(path);
         } else if (entry?.isFile()) {
             paths.add(declaration);
