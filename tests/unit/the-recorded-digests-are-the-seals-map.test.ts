@@ -52,21 +52,22 @@ const revision = await import('../../src/workflow/revision.js');
 
 let root = '';
 
-/** A map the way the seal produces one: null prototype, marked, frozen. */
-function sealedMap(entries: Record<string, string>): Record<string, string> {
-    const map = Object.assign(Object.create(null) as Record<string, string>, entries);
-    Object.defineProperty(map, revision.sealMapBrand, { value: true, enumerable: false, configurable: false, writable: false });
-    return Object.freeze(map);
-}
+const realComputePathDigests = (
+    await vi.importActual<typeof import('../../src/workflow/revision.js')>('../../src/workflow/revision.js')
+).computePathDigests;
 
 beforeEach(async () => {
     hoisted.seen.length = 0;
     hoisted.subjectOverride = undefined;
-    hoisted.sealReturns = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod', 'src/pkg/stub.pyi': 'hash-of-stub' });
     root = await mkdtemp(join(tmpdir(), 'kata-seal-identity-'));
     await mkdir(join(root, 'src', 'pkg'), { recursive: true });
     await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const x = 1;\n');
+    await writeFile(join(root, 'src', 'pkg', 'stub.pyi'), 'stub = 1\n');
     await mkdir(join(root, '.kata', 'tasks', 'seal-identity'), { recursive: true });
+    // **The sentinel is the seal's own output, not a hand-made lookalike.** The mark is a module-private register now, so a
+    // synthetic map cannot carry it — which is the point: a copy can reproduce a constant, not a registry. The mock returns
+    // this object, so the mocked seal and the real one produce the same kind of thing.
+    hoisted.sealReturns = await realComputePathDigests(root, ['src/pkg']);
 });
 
 afterEach(async () => {
@@ -84,9 +85,9 @@ describe('the recorded digest map is the seal’s own object', () => {
     });
 
     it('refuses a map that is not the seal’s own, so a copy cannot be recorded', async () => {
-        // Round 10's conditional copy: same contents, different object, no mark — the shape an identity assertion on the
-        // argument alone would have accepted.
-        hoisted.sealReturns = Object.freeze({ ...sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' }) });
+        // Round 10's conditional copy — and round 12's *re-marked* copy, which needed the exported symbol to exist. Same
+        // contents, different object: the register refuses it, and there is no constant left to re-define.
+        hoisted.sealReturns = Object.freeze({ ...(hoisted.sealReturns as Record<string, string>) });
 
         const result = await freezeSubject({ root, paths: ['src/pkg'] });
 
@@ -97,7 +98,7 @@ describe('the recorded digest map is the seal’s own object', () => {
     it('refuses a subject that does not carry the seal’s map', async () => {
         // Round 10's post-call wrapper: `subjectOf` is called with the right object and the subject comes back carrying a
         // filtered one.
-        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' });
+        const sealed = await realComputePathDigests(root, ['src/pkg']);
         hoisted.sealReturns = sealed;
         hoisted.subjectOverride = { revision: 'rev:wrapped', pathDigests: { 'src/pkg/mod.ts': 'hash-of-mod' } };
 
@@ -122,7 +123,7 @@ describe('the recorded digest map is the seal’s own object', () => {
 
         expect(Object.isFrozen(map)).toBe(true);
         expect(revision.carriesSealMark(map)).toBe(true);
-        expect(Object.keys(map).sort()).toEqual(['__proto__', 'src/pkg/mod.ts']);
+        expect(Object.keys(map).sort()).toEqual(['__proto__', 'src/pkg/mod.ts', 'src/pkg/stub.pyi']);
         expect(() => {
             (map as Record<string, string>)['src/pkg/anything.mts'] = 'hash';
         }).toThrow();
@@ -134,7 +135,7 @@ describe('the recorded digest map is the seal’s own object', () => {
         // case is that gate's falsifier: with the gate disabled the write succeeds and the record holds a filtered set.
         // A subject that is schema-valid and whose digests are *not* the seal's map: the schema contract passes, so the
         // only thing left to refuse it is the invariant at the write gate.
-        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' });
+        const sealed = await realComputePathDigests(root, ['src/pkg']);
         await expect(
             writeSubject(root, 'seal-identity', { revision: 'rev:aaaaaaaaaaaaaaaa', pathDigests: { 'src/pkg/mod.ts': 'hash-of-mod' } } as never),
         ).rejects.toThrow(/not the map the seal produced/);
@@ -145,10 +146,24 @@ describe('the recorded digest map is the seal’s own object', () => {
         ).resolves.toBeUndefined();
     });
 
-    it('distinguishes the shapes that defeated the earlier guards', () => {
-        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash', 'src/pkg/stub.pyi': 'hash' });
+    it('refuses a copy that reproduces the mark the earlier design exported', () => {
+        // **Round 12's attack, as a case.** The mark used to be `Symbol.for('kata.seal.pathDigests')`, exported from
+        // `src/workflow/revision.ts` — so the recipe for forging it was readable, and the reviewer's counterexample copied it
+        // verbatim (`Object.defineProperty(copy, Symbol.for(…), { value: true })`) and recorded a filtered set with all
+        // declared selectors green. A constant can be reproduced; the register cannot, and that is the difference this case
+        // pins. The symbol below is the attacker's *guess*, which no longer resolves to anything the code reads.
+        const sealed = hoisted.sealReturns as Record<string, string>;
+        const forged = { ...sealed };
+        Object.defineProperty(forged, Symbol.for('kata.seal.pathDigests'), { value: true, enumerable: false, configurable: false, writable: false });
 
-        // A copy, however it is built, loses the mark — and the mark is what the freeze checks.
+        expect(revision.carriesSealMark(forged)).toBe(false);
+        expect(Object.getOwnPropertySymbols(forged)).toHaveLength(1); // the mark is there, and it changes nothing
+    });
+
+    it('distinguishes the shapes that defeated the earlier guards', () => {
+        const sealed = hoisted.sealReturns as Record<string, string>;
+
+        // A copy, however it is built, is not the seal's object — the register answers, not a property on it.
         const copied = Object.fromEntries(Object.entries(sealed).filter(([key]) => !key.endsWith('.pyi')));
         expect(revision.carriesSealMark(copied)).toBe(false);
         expect(copied).not.toBe(sealed);
@@ -160,5 +175,6 @@ describe('the recorded digest map is the seal’s own object', () => {
 
         // And the shape that must pass: nothing between the seal and the subject.
         expect(revision.carriesSealMark(sealed)).toBe(true);
+        expect(Object.isFrozen(sealed)).toBe(true);
     });
 });

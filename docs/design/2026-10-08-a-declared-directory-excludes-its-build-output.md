@@ -379,10 +379,10 @@ plain object's `__proto__` assignment sets the prototype instead of adding an en
 That is the end of the road for test-side guards: the invariable lesson is that *the guard's own input is a list too*. So the
 invariant moved into the code that writes the record:
 
-1. **The seal marks its own map.** `computePathDigests` defines a non-enumerable symbol on the map and freezes it, and
-   `carriesSealMark` asks the object itself (through its property descriptor — indexing by a symbol would need a cast, and
-   `as unknown as …` is banned here for the reason that guard exists). A copy built with a spread, `Object.fromEntries` or
-   `Object.assign` loses a **non-enumerable** property, so "is this the seal's object" is answerable without naming kinds.
+1. **The seal registers its own map.** `computePathDigests` records the map in a module-private `WeakSet` and freezes it, and
+   `carriesSealMark` asks that registry. (It was a non-enumerable symbol until round 12 showed the symbol was a *value* — an
+   exported constant anyone could copy out of the source and re-define on a filtered object. A registry cannot be reproduced
+   without editing the module; see the round-12 section.)
 2. **`freezeSubject` refuses twice, at runtime, in the code that writes the record**: it refuses a map that does not carry the
    mark (round 10's conditional copy, and round 10's intra-`subjectOf` filter), and it refuses a subject that does not carry
    *that very object* (round 10's post-call wrapper). A refusal is the right failure mode — a drift that is caught is a
@@ -434,6 +434,43 @@ One more, about instruments rather than code: one recorded challenge's script ha
 `set -uo pipefail` and no `-e`, a mutation that failed to apply looked exactly like one that applied and did not diverge — the
 challenge sat `open` against a command that did nothing. The reviewer corrected it; the lesson is in the design because the
 same shape ("a check that cannot fail") has now appeared in four changes.
+
+### Round 12: the mark was a value, so it could be forged — and that is where the hardening stops
+
+Round 12 took the identity check and the write gate as given, and defeated both with nine lines: build the filtered copy,
+**re-define the mark on it**, assign it back to `sealed`.
+
+```ts
+const copy = Object.fromEntries(Object.entries(sealed).filter(([k]) => !k.endsWith('.bak')));
+Object.defineProperty(copy, Symbol.for('kata.seal.pathDigests'), { value: true, enumerable: false, configurable: false, writable: false });
+sealed = copy;
+```
+
+32 of 32 declared selector cases stayed green and the ledger recorded `['src/pkg/mod.ts']` against a seal set of three. The
+reason was in the design's own words: the mark was `Symbol.for('kata.seal.pathDigests')`, **exported**, and the recipe for
+forging it was printed verbatim in this change's guard test.
+
+Two repairs came out of it, and then the hardening stops — the reviewer said so explicitly, and it is right:
+
+1. **The mark became a registry.** `computePathDigests` adds the map to a module-private `WeakSet` and `carriesSealMark`
+   consults it, so there is no constant to reproduce: forging "the seal's map" now requires editing
+   `src/workflow/revision.ts` itself. Falsifiers: E27 (re-admitting a forgeable property read reddens) and E28 (removing the
+   registration reddens five cases).
+2. **`C2` states the boundary instead of a universality.** Its previous sentence — "a filter before the call, inside
+   `subjectOf`, after the call, or on the way to the writer therefore ends in a refusal, never in a smaller record" — was
+   falsified by the counterexample above. It now says: *a filter that does not also edit the enforcer* ends in a refusal, and
+   an edit to the enforcer is outside what any guard can decide.
+3. `C4`'s second half ("a cache moving under the same declaration is not drift") had no witness of its own: its evidence slot
+   held E24, which was byte-identical to E26. E24 is now the falsifier for exactly that half (dropping `__pycache__` from the
+   ignore table reddens "says nothing about drift when only a cache moved").
+
+**The boundary, stated once and for the last time.** Twelve rounds have now produced, in order: a kind list, a statement list,
+an argument-shape list, a sentinel-key list, a conditional copy, a post-check copy, and a re-marked copy. Every one of them is
+an edit **to the enforcer** — to the function whose job is to enforce, or to the constant it trusts — and no arrangement of
+checks inside a thing can defend itself against being rewritten. What the guards do buy is the part that matters for a
+record: *an unintended drift cannot be recorded silently*, whatever shape it takes, because the checks are at the two places
+where the value is passed on and at the gate where bytes land. An intended edit is a different act, judged by the review of
+the diff, not by a test.
 
 ## Ownership
 

@@ -551,25 +551,24 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
  * here changed" and nothing more, which is precisely the question this exists to answer precisely.
  */
 /**
- * The mark the seal puts on the map it produced.
+ * The set of maps this module produced — the seal's own register, held in module scope and exported by nothing.
  *
- * Round 10's second finding was a *conditional* copy of the map made before it reached `subjectOf` — keyed on a kind the
- * test's own sentinel happened not to carry, so an identity assertion on the argument was still satisfied. Identity alone
- * cannot tell "the seal's object" from "an object that happens to be passed on", so the seal marks its own: the mark is
- * non-enumerable, so a copy made with a spread, `Object.fromEntries` or `Object.assign` loses it, and `freezeSubject`
- * refuses anything that does not carry it. That is a property of the object, not a list of kinds.
+ * Rounds 10 to 12 walked the same ladder: a copy of the map (any kind), then a conditional copy, then a copy that
+ * **reproduced the mark**, because the mark was a `Symbol.for(...)` constant anyone could copy out of the source and
+ * re-define on a filtered object. A value can be forged; a registry cannot be, without editing this module. So the seal
+ * records what it produced here and `carriesSealMark` asks this register, which is the difference between "an object that
+ * looks marked" and "the object the seal made".
  */
-export const sealMapBrand: unique symbol = Symbol.for('kata.seal.pathDigests');
+const sealedMaps = new WeakSet<object>();
 
 /**
  * Whether this map is the object the seal produced.
  *
- * Read through the property descriptor rather than an index expression: the mark is a symbol and the map is typed as a plain
- * record, so indexing it would need a cast, and `as unknown as …` is banned in this tree for good reason (it is how a type
- * mismatch gets laundered). This asks the object itself.
+ * No cast and no property read: the register above answers, so a copy cannot be made to look like the seal's map however it
+ * is written, and there is no constant in this file for a copy to reproduce.
  */
 export function carriesSealMark(map: object): boolean {
-  return Object.getOwnPropertyDescriptor(map, sealMapBrand)?.value === true;
+  return sealedMaps.has(map);
 }
 
 export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
@@ -585,7 +584,7 @@ export async function computePathDigests(root: string, ownedPaths: string[]): Pr
   // filter raises at the point of the write, in production, whatever kind it keys on, so the divergence cannot be recorded;
   // and because the object is stable, the identity of what reaches the subject is assertable (see
   // `tests/unit/the-recorded-digests-are-the-seals-map.test.ts`).
-  Object.defineProperty(pathDigests, sealMapBrand, { value: true, enumerable: false, configurable: false, writable: false });
+  sealedMaps.add(pathDigests);
   return Object.freeze(pathDigests);
 }
 
