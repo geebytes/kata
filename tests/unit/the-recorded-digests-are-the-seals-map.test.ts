@@ -47,7 +47,7 @@ vi.mock('../../src/kernel/subject.js', async (importOriginal) => {
     };
 });
 
-const { freezeSubject } = await import('../../src/store/ledger.js');
+const { freezeSubject, writeSubject } = await import('../../src/store/ledger.js');
 const revision = await import('../../src/workflow/revision.js');
 
 let root = '';
@@ -126,6 +126,23 @@ describe('the recorded digest map is the seal’s own object', () => {
         expect(() => {
             (map as Record<string, string>)['src/pkg/anything.mts'] = 'hash';
         }).toThrow();
+    });
+
+    it('refuses at the write gate a subject whose digests are not the seal’s map', async () => {
+        // **Round 11's finding lives here.** It inserted a plain copy between the identity check and the return, so the
+        // in-function checks had already run; the only place such a record can still be stopped is where it is written. This
+        // case is that gate's falsifier: with the gate disabled the write succeeds and the record holds a filtered set.
+        // A subject that is schema-valid and whose digests are *not* the seal's map: the schema contract passes, so the
+        // only thing left to refuse it is the invariant at the write gate.
+        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' });
+        await expect(
+            writeSubject(root, 'seal-identity', { revision: 'rev:aaaaaaaaaaaaaaaa', pathDigests: { 'src/pkg/mod.ts': 'hash-of-mod' } } as never),
+        ).rejects.toThrow(/not the map the seal produced/);
+
+        // And the shape that must be accepted: the seal's own map.
+        await expect(
+            writeSubject(root, 'seal-identity', { revision: 'rev:bbbbbbbbbbbbbbbb', pathDigests: sealed } as never),
+        ).resolves.toBeUndefined();
     });
 
     it('distinguishes the shapes that defeated the earlier guards', () => {
