@@ -56,6 +56,13 @@ export const statusPrompts: Partial<Record<NextActionReason, Record<PromptLangua
         zh: 'review-rounds.jsonl 读不出来（存在无法解析的行），因此审查循环的历史无法被判定为“推进”或“停滞”。先修复该轮次记录，再执行 /kata-build 进入修复；不要把它当作 zero-count escalation。',
         en: 'review-rounds.jsonl cannot be read (it holds a line that does not parse), so the loop history can be decided neither as progressing nor as stalled. Repair that round record, then run /kata-build; do not read it as a zero-count escalation.',
     },
+    review_loop_recurring: {
+        // The reading `reviewLoop` cannot produce: it is scoped to the current revision, so a repair — which issues a new
+        // revision — makes the previous rounds history about something else, and the same problem returning reads as a loop
+        // that has measured nothing yet. The advice names the recurrence and the route, and does not claim the gate moved.
+        zh: '跨 revision 的读数显示：同一个问题在多次修复之后又被记录下来（同一 finding id 出现在不同 revision 的轮次里）。这不改变任何门禁要求，但说明修复没有消掉这个问题本身；建议回到 /kata-build 针对该问题修复，而不是再做一轮同样的审查。',
+        en: 'The cross-revision reading shows the same problem recorded again after repairs: one finding id appears under more than one revision. No gate requirement changes, but it says the repair did not end the problem — go back to /kata-build and address it rather than running another identical review round.',
+    },
     review_loop_unmeasurable: {
         zh: '当前 revision 的审查轮记录可读，但没有任何一轮携带可测量的阻塞计数。该状态既不是零计数 escalation，也不是文件读取错误；请由人决定如何恢复可测量的 review loop。',
         en: 'Current-revision review rounds are readable but none carries a measurable blocking count. This is neither a zero-count escalation nor a read error; a person must decide how to restore a measurable review loop.',

@@ -1,4 +1,3 @@
-import { llmwikiDirName } from './layout.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
@@ -12,6 +11,17 @@ import { createContentHasher } from './hash.js';
  * view could disagree about a path. They read this one policy now: a path the tree hash excludes is a path drift does
  * not report, and a path the manifest excludes is one it does not hash.
  */
+
+/**
+ * The knowledge store's directory name.
+ *
+ * **It lives here because the policy names it, and it moved here to break a cycle.** It was declared in `core/layout.ts`
+ * and imported by this module — one-way, until `layout` started asking this module what is not source, at which point the
+ * two modules were each half-initialised depending on which loaded first and `ignoredDirectoryNames` silently gained an
+ * `undefined` element. A constant that a policy list is made of belongs to the policy; `layout` re-exports it so existing
+ * importers keep working.
+ */
+export const llmwikiDirName = '.llmwiki';
 
 /**
  * Directory names that never carry identity: toolches, caches, and the machinery of the workflow.
@@ -36,6 +46,49 @@ export const ignoredDirectoryNames: readonly string[] = [
     '.claude',
     '.opencode',
 ];
+
+/**
+ * Directory names a **source walk** does not descend into.
+ *
+ * **Derived from the policy, never restated.** Two modules kept their own answer to "what is not content" — a descendant
+ * scan in `core/layout.ts` with `SKIP_DIRS` and a source walk with a scratch copy in `quality/wiring-check.ts` with `SKIP` —
+ * and the lists disagreed with this table and with each other. One disagreement was a live defect rather than untidiness:
+ * `SKIP_DIRS` held `.kata`, which is exactly where the descendant roots it was looking for live (`.kata/worktrees/<id>`), so
+ * that scan could never find one and the command failed with "No Kata workspace owns task …" and a remedy that could not run.
+ *
+ * The three extra names are a **walk** judgement, not an identity one: a tree called `target`, `build`, `venv` or `.venv`
+ * holds build output rather than source, so a walk over source skips it — while identity still hashes it, because "what a
+ * change declared" and "what source exists to read" are different questions and answering one by editing the other would
+ * quietly shrink what a revision covers.
+ */
+export const nonSourceDirectoryNames: readonly string[] = [
+    ...ignoredDirectoryNames,
+    'tmp',
+    'target',
+    'build',
+    'venv',
+    '.venv',
+];
+
+/** True when a source walk refuses to descend into a directory of this name. */
+export function isNonSourceDirectory(name: string): boolean {
+    return nonSourceDirectoryNames.includes(name);
+}
+
+/**
+ * Directory names that hold **this machine's own state** rather than the repository's.
+ *
+ * Named apart from the policy because it answers a different question: `.kata/` is content (its records are the project's
+ * own evolution — see `ignoredDirectoryNames`) and a scan for records must descend into it, while a *copy* of the repository
+ * for a scratch run must not carry 150 MB of worktrees. One list could not serve both, and serving both with one list is
+ * what made the descendant scan blind to the tree it was looking for.
+ */
+export const localMachineryDirectoryNames: readonly string[] = ['.kata'];
+
+/** True when a directory belongs to this machine or session rather than to the repository. */
+export function isLocalMachineryDirectory(name: string): boolean {
+    return localMachineryDirectoryNames.includes(name);
+}
 
 /**
  * Directories and files excluded for what they are rather than by size. Model weights and dataset dumps used to be

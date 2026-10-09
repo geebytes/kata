@@ -36,7 +36,7 @@ import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readL
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
-import { isCurrentAssuranceLevel } from '../kernel/types.js';
+import { isCurrentAssuranceLevel, isMergeBlockingSeverity, READABLE_SEVERITIES } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
@@ -1495,9 +1495,48 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             try {
                 const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
+                // **The vocabulary is checked before the schema, so the refusal names the word.** The schema refuses an
+                // unknown spelling too, but its message lists the legal values without saying which one was rejected — an
+                // operator reading `$[0].severity must be one of …` has to diff their own file against the list to find
+                // it. Done here because the schema's own check runs first and would otherwise be the only voice.
+                const rawFindings = result.findings as Array<{ id?: unknown; severity?: unknown }>;
+                const unreadableSeverity = rawFindings.find((item): boolean => typeof item?.severity !== 'string' || !(READABLE_SEVERITIES as readonly string[]).includes(item.severity));
+                if (unreadableSeverity) {
+                    throw new Error(`finding ${String(unreadableSeverity.id ?? '(unnamed)')} carries severity "${String(unreadableSeverity.severity)}", which is not in the severity vocabulary (${READABLE_SEVERITIES.join(', ')}); the record is refused rather than filed under a neighbouring word`);
+                }
                 findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
                 const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
                 if (foreignFinding) throw new Error(`finding ${foreignFinding.id} names task ${foreignFinding.taskId}, not ${taskId}`);
+                // **A merge-blocking severity carries a basis, and the record refuses one that does not.** `blocking` and
+                // `major` are the words that refuse an approval: they have a consequence, so the word has to be checkable.
+                // The basis is the acceptance criterion it falsifies — and the citation has to resolve, because a
+                // plausible-looking id is a claim about a criterion nobody can find — or, where no criterion covers the
+                // problem, what it does falsify in words. The escape valve is deliberate: a blocking defect outside the
+                // acceptance contract is a real thing, and a rule that admitted only the criterion form would invite such a
+                // finding to be filed as `minor` instead, which is a weaker record than the one this rule exists to
+                // require.
+                const severityTask = await readTask(root, taskId);
+                // **The criteria a finding may cite are the task's acceptance list, matrix or not.** Resolving against the
+                // matrix rows alone refused an accurate citation on a task that has criteria but no matrix — a legacy task —
+                // which is the "rejecting an accurate citation is itself a defect" rule (see the admissibility contract).
+                // The matrix is the declared row set *for* those criteria, not a second, better list of them.
+                const knownCriteria = new Set([
+                    ...severityTask.acceptance.map((criterion) => criterion.id),
+                    ...(severityTask.acceptanceMatrix?.rows ?? []).map((row) => row.acceptanceId),
+                ]);
+                for (const finding of findings) {
+                    if (!isMergeBlockingSeverity(finding.severity, severityTask.workflowProfile?.reviewMode)) continue;
+                    const basis = typeof finding.acceptanceId === 'string' ? finding.acceptanceId.trim() : '';
+                    const stated = typeof finding.falsifies === 'string' ? finding.falsifies.trim() : '';
+                    if (basis !== '') {
+                        if (!knownCriteria.has(basis)) {
+                            throw new Error(`finding ${finding.id} is ${finding.severity} and names acceptance criterion ${basis}, which this task's acceptance matrix does not hold; name a criterion the matrix holds, or state what it falsifies with \`falsifies\``);
+                        }
+                        continue;
+                    }
+                    if (stated !== '') continue;
+                    throw new Error(`finding ${finding.id} is ${finding.severity}, and a merge-blocking severity must name its basis: either an \`acceptanceId\` this task's acceptance matrix holds (${knownCriteria.size === 0 ? 'this task has no matrix, so state what it falsifies instead' : [...knownCriteria].join(', ')}), or \`falsifies\` — what this finding falsifies, in words — when no criterion covers it`);
+                }
                 // An empty set is only a result when the reviewer says what it covered. Without that, a four-byte
                 // artefact is indistinguishable from a subagent that produced nothing at all.
                 const coverage = result.declaredCoverage;
@@ -1509,24 +1548,27 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 // accepted with an invented claim id and the field was dropped — a declaration with a validator on one
                 // path and no reader on the other.
                 if (coverage !== undefined) {
-                    if (!Array.isArray(coverage) || coverage.length === 0 || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
-                        throw new Error('declaredCoverage must be a non-empty list of the claim ids that were read and found sound');
-                    }
-                    const coverageLedger = await readLedger(root, taskId);
-                    // **Name the file that is actually unreadable.** A ledger whose `claims.json` cannot be read holds no
-                    // claims, so the coverage check used to report "this ledger does not hold C1" — a true sentence about a
-                    // ledger nobody could read, and a misleading one about the round's declaration (measured by an
-                    // independent round).
-                    const unreadableClaims = (coverageLedger as { malformedFiles?: string[] }).malformedFiles?.includes('claims.json') === true;
-                    if (unreadableClaims) {
-                        throw new Error('claims.json cannot be read, so no declaration of coverage can be checked against it; repair the record rather than restating the declaration');
-                    }
-                    const known = new Set(coverageLedger.claims.map((claim) => claim.id));
-                    const unknown = (coverage as string[]).filter((claimId) => !known.has(claimId));
-                    if (unknown.length > 0) {
-                        throw new Error(`declaredCoverage names ${unknown.join(', ')}, which this ledger does not hold; the declaration must name the claims that were read`);
-                    }
-                    declaredCoverage = coverage as string[];
+                if (!Array.isArray(coverage) || !coverage.every((claim): claim is string => typeof claim === 'string' && claim.trim().length > 0)) {
+                    throw new Error('declaredCoverage must be a list of the claim ids that were read and found sound');
+                }
+                const coverageLedger = await readLedger(root, taskId);
+                // **Name the file that is actually unreadable.** A ledger whose `claims.json` cannot be read holds no
+                // claims, so the coverage check used to report "this ledger does not hold C1" — a true sentence about a
+                // ledger nobody could read, and a misleading one about the round's declaration (measured by an
+                // independent round).
+                const unreadableClaims = (coverageLedger as { malformedFiles?: string[] }).malformedFiles?.includes('claims.json') === true;
+                if (unreadableClaims) {
+                    throw new Error('claims.json cannot be read, so no declaration of coverage can be checked against it; repair the record rather than restating the declaration');
+                }
+                const known = new Set(coverageLedger.claims.map((claim) => claim.id));
+                if (coverage.length === 0 && known.size > 0) {
+                    throw new Error('declaredCoverage must be a non-empty list of the claim ids that were read and found sound when the ledger holds claims');
+                }
+                const unknown = coverage.filter((claimId) => !known.has(claimId));
+                if (unknown.length > 0) {
+                    throw new Error(`declaredCoverage names ${unknown.join(', ')}, which this ledger does not hold; the declaration must name the claims that were read`);
+                }
+                declaredCoverage = coverage;
                 }
             } catch (error) {
                 return {
@@ -1619,6 +1661,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 };
             }
             const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
+            // **Which revision this round reviewed, when that is not the revision it is recorded against.** The binding
+            // fields below describe the content the record is bound to; this names the revision the round was *opened*
+            // against. Entering review writes a placeholder bound to the revision in hand and the round that follows
+            // reviews that content, so when the pointer has moved by the time the result arrives the two differ — and a
+            // reader can then tell a round recorded after the content moved from one that answered the content in hand.
+            // Measured cost of not having it: a round's findings were stamped with the revision the CLI happened to see at
+            // record time, not the one the round actually read, and nothing on disk could tell the two apart.
+            const reviewedRevisionId = placeholder && typeof existing.record.revisionId === 'string'
+                ? existing.record.revisionId
+                : binding.revisionId ?? undefined;
             const recordPath = layoutReviewPath(root, taskId);
                     // **The conclusion being replaced is archived, not overwritten.** The release path lets a new round be
                     // recorded when the recorded one answered a different request; without this the earlier conclusion —
@@ -1647,7 +1699,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -1968,7 +2020,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             // Reached only with a ledger the earlier guards accepted, so the catch is a belt rather than a fold a damaged
             // ledger can reach (see the note above).
             const approvalSubject = (await readLedger(root, taskId).catch(() => undefined))?.subject?.revision;
-            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(approveBinding), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
+            // The approval carries forward what the round it approves reviewed: approving does not re-read the content.
+            const approvedReviewedRevisionId = typeof approvalRecord.record.reviewedRevisionId === 'string'
+                ? approvalRecord.record.reviewedRevisionId
+                : approveBinding.revisionId ?? undefined;
+            const approvalBytes = `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}), ...revisionBindingFields(approveBinding), ...(approvalSubject ? { subjectRevision: approvalSubject } : {}), ...(reviewedPaths ? { reviewedPaths } : {}), findings: approvalRecord.findings, status: 'approved', reviewEvidence, reviewRoute: 'ledger', ledgerReview: ledgerApproval, approvedAt: new Date().toISOString() }, null, 2)}\n`;
             const committed = await commitReviewDecision(root, taskId, approvalSnapshot, async (lock) => {
                 await mutateTaskArtefact(root, taskId, reviewPath, async () => approvalBytes, lock);
                 // **The approval is a round of the loop, and it measured zero.** `review-rounds.jsonl` only gained a line when a
@@ -1979,6 +2035,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     at: new Date().toISOString(),
                     ...(approveBinding.revisionId ? { revisionId: approveBinding.revisionId } : {}),
                     ...(approveBinding.manifestHash ? { manifestHash: approveBinding.manifestHash } : {}),
+                    ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}),
                     blockingIds: [],
                     blockingCount: 0,
                 }, lock);

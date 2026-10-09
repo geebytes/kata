@@ -222,6 +222,8 @@ describe('review CLI I/O', () => {
                 id: 'R-1',
                 taskId: changeId,
                 severity: 'blocking',
+                // A merge-blocking severity names its basis, and this fixture cites the criterion the round found false.
+                acceptanceId: 'AC-1',
                 message: 'the requested input was not produced',
                 reproduction: { findingId: 'R-1', ranChecks: [], missingTest: true },
             }],
@@ -246,7 +248,7 @@ describe('review CLI I/O', () => {
             findings: Array<{ id: string; message: string }>;
         };
         expect(record.status).toBe('pending');
-        expect(record.findings).toEqual([{ id: 'R-1', taskId: changeId, severity: 'blocking', message: 'the requested input was not produced', reproduction: { findingId: 'R-1', ranChecks: [], missingTest: true } }]);
+        expect(record.findings).toEqual([{ id: 'R-1', taskId: changeId, severity: 'blocking', acceptanceId: 'AC-1', message: 'the requested input was not produced', reproduction: { findingId: 'R-1', ranChecks: [], missingTest: true } }]);
     });
 
     it('refuses an empty finding set unless the result explicitly declares full coverage', async () => {
@@ -318,7 +320,7 @@ describe('review CLI I/O', () => {
 
         // 2. Record the round's result. This is what the placeholder must not block.
         await writeFile(join(root, 'tmp', 'round.json'), `${JSON.stringify({
-            findings: [{ id: 'R-1', taskId: changeId, severity: 'major', message: 'recorded after entering review' }],
+            findings: [{ id: 'R-1', taskId: changeId, severity: 'major', acceptanceId: 'AC-1', message: 'recorded after entering review' }],
         })}\n`);
         const recorded = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/round.json' });
         expect(recorded.success, JSON.stringify(recorded)).toBe(true);

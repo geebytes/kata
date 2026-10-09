@@ -558,17 +558,55 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
  * re-define on a filtered object. A value can be forged; a registry cannot be, without editing this module. So the seal
  * records what it produced here and `carriesSealMark` asks this register, which is the difference between "an object that
  * looks marked" and "the object the seal made".
+ *
+ * **What this enforces, and what it does not.** It enforces *one derivation*: the ledger records the map the seal returned
+ * rather than a re-derivation of it, and the refusal happens at runtime without knowing which kind of divergence it is
+ * looking at — it does not enumerate, so a filter keyed on an extension nobody wrote a fixture for is refused exactly like
+ * one that was. It does **not** prove that the traversal is complete: finite generators are *witnesses* of the kinds they
+ * carry (extensions, name shapes, nesting, dotfiles, empty and boundary-sized files), and a kind outside the generator is a
+ * hole in the guarantee, not a passing case. A claim about this mechanism that reads as universal is an overstatement; the
+ * honest statement is "one derivation, refused at runtime, witnessed by representative kinds".
  */
 const sealedMaps = new WeakSet<object>();
 
 /**
+ * **The declaration each sealed map was computed for**, in the same module-private register.
+ *
+ * Round 13 measured what the mark alone cannot say: it proves *a* seal produced this map, not that it is the map for *this*
+ * declaration. A caller could compute a genuine sealed map for a small declaration (`src/a.ts`) and attach it to a subject
+ * that declares the whole package — every declared selector passed, and the record held fewer paths than it declared, which
+ * is the one thing the declaration is for. So the register remembers the declaration alongside the map, and the reader
+ * compares that with the declaration being written.
+ */
+const sealedDeclarations = new WeakMap<object, string>();
+
+/**
  * Whether this map is the object the seal produced.
  *
- * No cast and no property read: the register above answers, so a copy cannot be made to look like the seal's map however it
- * is written, and there is no constant in this file for a copy to reproduce.
+ * No cast and no property read: the register answers, so a copy cannot be made to look like the seal's map however it is
+ * written, and there is no constant in this file for a copy to reproduce.
  */
 export function carriesSealMark(map: object): boolean {
   return sealedMaps.has(map);
+}
+
+/**
+ * The declaration this sealed map was computed for, or `undefined` when the map is not the seal's.
+ *
+ * Returned as the canonical string the seal itself uses, so a caller compares one derivation rather than re-deriving it.
+ */
+export function sealDeclarationOf(map: object): string | undefined {
+  return sealedDeclarations.get(map);
+}
+
+/**
+ * The canonical form of a declaration, as the seal records it.
+ *
+ * Exported because the readers of a sealed map have to ask the same question the writer answered — a second spelling of
+ * "which declaration is this" is the kind of second derivation this repository keeps removing.
+ */
+export function declarationKey(declaredPaths: readonly string[]): string {
+  return [...declaredPaths].sort((left, right) => left.localeCompare(right)).join('\u0000');
 }
 
 export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
@@ -585,6 +623,9 @@ export async function computePathDigests(root: string, ownedPaths: string[]): Pr
   // and because the object is stable, the identity of what reaches the subject is assertable (see
   // `tests/unit/the-recorded-digests-are-the-seals-map.test.ts`).
   sealedMaps.add(pathDigests);
+  // The declaration travels with the map, in the register the mark already uses: without it the mark would only say *a* seal
+  // made this map, and a genuine map for a smaller declaration could be attached to a larger one (round 13's measurement).
+  sealedDeclarations.set(pathDigests, declarationKey(ownedPaths));
   return Object.freeze(pathDigests);
 }
 

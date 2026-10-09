@@ -35,6 +35,14 @@ export type ClaimRequest = {
     readingSet: string[];
     /** Evidence types the tier requires, strongest first, with the minimum strength the claim's severity demands. */
     requiredEvidence: { types: EvidenceType[]; minimumStrength: number };
+    /**
+     * The judged domain this claim closes over, when it declares one.
+     *
+     * **Carried, not summarised.** The reviewer decides whether what they found is inside the claim, so the boundary they
+     * judge against has to be the author's own words on the claim they are judging; a paraphrase in a brief would be a
+     * second statement of the same boundary.
+     */
+    boundary?: string;
 };
 
 export type ReviewRequest = {
@@ -196,6 +204,7 @@ export async function buildReviewRequest(input: {
                 statement: claim.statement,
                 readingSet: readingById.get(claim.id) ?? [],
                 requiredEvidence: requiredById.get(claim.id) ?? { types: [], minimumStrength: 0 },
+                ...(claim.boundary === undefined ? {} : { boundary: claim.boundary }),
             })),
             probes: currentProbes.map((probe) => ({ id: probe.id, claimId: probe.claimId, command: probe.command })),
             // Present only when something was withheld, for the same reason `unreadableArtefacts` is: an absent field means

@@ -154,6 +154,15 @@ export interface ReviewRound {
      */
     revisionId?: string;
     manifestHash?: string;
+    /**
+     * The revision this round *reviewed*, when that is not the revision it is recorded against.
+     *
+     * The id above describes the content the round is bound to; this names the revision the round was opened against.
+     * Entering review writes a placeholder bound to the revision in hand and the round reviews that content, so when the
+     * pointer has moved by the time the result arrives the two differ — and a reader can then tell a round recorded after
+     * the content moved from one that answered the content in hand. Absent on lines written before the field existed.
+     */
+    reviewedRevisionId?: string;
     /** The problems the round was opened for, by id — the escalation names these rather than a count alone. */
     blockingIds: string[];
     /**
@@ -264,6 +273,54 @@ export function roundBoundTo(
     currentRevision: { revisionId: string; manifestHash: string },
 ): boolean {
     return round.revisionId === currentRevision.revisionId && round.manifestHash === currentRevision.manifestHash;
+}
+
+/**
+ * One problem, and the revisions it was recorded against.
+ *
+ * `revisions` is sorted and de-duplicated; a finding whose list has one entry did not recur.
+ */
+export interface ReviewRecurrence {
+    id: string;
+    revisions: string[];
+}
+
+/**
+ * Findings that came back after a repair, read across revisions rather than inside one.
+ *
+ * **This is the reading the current-revision count cannot produce, and its absence is why the loop never converged.**
+ * `assessReviewLoop` scopes the rounds to the current revision — deliberately, because "a round about other content is not
+ * a reading of this content". But a repair *produces* a new revision: entering review after a repair writes a placeholder
+ * bound to the new one, so the rounds of the previous revision are history about something else, `scopedRounds` is empty
+ * or thin, and the same problem being found for the fifth time reads as a loop that has not measured anything yet
+ * (measured downstream: eleven rounds, eleven distinct revision ids, every one of them recording `R2R12-F1`, and the only
+ * thing the router could say was `no_current_rounds`).
+ *
+ * **What it is not.** It is not a gate and it does not replace the escalation: a problem found again after a repair is a
+ * fact for the operator and for routing, and the count that decides whether a loop is stuck stays where it was — computed
+ * over one revision, because "this revision's problems are not falling" and "this problem keeps coming back" are two
+ * different sentences about two different sets.
+ *
+ * The identity compared is the revision the round **reviewed** (`reviewedRevisionId`), falling back to the one it is
+ * recorded against — a round that was opened against content the pointer later moved away from is evidence about the
+ * content it read, and that is the content a repair was made of. A line naming neither revision contributes to a bucket
+ * called `unnamed revision`, which is what it is: history that cannot say which content it read, and recurrence against it
+ * is still recurrence (the problem outlived a repair either way).
+ */
+export function recurrenceAcrossRevisions(rounds: readonly ReviewRound[]): ReviewRecurrence[] {
+    const revisionsById = new Map<string, Set<string>>();
+    for (const round of rounds) {
+        const revision = round.reviewedRevisionId ?? round.revisionId ?? 'unnamed revision';
+        for (const id of round.blockingIds) {
+            const revisions = revisionsById.get(id) ?? new Set<string>();
+            revisions.add(revision);
+            revisionsById.set(id, revisions);
+        }
+    }
+    return [...revisionsById.entries()]
+        .filter(([, revisions]) => revisions.size > 1)
+        .map(([id, revisions]) => ({ id, revisions: [...revisions].sort() }))
+        .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 /**

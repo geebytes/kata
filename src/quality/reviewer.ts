@@ -1,5 +1,13 @@
+import type { ReadableSeverity } from '../kernel/types.js';
 
-export type ReviewSeverity = 'blocking' | 'major' | 'minor' | 'note';
+/**
+ * The severity vocabulary this module reads, and it is the **readable** set.
+ *
+ * The ladder reads findings out of `review.json`, and a record written before `nit` was retired holds that spelling: a
+ * reader that could not name it would be unable to report a finding it can see. Writers are held to `SEVERITIES` — see
+ * `src/kernel/types.ts` for the split, which is the same one the assurance vocabulary uses.
+ */
+export type ReviewSeverity = ReadableSeverity;
 
 /**
  * **The recording half of this module is gone.** `ReviewFindingInput`, `FindingReproduction` and `recordFinding` were the
@@ -33,6 +41,14 @@ export interface ReviewFinding {
     missingTest: boolean;
   };
   impact?: string;
+  /**
+   * What this finding falsifies, in words, when no acceptance criterion covers it.
+   *
+   * Required for a merge-blocking severity that names no `acceptanceId`: `blocking` and `major` are the words that refuse
+   * an approval, so the word has to be checkable, and a blocking defect outside the acceptance contract is a real thing —
+   * requiring a criterion would invite it to be filed as `minor` instead, which is a weaker record than the rule asks for.
+   */
+  falsifies?: string;
   classInstances?: string[];
   falsifier?: string;
 }

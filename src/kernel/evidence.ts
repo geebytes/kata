@@ -5,7 +5,7 @@
  * requires. Requiring a reddening check for *every* finding would be narrower than the truth and would systematically
  * exclude architecture, privacy and threat-model findings, which cannot be reduced to one command.
  */
-import type { Evidence, EvidenceType, EvidenceVerdict, Severity } from './types.js';
+import type { Evidence, EvidenceType, EvidenceVerdict, ReadableSeverity, Severity } from './types.js';
 
 /** How much a type can carry. The reproducible four outrank concurrence, which no machine can re-run. */
 export const EVIDENCE_STRENGTH: Record<EvidenceType, number> = {
@@ -22,10 +22,18 @@ export const REPRODUCIBLE_TYPES: readonly EvidenceType[] = [
     'cross_artifact_contradiction',
 ];
 
-export const MIN_STRENGTH_BY_SEVERITY: Record<Severity, number> = {
+/**
+ * The strength a claim of each severity requires.
+ *
+ * Keyed by the **readable** vocabulary: `note` and the retired `nit` are the same level spelled two ways, and a lookup for
+ * a claim recorded under either must find the same number rather than `undefined`. A map keyed by the write set alone would
+ * have answered "no required strength" for a historical claim, which reads as satisfied.
+ */
+export const MIN_STRENGTH_BY_SEVERITY: Record<ReadableSeverity, number> = {
     blocking: 4,
     major: 3,
     minor: 1,
+    note: 1,
     nit: 1,
 };
 

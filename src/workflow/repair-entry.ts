@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { readValidatedOptional } from '../core/schema.js';
 import type { Phase } from '../core/state.js';
 import type { TaskRevision } from './revision.js';
-import { commitReviewDecision, readReviewDecisionSnapshot, revisionIsCurrent, revisionStatus } from './revision.js';
+import { commitReviewDecision, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus } from './revision.js';
 import type { JudgeAcceptanceResult } from '../quality/judge.js';
 import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type RepairScope } from '../quality/judge.js';
 import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
@@ -84,6 +84,40 @@ async function revisionStillDescribes(root: string, taskId: string, revision: Ta
     return revisionIsCurrent(status);
 }
 
+
+/**
+ * The sealed revision a re-seal would supersede, when that is genuinely the state this entry is in.
+ *
+ * **Two shapes reach here, and they are one fact.** `boundToCurrentRevision` is derived partly from the *workspace* (the
+ * frozen candidate, §7.4), so editing a declared path during review un-binds the recorded round and supersedes the seal in
+ * the same motion. The pointer may still name that superseded revision, or it may be gone entirely (`currentRevisionId:
+ * None` on the summary); in both cases the only route back is a new seal, and the baseline is the revision the round was
+ * recorded against.
+ *
+ * **Nothing else is admitted.** No record, a record that names no revision, a revision that still describes its content,
+ * an unreadable pointer, and a record and pointer that name two different revisions all keep the refusal they had — so
+ * this widens `review` by exactly the state that currently has no route out, and not by "a review exists".
+ */
+async function supersededSealForReseal(
+    root: string,
+    taskId: string,
+    snapshot: Awaited<ReturnType<typeof readReviewDecisionSnapshot>>,
+    reviewRecord: Record<string, unknown>,
+    sealed: TaskRevision | null,
+): Promise<TaskRevision | null> {
+    if (snapshot.revisionRead.kind === 'unreadable') return null;
+    // **The round is what is re-sealed, so the round has to name a revision.** A superseded seal with no recorded round
+    // is a different state with a different repair, and admitting it here would turn "the content moved" into a general
+    // way past the review gate.
+    const named = typeof reviewRecord.revisionId === 'string' && reviewRecord.revisionId.length > 0 ? reviewRecord.revisionId : null;
+    if (!named) return null;
+    // A record and a pointer that name different revisions describe two states, and this entry decides on one. Refuse.
+    if (sealed && sealed.id !== named) return null;
+    const baseline = sealed ?? await readTaskRevision(root, taskId, named);
+    if (!baseline) return null;
+    if (await revisionStillDescribes(root, taskId, baseline)) return null;
+    return baseline;
+}
 /**
  * Read a recorded artefact, and turn "it does not match its schema" into a denial.
  *
@@ -219,6 +253,29 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
     // unreachable whenever this phase had not written its record yet — the one problem the task could act on, and the
     // only route out. The refusal stays, below, for the case where the ledger has nothing to say either.
     if (!blockingRead.exists || !blockingRead.boundToCurrentRevision) {
+        // A review result cannot bind to a missing current revision, but a replacement seal is exactly what restores
+        // that binding. Admit only the measured superseded-history state; this does not turn an absent pointer or a
+        // passing ledger into a general repair admission.
+        const historicalRevision = await supersededSealForReseal(root, taskId, snapshot, blockingRead.record, revision);
+        if (historicalRevision) {
+            return {
+                authorized: true,
+                entryPhase,
+                repair: {
+                    fromPhase: entryPhase,
+                    reason: 'revision_superseded',
+                    baselineRevisionId: historicalRevision.id,
+                    baselineManifestHash: historicalRevision.manifestHash,
+                    findings: findings.map((finding) => ({
+                        id: finding.id ?? '',
+                        ...(finding.acceptanceId ? { acceptanceId: finding.acceptanceId } : {}),
+                        severity: finding.severity ?? '',
+                        message: finding.message ?? '',
+                        ...(finding.path ? { path: finding.path } : {}),
+                    })),
+                },
+            };
+        }
         const ledgerAdmission = await ledgerDeficitRepairAdmission(root, taskId, entryPhase);
         if (ledgerAdmission.authorized) return ledgerAdmission;
         if (!blockingRead.exists) {
@@ -379,7 +436,20 @@ export async function authorizeJudgeRepair(root: string, taskId: string): Promis
 export async function assertRepairBaselineStillCurrent(root: string, taskId: string, decidedOn: string): Promise<void> {
     const snapshot = await readReviewDecisionSnapshot(root, taskId);
     const current = snapshot.revisionRead.kind === 'current' ? snapshot.revisionRead.revision : null;
-    if (!current || current.id !== decidedOn) {
+    if (current) {
+        // A seal landed between authorisation and this write. The recorded baseline would name a revision the repair did
+        // not supersede, so the write is refused and the operator re-runs the entry against what is now current.
+        if (current.id !== decidedOn) {
+            throw new Error(`Repair baseline ${decidedOn} no longer describes the current revision; the sealed revision moved while the repair was being recorded.`);
+        }
+        return;
+    }
+    // **No current revision is the state the re-seal admission exists for, so it is not by itself a race.** The
+    // baseline is still valid only while the stored revision it names is readable *and still superseded*: a pointer that
+    // reappeared was answered by the branch above, and a stored revision that now describes its content means something
+    // restored it, which is equally not this repair's baseline.
+    const baseline = await readTaskRevision(root, taskId, decidedOn);
+    if (!baseline || await revisionStillDescribes(root, taskId, baseline)) {
         throw new Error(`Repair baseline ${decidedOn} no longer describes the current revision; the sealed revision moved while the repair was being recorded.`);
     }
 }

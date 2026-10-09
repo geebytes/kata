@@ -49,6 +49,8 @@ export interface SealBlocker {
 }
 
 export interface SealPreflightTask {
+    /** When the change was opened — the anchor for the committed-content reading, so a sibling's earlier work is not attributed to it. */
+    createdAt?: string;
     acceptance?: AcceptanceCriterion[];
     acceptanceMatrix?: AcceptanceMatrix;
     upstreamCoverage?: UpstreamCoverage;
@@ -79,6 +81,20 @@ export interface SealPreflightResult {
     ownershipConflicts: Array<{ taskId: string; path: string }>;
     codeGraphCandidates: CodeGraphCandidate[];
     codeGraphDisposition?: CodeGraphCandidateDisposition;
+    /**
+     * Undeclared content this change has already **committed**, reported rather than refused.
+     *
+     * **Why it is a report and not a blocker, measured.** The anchor for "what did this change commit" can only be a clock
+     * or a branch point, and neither is the change's own work: a branch point includes every sibling commit on a shared
+     * branch, and a task's creation time includes whatever the repository committed while the work was staged — running the
+     * check as a blocker refused 23 legitimate seals across this repository's own e2e fixtures, every one of them a fixture
+     * that committed its setup before the change under test began. So the reading is published (an operator can see that the
+     * declaration does not cover what is already committed) and the working-tree reading stays the blocker, because *that*
+     * one is about content the change itself created.
+     */
+    undeclaredCommittedChanges: string[];
+    /** Whether the committed reading was possible at all; `unavailable` is not an empty list. */
+    committedReading: 'available' | 'unavailable';
 }
 
 export async function collectSealPreflight(input: {
@@ -113,6 +129,10 @@ export async function collectSealPreflight(input: {
         diffHash: '',
     }));
     const blockers: SealBlocker[] = [];
+    // Filled by the tree-against-declaration step below, which is where the reading is taken. A report rather than a blocker
+    // for the reason stated on the result field.
+    let undeclaredCommittedChanges: string[] = [];
+    let committedReading: 'available' | 'unavailable' = 'unavailable';
     const deny = (code: string, message: string, diagnostics: Record<string, unknown>): void => {
         blockers.push({ code, message, diagnostics });
     };
@@ -171,16 +191,30 @@ export async function collectSealPreflight(input: {
             // committed half of the same question is answered from what the last revision recorded.
             const previousRead = await readCurrentTaskRevisionState(root, taskId);
             const previousPathDigests = previousRead.kind === 'current' ? Object.keys(previousRead.revision.pathDigests ?? {}) : [];
-            const undeclared = await undeclaredChanges({ root, declaredPaths: ownedPaths, previousPathDigests });
-            if (undeclared.paths.length === 0) return;
-            deny(
-                'undeclaredChanges',
-                `The working tree holds ${undeclared.paths.length} change(s) the declared surface does not cover, so a revision frozen `
-                + `now would not be about them: ${undeclared.paths.join(', ')}. `
-                + `Declare them (\`kata-cli scope change --change ${taskId} --add <path>\`, then \`kata-cli scope apply\`), or revert `
-                + 'them, and seal again.',
-                { undeclaredChanges: undeclared.paths },
-            );
+            const undeclared = await undeclaredChanges({
+                root,
+                declaredPaths: ownedPaths,
+                previousPathDigests,
+                // The change's own clock, so the committed reading answers "what did this change commit" rather than
+                // "everything this branch ever did" — which on a shared branch includes another change's work.
+                ...(task.createdAt === undefined ? {} : { sinceCommitted: task.createdAt }),
+            });
+            undeclaredCommittedChanges = undeclared.committedOutsideDeclaration;
+            committedReading = undeclared.committedReading;
+            if (undeclared.paths.length > 0) {
+                deny(
+                    'undeclaredChanges',
+                    `The working tree holds ${undeclared.paths.length} change(s) the declared surface does not cover, so a revision frozen `
+                    + `now would not be about them: ${undeclared.paths.join(', ')}. `
+                    + `Declare them (\`kata-cli scope change --change ${taskId} --add <path>\`, then \`kata-cli scope apply\`), or revert `
+                    + 'them, and seal again.',
+                    { undeclaredChanges: undeclared.paths },
+                );
+            }
+            // **And the committed half of the same question, which `git status` cannot answer.** A change could commit content
+            // outside its declaration and the working tree would be clean, so the seal saw nothing — measured on this change's
+            // own history. Reported as its own named blocker with its own remedy, because "the tree is dirty" and "the branch
+            // already committed this" ask for different actions.
         },
     ];
     await runWithConcurrency(independent, preflightConcurrency, () => 1, async (step) => { await step(); });
@@ -197,7 +231,7 @@ export async function collectSealPreflight(input: {
 
     if (options.ownedPathsError) {
         // Without owned paths the path-shaped checks cannot run; the blocker above is the whole answer.
-        return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition };
+        return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
     }
 
     // 7. A review repair must have changed the manifest it was opened against.
@@ -242,7 +276,7 @@ export async function collectSealPreflight(input: {
         const waiverErrors = validateWaivers(waivers);
         if (waiverErrors.length > 0) {
             deny('waiverErrors', 'Invalid recorded waiver.', { waiverErrors });
-            return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition };
+            return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
         }
 
         if (task.workflowProfile?.strictClosure && task.acceptanceMatrix) {
@@ -270,6 +304,6 @@ export async function collectSealPreflight(input: {
         }
     }
 
-    return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition };
+    return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
 }
 

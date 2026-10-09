@@ -15,6 +15,7 @@ import wikiRecordSchema from 'kata-asset:schemas/wiki-record.schema.json';
 import handoffPacketSchema from 'kata-asset:schemas/handoff-packet.schema.json';
 import handoffReceiptSchema from 'kata-asset:schemas/handoff-receipt.schema.json';
 import { hashContent } from './hash.js';
+import { isNonSourceDirectory } from './repository-identity.js';
 
 const schemaContents: Record<string, string> = {
   'task.schema.json': taskSchema,
@@ -71,20 +72,27 @@ function hasFileOrDir(dir: string, name: string): boolean {
 
 const workspaceMarkers = ['.git', '.opencode', 'opencode.json', 'package.json', 'Cargo.toml', 'go.mod'];
 
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'target',
-  'dist',
-  'build',
-  '.kata',
-  'coverage',
-  '__pycache__',
-  '.venv',
-  'venv',
-  '.env',
-  '.opencode',
-]);
+/**
+ * **This scan asks the identity policy what is not source, and keeps no list of its own.**
+ *
+ * The set that used to live here disagreed with the policy in both directions, and one disagreement was a live defect:
+ * it held `.kata`, so `findDescendantTaskRoots` — whose answer lives at `.kata/worktrees/<id>` — could never descend into
+ * the one directory it was looking for, and the command failed with a message naming no reachable remedy. A second list
+ * cannot be kept in agreement with the first by care; it is derived here instead (see `isNonSourceDirectory`).
+ */
+function skipDirectory(relativePath: string, name: string): boolean {
+  if (isNonSourceDirectory(name)) return true;
+  // **Under `.kata`, only `worktrees` is worth descending into.** A sibling worktree's records live at
+  // `.kata/worktrees/<id>/.kata/tasks/<taskId>` and that is the shape this scan exists to find; everything else under
+  // `.kata/` is this checkout's own trace — `runtime/` (one session's pointers), `locks/`, `evidence/` (one verification
+  // run), and `tasks/` (whose own records are addressed by the ancestor walk, not by a descendant search). Descending into
+  // all of it also costs: `.kata/worktrees/` alone was measured at 150 MB across 10,195 files.
+  if (relativePath === '.kata') return name !== 'worktrees';
+  if (relativePath.startsWith('.kata') && (relativePath.startsWith('.kata/') || relativePath.startsWith('.kata\\'))) {
+    return !relativePath.startsWith('.kata/worktrees') && !relativePath.startsWith('.kata\\worktrees');
+  }
+  return false;
+}
 
 export function resolveWorkspaceRoot(from?: string): string {
   let dir = resolve(from ?? cwd());
@@ -248,9 +256,10 @@ function findDescendantTaskRoots(taskId: string, root: string): string[] {
     } catch {
       return;
     }
+    const relativeDirectory = relative(root, dir).replaceAll(sep, '/');
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (skipDirectory(relativeDirectory, entry.name)) continue;
       const fullPath = join(dir, entry.name);
       // **The same key as `recordsRoot`.** This scan carried its own copy of the ownership test and kept the old form,
       // so the two derivations of "who owns this task" still disagreed for the descendant shape — which is exactly the
@@ -1274,7 +1283,12 @@ export function activeTaskPath(root: string): string {
 }
 
 /** The directory's name, exported so a consumer that only needs the name does not spell the string itself. */
-export const llmwikiDirName = '.llmwiki';
+/**
+ * Re-exported from the identity policy, which is where it belongs: this module used to declare it while the policy
+ * imported it, and the moment this module asked the policy a question the two formed a cycle — `ignoredDirectoryNames`
+ * then held `undefined` when `layout` happened to load first. One direction only, and the policy owns its own names.
+ */
+export { llmwikiDirName } from './repository-identity.js';
 
 /**
  * Where the wiki enrichment packet lives — **not in the governed task store.**

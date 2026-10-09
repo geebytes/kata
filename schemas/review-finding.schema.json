@@ -31,7 +31,8 @@
         "minor",
         "note",
         "nit"
-      ]
+      ],
+      "description": "The severity read vocabulary. A writer may only mint blocking|major|minor|note (READABLE_SEVERITIES is the schema's enum because a reader must be able to read records written before `nit` was retired); a blocking or major finding must name its basis in `acceptanceId` or `falsifies`."
     },
     "message": {
       "type": "string",
@@ -120,6 +121,15 @@
     "falsifier": {
       "type": "string",
       "description": "The check that must redden under this defect, so the repair is checkable rather than believed. Required by the brief on every finding."
+    },
+    "falsifies": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What this finding falsifies, in words, for a merge-blocking severity where no acceptance criterion covers the problem. `blocking` and `major` must carry an `acceptanceId` that the acceptance matrix holds, or this; the review record refuses one that carries neither."
+    },
+    "insideDeclaredBoundary": {
+      "type": "boolean",
+      "description": "Whether this finding lies inside the boundary the claim it is about declared. A finding past the declaration is still recorded \u2014 the declaration says where the claim stops, not that nothing exists beyond it \u2014 and the two answers are kept apart so the difference is auditable rather than hidden in a severity choice. Absent when the claim declared no boundary."
     }
   }
 }

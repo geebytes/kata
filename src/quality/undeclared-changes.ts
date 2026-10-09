@@ -1,4 +1,4 @@
-import { changedGitPaths } from '../core/git.js';
+import { changedGitPaths, changedPathsSinceBranchPoint } from '../core/git.js';
 import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
 
 /**
@@ -20,6 +20,21 @@ export interface UndeclaredChanges {
     paths: string[];
     /** The declared surface, normalized, so a caller can report what it compared against. */
     declared: string[];
+    /**
+     * Paths **committed** on this branch that the declaration does not cover.
+     *
+     * The reading `git status` cannot do. The working tree says nothing about work already committed, so a change could
+     * commit content outside its declaration and the seal would see a clean tree — measured. The anchor is the branch point
+     * (the merge base with the default branch), which is the standard answer to "what has this branch done".
+     */
+    committedOutsideDeclaration: string[];
+    /**
+     * Whether that reading was possible at all.
+     *
+     * `unavailable` is not `available` with an empty list: no default branch to compare against means nothing was
+     * established, and a caller that reports a pass there would be reporting a reading it never took.
+     */
+    committedReading: 'available' | 'unavailable';
 }
 
 /**
@@ -65,6 +80,15 @@ export async function undeclaredChanges(input: {
      * seal, and a revision delta; both are recorded as follow-ups rather than implied by this parameter.
      */
     previousPathDigests?: readonly string[];
+    /**
+     * An ISO timestamp to anchor the committed reading at, when the caller has one.
+     *
+     * **The narrow anchor, and the right one for a task.** Without it the reading starts at the branch point and therefore
+     * includes everything the branch ever committed — including another change's work on a shared branch, which is not this
+     * change's undeclared content and must not refuse its seal. A task knows when it was opened, so the caller passes that and
+     * the reading becomes "what this change committed".
+     */
+    sinceCommitted?: string;
 }): Promise<UndeclaredChanges> {
     // Normalized the same way on both sides: the declaration may be written with a leading `./` or with backslashes, and
     // git reports repository-relative paths with forward slashes. Comparing the raw strings would report a declared path
@@ -77,13 +101,23 @@ export async function undeclaredChanges(input: {
     const directoryPrefixes = declared.filter((path) => !path.includes('.') || path.endsWith('/**')).map((path) => path.replace(/\/\*\*$/, ''));
     const isCovered = (path: string): boolean => declaredSet.has(path) || directoryPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
-    // What git reports, plus what the previous revision hashed — the second covers work that is already committed.
+    // What git reports, plus what the previous revision hashed, plus what this branch committed — the second reports a
+    // declaration that lost a path it used to carry, and the third closes the gap `git status` cannot see.
+    const committed = changedPathsSinceBranchPoint(input.root, input.sinceCommitted === undefined ? {} : { since: input.sinceCommitted });
     const candidates = [...changedGitPaths(input.root), ...(input.previousPathDigests ?? [])];
-    const paths = candidates
+    const uncovered = (paths: readonly string[]): string[] => [...new Set(paths
         .map(normalize)
         .filter((path) => path.length > 0)
         .filter((path) => !isExcluded(path))
-        .filter((path) => !isCovered(path));
+        .filter((path) => !isCovered(path)))].sort();
 
-    return { paths: [...new Set(paths)].sort(), declared };
+    return {
+        paths: uncovered(candidates),
+        declared,
+        // **Named apart from `paths`.** A caller deciding "is this worked tree inside its declaration" wants the working-tree
+        // answer; a caller auditing the branch's whole work wants this one too, and folding them together would relabel the
+        // working-tree reading as something it is not.
+        committedOutsideDeclaration: uncovered(committed ?? []),
+        committedReading: committed === null ? 'unavailable' : 'available',
+    };
 }

@@ -14,10 +14,12 @@ import {
     isCurrentAssuranceLevel,
     EVIDENCE_TYPES,
     RISK_CLASSES,
+    READABLE_SEVERITIES,
     SEVERITIES,
     TIER_NAMES,
     type AssuranceLevel,
     type EvidenceType,
+    type ReadableSeverity,
     type Severity,
     type TierName,
 } from './types.js';
@@ -168,7 +170,7 @@ export function defaultPolicy(): Policy {
             blocking: ['executable_falsifier'],
             major: ['static_witness', 'cross_artifact_contradiction', 'executable_falsifier'],
             minor: 'any',
-            nit: 'any',
+            note: 'any',
         },
         deadline: { emitFirstRecordByToolCall: 'auto' },
     };
@@ -400,7 +402,10 @@ function loadFilled(value: Record<string, unknown>): PolicyLoad {
     }
     if (!isRecord(value.evidenceStrength)) return { ok: false, error: 'evidenceStrength is required' };
     for (const [severity, types] of Object.entries(value.evidenceStrength)) {
-        if (!SEVERITIES.includes(severity as Severity)) {
+        // **Readable, not writable.** A policy is a record of record: one stored before `note` was the spelling for the
+        // bottom level holds `nit`, and refusing to read it would refuse the change that most needs reading — the one
+        // already under way. New policies are written by the code above, which mints the write set only.
+        if (!READABLE_SEVERITIES.includes(severity as ReadableSeverity)) {
             return { ok: false, error: `evidenceStrength carries an unknown severity "${severity}"` };
         }
         if (types === 'any') continue;

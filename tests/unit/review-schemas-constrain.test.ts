@@ -10,6 +10,7 @@ import {
     EVIDENCE_TYPES,
     REASON_MESSAGES,
     RISK_CLASSES,
+    READABLE_SEVERITIES,
     SEVERITIES,
     TIER_NAMES,
     type Claim,
@@ -122,7 +123,11 @@ describe('the review schemas constrain their documents', () => {
     it('keeps the schema enums and the kernel enums the same fact', () => {
         const claimSchema = load('review-claim.schema.json') as { properties: Record<string, { enum?: string[] }> };
         expect(claimSchema.properties.riskClass?.enum?.sort()).toEqual([...RISK_CLASSES].sort());
-        expect(claimSchema.properties.severity?.enum?.sort()).toEqual([...SEVERITIES].sort());
+        // **The schema is a reader, so it holds the readable vocabulary.** `SEVERITIES` is what a writer may mint; the claims on
+        // disk include records written before `note` became the spelling for the bottom level, and a schema that could not
+        // read them would refuse the store of record. The same split the assurance vocabulary uses, asserted here so the
+        // schema and the kernel are still one fact rather than two lists that happen to agree today.
+        expect(claimSchema.properties.severity?.enum?.sort()).toEqual([...READABLE_SEVERITIES].sort());
 
         const evidenceSchema = load('review-evidence.schema.json') as { oneOf: Array<{ properties: { type: { const: string } } }> };
         expect(evidenceSchema.oneOf.map((entry) => entry.properties.type.const).sort()).toEqual([...EVIDENCE_TYPES].sort());

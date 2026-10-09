@@ -293,6 +293,8 @@ same way twice, and **a spent budget is never a pass**.
 ```bash
 kata-cli ledger freeze   --change <id> --paths src/a.ts,docs/spec.md   # a comma list; without it the declared paths are frozen
 kata-cli ledger claim    add --change <id> --id C1 --statement "..." --severity major --risk-class consistency --depends-on path:src/a.ts
+kata-cli ledger claim    restate --change <id> --id C1 --boundary "the exports under src/ that the matrix names"   # narrow the declaration
+kata-cli review          --change <id> --result-file result.json   # a finding may carry insideDeclaredBoundary: true|false
 kata-cli ledger evidence add --change <id> --file submission.json        # claims and evidence arrive as one document
 #   submission.json: { "claims": [{ "id": "C1", "statement": "...", "riskClass": "consistency", "severity": "major",
 #                                  "dependsOn": ["path:src/a.ts"], "evidenceIds": ["E1"] }],
@@ -339,6 +341,16 @@ kata-cli ledger status   --change <id> --cost                 # per claim, plus 
 **Repairing.** A repair changes content, the sealed revision derives from content, and a verdict is bound to the revision
 it was recorded against — so **sealing after each repair buys a round per repair**. Repair everything one revision can
 answer, then seal once. What a repair owes is a claim whose evidence does not support it, which `ledger decide` names.
+
+**A claim can declare the boundary it closes over, and refining it is cheap.** `ledger claim add --boundary "<what this
+claim stops at>"` (or `claim restate --boundary`, which changes only the declaration) states the judged domain a
+negative-classifier claim — "no shape of this kind" — is falsifiable against, so a reviewer's finding can record
+`insideDeclaredBoundary: true|false` instead of leaving the edge implied by a severity word. The boundary is **not part of
+the question**: `questionOf` hashes a claim's id, statement and dependencies, and the plan. So restating a claim's
+*statement* moves the subject (a different question, and every reading bound to the old wording is correctly stale), while
+refining its *boundary* does not — no re-freeze and no re-verification, because refining a declaration is how a claim is
+made falsifiable rather than a change to what is asked. An empty `--boundary` is refused: a declaration that says nothing
+reads as closed while deciding nothing.
 
 **Leaving a problem unfixed is a decision.** `kata-cli ledger claim waive <id> --reason "<why>"` records one, the reason
 must quote what the claim's own statement excludes, the waiver is reported at review, judge and archive, and the archive

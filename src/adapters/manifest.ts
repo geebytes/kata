@@ -1,4 +1,5 @@
 import { renderRepairScopeGuide } from '../quality/repair-scope-guide.js';
+import { platformAgentsDir } from './platforms.js';
 import { ledgerReviewGuidanceFor, automationGuidanceFor, phaseGuidanceFor } from './phase-guidance.js';
 import { GATE_CREATED_BY } from '../workflow/user-choice-gate.js';
 
@@ -652,4 +653,117 @@ function renderResponseLanguageContract(language?: ResponseLanguage): string {
 All user-facing natural-language responses must be written in English. Code, commands, file paths, API names, logs, and protocol fields may remain in their original form.`;
     }
     return '';
+}
+
+/**
+ * **The agents Kata asks a platform to define, as data rather than as hand-written files.**
+ *
+ * A definition is what the *host* owns: which tools an agent is given, which extension registration it needs, and the
+ * measured isolation boundary around both. The protocol is not here and must not be — it has one source and is rendered
+ * into the skills, because a second copy drifts: measured on one machine, **55 hand-written copies** of `kata-reviewer.md`
+ * existed when the protocol changed under them, and every copy kept instructing the retired behaviour until each was edited
+ * by hand.
+ *
+ * **`isolated` is deliberately absent from every entry.** The flag reads as "more isolation" and is not: on this host it
+ * overrides `extensions` to `false` in the runner, which cuts the registration the agent needs to reach its routed model
+ * provider — a measured failure that presents as an unavailable provider rather than as a missing extension. Cold context is
+ * a property of the *dispatch* (`inherit_context: false`), not of the definition, so it belongs where the dispatch is made.
+ */
+export interface AgentDefinitionSpec {
+    id: string;
+    description: string;
+    /** The skill carrying this agent's protocol; the definition points at it and restates nothing from it. */
+    protocolSkill: string;
+    /** Further skills the same agent is told to read, named so the pointer is complete rather than partial. */
+    alsoReads?: string[];
+    tools: string[];
+    extensions?: string[];
+    /** What this file owns, in the order the sections are rendered. */
+    owns: Array<{ heading: string; body: string }>;
+}
+
+export const agentDefinitions: readonly AgentDefinitionSpec[] = [
+    {
+        id: 'kata-reviewer',
+        description: 'Independent reviewer for one kata governed change, dispatched cold against a sealed revision. Use it for a review round and nothing else — never to author, repair, or re-review a change this session touched. Its protocol lives in the kata-review skill.',
+        protocolSkill: 'kata-review',
+        tools: ['read', 'grep', 'find', 'ls', 'bash'],
+        extensions: ['pi-esuyo-custom-provider'],
+        owns: [
+            {
+                heading: 'What you are handed',
+                body: 'A **ReviewRequest**, as your payload, and nothing else — no author-written brief. It carries the claims, each one\'s reading set, the evidence each requires, a deadline, and the questions you are asked. A question the request did not hand you is not yours to answer: it asks about content the request deliberately does not speak for.',
+            },
+            {
+                heading: 'What this file owns',
+                body: 'Your **tool surface** — `read`, `grep`, `find`, `ls`, `bash`. The shell is not a convenience: a review is decided by *measurement*, and every reading it rests on comes from running something — the declared check, the change that has to falsify it, and the state of the checkout afterwards. A definition without a shell can only read other people\'s claims about those runs, which is how a round becomes a summary instead of a check.\n\nRead-only is therefore a **commitment, not a sandbox**. With a shell you *can* write, and what keeps the review independent is that you do not: never repair, reformat, or "just fix" what you are reviewing, because a review that repairs what it reviews has replaced the judgement rather than informed it and its evidence becomes its own work. When you need scratch space, it is `tmp/`, never a tracked path.\n\nYour **extension registration** (`extensions:` above), because a cold context does not inherit the provider this session registered at startup — a dispatch without it fails with a message that reads like a typo and is not one.',
+            },
+            {
+                heading: 'The isolation boundary, as measured',
+                body: 'Read-only here is a property of the `tools` allowlist and of a cold context. It is **not** a property of process isolation, and trying to express it as one breaks the round before it starts:\n\n- `isolated: true` overrides `extensions` to `false` in the runner. That cuts off the extension which registers the routed model provider, so the child cannot resolve the provider and its requests leave for the upstream directly, which refuses them.\n- `extensions: false` cuts the same registration one level down — same failure.\n- Loading every extension (`extensions: true`, or omitting the field) does reach the provider, but injects **every** extension tool into the round (measured: 53 tools).\n\n`extensions: [pi-esuyo-custom-provider]` is the combination that works: the allowlist loads exactly the one extension that registers the provider — which registers **no tools** — while the `tools:` list above keeps the round\'s tool surface to five. Anything that reads as "more isolation" here costs the round its provider.\n\nA separate dispatch path reads no agent definition at all and disables extension discovery for every child, so a dispatch through it must name this same extension in the call; that is a fact about the dispatcher, not about this file.',
+            },
+        ],
+    },
+    {
+        id: 'kata-implementer',
+        description: 'A repair author for a kata governed change. Writes only inside a scratch copy of the change, and reports what it changed rather than editing the change itself.',
+        protocolSkill: 'kata-build',
+        alsoReads: ['kata-verify'],
+        tools: ['read', 'grep', 'find', 'ls', 'edit', 'write', 'bash'],
+        extensions: ['pi-esuyo-custom-provider'],
+        owns: [
+            {
+                heading: 'What you are handed',
+                body: 'The fact that a specific claim, at a specific severity, does not hold — with the reason it does not — rather than prose about a finding. How that fact is read, and what a repair owes it, is the skill\'s repair loop.',
+            },
+            {
+                heading: 'What this file owns',
+                body: 'Your **tool surface** — the four read tools plus `edit`, `write` and `bash`, because a repair is a change to a file. It is the write access that distinguishes this definition from the reviewer\'s, and it is confined by the protocol you were pointed at: a repair that edits the change it is repairing cannot be reviewed by anyone, including the round that comes next.\n\nYour **extension registration** (`extensions:` above), for the same measured reason the reviewer carries one: a cold context does not inherit the provider this session registered at startup, and `isolated: true` would set `extensions` to `false` — the combination that makes the provider unresolvable. Cold context comes from the dispatch (`inherit_context: false`), not from this file.\n\nA repair author that inherits this session\'s context inherits the blind spot it was dispatched to avoid, which is why the dispatch is cold — measured on this line, seven of the tests written during repairs could not fail, and every one of those was written by the author whose blind spot the round existed to find.',
+            },
+        ],
+    },
+];
+
+/**
+ * Render one agent definition for a platform.
+ *
+ * `null` when the platform declares no agents directory — the capability is what decides, so a platform that does not carry
+ * sub-agent definitions is not written one (and `kata-cli update` reports nothing for it rather than an empty file).
+ */
+export function renderAgentDefinition(
+    agentId: string,
+    platform: Platform,
+    options: { language?: ResponseLanguage } = {},
+): string | null {
+    if (platformAgentsDir(platform, 'project') === null) return null;
+    const spec = agentDefinitions.find((entry) => entry.id === agentId);
+    if (spec === undefined) return null;
+    const frontmatter = [
+        `name: ${spec.id}`,
+        `description: ${spec.description}`,
+        `tools: ${spec.tools.join(', ')}`,
+        ...(spec.extensions === undefined ? [] : [`extensions: [${spec.extensions.join(', ')}]`]),
+    ].join('\n');
+    const pointer = [
+        `Read \`.agents/skills/${spec.protocolSkill}/SKILL.md\` first — it is rendered by \`kata-cli update\` from the single`,
+        'source that carries this agent\'s protocol, so it is the current one.',
+        ...(spec.alsoReads ?? []).map((skill) => `The repair loop it hands you runs in \`.agents/skills/${skill}/SKILL.md\`.`),
+    ].join(' ').trim();
+    const sections = spec.owns.map((section) => `## ${section.heading}\n\n${section.body}`).join('\n\n');
+    const language = renderResponseLanguageContract(options.language);
+    return `---
+${frontmatter}
+---
+
+**This file owns what the host owns: your tool surface, your extension registration, and the isolation boundary around both.
+The protocol is not here.** ${pointer}
+
+${language ? `${language}\n\n` : ''}${sections}
+
+### Why this file is thin
+
+A hand-copied protocol drifts, and it drifts silently. Fifty-five hand-written copies of the reviewer's definition existed on
+one machine when the protocol changed under them, and every copy kept instructing the retired behaviour until each was edited
+by hand. This one is rendered, so an edit reaches it the same way it reaches the skills.
+`;
 }

@@ -180,6 +180,13 @@ export function reconcileInitiative(input: ReconciliationInput): ReconciliationR
         .map(([findingId]) => findingId)
         .sort();
 
+    // **A walk with nothing to compare against answers `undetermined`, not `fresh`.** The rule above already says a *design*
+    // that declares no dependency surface cannot be cleared; an *empty declaration set* is the same fact one level up — no
+    // design was named, so no design was cleared, and `fresh` would claim an assessment that never happened. The trigger
+    // already refuses absent and unreadable declarations; this closes the remaining route, where the file exists, is
+    // readable, and names nothing (measured on a linked legacy slice).
+    if (input.designs.length === 0) undetermined = true;
+
     const statuses = Object.values(statusByDesign);
     const overall: Freshness = undetermined
         ? 'undetermined'

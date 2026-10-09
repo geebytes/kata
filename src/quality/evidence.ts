@@ -194,9 +194,16 @@ export interface EvidenceEnvelope {
   reusedFrom?: string;
 }
 
-/** A passing envelope under the outcome contract, tolerating envelopes written before the field existed. */
-export function isPassing(evidence: EvidenceEnvelope): boolean {
-  return evidence.passed ?? evidence.exitCode === 0;
+/**
+ * A passing envelope under the outcome contract, tolerating envelopes written before the field existed.
+ *
+ * **`expectExitCode` is part of the answer, and two readers said it was not.** The field's own documentation states the
+ * contract — "`exitCode === (expectExitCode ?? 0)`" — and the seal's predicate read `exitCode === 0` anyway, so a check
+ * declared to exit 1 proved its sentence for the claim evaluator and failed for the seal. The reader that lacked the
+ * field is the tolerant one (`?? 0`), which is the same treatment a legacy envelope needs: absent means "must exit zero".
+ */
+export function isPassing(evidence: { exitCode?: number; expectExitCode?: number; passed?: boolean }): boolean {
+  return evidence.passed ?? evidence.exitCode === (evidence.expectExitCode ?? 0);
 }
 
 /**

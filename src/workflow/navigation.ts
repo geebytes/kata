@@ -20,6 +20,7 @@ import {
 } from './prompt-catalogue.js';
 import type { RepairScope } from '../quality/judge.js';
 import { isLegacyTask } from '../quality/acceptance-matrix.js';
+import { isPassing } from '../quality/evidence.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import { evaluateWikiClosure } from '../wiki/closure.js';
 import { reviewPath, judgePath, verifyPath, taskPath, evidenceDir as layoutEvidenceDir } from '../core/layout.js';
@@ -29,7 +30,7 @@ import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
-import { assessReviewLoop, readReviewRoundsState, type ReviewLoopAssessment } from '../quality/repair.js';
+import { assessReviewLoop, readReviewRoundsState, recurrenceAcrossRevisions, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
 import { isJsonRecord, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
@@ -44,9 +45,33 @@ type AcceptanceRecord = { acceptance?: AcceptanceItem[] };
 function isAcceptanceRecord(value: Record<string, unknown>): value is AcceptanceRecord {
   const acceptance = value.acceptance;
   if (acceptance === undefined) return true;
-  return Array.isArray(acceptance) && acceptance.every((item) => isJsonRecord(item)
+  if (!Array.isArray(acceptance)) return false;
+  return acceptance.every((item) => isJsonRecord(item)
+    // **Every nested field this summary reads is typed here.** `id` was unchecked, so an entry keyed by a number reached the
+    // acceptance reporting as an unnamed criterion — a value no reader could match to a criterion, arriving as a criterion
+    // that failed to match rather than as a record somebody has to repair.
+    && (item.id === undefined || typeof item.id === 'string')
     && (item.result === undefined || typeof item.result === 'string')
     && (item.repairScope === undefined || typeof item.repairScope === 'string'));
+}
+
+/**
+ * The shape of a review record, at the nested values the summary and the approval check consume.
+ *
+ * The record is a JSON object with a status and a body of findings; a damaged one is **unreadable**, which routes and reports
+ * under its own name, rather than *absent*, which reads as "nobody reviewed this yet". The two must not be interchangeable:
+ * the first asks an operator to repair a file, the second says the work has not been done.
+ */
+function isReviewRecord(value: Record<string, unknown>): value is { revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string } {
+  const typed = (field: unknown): boolean => field === undefined || typeof field === 'string';
+  if (!typed(value.revisionId) || !typed(value.manifestHash) || !typed(value.status) || !typed(value.reviewEvidence)) return false;
+  if (!typed(value.reviewRoute) || !typed(value.subjectRevision) || !typed(value.reviewedRevisionId)) return false;
+  // `findings` is the collection the round exists for. Present and not an array of objects is a record nobody can use, and
+  // `declaredCoverage` is the declaration beside it — both are read by consumers that assume a list.
+  if (value.findings !== undefined && (!Array.isArray(value.findings) || !value.findings.every((item) => isJsonRecord(item)))) return false;
+  if (value.declaredCoverage !== undefined
+    && (!Array.isArray(value.declaredCoverage) || !value.declaredCoverage.every((item) => typeof item === 'string'))) return false;
+  return true;
 }
 export type UpstreamSummary = {
   currentRevisionId?: string;
@@ -59,13 +84,6 @@ export type UpstreamSummary = {
   judgeResult?: string;
   /** Judge record answered a different declared question and is not current. */
   judgeStaleSubject?: string;
-  /**
-   * A record this summary could not read, named rather than folded into the field it would have filled.
-   *
-   * The summary is what routing and status read, so a damaged record that arrived as "no ledger" or "no summary" would be a
-   * fact about the reader reported as a fact about the change. Present only when there is something to report.
-   */
-  unreadable?: string;
   verifyResult?: string;
   failedAcceptance: number;
   failedVerifyAcceptance: number;
@@ -77,6 +95,23 @@ export type UpstreamSummary = {
   failingEvidence: number;
   /** Present on all runtime summaries; optional for legacy test/status payload compatibility. */
   reviewLoop?: ReviewLoopAssessment;
+  /**
+   * A record this summary could not read, named rather than folded into the field it would have filled.
+   *
+   * The summary is what routing and status read, so a damaged record that arrived as "no ledger" or "no summary" would be a
+   * fact about the reader reported as a fact about the change. Present only when there is something to report.
+   *
+   * Set by the candidate listing for a task whose *state* record could not be read (the per-source fields below carry the
+   * summary's own reads, each under its own name).
+   */
+  unreadable?: string;
+  /**
+   * Findings recorded against more than one revision — a problem that came back after a repair.
+   *
+   * A report, not a verdict about the current revision: it spans revisions by construction, which is exactly what the
+   * current-revision count cannot do. `null` when the round history could not be read (that state routes on its own).
+   */
+  reviewLoopRecurrence?: ReviewRecurrence[] | null;
   /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
   /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
@@ -155,6 +190,7 @@ export const nextActionReasons = [
   'continue_implementation',
   'design_intake_task',
   'escalate_review_without_progress',
+  'review_loop_recurring',
   'review_loop_unmeasurable',
   'unreadable_review_record',
   'repair_unreadable_current_revision',
@@ -241,7 +277,7 @@ export type NextAction = {
 
 export async function readUpstreamSummary(root: string, taskId: string): Promise<UpstreamSummary> {
   const evidenceFiles = await listEvidenceFiles(root, taskId);
-  const evidenceReads = await Promise.all(evidenceFiles.map((file) => readRecordState<{ exitCode?: number; revisionId?: string }>(join(layoutEvidenceDir(root), file))));
+  const evidenceReads = await Promise.all(evidenceFiles.map((file) => readRecordState<{ exitCode?: number; expectExitCode?: number; passed?: boolean; revisionId?: string }>(join(layoutEvidenceDir(root), file))));
   // The payload for the computations below, and the refusals kept aside: an evidence file that cannot be read is still an
   // evidence file of this task, and dropping it from the set made `failingEvidence` count a directory the operator could
   // not reconcile with the one on disk.
@@ -265,7 +301,11 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The record's payload, and its own read.** This is the `status`/`reviewEvidence` shape only — the findings are read
   // by `readBlockingProblems`, through the reader that binds them to the current revision, and declaring them here too
   // would be a second reader waiting to disagree. The read is taken once and reused for both branches below.
-  const reviewRecordRead = await readRecordState<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId));
+  // **The review record is shape-checked like every other record here, at the nested values this summary reads.** It had no
+  // shape at all, so a record that parsed but did not hold what the summary consumes (`"findings": "none"`, `"status": 42`)
+  // arrived as *usable* and was folded into the summary as a review that recorded nothing — a fact about the reader reported
+  // as a fact about the change, which is the one thing this reader exists to prevent.
+  const reviewRecordRead = await readRecordState<{ revisionId?: string; manifestHash?: string; status?: string; reviewEvidence?: string }>(reviewPath(root, taskId), isReviewRecord);
   const review = mixedRevision
     ? null
     : currentRevisionId
@@ -367,6 +407,14 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
   // **The summary's own reads are facts of the same kind, and they were the ones with no reader that could tell.** Each was
   // read through a helper that answered `null` for every failure, so a corrupt record was indistinguishable from a missing
   // one and nothing was published at all: a damaged `judge.json` said only that this change had not been judged.
+  // **One file, one name.** The review record is read here and again by the blocking reader that binds its findings to a
+  // revision; a second id for the same damaged file would be one fact with two answers, which is what this change keeps
+  // removing. So this read contributes to the established name only when the blocking reader did not already report it —
+  // which is the case when the record parses but does not hold what either reader consumes.
+  const reviewRecordReason = reviewRecordRead.kind === 'unreadable' ? reviewRecordRead.detail : null;
+  if (reviewRecordReason !== null && blockingRead.ok) {
+    unreadableProblems.push({ source: 'claim', id: 'review_record_unreadable', severity: 'blocking', message: reviewRecordReason });
+  }
   if (judgeRead.kind === 'unreadable') {
     unreadableProblems.push({ source: 'claim', id: 'judge_unreadable', severity: 'blocking', message: judgeRead.detail });
   }
@@ -405,6 +453,12 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(ledger.state === 'unreadable' ? { ledgerUnreadable: ledger.reason } : {}),
     // **And the summary's own reads name themselves too.** A record that cannot be read is not a record that says nothing,
     // and until now the only thing this status could say about a damaged `judge.json` was that no judgement was recorded.
+    // Published under the file's one name, and only when the blocking reader did not already name it: `blockingRead`
+    // short-circuits on the record, so with both sources damaged the record's reason is the one that would have gone missing
+    // (the ledger's is read from the state, which is what makes the two sources independent).
+    ...(reviewRecordReason !== null && !(!blockingRead.ok && blockingRead.source === 'review-record')
+      ? { reviewRecordUnreadable: reviewRecordReason }
+      : {}),
     ...(judgeRead.kind === 'unreadable' ? { judgeUnreadable: judgeRead.detail } : {}),
     ...(verifyRead.kind === 'unreadable' ? { verifyUnreadable: verifyRead.detail } : {}),
     ...(taskRead.kind === 'unreadable' ? { taskUnreadable: taskRead.detail } : {}),
@@ -417,6 +471,14 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     failedAcceptance: failedAcceptance.length,
     failedVerifyAcceptance: failedVerifyAcceptance.length,
     reviewLoop,
+    // **The reading that spans revisions, published beside the one that does not.** `reviewLoop` is scoped to the current
+    // revision on purpose, so a repair — which necessarily issues a new revision — makes the previous rounds history about
+    // something else, and the same problem returning for the fifth time reads as a loop that has measured nothing yet.
+    // Measured downstream: eleven rounds, eleven revision ids, one blocking id in every one of them, and the only thing the
+    // router could say was `no_current_rounds`. Read from the round history directly, because the identity it needs is not
+    // the current one; `null` when the history is unreadable — that state has its own route, and reporting `[]` there would
+    // be a claim about a file nobody could read.
+    reviewLoopRecurrence: reviewRounds.kind === 'unreadable' ? null : recurrenceAcrossRevisions(reviewRounds.rounds),
     ...(reviewLoop.kind === 'stalled_current_rounds' ? {
       reviewEscalation: {
         rounds: reviewLoop.rounds,
@@ -443,7 +505,10 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     ...(!wikiClosure.valid ? { wikiClosureReason: wikiClosure.reason } : {}),
     ledger,
     evidenceFiles,
-    failingEvidence: evidence.filter((item) => item && typeof item.exitCode === 'number' && item.exitCode !== 0).length,
+    // **The same answer the adequacy rule gives, not a third rule.** This counted `exitCode !== 0`, so a check declared
+    // to exit 1 was counted as failing evidence here while `isPassing` called it proved — and `failingEvidence > 0` routes
+    // the operator to `/kata-build` to fix a check that had already done what its declaration said.
+    failingEvidence: evidence.filter((item) => item != null && !isPassing(item)).length,
     // **The closure question is answered by the ledger branch in `navigation`, not by a field here.**
     //
     // This used to publish a `roundClosure`/`ledgerClosure` verdict — `mayClose`, the unsupported claim ids and a reason —
@@ -554,6 +619,18 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       default:
         break;
     }
+  }
+  // **A problem that survived a repair is worth another implementation pass, and it is a route rather than a gate change.**
+  // It sits below the escalation above, so it can only speak where that produced nothing: the operator is told the same
+  // finding keeps coming back even while each round's own count looks like steady progress. Nothing about what the gates
+  // demand moved — a change that only recurs is still routed the way a change with a blocking finding always was.
+  if (phase === 'review' && (upstream.reviewLoopRecurrence?.length ?? 0) > 0) {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'review_loop_recurring',
+      priority: 2100 + (upstream.reviewLoopRecurrence as ReviewRecurrence[]).length,
+    };
   }
   // Evidence from more than one revision cannot be judged together, so the seal that produced it is redone first.
   if (upstream.mixedRevisionEvidence) {
@@ -790,7 +867,7 @@ export function nextActionForTask(taskId: string, nextSkill: string, role: strin
             // `pauseInstruction` and dropped the trust-boundary text that carries the mandatory "kata does not route host
             // models" notice and the `--confirm-host-model` step — trading two required facts for one convenience, which is
             // the shape this repository removes most often. The boundary text goes first because the pause happens first.
-            pauseInstruction: `${gate ? boundaryPromptFor(gate, promptLanguage()) : ''} 进入 review 后要跑两条命令：\`kata-cli review --change ${taskId}\` 先把相位推进 review，\`kata-cli review --change ${taskId} --approve\` 在相位推进前会被拒绝。`,
+            pauseInstruction: `${gate ? boundaryPromptFor(gate, promptLanguage()) : ''} 进入 review 后要跑两条命令：\`kata-cli review --change ${taskId}\` 先把相位推进 review，然后 \`kata-cli review --change ${taskId} --approve --review-evidence "<本轮结论依据>"\` 记录结论——第一条在相位推进前会被拒绝，第二条属于记录结论，不再要求已经用掉的门禁。`,
         }
         : {}),
     ...(wikiClosure ? { pauseInstruction: '实现验证已通过；请决定本任务的知识闭环是 captured 还是 not_applicable，再重新执行 /kata-verify。' } : {}),
@@ -822,6 +899,8 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   // Not a model boundary: this one stops for a decision about the change, not about which platform runs next.
   escalate_review_without_progress: null,
   review_loop_unmeasurable: null,
+  // Not a model boundary either: it is a decision about the change, and the gates it passes through are unchanged.
+  review_loop_recurring: null,
   // Also a decision about the change rather than about which platform runs: the record has to be read again.
   unreadable_review_record: null,
   repair_unreadable_current_revision: null,

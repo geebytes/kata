@@ -79,8 +79,35 @@ export function assuranceAtLeast(recorded: AssuranceLevel, floor: AssuranceLevel
     return ASSURANCE_RANK[recorded] >= ASSURANCE_RANK[floor];
 }
 
-export const SEVERITIES = ['blocking', 'major', 'minor', 'nit'] as const;
+/**
+ * **One severity vocabulary for every record that carries one.**
+ *
+ * There were three: this list allowed `nit` and not `note`, the finding schema allowed both, and `ReviewSeverity` allowed
+ * `note` and not `nit`. So a record could be written with a severity one of its readers had no name for, and a writer
+ * could mint a spelling another writer refused — one fact, several spellings, and the disagreement surfacing at whichever
+ * reader happened not to know the word.
+ *
+ * The split is the one the assurance vocabulary already uses: `SEVERITIES` is what a writer may mint, and
+ * `READABLE_SEVERITIES` is what a reader must accept because records exist that hold the retired spelling. `nit` is the
+ * retirement — the same level as `note`, spelled two ways — and it stays readable rather than being re-written, because a
+ * reader that cannot read a record of record has destroyed the record.
+ */
+export const SEVERITIES = ['blocking', 'major', 'minor', 'note'] as const;
 export type Severity = (typeof SEVERITIES)[number];
+
+/** The read vocabulary: the write set plus the retired spelling. No writer may mint a value that is only in here. */
+export const READABLE_SEVERITIES = ['blocking', 'major', 'minor', 'note', 'nit'] as const;
+export type ReadableSeverity = (typeof READABLE_SEVERITIES)[number];
+
+/**
+ * **The severities that make a problem merge-blocking**, per mode, in one place.
+ *
+ * A merge-blocking severity is the one that refuses an approval, which is why it is also the one that has to carry a basis
+ * (see the review-record path): the word has a consequence, so the word has to be checkable.
+ */
+export function isMergeBlockingSeverity(severity: string, mode: string = 'strict'): boolean {
+    return mode === 'standard' ? severity === 'blocking' : severity === 'blocking' || severity === 'major';
+}
 
 export type TierName = 'standard' | 'strict' | 'security';
 export const TIER_NAMES: readonly TierName[] = ['standard', 'strict', 'security'];
@@ -136,6 +163,19 @@ export type Claim = {
      */
     reopens: number;
     waiver?: { reason: string; at: string };
+    /**
+     * **The judged domain this claim closes over, when it declares one.**
+     *
+     * A negative-classifier claim — "no shape of this kind" — is falsifiable only against a stated edge. Without a place to
+     * state the edge, a reviewer trying to falsify the claim can always produce a shape just past it, which is
+     * indistinguishable from a counterexample until someone writes down where the claim stops (measured downstream: the same
+     * criterion's boundary wording filed as `major` five times, each one forcing a mandatory repair round).
+     *
+     * **Deliberately not part of the question's identity.** `questionOf` hashes `id`, `statement` and `dependsOn`; refining
+     * the boundary is how a claim is made falsifiable, and making that refinement move the subject would invalidate every
+     * reading taken against the same question — which is the failure the boundary exists to stop.
+     */
+    boundary?: string;
 };
 
 export type Evidence =

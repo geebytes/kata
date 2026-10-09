@@ -1,4 +1,4 @@
-import { checkFreshness, type EvidenceEnvelope } from './evidence.js';
+import { checkFreshness, isPassing, type EvidenceEnvelope } from './evidence.js';
 import { evidenceCoversAcceptance, evidenceMatchesRow, getMatrixRowForAc, isEntrypointEvidenceKind } from './acceptance-matrix.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 import type { JudgeAcceptanceResult, RepairScope } from './judge.js';
@@ -14,15 +14,15 @@ import type { JudgeAcceptanceResult, RepairScope } from './judge.js';
  *   computed over mixed revisions would be attached to neither.
 
 /**
- * A passing envelope, under the contract the collector stamps (L2-01).
+ * A passing envelope, asked of the one derivation.
  *
- * This module used `envelope.exitCode === 0` to decide whether a test's evidence counts, which is the same disagreement
- * the seal had with claims: a check that must exit 1 proved its sentence and was read as a failure here. The `??` keeps
- * envelopes written before `passed` existed readable rather than silently re-classified.
+ * **The private copy is gone, not kept in step.** This module had its own `passed ?? exitCode === 0` while `evidence.ts`
+ * had a second one and the router counted failures with a third rule (`exitCode !== 0`, ignoring `expectExitCode`
+ * entirely) — so a check declared to exit 1 was proved for one reader, failed for another, and was reported as a failing
+ * piece of evidence by a third. The rule lives in `evidence.ts`; this is a name for it here, so a caller reading this file
+ * sees the same name it sees there.
  */
-function isPassingEvidence(envelope: EvidenceEnvelope): boolean {
-    return envelope.passed ?? envelope.exitCode === 0;
-}
+const isPassingEvidence = isPassing;
 
 export interface AcceptanceAdequacyInput {
     acceptance: Array<{ id?: string; statement?: string }>;

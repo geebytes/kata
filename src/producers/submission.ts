@@ -79,6 +79,9 @@ export function readSubmission(value: unknown): SubmissionRead {
         if (typeof entry.severity !== 'string' || !SEVERITIES.includes(entry.severity as Severity)) {
             errors.push(`claims[${index}].severity must be one of ${SEVERITIES.join(', ')}`);
         }
+        if (entry.boundary !== undefined && (typeof entry.boundary !== 'string' || entry.boundary.trim() === '')) {
+            errors.push(`claims[${index}].boundary must state the domain the claim closes over, or be omitted`);
+        }
         const dependsOn = entry.dependsOn ?? [];
         if (!Array.isArray(dependsOn) || dependsOn.some((dep) => typeof dep !== 'string' || !/^(path|claim):/u.test(dep))) {
             errors.push(`claims[${index}].dependsOn entries must start with "path:" or "claim:"`);
@@ -89,6 +92,7 @@ export function readSubmission(value: unknown): SubmissionRead {
             riskClass: entry.riskClass as RiskClass,
             severity: entry.severity as Severity,
             dependsOn: (Array.isArray(dependsOn) ? dependsOn : []) as Claim['dependsOn'],
+            ...(typeof entry.boundary === 'string' && entry.boundary.trim() !== '' ? { boundary: entry.boundary.trim() } : {}),
             evidenceIds: Array.isArray(entry.evidenceIds) ? (entry.evidenceIds as string[]) : [],
             challengeIds: Array.isArray(entry.challengeIds) ? (entry.challengeIds as string[]) : [],
             status: 'open',

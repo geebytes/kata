@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
 import { declaredContentPaths } from '../core/repository-identity.js';
-import { carriesSealMark, computePathDigests } from '../workflow/revision.js';
+import { carriesSealMark, computePathDigests, declarationKey, sealDeclarationOf } from '../workflow/revision.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -955,6 +955,25 @@ async function writeJson(root: string, changeId: string, file: string, value: un
             + 'set the seal does not. Nothing was written.',
         );
     }
+    // **And the map has to be the one for the declaration this record states.** The mark proves a seal produced the map; it
+    // does not prove the map answers the declaration the record carries beside it, and round 13 measured the difference: a
+    // genuine sealed map computed for a smaller declaration, attached to a full one, recorded fewer paths than the record
+    // declared while every declared selector passed. Compared here, against the record's own `declaredPaths`, because this is
+    // the last gate before the bytes land — a substitution introduced anywhere upstream has to get past the writer too.
+    if (file === FILES.subject && (value as Subject).declaredPaths !== undefined) {
+        // A record that states no declaration cannot be compared, and is not refused for that: the field is optional because
+        // subjects frozen before it existed have none, and "no declaration recorded" is a state rather than a false claim —
+        // the same three-way reading `questionBinding` uses for a record written before its binding field.
+        const record = value as Subject;
+        const sealedFor = sealDeclarationOf(record.pathDigests);
+        if (sealedFor === undefined || sealedFor !== declarationKey(record.declaredPaths ?? [])) {
+            throw new Error(
+                'refusing to record this subject: its path digests were computed for a different declaration than the record '
+                + 'declares, so the record would claim content it does not hold (or hold content it does not claim). Re-freeze '
+                + 'from the declaration. Nothing was written.',
+            );
+        }
+    }
     const dir = reviewDir(root, changeId);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, file), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -1211,6 +1230,19 @@ export async function freezeSubject(input: {
             unreadable: [],
         };
     }
+    // **The map has to be the map for *this* declaration.** The mark alone says a seal made it; a genuine sealed map computed
+    // for a smaller declaration attached to a larger one recorded fewer paths than the declaration named while every declared
+    // selector passed (round 13). The declaration the seal computed for travels in the same register, and it is compared here
+    // against the declaration this freeze is about.
+    const declaredKey = declarationKey(input.paths);
+    const sealedFor = sealDeclarationOf(sealed);
+    if (sealedFor !== declaredKey) {
+        return {
+            ok: false,
+            error: `the content map was computed for a different declaration than this freeze declares, so the record would hold content the declaration does not name (or name content it does not hold); re-freeze from the declaration itself`,
+            unreadable: [],
+        };
+    }
     const subject = subjectOf(sealed, input.paths, input.claims, input.planDigest);
     if (!Object.is(subject.pathDigests, sealed)) {
         return {
@@ -1249,12 +1281,35 @@ export async function writeSubject(root: string, changeId: string, subject: Subj
  * can see that the statement moved, and the claim's existing readings are re-checked against it by the same binding rules
  * every other change follows.
  */
-export async function restateClaim(root: string, changeId: string, claimId: string, statement: string): Promise<void> {
+/**
+ * Restate a claim's statement, and optionally refine the boundary it declares.
+ *
+ * **The reopen is for the statement, not for the boundary.** The statement is part of the question (`questionOf` hashes it),
+ * so correcting it is a new question and the count of reopens is how the author-side cost is measured. The boundary is a
+ * declaration *about* the question — the edge a reviewer judges against — and refining it does not change what is being
+ * asked, so it does not move the subject and does not count as a reopen. Making a boundary refinement cost a re-freeze and
+ * a re-verification of every reading is exactly the cost that kept the declaration out of the ledger in the first place.
+ */
+export async function restateClaim(
+    root: string,
+    changeId: string,
+    claimId: string,
+    statement: string,
+    boundary?: string,
+): Promise<void> {
     await mutate(root, changeId, async () => {
         const claims = (await readDocumentForWrite<Claim[]>(root, changeId, FILES.claims)) ?? [];
-        const next = claims.map((claim) => (claim.id === claimId
-            ? { ...claim, statement, reopens: (claim.reopens ?? 0) + 1 }
-            : claim));
+        const next = claims.map((claim) => {
+            if (claim.id !== claimId) return claim;
+            const statementMoved = claim.statement !== statement;
+            const restated: Claim = {
+                ...claim,
+                statement,
+                reopens: statementMoved ? (claim.reopens ?? 0) + 1 : (claim.reopens ?? 0),
+            };
+            if (boundary !== undefined) restated.boundary = boundary;
+            return restated;
+        });
         await writeJson(root, changeId, FILES.claims, next);
     });
 }
@@ -1301,6 +1356,22 @@ export async function appendClaim(root: string, changeId: string, claim: Claim):
  * skipped an existing id, which is the same shape as an insert that claims to have persisted (`the challenge-id
  * collision`, measured on this repository). An identical re-add is a no-op that says so.
  */
+/**
+ * Why this item may not be appended, or `null` when it may.
+ *
+ * **One derivation, two consumers.** `appendEvidence` refuses on this, and `ledger evidence add` asks it *before* it writes
+ * the submission's claims — because a submission is written claim-first and evidence-second, so an item refused halfway
+ * through left the claims on disk: a refusal that had already changed the ledger, which the next reading then refused
+ * again for a reason that named neither. A caller that re-implemented the comparison would be the second copy this
+ * repository removes most often, so the comparison lives here and both call it.
+ */
+export function evidenceWriteConflict(existing: readonly Evidence[], evidence: Evidence): string | null {
+    const recorded = existing.find((entry) => entry.id === evidence.id);
+    if (!recorded) return null;
+    if (JSON.stringify(recorded) === JSON.stringify(evidence)) return null;
+    return `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --reason <why>\` when the recorded item is wrong, so the correction carries its reason.`;
+}
+
 export async function appendEvidence(
     root: string,
     changeId: string,
@@ -1308,16 +1379,10 @@ export async function appendEvidence(
 ): Promise<{ ok: true; item: Evidence; written: boolean } | { ok: false; why: string }> {
     return mutate(root, changeId, async () => {
         const items = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
+        const why = evidenceWriteConflict(items, evidence);
+        if (why) return { ok: false as const, why };
         const existing = items.find((entry) => entry.id === evidence.id);
-        if (existing) {
-            const same = JSON.stringify(existing) === JSON.stringify(evidence);
-            return same
-                ? { ok: true as const, item: existing, written: false }
-                : {
-                    ok: false as const,
-                    why: `${evidence.id} is already recorded with different content, and evidence is write-once: an item is a fact about what was measured, so changing it would rewrite history. Use \`ledger evidence replace --reason <why>\` when the recorded item is wrong, so the correction carries its reason.`,
-                };
-        }
+        if (existing) return { ok: true as const, item: existing, written: false };
         items.push(evidence);
         await writeJson(root, changeId, FILES.evidence, items);
         return { ok: true as const, item: evidence, written: true };
@@ -1338,7 +1403,23 @@ export async function replaceEvidence(
     changeId: string,
     items: readonly Evidence[],
     reason: string,
-): Promise<{ replaced: number; droppedVerdicts: string[] }> {
+    /**
+     * The rebinding the author states in the same act, when they state one.
+     *
+     * **The claims half of a submission used to be parsed and then thrown away.** `ledger evidence replace` read a
+     * submission — which requires a `claims` array — and passed only its evidence to this function, so an author who wrote
+     * the new binding beside the new items had it silently discarded: measured, the set became `[E-REAIMED]` while the
+     * claim still cited `E1`, an item that no longer existed, and the command reported success.
+     */
+    rebinding?: { claims: readonly Claim[] },
+): Promise<{
+    replaced: number;
+    droppedVerdicts: string[];
+    /** Claims whose stored `evidenceIds` this write changed — the rebinding, per claim. */
+    reboundClaims: Array<{ claimId: string; evidenceIds: string[] }>;
+    /** Claims that cite an item whose content this write changed, so the reading they rested on is gone. */
+    citationsWhoseReadingWasDropped: Array<{ claimId: string; evidenceId: string }>;
+}> {
     return mutate(root, changeId, async () => {
         // **Every read happens before every write.** These four artefacts are one decision — which items changed, which
         // verdicts they drop, the run that records the reason, and the challenges whose binding the change invalidates —
@@ -1346,6 +1427,7 @@ export async function replaceEvidence(
         // `verdicts.json` afterwards refused an unreadable verdict file *after* the replacement had landed, under a message
         // that said nothing had been written.
         const before = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
+        const claims = (await readDocumentForWrite<Claim[]>(root, changeId, FILES.claims)) ?? [];
         const verdicts = (await readDocumentForWrite<EvidenceVerdict[]>(root, changeId, FILES.verdicts)) ?? [];
         const runs = await readRecordsForWrite<LedgerRun>(root, changeId, FILES.runs, STRING_FIELDS.runs);
         const challenges = await readRecordsForWrite<Challenge>(root, changeId, FILES.challenges, STRING_FIELDS.challenges);
@@ -1356,6 +1438,34 @@ export async function replaceEvidence(
         const changedIds = new Set(changed.map((item) => item.id));
         const kept = verdicts.filter((verdict) => !changedIds.has(verdict.evidenceId));
         const dropped = verdicts.filter((verdict) => changedIds.has(verdict.evidenceId)).map((verdict) => verdict.evidenceId);
+        // **The claims after this write, and the citations that would not resolve in it.** A claim states its binding, so
+        // the ledger cannot invent a new one; what it can do is refuse to leave a claim pointing at an item the new set does
+        // not hold. The check runs over the claims as they will be — the author's rebinding applied over the stored ones —
+        // because a claim this write rebinds is exactly the case that must succeed.
+        const storedById = new Map(claims.map((entry) => [entry.id, entry]));
+        for (const entry of rebinding?.claims ?? []) storedById.set(entry.id, entry);
+        const heldIds = new Set(items.map((item) => item.id));
+        const orphaned: Array<{ claimId: string; evidenceId: string }> = [];
+        for (const entry of storedById.values()) {
+            for (const cited of entry.evidenceIds) {
+                if (!heldIds.has(cited)) orphaned.push({ claimId: entry.id, evidenceId: cited });
+            }
+        }
+        if (orphaned.length > 0) {
+            const named = orphaned.map((entry) => `${entry.claimId} cites ${entry.evidenceId}`).join('; ');
+            throw new Error(`this replacement would leave claims citing evidence it does not hold: ${named}. Include those items in the set, or restate the claim with a binding that resolves (\`kata-cli ledger claim restate --id <claim> --evidence <id>\`), or state the new binding in the same submission (a claim's \`evidenceIds\` beside the items) — a binding is the author's statement and this command will not invent one. Nothing was written.`);
+        }
+        // Which claims this write rebinds, and which of them lose the reading their citation rested on.
+        const reboundClaims: Array<{ claimId: string; evidenceIds: string[] }> = [];
+        for (const entry of storedById.values()) {
+            const previous = claims.find((candidate) => candidate.id === entry.id);
+            if (previous === undefined || JSON.stringify(previous.evidenceIds) !== JSON.stringify(entry.evidenceIds)) {
+                reboundClaims.push({ claimId: entry.id, evidenceIds: [...entry.evidenceIds] });
+            }
+        }
+        const citationsWhoseReadingWasDropped = [...storedById.values()]
+            .flatMap((entry) => entry.evidenceIds.filter((cited) => changedIds.has(cited)).map((cited) => ({ claimId: entry.id, evidenceId: cited })))
+            .sort((left, right) => left.claimId.localeCompare(right.claimId) || left.evidenceId.localeCompare(right.evidenceId));
         // **A binding this write invalidated is dropped by this write.** `discoveryProjection` credits a challenge from
         // its own resolution, so a falsifier that stops being an `executable_falsifier` would leave its challenge carrying
         // credit for a declaration that no longer exists — and no reader can tell that from one that is still declared.
@@ -1382,11 +1492,14 @@ export async function replaceEvidence(
         });
 
         await writeJson(root, changeId, FILES.evidence, [...items]);
+        // The claims are written only when the submission stated a rebinding: a set-only replacement leaves them as they
+        // are (and the check above proved they still resolve).
+        if (rebinding !== undefined) await writeJson(root, changeId, FILES.claims, [...storedById.values()]);
         if (dropped.length > 0) await writeJson(root, changeId, FILES.verdicts, kept);
         runs.push({ at: nowIso(), producer: 'operator', claims: 0, evidence: changed.length, diversity: 'n/a', note: reason });
         await writeJson(root, changeId, FILES.runs, runs);
         if (unboundCount > 0) await writeJson(root, changeId, FILES.challenges, rebound);
-        return { replaced: changed.length, droppedVerdicts: dropped };
+        return { replaced: changed.length, droppedVerdicts: dropped, reboundClaims, citationsWhoseReadingWasDropped };
     });
 }
 

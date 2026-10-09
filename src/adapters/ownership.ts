@@ -5,6 +5,7 @@ import { loadConfig, writeConfigPatch } from '../core/config.js';
 import { initLlmWiki, buildLlmWikiTask } from '../wiki/llmwiki.js';
 import { writeWikiEnrichPacket } from '../wiki/enrich-packet.js';
 import { renderSkillFor } from './facade.js';
+import { agentDefinitions, renderAgentDefinition } from './manifest.js';
 import {
   commandManifest,
   skillCommands,
@@ -13,7 +14,7 @@ import {
   type InstallScope,
   type Platform,
 } from './manifest.js';
-import { platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, platformSkillsDir, resolvePlatformGlobalDir } from './platforms.js';
+import { platformAgentPath, platformAgentsDir, platformCommandPath, platformConfigDir, platformDefinitionById, platformRulePath, platformSkillPath, platformSkillsDir, resolvePlatformGlobalDir } from './platforms.js';
 import { renderHookGuardScript } from '../policy/guard-script.js';
 import { hookConfigForPlatform, mergeHookConfig, removeManagedHookConfig } from './hook-configs.js';
 
@@ -149,6 +150,58 @@ export async function uninstall(
   return report;
 }
 
+/**
+ * Write one managed file, under the conflict rules every managed artefact answers to.
+ *
+ * **Extracted so there is one copy of the rules.** The skills writer carried them inline and the agent definitions need the
+ * same three: a file with no manifest entry that already exists is a *conflict* (nobody knows whether the operator wrote it
+ * or kata did), a manifest entry whose content the operator edited is a conflict unless forced, and identical content is
+ * `unchanged` with the manifest refreshed. A second copy would be the shape this repository removes most often — and here it
+ * would mean a hand-edited agent definition being silently overwritten while a hand-edited skill is protected.
+ */
+async function writeManagedFile(input: {
+  platform: Platform;
+  scope: InstallScope;
+  commandId: string;
+  relativePath: string;
+  content: string;
+  baseRoot: string;
+  manifest: Awaited<ReturnType<typeof readManifest>>;
+  report: InstallReport;
+  force: boolean;
+  dryRun: boolean;
+}): Promise<void> {
+  const absolutePath = join(input.baseRoot, input.relativePath);
+  const nextHash = sha256(input.content);
+  const previous = input.manifest.files[input.relativePath];
+
+  input.report.planned.push(input.relativePath);
+  const existing = await readOptional(absolutePath);
+  if (existing !== undefined) {
+    const existingHash = sha256(existing);
+    if (previous === undefined && !input.force) {
+      input.report.conflicts.push(input.relativePath);
+      return;
+    }
+    if (previous !== undefined && existingHash !== previous.sha256 && existingHash !== nextHash && !input.force) {
+      input.report.conflicts.push(input.relativePath);
+      return;
+    }
+    if (existingHash === nextHash) {
+      input.report.unchanged.push(input.relativePath);
+      input.manifest.files[input.relativePath] = ownedFile(input.platform, input.scope, input.commandId, input.relativePath, nextHash);
+      return;
+    }
+  }
+
+  if (!input.dryRun) {
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await writeFileAtomic(absolutePath, input.content);
+    input.manifest.files[input.relativePath] = ownedFile(input.platform, input.scope, input.commandId, input.relativePath, nextHash);
+    input.report.written.push(input.relativePath);
+  }
+}
+
 async function writeSkills(
   platform: Platform,
   scope: InstallScope,
@@ -161,37 +214,46 @@ async function writeSkills(
   const report = createReport(platform, scope, effectiveOptions.dryRun === true);
 
   for (const command of skillCommands) {
-    const relativePath = platformSkillPath(platform, scope, command.id, baseRoot);
-    const absolutePath = join(baseRoot, relativePath);
-    // Through the facade, so the surface the tests exercise is the surface that writes the files (L1-08).
-    const content = renderSkillFor(platform, command, { language: effectiveOptions.language });
-    const nextHash = sha256(content);
-    const previous = manifest.files[relativePath];
+    await writeManagedFile({
+      platform,
+      scope,
+      commandId: command.id,
+      relativePath: platformSkillPath(platform, scope, command.id, baseRoot),
+      // Through the facade, so the surface the tests exercise is the surface that writes the files (L1-08).
+      content: renderSkillFor(platform, command, { language: effectiveOptions.language }),
+      baseRoot,
+      manifest,
+      report,
+      force: effectiveOptions.force === true,
+      dryRun: effectiveOptions.dryRun === true,
+    });
+  }
 
-    report.planned.push(relativePath);
-    const existing = await readOptional(absolutePath);
-    if (existing !== undefined) {
-      const existingHash = sha256(existing);
-      if (previous === undefined && !effectiveOptions.force) {
-        report.conflicts.push(relativePath);
-        continue;
-      }
-      if (previous !== undefined && existingHash !== previous.sha256 && existingHash !== nextHash && !effectiveOptions.force) {
-        report.conflicts.push(relativePath);
-        continue;
-      }
-      if (existingHash === nextHash) {
-        report.unchanged.push(relativePath);
-        manifest.files[relativePath] = ownedFile(platform, scope, command.id, relativePath, nextHash);
-        continue;
-      }
-    }
-
-    if (!effectiveOptions.dryRun) {
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFileAtomic(absolutePath, content);
-      manifest.files[relativePath] = ownedFile(platform, scope, command.id, relativePath, nextHash);
-      report.written.push(relativePath);
+  // **The agent definitions are rendered too, by the same rules.** They were hand-written files that `update` did not know
+  // about: measured on one machine, 55 copies of the reviewer definition drifted from the protocol they restated, and the
+  // `subAgents` capability that should have managed them was read by nothing. A platform that declares no agents directory
+  // is given none, and `update` reports nothing for it rather than an empty file.
+  if (platformAgentsDir(platform, scope) !== null) {
+    for (const spec of agentDefinitions) {
+      const relativePath = platformAgentPath(platform, scope, spec.id);
+      const content = renderAgentDefinition(spec.id, platform, { language: effectiveOptions.language });
+      if (relativePath === null || content === null) continue;
+      await writeManagedFile({
+        platform,
+        scope,
+        // **`agent:` prefix, because this list is not the skill list.** The first version recorded the bare id, and the
+        // obsolete-artefact sweep below removed both definitions the moment they were written: its rule is "a manifest entry
+        // whose id starts with `kata-` and is not an active *skill* is obsolete", which is exactly what a bare agent id looks
+        // like. Measured on the first run — `写入 2 · 移除 2`, and the two files were gone.
+        commandId: `agent:${spec.id}`,
+        relativePath,
+        content,
+        baseRoot,
+        manifest,
+        report,
+        force: effectiveOptions.force === true,
+        dryRun: effectiveOptions.dryRun === true,
+      });
     }
   }
 
@@ -236,8 +298,12 @@ async function removeObsoleteCommandFiles(
   report: InstallReport,
 ): Promise<void> {
   const activeCommands = new Set(skillCommands.map((command) => command.id));
+  const activeAgents = new Set(agentDefinitions.map((spec) => spec.id));
   const obsolete = Object.values(manifest.files).filter((file) => {
     if (file.platform !== platform || file.scope !== scope) return false;
+    // **An agent definition is obsolete when the agent is retired, not when it is not a skill.** The two kinds of artefact
+    // share this sweep, so the kind is read from the manifest entry rather than guessed from the id's spelling.
+    if (file.commandId.startsWith('agent:')) return !activeAgents.has(file.commandId.slice('agent:'.length));
     const commandId = file.commandId.startsWith('command:') ? file.commandId.slice('command:'.length) : file.commandId;
     const isCommandArtifact = commandId.startsWith('kata-');
     return isCommandArtifact && !activeCommands.has(commandId as typeof skillCommands[number]['id']);

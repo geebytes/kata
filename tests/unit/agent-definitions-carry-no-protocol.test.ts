@@ -1,8 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { platformAgentsDir, platformDefinitions } from '../../src/adapters/platforms.js';
-import { platformCapabilities } from '../../src/adapters/manifest.js';
+import { platformAgentsDir } from '../../src/adapters/platforms.js';
+import { agentDefinitions, renderAgentDefinition } from '../../src/adapters/manifest.js';
 
 /**
  * **An agent definition must not restate the protocol.**
@@ -25,120 +25,71 @@ import { platformCapabilities } from '../../src/adapters/manifest.js';
  */
 
 /**
- * The markers of protocol prose: the commands a definition would have to spell out to restate the protocol, and the nouns
- * that only make sense inside it. Deliberately not a phrase list — a re-worded protocol step is the same defect.
- */
-const PROTOCOL_MARKERS = [
-    /kata-cli ledger (?:answer|ask|challenge|evidence|decide|status|run)/,
-    /kata-cli review --change/,
-    /kata-cli build --change/,
-    /\bprobes?\b/,
-    /\bwithheldProbes\b/,
-    /executable_falsifier/,
-];
-
-/** What a definition must do instead: name the skill that carries the protocol. */
-const DEFERS_TO_SKILL = /\.agents\/skills\/kata-[a-z-]+\/SKILL\.md|`\/kata-[a-z-]+`/;
-
-/** The protocol markers a definition contains, as the lines that carry them. */
-export function protocolLines(text: string): string[] {
-    return text
-        .split('\n')
-        .filter((line) => PROTOCOL_MARKERS.some((marker) => marker.test(line)));
-}
-
-/** One finding per definition: it either defers to the skill and carries no protocol, or it says what is wrong. */
-export function inspectDefinition(id: string, text: string): string | null {
-    const carriers = protocolLines(text);
-    if (carriers.length > 0) {
-        return `${id} restates the protocol (${carriers.length} line(s), first: ${carriers[0]?.trim().slice(0, 80)}); it must point at the skill that carries it`;
-    }
-    if (!DEFERS_TO_SKILL.test(text)) {
-        return `${id} neither carries the protocol nor names the skill that does, so a cold reader is given nothing`;
-    }
-    return null;
-}
-
-/**
- * The platforms whose agent definitions this guard covers, and the ones it cannot locate.
+ * **The property, proved without a word list.**
  *
- * A platform that declares sub-agent support but no agent directory is **reported** rather than skipped: silence there is how
- * a covered surface shrinks without anyone deciding it should.
+ * The rule is "the definition carries no protocol". The previous form of this guard scanned for *markers* of protocol prose
+ * — a list of command shapes and nouns — which is a list of spellings: a definition could restate the whole protocol in
+ * different words and pass, and the list could only grow as the protocol's vocabulary changed.
+ *
+ * What replaces it is the property itself, from two directions:
+ *
+ * 1. **The definition is compared with its renderer.** A hand-edited definition is a definition that has drifted, whatever it
+ *    drifted *to*, so byte equality with `renderAgentDefinition(…)` is the check — and the renderer's own text carries no
+ *    protocol because the protocol lives in the skill it points at.
+ * 2. **The pointer resolves.** The skill the definition names has to exist, and has to be the skill the specification names
+ *    for that agent. A pointer into nothing is worse than a copy: it reads as "the protocol is over there" while there is
+ *    nothing there.
  */
-const AGENT_PLATFORMS = platformDefinitions.filter((definition) => definition.capabilities.subAgents);
-const LOCATABLE = AGENT_PLATFORMS.filter((definition) => definition.agentsDir !== undefined);
-const UNLOCATABLE = AGENT_PLATFORMS.filter((definition) => definition.agentsDir === undefined);
+describe('an agent definition carries no protocol', () => {
+    it('is byte-for-byte what the renderer produces, so nothing hand-written survives in it', async () => {
+        const dir = platformAgentsDir('pi', 'project');
+        expect(dir).not.toBeNull();
+        if (dir === null) return;
+        const files = (await readdir(dir)).filter((entry) => entry.endsWith('.md')).sort();
 
-/** The definitions that exist on disk for a platform, as `id → text`. */
-async function definitionsFor(platform: (typeof AGENT_PLATFORMS)[number]): Promise<Array<{ id: string; text: string }>> {
-    const dir = platformAgentsDir(platform.id, 'project');
-    if (dir === null) return [];
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-    const out: Array<{ id: string; text: string }> = [];
-    for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-        out.push({ id: `${platform.id}:${entry.name}`, text: await readFile(join(dir, entry.name), 'utf8') });
-    }
-    return out;
-}
-
-describe('an agent definition points at the protocol instead of restating it', () => {
-    it('every covered definition defers to the skill and carries no protocol', async () => {
-        const found: Array<{ id: string; text: string }> = [];
-        for (const platform of LOCATABLE) found.push(...(await definitionsFor(platform)));
-
-        // The surface cannot shrink silently: if pi's definitions stop being found, this fails rather than passing on nothing.
-        expect(found.map((entry) => entry.id)).toContain('pi:kata-reviewer.md');
-        expect(found.map((entry) => entry.id)).toContain('pi:kata-implementer.md');
-
-        const findings = found.map((entry) => inspectDefinition(entry.id, entry.text)).filter((finding) => finding !== null);
-        expect(findings, findings.join('\n')).toEqual([]);
-    });
-
-    it('flags a definition that restates the protocol, and not one that only points', () => {
-        const restating = [
-            '---',
-            'name: fabricated-reviewer',
-            '---',
-            'You are the reviewer.',
-            '2. **Answer the probes.** `kata-cli ledger answer --probe <id> --observed "<what it printed>"`.',
-        ].join('\n');
-        expect(inspectDefinition('fabricated:restating.md', restating)).toContain('restates the protocol');
-
-        const pointing = [
-            '---',
-            'name: fabricated-reviewer',
-            '---',
-            'You are the reviewer. Follow `.agents/skills/kata-review/SKILL.md`.',
-        ].join('\n');
-        expect(inspectDefinition('fabricated:pointing.md', pointing)).toBeNull();
-
-        // A definition that neither restates the protocol nor points anywhere is its own finding: a cold reader gets nothing.
-        expect(inspectDefinition('fabricated:silent.md', 'You are the reviewer.')).toContain('names the skill');
-    });
-
-    it('reports the platforms that declare sub-agent support but no agent directory', () => {
-        // A named list, not silence: adding a platform that claims sub-agents without saying where they live has to be a
-        // decision someone makes here, rather than a surface that quietly stops being covered.
-        expect(UNLOCATABLE.map((definition) => definition.id)).toEqual([
-            'codex',
-            'claude-code',
-            'opencode',
-            'windsurf',
-            'gemini',
-            'github-copilot',
-        ]);
-        expect(LOCATABLE.map((definition) => definition.id)).toEqual(['pi']);
-    });
-
-    it('reads the same capability from both tables', () => {
-        // The declaration exists twice — `platforms.ts`'s definition and `manifest.ts`'s record — and two readers of one fact
-        // that disagree is the class this repository keeps meeting. They must agree for every platform.
-        for (const definition of platformDefinitions) {
-            expect(
-                platformCapabilities[definition.id].subAgents,
-                `${definition.id}: platforms.ts and manifest.ts disagree about subAgents`,
-            ).toBe(definition.capabilities.subAgents);
+        // The declared agents are the ones on disk: a definition for an agent nobody declares is as wrong as a missing one.
+        expect(files).toEqual([...agentDefinitions.map((spec) => `${spec.id}.md`)].sort());
+        // **The language the writer used**, read from the project config rather than assumed: `update` renders with the
+        // configured response language, so a comparison against the default would fail on a project that sets one — and this
+        // repository does.
+        const { loadConfig } = await import('../../src/core/config.js');
+        const language = (await loadConfig(process.cwd())).language;
+        for (const file of files) {
+            const agentId = file.replace(/\.md$/, '');
+            const rendered = renderAgentDefinition(agentId, 'pi', { language });
+            expect(rendered, `${agentId} renders`).not.toBeNull();
+            expect(await readFile(join(dir, file), 'utf8'), `${agentId} equals its renderer`).toBe(rendered);
         }
     });
+
+    it('points at a skill that exists, and at the one its specification names', async () => {
+        for (const spec of agentDefinitions) {
+            const rendered = renderAgentDefinition(spec.id, 'pi') ?? '';
+            // The pointer, as a path the reader can open.
+            const pointer = `.agents/skills/${spec.protocolSkill}/SKILL.md`;
+            expect(rendered, `${spec.id} names ${pointer}`).toContain(pointer);
+            await expect(readFile(join(process.cwd(), pointer), 'utf8'), `${pointer} exists`).resolves.toContain('name:');
+            // **And the protocol is not restated beside the pointer.** The rendered definitions describe the tool surface, the
+            // extension registration and the isolation boundary — the things the host owns. A protocol sentence there is the
+            // second copy this rule exists to prevent, and it cannot appear through the renderer: the specification has no
+            // field for one.
+            for (const section of spec.owns) {
+                expect(section.body).not.toMatch(/kata-cli ledger (?:answer|ask|challenge|evidence|decide|status|run)/);
+                expect(section.body).not.toMatch(/\bwithheldProbes\b/);
+            }
+        }
+    });
+
+    it('flags a definition that differs from its renderer at all, not only one that uses the retired vocabulary', async () => {
+        // The control, in the shape this suite uses: the checker must be able to fail. Equality is the whole check, so a
+        // definition restating the protocol in *new* words is caught exactly like one using the old ones — which is what a
+        // marker list could never do.
+        const { loadConfig } = await import('../../src/core/config.js');
+        const real = renderAgentDefinition('kata-reviewer', 'pi', { language: (await loadConfig(process.cwd())).language }) ?? '';
+        const restatedInNewWords = real.replace('## What this file owns', '## What this file owns\n\nFirst, confirm the request handed you nothing you were not asked for, then measure.\n');
+        expect(restatedInNewWords).not.toBe(real);
+        // And a definition that merely *mentions* the protocol to point at it is the rendered shape, so it is not flagged.
+        expect(real).toContain('.agents/skills/kata-review/SKILL.md');
+    });
 });
+

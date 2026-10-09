@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
+import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -56,6 +56,73 @@ function emit(payload: Record<string, unknown>): void {
 function fail(payload: Record<string, unknown>): void {
     emit({ ok: false, ...payload });
     process.exitCode = 1;
+}
+
+/**
+ * Every flag the ledger family reads, and the refusal for one it does not.
+ *
+ * **An unknown flag used to be silently discarded, and the measured harm was a path set.** `--path a,b` (singular) was read
+ * by no verb, so it fell out of the parser and `freeze` fell back to the task's own declaration — the operator was told a
+ * path set had been frozen that had never been mentioned, and every identity derived from it was about different content.
+ * The same shape applies to every verb here: the parser reads the flags it knows and ignores the rest, so a typo is an
+ * instruction that silently does not happen.
+ *
+ * **What this checks, exactly.** A flag this *family* reads nowhere is refused by name before any verb runs, so nothing is
+ * written. A flag that is valid for another verb is still accepted here — a per-verb interface table would be a second
+ * parser that drifts from the first, and the class worth closing is the one that changes what a command does without saying
+ * so. `tests/unit/an-unknown-flag-is-refused.test.ts` scans this file for the flag literals it reads and fails when one is
+ * missing from this list, so adding a flag to the parser without adding it here is itself a red guard.
+ */
+export const ledgerFamilyFlags: readonly string[] = [
+    'actor',
+    'adapter',
+    'assurance',
+    'boundary',
+    'c0',
+    'change',
+    'claim',
+    'command',
+    'cost',
+    'depends-on',
+    'diversity',
+    'evidence',
+    'fails-on',
+    'falsifier',
+    'file',
+    'id',
+    'init',
+    'observed',
+    'out',
+    'paths',
+    'per-claim',
+    'probe',
+    'producer',
+    'reason',
+    'results-dir',
+    'risk-class',
+    'run-id',
+    'seed',
+    'set-file',
+    'severity',
+    'statement',
+    'tier',
+    'tokens',
+    'tool-calls',
+    'wall-ms',
+];
+
+/** Flags the entry point owns rather than the verb: they are read above this family and must pass through unrefused. */
+export const entryPointFlags: readonly string[] = ['root', 'quiet', 'json', 'help'];
+
+/** The first flag the ledger family reads nowhere, named with its spelling, or `null` when every flag is known. */
+export function unknownLedgerFlag(argv: string[]): string | null {
+    const known = new Set([...ledgerFamilyFlags, ...entryPointFlags]);
+    for (const token of argv) {
+        if (!token.startsWith('--')) continue;
+        const [name] = token.split('=');
+        if (!known.has((name as string).slice(2))) return name as string;
+    }
+    return null;
 }
 
 /**
@@ -192,6 +259,18 @@ export async function runLedgerCommand(argv: string[], options: LedgerCommandOpt
 }
 
 async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptions): Promise<void> {
+    // **Before anything is read, so a mistyped flag cannot produce a partial answer.** The refusal names the flag it did not
+    // recognize and says that nothing was written, because that is the fact an operator needs to decide what to re-run.
+    const unknown = unknownLedgerFlag(argv);
+    if (unknown) {
+        fail({
+            command: 'ledger',
+            error: `${unknown} is not a flag the ledger family reads, so it would have been silently discarded and the command would have run without it. Nothing was written. The flags ${argv[0] ?? 'status'} reads are in \`kata-cli usage\`; check the spelling and run it again.`,
+            unknownFlag: unknown,
+        });
+        return;
+    }
+
     // The family reads its own `--change`, because the entry point's positional guesser cannot tell a subcommand from an id:
     // `ledger status --change x` would otherwise read `status` as the change id, which it did until this line existed.
     const changeId = argValue(argv, '--change') ?? options.changeId;
@@ -446,6 +525,31 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             // the same claim id and evidence, and stamps a reopen so the decision knows the statement changed.
             const id = argValue(argv, '--id');
             const statement = argValue(argv, '--statement');
+            const restatedBoundary = argValue(argv, '--boundary');
+            if (restatedBoundary !== undefined && restatedBoundary.trim() === '') {
+                fail({ command: 'ledger claim restate', error: '--boundary must state the domain this claim closes over; omit the flag to leave the declaration as it is' });
+                return;
+            }
+            // **A boundary may be refined without restating the claim.** The statement is part of the question's identity, so
+            // editing it moves the subject and invalidates every reading taken against the same question; narrowing the
+            // declaration is the opposite — it is how the question is made falsifiable, and it must not cost a re-freeze.
+            if (restatedBoundary !== undefined && statement === undefined) {
+                const target = ledger.claims.find((claim) => claim.id === id);
+                if (id === undefined || target === undefined) {
+                    fail({ command: 'ledger claim restate', error: '--id must name a claim in this ledger' });
+                    return;
+                }
+                await restateClaim(options.root, changeId, id, target.statement, restatedBoundary.trim());
+                emit({
+                    ok: true,
+                    command: 'ledger claim restate',
+                    claim: id,
+                    changed: true,
+                    boundary: restatedBoundary.trim(),
+                    note: 'the declared boundary was refined; it is not part of the question, so no reading is invalidated and no re-freeze is needed',
+                });
+                return;
+            }
             if (id === undefined || statement === undefined) {
                 fail({ command: 'ledger claim restate', error: '--id and --statement are both required' });
                 return;
@@ -459,7 +563,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 emit({ ok: true, command: 'ledger claim restate', claim: id, changed: false });
                 return;
             }
-            await restateClaim(options.root, changeId, id, statement);
+            await restateClaim(options.root, changeId, id, statement, restatedBoundary?.trim());
             emit({
                 ok: true,
                 command: 'ledger claim restate',
@@ -492,6 +596,14 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 .split(',')
                 .map((entry) => entry.trim())
                 .filter((entry) => entry !== '') as Claim['dependsOn'];
+            // **A declaration that says nothing is not a declaration.** The flag is the way an author states the edge their
+            // claim closes over, and an empty one would put a boundary on the claim that closes over nothing — which reads as
+            // "closed" while deciding nothing.
+            const boundary = argValue(argv, '--boundary');
+            if (boundary !== undefined && boundary.trim() === '') {
+                fail({ command: 'ledger claim add', error: '--boundary must state the domain this claim closes over; omit the flag instead of passing an empty one' });
+                return;
+            }
             const evidenceRaw = argValue(argv, '--evidence') ?? '';
             const claim: Claim = {
                 id,
@@ -505,6 +617,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 // Left empty on purpose: the store stamps `at`, because the store is the only writer that knows the time.
                 at: '',
                 reopens: 0,
+                ...(boundary === undefined ? {} : { boundary: boundary.trim() }),
             };
             await appendClaim(options.root, changeId, claim);
             // **A writer that can move the question says so, like the others.** `movedQuestionFields` was wired into
@@ -526,23 +639,30 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             fail({ command: 'ledger usage', error: 'usage takes one action: set' });
             return;
         }
-        const numeric = (flag: string): number | undefined => {
+        // **Every value is read before anything is refused, and a refusal returns.** `fail` reports and sets the exit code
+        // but does not stop the caller, so this used to print the refusal and then carry on with the undefined value: a
+        // single command emitted two contradictory documents (`ok: false` naming the bad value, then `ok: true`), wrote
+        // `usage.json` anyway, and exited 1. Measured with `--tokens -5 --wall-ms 10`. The reading is a value, the refusal
+        // is a return, and nothing is written unless every value parsed.
+        const readNumber = (flag: string): { value?: number; error?: string } => {
             const raw = argValue(argv, flag);
-            if (raw === undefined) return undefined;
+            if (raw === undefined) return {};
             const value = Number(raw);
-            if (!Number.isFinite(value) || value < 0) {
-                fail({ command: 'ledger usage set', error: `${flag} must be a non-negative number` });
-                return undefined;
-            }
-            return value;
+            if (!Number.isFinite(value) || value < 0) return { error: `${flag} must be a non-negative number` };
+            return { value };
         };
-        const tokens = numeric('--tokens');
-        const wallMs = numeric('--wall-ms');
-        const toolCalls = numeric('--tool-calls');
+        const tokens = readNumber('--tokens');
+        const wallMs = readNumber('--wall-ms');
+        const toolCalls = readNumber('--tool-calls');
+        const invalid = [tokens, wallMs, toolCalls].find((reading) => reading.error !== undefined);
+        if (invalid) {
+            fail({ command: 'ledger usage set', error: invalid.error });
+            return;
+        }
         const usage = {
-            ...(tokens === undefined ? {} : { tokens }),
-            ...(wallMs === undefined ? {} : { wallMs }),
-            ...(toolCalls === undefined ? {} : { toolCalls }),
+            ...(tokens.value === undefined ? {} : { tokens: tokens.value }),
+            ...(wallMs.value === undefined ? {} : { wallMs: wallMs.value }),
+            ...(toolCalls.value === undefined ? {} : { toolCalls: toolCalls.value }),
         };
         if (Object.keys(usage).length === 0) {
             fail({ command: 'ledger usage set', error: 'nothing to record: pass --tokens, --wall-ms or --tool-calls' });
@@ -578,6 +698,22 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 fail({ command: 'ledger evidence add', errors: read.errors });
                 return;
             }
+            // **The whole submission is checked before any of it is written.** A submission is written claim-first and
+            // evidence-second, so an item refused halfway through left the claims on disk: a refusal that had already
+            // changed the ledger — measured, and the next `evidence verify` then refused the moved question rather than the
+            // item. The comparison is the writer's own (`evidenceWriteConflict`), asked here against the set already read,
+            // plus the items this same submission carries, which the writer would otherwise meet one at a time.
+            const conflicts = [...read.submission.evidence];
+            for (const [index, item] of read.submission.evidence.entries()) {
+                const priorConflicts = conflicts.slice(0, index).filter((entry) => entry.id === item.id && JSON.stringify(entry) !== JSON.stringify(item));
+                const why = priorConflicts.length > 0
+                    ? `${item.id} appears twice in this submission with different content; a submission is one set of facts, so the same id cannot carry two.`
+                    : evidenceWriteConflict(ledger.evidence, item);
+                if (why) {
+                    fail({ command: 'ledger evidence add', error: why, rejectedItem: item.id });
+                    return;
+                }
+            }
             for (const claim of read.submission.claims) await appendClaim(options.root, changeId, claim);
             for (const item of read.submission.evidence) {
                 const added = await appendEvidence(options.root, changeId, item);
@@ -603,11 +739,20 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             // every reading is refused until the subject is re-frozen. Saying so here is the difference between an operator
             // learning it now and learning it from a `decide` that cannot be satisfied. One derivation for both paths:
             // this one and the refusal above, so the two cannot report the move differently.
+            // **An identical re-add is a no-op, and the no-op says so.** Evidence is write-once, so re-adding an id that
+            // already carries the same content writes nothing — which used to be reported only inside each item's
+            // `written: false` while the top-level answer said `ok: true`. An author re-aiming a falsifier therefore got a
+            // success and kept the old mutation site and the old verdict; the field below names the ids that did not land,
+            // and the note names the command that rewrites a set.
+            const unchanged = read.submission.evidence
+                .filter((item) => ledger.evidence.some((entry) => entry.id === item.id && JSON.stringify(entry) === JSON.stringify(item)))
+                .map((item) => item.id);
             emit({
                 ok: true,
                 command: 'ledger evidence add',
                 claims: read.submission.claims.length,
                 evidence: read.submission.evidence.length,
+                ...(unchanged.length > 0 ? { unchanged, unchangedNote: 'these ids were already recorded with this exact content, so nothing was written for them; `ledger evidence replace --reason <why>` is the command that rewrites a recorded item' } : {}),
                 note: 'claims and evidence are written as they arrive; there is no submission document to lose',
             });
             return;
@@ -624,8 +769,30 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 fail({ command: 'ledger evidence replace', errors: read.errors });
                 return;
             }
-            const replaced = await replaceEvidence(options.root, changeId, read.submission.evidence, reason.trim());
-            emit({ ok: true, command: 'ledger evidence replace', reason: reason.trim(), ...replaced });
+            // **The submission's claims are the author's rebinding, and they are handed over rather than dropped.** A
+            // submission requires a `claims` array; this verb used only its evidence half, so an author who wrote the new
+            // binding beside the new items had it discarded while the command reported success. Passing it through means the
+            // rebinding and the set move together, and the refusal for a citation that would be orphaned lives in one place
+            // (the store), so the CLI and the store cannot disagree about what resolves.
+            let replaced: Awaited<ReturnType<typeof replaceEvidence>>;
+            try {
+                replaced = await replaceEvidence(options.root, changeId, read.submission.evidence, reason.trim(), { claims: read.submission.claims });
+            } catch (error) {
+                // The store enforces the rule; this reports it in the CLI's own vocabulary. Every other refusal in this
+                // family is a structured `ok: false` with a non-zero exit, and a thrown error escapes as an exception that
+                // a script cannot read.
+                fail({ command: 'ledger evidence replace', error: (error as Error).message });
+                return;
+            }
+            emit({
+                ok: true,
+                command: 'ledger evidence replace',
+                reason: reason.trim(),
+                ...replaced,
+                // The store this report is about, named: an operator auditing a claim needs to know which file lost the
+                // reading, not only that a count went down.
+                verdictsFile: join('review', 'verdicts.json'),
+            });
             return;
         }
 

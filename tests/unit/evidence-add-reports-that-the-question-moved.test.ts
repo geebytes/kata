@@ -120,17 +120,19 @@ describe('evidence add reports a question it moved', () => {
         expect((await ledger(['evidence', 'verify'])).ok).toBe(true);
     });
 
-    it('still reports the move when a later write in the same submission is refused', async () => {
-        // **A refusal must not hide the change the command already made.** The claims are written before the evidence, so
-        // a submission whose evidence write is refused has *still* moved the question — and reporting only the evidence
-        // conflict sent the operator to fix that while the ledger stayed in the state where no reading counts. Measured by
-        // an independent round: `evidence add` returned ok=false with no `questionMoved`, and the next `evidence verify`
-        // refused with the moved question.
+    it('refuses a submission whose later write would be refused before writing anything at all', async () => {
+        // **What this case pinned changed, and the change is the point.** It used to assert that the refusal *reported* the
+        // move — because the claims were written before the evidence, so a refused submission had already moved the
+        // question, and the report was the honest half of a write that should not have happened. The write no longer
+        // happens: the whole submission is checked against the set the writer would compare against before anything lands,
+        // so a refusal leaves no claim, no move and nothing to report. The load-bearing half of the old contract — that a
+        // refusal cannot *hide* a change the command made — is preserved by the assertion below it, which is the strongest
+        // form of it: there is no change left to hide.
         const frozen = (await readLedger(root, changeId)).subject?.revision ?? '';
         await submit('first', { claims: [], evidence: [falsifier] });
         expect((await ledger(['evidence', 'add', '--file', join(root, 'first.json')])).ok).toBe(true);
 
-        // The same evidence id again, with different content: write-once refuses it — after the claim below is written.
+        // The same evidence id again, with different content: write-once refuses it, and the claim beside it stays unwritten.
         const file = await submit('conflicting', {
             claims: [declaredClaim('C2')],
             evidence: [{ ...falsifier, command: 'grep -q "holds = true" src/a.ts # a different check' }],
@@ -138,10 +140,11 @@ describe('evidence add reports a question it moved', () => {
         const result = await ledger(['evidence', 'add', '--file', file]);
 
         expect(result.ok).toBe(false);
-        const declared = (await readLedger(root, changeId)).subjectAsDeclared?.revision ?? '';
-        expect(declared).not.toBe(frozen);
-        expect(result.questionMoved).toMatchObject({ frozen, declared });
-        expect(String(result.remedy)).toContain(`kata-cli ledger freeze --change ${changeId}`);
+        expect(String(result.error)).toContain('write-once');
+        const after = await readLedger(root, changeId);
+        expect(after.subjectAsDeclared?.revision ?? frozen).toBe(frozen);
+        expect(after.claims.some((claim) => claim.id === 'C2')).toBe(false);
+        expect(result.questionMoved).toBeUndefined();
     });
 
     it('reports it from `claim add`, which is the other way a claim arrives', async () => {

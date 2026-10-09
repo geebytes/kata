@@ -47,6 +47,11 @@
       "type": "string",
       "minLength": 1
     },
+    "reviewedRevisionId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The revision this round actually reviewed, when that is not the revision it is recorded against. The binding fields describe the content the record is bound to; this names the revision the round was opened against, so a round recorded after the content moved can be told apart from one that answered the content in hand. Absent on records written before the field existed, which is history that cannot claim either."
+    },
     "subjectRevision": {
       "type": "string",
       "minLength": 1,

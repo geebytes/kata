@@ -181,6 +181,23 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
     ...(input.upstreamCoverage ? { upstreamCoverage: input.upstreamCoverage } : {}),
   };
 
+  // **The record this writer is about to create must be one its own reader accepts.** Measured on the bootstrap path: a
+  // bootstrap whose `upstreamCoverage.sources[0]` lacked `ref` was accepted here, and the invalid task.json it wrote was
+  // refused by the *next* command — `design` — while `status` and `orient` kept working, because they read the file
+  // without the schema. A writer that can persist a record its reader rejects is the defect whatever the input's origin;
+  // the field hint in the message now names the failing object's fields, so the bootstrap author is told what to change.
+  //
+  // **And it is checked before anything exists on disk, because the refusal says nothing was written.** Measured: the
+  // directory was created first and validated second, so a bootstrap whose record failed its own schema left an empty
+  // `.kata/tasks/<id>` behind while the message claimed nothing was written — and the next `open` was refused with "Task
+  // <id> already exists; use kata status --change <id> to resume it", a remedy that could not run because there was no
+  // state record to resume. A refusal that creates state, misdescribes it, and names an unexecutable remedy is three
+  // defects in one message; validating first removes all three.
+  try {
+    validate('task', task);
+  } catch (error) {
+    throw new Error(`refusing to create task ${task.id}: the record would not match its schema, so every later read would fail. ${(error as Error).message} Nothing was written.`);
+  }
   const taskDirectory = taskDir(root, task.id);
   await mkdir(tasksDir(root), { recursive: true });
   try {
@@ -190,16 +207,6 @@ export async function createTask(input: CreateTaskInput): Promise<TaskRecord> {
       throw new Error(`Task ${task.id} already exists; use kata status --change ${task.id} to resume it instead of kata open.`);
     }
     throw error;
-  }
-  // **The record this writer is about to create must be one its own reader accepts.** Measured on the bootstrap path: a
-  // bootstrap whose `upstreamCoverage.sources[0]` lacked `ref` was accepted here, and the invalid task.json it wrote was
-  // refused by the *next* command — `design` — while `status` and `orient` kept working, because they read the file
-  // without the schema. A writer that can persist a record its reader rejects is the defect whatever the input's origin;
-  // the field hint in the message now names the failing object's fields, so the bootstrap author is told what to change.
-  try {
-    validate('task', task);
-  } catch (error) {
-    throw new Error(`refusing to create task ${task.id}: the record would not match its schema, so every later read would fail. ${(error as Error).message} Nothing was written.`);
   }
   await writeFile(join(taskDirectory, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 

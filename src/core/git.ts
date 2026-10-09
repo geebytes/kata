@@ -93,6 +93,58 @@ export function changedGitPaths(root: string): string[] {
     return [...new Set(paths)];
 }
 
+/**
+ * The paths this branch changed since it diverged from the repository's default branch.
+ *
+ * **What closes the committed-work gap.** `git status` reports uncommitted work only, so a change already committed *outside*
+ * the declaration was invisible to the seal's undeclared-content reading — measured, and stated as a boundary rather than
+ * claimed as coverage. The missing reading is "what has this branch done since it started", and that has a standard anchor:
+ * the merge base with the default branch. The diff against it names every committed path, whether or not the working tree
+ * is clean.
+ *
+ * Returns `null` when the anchor cannot be determined (no default branch, no history, not a git repository). **Not an empty
+ * list**: "nothing was committed outside the declaration" and "the reading was not possible" are different facts, and a
+ * caller that cannot tell them apart reports a pass it never established.
+ */
+export function changedPathsSinceBranchPoint(root: string, options: { since?: string } = {}): string[] | null {
+    // **`since` is the narrower anchor, and the one a caller with a clock should use.** The branch point answers "everything
+    // this branch did", which on a shared branch includes work another change committed before this one was opened — reading
+    // that as *this* change's undeclared content would refuse a legitimate seal. A task knows when it opened, so the commit
+    // log since then answers "what this change committed", which is the question.
+    if (options.since !== undefined) {
+        // **The anchor is validated here, because `git` silently ignores one it cannot parse.** Measured: `--since` with an
+        // out-of-range or unparseable value lists every commit, so a caller passing a bad timestamp would be told there is no
+        // committed work outside its declaration — the fail-open direction, over an input the helper never checked. An
+        // unusable anchor is `null` (unavailable, the caller says so) rather than an empty list (a pass nobody established),
+        // and a usable one is normalized to the ISO form `git` parses rather than passed through as it arrived.
+        const parsed = Date.parse(options.since);
+        // An anchor in the future is refused for the same measured reason: `git --since=<future>` lists every commit rather
+        // than none, so "since a time that has not happened" would come back as "everything is after it".
+        if (Number.isNaN(parsed) || parsed > Date.now()) return null;
+        const log = runGit(root, ['log', `--since=${new Date(parsed).toISOString()}`, '--name-only', '--pretty=format:']);
+        if (!log.ok) return null;
+        return [...new Set(log.stdout.split('\n').map((line) => line.trim().replaceAll('\\', '/')).filter(Boolean))];
+    }
+    const base = mergeBaseWithDefaultBranch(root);
+    if (base === null) return null;
+    const result = runGit(root, ['diff', '--name-only', `${base}..HEAD`]);
+    if (!result.ok) return null;
+    return [...new Set(result.stdout.split('\n').map((line) => line.trim().replaceAll('\\', '/')).filter(Boolean))];
+}
+
+/** The commit this branch diverged from, or `null` when there is no default branch to compare against. */
+function mergeBaseWithDefaultBranch(root: string): string | null {
+    // Both conventional names, because which one exists is the repository's business and hard-coding one would silently
+    // disable the reading in half of them. `origin/HEAD` is consulted first because it is the remote's own answer.
+    const head = readGitValue(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+    const candidates = [head, 'main', 'master'].filter((name): name is string => typeof name === 'string' && name.length > 0);
+    for (const candidate of candidates) {
+        const base = readGitValue(root, ['merge-base', 'HEAD', candidate]);
+        if (base !== null && base.length > 0) return base;
+    }
+    return null;
+}
+
 export interface GitWorktree {
     path: string;
     head: string | null;

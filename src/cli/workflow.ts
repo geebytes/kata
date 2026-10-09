@@ -72,7 +72,7 @@ export async function runWorkflowCommand(command: KataCommand, change: string, r
     // deadlock, immediately after the re-entry itself was fixed: verify → approve → review --confirm-host-model worked, and
     // the round's findings could not be written down. The discriminator is what the invocation *does*, not the phase it
     // runs in: the invocation that opens the phase crosses the boundary, the one that closes it does not.
-    const boundary = boundaryForCommand(command, inputPhase, { recording: resultFileRequested(argv) });
+    const boundary = boundaryForCommand(command, inputPhase, { recording: recordsAConclusion(argv) });
     if (boundary) await requireUserChoiceGate({ root, taskId: change, boundary });
     // hotfix/tweak and Git-Flow preparation can create or inspect an intake task
     // before an implementer handoff exists. They do not mutate an established
@@ -449,6 +449,23 @@ export function reviewResultFileArg(argv: string[]): string | undefined {
 /** True when the invocation asked for result recording at all, however malformed the value is — either spelling. */
 export function resultFileRequested(argv: string[]): boolean {
     return flagPresent(argv, '--result-file');
+}
+
+/**
+ * Whether this invocation is *finishing* work inside a boundary the session already crossed.
+ *
+ * **The discriminator is what the invocation does, and it was read off one flag name.** `--result-file` was the only
+ * recognised way to record an outcome, so `review --approve --review-evidence "<conclusion>"` — the other way a session
+ * writes its conclusion down, and the one the ladder itself prints — was treated as *opening* the boundary and demanded a
+ * gate the opening step had already consumed. Measured: `review --approve` reported `review_gate requires an explicit user
+ * choice` and the only way past was to re-run `verify` to rebuild the gate, paying a whole verification per close-out.
+ *
+ * An approval is a conclusion only when it carries the evidence it was based on: `--approve` with no `--review-evidence`
+ * still asks for the gate, as does the invocation that opens the phase.
+ */
+export function recordsAConclusion(argv: string[]): boolean {
+    if (resultFileRequested(argv)) return true;
+    return flagPresent(argv, '--approve') && Boolean(reviewEvidenceArg(argv)?.trim());
 }
 
 /**

@@ -44,8 +44,10 @@
         "blocking",
         "major",
         "minor",
+        "note",
         "nit"
-      ]
+      ],
+      "description": "The severity read vocabulary (see READABLE_SEVERITIES): a writer may only mint blocking|major|minor|note, and `nit` stays readable because records exist that hold it."
     },
     "dependsOn": {
       "type": "array",
@@ -99,6 +101,11 @@
     "reopens": {
       "type": "integer",
       "minimum": 0
+    },
+    "boundary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The judged domain this claim closes over, when it declares one. A negative-classifier claim ('no shape of this kind') is falsifiable only against a stated edge, so the edge belongs on the claim rather than in prose: a finding records whether it landed inside this declaration (`insideDeclaredBoundary`). Absent means no boundary was declared, which is not the same as declaring an empty one. Not part of the question's identity."
     }
   }
 }

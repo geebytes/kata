@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { isLocalMachineryDirectory, isNonSourceDirectory } from '../core/repository-identity.js';
 
 /**
  * The three mechanical checks, as one instrument.
@@ -41,7 +42,22 @@ export class WiringInstrumentError extends Error {
     }
 }
 
-const SKIP = new Set(['node_modules', '.git', 'dist', 'tmp', '.kata', 'coverage']);
+/**
+ * **What a walk here does not descend into, and what a copy must not carry.**
+ *
+ * Two different questions, and this file used to answer both with one hand-written list. The walk reads *source*, so it
+ * asks the identity policy (`isNonSourceDirectory`, which is derived from `ignoredDirectoryNames` rather than restating
+ * it). The scratch copy answers a cost question — it must not carry this machine's own state — so it additionally skips
+ * the local machinery. Keeping them apart is what lets the policy's own names be honoured here without the copy suddenly
+ * dragging 150 MB of worktrees along.
+ */
+function skipInWalk(name: string): boolean {
+    return isNonSourceDirectory(name);
+}
+
+function skipInCopy(name: string): boolean {
+    return isNonSourceDirectory(name) || isLocalMachineryDirectory(name);
+}
 
 /**
  * Source with comments removed — because a mention in a comment is not a use.
@@ -72,7 +88,7 @@ async function walkFiles(directory: string, root: string, out: string[] = []): P
         return out;
     }
     for (const entry of entries) {
-        if (SKIP.has(entry)) continue;
+        if (skipInWalk(entry)) continue;
         const path = join(directory, entry);
         const info = await stat(path).catch(() => null);
         if (!info) continue;
@@ -452,7 +468,7 @@ async function copyForScratch(root: string, scratch: string): Promise<void> {
     await mkdir(scratch, { recursive: true });
     const scratchFromRoot = relative(root, scratch);
     for (const entry of await readdir(root)) {
-        if (SKIP.has(entry)) continue;
+        if (skipInCopy(entry)) continue;
         // The scratch directory may live inside the tree being copied — `tmp/` is skipped already, but a caller may point
         // it anywhere, and copying a directory into itself fails with EINVAL rather than doing something surprising.
         if (scratchFromRoot === entry || scratchFromRoot.startsWith(`${entry}/`) || scratchFromRoot.startsWith(`${entry}\\`)) continue;
