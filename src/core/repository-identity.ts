@@ -1,7 +1,7 @@
 import { llmwikiDirName } from './layout.js';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { createContentHasher } from './hash.js';
 
 /**
@@ -237,6 +237,74 @@ export async function walkRepositoryFiles(root: string, options: WalkOptions = {
     const files: RepositoryFile[] = [];
     for await (const file of walkRepositoryEntries(root, options)) files.push(file);
     return files;
+}
+
+/**
+ * The repository-relative form of a set of declarations, canonicalised.
+ *
+ * **One derivation, because two were measured to disagree.** The seal canonicalised its owned paths and the ledger did not,
+ * so `./src/pkg` was `src/pkg` for the revision and `./src/pkg` for the ledger's subject — and the ledger then rebuilt its
+ * keys by slicing the raw declaration, which landed mid-name (`./src/pkg/sted/deep.ts` for `src/pkg/nested/deep.ts`) and
+ * collapsed distinct files onto one key, so editing a source file left the frozen subject byte-identical.
+ *
+ * Throws on a declaration that resolves outside the repository, which is the seal's rule and now the ledger's too.
+ */
+export function normalizeDeclaredPaths(root: string, declared: readonly string[]): string[] {
+    return [...new Set(declared.map((path) => {
+        const normalized = relative(root, resolve(root, path)).replaceAll('\\', '/');
+        if (!normalized || normalized === '..' || normalized.startsWith('../')) {
+            throw new Error(`Task-owned path must be inside the repository: ${path}`);
+        }
+        return normalized;
+    }))].sort();
+}
+
+/**
+ * What a set of declarations covers, in the walk's own coordinates.
+ *
+ * The caller decides what to do about a declaration it cannot read — the seal records a sentinel, the ledger refuses by name
+ * — but *which paths a declaration covers* is one answer, and it is the walk's: a directory expands to the paths
+ * `listRepositoryFiles` returns for it (the repository's own git declaration included, no depth cap, repository
+ * coordinates), and a file is itself.
+ */
+export async function declaredContentPaths(
+    root: string,
+    declared: readonly string[],
+): Promise<{ paths: string[]; unreadable: string[]; neverContent: string[] }> {
+    const paths = new Set<string>();
+    const unreadable: string[] = [];
+    const neverContent: string[] = [];
+    for (const declaration of normalizeDeclaredPaths(root, declared)) {
+        let entry: Awaited<ReturnType<typeof stat>> | null = null;
+        try {
+            entry = await stat(join(root, declaration));
+        } catch {
+            entry = null;
+        }
+        if (entry?.isDirectory()) {
+            // A *directory* whose root is never content is not an expansion question. Measured: declaring a git-ignored build
+            // directory recorded its output as content, so a rebuild moved the frozen subject — the defect this whole change
+            // is about, for a declaration root instead of a file inside one. The walk only asks this of entries it stands on,
+            // so the root has to be asked here. A *file* is asked nothing: declaring a file is a statement about that file,
+            // and a deliverable under `dist/` is still declarable by name.
+            if (isIgnoredRepositoryPath(declaration) || await isDeclaredIgnored(root, declaration)) {
+                neverContent.push(declaration);
+                continue;
+            }
+            for (const path of await listRepositoryFiles(root, { under: declaration })) paths.add(path);
+        } else if (entry?.isFile()) {
+            paths.add(declaration);
+        } else {
+            unreadable.push(declaration);
+        }
+    }
+    return { paths: [...paths].sort((left, right) => left.localeCompare(right)), unreadable, neverContent };
+}
+
+/** Whether the repository itself declares this path ignored, asked the same way the walk asks it. */
+async function isDeclaredIgnored(root: string, path: string): Promise<boolean> {
+    const ignored = await gitIgnoredPaths(root);
+    return ignored.has(path) || ignored.has(`${path}/`) || ignored.has(path.replace(/\/+$/, ''));
 }
 
 /** The identity of the current repository contents: a hash over the paths and contents of what the walk returned. */

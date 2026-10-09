@@ -1,7 +1,7 @@
 import { readTask } from '../core/task.js';
 import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { isIgnoredRepositoryPath, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
+import { isIgnoredRepositoryPath, normalizeDeclaredPaths, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -682,12 +682,11 @@ function pathsOverlap(left: string, right: string): boolean {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
-export function normalizeOwnedPaths(root: string, paths: string[]): string[] {
-  return [...new Set(paths.map((path) => {
-    const normalized = relative(root, resolve(root, path)).replaceAll('\\', '/');
-    if (!normalized || normalized === '..' || normalized.startsWith('../')) {
-      throw new Error(`Task-owned path must be inside the repository: ${path}`);
-    }
-    return normalized;
-  }))].sort();
-}
+/**
+ * The seal's name for the shared canonicalisation.
+ *
+ * The body moved to `core/repository-identity.ts` when an independent round measured what two copies cost: the ledger did
+ * not canonicalise at all, so `./src/pkg` was two different paths for the revision and the subject. Kept as a named export
+ * because every caller in this module reads better with it.
+ */
+export const normalizeOwnedPaths = normalizeDeclaredPaths;

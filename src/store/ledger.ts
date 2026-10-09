@@ -11,7 +11,7 @@ import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
-import { listRepositoryFiles } from '../core/repository-identity.js';
+import { declaredContentPaths } from '../core/repository-identity.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -1131,23 +1131,36 @@ export async function freezeSubject(input: {
         // **A declared directory is a set of files, not one unreadable path.** Task declarations name directories
         // (`openspec/changes/<id>` is one), and reading such a path as a file reported it as unreadable — which is how a
         // migration stopped on a declaration that was entirely correct. The walk skips only what is never content.
-        if (stats.isDirectory()) {
-            // **The identity's own enumeration, not a second one.** Asking `isIgnoredRepositoryPath` was still a second
-            // walk: the identity's filters a third way the predicate does not (`gitIgnoredPaths`, the repository's own
-            // declaration), it has no depth cap, and it speaks in repository coordinates while this one built keys from the
-            // raw declaration. Measured by an independent round: a git-ignored file under a declared directory was recorded
-            // by the ledger and excluded by identity — so editing it moved the frozen subject, and `ledger run`, which sits
-            // between `verify` and `review`, refused with "content that has moved": the reported defect, in another form.
-            // A file ten levels deep was invisible for the same reason (the cap was eight). The declared path is normalised
-            // once, and the key is built from that, so `src/pkg/` no longer records `src/pkg//mod.ts`.
-            const declared = path.replace(/\/+$/, '');
-            for (const file of await listRepositoryFiles(input.root, { under: declared })) {
-                const local = declared === '' ? file : file.slice(declared.length + 1);
-                const key = `${declared}/${local}`;
+        if (stats.isDirectory() || stats.isFile()) {
+            // **The declaration's own enumeration, shared with the revision identity.** Not a walk of this file's own and
+            // not a key rebuilt by slicing: `declaredContentPaths` normalises the declaration the way the seal does, expands
+            // a directory through the identity's walk (the repository's git declaration included, no depth cap, repository
+            // coordinates) and returns the paths the walk names. Measured, twice, by independent rounds: a second key
+            // construction gave `./src/pkg/sted/deep.ts` for `src/pkg/nested/deep.ts`, collapsed four distinct files onto two
+            // keys — so editing a source file left the frozen subject byte-identical — and left a git-ignored declaration
+            // root's build output recorded as content.
+            let expansion: Awaited<ReturnType<typeof declaredContentPaths>>;
+            try {
+                expansion = await declaredContentPaths(input.root, [path]);
+            } catch (error) {
+                // **A refusal, not a crash.** The canonicalisation refuses a declaration that resolves outside the
+                // repository, and that refusal has to arrive as a named state the operator can act on rather than as a
+                // thrown error from deep inside a freeze.
+                return { ok: false, error: (error as Error).message, unreadable: [] };
+            }
+            if (expansion.neverContent.length > 0) {
+                return {
+                    ok: false,
+                    error: `this declaration is itself never content, so it covers nothing to freeze: ${expansion.neverContent.join(', ')} — a path the repository does not count as content cannot be frozen as one; declare the files you mean, or a directory that holds them`,
+                    unreadable: [],
+                };
+            }
+            unreadable.push(...expansion.unreadable);
+            for (const covered of expansion.paths) {
                 try {
-                    digests[key] = hashContent(await readFile(join(input.root, file)));
+                    digests[covered] = hashContent(await readFile(join(input.root, covered)));
                 } catch {
-                    unreadable.push(key);
+                    unreadable.push(covered);
                 }
             }
             continue;
@@ -1158,7 +1171,7 @@ export async function freezeSubject(input: {
             unreadable.push(path);
         }
     }
-    if (input.paths.length > 0 && Object.keys(digests).length === 0) {
+    if (input.paths.length > 0 && unreadable.length === 0 && Object.keys(digests).length === 0) {
         // **A declaration that covers nothing is a declaration problem, not a schema problem.** Measured: declaring `dist`
         // expanded to no paths and the operator got `$.pathDigests must NOT have fewer than 1 properties` — a message about
         // the record, naming nothing about the declaration that produced it.

@@ -100,6 +100,40 @@ was still two consumers: a predicate is not an enumeration. If a second place mu
 first — copying its filter, or asking the part of it that looks like a rule, leaves the rest of the first one's behaviour
 unshared. The guard has to call the same thing too, or it certifies agreement with a proxy.
 
+## The second independent round: the walk was shared, the coordinates were not
+
+Round 2 (`adversarial`, `revision-3ac1409491ff8292`) returned **fail** with four majors, and the first two are one finding: the
+expansion called `listRepositoryFiles` but then **rebuilt the keys itself** — `file.slice(declared.length + 1)` on the raw
+declaration — instead of using the path the walk returned, and it never canonicalised the declaration the way the seal does
+(`normalizeOwnedPaths`, which `revision.ts:94` calls).
+
+| input | measured |
+|---|---|
+| `./src/pkg` | keys `./src/pkg/d.ts`, and `./src/pkg/sted/deep.ts` for `src/pkg/nested/deep.ts` — the slice landed mid-name |
+| `./src/pkg` with `{a,b,aa,ab}.ts` | four files collapsed onto **two** keys, so editing a source file left the frozen subject byte-identical |
+| `src/pkg/build` (a git-ignored directory as the declaration root) | its build output was recorded, so a rebuild moved the subject — the reported defect, for a root instead of a file inside one |
+| `.` / `..` | accepted and walked outside the repository (`../oob.txt` recorded) where the seal refuses them |
+| a symlinked declared directory | traversed by the ledger, dropped by the identity walk from the root |
+
+The round also found something about this change's **own record**: `ledger evidence replace` replaces the evidence set but
+leaves the claims' `evidenceIds` alone, so the bindings I passed in the same document were ignored — C3 cited the
+two-enumerations falsifier, C4 cited the sampling one, and the real-move falsifier was bound to no claim at all, so C4 would
+have stayed certified even if its own selector were deleted. That is repaired here (the bindings are now each claim's own
+selector) and the tool behaviour is a successor finding.
+
+**The repair, third time and at the class.** The enumeration and the canonicalisation moved to
+`core/repository-identity.ts` — `normalizeDeclaredPaths` (the seal's rule, now literally the same function) and
+`declaredContentPaths` (what a declaration covers, in the walk's own coordinates, with three named outcomes: paths,
+unreadable, and a **root that is never content**). The ledger records the paths that function returns, so there is no key
+construction left to get wrong; a declaration root that is never content is refused by name rather than expanded; `..` is
+refused with the seal's message; and the guard now compares the frozen subject with **`computePathDigests`** — the seal's own
+expansion — because that is the derivation that must agree, rather than a third opinion.
+
+**What is deliberately still different, stated so it can be argued with.** The seal records `[missing]` and `[unsupported]`
+sentinels for a declaration it cannot read; the ledger refuses such a declaration by name. That difference is intentional and
+pre-existing (a sentinel is indistinguishable from a deleted file at the ledger's readers), and it is the one place where the
+two expansions answer differently.
+
 ## Acceptance criteria
 
 | AC | What it asserts | Selector |

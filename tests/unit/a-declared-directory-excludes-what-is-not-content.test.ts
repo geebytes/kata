@@ -124,8 +124,23 @@ describe('a declared directory excludes what is not content', () => {
         const result = await ledger(['freeze']);
 
         expect(result.ok).toBe(false);
-        expect(String(result.error)).toContain('hold no content to freeze');
+        expect(String(result.error)).toContain('covers nothing to freeze');
         expect(String(result.error)).toContain('src/pkg/dist');
+    });
+
+    it('says a directory that holds nothing holds nothing', async () => {
+        // The other way a declaration covers no content: the directory exists and is not ignored, and simply has no files.
+        // Measured before this guard existed: the freeze wrote a subject with no paths and the operator was told
+        // `$.pathDigests must NOT have fewer than 1 properties` — a message about the record, naming nothing about the
+        // declaration that produced it.
+        await mkdir(join(root, 'src', 'pkg', 'empty'), { recursive: true });
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/empty'] });
+
+        const result = await ledger(['freeze']);
+
+        expect(result.ok).toBe(false);
+        expect(String(result.error)).toContain('hold no content to freeze');
+        expect(String(result.error)).toContain('src/pkg/empty');
     });
 
     it('still records a file that is declared explicitly, even under a build directory', async () => {

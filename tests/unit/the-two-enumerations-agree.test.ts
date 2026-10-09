@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { isIgnoredRepositoryPath, listRepositoryFiles } from '../../src/core/repository-identity.js';
+import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
@@ -104,6 +105,48 @@ describe('the two enumerations agree on what is content', () => {
         const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
 
         expect(recorded).toEqual(identity);
+    });
+
+    it('canonicalises the declaration the way the seal does, so a non-canonical one records the same paths', async () => {
+        // **The third round's first major.** The ledger rebuilt its keys by slicing the raw declaration, so `./src/pkg`
+        // recorded `./src/pkg/d.ts` and — when a name shared a prefix with the declaration — `./src/pkg/sted/deep.ts` for
+        // `src/pkg/nested/deep.ts`, collapsing distinct files onto one key. Measured consequence: editing a source file left
+        // the frozen subject byte-identical. `computePathDigests` is the seal's own expansion, so this asks the two
+        // derivations that must agree — the revision's and the subject's — rather than a third opinion.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['./src/pkg'] });
+
+        const sealed = await computePathDigests(root, ['./src/pkg']);
+        expect((await ledger(['freeze'])).ok).toBe(true);
+        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
+
+        expect(recorded).toEqual(Object.keys(sealed).sort());
+        expect(recorded.filter((path) => path.startsWith('./'))).toEqual([]);
+    });
+
+    it('refuses a declaration that resolves outside the repository, as the seal does', async () => {
+        // Measured: `..` was accepted and the walk went outside the repository (`../oob.txt` recorded), while
+        // `normalizeOwnedPaths` refuses it for the revision.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['..'] });
+
+        const result = await ledger(['freeze']);
+
+        expect(result.ok).toBe(false);
+        expect(String(result.error)).toContain('must be inside the repository');
+    });
+
+    it('refuses a directory whose root is never content, instead of recording its build output', async () => {
+        // **The third round's third major.** The walk asks the git declaration of the entries it stands on, not of the root
+        // it was handed, so a git-ignored *directory* declared as the root had its output recorded as content — a rebuild
+        // then moved the frozen subject, which is the reported defect for a declaration root instead of a file inside one.
+        await mkdir(join(root, 'src', 'pkg', 'build'), { recursive: true });
+        await writeFile(join(root, 'src', 'pkg', 'build', 'out.js'), 'built\n');
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/build'] });
+
+        const result = await ledger(['freeze']);
+
+        expect(result.ok).toBe(false);
+        expect(String(result.error)).toContain('never content');
+        expect(String(result.error)).toContain('src/pkg/build');
     });
 
     it('keys a declaration with a trailing slash in the same coordinates the walk uses', async () => {
