@@ -399,6 +399,42 @@ Measured falsifiability: removing the mark check reddens the guard; removing the
 the null prototype reddens the `__proto__` case; and round 10's conditional copy now reddens six declared cases, because the
 fixture carries a `.mts` file (`worker.mts` in `CONTENT`).
 
+### Round 11: the invariant cannot live inside the function it guards — and the claim had been stale for three rounds
+
+Round 11 accepted the mark and the identity check and then showed what no in-function invariant can do: it inserted a **plain
+copy** (no forgery, no mark involvement) *between* the identity check and the `return`, filtering `.tsx`, and the ledger
+recorded `[src/pkg/mod.ts]` against the seal's three paths **with all 30 declared selector cases green**. The checks had run
+before the reassignment, so they were satisfied; nothing after them was guarded. That is the same finding round 10 made, one
+statement lower.
+
+**Repair, and where it stops.** The requirement is checked a second time in `writeJson` — the last gate before the bytes land,
+after the reader-side schema contract, so a record that could not be read is still refused for that reason — and a filtered
+subject therefore has to get past the writer too, which is a different act from drifting on the way. Measured: round 11's exact
+mutation now reddens six declared cases, with `src/pkg/view.tsx` in the fixture as the witness for the kind it filtered.
+What that buys is stated plainly: *an invariant inside a function cannot see code inserted after it*. Every round of this change
+has been an adversarial edit to the very function that enforces the invariant, and no arrangement of statements can defend the
+statements after the last check. The guard's job is to make **unintended** drift impossible to record silently, and that it
+does; an intended edit to the enforcer is outside what any guard can decide.
+
+Round 11 also found three things that were not about that class at all, and all three were real:
+
+1. **`C2`'s recorded statement was three rounds stale.** `ledger evidence replace` rewrites the *evidence bindings* and never
+   the claim's text, so every "C2 now says…" in this document since round 8 was backed by nothing — the request handed the
+   reviewer the round-8 wording, whose three clauses round 10 had already called false. Repaired with `ledger claim restate`,
+   and this document now says what was actually written rather than what was intended. The same silent no-op had left `C2`'s
+   `evidenceIds` pointing at superseded evidence for three rounds.
+2. **The invariant lived in a file no claim named and the declaration did not cover.** `computePathDigests`, `sealMapBrand` and
+   `carriesSealMark` are in `src/workflow/revision.ts`; `C2`'s reading set named `repository-identity.ts` instead, and the
+   sealed revision therefore never included the code it certifies. Declared now, and named in the claim's reading set.
+3. **Two falsifiers had legal equivalents that stayed green**: dropping `added` from the refusal's moved list (no case ever
+   added a declared file — now there is one), and truncating the declaration walk to the first two paths (the case declared
+   exactly two — now it declares three). Both mutations redden now.
+
+One more, about instruments rather than code: one recorded challenge's script had a stale anchor, and because it ran with
+`set -uo pipefail` and no `-e`, a mutation that failed to apply looked exactly like one that applied and did not diverge — the
+challenge sat `open` against a command that did nothing. The reviewer corrected it; the lesson is in the design because the
+same shape ("a check that cannot fail") has now appeared in four changes.
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by

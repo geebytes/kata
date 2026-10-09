@@ -43,6 +43,7 @@ const chunks: string[] = [];
 const CONTENT = [
     'src/pkg/mod.ts', // the ordinary case
     'src/pkg/worker.mts', // a kind the rounds kept reaching for: the guard's own mark is what catches a filter on it
+    'src/pkg/view.tsx', // and one more, because a filter inserted after the in-function checks is caught at the write gate instead
     'src/pkg/nested/deep.ts', // a nested directory
     'src/pkg/data.json', // an extension a filter can key on …
     'src/pkg/README.md',
@@ -168,7 +169,7 @@ const EXTENSIONS = [
     // exists for — because it was not among the extensions drawn. A list cannot be completed (that is the finding), so these
     // are witnesses for the readable failure message; the property itself is enforced structurally by
     // `the-recorded-digests-are-the-seals-map.test.ts`, which fails on a filter of any kind.
-    'pyc', 'exe', 'o', 'obj', 'class', 'log', 'min.js', '.hidden', 'mts', 'pyi',
+    'pyc', 'exe', 'o', 'obj', 'class', 'log', 'min.js', '.hidden', 'mts', 'pyi', 'tsx',
 ];
 
 function generatedTree(seed: number, root: string): string[] {
@@ -240,15 +241,21 @@ describe('the two enumerations agree on what is content', () => {
         await writeFile(join(root, 'src', 'other', 'thing.ts'), 'export const thing = 1;\n');
         // A second extension in the second declaration, so a per-extension filter cannot hide behind a single-extension fixture.
         await writeFile(join(root, 'src', 'other', 'data.json'), '{ "thing": 1 }\n');
-        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg', 'src/other'] });
+        // **A third declaration, because two were not enough.** Round 11 measured that the same mutation truncated to
+        // `slice(0, 2)` stayed green here: with exactly two declared paths, "expand the first two" and "expand them all" are
+        // the same function. The property is *every* declaration, so the fixture has to hold more than the mutation keeps.
+        await mkdir(join(root, 'src', 'third'), { recursive: true });
+        await writeFile(join(root, 'src', 'third', 'more.py'), 'more = 1\n');
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg', 'src/other', 'src/third'] });
 
-        const sealed = await computePathDigests(root, ['src/pkg', 'src/other']);
+        const sealed = await computePathDigests(root, ['src/pkg', 'src/other', 'src/third']);
         expect((await ledger(['freeze'])).ok).toBe(true);
         const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
 
         expect(recorded).toEqual(Object.keys(sealed).sort());
         expect(recorded).toContain('src/other/thing.ts');
         expect(recorded).toContain('src/other/data.json');
+        expect(recorded).toContain('src/third/more.py');
     });
 
     it('records a plainly declared file whatever its extension', async () => {

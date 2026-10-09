@@ -944,6 +944,17 @@ async function writeJson(root: string, changeId: string, file: string, value: un
             );
         }
     }
+    // **The subject-specific invariant, at the last gate before the bytes land.** Round 11 measured that no check inside
+    // `freezeSubject` can see code inserted after it: a plain copy of `subject.pathDigests` placed between the identity check
+    // and the return was recorded while every declared selector passed. So the requirement is asked again here, on the value
+    // that is about to be written — a filtered subject now has to get past the writer as well, which is a different act from
+    // drifting on the way. A record that cannot be read is still refused for that reason first, above.
+    if (file === FILES.subject && !carriesSealMark((value as Subject).pathDigests)) {
+        throw new Error(
+            'refusing to record this subject: its path digests are not the map the seal produced, so the record would hold a '
+            + 'set the seal does not. Nothing was written.',
+        );
+    }
     const dir = reviewDir(root, changeId);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, file), `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -1218,6 +1229,16 @@ export async function freezeSubject(input: {
 
 
 export async function writeSubject(root: string, changeId: string, subject: Subject): Promise<void> {
+    // **The last place the record can be checked, so the check is here too.** Round 11 measured the gap that no check inside
+    // `freezeSubject` can close: a filter inserted *between* the identity check and the return — a plain copy of
+    // `subject.pathDigests`, no forgery involved — was recorded while every declared selector passed. An in-function
+    // invariant cannot see code inserted after it; the writer can, because it holds the value that is about to be persisted.
+    // So the mark is required again here, at the boundary: to get a filtered subject past this, the edit would have to reach
+    // into the writer as well, which is a different act from a drift on the way.
+    //
+    // The enforcement itself lives in `writeJson`, the last gate before the bytes land: the reader-side contract is checked
+    // there first, so a record that could not be read is still refused for that reason, and the subject's own invariant is
+    // asked after it.
     await mutate(root, changeId, async () => writeJson(root, changeId, FILES.subject, subject));
 }
 

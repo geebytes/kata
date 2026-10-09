@@ -76,6 +76,19 @@ describe('a real content move still refuses', () => {
         expect(why).toContain('src/pkg/extra.ts');
     });
 
+    it('refuses and names the source path when a declared source file was added', async () => {
+        // **Round 11's F5.** The refusal names `changed ∪ added ∪ removed`, and only the changed and removed halves were
+        // witnessed: a mutation that dropped `added` stayed green, so "an added declared path is named" rested on nothing.
+        // A new source file under a declared directory is exactly the case this change is about — the declaration covers the
+        // directory, so a file appearing in it has to move the subject.
+        await writeFile(join(root, 'src', 'pkg', 'appeared.ts'), 'export const appeared = true;\n');
+
+        const why = await refusal();
+
+        expect(why).toContain('has moved since it was frozen');
+        expect(why).toContain('src/pkg/appeared.ts');
+    });
+
     it('refuses and names the source path when a declared source file was edited', async () => {
         await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const holds = false;\n');
 
