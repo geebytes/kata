@@ -550,8 +550,32 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
  * A directory owned path is expanded to the files it contains: a single digest per directory would answer "something in
  * here changed" and nothing more, which is precisely the question this exists to answer precisely.
  */
+/**
+ * The mark the seal puts on the map it produced.
+ *
+ * Round 10's second finding was a *conditional* copy of the map made before it reached `subjectOf` — keyed on a kind the
+ * test's own sentinel happened not to carry, so an identity assertion on the argument was still satisfied. Identity alone
+ * cannot tell "the seal's object" from "an object that happens to be passed on", so the seal marks its own: the mark is
+ * non-enumerable, so a copy made with a spread, `Object.fromEntries` or `Object.assign` loses it, and `freezeSubject`
+ * refuses anything that does not carry it. That is a property of the object, not a list of kinds.
+ */
+export const sealMapBrand: unique symbol = Symbol.for('kata.seal.pathDigests');
+
+/**
+ * Whether this map is the object the seal produced.
+ *
+ * Read through the property descriptor rather than an index expression: the mark is a symbol and the map is typed as a plain
+ * record, so indexing it would need a cast, and `as unknown as …` is banned in this tree for good reason (it is how a type
+ * mismatch gets laundered). This asks the object itself.
+ */
+export function carriesSealMark(map: object): boolean {
+  return Object.getOwnPropertyDescriptor(map, sealMapBrand)?.value === true;
+}
+
 export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
-  const pathDigests: Record<string, string> = {};
+  // A null-prototype map, because a declared file literally named `__proto__` was silently dropped: assigning that key on a
+  // normal object sets the prototype instead of adding an entry (measured by an independent round, on the seal's own output).
+  const pathDigests: Record<string, string> = Object.create(null) as Record<string, string>;
   await feedOwnedTree(root, ownedPaths, createContentHasher(), pathDigests);
   // **Frozen, so no caller can filter what the seal decided.** Four review rounds defeated three different guards by mutating
   // or copying this map between the seal and the ledger's record — a filter keyed on `.rs`, then `.pyc`, then a copy built
@@ -561,6 +585,7 @@ export async function computePathDigests(root: string, ownedPaths: string[]): Pr
   // filter raises at the point of the write, in production, whatever kind it keys on, so the divergence cannot be recorded;
   // and because the object is stable, the identity of what reaches the subject is assertable (see
   // `tests/unit/the-recorded-digests-are-the-seals-map.test.ts`).
+  Object.defineProperty(pathDigests, sealMapBrand, { value: true, enumerable: false, configurable: false, writable: false });
   return Object.freeze(pathDigests);
 }
 

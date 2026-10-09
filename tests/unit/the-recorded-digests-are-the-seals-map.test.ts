@@ -4,28 +4,26 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * **The recorded digest map is the seal's own object — asserted by identity, because no syntax check and no fixture can be
- * complete.**
+ * **The recorded digest map is the seal's own object — asserted by identity, and enforced at runtime in the freeze.**
  *
- * Three rounds in a row defeated the guards that came before this one, each by moving one level: a one-sided filter keyed on
- * a kind the fixture did not carry (`.rs`, round 7); the same with `.pyc`, the very case this change exists for (round 8);
- * and then, when round 8's repair parsed the function's syntax tree to forbid anything between the seal's call and the subject
- * — `delete`, `Object.assign`, property writes, and passing the map to a helper — an expression wrapper (`Object.fromEntries(
- * Object.entries(sealed).filter(…))`, reassigned back) that named the map nowhere the scanner looked (round 9).
+ * Four rounds defeated the guards that came before: a one-sided filter keyed on a kind the fixture did not carry (`.rs`), the
+ * same with `.pyc` — the case this change exists for — then a copy built through an expression wrapper, and then (round 10) a
+ * filter *after* `subjectOf` that wrapped the subject it returned, and a *conditional* copy before the call keyed on a kind
+ * the sentinel happened not to carry. Every one of those was a **list** — of kinds, statements, argument shapes, sentinel keys
+ * — losing to something outside the list.
  *
- * Every one of those is the same mistake in a different coat: the guard was a *list* — of kinds, of statements, of argument
- * shapes — and the thing being guarded is unbounded. The property that actually holds, and that no wrapper can fake, is
- * **object identity**: the map handed to `subjectOf` is the object `computePathDigests` returned. So the seal is replaced by
- * a sentinel object that is `Object.freeze`d, `subjectOf` is replaced by a recorder, and the assertion is `toBe` — a copy,
- * however it was made, is a different object; an in-place edit of a frozen map throws. Kind-independent, shape-independent.
+ * So the property is not a test invariant any more, it is in the code that writes the record:
+ *
+ *   · the seal marks the map it produced with a non-enumerable symbol and freezes it, so a copy (spread, `fromEntries`,
+ *     `Object.assign`) loses the mark and an in-place filter raises at the write;
+ *   · `freezeSubject` refuses when the map it is about to record does not carry that mark;
+ *   · and it refuses when the subject does not carry *that very object*, so nothing can be substituted after the call.
+ *
+ * A refusal is the right failure mode: a drift that is caught is a refusal, a drift that is recorded is a lie.
  */
 const hoisted = vi.hoisted(() => ({
-    /**
-     * Frozen, so an in-place filter throws instead of quietly changing what the ledger records — and it carries a `.pyi` key
-     * on purpose: a filter whose predicate matches nothing in the map deletes nothing and cannot be detected, so the sentinel
-     * has to hold a kind the filters of the last three rounds keyed on.
-     */
-    sentinel: Object.freeze({ 'src/pkg/mod.ts': 'hash-of-mod', 'src/pkg/stub.pyi': 'hash-of-stub' }) as Record<string, string>,
+    sealReturns: undefined as unknown,
+    subjectOverride: undefined as unknown,
     seen: [] as unknown[],
 }));
 
@@ -33,7 +31,7 @@ vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../src/workflow/revision.js')>();
     return {
         ...actual,
-        computePathDigests: async () => hoisted.sentinel,
+        computePathDigests: async () => hoisted.sealReturns,
     };
 });
 
@@ -41,19 +39,30 @@ vi.mock('../../src/kernel/subject.js', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../../src/kernel/subject.js')>();
     return {
         ...actual,
-        subjectOf: (digests: unknown) => {
+        subjectOf: (digests: Record<string, string>) => {
             hoisted.seen.push(digests);
-            return { revision: 'rev:sentinel', pathDigests: {} };
+            if (hoisted.subjectOverride !== undefined) return hoisted.subjectOverride;
+            return { revision: 'rev:sentinel', pathDigests: digests };
         },
     };
 });
 
 const { freezeSubject } = await import('../../src/store/ledger.js');
+const revision = await import('../../src/workflow/revision.js');
 
 let root = '';
 
+/** A map the way the seal produces one: null prototype, marked, frozen. */
+function sealedMap(entries: Record<string, string>): Record<string, string> {
+    const map = Object.assign(Object.create(null) as Record<string, string>, entries);
+    Object.defineProperty(map, revision.sealMapBrand, { value: true, enumerable: false, configurable: false, writable: false });
+    return Object.freeze(map);
+}
+
 beforeEach(async () => {
     hoisted.seen.length = 0;
+    hoisted.subjectOverride = undefined;
+    hoisted.sealReturns = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod', 'src/pkg/stub.pyi': 'hash-of-stub' });
     root = await mkdtemp(join(tmpdir(), 'kata-seal-identity-'));
     await mkdir(join(root, 'src', 'pkg'), { recursive: true });
     await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const x = 1;\n');
@@ -70,48 +79,69 @@ describe('the recorded digest map is the seal’s own object', () => {
 
         expect(result.ok).toBe(true);
         expect(hoisted.seen).toHaveLength(1);
-        // `toBe`, not `toEqual`: a filtered copy is a different object however it was built, and an in-place edit of the
-        // frozen sentinel throws before this point.
-        expect(hoisted.seen[0]).toBe(hoisted.sentinel);
+        expect(hoisted.seen[0]).toBe(hoisted.sealReturns);
+        if (result.ok) expect(Object.is(result.subject.pathDigests, hoisted.sealReturns)).toBe(true);
     });
 
-    it('returns a frozen map, so an in-place filter raises wherever it is written', async () => {
-        // The production half of this guard. The sentinel above mirrors the seal, but the seal has to *be* frozen for an
-        // in-place filter to raise in production — and a filter keyed on a kind the sentinel does not carry is exactly how
-        // round 9's counterexample survived, so the freeze is what makes the property independent of any kind list.
-        const { computePathDigests: realSeal } = await vi.importActual<typeof import('../../src/workflow/revision.js')>('../../src/workflow/revision.js');
-        const map = await realSeal(root, ['src/pkg']);
+    it('refuses a map that is not the seal’s own, so a copy cannot be recorded', async () => {
+        // Round 10's conditional copy: same contents, different object, no mark — the shape an identity assertion on the
+        // argument alone would have accepted.
+        hoisted.sealReturns = Object.freeze({ ...sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' }) });
+
+        const result = await freezeSubject({ root, paths: ['src/pkg'] });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error).toContain('not the map the seal produced');
+    });
+
+    it('refuses a subject that does not carry the seal’s map', async () => {
+        // Round 10's post-call wrapper: `subjectOf` is called with the right object and the subject comes back carrying a
+        // filtered one.
+        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash-of-mod' });
+        hoisted.sealReturns = sealed;
+        hoisted.subjectOverride = { revision: 'rev:wrapped', pathDigests: { 'src/pkg/mod.ts': 'hash-of-mod' } };
+
+        const result = await freezeSubject({ root, paths: ['src/pkg'] });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error).toContain('does not carry the seal’s own content map');
+    });
+
+    it('returns a frozen, marked map from the real seal, and drops no file named __proto__', async () => {
+        // The production half. A filter cannot raise on a map it does not hold, so the freeze has to be real; and the mark is
+        // what a copy loses. `__proto__` is here because the seal silently dropped a file of that name (round 10, F6): the map
+        // is null-prototyped so the key is an entry rather than an assignment to the prototype.
+        // **At the root, where the key is exactly `__proto__`.** A file of that name inside a directory gives the key
+        // `src/pkg/__proto__`, which is an ordinary key on any object — measured, because the first version of this case put
+        // it under the directory and the reverted map stayed green. The hazard needs the key itself to be `__proto__`, which
+        // is why the map is created with a null prototype.
+        await writeFile(join(root, '__proto__'), 'a file with a dangerous name\n');
+        // The real seal, not the mock: the mock exists to control the argument, and this case is about production.
+        const realSeal = (await vi.importActual<typeof import('../../src/workflow/revision.js')>('../../src/workflow/revision.js')).computePathDigests;
+        const map = await realSeal(root, ['__proto__', 'src/pkg']);
 
         expect(Object.isFrozen(map)).toBe(true);
+        expect(revision.carriesSealMark(map)).toBe(true);
+        expect(Object.keys(map).sort()).toEqual(['__proto__', 'src/pkg/mod.ts']);
         expect(() => {
             (map as Record<string, string>)['src/pkg/anything.mts'] = 'hash';
         }).toThrow();
     });
 
-    it('distinguishes the shapes that defeated the three earlier guards', () => {
-        // The control the guard needs: it must fail for each evasion, or it is a guard that matches nothing. Each `attempt`
-        // stands in for what `freezeSubject` does between the seal's call and `subjectOf`.
-        const attempt = (between: (sealed: Record<string, string>) => Record<string, string>): unknown => {
-            const sealed = hoisted.sentinel;
-            const handed = between(sealed);
-            return handed;
-        };
+    it('distinguishes the shapes that defeated the earlier guards', () => {
+        const sealed = sealedMap({ 'src/pkg/mod.ts': 'hash', 'src/pkg/stub.pyi': 'hash' });
 
-        // Round 7/8: a one-sided filter on a shallow copy.
-        const copied = attempt((sealed) => Object.fromEntries(Object.entries(sealed).filter(([key]) => !key.endsWith('.pyc'))));
-        expect(copied).not.toBe(hoisted.sentinel);
+        // A copy, however it is built, loses the mark — and the mark is what the freeze checks.
+        const copied = Object.fromEntries(Object.entries(sealed).filter(([key]) => !key.endsWith('.pyi')));
+        expect(revision.carriesSealMark(copied)).toBe(false);
+        expect(copied).not.toBe(sealed);
 
-        // Round 9: the same thing with the map named nowhere a syntax scanner would look, and reassigned to the seal's name.
-        let reassigned: Record<string, string> = hoisted.sentinel;
-        reassigned = Object.fromEntries(Object.entries(reassigned).filter(([key]) => !key.endsWith('.pyi')));
-        expect(reassigned).not.toBe(hoisted.sentinel);
-
-        // An in-place edit of the map the seal returned: frozen, so this raises rather than changing the recorded set.
+        // An in-place edit of the seal's own map raises, so it cannot record a subset.
         expect(() => {
-            (hoisted.sentinel as Record<string, string>)['src/pkg/extra.ts'] = 'hash';
+            (sealed as Record<string, string>)['src/pkg/extra.ts'] = 'hash';
         }).toThrow();
 
-        // And the shape that must pass: nothing between the call and the subject.
-        expect(attempt((sealed) => sealed)).toBe(hoisted.sentinel);
+        // And the shape that must pass: nothing between the seal and the subject.
+        expect(revision.carriesSealMark(sealed)).toBe(true);
     });
 });

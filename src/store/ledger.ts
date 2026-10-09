@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
 import { declaredContentPaths } from '../core/repository-identity.js';
-import { computePathDigests } from '../workflow/revision.js';
+import { carriesSealMark, computePathDigests } from '../workflow/revision.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -1186,9 +1186,31 @@ export async function freezeSubject(input: {
     // declaration is the operator's own statement, so its files are recorded either way; round 7 then measured that the
     // report the design promised did not exist — `declaredContentPaths` returned `neverContent` and this function dropped
     // it, so an operator who declared `dist/` could not learn from the payload that build output would move their subject.
+    // **Two runtime invariants, so the property does not live only in a test.** Round 10 measured a filter *after* the call
+    // (wrapping the subject `subjectOf` returned — the guard asserted only the argument) and a *conditional copy before* it,
+    // both of which recorded a set the seal did not hold while every declared selector passed. Identity and the seal's mark
+    // are checked here, in the code that writes the record, and the freeze refuses rather than recording a smaller set:
+    //   · the map handed on must carry the seal's own non-enumerable mark (a copy loses it), and
+    //   · the subject must carry *that very object*, not a fresh one built around it.
+    // A refusal is the right failure mode — a drift that is caught is a refusal, a drift that is recorded is a lie.
+    if (!carriesSealMark(sealed)) {
+        return {
+            ok: false,
+            error: 'the content set about to be recorded is not the map the seal produced, so it could have been filtered on the way here; the freeze refuses rather than record a set the seal does not hold',
+            unreadable: [],
+        };
+    }
+    const subject = subjectOf(sealed, input.paths, input.claims, input.planDigest);
+    if (!Object.is(subject.pathDigests, sealed)) {
+        return {
+            ok: false,
+            error: 'the subject does not carry the seal’s own content map, so something replaced it after the seal produced it; the freeze refuses rather than record a set the seal does not hold',
+            unreadable: [],
+        };
+    }
     return {
         ok: true,
-        subject: subjectOf(sealed, input.paths, input.claims, input.planDigest),
+        subject,
         neverContent: classification.neverContent,
     };
 }

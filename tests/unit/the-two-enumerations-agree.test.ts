@@ -42,6 +42,7 @@ const chunks: string[] = [];
  */
 const CONTENT = [
     'src/pkg/mod.ts', // the ordinary case
+    'src/pkg/worker.mts', // a kind the rounds kept reaching for: the guard's own mark is what catches a filter on it
     'src/pkg/nested/deep.ts', // a nested directory
     'src/pkg/data.json', // an extension a filter can key on …
     'src/pkg/README.md',
@@ -167,7 +168,7 @@ const EXTENSIONS = [
     // exists for — because it was not among the extensions drawn. A list cannot be completed (that is the finding), so these
     // are witnesses for the readable failure message; the property itself is enforced structurally by
     // `the-recorded-digests-are-the-seals-map.test.ts`, which fails on a filter of any kind.
-    'pyc', 'exe', 'o', 'obj', 'class', 'log', 'min.js', '.hidden',
+    'pyc', 'exe', 'o', 'obj', 'class', 'log', 'min.js', '.hidden', 'mts', 'pyi',
 ];
 
 function generatedTree(seed: number, root: string): string[] {

@@ -363,6 +363,42 @@ the string rather than the digest of the string — survived three rounds. Probi
 **The through-line, four rounds deep**: kinds, then statements, then expressions — every guard that was a list lost to
 something outside the list. What survived is the property the code has by construction, asserted by identity.
 
+### Round 10: the guard's own inputs were the list, so the invariant moved into the freeze
+
+Round 10 accepted the identity assertion and then defeated it three ways at once, each by moving the *list*:
+
+| shape | what it did | why the guard was silent |
+|---|---|---|
+| a wrapper **after** `subjectOf` | `{ ...s, pathDigests: Object.fromEntries(Object.entries(s.pathDigests).filter(…)) }` | the guard recorded only the **argument** to `subjectOf`; everything after the call was unguarded |
+| a **conditional** copy **before** the call | `if (Object.keys(sealed).some(k => k.endsWith('.mts'))) sealed = Object.fromEntries(…)` | the sentinel's **keys** were a list, and `.mts` was not on it |
+| a filter **inside the shared traversal** | `if (file.path.endsWith('.mts')) continue;` in `feedOwnedTree` | seal and ledger agreed — this is content completeness, C1/C3's property, not identity |
+
+It also found a real defect with nothing to do with guards: **a file named `__proto__` was dropped by the seal**, because a
+plain object's `__proto__` assignment sets the prototype instead of adding an entry.
+
+That is the end of the road for test-side guards: the invariable lesson is that *the guard's own input is a list too*. So the
+invariant moved into the code that writes the record:
+
+1. **The seal marks its own map.** `computePathDigests` defines a non-enumerable symbol on the map and freezes it, and
+   `carriesSealMark` asks the object itself (through its property descriptor — indexing by a symbol would need a cast, and
+   `as unknown as …` is banned here for the reason that guard exists). A copy built with a spread, `Object.fromEntries` or
+   `Object.assign` loses a **non-enumerable** property, so "is this the seal's object" is answerable without naming kinds.
+2. **`freezeSubject` refuses twice, at runtime, in the code that writes the record**: it refuses a map that does not carry the
+   mark (round 10's conditional copy, and round 10's intra-`subjectOf` filter), and it refuses a subject that does not carry
+   *that very object* (round 10's post-call wrapper). A refusal is the right failure mode — a drift that is caught is a
+   refusal; a drift that is recorded is a lie.
+3. **The map is null-prototyped**, so `__proto__` is a key rather than an assignment to the prototype; the guard's case puts
+   that file at the repository root, because inside a directory the key is `src/pkg/__proto__`, which is an ordinary key — the
+   first version of that case stayed green and was measured to be inert.
+4. **`C2` now states the boundary instead of over-claiming.** The identity half is enforced in the freeze; a change *inside*
+   the traversal omits content from the seal and the ledger records faithfully, which is C1/C3's content-completeness property,
+   judged by their cases and by the traversal's diff. Round 10 was right that the earlier wording ("a structural guard forbids
+   anything between them", "a one-sided filter cannot exist whatever kind it keys on") was false.
+
+Measured falsifiability: removing the mark check reddens the guard; removing the subject identity check reddens it; reverting
+the null prototype reddens the `__proto__` case; and round 10's conditional copy now reddens six declared cases, because the
+fixture carries a `.mts` file (`worker.mts` in `CONTENT`).
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by
