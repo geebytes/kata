@@ -1,171 +1,104 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * **The recorded digest map is the seal's own return value — asserted structurally, because no fixture can be complete.**
+ * **The recorded digest map is the seal's own object — asserted by identity, because no syntax check and no fixture can be
+ * complete.**
  *
- * The behavioural guards in this change compare the ledger's recorded set against the seal's for the kinds their fixtures
- * carry. Three rounds in a row defeated them with a one-sided filter keyed on a kind the fixture happened not to hold — `.rs`
- * (round 7), then `.pyc` (round 8): `Object.assign(digests, sealed)` followed by `for (const key of Object.keys(digests)) if
- * (key.endsWith('.pyc')) delete digests[key];` left the ledger recording a set the seal did not, with every declared selector
- * green. `.pyc` is the case this change exists for, which is the clearest possible statement that "witness every kind" is not
- * a property a finite fixture can hold: any list of kinds is a list a future filter can step outside.
+ * Three rounds in a row defeated the guards that came before this one, each by moving one level: a one-sided filter keyed on
+ * a kind the fixture did not carry (`.rs`, round 7); the same with `.pyc`, the very case this change exists for (round 8);
+ * and then, when round 8's repair parsed the function's syntax tree to forbid anything between the seal's call and the subject
+ * — `delete`, `Object.assign`, property writes, and passing the map to a helper — an expression wrapper (`Object.fromEntries(
+ * Object.entries(sealed).filter(…))`, reassigned back) that named the map nowhere the scanner looked (round 9).
  *
- * So the property is enforced where it cannot be stepped around. `freezeSubject` no longer keeps a map of its own, and this
- * guard reads the function's syntax tree: the value handed to `subjectOf` must be exactly the value `computePathDigests`
- * returned, and the body must contain nothing that could alter an object — no `delete`, no `Object.assign`, no assignment
- * into a property or an element. Reintroducing the seam fails here regardless of which kind it filters on.
+ * Every one of those is the same mistake in a different coat: the guard was a *list* — of kinds, of statements, of argument
+ * shapes — and the thing being guarded is unbounded. The property that actually holds, and that no wrapper can fake, is
+ * **object identity**: the map handed to `subjectOf` is the object `computePathDigests` returned. So the seal is replaced by
+ * a sentinel object that is `Object.freeze`d, `subjectOf` is replaced by a recorder, and the assertion is `toBe` — a copy,
+ * however it was made, is a different object; an in-place edit of a frozen map throws. Kind-independent, shape-independent.
  */
-const LEDGER = join(process.cwd(), 'src', 'store', 'ledger.ts');
+const hoisted = vi.hoisted(() => ({
+    /**
+     * Frozen, so an in-place filter throws instead of quietly changing what the ledger records — and it carries a `.pyi` key
+     * on purpose: a filter whose predicate matches nothing in the map deletes nothing and cannot be detected, so the sentinel
+     * has to hold a kind the filters of the last three rounds keyed on.
+     */
+    sentinel: Object.freeze({ 'src/pkg/mod.ts': 'hash-of-mod', 'src/pkg/stub.pyi': 'hash-of-stub' }) as Record<string, string>,
+    seen: [] as unknown[],
+}));
 
-function parseLedger(source: string): ts.SourceFile {
-    return ts.createSourceFile('ledger.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-}
-
-/** The declaration of `freezeSubject`, which is the only place a recorded digest map is produced. */
-function freezeSubjectBody(file: ts.SourceFile): ts.Block {
-    let found: ts.Block | null = null;
-    const visit = (node: ts.Node): void => {
-        if (
-            ts.isFunctionDeclaration(node)
-            && node.name?.text === 'freezeSubject'
-            && node.body
-        ) {
-            found = node.body;
-            return;
-        }
-        ts.forEachChild(node, visit);
+vi.mock('../../src/workflow/revision.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../src/workflow/revision.js')>();
+    return {
+        ...actual,
+        computePathDigests: async () => hoisted.sentinel,
     };
-    visit(file);
-    if (found === null) throw new Error('freezeSubject is not declared in src/store/ledger.ts');
-    return found;
-}
+});
 
-/** The identifiers the seal's call result is assigned to, and the identifier handed to `subjectOf`. */
-function traceSeam(body: ts.Block): { sealNames: string[]; subjectArgument: string | null; offences: string[] } {
-    const sealNames: string[] = [];
-    let subjectArgument: string | null = null;
-    const offences: string[] = [];
-
-    const visit = (node: ts.Node): void => {
-        // The seal's result, bound to a name — as a declaration (`const sealed = await …`) or as an assignment inside the
-        // `try` that turns a canonicalisation refusal into a named state (`let sealed; try { sealed = await … }`).
-        if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
-            const initializer = unwrapAwait(node.initializer);
-            if (isSealCall(initializer) && ts.isIdentifier(node.name)) sealNames.push(node.name.text);
-        }
-        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && isSealCall(unwrapAwait(node.right))) {
-            if (ts.isIdentifier(node.left)) sealNames.push(node.left.text);
-        }
-        // `subjectOf(<identifier>, …)` — the map that becomes the subject.
-        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'subjectOf') {
-            const first = node.arguments[0];
-            subjectArgument = first !== undefined && ts.isIdentifier(first) ? first.text : `<${first?.getText() ?? 'nothing'}>`;
-        }
-        // A call that receives the map and is not a known read: an in-place mutation inside a helper never appears in this
-        // body, so "no delete and no assignment" is not enough on its own. Reads are a closed set (reflection helpers and the
-        // subject builder itself); anything else gets the map only to change it.
-        if (ts.isCallExpression(node) && sealNames.some((name) => node.arguments.some((argument) => argument.getText().trim() === name))) {
-            const callee = node.expression.getText().trim();
-            if (!['subjectOf', 'Object.keys', 'Object.entries', 'Object.values'].includes(callee)) {
-                offences.push(`the map is passed to ${callee}`);
-            }
-        }
-        // Anything that could change an object after it was produced.
-        if (ts.isDeleteExpression(node)) offences.push(`delete at ${node.getText().slice(0, 60)}`);
-        if (
-            ts.isCallExpression(node)
-            && ts.isPropertyAccessExpression(node.expression)
-            && node.expression.expression.getText() === 'Object'
-            && ['assign', 'defineProperty', 'setPrototypeOf'].includes(node.expression.name.text)
-        ) {
-            offences.push(`Object.${node.expression.name.text} at ${node.getText().slice(0, 60)}`);
-        }
-        if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind)) {
-            const target = node.left;
-            if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-                offences.push(`assignment into ${target.getText().slice(0, 60)}`);
-            }
-        }
-        ts.forEachChild(node, visit);
+vi.mock('../../src/kernel/subject.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../src/kernel/subject.js')>();
+    return {
+        ...actual,
+        subjectOf: (digests: unknown) => {
+            hoisted.seen.push(digests);
+            return { revision: 'rev:sentinel', pathDigests: {} };
+        },
     };
-    visit(body);
-    return { sealNames, subjectArgument, offences };
-}
+});
 
-function isSealCall(node: ts.Expression): boolean {
-    return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'computePathDigests';
-}
+const { freezeSubject } = await import('../../src/store/ledger.js');
 
-function unwrapAwait(node: ts.Expression): ts.Expression {
-    return ts.isAwaitExpression(node) ? node.expression : node;
-}
+let root = '';
 
-function isAssignment(kind: ts.SyntaxKind): boolean {
-    return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
-}
+beforeEach(async () => {
+    hoisted.seen.length = 0;
+    root = await mkdtemp(join(tmpdir(), 'kata-seal-identity-'));
+    await mkdir(join(root, 'src', 'pkg'), { recursive: true });
+    await writeFile(join(root, 'src', 'pkg', 'mod.ts'), 'export const x = 1;\n');
+    await mkdir(join(root, '.kata', 'tasks', 'seal-identity'), { recursive: true });
+});
 
-describe('the recorded digest map is the seal’s own value', () => {
-    it('hands the seal’s result to the subject, with nothing in between', async () => {
-        const body = freezeSubjectBody(parseLedger(await readFile(LEDGER, 'utf8')));
-        const { sealNames, subjectArgument, offences } = traceSeam(body);
+afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+});
 
-        // The seal is asked once, and its answer is what the subject is built from.
-        expect(sealNames).toHaveLength(1);
-        expect(subjectArgument).toBe(sealNames[0]);
+describe('the recorded digest map is the seal’s own object', () => {
+    it('hands the seal’s map itself to the subject, not a copy of it', async () => {
+        const result = await freezeSubject({ root, paths: ['src/pkg'] });
 
-        // And there is no place a filter could live: no deletion, no merge, no write into an object.
-        expect(offences, offences.join('\n')).toEqual([]);
+        expect(result.ok).toBe(true);
+        expect(hoisted.seen).toHaveLength(1);
+        // `toBe`, not `toEqual`: a filtered copy is a different object however it was built, and an in-place edit of the
+        // frozen sentinel throws before this point.
+        expect(hoisted.seen[0]).toBe(hoisted.sentinel);
     });
 
-    it('flags a seam reintroduced by any of the shapes the rounds measured', () => {
-        const source = (line: string): string => `
-async function freezeSubject(input: { paths: string[] }) {
-    const sealed = await computePathDigests(input.root, input.paths);
-    ${line}
-    return { ok: true, subject: subjectOf(sealed, input.paths) };
-}`;
+    it('distinguishes the shapes that defeated the three earlier guards', () => {
+        // The control the guard needs: it must fail for each evasion, or it is a guard that matches nothing. Each `attempt`
+        // stands in for what `freezeSubject` does between the seal's call and `subjectOf`.
+        const attempt = (between: (sealed: Record<string, string>) => Record<string, string>): unknown => {
+            const sealed = hoisted.sentinel;
+            const handed = between(sealed);
+            return handed;
+        };
 
-        // Round 8's mutation, verbatim: a one-sided filter keyed on a kind no fixture carries.
-        const roundEight = source("for (const key of Object.keys(sealed)) if (key.endsWith('.pyc')) delete sealed[key];");
-        expect(traceSeam(freezeSubjectBody(parseLedger(roundEight))).offences.join('\n')).toContain('delete at');
+        // Round 7/8: a one-sided filter on a shallow copy.
+        const copied = attempt((sealed) => Object.fromEntries(Object.entries(sealed).filter(([key]) => !key.endsWith('.pyc'))));
+        expect(copied).not.toBe(hoisted.sentinel);
 
-        // Round 7's shape, and the two other ways to move an object after it was produced.
-        expect(traceSeam(freezeSubjectBody(parseLedger(source("Object.assign(sealed, {});")))).offences.join('\n')).toContain('Object.assign');
-        expect(traceSeam(freezeSubjectBody(parseLedger(source("sealed['src/a.ts'] = 'x';")))).offences.join('\n'))
-            .toContain('assignment into');
+        // Round 9: the same thing with the map named nowhere a syntax scanner would look, and reassigned to the seal's name.
+        let reassigned: Record<string, string> = hoisted.sentinel;
+        reassigned = Object.fromEntries(Object.entries(reassigned).filter(([key]) => !key.endsWith('.pyi')));
+        expect(reassigned).not.toBe(hoisted.sentinel);
 
-        // A copy that is filtered and then handed on: no offence to find, and the argument check is what catches it.
-        const viaCopy = `
-async function freezeSubject(input: { paths: string[] }) {
-    const sealed = await computePathDigests(input.root, input.paths);
-    const kept = { ...sealed };
-    for (const key of Object.keys(kept)) if (key.endsWith('.pyc')) delete kept[key];
-    return { ok: true, subject: subjectOf(kept, input.paths) };
-}`;
-        const traced = traceSeam(freezeSubjectBody(parseLedger(viaCopy)));
-        expect(traced.subjectArgument).toBe('kept');
-        expect(traced.sealNames).toEqual(['sealed']);
+        // An in-place edit of the map the seal returned: frozen, so this raises rather than changing the recorded set.
+        expect(() => {
+            (hoisted.sentinel as Record<string, string>)['src/pkg/extra.ts'] = 'hash';
+        }).toThrow();
 
-        // The evasion the first version of this guard would have missed: the map is mutated in place by a helper, so nothing
-        // in this body deletes or assigns — the call is the offence.
-        const viaHelper = `
-async function freezeSubject(input: { paths: string[] }) {
-    const sealed = await computePathDigests(input.root, input.paths);
-    dropCaches(sealed);
-    return { ok: true, subject: subjectOf(sealed, input.paths) };
-}`;
-        expect(traceSeam(freezeSubjectBody(parseLedger(viaHelper))).offences).toEqual(['the map is passed to dropCaches']);
-
-        // And a read is not an offence: the body already asks the map how large it is.
-        const withRead = `
-async function freezeSubject(input: { paths: string[] }) {
-    const sealed = await computePathDigests(input.root, input.paths);
-    if (Object.keys(sealed).length === 0) return { ok: false };
-    return { ok: true, subject: subjectOf(sealed, input.paths) };
-}`;
-        expect(traceSeam(freezeSubjectBody(parseLedger(withRead))).offences).toEqual([]);
+        // And the shape that must pass: nothing between the call and the subject.
+        expect(attempt((sealed) => sealed)).toBe(hoisted.sentinel);
     });
 });

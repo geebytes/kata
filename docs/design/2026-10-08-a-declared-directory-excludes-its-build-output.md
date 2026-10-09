@@ -148,7 +148,7 @@ found something worse than a code defect: **one of my falsifiers was invalid.**
 | E4 reddens a precondition, not the comparison | recorded | stated in the falsifier table rather than left implicit |
 
 **What is still different between the two, stated precisely (the previous claim was too broad).** Two differences, not one:
-the seal records `[missing]`/`[unsupported]` sentinels for a declaration it cannot read where the ledger refuses by name, and
+the seal records the digest of its `[missing]`/`[unsupported]` sentinel string for a declaration it cannot read where the ledger refuses by name, and
 an empty expansion is a refusal here because a subject with no paths cannot satisfy its own schema. Everything else — which
 paths a declaration covers, in which coordinates, after which canonicalisation — is one answer, and it is the shared
 function's.
@@ -243,7 +243,7 @@ sentinel, and a symlink. Each of those payloads exists because a round showed th
 
 Round 6 found three more one-sided filters that left every selector green: dropping explicitly declared `.md` names on the
 ledger's side, dropping declared `.txt` names on the seal's side, and dropping extension-less names. It also found a shape
-where the two sides genuinely disagreed — a declared broken symlink, which the seal records with its `[missing]` sentinel and
+where the two sides genuinely disagreed — a declared broken symlink, which the seal records as the digest of `[missing]` and
 the ledger refused — and it asked the question round 5's repair should already have answered: the fixture is only ever as
 strong as the kinds it carries, so adding one kind per round cannot converge.
 
@@ -260,7 +260,7 @@ Two changes answer it, and neither is another kind:
    drops `.md` inside the traversal, which the old guard could not see at all, now fails three cases.
 
 **The one deliberate difference is now stated in C2 rather than hidden by an over-claim.** A declaration the seal answers with
-a sentinel (`[missing]`, `[unsupported]` — a FIFO, a broken symlink) is still refused by name, because a sentinel in a
+a path the seal can only answer with a sentinel digest (`hashContent('[missing]')`, `hashContent('[unsupported]')` — a dangling symlink, a FIFO) is still refused by name, because a sentinel in a
 *declaration* cannot be told from a file deleted after it, and the operator should fix the declaration instead of freezing on
 top of it. The guard asserts both halves of that sentence, so neither can move alone. Kinds carried by the fixture, for the
 record: an ordinary file, a nested directory, six extensions, a multi-dot name, a name with no extension, a dotfile, a
@@ -333,6 +333,35 @@ kinds are unbounded. So the property is now enforced where it cannot be stepped 
 The general lesson, written here because it cost three rounds: **a guard that compares two derivations can only witness the
 kinds its fixture carries; if the property must hold for all kinds, enforce the shape of the code, not the answer for a list of
 inputs.**
+
+### Round 9: a syntax check is a list too, so the property is object identity
+
+Round 9 defeated the structural guard of the previous repair with an expression the scanner could not see: the map was copied
+and filtered through a wrapper (`Object.fromEntries(Object.entries(sealed).filter(…))`) and reassigned to the seal's own name,
+so the identifier handed to `subjectOf` was still the one the seal's call was bound to and no `delete`, `Object.assign` or
+property write appeared in the body. Every declared selector stayed green while the ledger recorded a set the seal did not.
+
+That is the third coat on the same mistake: the guard was a **list** — of kinds (rounds 7–8), then of statements and argument
+shapes (round 9) — and the thing being guarded is unbounded. A syntax check can only name the shapes someone thought of, and
+the space of expressions is not enumerable.
+
+So the property is now the one thing a wrapper cannot fake: **object identity**. The guard replaces the seal with a frozen
+sentinel map and `subjectOf` with a recorder, runs `freezeSubject`, and asserts `toBe` — the map handed on *is* the object the
+seal returned.
+
+- A copied-then-filtered map, however it is written, is a different object ⇒ the assertion fails.
+- An in-place filter on a frozen map raises, and the sentinel deliberately carries a `.pyi` key so a filter whose predicate
+  matches nothing cannot pass by doing nothing.
+- `C2` states this and nothing stronger: one derivation, the seal's own object, asserted by identity — the earlier wording
+  ("a one-sided filter cannot exist whatever kind") was an over-claim, and round 9 was right to call it one.
+
+Round 9 also found that the sentinel case asserted the seal's **keys** but not its values, which is how the wrong value —
+the string rather than the digest of the string — survived three rounds. Probing the seal directly measured it:
+`computePathDigests` records `hashContent('[unsupported]')` for a FIFO and `hashContent('[missing]')` for a dangling symlink
+(`src/workflow/revision.ts:485,488`), and the case now asserts those exact values.
+
+**The through-line, four rounds deep**: kinds, then statements, then expressions — every guard that was a list lost to
+something outside the list. What survived is the property the code has by construction, asserted by identity.
 
 ## Ownership
 

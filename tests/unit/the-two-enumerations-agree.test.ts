@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { isIgnoredRepositoryPath, listRepositoryFiles, normalizeDeclaredPaths } from '../../src/core/repository-identity.js';
+import { hashContent } from '../../src/core/hash.js';
 import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
@@ -337,7 +338,15 @@ describe('the two enumerations agree on what is content', () => {
         const sealed = await computePathDigests(root, ['src/pkg/pipe', 'src/pkg/broken-link']);
         const result = await ledger(['freeze']);
 
+        // **The sentinel *values*, not only the keys.** Round 9 measured that this asserted the key set alone, so a seal that
+        // recorded a hash for a FIFO or a dangling symlink — or an empty string — would pass a case whose title is about the
+        // sentinel. The two values are what make the difference between "the seal records the path" and "the seal records it
+        // as not-readable", which is the whole content of this deliberate difference.
         expect(Object.keys(sealed).sort()).toEqual([...SENTINEL_DECLARED].sort());
+        // The seal records the *digest of its sentinel string* (`src/workflow/revision.ts:485,488`), not the string itself —
+        // measured by probing the seal directly, which is how the first version of this assertion was caught being wrong.
+        expect(sealed['src/pkg/pipe']).toBe(hashContent('[unsupported]'));
+        expect(sealed['src/pkg/broken-link']).toBe(hashContent('[missing]'));
         expect(result.ok).toBe(false);
         for (const path of SENTINEL_DECLARED) expect(String(result.error), path).toContain(path);
         expect(String(result.error)).toContain('cannot be read');
