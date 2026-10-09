@@ -75,6 +75,19 @@ describe('the recorded digest map is the seal’s own object', () => {
         expect(hoisted.seen[0]).toBe(hoisted.sentinel);
     });
 
+    it('returns a frozen map, so an in-place filter raises wherever it is written', async () => {
+        // The production half of this guard. The sentinel above mirrors the seal, but the seal has to *be* frozen for an
+        // in-place filter to raise in production — and a filter keyed on a kind the sentinel does not carry is exactly how
+        // round 9's counterexample survived, so the freeze is what makes the property independent of any kind list.
+        const { computePathDigests: realSeal } = await vi.importActual<typeof import('../../src/workflow/revision.js')>('../../src/workflow/revision.js');
+        const map = await realSeal(root, ['src/pkg']);
+
+        expect(Object.isFrozen(map)).toBe(true);
+        expect(() => {
+            (map as Record<string, string>)['src/pkg/anything.mts'] = 'hash';
+        }).toThrow();
+    });
+
     it('distinguishes the shapes that defeated the three earlier guards', () => {
         // The control the guard needs: it must fail for each evasion, or it is a guard that matches nothing. Each `attempt`
         // stands in for what `freezeSubject` does between the seal's call and `subjectOf`.

@@ -553,7 +553,15 @@ export async function computeManifestHash(root: string, ownedPaths: string[]): P
 export async function computePathDigests(root: string, ownedPaths: string[]): Promise<Record<string, string>> {
   const pathDigests: Record<string, string> = {};
   await feedOwnedTree(root, ownedPaths, createContentHasher(), pathDigests);
-  return pathDigests;
+  // **Frozen, so no caller can filter what the seal decided.** Four review rounds defeated three different guards by mutating
+  // or copying this map between the seal and the ledger's record — a filter keyed on `.rs`, then `.pyc`, then a copy built
+  // through an expression wrapper, then an in-place filter reached through a helper (`dropCaches((sealed))`) whose kind no
+  // fixture carried. Every one of those was a *list* (of kinds, statements, argument shapes) losing to something outside the
+  // list, and the kinds are unbounded, so no test can enumerate them. Freezing does not enumerate anything: an in-place
+  // filter raises at the point of the write, in production, whatever kind it keys on, so the divergence cannot be recorded;
+  // and because the object is stable, the identity of what reaches the subject is assertable (see
+  // `tests/unit/the-recorded-digests-are-the-seals-map.test.ts`).
+  return Object.freeze(pathDigests);
 }
 
 /** Owned-path hashing shares the repository's ignore policy, and reads what it is responsible for (no size cap). */
