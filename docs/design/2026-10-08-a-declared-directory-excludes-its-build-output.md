@@ -239,6 +239,35 @@ declaration, so a per-extension filter on either side stayed green. The guard no
 file of each kind, a second declaration, a git-ignored path, a path deeper than any cap, a file above the tree-hash budget, a
 sentinel, and a symlink. Each of those payloads exists because a round showed the guard was silent without it.
 
+### Round 6: the lesson was not another kind, but where the expectation lives
+
+Round 6 found three more one-sided filters that left every selector green: dropping explicitly declared `.md` names on the
+ledger's side, dropping declared `.txt` names on the seal's side, and dropping extension-less names. It also found a shape
+where the two sides genuinely disagreed — a declared broken symlink, which the seal records with its `[missing]` sentinel and
+the ledger refused — and it asked the question round 5's repair should already have answered: the fixture is only ever as
+strong as the kinds it carries, so adding one kind per round cannot converge.
+
+Two changes answer it, and neither is another kind:
+
+1. **One derivation instead of two.** `freezeSubject` asked the shared enumeration for a *path list* and then read and hashed
+   every file itself. That list was the seam: a filter on it changed the ledger's answer only, and no amount of fixture could
+   close every possible key. The ledger now asks `computePathDigests` — the seal's own traversal — for the content set and its
+   digests, so the set is produced once and there is nothing left for either side to filter.
+2. **The expectation is written down.** The guard used to compare the ledger against the seal, which is exactly what a filter
+   *inside* the shared traversal defeats: both sides move together and agree. `CONTENT` in
+   `tests/unit/the-two-enumerations-agree.test.ts` is now the authority — every kind a filter could key on, written as a list —
+   and it is asserted before the comparison (`recorded` must equal `CONTENT` *and* the seal's map). Measured: a filter that
+   drops `.md` inside the traversal, which the old guard could not see at all, now fails three cases.
+
+**The one deliberate difference is now stated in C2 rather than hidden by an over-claim.** A declaration the seal answers with
+a sentinel (`[missing]`, `[unsupported]` — a FIFO, a broken symlink) is still refused by name, because a sentinel in a
+*declaration* cannot be told from a file deleted after it, and the operator should fix the declaration instead of freezing on
+top of it. The guard asserts both halves of that sentence, so neither can move alone. Kinds carried by the fixture, for the
+record: an ordinary file, a nested directory, six extensions, a multi-dot name, a name with no extension, a dotfile, a
+non-ASCII name, a name with spaces, a case variant, an empty file, a nested kept directory, a file above the tree-hash budget,
+a file exactly at it, a hard link, a path twelve segments deep, a git-ignored file, a nested git-ignored directory, a file
+excluded through `.git/info/exclude`, a FIFO, a broken symlink, and the set of names the identity table excludes.
+
 ## Ownership
 
 `src/store/ledger.ts` and `docs/operations.md` are shared with active changes; the conflicts are recorded as audit facts by

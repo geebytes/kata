@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,21 +29,52 @@ const chunks: string[] = [];
 
 /** The tree both enumerations are asked about: two real files, and one path per name the identity table excludes. */
 /**
- * The tree both enumerations are asked about: real files of **several extensions**, and one path per name the identity
- * table excludes.
+ * The tree both enumerations are asked about, and **the expectation, written down**.
  *
- * The extensions are load-bearing. Round 5 measured two compile-valid mutations — filtering `.json` out of the ledger's
- * expansion, and filtering it out of the seal's — that left all 21 cases green, because the fixture's only `.json` was a
- * git-ignored file *inside* a directory and no `.json` was ever a plainly declared source. A per-extension filter on either
- * side of the comparison is exactly the "second list" this change removes, so the fixture has to carry one of each kind.
+ * Rounds 5 and 6 measured the same failure four times: a compile-valid one-sided filter keyed on an extension, a name shape
+ * or a size left every declared selector green, because the fixture did not happen to carry that kind. Adding one kind per
+ * round does not converge — a filter keyed on a kind nobody thought of still passes, and a comparison that only asks the
+ * other derivation moves *with* the filter when it is applied inside the shared traversal. So the kinds are a table and the
+ * answer is written here: `CONTENT` is what a correct freeze must record, and both consumers are asked for it. A filter on
+ * either side, or inside the traversal itself, fails against this list.
  */
-const REAL = ['src/pkg/mod.ts', 'src/pkg/nested/deep.ts', 'src/pkg/data.json', 'src/pkg/README.md', 'src/pkg/helper.py', 'src/pkg/notes.txt'];
+const CONTENT = [
+    'src/pkg/mod.ts', // the ordinary case
+    'src/pkg/nested/deep.ts', // a nested directory
+    'src/pkg/data.json', // an extension a filter can key on …
+    'src/pkg/README.md',
+    'src/pkg/helper.py',
+    'src/pkg/notes.txt',
+    'src/pkg/Cargo.toml', // … a multi-dot name …
+    'src/pkg/LICENSE', // … and a name with no extension at all
+    'src/pkg/.env.example', // a dotfile the ignore table does not name
+    'src/pkg/ünïcode.txt', // a non-ASCII name
+    'src/pkg/a file with spaces.ts', // spaces
+    'src/pkg/Upper.TS', // a case variant of a carried extension
+    'src/pkg/empty.ts', // an empty file
+    'src/pkg/nested/kept/kept.md', // a nested directory that is not ignored
+    'src/pkg/big.bin', // larger than the tree-hash budget
+    'src/pkg/exactly-budget.bin', // exactly at it, not above
+    'src/pkg/mod-hardlink.ts', // a second name for a file that is already content
+    'src/pkg/a/b/c/d/e/f/g/h/i/deep.ts', // deeper than any cap the ledger's own walk had
+];
 /** Larger than the tree-hash budget, so a cap applied on one side only changes that side's set. */
 const OVERSIZED = 'src/pkg/big.bin';
+/** Exactly at the budget: an off-by-one in a cap is invisible one byte above it. */
+const AT_BUDGET = 'src/pkg/exactly-budget.bin';
 /** Ten levels down: the ledger's own walk stopped at eight, and the identity walk has no cap. */
 const DEEP = 'src/pkg/a/b/c/d/e/f/g/h/i/deep.ts';
-/** Excluded by the repository's git declaration, not by the built-in table. */
-const DECLARED_IGNORED = ['src/pkg/build/out.js', 'src/pkg/scratch.local.json'];
+/** A hard link: one inode, two names — a filter that keys on inode loses one of them. */
+const HARDLINK = 'src/pkg/mod-hardlink.ts';
+/** Excluded by the repository's git declaration — `.gitignore` and `.git/info/exclude` — not by the built-in table. */
+const DECLARED_IGNORED = [
+    'src/pkg/build/out.js',
+    'src/pkg/scratch.local.json',
+    'src/pkg/nested/build/nested-out.ts',
+    'src/pkg/excluded-by-info-exclude.ts',
+];
+/** Paths a declaration names directly and the seal answers with a sentinel rather than a file. */
+const SENTINEL_DECLARED = ['src/pkg/pipe', 'src/pkg/broken-link'];
 const NOT_CONTENT = [
     'src/pkg/__pycache__/mod.cpython-312.pyc',
     'src/pkg/.pytest_cache/v/lastfailed',
@@ -77,16 +108,25 @@ beforeEach(async () => {
     previousExitCode = process.exitCode;
     root = await mkdtemp(join(tmpdir(), 'kata-two-enumerations-'));
     await mkdir(join(root, '.kata', 'tasks', changeId), { recursive: true });
-    for (const path of [...REAL, ...NOT_CONTENT, ...DECLARED_IGNORED, DEEP, OVERSIZED]) {
+    for (const path of [...CONTENT, ...NOT_CONTENT, ...DECLARED_IGNORED, ...SENTINEL_DECLARED]) {
         await mkdir(dirname(join(root, path)), { recursive: true });
-        // One file above the tree-hash budget, so a size cap applied to one consumer only is visible.
-        await writeFile(join(root, path), path === OVERSIZED ? 'x'.repeat(3_000_000) : `content of ${path}\n`);
+        if (path === HARDLINK) continue; // created as a link below, so both names share one inode
+        if (path === OVERSIZED) await writeFile(join(root, path), 'x'.repeat(3_000_000));
+        else if (path === AT_BUDGET) await writeFile(join(root, path), 'x'.repeat(2_000_000));
+        else if (path === 'src/pkg/empty.ts') await writeFile(join(root, path), '');
+        else if (path === 'src/pkg/pipe') execFileSync('mkfifo', [join(root, path)]);
+        else if (path === 'src/pkg/broken-link') await symlink('missing-target', join(root, path));
+        else await writeFile(join(root, path), `content of ${path}\n`);
     }
+    // One inode, two names. A filter keyed on the inode keeps one of them and loses the other.
+    await link(join(root, 'src/pkg/mod.ts'), join(root, HARDLINK));
     // **The filter the predicate does not have.** The identity walk reads what the repository itself declares ignored; a
     // second walk that only asked the predicate recorded these as content, which is how the reported defect survived the
     // first repair (measured: editing only the git-ignored file moved the frozen subject).
     execFileSync('git', ['init', '-q', '.'], { cwd: root });
     await writeFile(join(root, '.gitignore'), 'build/\nscratch.local.json\n', 'utf8');
+    // The second place the repository declares something ignored. A guard that only knows `.gitignore` answers for a subset.
+    await writeFile(join(root, '.git', 'info', 'exclude'), 'excluded-by-info-exclude.ts\n', 'utf8');
     await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg'] });
 });
 
@@ -99,7 +139,7 @@ afterEach(async () => {
 describe('the two enumerations agree on what is content', () => {
     it('the fixture exercises the rule: the identity table rejects every path that is not content', () => {
         for (const path of NOT_CONTENT) expect(isIgnoredRepositoryPath(path), path).toBe(true);
-        for (const path of REAL) expect(isIgnoredRepositoryPath(path), path).toBe(false);
+        for (const path of CONTENT) expect(isIgnoredRepositoryPath(path), path).toBe(false);
     });
 
     it('records exactly what the seal records, under a declared directory', async () => {
@@ -115,6 +155,12 @@ describe('the two enumerations agree on what is content', () => {
         const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
 
         expect(recorded).toEqual(Object.keys(sealed).sort());
+        // **The expectation is written down, and it is asserted first.** Round 6's three majors were one-sided filters that
+        // moved both sides of the comparison above — the seal and the ledger — or that the fixture's kinds did not exercise.
+        // An assertion that only asks the other derivation cannot see a filter applied *inside* the shared traversal, and a
+        // fixture that only carries some kinds cannot see a filter keyed on the others. `CONTENT` is the answer, so a filter
+        // on either side, or in the traversal, fails here rather than in production.
+        expect(recorded).toEqual([...CONTENT].sort());
         // The oversized file is what makes the call-shape mutation visible: without it, a budget applied on one side only
         // cannot change either set.
         expect(recorded).toContain(OVERSIZED);
@@ -222,19 +268,25 @@ describe('the two enumerations agree on what is content', () => {
         expect(recorded).toEqual(['src/pkg/build/out.js']);
     });
 
-    it('refuses a declaration that is neither a file nor a directory, instead of hanging on it', async () => {
-        // **Round 3's second major.** The freeze stat-ed first and branched itself, so a FIFO never reached the function that
-        // classifies it and fell through to `readFile`, which blocks on a pipe that has no writer: `ledger freeze` hung with
-        // no refusal at all. One call now answers every declaration, so this is a named refusal like any other unreadable
-        // one — and the seal's own answer for the same input is a sentinel, which is the difference the design states.
-        execFileSync('mkfifo', [join(root, 'src', 'pkg', 'pipe')]);
-        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/pipe'] });
+    it('refuses a declared path the seal would sentinel, and says which, instead of recording the sentinel', async () => {
+        // **Round 3's second major, with round 6's second major named beside it.** The freeze used to stat first and branch
+        // itself, so a FIFO never reached the function that classifies it and fell through to `readFile`, which blocks on a
+        // pipe with no writer: `ledger freeze` hung with no refusal at all. It refuses by name now.
+        //
+        // **This is the one place where the ledger deliberately does not record what the seal records**, so C2 says so
+        // instead of claiming agreement for every shape: the seal answers a declared FIFO or broken symlink with
+        // `[unsupported]` / `[missing]`, and this is the shape where a sentinel is worse than a refusal — a sentinel in a
+        // *declaration* cannot be told from a file that was deleted after it, so the operator is told to fix the declaration
+        // rather than being allowed to freeze on top of it. The case asserts both halves, so neither can move alone.
+        await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/pipe', 'src/pkg/broken-link'] });
 
+        const sealed = await computePathDigests(root, ['src/pkg/pipe', 'src/pkg/broken-link']);
         const result = await ledger(['freeze']);
 
+        expect(Object.keys(sealed).sort()).toEqual([...SENTINEL_DECLARED].sort());
         expect(result.ok).toBe(false);
+        for (const path of SENTINEL_DECLARED) expect(String(result.error), path).toContain(path);
         expect(String(result.error)).toContain('cannot be read');
-        expect(String(result.error)).toContain('src/pkg/pipe');
     });
 
     it('canonicalises a declaration before looking for it, as the seal does', async () => {

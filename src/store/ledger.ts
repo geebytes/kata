@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { taskDir, taskPath } from '../core/layout.js';
 import { declaredContentPaths } from '../core/repository-identity.js';
+import { computePathDigests } from '../workflow/revision.js';
 import { withTaskLock } from '../core/state.js';
 import { validateArtefact } from '../core/schema.js';
 import type { BudgetUsage } from '../kernel/budget.js';
@@ -1124,25 +1125,44 @@ export async function freezeSubject(input: {
     // file.** This loop used to stat first and branch itself, which meant a FIFO never reached the function that knows how to
     // classify it and fell through to `readFile` — measured: `ledger freeze` hung on a declared pipe instead of refusing it,
     // and a backslash declaration (`src\\pkg`) was reported unreadable because the raw spelling was stat-ed before the
-    // canonicalisation that the seal applies first. One call answers all of it.
-    let expansion: Awaited<ReturnType<typeof declaredContentPaths>>;
+    // canonicalisation that the seal applies first.
+    //
+    // **The content set and its digests come from the seal's own function.** This used to be a second derivation: the ledger
+    // asked the shared enumeration for a path list, then read and hashed every file itself. Two derivations of one fact — and
+    // an independent round measured what that costs: a one-sided filter on an extension, a name shape or a size left every
+    // declared selector green while the two answers differed. `computePathDigests` *is* the revision identity's traversal, so
+    // asking it is not a second opinion, and no intermediate path list is left for either side to filter.
+    //
+    // **The one deliberate difference is stated, not implied.** A declaration the seal answers with a sentinel
+    // (`[missing]`, `[unsupported]`) is refused here by name, because a sentinel in a *declaration* is indistinguishable
+    // from a file that was deleted after it, and the operator should fix the declaration rather than freeze on top of it.
+    // The classification call below is what produces that refusal; it answers *which declarations are readable*, while the
+    // content set and its digests come from the seal's traversal, so the two cannot drift.
+    let classification: Awaited<ReturnType<typeof declaredContentPaths>>;
     try {
-        expansion = await declaredContentPaths(input.root, input.paths);
+        classification = await declaredContentPaths(input.root, input.paths);
     } catch (error) {
         // **A refusal, not a crash.** The canonicalisation refuses a declaration that resolves outside the repository, and
         // that refusal has to arrive as a named state the operator can act on rather than as a thrown error from inside a
         // freeze.
         return { ok: false, error: (error as Error).message, unreadable: [] };
     }
-    unreadable.push(...expansion.unreadable);
-    for (const covered of expansion.paths) {
-        try {
-            digests[covered] = hashContent(await readFile(join(input.root, covered)));
-        } catch {
-            unreadable.push(covered);
-        }
+    unreadable.push(...classification.unreadable);
+    if (unreadable.length > 0) {
+        return {
+            ok: false,
+            error: `these declared paths cannot be read, so they cannot be frozen: ${unreadable.join(', ')}`,
+            unreadable,
+        };
     }
-    if (input.paths.length > 0 && unreadable.length === 0 && Object.keys(digests).length === 0) {
+    let sealed: Record<string, string>;
+    try {
+        sealed = await computePathDigests(input.root, [...input.paths]);
+    } catch (error) {
+        return { ok: false, error: (error as Error).message, unreadable: [] };
+    }
+    Object.assign(digests, sealed);
+    if (input.paths.length > 0 && Object.keys(digests).length === 0) {
         // **A declaration that covers nothing is a declaration problem, not a schema problem.** Measured: declaring `dist`
         // expanded to no paths and the operator got `$.pathDigests must NOT have fewer than 1 properties` — a message about
         // the record, naming nothing about the declaration that produced it.
@@ -1150,15 +1170,6 @@ export async function freezeSubject(input: {
             ok: false,
             error: `the declared paths hold no content to freeze: ${input.paths.join(', ')} — the declaration covers no files: an empty directory, or one whose contents are all never content (a file under such a name has to be declared by name)`,
             unreadable: [],
-        };
-    }
-    if (unreadable.length > 0) {
-        // The lesson from the identity-policy defect: a path this walker cannot read must not be written as a sentinel,
-        // because a sentinel is indistinguishable from a deleted file and makes the revision permanently unusable.
-        return {
-            ok: false,
-            error: `these declared paths cannot be read, so they cannot be frozen: ${unreadable.join(', ')}`,
-            unreadable,
         };
     }
     // **The declaration travels with the freeze.** `digests` is the expansion of `paths`, so it cannot be inverted; a
