@@ -64,6 +64,15 @@ function traceSeam(body: ts.Block): { sealNames: string[]; subjectArgument: stri
             const first = node.arguments[0];
             subjectArgument = first !== undefined && ts.isIdentifier(first) ? first.text : `<${first?.getText() ?? 'nothing'}>`;
         }
+        // A call that receives the map and is not a known read: an in-place mutation inside a helper never appears in this
+        // body, so "no delete and no assignment" is not enough on its own. Reads are a closed set (reflection helpers and the
+        // subject builder itself); anything else gets the map only to change it.
+        if (ts.isCallExpression(node) && sealNames.some((name) => node.arguments.some((argument) => argument.getText().trim() === name))) {
+            const callee = node.expression.getText().trim();
+            if (!['subjectOf', 'Object.keys', 'Object.entries', 'Object.values'].includes(callee)) {
+                offences.push(`the map is passed to ${callee}`);
+            }
+        }
         // Anything that could change an object after it was produced.
         if (ts.isDeleteExpression(node)) offences.push(`delete at ${node.getText().slice(0, 60)}`);
         if (
@@ -121,12 +130,12 @@ async function freezeSubject(input: { paths: string[] }) {
 
         // Round 8's mutation, verbatim: a one-sided filter keyed on a kind no fixture carries.
         const roundEight = source("for (const key of Object.keys(sealed)) if (key.endsWith('.pyc')) delete sealed[key];");
-        expect(traceSeam(freezeSubjectBody(parseLedger(roundEight))).offences.map((entry) => entry.split(' ')[0])).toEqual(['delete']);
+        expect(traceSeam(freezeSubjectBody(parseLedger(roundEight))).offences.join('\n')).toContain('delete at');
 
         // Round 7's shape, and the two other ways to move an object after it was produced.
-        expect(traceSeam(freezeSubjectBody(parseLedger(source("Object.assign(sealed, {});")))).offences.map((entry) => entry.split(' ')[0])).toEqual(['Object.assign']);
-        expect(traceSeam(freezeSubjectBody(parseLedger(source("sealed['src/a.ts'] = 'x';")))).offences.map((entry) => entry.split(' ')[0]))
-            .toEqual(['assignment']);
+        expect(traceSeam(freezeSubjectBody(parseLedger(source("Object.assign(sealed, {});")))).offences.join('\n')).toContain('Object.assign');
+        expect(traceSeam(freezeSubjectBody(parseLedger(source("sealed['src/a.ts'] = 'x';")))).offences.join('\n'))
+            .toContain('assignment into');
 
         // A copy that is filtered and then handed on: no offence to find, and the argument check is what catches it.
         const viaCopy = `
@@ -139,5 +148,24 @@ async function freezeSubject(input: { paths: string[] }) {
         const traced = traceSeam(freezeSubjectBody(parseLedger(viaCopy)));
         expect(traced.subjectArgument).toBe('kept');
         expect(traced.sealNames).toEqual(['sealed']);
+
+        // The evasion the first version of this guard would have missed: the map is mutated in place by a helper, so nothing
+        // in this body deletes or assigns — the call is the offence.
+        const viaHelper = `
+async function freezeSubject(input: { paths: string[] }) {
+    const sealed = await computePathDigests(input.root, input.paths);
+    dropCaches(sealed);
+    return { ok: true, subject: subjectOf(sealed, input.paths) };
+}`;
+        expect(traceSeam(freezeSubjectBody(parseLedger(viaHelper))).offences).toEqual(['the map is passed to dropCaches']);
+
+        // And a read is not an offence: the body already asks the map how large it is.
+        const withRead = `
+async function freezeSubject(input: { paths: string[] }) {
+    const sealed = await computePathDigests(input.root, input.paths);
+    if (Object.keys(sealed).length === 0) return { ok: false };
+    return { ok: true, subject: subjectOf(sealed, input.paths) };
+}`;
+        expect(traceSeam(freezeSubjectBody(parseLedger(withRead))).offences).toEqual([]);
     });
 });
