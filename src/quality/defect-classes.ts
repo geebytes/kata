@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative as relativePathOf, resolve, sep } from 'node:path';
+import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
 
 /**
  * **The defect classes this repository's review loop produces, and what kind of oracle each one needs.**
@@ -161,11 +162,27 @@ export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
 export function instrumentResolves(root: string, generator: string): boolean {
     const candidate = generator.trim();
     if (candidate === '') return false;
+    const resolved = resolve(root, candidate);
+    // **Inside the workspace, and inside the surface that is sampled.** A file inside `.git/` resolves and is a regular
+    // file, yet it is excluded from the declared/sampled surface, so an instrument living there would be one no change can
+    // carry — measured by an independent round (R3-F4). The policy that says what is content is asked rather than guessed,
+    // so this cannot drift from the walk.
+    const relative = relativePath(root, resolved);
+    if (relative === null) return false;
+    if (isIgnoredRepositoryPath(relative)) return false;
     try {
-        return statSync(resolve(root, candidate)).isFile();
+        return statSync(resolved).isFile();
     } catch {
         return false;
     }
+}
+
+/** The workspace-relative path, or `null` when the path is outside the workspace entirely. */
+function relativePath(root: string, path: string): string | null {
+    const rootPrefix = root.endsWith(sep) ? root : root + sep;
+    if (path === root) return '';
+    if (!path.startsWith(rootPrefix)) return null;
+    return path.slice(rootPrefix.length).split(sep).join('/');
 }
 
 /**

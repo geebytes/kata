@@ -643,6 +643,29 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2250,
     };
   }
+  // **Every state that must be repaired before a report about the change means anything precedes the reports.** The
+  // `reviewRecordUnreadable` refusal above was moved first and only that one, and an independent round measured the
+  // remainder: a change with mixed-revision evidence (or an unreadable ledger) *and* a recurring class was sent to
+  // mechanize a class, when the state it had to fix first was the evidence set — the repair routes therefore sit above both
+  // recurrence reports, which are reports and nothing else.
+  if (upstream.mixedRevisionEvidence) {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'repair_mixed_revision_evidence',
+      priority: 2240,
+    };
+  }
+  // A ledger that exists and cannot be read is a refusal, not an absence: falling through would let the round-shaped
+  // branches decide as if nothing were wrong.
+  if (upstream.ledger && upstream.ledger.state === 'unreadable') {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'satisfy_ledger_deficits',
+      priority: 2230,
+    };
+  }
   // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
   // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists
   // to close, measured by an independent round. It sits above the id-based route because a class recurring inside a repair
@@ -669,15 +692,6 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2100 + (upstream.reviewLoopRecurrence as ReviewRecurrence[]).length,
     };
   }
-  // Evidence from more than one revision cannot be judged together, so the seal that produced it is redone first.
-  if (upstream.mixedRevisionEvidence) {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_mixed_revision_evidence',
-      priority: 2100,
-    };
-  }
   // **The ledger's own decision is the authority when the change has one.** It accounts for evidence strength, stale
   // verdicts, open counterexamples and the discovery floor in one place, where the branches below count findings — and
   // counting findings is the part this replaces. It sits below the two state gates above it (mixed-revision evidence,
@@ -697,18 +711,6 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       role: 'implementer',
       reason: 'satisfy_ledger_deficits',
       priority: 1990 + upstream.ledger.deficits.length,
-    };
-  }
-  // A ledger that exists and cannot be read is a refusal, not an absence: falling through would let the round-shaped
-  // branches decide as if nothing were wrong.
-  if (upstream.ledger && upstream.ledger.state === 'unreadable') {
-    // A ledger that exists and cannot be read decides nothing, and that is not the same fact as one that was never
-    // written — so it refuses here rather than falling through to the round-shaped branches as if nothing were wrong.
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'satisfy_ledger_deficits',
-      priority: 1995,
     };
   }
   // **A legacy matrix is migrated only when something is asking for it.** The old gate fired when an *obligation* existed

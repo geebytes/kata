@@ -82,7 +82,7 @@ describe('a finding that recurs across revisions is reported', () => {
 describe('the recovery route for a recurring finding', () => {
     async function summaryWith(
         rounds: ReviewRound[] | ((sealed: { revisionId: string; manifestHash: string }) => ReviewRound[]),
-        options: { corruptReviewRecord?: boolean } = {},
+        options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean } = {},
     ): Promise<{ summary: Awaited<ReturnType<typeof readUpstreamSummary>>; sealedRevisionId: string; sealedManifestHash: string; root: string }> {
         const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
         roots.push(root);
@@ -100,6 +100,10 @@ describe('the recovery route for a recurring finding', () => {
         await writeFile(join(root, '.kata', 'evidence', `${taskId}-current.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: sealed.revision.id })}\n`);
         const materialized = typeof rounds === 'function' ? rounds({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash }) : rounds;
         await writeFile(reviewRoundFile(root), materialized.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
+        if (options.mixedRevisionEvidence === true) {
+            // Two evidence files bound to different revisions: judged together they prove nothing about either.
+            await writeFile(join(root, '.kata', 'evidence', `${taskId}-other.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: 'revision-something-else' })}\n`);
+        }
         if (options.corruptReviewRecord === true) {
             // A record that exists and cannot be read: the state that must be re-read before anything is concluded about it.
             await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), '{ this is not a review record\n');
@@ -147,6 +151,23 @@ describe('the recovery route for a recurring finding', () => {
         ]);
         expect(original.summary.reviewLoopClassRecurrence?.every((entry) => !entry.stopLineCandidate)).toBe(true);
         expect(suggestCandidateAction('review', original.summary).reason).not.toBe('review_class_recurring');
+    });
+
+    it('sends mixed-revision evidence to the seal that must be redone, not to a mechanization', async () => {
+        // **The rule is about every precondition, not one instance** (R3-F2). The first repair moved only the
+        // `reviewRecordUnreadable` refusal, and an independent round measured the rest: with mixed-revision evidence *and* a
+        // recurring class the operator was sent to mechanize the class, when the state that had to be fixed first was the
+        // evidence set.
+        const both = await summaryWith(
+            [
+                { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+                { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+            ],
+            { mixedRevisionEvidence: true },
+        );
+        expect(both.summary.mixedRevisionEvidence, 'the fixture must carry two revisions of evidence').toBeTruthy();
+        expect(both.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate)).toBe(true);
+        expect(suggestCandidateAction('review', both.summary)).toMatchObject({ reason: 'repair_mixed_revision_evidence' });
     });
 
     it('sends an unreadable review record to a re-read, not to a mechanization', async () => {

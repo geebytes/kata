@@ -37,7 +37,7 @@ export interface LoopReplay {
     stopLineCandidates: string[];
     discovery:
         | { identified: false; reason: string }
-        | { identified: true; findingsPerRound: number; /** `null` when no recorded round had a numeric count: a rate over an empty set is not zero, it is unmeasured. */ blockingPerRound: number | null; roundsForHalfRate: number };
+        | { identified: true; findingsPerRound: number | null; /** `null` when no recorded round had a numeric count: a rate over an empty set is not zero, it is unmeasured. */ blockingPerRound: number | null; roundsForHalfRate: number | null };
     /** Rows that could not contribute, named — a legacy row with no findings is not a row with none. */
     unavailable: string[];
     /** Rounds whose blocking count was recorded as "could not be measured" (`null`), named: they are not rounds with zero. */
@@ -83,7 +83,10 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
                 }
                 : {
                     identified: true,
-                    findingsPerRound: share(findings.length, rounds.length),
+                    // The denominator is the rounds whose findings could be **read**: an unreadable row is named in
+                    // `unavailable` and cannot stand in for a round that found nothing (R3-F3, measured by an independent
+                    // round — the R2-F4 repair closed this fold for the blocking rate only).
+                    findingsPerRound: rounds.length - unavailable.length === 0 ? null : share(findings.length, rounds.length - unavailable.length),
                     blockingPerRound: measuredBlocking.length === 0
                         // **An empty measured set is not a zero rate.** `share` answers `0` for a `0/0` denominator, so a
                         // history where nothing could be measured reported the same number as a history that measured
@@ -92,7 +95,9 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
                         : share(measuredBlocking.reduce((total, round) => total + (round.blockingCount as number), 0), measuredBlocking.length),
                     // The rounds it would take for the observed rate to halve if it decays at the rate it has shown so far:
                     // a statement about the *series*, not a prediction, and stated as such in the report.
-                    roundsForHalfRate: findings.length === 0 ? 0 : Math.ceil(Math.log(0.5) / Math.log(1 - share(findings.length, rounds.length) / Math.max(findings.length, 1))),
+                    // **`0` here reads as "stop now".** With no findings there is nothing to halve, so the honest value is
+                    // `null` rather than the smallest number the type allows (R3-F3).
+                    roundsForHalfRate: findings.length === 0 ? null : Math.ceil(Math.log(0.5) / Math.log(1 - share(findings.length, rounds.length) / Math.max(findings.length, 1))),
                 },
         unavailable,
         unmeasuredRounds,

@@ -155,6 +155,21 @@ describe('a mechanizable class needs a generator', () => {
         expect(deficits.some((deficit) => deficit.need.includes('`src` does not resolve'))).toBe(true);
     });
 
+    it('refuses a generator that lives outside the sampled surface', async () => {
+        // **Inside the workspace is not enough** (R3-F4): `.git/h.ts` resolves and is a regular file, yet `.git` is excluded
+        // from the declared/sampled surface, so an instrument living there is one no change can carry. The rule asks the
+        // policy that decides what content is, rather than testing for the presence of a path.
+        await prepare();
+        await mkdir(join(root, '.git'), { recursive: true });
+        await writeFile(join(root, '.git', 'h.ts'), 'export const instrument = true;\n');
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:.git/h.ts:reddens']);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const named = deficits.find((deficit) => deficit.need.includes('.git/h.ts'));
+        expect(named, JSON.stringify(deficits)).toBeDefined();
+        expect(named?.need).toMatch(/does not resolve to a file/);
+    });
+
     it('answers a plan whose declaration is not an array the same way in both readers', async () => {
         // **One derivation, two consumers** (R2-F2). The decision guarded with `Array.isArray` and answered "nothing
         // declared"; the request inlined a filter and threw a raw `TypeError` for the same document. The plan is written by

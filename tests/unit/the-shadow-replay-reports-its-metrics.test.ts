@@ -93,6 +93,25 @@ describe('the shadow replay reports its metrics', () => {
         expect(replay.discovery.blockingPerRound).toBe(2);
     });
 
+    it('reports no findings rate either when every row could not be read', () => {
+        // **The same fold, two fields further on** (R3-F3): `findingsPerRound` divided by *every* round even when the rows'
+        // findings could not be read (the rows are named in `unavailable`), so an unreadable history reported a rate of
+        // zero; and `roundsForHalfRate` published `0`, which reads as "stop now" — a stopping signal from a history that
+        // measured nothing.
+        const rounds = Array.from({ length: IDENTIFIABLE_ROUNDS }, (_, index) => ({
+            at: `2026-12-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+            blockingIds: [] as string[],
+            blockingCount: 0,
+        }));
+        const replay = replayLoop(rounds);
+        expect(replay.unavailable).toHaveLength(IDENTIFIABLE_ROUNDS);
+        expect(replay.discovery.identified).toBe(true);
+        if (!replay.discovery.identified) return;
+        expect(replay.discovery.findingsPerRound).toBeNull();
+        expect(replay.discovery.roundsForHalfRate).toBeNull();
+        expect(replay.discovery.blockingPerRound).toBe(0);
+    });
+
     it('reports no blocking rate at all when nothing could be measured', () => {
         // **An empty measured set is not a zero rate** (R2-F4). `share` answers 0 for a 0/0 denominator, so a history where
         // every round was unmeasurable reported the same number as a history that measured zero blocking findings — the fold
