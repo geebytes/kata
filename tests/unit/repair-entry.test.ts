@@ -370,7 +370,11 @@ describe('a superseded seal authorises the re-seal from hardVerify', () => {
         const authorization = await authorizeVerifyRepair(root, taskId);
 
         expect(authorization.authorized).toBe(false);
-        expect(authorization.denial).toContain('kata-cli verify --change <task>');
+        // **The remedy names the change.** It used to print `--change <task>` although the id is in hand here; an
+        // independent round measured that as the surviving instance of the rule the defect-class refusals were fixed by
+        // (R9-F4), and this assertion pinned the placeholder, so it is the reason the contract moved.
+        expect(authorization.denial).toContain(`kata-cli verify --change ${taskId}`);
+        expect(authorization.denial).not.toContain('--change <task>');
         // `rba7-a4e3edc4`: the denial used to end "the sealed revision still matches the workspace", a claim about the working
         // tree that the check behind it — a hash over the revision's declared owned paths — cannot make. The wording here is the
         // falsifier: restoring the workspace claim reddens it.

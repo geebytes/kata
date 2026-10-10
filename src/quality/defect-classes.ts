@@ -232,7 +232,7 @@ export async function instrumentResolves(
             refusal: {
                 kind: 'not-a-file',
                 because: `the generator \`${candidate}\` is not a regular file`,
-                remedy: 'name the file that holds the check, not the directory that contains it',
+                remedy: `name the file that holds the check, not the directory that contains it: \`kata-cli ledger plan --change ${changeId} --classes '${forClass}:<the file that decides it>:<the relation it asserts>'\``,
             },
         };
     }

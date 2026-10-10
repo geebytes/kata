@@ -131,6 +131,30 @@ describe('the shadow replay reports its metrics', () => {
         expect(replay.repairOriginShare).toBe(0.5);
     });
 
+    it('names a finding no share speaks for whatever its class holds', () => {
+        // **The kind the widened predicate exists for** (R9-F3). R8-F2 replaced a string-only filter with "every finding no
+        // share speaks for", and no assertion carried that widening: reverting it left all seven selectors green. A `class`
+        // that is absent, `null`, a number or an object is exactly what the widening covers, so the fixture carries them.
+        const rounds = [
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            {
+                at: '2',
+                blockingIds: ['B-1'],
+                blockingCount: 1,
+                findings: [
+                    { id: 'B-1', severity: 'major', class: null, origin: 'repair' },
+                    { id: 'B-2', severity: 'major', class: 7, origin: 'repair' },
+                    { id: 'B-3', severity: 'major', origin: 'repair' },
+                ],
+            },
+        ] as unknown as Parameters<typeof replayLoop>[0];
+        const replay = replayLoop(rounds);
+        expect(replay.classified).toBe(1);
+        expect(replay.unclassifiedFindings.map((entry) => entry.id).sort()).toEqual(['B-1', 'B-2', 'B-3']);
+        // The shares speak only for the one classified finding, and nothing in them counts an unclassified one.
+        expect(replay.repairOriginShare).toBe(0);
+    });
+
     it('reports no blocking rate at all when nothing could be measured', () => {
         // **An empty measured set is not a zero rate** (R2-F4). `share` answers 0 for a 0/0 denominator, so a history where
         // every round was unmeasurable reported the same number as a history that measured zero blocking findings — the fold

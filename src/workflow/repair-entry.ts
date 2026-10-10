@@ -200,7 +200,9 @@ export async function authorizeVerifyRepair(root: string, taskId: string): Promi
                 'Build cannot run from hardVerify without a repairable verify FAIL result, or a ledger that asks for a repair.',
                 ledgerAdmission.denial,
                 "The sealed revision's declared manifest is unchanged (a change outside its owned paths is not seen by this check).",
-                'Run `kata-cli verify --change <task>` to record what is missing, or make the change the verdict asks for.',
+                // A remedy names a command the operator can run as written: the task id is in hand here (R9-F4, the same rule the
+                // defect-class refusals were fixed by — this was the surviving instance).
+                `Run \`kata-cli verify --change ${taskId}\` to record what is missing, or make the change the verdict asks for.`,
             ].filter(Boolean).join(' '),
         );
     }
