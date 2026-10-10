@@ -116,6 +116,8 @@ export type SupersededComparison =
       kind: 'content-moved';
       revisionId: string;
       differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
+      /** Present when the same move also changed a path's kind, so neither half is lost. */
+      kindChanges?: Array<{ path: string; recorded: string | null; observed: string | null }>;
     }
   | {
       kind: 'declaration-moved';
@@ -134,6 +136,16 @@ export type SupersededComparison =
       kind: 'kind-moved';
       revisionId: string;
       kindChanges: Array<{ path: string; recorded: string | null; observed: string | null }>;
+    }
+  | {
+      /**
+       * The manifest moved, no declared path's content differs, and there was no kind comparison to make — a revision sealed
+       * before kinds were recorded, or a move invisible to both comparisons. The reason is carried so the reader is not left
+       * with "no path changed" about a real move (the shape this payload exists for).
+       */
+      kind: 'unnameable';
+      revisionId: string;
+      reason: string;
     };
 
 export interface JudgeResult {

@@ -133,7 +133,8 @@
           "enum": [
             "content-moved",
             "declaration-moved",
-            "kind-moved"
+            "kind-moved",
+            "unnameable"
           ],
           "description": "Which comparison produced the verdict. The three are different facts and are kept apart rather than recorded as one with an empty list."
         },
@@ -192,7 +193,7 @@
         "kindChanges": {
           "type": "array",
           "minItems": 1,
-          "description": "For `kind-moved`: the paths whose kind changed while their content did not, each with both sides (`content`/`directory`/`missing`/`unsupported`, or null when the path was not in that side's map).",
+          "description": "The paths whose kind changed, each with both sides (`content`/`directory`/`missing`/`unsupported`, or null when the path\n was not in that side's map). Attached to `kind-moved` (where it is the whole comparison) and to `content-moved` when the same\n move changed a path's kind as well.",
           "items": {
             "type": "object",
             "required": [
@@ -219,11 +220,16 @@
               }
             }
           }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For `unnameable`: why no path could be named \u2014 a revision that recorded no path kinds, or a move invisible to both comparisons."
         }
       },
       "oneOf": [
         {
-          "description": "Content drift: the declared content moved, and at least one differing path carries both sides.",
+          "description": "Content drift: at least one declared path's content differs, with both sides.",
           "required": [
             "kind",
             "revisionId",
@@ -250,7 +256,7 @@
           }
         },
         {
-          "description": "A moved declaration: the declared sets disagree, so there is no differing path to list \u2014 and at least one of the two is non-empty, because two equal sets are not a move. An independent round measured the branch accepting `added: []` and `removed: []` together, which is the same empty-list lie the content branch already refuses.",
+          "description": "A moved declaration: the declared sets disagree, so there is no differing path to list \u2014 and at least one of the two is non-empty, because two equal sets are not a move (a round measured this branch accepting two empty sets, the same empty-list lie the content branch refuses).",
           "required": [
             "kind",
             "revisionId",
@@ -301,6 +307,48 @@
               {
                 "required": [
                   "differingPaths"
+                ]
+              },
+              {
+                "required": [
+                  "added"
+                ]
+              },
+              {
+                "required": [
+                  "removed"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "description": "The manifest moved and neither comparison could name a path; the reason is carried instead of an empty list.",
+          "required": [
+            "kind",
+            "revisionId",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unnameable"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "differingPaths"
+                ]
+              },
+              {
+                "required": [
+                  "kindChanges"
                 ]
               },
               {

@@ -100,8 +100,10 @@ export type RevisionStatus =
       expectedManifestHash: string;
       revisionManifestHash: string;
       differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
-      /** Present when the move is a change of kind rather than of content, so the verdict can name it. */
+      /** Present when the move is (also) a change of kind, so the verdict can name it. */
       kindChanges?: Array<{ path: string; recorded: string | null; observed: string | null }>;
+      /** Present only when the manifest moved and neither comparison could name a path, with the reason. */
+      comparisonUnavailable?: string;
     };
 
 /**
@@ -430,15 +432,24 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
       .sort()
       .map((path) => ({ path, recorded: recorded[path] ?? null, observed: observed[path] ?? null }));
 
-    // **A move with no content difference still has to be named.** The manifest moved — the tag says what each entry is — and
-    // a comparison that comes back empty would say "no path changed" about a real move: measured for a declared path whose
-    // kind changed while its content did not (a FIFO that becomes a missing path, a file that becomes a directory). So when
-    // the content comparison names nothing, the kind comparison answers instead.
-    const recordedKinds = (revision.pathKinds ?? {}) as Record<string, PathKind>;
-    const kindChanges = [...new Set([...Object.keys(recordedKinds), ...Object.keys(observedKinds)])]
-      .filter((path) => (recordedKinds[path] ?? null) !== (observedKinds[path] ?? null))
-      .sort()
-      .map((path) => ({ path, recorded: recordedKinds[path] ?? null, observed: observedKinds[path] ?? null }));
+    // **A move with no content difference still has to be named**, and the kind comparison is what names it: measured for a
+    // declared path whose kind changed while its content did not (a FIFO that becomes a missing path, a file that becomes a
+    // directory). Two rules govern it, both learned from a round that defeated the first version:
+    //
+    // 1. **It runs only when the revision recorded kinds.** A revision sealed before that field existed carries none, so every
+    //    observed kind would look "changed" against an absent recorded side — a false `kind-moved` naming paths whose kind did
+    //    not change, persisted into `verify.json` (measured by an independent round). A comparison without a recorded side is
+    //    not a comparison, and the verdict says so instead of inventing one.
+    // 2. **It is attached whenever it found something**, not only when the content comparison came back empty: a move can be
+    //    both, and dropping the kind half then loses half the fact (measured, same round).
+    const recordedKinds = revision.pathKinds;
+    const comparableKinds = recordedKinds !== undefined;
+    const kindChanges = !comparableKinds
+      ? []
+      : [...new Set([...Object.keys(recordedKinds), ...Object.keys(observedKinds)])]
+          .filter((path) => (recordedKinds[path] ?? null) !== (observedKinds[path] ?? null))
+          .sort()
+          .map((path) => ({ path, recorded: recordedKinds[path] ?? null, observed: observedKinds[path] ?? null }));
 
     return {
       status: 'superseded',
@@ -446,7 +457,14 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
       expectedManifestHash: manifestHash,
       revisionManifestHash: revision.manifestHash,
       differingPaths,
-      ...(differingPaths.length === 0 && kindChanges.length > 0 ? { kindChanges } : {}),
+      ...(kindChanges.length > 0 ? { kindChanges } : {}),
+      // **Nothing nameable, and the reason it is not nameable.** The manifest moved, no declared path's content differs, and
+      // the revision recorded no kinds to compare — a legacy revision, or a move invisible to both comparisons. Recording the
+      // unavailability is what keeps this from becoming either a silent `content-moved` with an empty list (the defect this
+      // payload exists for) or a fabricated `kind-moved`.
+      ...(differingPaths.length === 0 && kindChanges.length === 0
+        ? { comparisonUnavailable: comparableKinds ? 'no declared path differs in content or kind' : 'this revision records no path kinds (sealed before the field existed)' }
+        : {}),
     };
   }
   // **And the declaration itself can have moved**, which the hash above cannot see because it is taken over the old one. A

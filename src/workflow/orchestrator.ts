@@ -2543,9 +2543,11 @@ function supersededReadiness(
         // moved, or a path changed **kind** with its content unchanged — the last of which the content comparison cannot name,
         // so the verdict would otherwise say "no path changed" about a real move (measured by an independent round).
         supersededComparison: status.status === 'superseded'
-            ? status.kindChanges
+            ? status.kindChanges && status.differingPaths.length === 0
                 ? { kind: 'kind-moved' as const, revisionId: status.revisionId, kindChanges: status.kindChanges }
-                : { kind: 'content-moved' as const, revisionId: status.revisionId, differingPaths: status.differingPaths }
+                : status.differingPaths.length > 0
+                ? { kind: 'content-moved' as const, revisionId: status.revisionId, differingPaths: status.differingPaths, ...(status.kindChanges ? { kindChanges: status.kindChanges } : {}) }
+                : { kind: 'unnameable' as const, revisionId: status.revisionId, reason: status.comparisonUnavailable ?? 'no declared path differs' }
             : status.status === 'declaration-moved'
             ? { kind: 'declaration-moved' as const, revisionId, added: status.added, removed: status.removed }
             : undefined,

@@ -253,4 +253,93 @@ describe('a superseded verdict names what it compared', () => {
         expect(verdict.supersededComparison?.kind).toBe('kind-moved');
         expect(verdict.supersededComparison?.kindChanges?.map((entry) => entry.path)).toEqual(['src/pipe']);
     }, 120_000);
+
+    it('does not invent kind changes for a revision that recorded no kinds', async () => {
+        // **Round 8's blocking finding.** A revision sealed before `pathKinds` existed carries none, so comparing its absent
+        // recorded side against the observed kinds made *every* path look changed — a `kind-moved` payload naming paths whose
+        // kind did not change, persisted into `verify.json`. A comparison without a recorded side is not a comparison.
+        const root = await fixture();
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        // The shape of every revision sealed before this change: no kind map.
+        const legacy = { ...revision } as Record<string, unknown>;
+        delete legacy.pathKinds;
+
+        // Move one declared path's content, so the manifest differs and there is something to compare.
+        await writeFile(join(root, 'src', 'moved.ts'), 'export const value = "moved after the seal";\n');
+        const status = await revisionStatus(root, legacy as unknown as typeof revision, taskId);
+
+        expect(status.status, JSON.stringify(status)).toBe('superseded');
+        if (status.status !== 'superseded') return;
+        expect(status.differingPaths.map((entry) => entry.path)).toContain('src/moved.ts');
+        expect(status.kindChanges, 'no recorded kinds ⇒ no kind comparison').toBeUndefined();
+
+        // And the state where the manifest moved with nothing nameable says why, rather than reporting an empty comparison.
+        // Reached by a *kind* move on a revision with no recorded kinds: a FIFO that stops existing moves the manifest while
+        // the content maps stay empty on both sides, so neither comparison can name a path.
+        const kindRoot = await fixture();
+        await execFileAsync('mkfifo', [join(kindRoot, 'src', 'pipe')]);
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: kindRoot, args: ['-e', 'process.exit(0)'] };
+        const kindSealed = await runCommand('build', taskId, kindRoot, { seal: true, ownedPaths: [...declared, 'src/pipe'], checks: [check] });
+        expect(kindSealed.success, JSON.stringify(kindSealed).slice(0, 300)).toBe(true);
+        const pointer = await readCurrentTaskRevisionState(kindRoot, taskId);
+        if (pointer.kind !== 'current') return;
+        const withKinds = (await readTaskRevision(kindRoot, taskId, pointer.revision.id))!;
+        const stripped: Record<string, unknown> = { ...withKinds };
+        delete stripped.pathKinds;
+        await rm(join(kindRoot, 'src', 'pipe'));
+
+        const second = await revisionStatus(kindRoot, stripped as unknown as typeof withKinds, taskId);
+        expect(second.status, JSON.stringify(second)).toBe('superseded');
+        if (second.status !== 'superseded') return;
+        expect(second.differingPaths, 'no content differs here').toEqual([]);
+        expect(second.comparisonUnavailable, JSON.stringify(second)).toContain('records no path kinds');
+    }, 120_000);
+
+    it('reports a move that is both content and kind with both halves', async () => {
+        // **Round 8's fourth finding.** `kindChanges` was attached only when the content comparison came back empty, so a move
+        // that changed a path's content *and* another path's kind lost the kind half in the artefact.
+        const root = await fixture();
+        await execFileAsync('mkfifo', [join(root, 'src', 'pipe')]);
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: [...declared, 'src/pipe'], checks: [check] });
+        expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+
+        // Content of one declared path moves, and the FIFO becomes a missing path: one content change, one kind change.
+        await writeFile(join(root, 'src', 'moved.ts'), 'export const value = "content moved";\n');
+        await rm(join(root, 'src', 'pipe'));
+        const status = await revisionStatus(root, revision, taskId);
+        expect(status.status).toBe('superseded');
+        if (status.status !== 'superseded') return;
+        expect(status.differingPaths.map((entry) => entry.path), 'the content half').toContain('src/moved.ts');
+        expect(status.kindChanges?.map((entry) => entry.path), 'the kind half').toEqual(['src/pipe']);
+
+        await runCommand('verify', taskId, root);
+        const verdict = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'verify.json'), 'utf8')) as {
+            supersededComparison?: { kind?: string; differingPaths?: unknown[]; kindChanges?: Array<{ path: string }> };
+        };
+        expect(verdict.supersededComparison?.kind).toBe('content-moved');
+        expect(verdict.supersededComparison?.kindChanges?.map((entry) => entry.path)).toEqual(['src/pipe']);
+    }, 120_000);
+
+    it('writes a verification artefact its own reader accepts', async () => {
+        // **Round 8's third finding: the write-time validation had no instrument.** The comparison payload is schema-constrained
+        // (the branches are a `oneOf`, each requiring the fields that carry its comparison), and `verify` validates before it
+        // writes — but nothing observed that. This case does: the artefact on disk must parse *and* satisfy the schema its
+        // reader enforces, so a payload the writer produced and the reader would reject cannot pass unnoticed.
+        const root = await fixture();
+        await writeFile(join(root, 'src', 'moved.ts'), 'export const value = "drifted";\n');
+        await runCommand('verify', taskId, root);
+
+        const raw = await readFile(join(root, '.kata', 'tasks', taskId, 'verify.json'), 'utf8');
+        const payload = JSON.parse(raw) as Record<string, unknown>;
+        const { validate } = await import('../../src/core/schema.js');
+        expect(() => validate('verify-result', payload), raw.slice(0, 300)).not.toThrow();
+        expect(payload.supersededComparison, 'the comparison the verdict was about').toBeDefined();
+    }, 120_000);
 });
