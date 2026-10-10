@@ -1,3 +1,9 @@
+import { loopReplayOfReadable, readLoopReplay } from '../../src/quality/loop-replay.js';
+import type { ReviewRequest } from '../../src/store/review-request.js';
+
+// A typed reader, so the type must name what the document carries (R6-F6).
+const typedReader = (request: ReviewRequest): number => request.loopReplay?.rounds ?? 0;
+void typedReader;
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -175,7 +181,7 @@ describe('a mechanizable class needs a generator', () => {
         const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
         const named = deficits.find((deficit) => deficit.need.includes('.git/h.ts'));
         expect(named, JSON.stringify(deficits)).toBeDefined();
-        expect(named?.need).toMatch(/is outside the change's declared surface/);
+        expect(named?.need).toMatch(/not part of what the change carries/);
     });
 
     it('accepts a generator covered by a declared directory, spelled the way a person writes it', async () => {
@@ -207,6 +213,21 @@ describe('a mechanizable class needs a generator', () => {
         expect(named, JSON.stringify(deficits)).toBeDefined();
         expect(named?.need).toMatch(/vocabulary does not know/);
         expect(named?.need).not.toMatch(/--classes 'kind-of-racy:/);
+    });
+
+    it('has no loop report when there is no readable history, in either reader', async () => {
+        // **One decision, two readers** (R6-F5): the request omitted the field for an absent history while the summary
+        // published a zeroed report built from an empty round list, so one reader saw "no history" and the other saw "a
+        // history in which nothing happened". `readLoopReplay`/`loopReplayOfReadable` is the single decision, and this case
+        // pins both sides of it: absent ⇒ nothing, and a readable history ⇒ a report.
+        expect(loopReplayOfReadable({ kind: 'absent', rounds: [] })).toBeNull();
+        expect(await readLoopReplay(root, changeId)).toBeNull();
+        await prepare();
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/gen.ts:reddens']);
+        const request = await ledger(['run', '--change', changeId, '--out', 'tmp/request.json']);
+        expect(request.ok, JSON.stringify(request).slice(0, 200)).toBe(true);
+        const written = JSON.parse(await readFile(join(root, 'tmp', 'request.json'), 'utf8')) as { loopReplay?: unknown };
+        expect(written.loopReplay, 'an absent history is not a history in which nothing happened').toBeUndefined();
     });
 
     it('keeps the declaration when the plan is re-run without --classes', async () => {
@@ -244,6 +265,25 @@ describe('a mechanizable class needs a generator', () => {
         expect(written.loopReplay?.repairOriginShare).toBe(0.5);
     });
 
+    it('refuses a generator inside a declaration that carries no content', async () => {
+        // **What the declaration covers, not how it is spelled** (R6-F1). The rule compared the resolved generator against the
+        // raw declaration strings, so a generator inside a declared directory the change cannot carry — here `dist`, a name the
+        // repository never treats as content — was accepted as an instrument and named nowhere: the change's declared content
+        // is empty, and `decide` reported no deficit. The rule now asks the repository's own derivation of what a declaration
+        // covers.
+        await prepare();
+        await mkdir(join(root, 'dist'), { recursive: true });
+        await writeFile(join(root, 'dist', 'inst.ts'), 'export const instrument = true;\n');
+        await declarePathsForTest(['dist']);
+        const planned = await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:dist/inst.ts:reddens']);
+        expect(planned.error, JSON.stringify(planned).slice(0, 200)).toBeFalsy();
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const named = deficits.find((deficit) => deficit.need.includes('dist/inst.ts'));
+        expect(named, JSON.stringify(deficits)).toBeDefined();
+        expect(named?.need).toMatch(/not part of what the change carries/);
+    });
+
     it('derives the oracle from the vocabulary, not from the stored field', async () => {
         // **The vocabulary owns the oracle** (R4-F1). Reading the author-supplied field meant a plan whose `oracle` was
         // omitted — or contradicted the vocabulary — flipped the rule: a class the vocabulary calls mechanizable could be
@@ -269,7 +309,7 @@ describe('a mechanizable class needs a generator', () => {
         const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
         const named = deficits.find((deficit) => deficit.need.includes('link-outside.ts'));
         expect(named, JSON.stringify(deficits)).toBeDefined();
-        expect(named?.need).toMatch(/is outside the change's declared surface \(`outside\.ts`/);
+        expect(named?.need).toMatch(/not part of what the change carries/);
     });
 
     it('is refused one layer earlier when a declared generator leaves the workspace', async () => {

@@ -185,11 +185,12 @@ describe('the recovery route for a recurring finding', () => {
         }
     });
 
-    it('answers every state that invalidates the report, from one table', async () => {
-        // **The class, not the instance — again, and this time with the enumeration asserted.** The rule was fixed four times
-        // (one branch per round); the table is the fifth answer, and this case checks the two things a table can get wrong: an
-        // entry that does not fire, and a summary field that nobody routed. The second list is written here on purpose: adding
-        // an `*Unreadable` field to `UpstreamSummary` without deciding where it routes fails this case, which is the point.
+    it('answers every state that invalidates the report, from one table', () => {
+        // **The class, not the instance — with the enumeration and every entry asserted.** Rounds 2–5 fixed one branch per
+        // round; the table is the fifth answer. An independent round then measured the two holes a table can still have: an
+        // entry that cannot fire (two of them were shadowed by the review-loop switch) and a `field` list checked against a
+        // literal instead of against the states (R6-F3). So this case (a) fires every entry, (b) asserts the array is ordered
+        // by priority, and (c) pairs the rows with the table **by index**, because two entries share a field name.
         const recurring = {
             reviewFindings: 1,
             blockingFindings: 1,
@@ -205,24 +206,68 @@ describe('the recovery route for a recurring finding', () => {
             ],
         } as unknown as UpstreamSummary;
 
-        const states: Array<{ field: string; summary: UpstreamSummary; expected: string }> = [
-            { field: 'reviewLoop', summary: { ...recurring, reviewLoop: { kind: 'unreadable_current_revision' } } as unknown as UpstreamSummary, expected: 'repair_unreadable_current_revision' },
-            { field: 'reviewRecordUnreadable', summary: { ...recurring, reviewRecordUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'unreadable_review_record' },
-            { field: 'mixedRevisionEvidence', summary: { ...recurring, mixedRevisionEvidence: 'two revisions' } as unknown as UpstreamSummary, expected: 'repair_mixed_revision_evidence' },
-            { field: 'ledger', summary: { ...recurring, ledger: { state: 'unreadable', reason: 'damaged' } } as unknown as UpstreamSummary, expected: 'satisfy_ledger_deficits' },
-            { field: 'judgeUnreadable', summary: { ...recurring, judgeUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
-            { field: 'verifyUnreadable', summary: { ...recurring, verifyUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
-            { field: 'taskUnreadable', summary: { ...recurring, taskUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
-            { field: 'evidenceUnreadable', summary: { ...recurring, evidenceUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+        // One row per table entry, in the table's own order. The review loop's own four outcomes are *not* here: the switch
+        // above the table is their single producer (and its terminal escalation deliberately wins over every repair route —
+        // held by `review-escalation-terminal.test.ts`), so the table holds the states the loop does not own.
+        const rows: Array<{ what: string; summary: UpstreamSummary; expected: string }> = [
+            { what: 'the review record cannot be read', summary: { ...recurring, reviewRecordUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'unreadable_review_record' },
+            { what: 'evidence comes from two revisions', summary: { ...recurring, mixedRevisionEvidence: 'two revisions' } as unknown as UpstreamSummary, expected: 'repair_mixed_revision_evidence' },
+            { what: 'the ledger cannot be read', summary: { ...recurring, ledger: { state: 'unreadable', reason: 'damaged' } } as unknown as UpstreamSummary, expected: 'satisfy_ledger_deficits' },
+            { what: 'the judge record cannot be read', summary: { ...recurring, judgeUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { what: 'the verify record cannot be read', summary: { ...recurring, verifyUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { what: 'the task record cannot be read', summary: { ...recurring, taskUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { what: 'an evidence file cannot be read', summary: { ...recurring, evidenceUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { what: 'verify failed against this content', summary: { ...recurring, verifyResult: 'FAIL' } as unknown as UpstreamSummary, expected: 'repair_failed_verify' },
         ];
-        for (const state of states) {
-            const action = suggestCandidateAction('review', state.summary);
+        // The index pairing is the point: four entries share a reason, so a lookup by reason would silently test one twice.
+        expect(rows.length).toBe(invalidatingStates.length);
+        rows.forEach((row, index) => {
+            const entry = invalidatingStates[index];
+            const action = suggestCandidateAction('review', row.summary);
             // The recurrence is present in every row: the report exists and must lose to the state.
-            expect(state.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), state.field).toBe(true);
-            expect(action.reason, `${state.field}: ${JSON.stringify(action)}`).toBe(state.expected);
+            expect(row.summary.reviewLoopClassRecurrence?.some((candidate) => candidate.stopLineCandidate), row.what).toBe(true);
+            expect(action.reason, `row ${index} (${row.what}): ${JSON.stringify(action)}`).toBe(row.expected);
+            // And the entry that answers it is the table's own row — not merely some entry with the same reason.
+            expect(entry?.detect(row.summary), `table entry ${index} must fire for "${row.what}""`).toBe(true);
+        });
+        // The array *is* the order, and the numbers agree with it (the dynamic priority is a tie-breaker inside its own
+        // place: a failed verify counts the criteria it failed, as it always did).
+        const priorities = invalidatingStates.map((entry) => entry.priority);
+        expect(priorities).toEqual([...priorities].sort((left, right) => right - left));
+    });
+
+    it('routes the review loop\'s own four outcomes, one case each', () => {
+        // The other half of the enumeration: the loop's kinds are the switch's, so they are asserted here rather than through
+        // the table. Each one is stated, so a new kind that routes nowhere is a visible omission instead of a silent default.
+        const base = { reviewFindings: 0, blockingFindings: 0, majorFindings: 0, failedAcceptance: 0, failedVerifyAcceptance: 0, repairScopes: [], verifyRepairScopes: [], evidenceFiles: [], failingEvidence: 0 } as unknown as UpstreamSummary;
+        const kinds: Array<{ kind: string; expected: string }> = [
+            { kind: 'unreadable_current_revision', expected: 'repair_unreadable_current_revision' },
+            { kind: 'unreadable_round_history', expected: 'repair_unreadable_round_history' },
+            { kind: 'unmeasurable_current_rounds', expected: 'review_loop_unmeasurable' },
+            { kind: 'stalled_current_rounds', expected: 'escalate_review_without_progress' },
+        ];
+        for (const entry of kinds) {
+            const summary = { ...base, reviewLoop: { kind: entry.kind } } as unknown as UpstreamSummary;
+            expect(suggestCandidateAction('review', summary).reason, entry.kind).toBe(entry.expected);
         }
-        // And the table is the same one the router reads, with one entry per routed field.
-        expect([...new Set(invalidatingStates.map((entry) => entry.field))].sort()).toEqual(states.map((state) => state.field).sort());
+        // And the terminal escalation wins even when a repair route competes — the rule `review-escalation-terminal.test.ts`
+        // holds end-to-end, restated here because this case is the enumeration a new state would be added to.
+        const competing = { ...base, verifyResult: 'FAIL', mixedRevisionEvidence: 'two revisions', reviewLoop: { kind: 'stalled_current_rounds' } } as unknown as UpstreamSummary;
+        expect(suggestCandidateAction('review', competing).reason).toBe('escalate_review_without_progress');
+    });
+
+    it('names the summary fields that are deliberately not routed', () => {
+        // **An omission has to be a decision.** Three fields on the summary report the same damage as an entry above them:
+        // they are projections kept for readers that ask by artefact name, and routing reads the source of truth. Writing
+        // them here means adding a fourth has to be answered rather than inherited (R6-F3's second half).
+        const projections: Record<string, string> = {
+            ledgerUnreadable: 'projection of `ledger.state`',
+            currentRevisionUnreadable: 'projection of `reviewLoop.unreadable_current_revision`',
+            reviewHistoryUnreadable: 'projection of `reviewLoop.unreadable_round_history`',
+        };
+        for (const name of Object.keys(projections)) {
+            expect(invalidatingStates.some((entry) => entry.field === name), `${name} must not be a routed entry: ${projections[name]}`).toBe(false);
+        }
     });
 
     it('publishes the loop replay, so the report is readable and not only testable', async () => {

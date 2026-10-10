@@ -1,5 +1,5 @@
 import { isDefectClass, oracleFor, type DefectClass } from './defect-classes.js';
-import { classRecurrence, type ReviewRound } from './repair.js';
+import { classRecurrence, readReviewRoundsState, type ReviewRound, type ReviewRoundsRead } from './repair.js';
 
 /**
  * **What the recorded loop actually looked like: which classes it paid for, and how much of it a machine could have decided.**
@@ -46,6 +46,23 @@ export interface LoopReplay {
 
 /** Below this many rounds a per-round rate is not identifiable, and reporting one would be a number without a meaning. */
 export const IDENTIFIABLE_ROUNDS = 12;
+
+/**
+ * **Whether there is a loop report, decided once.**
+ *
+ * The navigation summary and the review request each decided this for themselves and disagreed on an absent history: the
+ * request omitted the field while the summary published a zeroed report built from an empty round list, so one reader saw
+ * "no history" and the other saw "a history in which nothing happened" (measured by an independent round, R6-F5). Only a
+ * *readable* history yields a report.
+ */
+export function loopReplayOfReadable(state: ReviewRoundsRead): LoopReplay | null {
+    return state.kind === 'readable' ? replayLoop(state.rounds) : null;
+}
+
+/** The same decision, for a caller that has only the change's id. */
+export async function readLoopReplay(root: string, changeId: string): Promise<LoopReplay | null> {
+    return loopReplayOfReadable(await readReviewRoundsState(root, changeId));
+}
 
 export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
     const unavailable = rounds.filter((round) => (round.findings ?? []).length === 0 && round.noFindings === undefined).map((round) => round.at);

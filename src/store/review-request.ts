@@ -23,8 +23,7 @@
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
-import { readReviewRoundsState } from '../quality/repair.js';
-import { replayLoop } from '../quality/loop-replay.js';
+import { readLoopReplay, type LoopReplay } from '../quality/loop-replay.js';
 import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
@@ -68,6 +67,16 @@ export type ReviewRequest = {
      */
     withheldProbes?: Array<{ id: string; claimId: string; subjectRevision: string | null }>;
     note: string;
+    /**
+     * **What the document carries besides the claims, declared here rather than only at the spread.** An independent round
+     * measured that the request's own type named none of the fields the returned object builds conditionally
+     * (`defectClasses`, `missingGenerators`, `unreadableArtefacts`, `loopReplay`), so `tsc` could not see a reader that
+     * forgot to look at them and the type stopped describing the document it names (R6-F6).
+     */
+    defectClasses?: Array<{ class: string; oracle: string; generator?: string; relation?: string }>;
+    missingGenerators?: string[];
+    unreadableArtefacts?: string[];
+    loopReplay?: LoopReplay;
 };
 
 export type RequestGap = { claimId: string | null; what: string };
@@ -110,8 +119,8 @@ export async function buildReviewRequest(input: {
     // in production (measured twice by independent rounds: first "computed, nobody reads it", then "published, nobody reads
     // it"). The reviewer is its real consumer — the shares and the stop-line classes are exactly what a round needs to tell
     // "this loop is recycling its own repairs" from "this class keeps turning up in the original code".
-    const roundsRead = await readReviewRoundsState(input.root, input.changeId);
-    const loopReplay = roundsRead.kind === 'readable' ? replayLoop(roundsRead.rounds) : null;
+    // The same decision the summary asks, so the two cannot disagree about an absent history (R6-F5).
+    const loopReplay = await readLoopReplay(input.root, input.changeId);
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
     const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments)).map((entry) => entry.class);

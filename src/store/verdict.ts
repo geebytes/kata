@@ -367,13 +367,12 @@ export async function ledgerVerdict(input: {
             verdict: 'insufficient',
             deficits: [
                 ...decision.deficits,
+                // **The remedy travels with the diagnosis.** One suffix appended to every reason named a command that, for
+                // two of the five reasons, ran and changed nothing (measured by an independent round, R6-F2); each refusal
+                // now carries the action that ends *it*.
                 ...missingGenerators.map((entry) => ({
                     claimId: '(defect classes)',
-                    // **The remedy must be one the CLI accepts.** For a class the vocabulary does not know, `--classes
-                    // 'unknown:…'` is refused by name, so the damaged declaration's own message is the whole remedy.
-                    need: entry.kind === 'damaged-declaration'
-                        ? entry.because
-                        : `${entry.because}; declare it as \`--classes '${entry.class}:<generator>:<relation>'\` or the class is paid for by independent rounds instead of by a machine`,
+                    need: `${entry.because}; ${entry.remedy}`,
                 })),
             ],
         };

@@ -31,7 +31,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, classRecurrence, readReviewRoundsState, recurrenceAcrossRevisions, type ClassRecurrence, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
-import { replayLoop, type LoopReplay } from '../quality/loop-replay.js';
+import { loopReplayOfReadable, type LoopReplay } from '../quality/loop-replay.js';
 import { isJsonRecord, readDirectoryState, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
@@ -500,7 +500,7 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // the operator sees which class is being sampled again and decides.
     reviewLoopClassRecurrence: reviewRounds.kind === 'unreadable' ? null : classRecurrence(reviewRounds.rounds),
     // The same rounds, reported rather than only counted: a rate is reported only when the history can identify one.
-    reviewLoopReplay: reviewRounds.kind === 'unreadable' ? null : replayLoop(reviewRounds.rounds),
+    reviewLoopReplay: loopReplayOfReadable(reviewRounds),
     ...(reviewLoop.kind === 'stalled_current_rounds' ? {
       reviewEscalation: {
         rounds: reviewLoop.rounds,
@@ -639,9 +639,11 @@ export const invalidatingStates: ReadonlyArray<{
     priority: number;
     /** The phases whose reports this state invalidates; absent means every phase (as these two branches always were). */
     phases?: readonly string[];
+    /** A priority that depends on the state itself (the verify branch counts the acceptance criteria it failed). */
+    priorityFor?: (upstream: UpstreamSummary) => number;
+    /** A reason that depends on the state itself (a failed verify names the repair scope it failed in). */
+    reasonFor?: (upstream: UpstreamSummary) => NextActionReason;
 }> = [
-    { field: 'reviewLoop', detect: (upstream) => upstream.reviewLoop?.kind === 'unreadable_current_revision', nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_current_revision', priority: 2300 , phases: ['review'] },
-    { field: 'reviewLoop', detect: (upstream) => upstream.reviewLoop?.kind === 'unreadable_round_history', nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_round_history', priority: 2290 , phases: ['review'] },
     { field: 'reviewRecordUnreadable', detect: (upstream) => upstream.reviewRecordUnreadable !== undefined, nextSkill: '/kata-review', role: 'reviewer', reason: 'unreadable_review_record', priority: 2250 , phases: ['review'] },
     { field: 'mixedRevisionEvidence', detect: (upstream) => upstream.mixedRevisionEvidence !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_mixed_revision_evidence', priority: 2240 },
     { field: 'ledger', detect: (upstream) => upstream.ledger?.state === 'unreadable', nextSkill: '/kata-build', role: 'implementer', reason: 'satisfy_ledger_deficits', priority: 2230 },
@@ -651,7 +653,12 @@ export const invalidatingStates: ReadonlyArray<{
     { field: 'judgeUnreadable', detect: (upstream) => upstream.judgeUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2226 , phases: ['review'] },
     { field: 'verifyUnreadable', detect: (upstream) => upstream.verifyUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2225 , phases: ['review'] },
     { field: 'taskUnreadable', detect: (upstream) => upstream.taskUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2224 , phases: ['review'] },
-    { field: 'evidenceUnreadable', detect: (upstream) => upstream.evidenceUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2223 , phases: ['review'] },
+    { field: 'evidenceUnreadable', detect: (upstream) => upstream.evidenceUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2223, phases: ['review'] },
+    // **A failed verify is a state too.** It sat above the table after the round-5 refactor, so with a failed verify *and* an
+    // unreadable review record the operator was sent to `repair_failed_verify` although the record's own priority is higher —
+    // the numbers were documentation and the order was the array, which is exactly what an independent round measured
+    // (R6-F4). In the table it keeps its place *and* its meaning: the array is ordered by priority, the highest first.
+    { field: 'verifyResult', detect: (upstream) => upstream.verifyResult === 'FAIL', nextSkill: '/kata-build', role: 'implementer', reason: 'repair_failed_verify', priority: 2220, phases: ['review'], priorityFor: (upstream) => 2220 + upstream.failedVerifyAcceptance, reasonFor: (upstream) => verifyRepairReason(upstream) },
 ];
 
 export function suggestCandidateAction(phase: string, upstream: UpstreamSummary): SuggestedAction {
@@ -659,7 +666,10 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   if (phase === 'archive') {
     return phaseFallbackAction('archive');
   }
-  // The only review-loop route producer: each discriminated outcome names its own route.
+  // **The review loop's own outcomes, from their single producer.** These four come from one discriminated field, and the
+  // terminal escalation is deliberately the first thing that can answer: a change whose loop has stopped making progress is
+  // a human decision, and it outranks a ledger or verify repair the same state may also need (a pre-existing case holds this,
+  // and the round-5 refactor inverted it by putting every state above the switch — measured by an independent round, R6-F4).
   if (phase === 'review' && upstream.reviewLoop) {
     switch (upstream.reviewLoop.kind) {
       case 'unreadable_current_revision':
@@ -679,25 +689,25 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
         break;
     }
   }
-  // A verify that failed against this content invalidates the findings a report would be built from, so it is answered with
-  // the states above (its reason still comes from the repair scope the failure named).
-  if (phase === 'review' && upstream.verifyResult === 'FAIL') {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: verifyRepairReason(upstream),
-      priority: 2220 + upstream.failedVerifyAcceptance,
-    };
-  }
-  // **The table above the reports.** Every state named there invalidates what a report is derived from, so it is answered
-  // first; the reports below it are *about* the change and only mean something once these are repaired.
+  // **Every state below invalidates the reports, so the table is consulted before them.** It holds the states the review
+  // loop does not own (a record nobody can read, evidence from two revisions, a ledger nobody can read, a verify that failed
+  // against this content); the loop's own four outcomes are the switch above, whose terminal escalation deliberately wins.
+  //
+  // The array is the order: entries are written highest priority first, and the dynamic fields let an entry keep a priority
+  // and a reason that depend on the state itself. A table entry that cannot fire is invisible to the case named for it, so
+  // every entry is asserted to fire (R6-F3).
   const invalidating = invalidatingStates.find((entry) => (entry.phases === undefined || entry.phases.includes(phase)) && entry.detect(upstream));
   // The first state in the table that applies is the answer: it names the repair that has to happen before a report about
   // the change can mean anything. Each entry decides its own phases, because two of these branches were never phase-guarded
   // and narrowing them to `review` would have stopped a mixed-revision seal from being repaired outside it (measured by a
   // pre-existing case after the first version of this table).
   if (invalidating) {
-    return { nextSkill: invalidating.nextSkill, role: invalidating.role, reason: invalidating.reason, priority: invalidating.priority };
+    return {
+      nextSkill: invalidating.nextSkill,
+      role: invalidating.role,
+      reason: invalidating.reasonFor?.(upstream) ?? invalidating.reason,
+      priority: invalidating.priorityFor?.(upstream) ?? invalidating.priority,
+    };
   }
   // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
   // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists

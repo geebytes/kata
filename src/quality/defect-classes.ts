@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolveDeclaredLocation } from '../core/repository-identity.js';
+import { declaredContentPaths, resolveDeclaredLocation } from '../core/repository-identity.js';
 
 /**
  * **The defect classes this repository's review loop produces, and what kind of oracle each one needs.**
@@ -170,48 +170,85 @@ export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
  * Resolution is against the workspace, and the file must be a regular file: a directory is not an instrument, and neither is
  * a name that resolves nowhere.
  */
+export interface InstrumentRefusal {
+    /** Machine-readable so the deficit can be rendered with the remedy that fits it. */
+    kind: 'empty' | 'outside-workspace' | 'unresolvable' | 'not-a-file' | 'outside-declared-surface';
+    because: string;
+    /** The command or action that ends this state. Every refusal names one, and it is one the CLI accepts. */
+    remedy: string;
+}
+
 export async function instrumentResolves(
     root: string,
     generator: string,
     declaredPaths: readonly string[] = [],
-): Promise<{ ok: true; path: string } | { ok: false; because: string }> {
+): Promise<{ ok: true; path: string } | { ok: false; refusal: InstrumentRefusal }> {
     const candidate = generator.trim();
-    if (candidate === '') return { ok: false, because: 'the generator is empty' };
-    // **The repository's own resolver decides where a declaration points.** Asking it (rather than lexically prefixing the
-    // root) is what makes a link that leaves the workspace — or one that points into a tree no change can carry — answer as
-    // the target's location; a lexical prefix test accepted `tmp/link-outside.ts` and `tmp/link-to-.git.ts` (measured by an
-    // independent round, R4-F3).
+    if (candidate === '') {
+        return {
+            ok: false,
+            refusal: {
+                kind: 'empty',
+                because: 'the generator is empty, so nothing is named to decide this class',
+                remedy: `name the file that would decide it: \`kata-cli ledger plan --classes '<class>:<generator>:<relation>'\``,
+            },
+        };
+    }
+    // **The repository's own resolver decides where a declaration points** (R4-F3): a lexical prefix test accepted a link
+    // that leaves the workspace, because `resolve` does not follow links while `statSync` does.
     const location = await resolveDeclaredLocation(root, candidate);
     if (location.kind === 'outside') {
-        return { ok: false, because: `the generator \`${candidate}\` resolves to a path outside this workspace, so the change cannot carry it` };
+        return {
+            ok: false,
+            refusal: {
+                kind: 'outside-workspace',
+                because: `the generator \`${candidate}\` resolves to a path outside this workspace`,
+                remedy: 'move the instrument into the workspace and name it by its repository-relative path',
+            },
+        };
     }
     let stats;
     try {
         stats = statSync(join(root, location.path));
     } catch {
-        return { ok: false, because: `the generator \`${candidate}\` does not resolve to a file in this workspace, so nothing can decide this class` };
+        return {
+            ok: false,
+            refusal: {
+                kind: 'unresolvable',
+                because: `the generator \`${candidate}\` does not resolve to a file in this workspace`,
+                remedy: `point it at a file that exists, or correct the spelling in \`kata-cli ledger plan --classes\``,
+            },
+        };
     }
     if (!stats.isFile()) {
-        return { ok: false, because: `the generator \`${candidate}\` is not a regular file, so nothing can decide this class` };
+        return {
+            ok: false,
+            refusal: {
+                kind: 'not-a-file',
+                because: `the generator \`${candidate}\` is not a regular file`,
+                remedy: 'name the file that holds the check, not the directory that contains it',
+            },
+        };
     }
-    // **Inside the change's declared surface, or the change cannot carry it.** The first version refused any path with an
-    // ignored segment, which wrongly refused a *declared* file (`dist/gen.ts` is content when declared) and, worse, said it
-    // "does not resolve to a file in this workspace" about a file that does (measured by an independent round, R4-F2). The
-    // declaration is the authority on what the change can carry, so the rule asks it.
-    // **Both sides resolved.** Comparing a resolved path against the *raw spelling* of a declaration refused a declaration
-    // the resolver covers (`./src`, a declared symlink, a declared directory written with a trailing slash) and said
-    // "outside the change's declared surface" about a path that is inside it (measured by an independent round, R5-F1).
-    // The declarations are therefore resolved with the same resolver, once per call.
-    const resolvedDeclarations = (
-        await Promise.all(
-            declaredPaths.map(async (declared) => {
-                const resolved = await resolveDeclaredLocation(root, declared);
-                return resolved.kind === 'inside' ? resolved.path : null;
-            }),
-        )
-    ).filter((entry): entry is string => entry !== null);
-    if (resolvedDeclarations.length > 0 && !resolvedDeclarations.some((declared) => location.path === declared || location.path.startsWith(`${declared.replace(/\/+$/, '')}/`))) {
-        return { ok: false, because: `the generator \`${candidate}\` is outside the change's declared surface (\`${location.path}\` is not covered by any declared path), so the change cannot carry it` };
+    // **What the declaration *covers*, not how it is spelled.** The first version compared the resolved generator against the
+    // raw declaration strings, so a generator inside a declared directory that the change cannot carry (a never-content
+    // directory, a declaration covering no files at all) was accepted as an instrument and named nowhere — measured by an
+    // independent round (R6-F1). The repository already owns the derivation of what a declaration covers, so it is asked.
+    if (declaredPaths.length > 0) {
+        const covered = await declaredContentPaths(root, declaredPaths);
+        if (!covered.paths.includes(location.path)) {
+            const why = covered.paths.length === 0
+                ? 'the change declares no content at all'
+                : `the change's declared surface does not cover \`${location.path}\``;
+            return {
+                ok: false,
+                refusal: {
+                    kind: 'outside-declared-surface',
+                    because: `the generator \`${candidate}\` is not part of what the change carries: ${why}`,
+                    remedy: `declare the path that covers it (\`kata-cli scope change --change <id> --add <path>\`) or name a generator inside the declared surface`,
+                },
+            };
+        }
     }
     return { ok: true, path: location.path };
 }
@@ -224,30 +261,44 @@ export async function unbackedDefectClasses(
     classes: readonly DeclaredDefectClass[],
     root: string,
     declaredPaths: readonly string[] = [],
-): Promise<Array<{ class: string; generator?: string; because: string; kind: 'missing-instrument' | 'damaged-declaration' }>> {
-    const unbacked: Array<{ class: string; generator?: string; because: string; kind: 'missing-instrument' | 'damaged-declaration' }> = [];
+): Promise<Array<{ class: string; generator?: string; because: string; remedy: string; kind: 'missing-instrument' | 'damaged-declaration' }>> {
+    const unbacked: Array<{ class: string; generator?: string; because: string; remedy: string; kind: 'missing-instrument' | 'damaged-declaration' }> = [];
     for (const entry of classes) {
         if (entry.oracle !== 'mechanizable') continue;
         const generator = entry.generator;
         // **A damaged declaration is reported as damaged, before anything is said about instruments.** The remedy differs: an
-        // unknown class name cannot be declared at all (the CLI refuses it by name), so telling the operator to run
-        // `--classes '<unknown>:…'` would name a command that cannot work — the "refusal whose remedy cannot be executed"
-        // class, measured by an independent round (R5-F3).
+        // unknown class name cannot be declared at all, so telling the operator to run `--classes '<unknown>:…'` would name a
+        // command the CLI refuses (measured by an independent round, R5-F3).
         if (entry.unknown === true) {
             unbacked.push({
                 class: entry.class,
                 ...(generator === undefined ? {} : { generator }),
-                because: `the plan declares a class the vocabulary does not know (\`${entry.class}\`), so this declaration cannot be honoured — re-run \`ledger plan --classes\` naming a class from \`defect-classes.ts\``,
+                because: `the plan declares a class the vocabulary does not know (\`${entry.class}\`)`,
+                remedy: 're-run `kata-cli ledger plan --classes` naming a class from `defect-classes.ts`',
                 kind: 'damaged-declaration',
             });
             continue;
         }
         if (generator === undefined || generator.trim() === '') {
-            unbacked.push({ class: entry.class, because: 'no generator is named, so nothing can decide this class', kind: 'missing-instrument' });
+            unbacked.push({
+                class: entry.class,
+                because: 'no generator is named, so nothing can decide this class',
+                remedy: `name it with \`kata-cli ledger plan --classes '${entry.class}:<generator>:<relation>'\`, or the class is paid for by independent rounds instead of by a machine`,
+                kind: 'missing-instrument',
+            });
             continue;
         }
         const resolved = await instrumentResolves(root, generator, declaredPaths);
-        if (!resolved.ok) unbacked.push({ class: entry.class, generator, because: resolved.because, kind: 'missing-instrument' });
+        if (!resolved.ok) {
+            unbacked.push({
+                class: entry.class,
+                generator,
+                because: resolved.refusal.because,
+                remedy: resolved.refusal.remedy,
+                kind: 'missing-instrument',
+            });
+        }
     }
     return unbacked;
+
 }
