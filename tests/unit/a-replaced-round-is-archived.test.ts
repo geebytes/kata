@@ -162,6 +162,28 @@ describe('a replaced round is archived', () => {
         expect(archived[0]?.supersededBy).not.toBe(archived[0]?.subjectRevision);
     });
 
+    it('names no question when the archived record does not name one', async () => {
+        // The round is recorded while the subject cannot be derived, so the record carries no `subjectRevision`. A later
+        // replacement then must **not** name the successor's question as what superseded it: no movement can be established
+        // from a question that was never written down (measured by an independent round).
+        await seal();
+        await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
+        await waitFor('record round 1', record('F-1', 'round-1.json'));
+        const written = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        const withoutSubject = { ...written };
+        delete withoutSubject.subjectRevision;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify(withoutSubject, null, 2)}\n`);
+
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        await seal();
+        await waitFor('record round 2 after the re-seal', record('F-2', 'round-2.json'));
+        const archived = await rows();
+        expect(archived).toHaveLength(1);
+        expect(archived[0]?.subjectRevision, 'the record still names no question').toBe(undefined);
+        expect(archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe(undefined);
+        expect(archived[0]?.supersededByRevision).toBeDefined();
+    });
+
     it('archives through the result path when only the content moved, naming the seal and no question', async () => {
         const first = await seal();
         await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
@@ -182,28 +204,29 @@ describe('a replaced round is archived', () => {
         expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
     });
 
-    it('archives through the entry when the request moved, and names the revision it opens against', async () => {
-        await seal();
+    it('archives through the entry when the content moved, and names the revision it opens against', async () => {
+        const first = await seal();
         await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
         await waitFor('record round 1', record('F-1', 'round-1.json'));
-        await restateClaim(root, changeId, 'C-1', 'The export is present, and stays present.');
-        await waitFor('enter review after the restatement', runCommand('review', changeId, root, { confirmHostModel: true }));
+        // **The content moves, so the archived round's own seal and the successor are two different seals** — otherwise the
+        // assertion below could be satisfied by the record naming itself (measured by an independent round).
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        const second = await seal();
+        await waitFor('enter review after the re-seal', runCommand('review', changeId, root, { confirmHostModel: true }));
         const archived = await rows();
         expect(archived).toHaveLength(1);
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
-        expect(archived[0]?.supersededByRevision, JSON.stringify(archived[0])).toBe(
-            JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')).id as string,
-        );
+        expect(archived[0]?.revisionId, 'the round answered the first seal').toBe(first);
+        expect(archived[0]?.supersededByRevision, 'the successor is the seal it was replaced by').toBe(second);
+        expect(archived[0]?.revisionId).not.toBe(archived[0]?.supersededByRevision);
         // And the archive carries the **whole** record: `reviewRoute` is what tells a round from a placeholder, and an
         // allow-list row dropped it (measured by an independent round).
         expect(archived[0]?.reviewRoute).toBe('adversarial');
         // The entry road names no **question** — nothing moved the question there — and it does name the round's own read
         // precisely, rather than merely being a string (both were weaker here than on the result road).
         expect(archived[0]?.supersededBy).toBe(undefined);
-        expect(archived[0]?.reviewedRevisionId).toBe(
-            JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')).id as string,
-        );
         expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
-        expect(typeof archived[0]?.reviewedRevisionId).toBe('string');
+        // The seal the round **read** — the one it was opened against, not the one standing when its result was recorded.
+        expect(archived[0]?.reviewedRevisionId).toBe(first);
     });
 });

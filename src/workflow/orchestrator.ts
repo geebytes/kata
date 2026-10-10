@@ -195,8 +195,11 @@ function isAcceptedReviewRecord(record: { reviewRoute?: unknown; findings?: unkn
     // approved record with no evidence as `invalidReviewApproval` and routes the operator to `/kata-review`; a predicate here
     // that called the same record accepted made the router and the entry contradict each other (measured by an independent
     // round). One reading of "approved": status, a recorded round, and the evidence the approval was recorded with.
+    // **The question the other readers ask, word for word** (`navigation.ts`'s `reviewReady` / `invalidReviewApproval`,
+    // `distill-gates`, the judge and archive gates, `recordsAConclusion`): the status, and the evidence the approval was
+    // recorded with. An earlier version also excluded the placeholder shape, a state no writer produces — a clause nothing
+    // exercised and no sibling reader asked, i.e. a fourth reading waiting to disagree (measured by an independent round).
     return record.status === 'approved'
-        && !isReviewPlaceholder(record)
         && typeof record.reviewEvidence === 'string'
         && record.reviewEvidence.trim() !== '';
 }
@@ -1905,8 +1908,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                                 // Only when the question **moved**: on a content-only replacement the subject is the same
                                 // question the archived record already answered, and naming it as its own successor says
                                 // something happened that did not (measured by an independent round).
+                                // Only when the archived record **names a question** and the successor names a different
+                                // one. Without the first half, a record with no `subjectRevision` made any defined subject
+                                // look like a movement — naming the successor's question as what superseded a round whose
+                                // question is unknown (measured by an independent round).
                                 subject: currentSubject !== undefined
-                                    && currentSubject !== (existing.record as { subjectRevision?: unknown }).subjectRevision
+                                    && typeof (existing.record as { subjectRevision?: unknown }).subjectRevision === 'string'
+                                    && currentSubject !== (existing.record as { subjectRevision?: string }).subjectRevision
                                     ? currentSubject
                                     : undefined,
                             }),

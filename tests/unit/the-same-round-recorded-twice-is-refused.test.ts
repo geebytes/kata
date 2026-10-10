@@ -151,6 +151,20 @@ describe('only the same round is refused', () => {
         expect(reentry.success, JSON.stringify(reentry).slice(0, 240)).toBe(true);
     });
 
+    it('refuses an approved record the product would not mint, because every other reader calls it approved', async () => {
+        // The placeholder shape with `status: 'approved'` is not a state any writer produces — but `navigation.ts`, the
+        // judge, archive and `recordsAConclusion` all ask only "approved, with the evidence it was accepted with", so the
+        // entry asks the same question rather than a fourth one (measured by an independent round: a clause nothing
+        // exercised and no sibling reader shared).
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        const placeholder = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...placeholder, status: 'approved', reviewEvidence: 'approved' }, null, 2)}\n`);
+
+        const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
+        expect(reentry.success, JSON.stringify(reentry).slice(0, 240)).toBe(false);
+        expect(reentry.error).toMatch(/approved review record/);
+    });
+
     it('refuses to enter review over an approved record, and says what to do instead', async () => {
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
