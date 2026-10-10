@@ -476,4 +476,33 @@ describe('the sealed identity is computed where the change is', () => {
         const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
         expect((await declaredContentPaths(root, ['src/marker.txt'])).paths).toEqual([]);
     }, 180_000);
+
+    it('hashes an entered scope exactly as it hashes a declared one, entry kinds included', async () => {
+        // **The two streams are one derivation, and that is asserted directly.** The evidence scope hash is compared against the
+        // revision manifest at verify time (`checkFreshness`), so a second stream that agrees only by accident makes every
+        // sealed evidence stale — measured when the entry-kind tags were added to the manifest alone: 12 e2e cases failed.
+        // Asserting the equality here rather than through the suite that noticed is what makes the property a guard: it costs
+        // milliseconds, needs no built bundle, and reddens whichever side diverges.
+        const root = await fixture();
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const owned = ['src', 'src/declared.ts', 'src/does-not-exist.ts', '.llmwiki'];
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: owned, checks: [check] });
+        expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
+
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+
+        const { computeScopeHash } = await import('../../src/quality/evidence.js');
+        const { computeBothOwnedDigests } = await import('../../src/workflow/revision.js');
+        // The revision the seal minted for this declaration …
+        expect(await computeScopeHash(root, owned)).toBe(revision.manifestHash);
+        // … and every shape that reaches the stream, asked of the two functions directly (a second seal in this test would
+        // first consume a repair entry, so the property is asserted where it lives rather than through the CLI again): a
+        // directory, a declared file, a missing path, and a never-content root.
+        for (const paths of [owned, ['src'], ['src/declared.ts'], ['src/does-not-exist.ts'], ['.llmwiki']]) {
+            expect(await computeScopeHash(root, paths), paths.join(',')).toBe((await computeBothOwnedDigests(root, paths)).manifestHash);
+        }
+    }, 180_000);
 });
