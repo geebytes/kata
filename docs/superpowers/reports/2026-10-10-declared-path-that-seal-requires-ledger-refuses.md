@@ -117,3 +117,46 @@ async function currentSubject(input: LedgerCommandOptions): Promise<...> {
 * 本报告**不主张**放宽 `ledger freeze` 对不可读路径的拒绝 —— 那是由可读性读数驱动的正确保守行为，注释里已有的测量支持保留它。
 * 本报告**不主张**「删除不需要声明」。选项 A 只针对 rename/copy 读数的**原名字**，纯删除仍应声明。
 * 未在本报告中给出 kata 侧的补丁；下游 `zenmpai` 侧**没有**绕过任何门禁：用到的只是「先把改名提交，再继续 seal/账本」这一流程顺序。
+
+---
+
+## 追加（2026-10-10，同一根因的**更靠前一环**）
+
+上文记录的是 `ledger freeze` 拒绝冻结声明里那个已删除的路径。本轮在另一个 change
+（`thin-the-entry-layer-and-own-the-parameter-metadata`，它把一个模块从基础设施移到领域）实测到：
+**更靠前的一环也被同一条判据挡住** —— `ledger plan` 与 `ledger run` 同样从**声明**取路径。
+
+逐字输出（同一次会话，kata HEAD `480d543`）：
+
+```
+$ kata-cli ledger plan --change thin-the-entry-layer-and-own-the-parameter-metadata
+…（报错点名 packages/zenmpai-core/src/zenmpai_core/infrastructure/photo_observation/parameter_registry.py）
+
+$ kata-cli ledger run --change … --out tmp/request-tel.json
+{"ok":false,"state":"no-plan","error":"no plan has been stored for this change: a request is derived
+ from the plan, and without one there is nothing to hand over"}
+```
+
+也就是说：
+
+* `freeze` 有一个逃生口 `--paths`（上文已记录，且本轮**再次用上了它**：`ledger freeze --paths
+  "<只含可读路径>"` 成功，冻结为 `rev:c40645b12ab5df00`）；
+* `plan` 与 `run` **没有**这个逃生口 ⇒ 计划生成不出来 ⇒ **ReviewRequest 生成不出来** ⇒ 独立复核连请求都没有。
+
+**后果比上文更硬**：上文说的是「账本阶段卡住」，这一环是「**复核阶段也进不去**」。本轮的实际处置是
+**人手按同一 schema 装配请求**（claims / evidence / 冻结修订号逐字取自 `.kata/tasks/<id>/review/*.json`
+与 `current-revision.json`，未加工并在 `note` 里写明原因）—— 这不是绕过门禁（复核照常进行、证据未改），
+但它意味着一个改名的 change 在当前 kata 上**无法正常生成复核请求**。
+
+### 追加的修复建议
+
+上文推荐的 A（seal 的未覆盖读数对 rename/copy 只认新名字）**仍是最优解** —— 它一次消掉整条链上的三处
+症状（`plan` / `run` / `freeze`）。若选择保留 `freeze` 的严格拒绝，则 `plan` 与 `run` 至少需要**同样的
+`--paths` 逃生口**：三处共用同一条「从声明取路径」的判据，接口不对称本身就是判据分裂。
+
+### 追加的必需回归
+
+5. 声明里含「已删除路径」的 change：`ledger plan` 与 `ledger run` 必须能产出请求（跳过或标记该路径，
+   而不是整体拒绝）；`freeze --paths` 的行为保持不变（回归 4 仍覆盖它）。
+6. 反向：声明里含**拼错**的路径（文件从未存在）时仍应被点名报错，而不是被当作「已删除」静默跳过 ——
+   「不存在」与「删除过」必须可区分。

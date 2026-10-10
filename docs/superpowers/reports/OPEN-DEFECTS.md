@@ -29,7 +29,11 @@
 * **最小修复点**：给 `severity` 写下判据定义（blocking=机制不成立 / major=行为或验收被违反 / minor=声明与见证不准确 / note=无验收影响），并把它做成可被复核者引用的文本而不是口头约定。
 * **报告**：同上（F5）。
 
-### A-4 `seal` 要求声明的路径，正是账本拒绝冻结的路径（改名的 change 卡在账本阶段）
+### A-4 `seal` 要求声明的路径，正是账本拒绝冻结的路径（改名的 change 连复核请求都生成不出来）
+
+> **2026-10-10 追加**：同一条判据不止挡住 `freeze` —— `ledger plan` 与 `ledger run` 也从声明取路径，
+> 且**没有** `--paths` 逃生口 ⇒ 计划与 ReviewRequest 都生成不出来（实测：本轮人手装配请求才派得出复核）。
+> 详见 `2026-10-10-declared-path-that-seal-requires-ledger-refuses.md` 的「追加」一节。
 
 * **影响**：中高。改文件名的 change 无法完成 freeze / run（生成不出 ReviewRequest），能否避开取决于**操作顺序**（先提交改名即可）。
 * **判据位置**：`src/core/git.ts:82-91`（rename 时把原路径也 push）、`src/cli/ledger.ts:186-217`（`currentSubject` 从声明取路径、读不到即拒绝）。
@@ -42,6 +46,15 @@
 * **判据位置**：`src/quality/check-resolver.ts:256` → `:260-268`（`dedupeChecks` 只按 (kind, command, args, cwd) 去重，不带归属）。
 * **最小修复点（推荐 A）**：去重后的执行列表带上 `acceptanceIds: string[]`，让一份结果服务多行；或（B）在声明期拒绝并点名两行。
 * **报告**：`2026-10-10-shared-check-command-drops-an-acceptance.md`。
+
+### A-6b `executable_falsifier` 无法表达「创建 / 删除文件」类变异（删除类不变量只得弱见证）
+
+* **影响**：中高。重构（移动模块、拆包、改名）产生的不变量多是「某模块不再住在那里」，而它们的自然变异
+  是**创建/删除文件** —— 变异的固定形状是 `{file, find, replace}`，表达不了 ⇒ 由 kata 判 `inconclusive`，
+  只能用**声明式**的 `static_witness` 见证（强度低于 kata 亲自执行+还原的 `executable_falsifier`）。
+* **判据位置**：`src/kernel/types.ts:224`（`mutation: { file, find, replace }`）。
+* **最小修复点（推荐 A）**：变异扩成带 `op` 的联合（`edit` / `create` / `delete`），执行器按 op 施加并无条件还原。
+* **报告**：`2026-10-10-executable-falsifier-cannot-express-file-creation.md`。
 
 ### A-6 `executable_falsifier` 判 refuted 时不说成因，且文案把探测失败说成「缺陷存在」
 
