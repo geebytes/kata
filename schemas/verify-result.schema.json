@@ -122,7 +122,7 @@
     },
     "supersededComparison": {
       "type": "object",
-      "description": "The comparison behind a drift verdict, as a union of the two states that produce one. `content-moved` names the declared paths whose own digests differ; `declaration-moved` names the declared sets that disagree, and in that state the manifest is equal, so an empty `differingPaths` is the truth rather than a gap. Present only for those two verdicts, because they are otherwise unwitnessable: the scope names no file, and the map an operator can diff (`contentDigests`) is built by the filtered walk and so excludes exactly the declared paths that can move invisibly.",
+      "description": "The comparison behind a drift verdict, as a union of the two states that produce one. `content-moved` names the declared paths whose own digests differ; `declaration-moved` names the declared sets that disagree \u2014 in that state the manifest itself is equal, so no differing path is listed. Present only for those two verdicts, because they are otherwise unwitnessable: the scope names no file, and the map an operator can diff (`contentDigests`) is built by the filtered walk and so excludes exactly the declared paths that can move invisibly. The union is enforced with `oneOf`, not merely labelled with `kind`: an independent round measured a labelled-only version accepting `content-moved` with no paths, which is the false statement this field exists to make impossible.",
       "required": [
         "kind",
         "revisionId"
@@ -143,7 +143,8 @@
         },
         "differingPaths": {
           "type": "array",
-          "description": "For `content-moved`: each declared path whose own digest differs, with both sides. Empty when the manifest moved without a per-path difference being derivable.",
+          "minItems": 1,
+          "description": "For `content-moved`: each declared path whose own digest differs, with both sides. At least one, because content drift is a change to some path's digest: the manifest hashes the declared paths and their content, so it cannot move while every path agrees.",
           "items": {
             "type": "object",
             "required": [
@@ -161,7 +162,7 @@
                   "string",
                   "null"
                 ],
-                "description": "The digest the seal recorded for this path (`pathDigests`), or null when it recorded none."
+                "description": "The digest the seal recorded for this path, or null when it recorded none."
               },
               "observed": {
                 "type": [
@@ -187,7 +188,55 @@
           },
           "description": "For `declaration-moved`: carried by the revision, no longer declared by the task."
         }
-      }
+      },
+      "oneOf": [
+        {
+          "description": "Content drift: the declared content moved, and at least one differing path carries both sides.",
+          "required": [
+            "kind",
+            "revisionId",
+            "differingPaths"
+          ],
+          "properties": {
+            "kind": {
+              "const": "content-moved"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "added"
+                ]
+              },
+              {
+                "required": [
+                  "removed"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "description": "A moved declaration: the declared sets disagree, so there is no differing path to list.",
+          "required": [
+            "kind",
+            "revisionId",
+            "added",
+            "removed"
+          ],
+          "properties": {
+            "kind": {
+              "const": "declaration-moved"
+            }
+          },
+          "not": {
+            "required": [
+              "differingPaths"
+            ]
+          }
+        }
+      ]
     }
   }
 }

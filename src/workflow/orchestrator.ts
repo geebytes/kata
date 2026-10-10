@@ -24,7 +24,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeContentDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
+import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
@@ -690,6 +690,9 @@ async function cmdBuild(
     // same content either way — for every path both walks can see. The one place they differ is the one that mattered.
     // Read once, and kept: the identity is computed from this snapshot, and the seal compares the same snapshot against the
     // tree after the checks have run (below), because the sandbox is a rewrite layer rather than a boundary.
+    // Two notes on cost, stated because a seal pays it on every run: this is a walk of the repository, and the re-check
+    // below walks it once more (both ~1 s on a 1000-file tree here). The alternative — reading only what the checks claim to
+    // have touched — is what the defected version did, and it certified content it did not hold.
     const identityContent = await computeContentDigests(root);
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
@@ -811,18 +814,35 @@ async function cmdBuild(
     //
     // So the content is read again here and compared with what the identity was computed from. This does not pretend the
     // sandbox is a boundary — it stops the seal from certifying content that no longer exists, and it names the paths.
-    const afterChecks = await computeContentDigests(root);
-    const movedWhileChecking = [...new Set([...Object.keys(identityContent), ...Object.keys(afterChecks)])]
-        .filter((path) => identityContent[path] !== afterChecks[path])
+    // **Two questions, because the answer to one does not answer the other.** The first version of this re-check compared
+    // only the repository content snapshot (`computeContentDigests`), and that walk *excludes* the paths the identity policy
+    // calls never-content — which a declaration may still name (`.llmwiki/**`, `dist`, caches). An independent round measured
+    // what that misses: a check overwrote a declared `.llmwiki/**` path, the seal reported success, and the revision it had
+    // just minted was immediately `superseded`. So the declared content is asked again with the identity's own derivation
+    // (`computeBothOwnedDigests`, the function that wrote `pathDigests`), and the repository snapshot is asked separately.
+    const afterChecks = await computeBothOwnedDigests(root, ownedPaths);
+    const declaredBefore = revision?.pathDigests ?? {};
+    const declaredMoved = [...new Set([...Object.keys(declaredBefore), ...Object.keys(afterChecks.pathDigests)])]
+        .filter((path) => declaredBefore[path] !== afterChecks.pathDigests[path])
         .sort();
-    if (movedWhileChecking.length > 0) {
+    const afterContent = await computeContentDigests(root);
+    const repositoryMoved = [...new Set([...Object.keys(identityContent), ...Object.keys(afterContent)])]
+        .filter((path) => identityContent[path] !== afterContent[path])
+        .sort();
+    if (declaredMoved.length > 0 || repositoryMoved.length > 0) {
+        const named = (paths: string[]): string => `${paths.slice(0, 10).join(', ')}${paths.length > 10 ? ` (+${paths.length - 10} more)` : ''}`;
+        const which = declaredMoved.length > 0 && repositoryMoved.length > 0
+            ? `the declared content (${named(declaredMoved)}) and other repository content (${named(repositoryMoved)})`
+            : declaredMoved.length > 0
+            ? `the declared content (${named(declaredMoved)})`
+            : `repository content outside the declaration (${named(repositoryMoved)})`;
         return {
             command: 'build',
             taskId,
             phase: 'implement',
             success: false,
-            error: `The repository moved while the checks ran: ${movedWhileChecking.slice(0, 10).join(', ')}${movedWhileChecking.length > 10 ? ` (+${movedWhileChecking.length - 10} more)` : ''}. A check runs in the execution sandbox and must not write into the repository; the seal refuses rather than certifying content that no longer exists. Re-run after the writer stops.`,
-            diagnostics: { mode: 'seal', reason: 'repository_moved_during_checks', movedWhileChecking },
+            error: `The repository moved while the checks ran: ${which}. A check runs in the execution sandbox and must not write into the repository; the seal refuses rather than certifying content that no longer exists. Re-run after the writer stops.`,
+            diagnostics: { mode: 'seal', reason: 'repository_moved_during_checks', declaredMoved, repositoryMoved },
         };
     }
     await progress.finish();

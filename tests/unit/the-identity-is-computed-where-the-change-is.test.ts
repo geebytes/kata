@@ -152,6 +152,35 @@ describe('the sealed identity is computed where the change is', () => {
         expect((await revisionStatus(root, revision, taskId)).status).toBe('current');
     }, 120_000);
 
+    it('catches a check that overwrites a DECLARED never-content path, which the repository walk cannot see', async () => {
+        // **The first version of the re-check asked the wrong question.** It compared `computeContentDigests` — the repository
+        // walk — which excludes exactly the paths the identity policy calls never-content, and a declaration may still name
+        // them. An independent round measured the gap: a check overwrote a declared `.llmwiki/**` path, the seal reported
+        // success, and the revision it minted was immediately `superseded`. The re-check now asks the identity's own question
+        // (`computeBothOwnedDigests`, the function that wrote `pathDigests`) as well as the repository's.
+        const root = await fixture();
+        const clobber = {
+            id: 'clobbers-a-declared-never-content-path',
+            name: 'clobbers-a-declared-never-content-path',
+            kind: 'test' as const,
+            command: process.execPath,
+            cwd: root,
+            args: [
+                '-e',
+                'const { execSync } = require("node:child_process"); const path = require("node:path");'
+                + ' const common = execSync("git rev-parse --git-common-dir").toString().trim();'
+                + ' const authorRoot = path.dirname(path.resolve(process.cwd(), common));'
+                + ' require("node:fs").writeFileSync(path.join(authorRoot, ".llmwiki", "edited.md"), "# MUTATED BY CHECK\\n");',
+            ],
+        };
+
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: declared, checks: [clobber] });
+
+        expect(sealed.success, `seal answered: ${JSON.stringify(sealed).slice(0, 400)}`).toBe(false);
+        expect((sealed.diagnostics as { reason?: string; declaredMoved?: string[] } | undefined)?.reason).toBe('repository_moved_during_checks');
+        expect((sealed.diagnostics as { declaredMoved?: string[] } | undefined)?.declaredMoved).toContain('.llmwiki/edited.md');
+    }, 120_000);
+
     it('refuses to seal when a check reaches the repository, instead of certifying content that no longer exists', async () => {
         // **The sandbox is a rewrite layer, not a jail, and the seal has to survive that.** `checksForExecutionSandbox`
         // rewrites the author root's literal occurrences in command, args, cwd and env — but a check that *resolves* the root

@@ -170,20 +170,49 @@ describe('a superseded verdict names what it compared', () => {
         // false statement about the seal (it did record this path). So the recorded side has to carry a digest.
         expect(typeof entry?.recorded, `recorded: ${String(entry?.recorded)}`).toBe('string');
         expect(entry?.recorded).toBe(revision.pathDigests?.['__proto__']);
+        // **The observed side too.** With a plain object for that map the union still names the path — from the recorded side —
+        // but the value it reads is the prototype object, so the payload carries `{}` where a digest belongs. The type is the
+        // assertion that makes that map load-bearing rather than defensive.
+        expect(typeof entry?.observed, `observed: ${String(entry?.observed)}`).toBe('string');
 
         // And the two derivations that produce those maps, asked directly, because the end-to-end verdict can be right while
-        // one of them is blind: measured here — reverting the recorded map alone left this case green, because the path still
-        // appeared on the observed side. Each map is asserted where it is built.
+        // one of them is blind: measured here — reverting the recorded map alone left this case green before the assertion
+        // below existed, because the path still appeared on the observed side. Each map is asserted where it is built.
         //
-        // The third map, the one `revisionStatus` builds for the observed side, is defence rather than a load-bearing part of
-        // this payload, and that is measured rather than assumed: reverting it alone also leaves this case green, because the
-        // union names the path from the recorded side. It keeps the null prototype because a plain object would report
-        // `observed: null` for a newly appearing such path — a false statement — but no case here can witness that while the
-        // recorded side is intact, so this comment is where the limit is stated instead of a fourth assertion pretending.
+        // The three maps are each load-bearing, and the third one measurably so: with a plain object for the observed side, the
+        // union still names the path (from the recorded side) but the *observed* value is the object's prototype rather than a
+        // digest — an illegal payload — which the type assertion below catches. (Two comments here have been corrected by
+        // independent rounds: the first claimed the recorded side was not load-bearing, the second claimed a plain observed map
+        // would report `observed: null`. Both were measurements I had not taken.)
         const { computeBothOwnedDigests, computeContentDigests } = await import('../../src/workflow/revision.js');
         const recordedSet = await computeBothOwnedDigests(root, withProto);
         expect(Object.keys(recordedSet.pathDigests), 'the seal records a root-level `__proto__` path').toContain('__proto__');
         const content = await computeContentDigests(root);
         expect(Object.keys(content), "the identity's content map holds it too").toContain('__proto__');
     }, 120_000);
+
+    it('refuses a drift payload whose kind contradicts the comparison it carries', async () => {
+        // **A label is not a constraint.** Round 1's finding was that a `declaration-moved` state was recorded as content
+        // drift with an empty path list — the false statement this field exists to make impossible — and adding `kind` only
+        // labelled it: an independent round measured the schema accepting `content-moved` + `differingPaths: []` and
+        // `declaration-moved` with no sets at all. So the union is enforced with `oneOf`, and this case is the gate: each of
+        // these payloads is a lie about the state it describes.
+        const { validate } = await import('../../src/core/schema.js');
+        const base = { taskId: 'schema-union', result: 'FAIL', diffHash: 'h', acceptance: [] };
+
+        const accepted = { kind: 'content-moved', revisionId: 'revision-1', differingPaths: [{ path: 'src/a.ts', recorded: 'a', observed: 'b' }] };
+        expect(() => validate('verify-result', { ...base, supersededComparison: accepted }), 'a true content-drift payload').not.toThrow();
+        const declaration = { kind: 'declaration-moved', revisionId: 'revision-1', added: ['src/a.ts'], removed: [] };
+        expect(() => validate('verify-result', { ...base, supersededComparison: declaration }), 'a declaration payload carries its sets').not.toThrow();
+
+        const lies = [
+            { kind: 'content-moved', revisionId: 'revision-1', differingPaths: [] },
+            { kind: 'content-moved', revisionId: 'revision-1', differingPaths: [], added: [], removed: [] },
+            { kind: 'declaration-moved', revisionId: 'revision-1' },
+            { kind: 'declaration-moved', revisionId: 'revision-1', added: [], removed: [], differingPaths: [] },
+        ];
+        for (const lie of lies) {
+            expect(() => validate('verify-result', { ...base, supersededComparison: lie }), JSON.stringify(lie)).toThrow();
+        }
+    }, 30_000);
 });
