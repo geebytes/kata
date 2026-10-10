@@ -163,6 +163,27 @@ describe('a superseded verdict names what it compared', () => {
 
         expect(status.status).toBe('superseded');
         if (status.status !== 'superseded') return;
-        expect(status.differingPaths.map((entry) => entry.path)).toContain('__proto__');
+        const entry = status.differingPaths.find((candidate) => candidate.path === '__proto__');
+        expect(entry, `differingPaths: ${JSON.stringify(status.differingPaths)}`).toBeDefined();
+        // **Both sides of the payload, not just the naming.** An assertion that the path appears is satisfied by one map
+        // keeping the key while the other drops it — the path shows up as newly appearing, with `recorded: null`, which is a
+        // false statement about the seal (it did record this path). So the recorded side has to carry a digest.
+        expect(typeof entry?.recorded, `recorded: ${String(entry?.recorded)}`).toBe('string');
+        expect(entry?.recorded).toBe(revision.pathDigests?.['__proto__']);
+
+        // And the two derivations that produce those maps, asked directly, because the end-to-end verdict can be right while
+        // one of them is blind: measured here — reverting the recorded map alone left this case green, because the path still
+        // appeared on the observed side. Each map is asserted where it is built.
+        //
+        // The third map, the one `revisionStatus` builds for the observed side, is defence rather than a load-bearing part of
+        // this payload, and that is measured rather than assumed: reverting it alone also leaves this case green, because the
+        // union names the path from the recorded side. It keeps the null prototype because a plain object would report
+        // `observed: null` for a newly appearing such path — a false statement — but no case here can witness that while the
+        // recorded side is intact, so this comment is where the limit is stated instead of a fourth assertion pretending.
+        const { computeBothOwnedDigests, computeContentDigests } = await import('../../src/workflow/revision.js');
+        const recordedSet = await computeBothOwnedDigests(root, withProto);
+        expect(Object.keys(recordedSet.pathDigests), 'the seal records a root-level `__proto__` path').toContain('__proto__');
+        const content = await computeContentDigests(root);
+        expect(Object.keys(content), "the identity's content map holds it too").toContain('__proto__');
     }, 120_000);
 });
