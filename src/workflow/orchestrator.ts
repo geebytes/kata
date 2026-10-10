@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { containedPath } from '../store/verify-context.js';
+import { hashContent } from '../core/hash.js';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type TaskRecord, type UpstreamCoverage } from '../core/task.js';
 import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
@@ -703,7 +704,13 @@ async function cmdBuild(
     // declaration is the operator's statement, so it is refused with the reason and the way forward.
     if (ownedPaths.length > 0) {
         const declaredContent = await computePathDigests(root, ownedPaths);
-        if (Object.keys(declaredContent).length === 0) {
+        // **Content, not sentinels.** A declaration whose every path is absent expands to `[missing]` entries, which are not
+        // content — the ledger reports those paths as unreadable and refuses the same declaration, and before this the two
+        // readers disagreed: the seal minted a revision whose only "content" was a sentinel while the ledger refused. One
+        // question, one answer: a declaration covers no files when it covers no *file*.
+        const sentinels = new Set([hashContent('[missing]'), hashContent('[unsupported]')]);
+        const coveredFiles = Object.values(declaredContent).filter((digest) => !sentinels.has(digest));
+        if (coveredFiles.length === 0) {
             return {
                 command: 'build',
                 taskId,

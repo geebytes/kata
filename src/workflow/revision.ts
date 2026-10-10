@@ -1,7 +1,7 @@
 import { readTask } from '../core/task.js';
 import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { isIgnoredRepositoryPath, normalizeDeclaredPaths, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
+import { resolveDeclaredLocation, isIgnoredRepositoryPath, normalizeDeclaredPaths, walkRepositoryEntries, walkRepositoryFiles } from '../core/repository-identity.js';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -500,8 +500,22 @@ async function feedOwnedTree(
       entry = null;
     }
 
+    // **A declared link is the same content under another name.** Resolved before it is walked, so it answers exactly as its
+    // target does — lexically following it recorded descendants the target excludes, and a link leaving the repository was
+    // recorded under a repository-relative key, which the containment rule promises cannot happen. An escaping link is
+    // recorded as `[unsupported]`; the ledger reports the same declaration as unreadable and the seal refuses a declaration
+    // that then covers no files.
+    const resolved = await resolveDeclaredLocation(root, path);
+    const location = resolved.kind === 'inside' ? resolved.path : null;
+    // **A link that leaves the repository is not content.** Reading through it recorded an outside file under a
+    // repository-relative key, which the declaration's containment rule promises cannot happen — and worse, the identity then
+    // claimed content from outside the tree it describes. It is recorded as `[unsupported]` here (a sentinel, not content),
+    // the ledger reports the same declaration as unreadable, and the seal refuses a declaration that then covers no files.
+    const escaping = resolved.kind === 'outside';
+    if (!escaping && location !== null && location !== path.replace(/\/+$/, '')) entry = await stat(join(root, location)).catch(() => null);
+
     if (entry?.isDirectory()) {
-      const relativeDir = relative(root, fullPath).replaceAll('\\', '/');
+      const relativeDir = (location ?? path).replace(/\/+$/, '');
       for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
         manifest.update(file.path);
         manifest.update('\0');
@@ -509,10 +523,13 @@ async function feedOwnedTree(
         manifest.update('\0');
         if (pathDigests) pathDigests[file.path] = hashContent(file.content);
       }
+    } else if (escaping) {
+      manifest.update('[unsupported]');
+      if (pathDigests) pathDigests[path] = hashContent('[unsupported]');
     } else if (entry?.isFile()) {
-      const content = await readFile(fullPath);
+      const content = await readFile(join(root, location ?? path));
       manifest.update(content);
-      if (pathDigests) pathDigests[path] = hashContent(content);
+      if (pathDigests) pathDigests[location ?? path] = hashContent(content);
     } else if (entry) {
       manifest.update('[unsupported]');
       if (pathDigests) pathDigests[path] = hashContent('[unsupported]');

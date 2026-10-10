@@ -313,22 +313,25 @@ describe('the two enumerations agree on what is content', () => {
     });
 
     it('records what the seal records for a never-content root, and says what was declared', async () => {
-        // **Round 3's first major, resolved the other way round.** Refusing a git-ignored directory *root* put the ledger and
-        // the seal at odds for that input: the seal records what the operator declared (owned-path hashing has no filter or
-        // cap), the ledger refused it, and the guard could not see the disagreement. The filter is for what a declaration
-        // *silently* pulls in; a declaration is the operator's own statement. So the expansion matches the seal and the
-        // declaration is *reported*, which is how the operator learns that build output they named will move the subject.
+        // **This contract was strengthened after two independent rounds, and both halves are asserted here.** The earlier
+        // rule was "the seal records what the operator declared (owned-path hashing has no filter), and the ledger reports the
+        // declaration" — chosen so the two readers agreed for a never-content *root*. A later round measured what that left
+        // open: with such a root recorded, the same physical directory answered differently depending on how the repository's
+        // own `.gitignore` was spelled (`build/` recorded, `build/*` excluded), and naming one directly was recorded while the
+        // same directory reached through a declaration was not. So the rule is one rule — a declared path is expanded under
+        // the repository's own content policy — and a declaration that covers no *file* is refused by both readers rather
+        // than honoured by one of them.
         await mkdir(join(root, 'src', 'pkg', 'build'), { recursive: true });
         await writeFile(join(root, 'src', 'pkg', 'build', 'out.js'), 'built\n');
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/build'] });
 
         const sealed = await computePathDigests(root, ['src/pkg/build']);
         const result = await ledger(['freeze']);
-        const recorded = Object.keys((await readLedger(root, changeId)).subject?.pathDigests ?? {}).sort();
 
-        expect(result.ok).toBe(true);
-        expect(recorded).toEqual(Object.keys(sealed).sort());
-        expect(recorded).toEqual(['src/pkg/build/out.js']);
+        expect(Object.keys(sealed)).toEqual([]); // the expansion is empty for a never-content root …
+        expect(result.ok).toBe(false); // … and the ledger refuses by name, which is the reader that used to disagree
+        expect(String(result.error)).toContain('the declaration covers no files');
+        expect(String(result.error)).toContain('src/pkg/build');
     });
 
     it('refuses a declared path the seal would sentinel, and says which, instead of recording the sentinel', async () => {

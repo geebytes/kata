@@ -144,6 +144,23 @@ export const ignoredPathPrefixes: readonly string[] = [
  * The largest file the *whole-tree* identity walk reads. Owned-path hashing has no cap: the manifest's job is to notice
  * that any owned file changed, while the tree hash is a cheap fingerprint over everything.
  */
+/**
+ * Whether the repository's own ignore declaration covers a path — **the path itself or any ancestor directory**.
+ *
+ * Asking only about the full path made the answer depend on how the repository's own `.gitignore` is spelled:
+ * `--ignored=matching` reports `build/` for the pattern `build/` and `build/top.js` for `build/*`, so the same ignored
+ * directory was pruned in one spelling and recorded in the other (measured by an independent round: the same declared set
+ * recorded `build/top.js` under one spelling and was refused as covering nothing under the other). Git's own semantics are
+ * the ancestor rule — a file inside an ignored directory is ignored — so that is what this asks.
+ */
+function ignoredByGitDeclaration(declaredIgnored: ReadonlySet<string>, repositoryPath: string): boolean {
+    if (declaredIgnored.size === 0) return false;
+    const parts = repositoryPath.split('/').filter(Boolean);
+    for (let index = 1; index <= parts.length; index += 1) {
+        if (declaredIgnored.has(parts.slice(0, index).join('/'))) return true;
+    }
+    return false;
+}
 export const maxTreeHashFileBytes = 2_000_000;
 
 function segments(path: string): string[] {
@@ -243,8 +260,9 @@ export async function listRepositoryFiles(root: string, options: WalkOptions = {
             const repositoryPath = relative(root, absolutePath).replaceAll('\\', '/');
             if (isIgnoredRepositoryPath(repositoryPath)) continue;
             // git reports an ignored *directory* by its directory path, so matching the entry itself is enough to prune the
-            // whole subtree — which is what makes the walk cheap as well as correct.
-            if (declaredIgnored.has(repositoryPath)) continue;
+            // **The path or any ancestor**, because a repository's own `.gitignore` reports an ignored directory as one entry
+            // under some spellings (`build/`) and as its files under others (`build/*`) — see `ignoredByGitDeclaration`.
+            if (ignoredByGitDeclaration(declaredIgnored, repositoryPath)) continue;
             if (entry.isDirectory()) {
                 await visit(absolutePath);
                 continue;
@@ -313,11 +331,53 @@ export async function walkRepositoryFiles(root: string, options: WalkOptions = {
 export function normalizeDeclaredPaths(root: string, declared: readonly string[]): string[] {
     return [...new Set(declared.map((path) => {
         const normalized = relative(root, resolve(root, path)).replaceAll('\\', '/');
-        if (!normalized || normalized === '..' || normalized.startsWith('../')) {
+        if (!normalized) {
+            // **The repository root is not a declaration.** It used to be refused with "must be inside the repository", which
+            // is false about `.` — the repository *is* inside itself (measured by an independent round). Declaring the whole
+            // repository is a different decision from declaring a path in it, and it is refused for its own reason.
+            throw new Error(`Task-owned path must name a path in the repository, not the repository root: ${path}`);
+        }
+        if (normalized === '..' || normalized.startsWith('../')) {
             throw new Error(`Task-owned path must be inside the repository: ${path}`);
         }
         return normalized;
     }))].sort();
+}
+
+/**
+ * Where a declared path actually is, in repository coordinates.
+ *
+ * `normalizeDeclaredPaths` checks containment lexically, which a symlink walks straight past; this asks the filesystem. A
+ * declared link then answers exactly as its target does — the same tree used to have a third answer through a link
+ * (recording descendants the target excludes) — and a link that leaves the repository is reported rather than recorded.
+ * A path that cannot be resolved at all (it does not exist yet) is returned unchanged, which is what the sentinel is for.
+/**
+ * Where a declared path actually is, in repository coordinates.
+ *
+ * `normalizeDeclaredPaths` checks containment lexically, which a symlink walks straight past; this asks the filesystem. A
+ * declared link then answers exactly as its target does — the same tree used to have a third answer through a link
+ * (recording descendants the target excludes) — and a link that leaves the repository is reported rather than recorded.
+ * A path that cannot be resolved at all (it does not exist yet) is returned unchanged, which is what the sentinel is for.
+ */
+export async function resolveDeclaredLocation(
+    root: string,
+    declaredPath: string,
+): Promise<{ kind: 'inside'; path: string } | { kind: 'outside' }> {
+    const { realpath } = await import('node:fs/promises');
+    let resolved: string;
+    try {
+        resolved = await realpath(join(root, declaredPath));
+    } catch {
+        return { kind: 'inside', path: declaredPath };
+    }
+    // **Both sides resolved.** Comparing a resolved path against the *lexical* root made a repository reached through a link
+    // look like a declaration that leaves the repository — measured by a pre-existing case ("accepts an existing path when the
+    // workspace root itself is reached through a link"), which is what a resolver has to get right before it can be trusted
+    // about the links it is here to judge.
+    const resolvedRoot = await realpath(root).catch(() => root);
+    const relativeResolved = relative(resolvedRoot, resolved).replaceAll('\\', '/');
+    if (!relativeResolved || relativeResolved === '..' || relativeResolved.startsWith('../')) return { kind: 'outside' };
+    return { kind: 'inside', path: relativeResolved };
 }
 
 /**
@@ -327,13 +387,6 @@ export function normalizeDeclaredPaths(root: string, declared: readonly string[]
  * — but *which paths a declaration covers* is one answer, and it is the walk's: a directory expands to the paths
  * `listRepositoryFiles` returns for it (the repository's own git declaration included, no depth cap, repository
  * coordinates), and a file is itself.
- *
- * **The filter applies to what the walk descends into, never to what was declared.** A declaration is the operator's own
- * statement about their change, and the identity has always honoured it without a cap or a filter ("owned-path hashing reads
- * what it is responsible for"); the walk's exclusions are for what a declaration *silently* pulls in. An independent round
- * measured the difference this makes: refusing a git-ignored directory *root* put the ledger and the seal at odds for that
- * input, while expanding it keeps them equal and reports the declaration as `neverContent` so the operator can see what they
- * declared.
  */
 export async function declaredContentPaths(
     root: string,
@@ -343,18 +396,28 @@ export async function declaredContentPaths(
     const unreadable: string[] = [];
     const neverContent: string[] = [];
     for (const declaration of normalizeDeclaredPaths(root, declared)) {
+        // **Resolved before it is classified.** A declared link is the same content under another name: following it lexically
+        // gave the same tree a third answer (a link to `src/` recorded the descendants `src/` excludes), and a link pointing
+        // outside the repository entered under a repository-relative key — which the declaration's containment rule promises
+        // cannot happen. Resolution happens for every shape, file and directory alike, because a link to a *file* outside the
+        // repository was the one the directory-only check missed (measured by an independent round).
+        const resolved = await resolveDeclaredLocation(root, declaration);
+        if (resolved.kind === 'outside') {
+            unreadable.push(declaration);
+            continue;
+        }
+        const where = resolved.path;
         let entry: Awaited<ReturnType<typeof stat>> | null = null;
         try {
-            entry = await stat(join(root, declaration));
+            entry = await stat(join(root, where));
         } catch {
             entry = null;
         }
         if (entry?.isDirectory()) {
-            // Reported, not refused: the operator declared this root, and the identity records what it declared.
-            if (isIgnoredRepositoryPath(declaration) || await isDeclaredIgnored(root, declaration)) neverContent.push(declaration);
-                    for (const path of await listRepositoryFiles(root, { under: declaration })) paths.add(path);
+            if (isIgnoredRepositoryPath(where) || await isDeclaredIgnored(root, where)) neverContent.push(declaration);
+            for (const path of await listRepositoryFiles(root, { under: where })) paths.add(path);
         } else if (entry?.isFile()) {
-            paths.add(declaration);
+            paths.add(where);
         } else {
             unreadable.push(declaration);
         }
@@ -364,8 +427,8 @@ export async function declaredContentPaths(
 
 /** Whether the repository itself declares this path ignored, asked the same way the walk asks it. */
 async function isDeclaredIgnored(root: string, path: string): Promise<boolean> {
-    const ignored = await gitIgnoredPaths(root);
-    return ignored.has(path) || ignored.has(`${path}/`) || ignored.has(path.replace(/\/+$/, ''));
+    // The same rule the walk uses, from the same derivation: the path, or any ancestor directory.
+    return ignoredByGitDeclaration(await gitIgnoredPaths(root), path);
 }
 
 /** The identity of the current repository contents: a hash over the paths and contents of what the walk returned. */

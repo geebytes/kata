@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { symlink } from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +8,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
-import { readTaskRevision, revisionStatus } from '../../src/workflow/revision.js';
+import { computePathDigests, readTaskRevision, revisionStatus } from '../../src/workflow/revision.js';
 import { readCurrentTaskRevisionState } from '../../src/workflow/revision.js';
 
 /**
@@ -324,4 +325,86 @@ describe('the sealed identity is computed where the change is', () => {
         // never named, so the two facts stay distinguishable in the payload.
         expect(diagnostics?.declaredMoved).toEqual([]);
     }, 120_000);
+
+    it('answers the same for an ignored directory however the repository spells the ignore rule', async () => {
+        // **R5-F1: the answer depended on the repository's own `.gitignore` spelling.** `git status --ignored=matching` reports
+        // the directory `build/` for the pattern `build/` and each of its files for `build/*`, so pruned-by-entry was true in
+        // one spelling and false in the other: the same declared set was recorded under one and refused as covering nothing
+        // under the other. The rule now asks about the path *or any ancestor*, which is also git's own semantics.
+        const spellings: Array<[string, string, string[]]> = [
+            ['build/', 'build', ['build/top.js']],
+            ['build/*', 'build', []],
+        ];
+        const answers: Array<{ spelling: string; keys: string[]; refused: boolean }> = [];
+        for (const [ignoreRule, declaration] of spellings) {
+            const root = await fixture();
+            await writeFile(join(root, '.gitignore'), `${ignoreRule}\n`);
+            await mkdir(join(root, 'build'), { recursive: true });
+            await writeFile(join(root, 'build', 'top.js'), 'built\n');
+            await git(root, ['add', '.gitignore']);
+            await git(root, ['commit', '-qm', `ignore rule ${ignoreRule}`]);
+            const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+
+            const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: [declaration], checks: [check] });
+            const current = await readCurrentTaskRevisionState(root, taskId);
+            if (current.kind === 'current') {
+                const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+                answers.push({ spelling: ignoreRule, keys: Object.keys(revision.pathDigests ?? {}).sort(), refused: false });
+            } else {
+                answers.push({ spelling: ignoreRule, keys: [], refused: sealed.success === false });
+            }
+        }
+
+        // Both spellings agree: the ignored directory is not content, so the declaration covers nothing and both refuse.
+        expect(answers.map((answer) => answer.keys), JSON.stringify(answers)).toEqual([[], []]);
+        expect(answers.every((answer) => answer.refused), JSON.stringify(answers)).toBe(true);
+    }, 180_000);
+
+    it('answers the same for a declared path that does not exist, and reports a link that leaves the repository', async () => {
+        // **Two more shapes where the readers used to disagree (round 5).** A declaration whose path does not exist expanded
+        // to a `[missing]` sentinel, which is not content, so the seal minted a revision while the ledger refused the same
+        // declaration. And a declared symlink was followed lexically: a link pointing inside the repository recorded
+        // descendants its target excludes (a third answer for one tree) and a link pointing outside the repository entered
+        // under a repository-relative key, which the declaration's containment rule promises cannot happen.
+        const root = await fixture();
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+
+        const absent = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['src/does-not-exist.ts'], checks: [check] });
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        const ledgerSide = await declaredContentPaths(root, ['src/does-not-exist.ts']);
+
+        expect(absent.success, JSON.stringify(absent).slice(0, 300)).toBe(false);
+        expect((absent.diagnostics as { reason?: string } | undefined)?.reason).toBe('declaration_covers_no_content');
+        expect(ledgerSide.unreadable).toEqual(['src/does-not-exist.ts']);
+
+        // A link to a directory inside the repository answers exactly as its target does.
+        const second = await fixture();
+        await mkdir(join(second, 'notes'), { recursive: true });
+        await writeFile(join(second, 'notes', 'a.md'), '# a note\n');
+        await git(second, ['add', '-A']);
+        await git(second, ['commit', '-qm', 'a directory for the link to point at']);
+        await symlink(join(second, 'notes'), join(second, 'link-to-notes'));
+        await git(second, ['add', 'link-to-notes']);
+        await git(second, ['commit', '-qm', 'a link to that directory']);
+
+        const linkCheck = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: second, args: ['-e', 'process.exit(0)'] };
+        const viaLink = await runCommand('build', taskId, second, { seal: true, ownedPaths: ['link-to-notes'], checks: [linkCheck] });
+        expect(viaLink.success, JSON.stringify(viaLink).slice(0, 300)).toBe(true);
+        const target = await computePathDigests(second, ['notes']);
+        const throughLink = await computePathDigests(second, ['link-to-notes']);
+        expect(Object.keys(throughLink).sort(), 'the link answers as its target does').toEqual(Object.keys(target).sort());
+
+        // A link that leaves the repository is reported, not recorded under a repository-relative key.
+        const outside = await mkdtemp(join(tmpdir(), 'kata-outside-'));
+        roots.push(outside);
+        await writeFile(join(outside, 'secret.txt'), 'outside\n');
+        const third = await fixture();
+        await symlink(join(outside, 'secret.txt'), join(third, 'escaping-link'));
+        const escapingCheck = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: third, args: ['-e', 'process.exit(0)'] };
+        const escaping = await runCommand('build', taskId, third, { seal: true, ownedPaths: ['escaping-link'], checks: [escapingCheck] });
+        const escapingRead = await declaredContentPaths(third, ['escaping-link']);
+        expect(escaping.success, JSON.stringify(escaping).slice(0, 300)).toBe(false);
+        expect(escapingRead.unreadable).toEqual(['escaping-link']);
+        expect(JSON.stringify(escaping)).not.toContain('secret.txt');
+    }, 180_000);
 });
