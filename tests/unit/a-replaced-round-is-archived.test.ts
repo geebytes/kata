@@ -142,14 +142,40 @@ describe('a replaced round is archived', () => {
         const archived = await rows();
         expect(archived).toHaveLength(1);
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
-        // **The row names what superseded it, and the name is the fact itself** — not "a non-empty string": an earlier
-        // version asserted only non-emptiness, and a fixed wrong value stayed green (measured by an independent round). The
-        // subject that moved is the new question the record now answers, so the row must carry *that* value; the seal is
-        // the revision being recorded against, which resolves under `.kata/tasks/<id>/revisions/`.
-        const current = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { subjectRevision?: string; revisionId?: string };
+        // **The row names what superseded it, and each name is the fact itself** — not "a non-empty string": an earlier
+        // version asserted only non-emptiness, and a fixed wrong value stayed green (measured by an independent round).
+        const current = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { subjectRevision?: string; revisionId?: string; reviewedRevisionId?: string };
         expect(archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe(current.subjectRevision);
         expect(archived[0]?.supersededByRevision).toBe(current.revisionId);
         expect(String(archived[0]?.supersededBy).startsWith('rev:'), 'a subject revision names the question').toBe(true);
+        // The round answered the same seal the successor names on this road — the content did not move, so the two seals
+        // are the same one, and the case that separates them is the content-move case below.
+        expect(archived[0]?.revisionId).toBe(archived[0]?.reviewedRevisionId);
+        expect(archived[0]?.supersededByRevision).toBe(archived[0]?.revisionId);
+        // **And when the question did not move, the row names no question.** The result road passes the subject
+        // unconditionally in an earlier version, so a content-only replacement wrote `supersededBy` equal to the record's own
+        // `subjectRevision` — a question that superseded nothing (measured by an independent round).
+        // The archived round answered the **old** question and the successor names the new one: that difference is what
+        // makes `supersededBy` meaningful here, and the content-only case below is where it must be absent.
+        expect(archived[0]?.subjectRevision, JSON.stringify(archived[0])).not.toBe(current.subjectRevision);
+        expect(archived[0]?.subjectRevision).not.toBe(undefined);
+        expect(archived[0]?.supersededBy).not.toBe(archived[0]?.subjectRevision);
+    });
+
+    it('archives through the result path when only the content moved, naming the seal and no question', async () => {
+        const first = await seal();
+        await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
+        await waitFor('record round 1', record('F-1', 'round-1.json'));
+        // The content moves and is re-sealed; the question does not.
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        const second = await seal();
+        await waitFor('record round 2 after the re-seal', record('F-2', 'round-2.json'));
+        const archived = await rows();
+        expect(archived).toHaveLength(1);
+        expect(archived[0]?.revisionId, 'the round answered the first seal').toBe(first);
+        expect(archived[0]?.supersededByRevision, 'the successor is the seal it was replaced by').toBe(second);
+        expect(archived[0]?.revisionId, 'so the two seals are told apart, not read off one field').not.toBe(archived[0]?.supersededByRevision);
+        expect(archived[0]?.supersededBy, 'no question moved, so none is named').toBe(undefined);
         expect(typeof archived[0]?.archivedAt).toBe('string');
         // And the declaration travels on this road too, not only on the entry road (the same round measured that the result
         // path dropped it).
@@ -171,6 +197,12 @@ describe('a replaced round is archived', () => {
         // And the archive carries the **whole** record: `reviewRoute` is what tells a round from a placeholder, and an
         // allow-list row dropped it (measured by an independent round).
         expect(archived[0]?.reviewRoute).toBe('adversarial');
+        // The entry road names no **question** — nothing moved the question there — and it does name the round's own read
+        // precisely, rather than merely being a string (both were weaker here than on the result road).
+        expect(archived[0]?.supersededBy).toBe(undefined);
+        expect(archived[0]?.reviewedRevisionId).toBe(
+            JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')).id as string,
+        );
         expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
         expect(typeof archived[0]?.reviewedRevisionId).toBe('string');
     });

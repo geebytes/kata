@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initLayout, reviewPath } from '../../src/core/layout.js';
+import { initLayout, reviewPath, taskDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
 import { appendClaim, freezeSubject, writePlan, writePolicy, writeSubject } from '../../src/store/ledger.js';
@@ -102,7 +102,7 @@ describe('only the same round is refused', () => {
         expect((await runCommand('review', changeId, root, { reviewResultFile: 'tmp/clean.json' })).success).toBe(true);
         const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
         expect(recorded.reviewRoute, 'a round that reported nothing is still a round').toBe('adversarial');
-        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved' }, null, 2)}\n`);
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'a clean pass: nothing to repair and the ledger passes' }, null, 2)}\n`);
         await writeCurrentState(root, { taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-10-11T00:00:00.000Z' });
         const stateFile = join(root, '.kata', 'tasks', changeId, 'current-state.json');
         const before = await readFile(stateFile, 'utf8');
@@ -113,6 +113,44 @@ describe('only the same round is refused', () => {
         expect(await readFile(stateFile, 'utf8'), 'a refused entry must not move the task').toBe(before);
     });
 
+    it('lets a change that was approved and then repaired be reviewed again', async () => {
+        // **The deadlock an earlier version created**: the refusal was revision-blind, so an approved record refused
+        // re-entry even after the content had moved and been re-sealed — and its own printed remedy ("change the content")
+        // was inert, because the only transition into `review` sat below the refusal (measured by an independent round).
+        // An acceptance answers the content it was recorded against; once that content is gone, the entry may proceed and
+        // the record is archived on the way in.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'accepted for this content' }, null, 2)}\n`);
+
+        // The repair: content moves, the change is re-sealed.
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+
+        const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
+        expect(reentry.success, JSON.stringify(reentry).slice(0, 240)).toBe(true);
+        // And the acceptance is moved into the history rather than erased: the round it described stays readable.
+        const rows = (await readFile(join(taskDir(root, changeId), 'review-history.jsonl'), 'utf8')).trim().split('\n').filter(Boolean)
+            .map((line) => JSON.parse(line) as { findings?: Array<{ id?: string }>; status?: string });
+        expect(rows.map((row) => (row.findings ?? []).map((finding) => finding.id))).toEqual([['F-1']]);
+        expect(rows[0]?.status).toBe('approved');
+    });
+
+    it('does not refuse an approved record the router itself calls invalid', async () => {
+        // **Two readers of one word.** `navigation.ts` reads an approved record with no `reviewEvidence` as
+        // `invalidReviewApproval` and tells the operator to re-run `/kata-review`; the entry's earlier predicate called that
+        // same record accepted and refused — so following the router's advice hit a wall (measured by an independent round).
+        // One reading now: an approval carries the evidence it was accepted with, and one that does not is not accepted.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved' }, null, 2)}\n`);
+
+        const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
+        expect(reentry.success, JSON.stringify(reentry).slice(0, 240)).toBe(true);
+    });
+
     it('refuses to enter review over an approved record, and says what to do instead', async () => {
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
@@ -120,7 +158,10 @@ describe('only the same round is refused', () => {
         // rather than driven, because driving the approval needs a passing ledger (which is a property of the ledger, not of
         // this case) — and this case is about what the entry does when the record it finds is approved.
         const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
-        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved' }, null, 2)}\n`);
+        // **A real approval carries the evidence it was accepted with** — `review --approve --review-evidence` writes it,
+        // and the router reads an approved record without it as `invalidReviewApproval`. Staging the status alone made the
+        // fixture a state the product does not produce (measured while aligning the two readers).
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'the round found one major and the ledger passes' }, null, 2)}\n`);
         const record1 = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { status?: string };
         expect(record1.status).toBe('approved');
 

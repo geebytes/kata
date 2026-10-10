@@ -74,7 +74,7 @@ grep 'R6-F2|F3|F4' .kata/tasks/<id>/      → 只在第 7 轮 rl-r7-F1/F2 的正
 | AC | 属性 | 选择器（各自独立文件） |
 |---|---|---|
 | **AC-1** | 记录按**它审的 revision** 归档：同一 revision、同一请求下的两轮是**两条**记录 | `tests/unit/a-record-is-filed-under-the-rounds-revision.test.ts` |
-| **AC-2** | **每一条替换路径**都把被替换的记录追加进 `review-history.jsonl`（另请求 / 内容移动 / review 入口取代），行里有 `supersededBy` | `tests/unit/a-replaced-round-is-archived.test.ts` |
+| **AC-2** | **每一条替换路径**都把被替换的记录追加进 `review-history.jsonl`（另请求 / 内容移动 / review 入口取代）；行是**整条记录展开**加两个后继字段——`supersededByRevision`（取代它的那次封存）与 `supersededBy`（**只有问题确实移动时**才写的那个问题） | `tests/unit/a-replaced-round-is-archived.test.ts` |
 | **AC-3** | 只有**同一轮**（同 reviewedRevision + 同请求 + 内容未动）被记两次时才拒绝，文案点名该状态 | `tests/unit/the-same-round-recorded-twice-is-refused.test.ts` |
 | **AC-4** | 一条记录的 findings 能活过下一条记录：同一 revision 上 N 轮之后，history 有 N−1 行，且每轮的 finding id **恰好出现一次** | `tests/unit/every-rounds-findings-survive-the-next-record.test.ts` |
 
@@ -99,3 +99,23 @@ grep 'R6-F2|F3|F4' .kata/tasks/<id>/      → 只在第 7 轮 rl-r7-F1/F2 的正
 - 本 change **不**保证「任何丢弃都有人看见」——它保证的是：**被替换的一轮会被归档**，以及**同一槽里能区分两轮**。已经丢掉的两轮（第 4、6 轮）无法回溯补写（项目禁止手写 `.kata` 记录），且**其确切路径未复现**：本 change 只关闭了放行第二轮之后新出现的那个窗口，并保留那份未复现的报告。
 - 本 change **不**动 `review-rounds.jsonl`（见 §5）。
 - 本 change **不**改任何门禁强度：拒绝条件只是变精确（同槽同请求同内容才拒），归档只会让记录更完整。
+
+
+---
+
+## 9. 第 3 轮后的更正与边界（2026-10-11）
+
+**修法变了，文档随之更新**（独立审查 N4 指出文档与代码不一致）：
+
+- 后继者是**两个字段**而不是一个：`supersededByRevision`（取代它的那次**封存**，可在 `.kata/tasks/<id>/revisions/` 解析）与 `supersededBy`（**只有问题确实移动时**才写的**问题** revision）。两处含义各自单一，不互相顶替。
+- **拒绝是有条件的**（R3-F1，major）：只有「该记录**绑定当前内容**」时才拒绝重入。早期版本对任何 approved 记录都拒绝，于是**通过门禁后被返修并重封的 change 再也无法复核**——而拒绝文案给出的补救（改内容）恰好是无效的。现在的形态：内容移动 ⇒ 该接受结论所回答的内容已不存在 ⇒ 允许重入，并在入口把那条记录**归档**（移动，不抹掉）。
+- **"accepted" 只有一个读法**（R3-N3）：`status === 'approved'` **且** 不是 placeholder **且** `reviewEvidence` 非空——与 `navigation.ts` 的 `reviewReady` / `invalidReviewApproval` 同一问法，避免路由让操作者去 `/kata-review` 而入口拒绝，两条路互相矛盾。
+- **一次指针读**：入口的身份与上面那个拒绝共用**同一次** `readReviewDecisionSnapshot`（套件持有"一次读"的不变量，且清单禁止在工厂外裸读指针），因此那次读被移到 transition **之前**，拒绝也就在任何写入之前判定。
+
+### 写下来的边界（不假装做到）
+
+| # | 边界 | 来源 |
+|---|---|---|
+| B7 | 锁内那份 belt 在已交付的夹具里**不可达**（前置检查先触发），因此**没有任何声明的 falsifier 能覆盖它**；它存在是为了覆盖"两次读之间指针被移动"的 TOCTOU，代码注释已如此写明 | R3-N1 |
+| B8 | `review-history.jsonl` 在 `src/` 里**没有 reader**（只有两个 writer）；行是整条记录 ⇒ 字段齐全的归档行**将来**可能被误当活动记录读。现在没有这个 site，但这个陷阱是潜在的 | R3-N2 |
+| B9 | 归档行**不**保证在语料层面唯一标识"哪一轮"——它记的是那一轮读过的 revision 与它回答的问题；同一 revision 上的两轮在行里只能靠 findings/archivedAt 区分 | 本文件 §7 的未复现报告 |

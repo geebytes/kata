@@ -35,7 +35,7 @@ import { isRepairableScope, repairableJudgeScopes, repairableVerifyScopes, type 
 import { evaluateAcceptanceAdequacy } from '../quality/evidence-adequacy.js';
 import { readBlockingProblems, readReviewMode, readReviewRecord } from './review-read.js';
 import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readLedger } from '../store/ledger.js';
-import type { VerdictBinding } from './verdict-binding.js';
+import type { RevisionIdentity, VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
 import { isCurrentAssuranceLevel, READABLE_SEVERITIES } from '../kernel/types.js';
@@ -177,8 +177,28 @@ function supersededRoundRow(
  * the code itself produces — an approved record whose round reported nothing — so that record still moved the task
  * (measured by an independent round).
  */
-function isAcceptedReviewRecord(record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown; status?: unknown }): boolean {
-    return record.status === 'approved' && !isReviewPlaceholder(record);
+/**
+ * **The whole question: is this record the accepted answer to the content that stands now?** Both the pre-transition refusal
+ * and the in-lock belt ask this, so neither can drift from the other — the earlier pair (a predicate without the binding, and
+ * the same predicate in two places) let an accepted record for *gone* content refuse a repaired change's re-review, with a
+ * remedy the refusal itself made inert (measured by an independent round).
+ */
+function isAcceptedReviewRecordFor(
+    record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown; status?: unknown; reviewEvidence?: unknown },
+    binding: RevisionIdentity,
+): boolean {
+    return isAcceptedReviewRecord(record) && bindsToRevision(record as VerdictBinding, binding);
+}
+
+function isAcceptedReviewRecord(record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown; status?: unknown; reviewEvidence?: unknown }): boolean {
+    // **`reviewEvidence` is part of the question, because the router already asks it that way.** `navigation.ts` treats an
+    // approved record with no evidence as `invalidReviewApproval` and routes the operator to `/kata-review`; a predicate here
+    // that called the same record accepted made the router and the entry contradict each other (measured by an independent
+    // round). One reading of "approved": status, a recorded round, and the evidence the approval was recorded with.
+    return record.status === 'approved'
+        && !isReviewPlaceholder(record)
+        && typeof record.reviewEvidence === 'string'
+        && record.reviewEvidence.trim() !== '';
 }
 
 export async function runCommand(
@@ -1880,7 +1900,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             join(taskDir(root, taskId), 'review-history.jsonl'),
                             // Two fields, two kinds: the revision being recorded against (a seal), and the question when
                             // the question is what moved (a subject revision, which names no artefact).
-                            supersededRoundRow(existing.record as Record<string, unknown>, { revision: binding.revisionId, subject: currentSubject }),
+                            supersededRoundRow(existing.record as Record<string, unknown>, {
+                                revision: binding.revisionId,
+                                // Only when the question **moved**: on a content-only replacement the subject is the same
+                                // question the archived record already answered, and naming it as its own successor says
+                                // something happened that did not (measured by an independent round).
+                                subject: currentSubject !== undefined
+                                    && currentSubject !== (existing.record as { subjectRevision?: unknown }).subjectRevision
+                                    ? currentSubject
+                                    : undefined,
+                            }),
                             'utf8',
                         );
                     }
@@ -2271,33 +2300,6 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
         }
 
-        // **A refusal must not move the task, so it is decided before anything is written.** This check used to live inside
-        // the lock callback, which runs after `guardTransition` and `transition` have already put the task in `review`: the
-        // refusal was emitted with the phase already changed, so "refused" and "re-entered review" happened together
-        // (measured by an independent round). The record is read here, before the transition, and an accepted conclusion
-        // stops the entry with nothing moved — the assertion in `the-same-round-recorded-twice-is-refused.test.ts` holds
-        // that, and it reddens if this moves back below the transition.
-        {
-            const standing = await readFile(layoutReviewPath(root, taskId), 'utf8').catch(() => '');
-            if (standing) {
-                try {
-                    const record = JSON.parse(standing) as { status?: string; findings?: unknown[]; reviewRoute?: unknown; declaredCoverage?: unknown };
-                    if (isAcceptedReviewRecord(record)) {
-                        return {
-                            command: 'review',
-                            taskId,
-                            phase: (await readCurrentState(root, taskId)).phase,
-                            success: false,
-                            error: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
-                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
-                        };
-                    }
-                } catch {
-                    // A record that cannot be parsed is refused by the entry's own reader below, with its own words: this
-                    // check is only about a conclusion the gate already accepted.
-                }
-            }
-        }
         if (!options.confirmHostModel) {
             // **The phase the task holds, not the phase this branch assumed.** Reported from another checkout: the refusal
             // said `hardVerify` while `current-state.json` said `review`, so the operator's next step (the remedy for a
@@ -2309,6 +2311,51 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
         }
 
+        // **One pointer read, before anything is written.** The entry mints its identity here and both uses consume it —
+        // the placeholder it stamps, and the question below about whether an accepted record still describes this content.
+        // Moving the read above the transition (where the refusal must be decided) is what the two invariants together
+        // require: the suite counts snapshot reads, and the inventory forbids a raw pointer read outside the factory.
+        const entrySnapshot = await readReviewDecisionSnapshot(root, taskId);
+        const entryRevisionRead = entrySnapshot.revisionRead;
+        const entryBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
+        // **A refusal must not move the task, so it is decided before anything is written.** This check used to live inside
+        // the lock callback, which runs after `guardTransition` and `transition` have already put the task in `review`: the
+        // refusal was emitted with the phase already changed, so "refused" and "re-entered review" happened together
+        // (measured by an independent round). The record is read here, before the transition, and an accepted conclusion
+        // stops the entry with nothing moved — the assertion in `the-same-round-recorded-twice-is-refused.test.ts` holds
+        // that, and it reddens if this moves back below the transition.
+        {
+            const standing = await readFile(layoutReviewPath(root, taskId), 'utf8').catch(() => '');
+            if (standing) {
+                try {
+                    const record = JSON.parse(standing) as { status?: string; findings?: unknown[]; reviewRoute?: unknown; declaredCoverage?: unknown; reviewEvidence?: unknown };
+                    // **The refusal is about a conclusion that still stands for this content.** An earlier version refused
+                    // any approved record, revision-blind — so a change approved on a clean pass, repaired and re-sealed,
+                    // could never be reviewed again: the refusal fired, the only transition into `review` sat below it, and
+                    // its own printed remedy (change the content) was inert (measured by an independent round). Once the
+                    // content has moved, the accepted record is answered for content that is gone, so the entry may proceed
+                    // and the record is archived on the way in.
+                    // **The same binding the entry will write.** The refusal is asked from the entry's own snapshot read, so
+                    // the question "is this acceptance for the content that stands" is answered from the identity the
+                    // placeholder is stamped with — one pointer read, one identity, both uses (`review-entry-reads-the-pointer-once`
+                    // holds the count, and the in-lock belt re-judges under the lock if the pointer moves meanwhile).
+                    const acceptedStanding = isAcceptedReviewRecordFor(record, entryBinding);
+                    if (acceptedStanding) {
+                        return {
+                            command: 'review',
+                            taskId,
+                            phase: (await readCurrentState(root, taskId)).phase,
+                            success: false,
+                            error: 'This change has an approved review record for exactly this content, so entering review again would move an accepted conclusion out of the store. '
+                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
+                        };
+                    }
+                } catch {
+                    // A record that cannot be parsed is refused by the entry's own reader below, with its own words: this
+                    // check is only about a conclusion the gate already accepted.
+                }
+            }
+        }
         await guardTransition(options.guard, 'check', taskId, 'review');
         const state = await transition(taskId, 'review', actorFor(reviewerActor, options.platform), { root });
         await guardTransition(options.guard, 'apply', taskId, 'review');
@@ -2323,9 +2370,6 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         // overwrite/archive decision below — and the pointer is written non-atomically, so a seal landing between the two
         // left the record stamped from one revision while the decision to replace it rested on another (measured by an
         // independent review; same invariant as the round writer in `repair-entry.ts`).
-        const entrySnapshot = await readReviewDecisionSnapshot(root, taskId);
-        const entryRevisionRead = entrySnapshot.revisionRead;
-        const entryBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
         let committed;
         try {
             committed = await commitReviewDecision(root, taskId, entrySnapshot, async (lock) => {
@@ -2353,7 +2397,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // refusal returned as an envelope here would be dropped: the caller only inspects `committed.kind`, so
                     // the command would report success while writing nothing — measured while wiring this guard, and the
                     // reason it carries a `refused` field instead.
-                    if (isAcceptedReviewRecord(previous)) {
+                    if (isAcceptedReviewRecordFor(previous, recordBinding)) {
                         return {
                             refused: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
                                 + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
