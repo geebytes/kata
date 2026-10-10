@@ -407,4 +407,73 @@ describe('the sealed identity is computed where the change is', () => {
         expect(escapingRead.unreadable).toEqual(['escaping-link']);
         expect(JSON.stringify(escaping)).not.toContain('secret.txt');
     }, 180_000);
+
+    it('does not read through a declared link whose target is a directory outside the repository', async () => {
+        // **Round 6's blocking finding, and the branch order it exposed.** `stat` follows symlinks, so `entry.isDirectory()` is
+        // true for a link whose target is a directory — and that check came *before* the escape check, which made the escape
+        // branch dead code for exactly this shape. Measured: the seal minted a revision whose
+        // `pathDigests['link-dir-out/x.txt']` was the digest of bytes **outside the repository**, while the ledger refused the
+        // same declaration as unreadable. A link to the repository root was recorded as the whole tree the same way.
+        const outsideDirectory = await mkdtemp(join(tmpdir(), 'kata-outside-dir-'));
+        roots.push(outsideDirectory);
+        await writeFile(join(outsideDirectory, 'x.txt'), 'OUTSIDE CONTENT\n');
+
+        const root = await fixture();
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        await symlink(outsideDirectory, join(root, 'link-dir-out'));
+
+        const refused = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['link-dir-out'], checks: [check] });
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        const ledgerSide = await declaredContentPaths(root, ['link-dir-out']);
+
+        expect(refused.success, `seal answered: ${JSON.stringify(refused).slice(0, 400)}`).toBe(false);
+        expect((refused.diagnostics as { reason?: string } | undefined)?.reason).toBe('declaration_covers_no_content');
+        expect(ledgerSide.unreadable).toEqual(['link-dir-out']);
+        // The outside bytes are nowhere in what the seal reported, which is the whole point of refusing.
+        expect(JSON.stringify(refused)).not.toContain('OUTSIDE CONTENT');
+
+        // A link to the repository itself is the same shape: it is not content, and the tree is not recorded under its name.
+        const second = await fixture();
+        await symlink(second, join(second, 'link-to-root'));
+        const rootLink = await runCommand('build', taskId, second, { seal: true, ownedPaths: ['link-to-root'], checks: [{ ...check, cwd: second }] });
+        expect(rootLink.success, JSON.stringify(rootLink).slice(0, 300)).toBe(false);
+        expect(JSON.stringify(rootLink)).not.toContain('sentinel-of-self');
+    }, 180_000);
+
+    it('treats a file whose content is exactly a sentinel marker as content, and reports its deletion', async () => {
+        // **Round 6's second major.** The seal decided "covers no content" by comparing digests against
+        // `sha256('[missing]')`, so a real declared file containing exactly `[missing]` was refused by the seal while the same
+        // declaration was accepted by the ledger — and, in a mixed declaration, that file was indistinguishable from a deleted
+        // one: deleting it left `revisionStatus` reporting `current` and `differingPaths` empty, so a real move went
+        // unreported. A path with no content no longer produces a digest entry at all, so the map answers the question without
+        // any sentinel comparison.
+        const root = await fixture();
+        await writeFile(join(root, 'src', 'marker.txt'), '[missing]');
+        await git(root, ['add', 'src/marker.txt']);
+        await git(root, ['commit', '-qm', 'a file whose bytes are a sentinel marker']);
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['src/marker.txt', 'src/declared.ts'], checks: [check] });
+        expect(sealed.success, `seal answered: ${JSON.stringify(sealed).slice(0, 300)}`).toBe(true);
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        expect(Object.keys(revision.pathDigests ?? {}).sort()).toEqual(['src/declared.ts', 'src/marker.txt']);
+        expect(await revisionStatus(root, revision, taskId).then((status) => status.status)).toBe('current');
+
+        // Deleting it is a real move, and it is reported with both sides.
+        await rm(join(root, 'src', 'marker.txt'));
+        const after = await revisionStatus(root, revision, taskId);
+        expect(after.status, JSON.stringify(after)).toBe('superseded');
+        if (after.status !== 'superseded') return;
+        const entry = after.differingPaths.find((candidate) => candidate.path === 'src/marker.txt');
+        expect(entry?.observed).toBeNull();
+        expect(typeof entry?.recorded).toBe('string');
+        // And the deleted path is no longer content for either reader, which is the condition the seal refuses on (driven end
+        // to end in the case above; here the task record already carries the wider declaration, so the CLI would reuse it).
+        expect(await computePathDigests(root, ['src/marker.txt'])).toEqual({});
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        expect((await declaredContentPaths(root, ['src/marker.txt'])).paths).toEqual([]);
+    }, 180_000);
 });

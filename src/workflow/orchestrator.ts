@@ -703,14 +703,13 @@ async function cmdBuild(
     // directory answer differently depending on how the declaration was spelled (`build/` recorded, `build/*` did not). The
     // declaration is the operator's statement, so it is refused with the reason and the way forward.
     if (ownedPaths.length > 0) {
+        // **What the declaration covers, from the derivation that answers it.** This first read the digest map and treated a
+        // value equal to the `[missing]` sentinel's digest as "not content" — a proxy, and a wrong one: a real declared file
+        // whose bytes are exactly `[missing]` was refused by the seal while the same declaration was accepted by the ledger
+        // (measured by an independent round). `computePathDigests` now records content only — a path with no content is not an
+        // entry — so the question is answered by the map's emptiness, with no sentinel comparison anywhere.
         const declaredContent = await computePathDigests(root, ownedPaths);
-        // **Content, not sentinels.** A declaration whose every path is absent expands to `[missing]` entries, which are not
-        // content — the ledger reports those paths as unreadable and refuses the same declaration, and before this the two
-        // readers disagreed: the seal minted a revision whose only "content" was a sentinel while the ledger refused. One
-        // question, one answer: a declaration covers no files when it covers no *file*.
-        const sentinels = new Set([hashContent('[missing]'), hashContent('[unsupported]')]);
-        const coveredFiles = Object.values(declaredContent).filter((digest) => !sentinels.has(digest));
-        if (coveredFiles.length === 0) {
+        if (Object.keys(declaredContent).length === 0) {
             return {
                 command: 'build',
                 taskId,

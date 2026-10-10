@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { isIgnoredRepositoryPath, listRepositoryFiles, normalizeDeclaredPaths } from '../../src/core/repository-identity.js';
-import { hashContent } from '../../src/core/hash.js';
 import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
@@ -335,32 +334,30 @@ describe('the two enumerations agree on what is content', () => {
     });
 
     it('refuses a declared path the seal would sentinel, and says which, instead of recording the sentinel', async () => {
-        // **Round 3's second major, with round 6's second major named beside it.** The freeze used to stat first and branch
-        // itself, so a FIFO never reached the function that classifies it and fell through to `readFile`, which blocks on a
-        // pipe with no writer: `ledger freeze` hung with no refusal at all. It refuses by name now.
+        // **Round 3's second major, re-cut by round 6's second major.** The freeze used to stat first and branch itself, so
+        // a FIFO never reached the function that classifies it and fell through to `readFile`, which blocks on a pipe with no
+        // writer: `ledger freeze` hung with no refusal at all. It refuses by name now.
         //
-        // **This is the one place where the ledger deliberately does not record what the seal records**, so C2 says so
-        // instead of claiming agreement for every shape: the seal answers a declared FIFO or broken symlink with
-        // `[unsupported]` / `[missing]`, and this is the shape where a sentinel is worse than a refusal — a sentinel in a
-        // *declaration* cannot be told from a file that was deleted after it, so the operator is told to fix the declaration
-        // rather than being allowed to freeze on top of it. The case asserts both halves, so neither can move alone.
+        // The earlier shape of this case asserted a *deliberate difference*: the seal recorded a sentinel digest
+        // (`sha256('[unsupported]')` / `sha256('[missing]')`) for a FIFO or a broken link while the ledger refused. An
+        // independent round measured what that cost — a real declared file whose bytes are exactly `[missing]` was
+        // indistinguishable from a deleted one, so deleting it left `revisionStatus` reporting `current`, and the seal refused
+        // such a file by reading its digest as a sentinel. A path with no content is not a *content digest*: it no longer
+        // enters the map, so both readers answer the same question the same way, and the case asserts the shared derivation
+        // rather than a difference.
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/pipe', 'src/pkg/broken-link'] });
 
         const sealed = await computePathDigests(root, ['src/pkg/pipe', 'src/pkg/broken-link']);
         const result = await ledger(['freeze']);
 
-        // **The sentinel *values*, not only the keys.** Round 9 measured that this asserted the key set alone, so a seal that
-        // recorded a hash for a FIFO or a dangling symlink — or an empty string — would pass a case whose title is about the
-        // sentinel. The two values are what make the difference between "the seal records the path" and "the seal records it
-        // as not-readable", which is the whole content of this deliberate difference.
-        expect(Object.keys(sealed).sort()).toEqual([...SENTINEL_DECLARED].sort());
-        // The seal records the *digest of its sentinel string* (`src/workflow/revision.ts:485,488`), not the string itself —
-        // measured by probing the seal directly, which is how the first version of this assertion was caught being wrong.
-        expect(sealed['src/pkg/pipe']).toBe(hashContent('[unsupported]'));
-        expect(sealed['src/pkg/broken-link']).toBe(hashContent('[missing]'));
+        // The map holds content only, so a declaration whose every path is a FIFO or a dangling link holds nothing …
+        expect(sealed).toEqual({});
+        // … and the ledger refuses it by name, naming the paths.
         expect(result.ok).toBe(false);
         for (const path of SENTINEL_DECLARED) expect(String(result.error), path).toContain(path);
         expect(String(result.error)).toContain('cannot be read');
+        // The seal refuses on the same condition (the emptiness of this map), driven end to end in
+        // `the-identity-is-computed-where-the-change-is.test.ts` ("refuses a declaration that expands to nothing").
     });
 
     it('canonicalises a declaration before looking for it, as the seal does', async () => {

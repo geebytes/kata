@@ -483,6 +483,25 @@ export function revisionIsCurrent(status: RevisionStatus): boolean {
  * materialised in full just to hash it. Same ignore policy, same size rule (owned-path hashing has no size cap), same
  * `localeCompare` order — so the digests do not move.
  */
+/**
+ * The bytes that separate one kind of entry from another in a content stream.
+ *
+ * **A marker is bytes like any other, so every entry states its kind.** Feeding `[missing]` for a path with no content made a
+ * real file whose bytes are exactly `[missing]` hash to the *same* stream as a deleted one — an independent round measured
+ * that deleting such a file left `revisionStatus` reporting `current`, so a real move went unreported. The tag is written at a
+ * position content would otherwise occupy, so no content can be read as a sentinel or the reverse.
+ *
+ * **Shared, because two streams must agree.** The revision manifest (`feedOwnedTree`) and the evidence scope hash
+ * (`computeScopeHash`) are compared against each other at verify time, so they are the same derivation: this module owns the
+ * tags and the sequence, and both readers write it.
+ */
+export type TreeEntryKind = 'file' | 'directory' | 'sentinel';
+
+export function writeEntryKind(hash: Hash, kind: TreeEntryKind): void {
+    hash.update(kind);
+    hash.update('\0');
+}
+
 async function feedOwnedTree(
   root: string,
   ownedPaths: string[],
@@ -502,42 +521,59 @@ async function feedOwnedTree(
 
     // **A declared link is the same content under another name.** Resolved before it is walked, so it answers exactly as its
     // target does — lexically following it recorded descendants the target excludes, and a link leaving the repository was
-    // recorded under a repository-relative key, which the containment rule promises cannot happen. An escaping link is
-    // recorded as `[unsupported]`; the ledger reports the same declaration as unreadable and the seal refuses a declaration
-    // that then covers no files.
+    // recorded under a repository-relative key, which the containment rule promises cannot happen.
+    //
+    // **The escape is decided before anything reads through the link.** `stat` follows symlinks, so `entry.isDirectory()` is
+    // true for a link whose target is a directory outside the repository — which made the escape branch below dead code for
+    // exactly that shape, and an independent round measured the consequence: the seal minted a revision whose
+    // `pathDigests['link-dir-out/x.txt']` was the digest of bytes **outside the repository**, while the ledger refused the
+    // same declaration as unreadable. The branch order is the fix; `escaping` is the first question asked.
     const resolved = await resolveDeclaredLocation(root, path);
     const location = resolved.kind === 'inside' ? resolved.path : null;
-    // **A link that leaves the repository is not content.** Reading through it recorded an outside file under a
-    // repository-relative key, which the declaration's containment rule promises cannot happen — and worse, the identity then
-    // claimed content from outside the tree it describes. It is recorded as `[unsupported]` here (a sentinel, not content),
-    // the ledger reports the same declaration as unreadable, and the seal refuses a declaration that then covers no files.
     const escaping = resolved.kind === 'outside';
     if (!escaping && location !== null && location !== path.replace(/\/+$/, '')) entry = await stat(join(root, location)).catch(() => null);
+    // A path that is not content is **not a digest entry**. `pathDigests` is the per-path content digest map, and recording
+    // `sha256('[missing]')` for a path that has no content made a real file whose bytes are exactly `[missing]`
+    // indistinguishable from a deleted one: deleting it left `revisionStatus` reporting `current`, so a real move went
+    // unreported (measured by an independent round, which also found the seal refusing such a file by misreading the digest as
+    // a sentinel). The kind still enters the **manifest hash**, which is what it is for; it no longer enters the content map.
+    // **Every entry carries its kind, because a marker is bytes like any other.** Feeding `[missing]` for a path with no
+    // content made a real file whose bytes are exactly `[missing]` hash to the *same manifest* as a deleted one — an
+    // independent round measured that deleting such a file left `revisionStatus` reporting `current`, so a real move went
+    // unreported. Tagging the position (a fixed literal where content would otherwise sit) makes the two streams differ at a
+    // byte no content can occupy, so no content can ever be read as a sentinel or the reverse.
+    const entryTag = (kind: TreeEntryKind): void => writeEntryKind(manifest, kind);
+    const sentinel = (marker: string): void => {
+      entryTag('sentinel');
+      manifest.update(marker);
+      manifest.update('\0');
+    };
 
-    if (entry?.isDirectory()) {
+    if (escaping) {
+      sentinel('[unsupported]');
+    } else if (entry?.isDirectory()) {
+      entryTag('directory');
       const relativeDir = (location ?? path).replace(/\/+$/, '');
       for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
         manifest.update(file.path);
         manifest.update('\0');
+        entryTag('file');
         manifest.update(file.content);
         manifest.update('\0');
         if (pathDigests) pathDigests[file.path] = hashContent(file.content);
       }
-    } else if (escaping) {
-      manifest.update('[unsupported]');
-      if (pathDigests) pathDigests[path] = hashContent('[unsupported]');
+      manifest.update('\0');
     } else if (entry?.isFile()) {
+      entryTag('file');
       const content = await readFile(join(root, location ?? path));
       manifest.update(content);
       if (pathDigests) pathDigests[location ?? path] = hashContent(content);
+      manifest.update('\0');
     } else if (entry) {
-      manifest.update('[unsupported]');
-      if (pathDigests) pathDigests[path] = hashContent('[unsupported]');
+      sentinel('[unsupported]');
     } else {
-      manifest.update('[missing]');
-      if (pathDigests) pathDigests[path] = hashContent('[missing]');
+      sentinel('[missing]');
     }
-    manifest.update('\0');
   }
 }
 

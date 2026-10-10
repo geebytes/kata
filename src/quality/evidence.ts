@@ -3,7 +3,7 @@ import { readDirectoryState } from '../core/record-read.js';
 import { readFile, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import type { TaskRevision } from '../workflow/revision.js';
+import { writeEntryKind, type TaskRevision } from '../workflow/revision.js';
 import { repositoryTreeHash, walkRepositoryFiles } from '../core/repository-identity.js';
 import { createContentHasher, hashContent } from '../core/hash.js';
 import { runProcess } from '../process/run.js';
@@ -590,14 +590,27 @@ export async function computeScopeHash(root: string, paths: string[]): Promise<s
     hash.update(path);
     hash.update('\0');
     const fullPath = join(root, path);
+    let entryStat: Awaited<ReturnType<typeof stat>> | null = null;
     try {
-      const entryStat = await stat(fullPath);
-      if (entryStat.isDirectory()) {
-        await hashDirectoryRecursive(fullPath, root, hash);
-      } else {
-        hash.update(await readFile(fullPath));
-      }
+      entryStat = await stat(fullPath);
     } catch {
+      entryStat = null;
+    }
+    // **The same stream the revision manifest writes, kind tags included.** This hash is compared against
+    // `revision.manifestHash` at verify time (`checkFreshness`), so a second stream that agreed only by accident would make
+    // every sealed evidence stale — measured when the tags were added to one side only. The sequence and the tags are
+    // `writeEntryKind`'s, from `workflow/revision.ts`.
+    if (entryStat?.isDirectory()) {
+      writeEntryKind(hash, 'directory');
+      await hashDirectoryRecursive(fullPath, root, hash);
+    } else if (entryStat?.isFile()) {
+      writeEntryKind(hash, 'file');
+      hash.update(await readFile(fullPath));
+    } else if (entryStat) {
+      writeEntryKind(hash, 'sentinel');
+      hash.update('[unsupported]');
+    } else {
+      writeEntryKind(hash, 'sentinel');
       hash.update('[missing]');
     }
     hash.update('\0');
@@ -611,6 +624,7 @@ async function hashDirectoryRecursive(dirPath: string, root: string, hash: Hash)
   for (const file of await walkRepositoryFiles(root, relativeDir ? { under: relativeDir } : {})) {
     hash.update(file.path);
     hash.update('\0');
+    writeEntryKind(hash, 'file');
     hash.update(file.content);
     hash.update('\0');
   }
