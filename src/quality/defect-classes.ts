@@ -182,6 +182,10 @@ export async function instrumentResolves(
     root: string,
     generator: string,
     declaredPaths: readonly string[] = [],
+    /** The change, so a remedy can name a command the operator can actually run (`<id>` in a remedy is not a remedy). */
+    changeId = '<id>',
+    /** The covered set, when the caller already derived it — the rule is asked per class, and the walk is not free. */
+    covered?: { paths: string[] },
 ): Promise<{ ok: true; path: string } | { ok: false; refusal: InstrumentRefusal }> {
     const candidate = generator.trim();
     if (candidate === '') {
@@ -235,9 +239,9 @@ export async function instrumentResolves(
     // directory, a declaration covering no files at all) was accepted as an instrument and named nowhere — measured by an
     // independent round (R6-F1). The repository already owns the derivation of what a declaration covers, so it is asked.
     if (declaredPaths.length > 0) {
-        const covered = await declaredContentPaths(root, declaredPaths);
-        if (!covered.paths.includes(location.path)) {
-            const why = covered.paths.length === 0
+        const coveredPaths = covered ?? await declaredContentPaths(root, declaredPaths);
+        if (!coveredPaths.paths.includes(location.path)) {
+            const why = coveredPaths.paths.length === 0
                 ? 'the change declares no content at all'
                 : `the change's declared surface does not cover \`${location.path}\``;
             return {
@@ -245,7 +249,10 @@ export async function instrumentResolves(
                 refusal: {
                     kind: 'outside-declared-surface',
                     because: `the generator \`${candidate}\` is not part of what the change carries: ${why}`,
-                    remedy: `declare the path that covers it (\`kata-cli scope change --change <id> --add <path>\`) or name a generator inside the declared surface`,
+                    // **A remedy has to be runnable as written.** The first version printed `--change <id> --add <path>`,
+                    // two placeholders, and the CLI refuses a literal `<id>` — the refusal-nobody-can-execute class inside
+                    // the message that exists to end it (measured by an independent round, R7-F1).
+                    remedy: `declare \`${location.path}\` (\`kata-cli scope change --change ${changeId} --add ${location.path}\`, then \`kata-cli scope apply --change ${changeId}\`), or name a generator inside the declared surface`,
                 },
             };
         }
@@ -261,8 +268,13 @@ export async function unbackedDefectClasses(
     classes: readonly DeclaredDefectClass[],
     root: string,
     declaredPaths: readonly string[] = [],
+    changeId = '<id>',
 ): Promise<Array<{ class: string; generator?: string; because: string; remedy: string; kind: 'missing-instrument' | 'damaged-declaration' }>> {
     const unbacked: Array<{ class: string; generator?: string; because: string; remedy: string; kind: 'missing-instrument' | 'damaged-declaration' }> = [];
+    // **What the declaration covers, derived once for the whole rule.** It was asked once per generator, and each call
+    // re-walks every declared directory — a class list of ten meant ten walks of the same tree (measured by an independent
+    // round, R7-F4). Nothing here depends on the class, so it moves out of the loop.
+    const covered = declaredPaths.length === 0 ? undefined : await declaredContentPaths(root, declaredPaths);
     for (const entry of classes) {
         if (entry.oracle !== 'mechanizable') continue;
         const generator = entry.generator;
@@ -288,7 +300,7 @@ export async function unbackedDefectClasses(
             });
             continue;
         }
-        const resolved = await instrumentResolves(root, generator, declaredPaths);
+        const resolved = await instrumentResolves(root, generator, declaredPaths, changeId, covered);
         if (!resolved.ok) {
             unbacked.push({
                 class: entry.class,

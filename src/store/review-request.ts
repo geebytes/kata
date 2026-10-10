@@ -123,7 +123,7 @@ export async function buildReviewRequest(input: {
     const loopReplay = await readLoopReplay(input.root, input.changeId);
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
-    const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments)).map((entry) => entry.class);
+    const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments, input.changeId)).map((entry) => entry.class);
     // **The request speaks for the sealed revision, or it is not handed to a reviewer at all.** Measured by an independent
     // review on a real flow: this function copied `ledger.subject.revision` straight into the request, and the frozen
     // subject was 20 files behind the sealed revision — so the reviewer was given a brief for content that was no longer

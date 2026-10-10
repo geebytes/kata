@@ -282,6 +282,12 @@ describe('a mechanizable class needs a generator', () => {
         const named = deficits.find((deficit) => deficit.need.includes('dist/inst.ts'));
         expect(named, JSON.stringify(deficits)).toBeDefined();
         expect(named?.need).toMatch(/not part of what the change carries/);
+        // **And the remedy is runnable as written** (R7-F1): the first version printed `--change <id> --add <path>` — two
+        // placeholders, and the CLI refuses a literal `<id>`, so the message that exists to end the state named a command
+        // that cannot. The remedy must carry the real change id and the real path, and no placeholder.
+        expect(named?.need).toContain(`--change ${changeId}`);
+        expect(named?.need).toContain('--add dist/inst.ts');
+        expect(named?.need).not.toMatch(/--change <[a-z-]+>|--add <[a-z-]+>/);
     });
 
     it('derives the oracle from the vocabulary, not from the stored field', async () => {

@@ -25,8 +25,15 @@ import { classRecurrence, readReviewRoundsState, type ReviewRound, type ReviewRo
 export interface LoopReplay {
     rounds: number;
     findings: number;
-    /** Findings that carry a class, which is the set every share below is computed over. */
+    /** Findings that carry a class the vocabulary knows, which is the set every share below is computed over. */
     classified: number;
+    /**
+     * **The findings no share can speak for.** A `class` outside the vocabulary (a hand-written review result, or one
+     * recorded before a class was renamed) was silently excluded from every share — the numerator *and* the denominator — so
+     * a history made mostly of such findings reported shares computed over almost nothing and said nothing about it. Named
+     * here, they are visible instead (measured by an independent round, R7-F3).
+     */
+    unclassifiedFindings: Array<{ id: string; class: string }>;
     /** Share of rounds whose findings were all in classes whose oracle is `mechanizable`. */
     mechanizableRoundShare: number;
     /** Share of classified findings that were defects in a previous round's repair. */
@@ -88,6 +95,9 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
         rounds: rounds.length,
         findings: findings.length,
         classified: classified.length,
+        unclassifiedFindings: findings
+            .filter((finding) => typeof finding.class === 'string' && !isDefectClass(finding.class))
+            .map((finding) => ({ id: finding.id, class: finding.class as string })),
         mechanizableRoundShare: share(mechanizableRounds.length, withFindings.length),
         repairOriginShare: share(repairOrigin.length, classified.length),
         judgmentShare: share(judgment.length, classified.length),

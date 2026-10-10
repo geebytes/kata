@@ -112,6 +112,25 @@ describe('the shadow replay reports its metrics', () => {
         expect(replay.discovery.blockingPerRound).toBe(0);
     });
 
+    it('counts a class only when the vocabulary knows it', () => {
+        // **The kind its filter distinguishes** (R7-F3). `classified` keeps findings whose `class` the vocabulary knows, and
+        // the selector's fixture only ever carried known classes — so a string outside the vocabulary (a hand-written review
+        // result, or one recorded before a class was renamed) was never exercised, and neither was the arithmetic that
+        // depends on it: an unknown class must not count towards the share that decides "this loop is recycling".
+        const rounds = [
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'a-class-that-was-never-declared', origin: 'repair' }] },
+            { at: '3', blockingIds: ['C-1'], blockingCount: 1, findings: [{ id: 'C-1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }] },
+        ];
+        const replay = replayLoop(rounds);
+        expect(replay.unclassifiedFindings, 'the unknown class is reported, not silently dropped').toEqual([{ id: 'B-1', class: 'a-class-that-was-never-declared' }]);
+        // Two of the three findings carry a class the vocabulary knows, and the shares are computed over those two — the
+        // unknown one is excluded from the denominator as well as the numerator, which is the arithmetic a fixture without
+        // this kind cannot check: one of the two classified findings came from a repair, so the share is a half.
+        expect(replay.classified).toBe(2);
+        expect(replay.repairOriginShare).toBe(0.5);
+    });
+
     it('reports no blocking rate at all when nothing could be measured', () => {
         // **An empty measured set is not a zero rate** (R2-F4). `share` answers 0 for a 0/0 denominator, so a history where
         // every round was unmeasurable reported the same number as a history that measured zero blocking findings — the fold

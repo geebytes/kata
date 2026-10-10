@@ -693,9 +693,12 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // loop does not own (a record nobody can read, evidence from two revisions, a ledger nobody can read, a verify that failed
   // against this content); the loop's own four outcomes are the switch above, whose terminal escalation deliberately wins.
   //
-  // The array is the order: entries are written highest priority first, and the dynamic fields let an entry keep a priority
-  // and a reason that depend on the state itself. A table entry that cannot fire is invisible to the case named for it, so
-  // every entry is asserted to fire (R6-F3).
+  // **The array is the order, and `priority` is what the caller reports — not the sort key.** The entries' static
+  // priorities descend, and a dynamic one (`priorityFor`, the verify entry counting the criteria it failed) can exceed a
+  // neighbouring entry's static value while still keeping its own place: the order is fixed here, deliberately, so that a
+  // failed verify cannot jump ahead of an unreadable record. A table entry that cannot fire is invisible to the case named
+  // for it, so every entry is asserted to fire (R6-F3), and the case asserts the *static* priorities descend — not the
+  // dynamic values, which is the claim this comment used to make and the router does not keep (R7-F2).
   const invalidating = invalidatingStates.find((entry) => (entry.phases === undefined || entry.phases.includes(phase)) && entry.detect(upstream));
   // The first state in the table that applies is the answer: it names the repair that has to happen before a report about
   // the change can mean anything. Each entry decides its own phases, because two of these branches were never phase-guarded

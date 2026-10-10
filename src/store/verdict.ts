@@ -359,7 +359,7 @@ export async function ledgerVerdict(input: {
     // other threw) — which is this change's own subject, measured by an independent round.
     const declaredClasses = declaredDefectClasses(await readStoredPlan(input.root, input.changeId));
     const declared = await declaredPaths(input.root, input.changeId);
-    const missingGenerators = await unbackedDefectClasses(declaredClasses, input.root, declared);
+    const missingGenerators = await unbackedDefectClasses(declaredClasses, input.root, declared, input.changeId);
     const withClassGaps: typeof decision = missingGenerators.length === 0
         ? decision
         : {
