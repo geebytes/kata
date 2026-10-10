@@ -163,7 +163,10 @@ function supersededRoundRow(
     return `${JSON.stringify({
         ...record,
         ...(superseded.revision ? { supersededByRevision: superseded.revision } : {}),
-        ...(superseded.subject ? { supersededBySubject: superseded.subject } : {}),
+        // `supersededBy` keeps the meaning an earlier change pinned on it — the *question* that superseded the round — so
+        // the two kinds of successor live in two fields instead of one field meaning two things (measured by an independent
+        // round). The entry road has no question to name and simply omits it.
+        ...(superseded.subject ? { supersededBy: superseded.subject } : {}),
         archivedAt: new Date().toISOString(),
     })}\n`;
 }

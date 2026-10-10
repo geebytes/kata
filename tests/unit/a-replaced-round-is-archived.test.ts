@@ -147,9 +147,9 @@ describe('a replaced round is archived', () => {
         // subject that moved is the new question the record now answers, so the row must carry *that* value; the seal is
         // the revision being recorded against, which resolves under `.kata/tasks/<id>/revisions/`.
         const current = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { subjectRevision?: string; revisionId?: string };
-        expect(archived[0]?.supersededBySubject, JSON.stringify(archived[0])).toBe(current.subjectRevision);
+        expect(archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe(current.subjectRevision);
         expect(archived[0]?.supersededByRevision).toBe(current.revisionId);
-        expect(String(archived[0]?.supersededBySubject).startsWith('rev:'), 'a subject revision names the question').toBe(true);
+        expect(String(archived[0]?.supersededBy).startsWith('rev:'), 'a subject revision names the question').toBe(true);
         expect(typeof archived[0]?.archivedAt).toBe('string');
         // And the declaration travels on this road too, not only on the entry road (the same round measured that the result
         // path dropped it).
