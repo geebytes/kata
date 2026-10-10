@@ -193,6 +193,9 @@ export const nextActionReasons = [
   'design_intake_task',
   'escalate_review_without_progress',
   'review_loop_recurring',
+  // The same recurrence counted by defect class: a mechanizable class that came back inside a repair, which is the shape
+  // mechanization is supposed to end. Reported and routed, never a gate change.
+  'review_class_recurring',
   'review_loop_unmeasurable',
   'unreadable_review_record',
   'repair_unreadable_current_revision',
@@ -627,6 +630,33 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
         break;
     }
   }
+  // **A record nobody can read outranks every report about the change.** This branch used to sit far below the loop
+  // reports (change `1150`), so when a class recurred *and* the review record was unreadable the operator was sent to
+  // `/kata-build` to mechanize a class instead of to `/kata-review` to re-read the record — measured by an independent
+  // round. The rule the order now states: a refusal that names a precondition (make this readable) precedes any report
+  // about the change, whatever priority the report carries.
+  if (phase === 'review' && upstream.reviewRecordUnreadable) {
+    return {
+      nextSkill: '/kata-review',
+      role: 'reviewer',
+      reason: 'unreadable_review_record',
+      priority: 2250,
+    };
+  }
+  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
+  // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists
+  // to close, measured by an independent round. It sits above the id-based route because a class recurring inside a repair
+  // says more than one id repeating: the id view cannot see it at all (no id repeated across the seven rounds that produced
+  // ten findings, seven of them in the previous round's repair).
+  if (phase === 'review' && (upstream.reviewLoopClassRecurrence ?? []).some((entry) => entry.stopLineCandidate)) {
+    const candidates = (upstream.reviewLoopClassRecurrence as ClassRecurrence[]).filter((entry) => entry.stopLineCandidate);
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: 'review_class_recurring',
+      priority: 2150 + candidates.length,
+    };
+  }
   // **A problem that survived a repair is worth another implementation pass, and it is a route rather than a gate change.**
   // It sits below the escalation above, so it can only speak where that produced nothing: the operator is told the same
   // finding keeps coming back even while each round's own count looks like steady progress. Nothing about what the gates
@@ -708,15 +738,6 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
   // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a
   // refusal, and the step it refuses towards is a re-read of the review, not a judgement of the change.
 
-  // A recorded review that cannot be read decides nothing, so it is re-read rather than worked around.
-  if (phase === 'review' && upstream.reviewRecordUnreadable) {
-    return {
-      nextSkill: '/kata-review',
-      role: 'reviewer',
-      reason: 'unreadable_review_record',
-      priority: 1150,
-    };
-  }
   // **One ladder, read twice.** The severities that block come from `mergeBlockingSeverities`, ordered hardest first,
   // so position 0 is the severity every mode refuses and position 1 is the one only the tiers above std do. This used
   // to be two blocks of prose plus a `=== 'strict'` literal, which is why `security` — a tier the kernel gives two
@@ -908,6 +929,9 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   review_loop_unmeasurable: null,
   // Not a model boundary either: it is a decision about the change, and the gates it passes through are unchanged.
   review_loop_recurring: null,
+  // A class recurring inside a repair routes through the build entry, not through a gate: nothing about what the gates
+  // demand changes, the operator is told which class keeps being paid for.
+  review_class_recurring: null,
   // Also a decision about the change rather than about which platform runs: the record has to be read again.
   unreadable_review_record: null,
   repair_unreadable_current_revision: null,

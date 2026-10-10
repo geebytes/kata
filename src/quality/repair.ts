@@ -517,12 +517,39 @@ export function assessReviewLoop(input: ReviewLoopAssessmentInput): ReviewLoopAs
  * moving. The lock is the repository's one rule for task artefacts, and this file keeps a single write entry point so
  * there is no second, unlocked way in.
  */
+/**
+ * **What a round row's `findings` means, defined once.**
+ *
+ * The writer's guard and the reader's projection must agree on what "this row carries findings" means, or a row the writer
+ * accepted reads back as `unavailable`. The guard measured `length`; the reader kept only entries with a string `id` and
+ * `severity` — so a non-array, or entries the reader drops, slipped through, and the history said a round happened and not
+ * what it found. One predicate, used by both.
+ */
+export function readableRoundFindings(value: unknown): RoundFinding[] {
+    if (!Array.isArray(value)) return [];
+    return (value as unknown[])
+        .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+        .filter((entry) => typeof entry.id === 'string' && typeof entry.severity === 'string')
+        .map((entry) => ({
+            id: entry.id as string,
+            severity: entry.severity as string,
+            ...(typeof entry.class === 'string' ? { class: entry.class } : {}),
+            ...(typeof entry.origin === 'string' ? { origin: entry.origin } : {}),
+        }));
+}
+
 export async function appendReviewRound(root: string, taskId: string, round: ReviewRound, lock?: TaskLock): Promise<void> {
     // **A round that records no findings says so, and is never silently id-only.** The caller has to pass the findings it read
     // (possibly an empty list — an approval measured zero) or an explicit `noFindings` reason, so "the record could not be
     // read" cannot arrive here disguised as "the round found nothing". Measured shape this refuses: the old row recorded
     // `blockingIds` and a count, which is indistinguishable from a round whose findings nobody kept.
-    if (round.findings === undefined && round.noFindings === undefined) {
+    // **Empty is not a reason.** `findings: []` with no `noFindings` reads back as `unavailable` — the same
+    // "nobody kept what it found" ambiguity this rule exists to refuse, reached through the empty-array door (measured by
+    // an independent round).
+    // **The guard asks the same predicate the reader does.** It measured `findings.length`, while the reader kept only
+    // entries carrying an `id` and a `severity` — so a non-array, or an array of entries the reader drops, passed the guard
+    // and read back as `unavailable`, which is the ambiguity this rule exists to refuse (measured by an independent round).
+    if (readableRoundFindings(round.findings).length === 0 && round.noFindings === undefined) {
         throw new Error(
             `refusing to record the round at ${round.at}: it carries no findings and no reason for having none, so the history `
             + 'would say a round happened and not what it found — pass the findings the round recorded, or `noFindings` with the reason',
@@ -617,19 +644,7 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
                 // **What the round found, when the row kept it.** Rows written before the field existed simply have nothing
                 // here, and that is reported by its absence rather than filled in with a guess: a history that cannot be read
                 // is a worse outcome than an incomplete one.
-                ...(Array.isArray(parsed.findings)
-                    ? {
-                        findings: (parsed.findings as unknown[])
-                            .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
-                            .filter((entry) => typeof entry.id === 'string' && typeof entry.severity === 'string')
-                            .map((entry) => ({
-                                id: entry.id as string,
-                                severity: entry.severity as string,
-                                ...(typeof entry.class === 'string' ? { class: entry.class } : {}),
-                                ...(typeof entry.origin === 'string' ? { origin: entry.origin } : {}),
-                            })),
-                    }
-                    : {}),
+                ...(readableRoundFindings(parsed.findings).length > 0 ? { findings: readableRoundFindings(parsed.findings) } : {}),
                 ...(typeof parsed.noFindings === 'string' ? { noFindings: parsed.noFindings } : {}),
             });
         } catch {

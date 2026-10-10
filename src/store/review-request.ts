@@ -22,6 +22,7 @@
  * request speaks for the ledger, and `ledger claim add` is the remedy, not a gap here), and probe answers are **not** checked —
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
+import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
 import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
@@ -100,10 +101,11 @@ export async function buildReviewRequest(input: {
     // is a class that will be paid for by independent rounds instead of by a machine, so the round is *briefed* about it
     // rather than surprised by it — and `decide` reports the same gap as a deficit (the operator chose the report-and-route
     // form over refusing to dispatch).
-    const declaredClasses = (plan.defectClasses ?? []).filter((entry): entry is { class: string; oracle?: string; generator?: string; relation?: string } => typeof entry?.class === 'string');
-    const missingGenerators = declaredClasses
-        .filter((entry) => (entry.oracle ?? 'judgment') === 'mechanizable' && !entry.generator && !entry.relation)
-        .map((entry) => entry.class);
+    // **The same derivation the decision uses.** These were two copies, and they disagreed on a plan whose `defectClasses`
+    // is not an array — this one threw a raw `TypeError` where the decision answered "nothing declared" (measured by an
+    // independent round; the defect class is the one this change exists to name).
+    const declaredClasses = declaredDefectClasses(stored);
+    const missingGenerators = unbackedDefectClasses(declaredClasses, input.root).map((entry) => entry.class);
     // **The request speaks for the sealed revision, or it is not handed to a reviewer at all.** Measured by an independent
     // review on a real flow: this function copied `ledger.subject.revision` straight into the request, and the frozen
     // subject was 20 files behind the sealed revision — so the reviewer was given a brief for content that was no longer

@@ -39,6 +39,8 @@ beforeEach(async () => {
     await mkdir(join(root, 'src'), { recursive: true });
     await mkdir(join(root, 'tmp'), { recursive: true });
     await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
+    // A declared generator must resolve to a real file (R2-F3), so the fixture carries one — the shape it names.
+    await writeFile(join(root, 'tmp', 'gen.ts'), 'export const generated = true;\n');
 });
 
 afterEach(async () => {
@@ -137,6 +139,58 @@ describe('a mechanizable class needs a generator', () => {
         expect(deficits.some((deficit) => deficit.need.includes('instrument-unsound'))).toBe(false);
         expect(deficits.some((deficit) => deficit.need.includes('intent-omission'))).toBe(false);
     }, 60_000);
+
+    it('reports a generator that names nothing, or a directory', async () => {
+        // **Naming a machine is not having one** (R2-F3): the rule tested for the presence of a *string*, so a path to
+        // nothing — or to a directory — was accepted by both the decision and the brief. The report names the generator and
+        // why, so the reader knows whether to create the file or fix the spelling.
+        await prepare();
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/does-not-exist.ts:reddens;comparison-unnamed:src:two-agree']);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const absent = deficits.find((deficit) => deficit.need.includes('does-not-exist.ts'));
+        expect(absent, JSON.stringify(deficits)).toBeDefined();
+        expect(absent?.need).toMatch(/does not resolve to a file/);
+        // A directory is not an instrument either: `src` exists, and is not a file.
+        expect(deficits.some((deficit) => deficit.need.includes('`src` does not resolve'))).toBe(true);
+    });
+
+    it('answers a plan whose declaration is not an array the same way in both readers', async () => {
+        // **One derivation, two consumers** (R2-F2). The decision guarded with `Array.isArray` and answered "nothing
+        // declared"; the request inlined a filter and threw a raw `TypeError` for the same document. The plan is written by
+        // hand here, which is exactly how a hand-repaired plan arrives.
+        await prepare();
+        const planPath = join(root, '.kata', 'tasks', changeId, 'review', 'plan.json');
+        const stored = JSON.parse(await readFile(planPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(planPath, `${JSON.stringify({ ...stored, defectClasses: { 'instrument-unsound': true } }, null, 2)}\n`);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        expect(decision.error, JSON.stringify(decision).slice(0, 200)).toBeFalsy();
+        const request = await ledger(['run', '--change', changeId, '--out', 'tmp/request.json']);
+        expect(request.error, JSON.stringify(request).slice(0, 200)).toBeFalsy();
+        expect((request as { ok?: unknown }).ok).toBe(true);
+        const written = JSON.parse(await readFile(join(root, 'tmp', 'request.json'), 'utf8')) as { defectClasses?: unknown; missingGenerators?: unknown };
+        // Neither reader invents a declaration out of a document it cannot read.
+        expect(written.defectClasses).toBeUndefined();
+        expect(written.missingGenerators).toBeUndefined();
+    });
+
+    it('reports a mechanizable class that names a relation but no generator', async () => {
+        // **The hole an independent round measured (R1-F1).** The first version reported only when *both* were absent, so a
+        // declaration carrying a relation and no machine passed every gate this rule exists to close — a relation cannot be
+        // run, so it is not an instrument, and the archive gate would have certified the class anyway.
+        await prepare();
+        await ledger(['plan', '--change', changeId, '--classes', 'comparison-unnamed::two-comparisons-agree']);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const named = deficits.find((deficit) => deficit.need.includes('comparison-unnamed'));
+        expect(named, JSON.stringify(deficits)).toBeDefined();
+        expect(named?.need).toMatch(/generator/);
+
+        const request = await ledger(['run', '--change', changeId, '--out', 'tmp/request.json']);
+        expect(request.ok, JSON.stringify(request).slice(0, 200)).toBe(true);
+        const written = JSON.parse(await readFile(join(root, 'tmp', 'request.json'), 'utf8')) as { missingGenerators?: string[] };
+        expect(written.missingGenerators).toEqual(['comparison-unnamed']);
+    });
 
     it('carries the declaration into the request, and names what is missing there', async () => {
         await prepare();

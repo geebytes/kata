@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { initLayout, taskDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
@@ -79,6 +79,38 @@ describe('a round record carries its findings', () => {
         // And nothing was written: a refused round leaves no half-record behind.
         await expect(readReviewRoundsState(root, changeId)).resolves.toMatchObject({ kind: 'absent' });
     }, 60_000);
+
+    it('refuses findings the reader would not keep, and never reports them as a round with none', async () => {
+        // **The guard and the reader ask the same predicate** (R2-F6). The guard measured `length` while the reader kept only
+        // entries carrying an `id` and a `severity` — so a non-array, or entries the reader drops, passed the guard and read
+        // back as `unavailable`: the history would say a round happened and not what it found.
+        await expect(
+            appendReviewRound(root, changeId, { at: '2026-10-10T00:00:00.000Z', blockingIds: [], blockingCount: 0, findings: 'not-an-array' as never }),
+        ).rejects.toThrow(/no findings and no reason/);
+        await expect(
+            appendReviewRound(root, changeId, { at: '2026-10-10T00:00:00.000Z', blockingIds: [], blockingCount: 0, findings: [{ note: 'no id, no severity' } as never] }),
+        ).rejects.toThrow(/no findings and no reason/);
+        // A hand-written row the reader cannot use is reported as damaged rather than as a round that found nothing.
+        await mkdir(dirname(reviewRoundsPath(root, changeId)), { recursive: true });
+        await writeFile(reviewRoundsPath(root, changeId), `${JSON.stringify({ at: '2026-10-10T00:00:00.000Z', blockingIds: [], blockingCount: 0, findings: [{ note: 'x' }] })}\n`);
+        const read = await readReviewRoundsState(root, changeId);
+        expect(read.kind).toBe('readable');
+        if (read.kind !== 'readable') return;
+        expect(read.rounds[0]?.findings).toBeUndefined();
+    });
+
+    it('refuses an empty findings list with no reason', async () => {
+        // **Empty is not a reason** (R1-F4). `findings: []` with no `noFindings` reads back as `unavailable`, which is the
+        // identical "nobody kept what it found" ambiguity this rule refuses — reached through the empty-array door. A row with
+        // genuinely nothing to report says so with a reason.
+        await expect(
+            appendReviewRound(root, changeId, { at: '2026-10-10T00:00:00.000Z', blockingIds: [], blockingCount: 0, findings: [] }),
+        ).rejects.toThrow(/no findings and no reason/);
+        await expect(readReviewRoundsState(root, changeId)).resolves.toMatchObject({ kind: 'absent' });
+        // And the reason-carrying form is what a round with nothing to report writes.
+        await appendReviewRound(root, changeId, { at: '2026-10-10T00:00:00.000Z', blockingIds: [], blockingCount: 0, noFindings: 'the approval cleared a review with no findings' });
+        await expect(readReviewRoundsState(root, changeId)).resolves.toMatchObject({ kind: 'readable' });
+    });
 
     it('still reads a row written before the field existed', async () => {
         // Legacy rows stay readable — the same rule the finding's own class field follows. A history that cannot be read is a

@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 /**
  * **The defect classes this repository's review loop produces, and what kind of oracle each one needs.**
  *
@@ -110,4 +113,80 @@ export function requireDefectClass(value: unknown, where: string): DefectClass {
         + 'name the class the defect belongs to, or omit the field — a value that is close to one of these is worse than none, '
         + 'because it makes the class register wrong rather than incomplete',
     );
+}
+
+/**
+ * **The classes a plan declares, read once for every consumer.**
+ *
+ * The declaration has two readers — the ledger's decision (which reports a missing instrument as a deficit) and the review
+ * request (which names the missing generators in the brief) — and they were written twice: one guarded with `Array.isArray`
+ * and answered "nothing declared" for a plan whose `defectClasses` is not an array, while the other inlined a filter that
+ * threw a raw `TypeError` for the same document. That is this module's own subject (`one-fact-derived-twice`), measured by an
+ * independent round on the change that introduced it. Both now ask this function.
+ *
+ * A document this cannot understand is answered as "nothing declared" rather than by guessing: the plan is already refused by
+ * name where it matters (`buildReviewRequest` names an unreadable plan), and inventing a declaration here would make this the
+ * second reader deciding what the change is about.
+ */
+export interface DeclaredDefectClass {
+    class: string;
+    oracle: OracleType;
+    generator?: string;
+    relation?: string;
+}
+
+export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
+    const document = plan as { defectClasses?: unknown } | null | undefined;
+    const declared = document?.defectClasses;
+    if (!Array.isArray(declared)) return [];
+    return declared
+        .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+        .filter((entry) => typeof entry.class === 'string')
+        .map((entry) => ({
+            class: entry.class as string,
+            oracle: entry.oracle === 'mechanizable' ? 'mechanizable' : 'judgment',
+            ...(typeof entry.generator === 'string' ? { generator: entry.generator } : {}),
+            ...(typeof entry.relation === 'string' ? { relation: entry.relation } : {}),
+        }));
+}
+
+/**
+ * **Naming a machine is not having one.** A declaration says `mechanizable` and names a generator; a generator that does not
+ * exist, or that names a directory, cannot decide anything, so it is reported exactly like a missing one — the first version
+ * tested for the presence of a *string* and accepted a path to nothing (measured by an independent round).
+ *
+ * Resolution is against the workspace, and the file must be a regular file: a directory is not an instrument, and neither is
+ * a name that resolves nowhere.
+ */
+export function instrumentResolves(root: string, generator: string): boolean {
+    const candidate = generator.trim();
+    if (candidate === '') return false;
+    try {
+        return statSync(resolve(root, candidate)).isFile();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The declared mechanizable classes whose instrument is missing or does not resolve, with the reason — one derivation for the
+ * deficit (the ledger's decision) and for the brief (the review request's `missingGenerators`).
+ */
+export function unbackedDefectClasses(
+    classes: readonly DeclaredDefectClass[],
+    root: string,
+): Array<{ class: string; generator?: string; because: string }> {
+    return classes
+        .filter((entry) => entry.oracle === 'mechanizable')
+        .map((entry) => {
+            const generator = entry.generator;
+            if (generator === undefined || generator.trim() === '') {
+                return { class: entry.class, because: 'no generator is named, so nothing can decide this class' };
+            }
+            if (!instrumentResolves(root, generator)) {
+                return { class: entry.class, generator, because: `the generator \`${generator}\` does not resolve to a file in this workspace, so nothing can decide this class` };
+            }
+            return undefined;
+        })
+        .filter((entry): entry is { class: string; generator?: string; because: string } => entry !== undefined);
 }

@@ -76,6 +76,42 @@ describe('the shadow replay reports its metrics', () => {
         expect(replay.discovery.roundsForHalfRate).toBeGreaterThan(0);
     });
 
+    it('does not average a round that could not be measured as a round with no blocking findings', () => {
+        // **`0` cleared and `null` nothing to measure are two facts the round row distinguishes on purpose** (R1-F3). A rate
+        // that folds them together reports a loop that measured nothing as a loop that found nothing.
+        const rounds = [
+            ...Array.from({ length: IDENTIFIABLE_ROUNDS }, (_, index) =>
+                round(`2026-11-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`, [{ id: `R${index}-F1`, severity: 'minor', class: 'instrument-unsound', origin: 'original' }], 2),
+            ),
+            { at: '2026-12-01T00:00:00.000Z', blockingIds: ['R-9'], blockingCount: null, findings: [{ id: 'R-9', severity: 'minor', class: 'intent-omission', origin: 'original' }] },
+        ];
+        const replay = replayLoop(rounds);
+        expect(replay.unmeasuredRounds).toEqual(['2026-12-01T00:00:00.000Z']);
+        expect(replay.discovery.identified).toBe(true);
+        if (!replay.discovery.identified) return;
+        // Twelve measured rounds at two apiece: the unmeasurable one is excluded, not averaged in as zero.
+        expect(replay.discovery.blockingPerRound).toBe(2);
+    });
+
+    it('reports no blocking rate at all when nothing could be measured', () => {
+        // **An empty measured set is not a zero rate** (R2-F4). `share` answers 0 for a 0/0 denominator, so a history where
+        // every round was unmeasurable reported the same number as a history that measured zero blocking findings — the fold
+        // R1-F3 closed for the mixed case and left open for this one.
+        const rounds = Array.from({ length: IDENTIFIABLE_ROUNDS }, (_, index) => ({
+            at: `2026-12-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+            blockingIds: [] as string[],
+            blockingCount: null,
+            findings: [{ id: `R${index}-F1`, severity: 'minor', class: 'instrument-unsound', origin: 'original' }],
+        }));
+        const replay = replayLoop(rounds);
+        expect(replay.discovery.identified).toBe(true);
+        if (!replay.discovery.identified) return;
+        expect(replay.unmeasuredRounds).toHaveLength(IDENTIFIABLE_ROUNDS);
+        expect(replay.discovery.blockingPerRound).toBeNull();
+        // The findings rate is still a real measurement: findings were recorded.
+        expect(replay.discovery.findingsPerRound).toBe(1);
+    });
+
     it('says nothing rather than zero for an empty history', () => {
         const replay = replayLoop([]);
         expect(replay).toMatchObject({ rounds: 0, findings: 0, classified: 0, mechanizableRoundShare: 0, repairOriginShare: 0, judgmentShare: 0 });

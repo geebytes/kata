@@ -80,7 +80,10 @@ describe('a finding that recurs across revisions is reported', () => {
 });
 
 describe('the recovery route for a recurring finding', () => {
-    async function summaryWith(rounds: ReviewRound[] | ((sealed: { revisionId: string; manifestHash: string }) => ReviewRound[])): Promise<{ summary: Awaited<ReturnType<typeof readUpstreamSummary>>; sealedRevisionId: string; sealedManifestHash: string }> {
+    async function summaryWith(
+        rounds: ReviewRound[] | ((sealed: { revisionId: string; manifestHash: string }) => ReviewRound[]),
+        options: { corruptReviewRecord?: boolean } = {},
+    ): Promise<{ summary: Awaited<ReturnType<typeof readUpstreamSummary>>; sealedRevisionId: string; sealedManifestHash: string; root: string }> {
         const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
         roots.push(root);
         await initLayout(root);
@@ -97,7 +100,11 @@ describe('the recovery route for a recurring finding', () => {
         await writeFile(join(root, '.kata', 'evidence', `${taskId}-current.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: sealed.revision.id })}\n`);
         const materialized = typeof rounds === 'function' ? rounds({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash }) : rounds;
         await writeFile(reviewRoundFile(root), materialized.map((entry) => JSON.stringify(entry)).join('\n') + '\n');
-        return { summary: await readUpstreamSummary(root, taskId), sealedRevisionId: sealed.revision.id, sealedManifestHash: sealed.revision.manifestHash };
+        if (options.corruptReviewRecord === true) {
+            // A record that exists and cannot be read: the state that must be re-read before anything is concluded about it.
+            await writeFile(join(root, '.kata', 'tasks', taskId, 'review.json'), '{ this is not a review record\n');
+        }
+        return { summary: await readUpstreamSummary(root, taskId), sealedRevisionId: sealed.revision.id, sealedManifestHash: sealed.revision.manifestHash, root };
     }
     const reviewRoundFile = (root: string): string => reviewRoundsPath(root, taskId);
 
@@ -115,6 +122,48 @@ describe('the recovery route for a recurring finding', () => {
 
         const action = suggestCandidateAction('review', summary);
         expect(action).toMatchObject({ nextSkill: '/kata-build', role: 'implementer', reason: 'review_loop_recurring' });
+    });
+
+    it('routes a class that came back inside a repair, and stays quiet for one that recurred only in the original code', async () => {
+        // **The signal the id view cannot see.** No finding id repeats, so `reviewLoopRecurrence` is empty — while the same
+        // mechanizable class appears in two rounds and one instance is a defect in the *previous* repair. That is the
+        // recycling shape, and publishing it without routing it was the "computed, nobody reads it" defect an independent
+        // round measured (R1-F2).
+        const recycling = await summaryWith([
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+        ]);
+        expect(recycling.summary.reviewLoopRecurrence).toEqual([]);
+        expect(recycling.summary.reviewLoopClassRecurrence).toEqual([
+            expect.objectContaining({ class: 'instrument-unsound', oracle: 'mechanizable', repairOrigin: 1, stopLineCandidate: true }),
+        ]);
+        expect(suggestCandidateAction('review', recycling.summary)).toMatchObject({ nextSkill: '/kata-build', role: 'implementer', reason: 'review_class_recurring' });
+
+        // The control: the same class twice, both in the original code — worth mechanizing, not a stop signal, and it must
+        // not displace the routes that the ordinary review readings produce.
+        const original = await summaryWith([
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+        ]);
+        expect(original.summary.reviewLoopClassRecurrence?.every((entry) => !entry.stopLineCandidate)).toBe(true);
+        expect(suggestCandidateAction('review', original.summary).reason).not.toBe('review_class_recurring');
+    });
+
+    it('sends an unreadable review record to a re-read, not to a mechanization', async () => {
+        // **A refusal that names a precondition precedes any report.** The class route was placed above the
+        // `unreadable_review_record` refusal (priority 1150), so a recurring class plus a damaged `review.json` sent the
+        // operator to `/kata-build` to mechanize a class instead of to `/kata-review` to re-read the record (measured by an
+        // independent round). The order now states the rule, and this case carries both facts at once.
+        const both = await summaryWith(
+            [
+                { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+                { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+            ],
+            { corruptReviewRecord: true },
+        );
+        expect(both.summary.reviewRecordUnreadable, 'the fixture must carry an unreadable record').toBeTruthy();
+        expect(both.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate)).toBe(true);
+        expect(suggestCandidateAction('review', both.summary)).toMatchObject({ nextSkill: '/kata-review', role: 'reviewer', reason: 'unreadable_review_record' });
     });
 
     it('does not displace the escalation, and does not decide anything a gate would', async () => {

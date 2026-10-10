@@ -37,9 +37,11 @@ export interface LoopReplay {
     stopLineCandidates: string[];
     discovery:
         | { identified: false; reason: string }
-        | { identified: true; findingsPerRound: number; blockingPerRound: number; roundsForHalfRate: number };
+        | { identified: true; findingsPerRound: number; /** `null` when no recorded round had a numeric count: a rate over an empty set is not zero, it is unmeasured. */ blockingPerRound: number | null; roundsForHalfRate: number };
     /** Rows that could not contribute, named — a legacy row with no findings is not a row with none. */
     unavailable: string[];
+    /** Rounds whose blocking count was recorded as "could not be measured" (`null`), named: they are not rounds with zero. */
+    unmeasuredRounds: string[];
 }
 
 /** Below this many rounds a per-round rate is not identifiable, and reporting one would be a number without a meaning. */
@@ -47,6 +49,11 @@ export const IDENTIFIABLE_ROUNDS = 12;
 
 export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
     const unavailable = rounds.filter((round) => (round.findings ?? []).length === 0 && round.noFindings === undefined).map((round) => round.at);
+    // **`null` is "could not be measured", and averaging it as `0` is the reading this repository's own records distinguish.**
+    // The round row was given the two states on purpose (`0` cleared, `null` nothing to measure); a rate that folds them
+    // together reports a loop that measured nothing as a loop that found nothing (measured by an independent round).
+    const unmeasuredRounds = rounds.filter((round) => round.blockingCount === null).map((round) => round.at);
+    const measuredBlocking = rounds.filter((round) => typeof round.blockingCount === 'number');
     const withFindings = rounds.filter((round) => (round.findings ?? []).length > 0);
     const findings = withFindings.flatMap((round) => round.findings ?? []);
     const classified = findings.filter((finding): finding is typeof finding & { class: DefectClass } => isDefectClass(finding.class));
@@ -77,11 +84,17 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
                 : {
                     identified: true,
                     findingsPerRound: share(findings.length, rounds.length),
-                    blockingPerRound: share(rounds.reduce((total, round) => total + (round.blockingCount ?? 0), 0), rounds.length),
+                    blockingPerRound: measuredBlocking.length === 0
+                        // **An empty measured set is not a zero rate.** `share` answers `0` for a `0/0` denominator, so a
+                        // history where nothing could be measured reported the same number as a history that measured
+                        // zero blocking findings — the fold R1-F3 closed for the mixed case, still open for this one.
+                        ? null
+                        : share(measuredBlocking.reduce((total, round) => total + (round.blockingCount as number), 0), measuredBlocking.length),
                     // The rounds it would take for the observed rate to halve if it decays at the rate it has shown so far:
                     // a statement about the *series*, not a prediction, and stated as such in the report.
                     roundsForHalfRate: findings.length === 0 ? 0 : Math.ceil(Math.log(0.5) / Math.log(1 - share(findings.length, rounds.length) / Math.max(findings.length, 1))),
                 },
         unavailable,
+        unmeasuredRounds,
     };
 }
