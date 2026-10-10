@@ -93,7 +93,17 @@ export async function buildReviewRequest(input: {
         readingSets?: Array<{ claimId: string; paths: string[] }>;
         requiredEvidence?: Array<{ claimId: string; types: EvidenceType[]; minimumStrength: number }>;
         discovery?: { deadlineToolCalls: number | null };
+        /** The defect classes the change declared on its plan, each with the generator the class's oracle needs. */
+        defectClasses?: Array<{ class: string; oracle?: string; generator?: string; relation?: string }>;
     };
+    // **Which declared classes have no instrument, named in the request.** A class declared `mechanizable` without a generator
+    // is a class that will be paid for by independent rounds instead of by a machine, so the round is *briefed* about it
+    // rather than surprised by it — and `decide` reports the same gap as a deficit (the operator chose the report-and-route
+    // form over refusing to dispatch).
+    const declaredClasses = (plan.defectClasses ?? []).filter((entry): entry is { class: string; oracle?: string; generator?: string; relation?: string } => typeof entry?.class === 'string');
+    const missingGenerators = declaredClasses
+        .filter((entry) => (entry.oracle ?? 'judgment') === 'mechanizable' && !entry.generator && !entry.relation)
+        .map((entry) => entry.class);
     // **The request speaks for the sealed revision, or it is not handed to a reviewer at all.** Measured by an independent
     // review on a real flow: this function copied `ledger.subject.revision` straight into the request, and the frozen
     // subject was 20 files behind the sealed revision — so the reviewer was given a brief for content that was no longer
@@ -195,6 +205,8 @@ export async function buildReviewRequest(input: {
             changeId: input.changeId,
             subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
             tier: plan.tier ?? 'unknown',
+            ...(declaredClasses.length > 0 ? { defectClasses: declaredClasses } : {}),
+            ...(missingGenerators.length > 0 ? { missingGenerators } : {}),
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
             // Present only when something could not be read: an absent field means the brief describes a ledger that was
             // fully readable, and a name here means the reviewer is looking at a request built around a hole.

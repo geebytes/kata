@@ -101,6 +101,18 @@ Two candidates would change **gate semantics** — `kata`'s own rule is that a c
 
 Both are recorded here with their mechanism-preserving form implemented, and neither is taken unilaterally.
 
+## 6c. One narrowing recorded, not hidden: the class gap is a deficit, not a reason code
+
+The first version of AC-3 added a kernel reason code (`class_without_instrument`) so the class gap would appear in the
+decision's `reasons`. The eval corpus's own guard refused it — *"a refusal reason no seed exercises is a rule with no
+example"* — because the rule lives in `src/store/verdict.ts` while the corpus scores the kernel (`src/kernel/**`). Two honest
+answers existed: move the rule into the kernel so a corpus seed can exercise it, or drop the code and let the **deficit** carry
+the gap (the deficit array is where "what is missing" belongs, and the verdict is already `insufficient`). The second was taken
+for this slice; the first is recorded here as the follow-up that would give the rule a scored example.
+
+The guard is worth keeping exactly as it is: it refused a rule nobody could see working, which is the same property this change
+exists to install.
+
 ## 7. Cost
 
 - `src/quality/defect-classes.ts` (vocabulary + oracle type), the finding schema fields, the round-record writer, the falsifier anchor check, the request's instrument declaration, the recurrence class, and the replay computation: **≈300 lines of production code, one schema extension, six selectors**.

@@ -10,7 +10,7 @@
  * silently deciding by whichever code path happened to run. `unreadable` is separate from `absent` on purpose: a ledger
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
-import { readLedger, declaredPaths, type Ledger, declaredSubjectRevision } from './ledger.js';
+import { readLedger, declaredPaths, type Ledger, declaredSubjectRevision, readPlanState } from './ledger.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { readingsForRevision } from '../kernel/evidence.js';
 import { aggregateQuorum, groupByProducer, type QuorumRecord } from '../kernel/quorum.js';
@@ -348,14 +348,58 @@ export async function ledgerVerdict(input: {
         ...(input.actor === undefined ? {} : { actor: input.actor }),
     });
 
+    // **A class declared mechanizable with no generator is a deficit, not a note.** The declaration is half of the
+    // operator's chosen rule (`docs/design/2026-10-10-the-review-loop-carries-its-defect-classes.md` §6): the request names
+    // the missing generator for the next round, and the decision reports it so the archive gate — which re-runs `decide` —
+    // cannot certify a change whose mechanizable class has no machine. Nothing is refused at dispatch: the rejected form
+    // would have discarded the rounds that found three blocking and two major findings.
+    const declaredClasses = await readDeclaredDefectClasses(input.root, input.changeId);
+    const missingGenerators = declaredClasses
+        .filter((entry) => entry.oracle === 'mechanizable' && !entry.generator && !entry.relation)
+        .map((entry) => entry.class);
+    const withClassGaps: typeof decision = missingGenerators.length === 0
+        ? decision
+        : {
+            ...decision,
+            verdict: 'insufficient',
+            deficits: [
+                ...decision.deficits,
+                ...missingGenerators.map((name) => ({
+                    claimId: '(defect classes)',
+                    need: `name the generator and the relation that decide the mechanizable class \`${name}\` (\`kata-cli ledger plan --classes '${name}:<generator>:<relation>'\`), or the class is paid for by independent rounds instead of by a machine`,
+                })),
+            ],
+        };
+
     return {
         kind: 'decided',
         tier,
         claims: ledger.claims.length,
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
         subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
-        decision,
+        decision: withClassGaps,
     };
+}
+
+/**
+ * The classes the change declared on its plan, read once, with an unreadable plan answered as "none declared" — because a
+ * plan that cannot be read is already a refusal elsewhere (`buildReviewRequest` names it), and inventing a declaration here
+ * would make this the second reader deciding what the change is about.
+ */
+async function readDeclaredDefectClasses(root: string, changeId: string): Promise<Array<{ class: string; oracle: string; generator?: string; relation?: string }>> {
+    const stored = await readPlanState(root, changeId);
+    if (stored.kind !== 'usable') return [];
+    const plan = stored.value as { defectClasses?: unknown };
+    if (!Array.isArray(plan.defectClasses)) return [];
+    return plan.defectClasses
+        .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+        .filter((entry) => typeof entry.class === 'string')
+        .map((entry) => ({
+            class: entry.class as string,
+            oracle: typeof entry.oracle === 'string' ? entry.oracle : 'judgment',
+            ...(typeof entry.generator === 'string' ? { generator: entry.generator } : {}),
+            ...(typeof entry.relation === 'string' ? { relation: entry.relation } : {}),
+        }));
 }
 
 /**

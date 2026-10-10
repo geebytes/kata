@@ -10,6 +10,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { hashContent } from '../core/hash.js';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { oracleFor, requireDefectClass } from '../quality/defect-classes.js';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
@@ -81,6 +82,7 @@ export const ledgerFamilyFlags: readonly string[] = [
     'c0',
     'change',
     'claim',
+    'classes',
     'command',
     'cost',
     'depends-on',
@@ -234,6 +236,27 @@ export const LEDGER_VERBS = [
  * before the dispatch and the revision after it. A pure read on an already-stale ledger therefore reports nothing: it did
  * not move anything, and saying it did would be a different lie.
  */
+/**
+ * Parse `--classes 'name[:generator[:relation]];…'` into the declaration the plan carries.
+ *
+ * One derivation for the syntax, used by the only writer, and every name is checked against the vocabulary by name: a class
+ * that is not in it makes the register wrong rather than incomplete, which is worse than no declaration at all.
+ */
+function parseDefectClassDeclaration(raw: string): Array<{ class: string; oracle: string; generator?: string; relation?: string }> {
+    const declarations: Array<{ class: string; oracle: string; generator?: string; relation?: string }> = [];
+    for (const entry of raw.split(';').map((part) => part.trim()).filter((part) => part !== '')) {
+        const [name, generator, relation] = entry.split(':').map((part) => part.trim());
+        const defectClass = requireDefectClass(name, 'the --classes declaration');
+        declarations.push({
+            class: defectClass,
+            oracle: oracleFor(defectClass),
+            ...(generator ? { generator } : {}),
+            ...(relation ? { relation } : {}),
+        });
+    }
+    return declarations;
+}
+
 export async function runLedgerCommand(argv: string[], options: LedgerCommandOptions): Promise<void> {
     const changeId = argValue(argv, '--change') ?? options.changeId;
     const before = declaredSubjectRevision(await readLedger(options.root, changeId));
@@ -1235,9 +1258,16 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             contentPaths: Object.keys(current.pathDigests),
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
         });
+        // **Which defect classes this change touches, and — for a mechanizable one — the machine that decides it.** A class
+        // declared mechanizable without a generator is a class that will be paid for by independent rounds instead (the
+        // measurement behind this rule is in `docs/design/2026-10-10-the-review-loop-carries-its-defect-classes.md`), so the
+        // declaration is validated here by name and reported by `decide` as a deficit rather than accepted silently.
+        const classesRaw = argValue(argv, '--classes');
+        const defectClasses = classesRaw === undefined ? undefined : parseDefectClassDeclaration(classesRaw);
+        const planWithClasses = defectClasses === undefined ? plan : { ...plan, defectClasses };
         // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read
         // afterwards is a printout rather than a record.
-        await writePlan(options.root, changeId, plan);
+        await writePlan(options.root, changeId, planWithClasses);
         // The envelope is reported where the operator looks, and it comes from the policy rather than a second derivation:
         // a plan that says what a review must produce is incomplete without the limits it must produce it within.
         emit({
