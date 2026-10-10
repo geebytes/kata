@@ -179,3 +179,25 @@ re-seal 因此确实不可能改变结论**。
 - **B**（备选）：让沙箱能表示**每一条被声明的路径**，即使策略视其为「永不是内容」也 overlay 进去。
 - **C**（与 A/B 无关，必须做）：`superseded` 必须给出**它比的是哪一侧**——哪个 revision、哪些路径、记录摘要 vs 观测摘要；
   并让可读的内容图覆盖被声明的路径。否则这个状态无法被操作者核对，而报告作者按现有工件核对只会得出「什么都没变」。
+
+## 量化（2026-10-09 二次更新后追加）
+
+kata HEAD `c0553d7`（含此前几轮修复）下的实测：
+
+```
+surfaceBasis: content-diff | baseRevisionId == revisionId: True
+changedOutsideOwnership: 322
+    217  .kata/evidence/**      ← 门禁自己写的证据文件
+    104  .kata/tasks/**         ← 门禁自己的 pointer / change-record / handoff / 审计记录
+      1  .kata/wiki/**          ← 门禁自己的 wiki 记录
+```
+
+**322 条全部是 `.kata/**`（门禁自身的记账），生产代码 0 条。** 也就是说：判「声明面之外发生了变更」的输入里，百分之百是门禁自己上一轮写下的东西 —— 这既是根因的直接量化，也说明它不是下游仓库可修复的问题（`scope change --add` 只会把门禁的记账声明成这个 change 的内容）。
+
+同一轮里另外两点观察，供参考：
+
+- 本次更新**改善了另一条拒绝路径的提示**：`build --seal` 对「工作树里有未声明变更」现在会逐条点名
+  （实测：`.codegraph/.gitignore`），并给出可执行命令 `kata-cli scope change …`。这与本问题无关，但确实是可用的改进。
+- 本问题的症状未变：`verifyResult: FAIL`、`failedVerifyAcceptance: 12`、`verifyRepairScopes` 全为
+  `revision_superseded`，而同一时刻 `failingEvidence: 0`、`wikiClosureValid: true`、
+  `currentRevisionId` 与全部 31 条证据印章一致。
