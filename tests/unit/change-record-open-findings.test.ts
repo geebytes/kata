@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { createTaskRevision } from '../../src/workflow/revision.js';
+import { isOpenFinding } from '../../src/quality/review-ladder.js';
 
 /**
  * AC-6's actual subject, which its declared selector never touched (`kgs-f5`): the change record's `openFindings`
@@ -82,5 +83,24 @@ describe('the change record derives what is still open', () => {
         expect(ids).toContain('raised-and-routed');
         // The count is the same fact, so it cannot disagree with the list it counts.
         expect(record.counts.openFindings).toBe(record.openFindings.length);
+    });
+
+    it('reads every disposition the schema allows, and agrees with the ladder that owns the rule', async () => {
+        // **The kinds the fixture carries are the strength of the comparison.** The cases above exercised three dispositions
+        // (`open`, `fixed`, `routed`), so a second reader that also closed `accepted` disagreed with the ladder and stayed
+        // green — measured by an independent round, which rewrote this side to `!== 'fixed' && !== 'accepted'` and watched all
+        // three guards of this module pass while `review-ladder` still called those findings open. So every value the schema
+        // permits is carried here, and the two readers are compared rather than each being asserted alone.
+        const { root, revisionId } = await fixture('every-disposition');
+        const dispositions = ['open', 'fixed', 'deferred', 'accepted', 'routed'];
+        const record = await recordWith(root, 'every-disposition', revisionId, dispositions.map((disposition) => ({ id: `raised-and-${disposition}`, severity: 'major', disposition })));
+
+        const open = record.openFindings.map((finding) => finding.id).sort();
+        expect(open).toEqual(['raised-and-accepted', 'raised-and-deferred', 'raised-and-open', 'raised-and-routed']);
+        // The ladder answers the same question for the same inputs: only `fixed` closes a finding, and a record that says
+        // otherwise is the divergence this case exists to catch.
+        for (const disposition of dispositions) {
+            expect(isOpenFinding({ disposition }), `disposition=${disposition}`).toBe(open.includes(`raised-and-${disposition}`));
+        }
     });
 });

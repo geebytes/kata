@@ -6,6 +6,8 @@ import { initLayout } from '../../src/core/layout.js';
 import { readWaivers } from '../../src/quality/acceptance-matrix.js';
 import { waiversPath } from '../../src/core/layout.js';
 import { readRecordedEvidence } from '../../src/quality/evidence.js';
+import { runCommand } from '../../src/workflow/orchestrator.js';
+import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { readDirectoryState } from '../../src/core/record-read.js';
 
 /**
@@ -90,4 +92,58 @@ describe('a store that cannot be read is never reported as an empty one', () => 
         expect(unlistable.kind).toBe('unreadable');
         if (unlistable.kind === 'unreadable') expect(unlistable.detail).toContain('could not be listed');
     });
+});
+
+describe('a refusal is not swallowed one layer up', () => {
+    /**
+     * **The reader that refuses is only as good as its callers.** An independent round re-ran R1-F3's fix and found the
+     * named refusal consumed one level up: `readTaskEvidence` wrapped `readRecordedEvidence` in `catch { return …[] }`, so
+     * an evidence store that cannot be listed arrived at `judge` as `evidenceCount: 0` — "no evidence recorded", which is
+     * the exact fold the fix removed, wearing its caller's clothes. Measured with `.kata/evidence` as a file (ENOTDIR, not
+     * ENOENT): the reader threw the named error and `judge` reported `evidenceCount: 0` and
+     * `repairScope: missing_test_evidence`.
+     *
+     * The caller may not decide that question for itself. `readRecordedEvidence` answers three ways already — absent is
+     * `[]`, anything unreadable throws — so a caller that catches everything has re-joined the two answers.
+     */
+    it('does not turn an unlistable evidence store into an empty one at the judge route', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'kata-unlistable-judge-'));
+        roots.push(directory);
+        const judgeTask = 'unlistable-store';
+        await mkdir(join(directory, '.kata', 'tasks', judgeTask), { recursive: true });
+        await writeFile(join(directory, 'subject.ts'), 'export const version = 1;\n');
+        await writeFile(join(directory, '.kata', 'tasks', judgeTask, 'task.json'), `${JSON.stringify({
+            id: judgeTask,
+            title: 'Unlistable store',
+            phase: 'review',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['subject.ts'],
+            acceptanceMatrix: {
+                version: 1,
+                rows: [{
+                    acceptanceId: 'AC-1',
+                    implementationPaths: ['subject.ts'],
+                    testPaths: ['subject.ts'],
+                    evidence: [{ id: 'ac-1', kind: 'test', command: 'vitest', testSelector: 'subject.ts' }],
+                    verificationLevel: 'unit',
+                }],
+            },
+            createdAt: '2026-10-09T00:00:00.000Z',
+            updatedAt: '2026-10-09T00:00:00.000Z',
+        })}\n`);
+        const sealed = await createTaskRevisionIfChanged({ root: directory, taskId: judgeTask, ownedPaths: ['subject.ts'], checkIds: [] });
+        await writeFile(join(directory, '.kata', 'tasks', judgeTask, 'current-state.json'), `${JSON.stringify({ taskId: judgeTask, phase: 'review', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-10-09T00:00:00.000Z' })}\n`);
+        await writeFile(join(directory, '.kata', 'tasks', judgeTask, 'review.json'), `${JSON.stringify({ revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash, status: 'approved', reviewEvidence: 'reviewed', findings: [] })}\n`);
+        // A file where the evidence directory belongs: `ENOTDIR`, which is not an absence.
+        await writeFile(join(directory, '.kata', 'evidence'), 'not a directory\n');
+
+        const judged = await runCommand('judge', judgeTask, directory, { confirmHostModel: true }).catch((error: Error) => ({ threw: error.message }));
+
+        // Either the command refuses by name, or it throws naming the store — what it must not do is answer "no evidence".
+        const asText = JSON.stringify(judged);
+        expect(asText, `judge answered: ${asText.slice(0, 300)}`).toContain('evidence');
+        expect(asText).not.toContain('"evidenceCount":0');
+        if ('threw' in judged) expect(String(judged.threw)).toMatch(/cannot be listed|evidence/i);
+        else expect(judged.success).toBe(false);
+    }, 120_000);
 });

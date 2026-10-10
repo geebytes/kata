@@ -51,6 +51,12 @@ describe('which severities block has one derivation', () => {
 
             // The ladder's set *is* the kernel's set for the tier the ladder resolved: one fact, one value.
             expect(fromLadder, label).toEqual(fromKernel);
+            // **And it is the same value, not an equal one.** `toEqual` cannot tell a delegation from a second construction
+            // that happens to agree — measured by an independent round: re-adding the ladder's own local copy (correct this
+            // time: `reviewTierFor(mode) === 'standard' ? ['blocking'] : ['blocking','major']`) left every case green. The
+            // identity below fails for any implementation that builds its own array, which is the property AC-6 states.
+            expect(fromLadder, `${label}: the ladder must return the kernel's own value`).toBe(fromKernel);
+            expect(Object.isFrozen(fromLadder), `${label}: the set is not mutable state`).toBe(true);
             for (const severity of ['blocking', 'major', 'minor', 'note', 'nit']) {
                 // And the two predicates agree with that set — including `major` under `std` and under an absent mode, which
                 // is where they used to disagree and where a legitimate round was refused.

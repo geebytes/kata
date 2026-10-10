@@ -76,7 +76,6 @@ export interface SealPreflightOptions {
 export interface SealPreflightResult {
     /** Ordered as the fail-fast version ordered its checks, so the first blocker is the one it would have reported. */
     blockers: SealBlocker[];
-    ownedPaths: string[];
     waivers: Waiver[];
     ownershipConflicts: Array<{ taskId: string; path: string }>;
     codeGraphCandidates: CodeGraphCandidate[];
@@ -235,7 +234,7 @@ export async function collectSealPreflight(input: {
 
     if (options.ownedPathsError) {
         // Without owned paths the path-shaped checks cannot run; the blocker above is the whole answer.
-        return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
+        return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
     }
 
     // 7. A review repair must have changed the manifest it was opened against.
@@ -280,7 +279,7 @@ export async function collectSealPreflight(input: {
         const waiverErrors = validateWaivers(waivers);
         if (waiverErrors.length > 0) {
             deny('waiverErrors', 'Invalid recorded waiver.', { waiverErrors });
-            return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
+            return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
         }
 
         if (task.workflowProfile?.strictClosure && task.acceptanceMatrix) {
@@ -308,6 +307,6 @@ export async function collectSealPreflight(input: {
         }
     }
 
-    return { blockers, ownedPaths, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
+    return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
 }
 

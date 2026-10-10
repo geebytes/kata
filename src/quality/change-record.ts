@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashContent } from '../core/hash.js';
 import { changedGitPaths } from '../core/git.js';
+import { isOpenFinding } from './review-ladder.js';
 import { taskDir } from '../core/layout.js';
 import { readValidatedOptional } from '../core/schema.js';
 import { mutateTaskArtefact } from '../core/state.js';
@@ -260,8 +261,12 @@ export async function buildChangeRecord(input: ChangeRecordInput): Promise<Chang
         passed: envelope.passed ?? envelope.exitCode === 0,
     }));
 
+    // **One predicate for "is this finding still open"**, asked here rather than restated. The ladder owns it
+    // (`isOpenFinding`), and this line was a second copy of the same rule with the same reading — which is what an
+    // independent round measured: rewriting *this* side to also treat `accepted` as closed left all three of this module's
+    // guards green, while the ladder kept calling those findings open. Two readers that agree today are two readers.
     const openFindings = input.findings
-        .filter((finding) => finding.disposition !== 'fixed')
+        .filter((finding) => isOpenFinding(finding))
         .map((finding) => ({ id: finding.id, severity: finding.severity, disposition: finding.disposition }))
         .sort((a, b) => a.id.localeCompare(b.id));
 

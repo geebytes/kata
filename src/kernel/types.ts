@@ -113,8 +113,23 @@ export type ReadableSeverity = (typeof READABLE_SEVERITIES)[number];
  * must name its basis". One derivation reads the mode (`reviewTierFor`, in the quality ladder, where the spellings and the
  * legacy-absent rule live); everything else asks the tier.
  */
+const mergeBlockingByTier: Readonly<Record<TierName, readonly ReadableSeverity[]>> = Object.freeze({
+    standard: Object.freeze(['blocking'] as const),
+    strict: Object.freeze(['blocking', 'major'] as const),
+    security: Object.freeze(['blocking', 'major'] as const),
+});
+
+/**
+ * The set for a tier, as **one frozen value per tier** rather than a fresh array each call.
+ *
+ * The freezing is not tidiness. Handing out a stable object makes "there is only one derivation of this set" *observable*:
+ * `mergeBlockingSeverities(mode) === mergeBlockingSeveritiesForTier(tier)` can hold only if the ladder returns this value
+ * rather than building one, so a re-added local copy fails a test — measured, and it is the difference between a guard that
+ * pins agreement and one that pins the property. Freezing also means a caller cannot mutate the set in place and change what
+ * every other reader sees.
+ */
 export function mergeBlockingSeveritiesForTier(tier: TierName): readonly ReadableSeverity[] {
-    return tier === 'standard' ? ['blocking'] : ['blocking', 'major'];
+    return mergeBlockingByTier[tier];
 }
 
 

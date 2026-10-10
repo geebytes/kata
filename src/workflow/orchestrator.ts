@@ -645,8 +645,10 @@ async function cmdBuild(
      * It is not a blocker (see the field's doc comment: both anchors for "what did this change commit" include work that is
      * not this change's, and blocking on it refused 23 legitimate seals). It is also not nothing: a value computed and then
      * read by nobody is a mechanism without a consumer, and an operator cannot act on a fact they cannot see. So it travels
-     * in the seal's diagnostics, which every caller already receives, and it is named in the human output when it is not
-     * empty. Measured by an independent round before this: `collectSealPreflight` returned
+     * in the seal's diagnostics, which every caller already receives — that is the surface this change can reach, and the
+     * first version of this comment claimed more than the code did ("named in the human output when it is not empty", where
+     * `build` has no human renderer at all: measured by an independent round after the comment was written, which is the same
+     * class as the comment it replaced). Measured by an independent round before this: `collectSealPreflight` returned
      * `{ committedOutsideDeclaration: ['.gitignore', 'src/stowaway.ts'], committedReading: 'available', blockers: [] }` and
      * nothing anywhere read either field.
      */
@@ -2390,12 +2392,20 @@ async function cmdJudge(taskId: string, root: string, options: CommandOptions = 
  * on these two commands instead of a refusal.
  */
 async function readTaskEvidence(root: string, taskId: string, options: CommandOptions = {}): Promise<EvidenceEnvelope[]> {
-    // The recorded set, read through the shared reader. Only a genuinely absent directory falls back to collecting now.
-    try {
-        return await readRecordedEvidence(root, taskId);
-    } catch {
-        return options.checks ? await collectEvidence(taskId, options.checks) : [];
-    }
+    // **The reader answers three ways, and this caller may not join two of them.**
+    //
+    // It used to be `try { return await readRecordedEvidence(...) } catch { return …[] }`, under a comment claiming that only
+    // a genuinely absent directory fell back to collecting. After the reader was taught to refuse a store it cannot list, that
+    // claim became false: an independent round measured `judge` reporting `evidenceCount: 0` and
+    // `repairScope: missing_test_evidence` for `.kata/evidence` that was a file — "no evidence recorded", which is the fold
+    // the reader had just stopped making, one layer up and wearing the caller's clothes.
+    //
+    // So the question is asked once, where it is answered: the reader returns `[]` for an absent directory and throws for
+    // anything it cannot read, and this function only adds the "nothing recorded yet, and the caller supplied checks" case.
+    // A caller that catches everything has re-joined absence and damage, however good the reader it wraps.
+    const recorded = await readRecordedEvidence(root, taskId);
+    if (recorded.length === 0 && options.checks) return await collectEvidence(taskId, options.checks);
+    return recorded;
 }
 
 
