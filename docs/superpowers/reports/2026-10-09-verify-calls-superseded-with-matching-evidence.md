@@ -75,3 +75,34 @@ askUser                = ["建议执行 /kata-build，角色 implementer。"]
 * 本报告**不主张**作用域绑定应当取消 —— 「结论不得比它读过的内容活得更久」是对的；缺陷在于**判据与实际状态相反且无出路**。
 * 本报告**不主张** `verify` 应当对未通过检查放行 —— 本 case 里 `failingEvidence: 0`、全部 `exitCode: 0`，没有任何检查失败。
 * 本报告**不主张**这是 kata 本次更新引入的 —— 我没有对比更新前后的实现，只记录当前 HEAD `89ba08a` 下的实测。
+
+## 根因（已定位，2026-10-09 追加）
+
+决定性证据来自 `verify` 输出里的 `diagnostics.changeRecord`：
+
+```json
+{
+  "version": 1,
+  "revisionId": "revision-1b7bf1d50f6de6ce",
+  "baseRevisionId": "revision-1b7bf1d50f6de6ce",        // ← 与自身比较
+  "surfaceBasis": "content-diff",
+  "changedPaths": [ … ".kata/evidence/expose-the-complete-parameter-set-AC-1-….json",
+                        ".kata/tasks/expose-the-complete-parameter-set/current-revision.json",
+                        ".kata/tasks/…/change-record-revision-*.json", … "uv.lock", … ],
+  "changedOutsideOwnership": [ ".kata/evidence/expose-the-complete-parameter-set-AC-1-….json", … ]
+}
+```
+
+也就是说：
+
+1. **`baseRevisionId == revisionId`** —— 变更记录把当前 revision 与它**自己**做 diff；
+2. `surfaceBasis` 是 **`content-diff`** —— 于是「变更路径」= 该 diff 的产物；
+3. 这个集合里混进了 **kata 自己的记账文件**：`.kata/evidence/*.json`（每次 seal/verify 都重写）与 `.kata/tasks/**`（pointer、change-record、handoff）；
+4. 它们**不在 `ownedPaths` 里** ⇒ 落入 `changedOutsideOwnership`；
+5. 每个验收项的判定读到的就是「声明面之外发生了变更」⇒ **全部 12 项判 `revision_superseded`**。
+
+**这是自我否证**：门禁自己的记账写在它自己用来判定「表面是否移动」的集合里，于是 seal/verify 每跑一次就把它刚刚产出的结论作废一次；re-seal 只会写更多同类文件，因此「要求 re-seal」的补救在原理上不可能改变结论 —— 与实测的 `verify` 永久 FAIL 完全一致。
+
+与前文「已排除的可能原因」并不矛盾：内容摘要确实一致（`contentDigests` 覆盖文件内容，而 supersede 判据用的是**声明面归属**），证据印章确实正确（31 条都是当前 revision）。两者查的是不同的东西，只有这一条把结论解释清楚了。
+
+**修复方向（据此更新）**：`content-diff` 的表面计算必须排除门禁自身的工作区（`.kata/evidence/**`、`.kata/tasks/**`，至少排除其可写产物），或把这些路径显式声明为「不属于表面」；否则任何按 `content-diff` 判定的验收都会在每次运行后自废。第 2 条回归相应改写成：**当 `revisionId == baseRevisionId` 时，`changedOutsideOwnership` 不得由门禁自身的记账文件构成**。
