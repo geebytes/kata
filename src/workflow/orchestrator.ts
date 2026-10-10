@@ -142,25 +142,40 @@ async function guardTransition(
 }
 
 /**
- * **One row shape, derived once, for both roads that archive a round.**
+ * **The archive row is the record plus what replaced it — no allow-list.**
  *
- * The entry and the result path each built their own row, and they drifted: the result road dropped `declaredCoverage` and
- * `reviewedRevisionId`, so an empty-but-declared round archived by a result carried its declaration nowhere — reachable from
- * neither the store nor the history (measured by an independent round). A row is written by this function or not at all, and
- * `supersededBy` is a real name: the entry's first version read `subjectRevision` off a `RevisionIdentity`, which has no such
- * field, so it wrote an empty string on every row (measured by the same round).
+ * Two rounds measured this: the entry road and the result road each built their own row and drifted (the result road dropped
+ * `declaredCoverage` and `reviewedRevisionId`, so an empty-but-declared round's declaration was reachable from neither the
+ * store nor the history), and the allow-list that replaced them still dropped `reviewRoute` — **the field that tells a round
+ * from a placeholder** — along with `approvedAt`, `reviewedPaths`, `reviewEvidence` and the revision binding. So the row is
+ * the record, spread, plus the two facts about its successor and when it was archived. A field added to a record later
+ * travels into the archive without anyone remembering to add it here.
+ *
+ * **The successor is two fields, because it is two kinds of thing.** The entry knows the revision the new round is bound to
+ * (a seal id, resolvable under `.kata/tasks/<id>/revisions/`); the result road knows that, and when the *question* moved
+ * instead, the subject revision (`rev:<hex>`, which names no artefact). Writing either into one field made the value mean
+ * different things on different rows (measured by an independent round).
  */
-function supersededRoundRow(record: Record<string, unknown>, supersededBy: string | null | undefined): string {
+function supersededRoundRow(
+    record: Record<string, unknown>,
+    superseded: { revision?: string | null; subject?: string | null },
+): string {
     return `${JSON.stringify({
-        revisionId: record.revisionId,
-        ...(typeof record.subjectRevision === 'string' ? { subjectRevision: record.subjectRevision } : {}),
-        ...(typeof record.reviewedRevisionId === 'string' ? { reviewedRevisionId: record.reviewedRevisionId } : {}),
-        ...(Array.isArray(record.declaredCoverage) ? { declaredCoverage: record.declaredCoverage } : {}),
-        findings: record.findings,
-        status: typeof record.status === 'string' ? record.status : 'pending',
-        supersededBy: supersededBy ?? '',
+        ...record,
+        ...(superseded.revision ? { supersededByRevision: superseded.revision } : {}),
+        ...(superseded.subject ? { supersededBySubject: superseded.subject } : {}),
         archivedAt: new Date().toISOString(),
     })}\n`;
+}
+
+/**
+ * **A record the gate accepted.** One predicate, both callers: the pre-transition refusal and the in-lock belt used to ask
+ * different questions (`findings.length > 0` versus "not a placeholder"), and they disagreed on exactly the clean-pass shape
+ * the code itself produces — an approved record whose round reported nothing — so that record still moved the task
+ * (measured by an independent round).
+ */
+function isAcceptedReviewRecord(record: { reviewRoute?: unknown; findings?: unknown; declaredCoverage?: unknown; status?: unknown }): boolean {
+    return record.status === 'approved' && !isReviewPlaceholder(record);
 }
 
 export async function runCommand(
@@ -1860,9 +1875,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     if (!placeholder && Object.keys(existingRecord).length > 0 && !sameRound) {
                         await appendFile(
                             join(taskDir(root, taskId), 'review-history.jsonl'),
-                            // The successor is the question that moved when there is one, and the revision being recorded
-                            // against otherwise — never a field the identity does not carry.
-                            supersededRoundRow(existing.record as Record<string, unknown>, currentSubject ?? binding.revisionId),
+                            // Two fields, two kinds: the revision being recorded against (a seal), and the question when
+                            // the question is what moved (a subject revision, which names no artefact).
+                            supersededRoundRow(existing.record as Record<string, unknown>, { revision: binding.revisionId, subject: currentSubject }),
                             'utf8',
                         );
                     }
@@ -2263,8 +2278,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const standing = await readFile(layoutReviewPath(root, taskId), 'utf8').catch(() => '');
             if (standing) {
                 try {
-                    const record = JSON.parse(standing) as { status?: string; findings?: unknown[] };
-                    if (record.status === 'approved' && Array.isArray(record.findings) && record.findings.length > 0) {
+                    const record = JSON.parse(standing) as { status?: string; findings?: unknown[]; reviewRoute?: unknown; declaredCoverage?: unknown };
+                    if (isAcceptedReviewRecord(record)) {
                         return {
                             command: 'review',
                             taskId,
@@ -2335,7 +2350,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // refusal returned as an envelope here would be dropped: the caller only inspects `committed.kind`, so
                     // the command would report success while writing nothing — measured while wiring this guard, and the
                     // reason it carries a `refused` field instead.
-                    if (!isReviewPlaceholder(previous) && previous.status === 'approved') {
+                    if (isAcceptedReviewRecord(previous)) {
                         return {
                             refused: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
                                 + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
@@ -2348,7 +2363,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         // revision it opens against is what moved the store on.
                         await appendFile(
                             join(taskDir(root, taskId), 'review-history.jsonl'),
-                            supersededRoundRow(previous as Record<string, unknown>, entryBinding.revisionId),
+                            supersededRoundRow(previous as Record<string, unknown>, { revision: entryBinding.revisionId }),
                             'utf8',
                         );
                     }

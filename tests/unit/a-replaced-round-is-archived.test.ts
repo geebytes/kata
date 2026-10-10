@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initLayout, taskDir } from '../../src/core/layout.js';
+import { initLayout, reviewPath, taskDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
 import { appendClaim, restateClaim, writePlan, writePolicy } from '../../src/store/ledger.js';
@@ -142,10 +142,14 @@ describe('a replaced round is archived', () => {
         const archived = await rows();
         expect(archived).toHaveLength(1);
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
-        // **The row says what superseded it, and the name is non-empty** — the entry road wrote an empty string on every
-        // row because it read a field the identity does not carry (measured by the same round).
-        expect(typeof archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe('string');
-        expect(archived[0]?.supersededBy).not.toBe('');
+        // **The row names what superseded it, and the name is the fact itself** — not "a non-empty string": an earlier
+        // version asserted only non-emptiness, and a fixed wrong value stayed green (measured by an independent round). The
+        // subject that moved is the new question the record now answers, so the row must carry *that* value; the seal is
+        // the revision being recorded against, which resolves under `.kata/tasks/<id>/revisions/`.
+        const current = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { subjectRevision?: string; revisionId?: string };
+        expect(archived[0]?.supersededBySubject, JSON.stringify(archived[0])).toBe(current.subjectRevision);
+        expect(archived[0]?.supersededByRevision).toBe(current.revisionId);
+        expect(String(archived[0]?.supersededBySubject).startsWith('rev:'), 'a subject revision names the question').toBe(true);
         expect(typeof archived[0]?.archivedAt).toBe('string');
         // And the declaration travels on this road too, not only on the entry road (the same round measured that the result
         // path dropped it).
@@ -161,9 +165,12 @@ describe('a replaced round is archived', () => {
         const archived = await rows();
         expect(archived).toHaveLength(1);
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
-        expect(archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe(
+        expect(archived[0]?.supersededByRevision, JSON.stringify(archived[0])).toBe(
             JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')).id as string,
         );
+        // And the archive carries the **whole** record: `reviewRoute` is what tells a round from a placeholder, and an
+        // allow-list row dropped it (measured by an independent round).
+        expect(archived[0]?.reviewRoute).toBe('adversarial');
         expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
         expect(typeof archived[0]?.reviewedRevisionId).toBe('string');
     });

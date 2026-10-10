@@ -91,6 +91,28 @@ describe('only the same round is refused', () => {
         expect(second.success, JSON.stringify(second).slice(0, 200)).toBe(true);
     });
 
+    it('refuses to enter review over an approved round that reported nothing', async () => {
+        // **The clean-pass shape, and the one the two predicates disagreed about.** A round that finds nothing is recorded
+        // with `findings: []` and `reviewRoute: 'adversarial'` — a recorded round, not a placeholder — and the gate can
+        // accept it. The pre-transition check once required a non-empty finding list while the belt asked "is this an
+        // accepted record", so that record alone still moved the task when review was re-entered (measured by an independent
+        // round). An empty round is not the same as no round: `reviewRoute` is what tells them apart.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        await writeFile(join(root, 'tmp', 'clean.json'), `${JSON.stringify({ findings: [], declaredCoverage: ['C-1'] })}\n`);
+        expect((await runCommand('review', changeId, root, { reviewResultFile: 'tmp/clean.json' })).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        expect(recorded.reviewRoute, 'a round that reported nothing is still a round').toBe('adversarial');
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved' }, null, 2)}\n`);
+        await writeCurrentState(root, { taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-10-11T00:00:00.000Z' });
+        const stateFile = join(root, '.kata', 'tasks', changeId, 'current-state.json');
+        const before = await readFile(stateFile, 'utf8');
+
+        const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
+        expect(reentry.success, JSON.stringify(reentry).slice(0, 220)).toBe(false);
+        expect(reentry.error).toMatch(/approved review record/);
+        expect(await readFile(stateFile, 'utf8'), 'a refused entry must not move the task').toBe(before);
+    });
+
     it('refuses to enter review over an approved record, and says what to do instead', async () => {
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
