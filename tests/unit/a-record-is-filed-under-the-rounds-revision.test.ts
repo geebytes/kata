@@ -94,6 +94,29 @@ describe('a record is filed under the revision the round read', () => {
         expect(two.reviewedRevisionId).toBe(second);
     });
 
+    it('separates the round that read the old content from the round recorded against the new one', async () => {
+        // **The state the real change produced.** A round is opened against revision A, the content then moves and is
+        // re-sealed as B, and the result arrives while the placeholder still names A. The record then carries A as what it
+        // read and B as what it answers — and a second result recorded in that state is *another* round, not the same one
+        // recorded twice, which is the difference the two fields exist to make.
+        const first = await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        const second = await seal();
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const one = await readRecord();
+        expect(one.reviewedRevisionId, 'what the round read').toBe(first);
+        expect(one.revisionId, 'what it answers').toBe(second);
+
+        // No new entry: this is the same round's slot being asked for a second conclusion, and the fields say the round
+        // that read A is not the round standing here now.
+        const two = await record('F-2', 'round-2.json');
+        expect(two.success, JSON.stringify(two).slice(0, 200)).toBe(true);
+        const rows = (await readFile(join(taskDir(root, changeId), 'review-history.jsonl'), 'utf8')).trim().split('\n').filter(Boolean)
+            .map((line) => JSON.parse(line) as { findings?: Array<{ id?: string }> });
+        expect(rows.map((row) => (row.findings ?? []).map((finding) => finding.id))).toEqual([['F-1']]);
+    });
+
     it('lets two rounds over one revision be two rounds, with the first in the history', async () => {
         const first = await seal();
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
