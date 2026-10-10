@@ -58,6 +58,7 @@
 | **I-5（本仓新）** | 非法 `--tier` 崩成 TypeError 而非具名拒绝 | `src/cli/ledger.ts`（`--tier` 直入 `policy.tiers` 索引） | 拒绝并点名合法取值；与 `usage set` 的 `fail()` 不终止同族 | 本批次「Found while landing AC-3」 |
 | **I-6（本仓新）** | 族级 flag 被动词静默丢弃 | `ledger claim restate --evidence`：`ok: true` 而 `evidenceIds` 不变（`--evidence` 在 `ledgerFamilyFlags` 内，故未知 flag 拒绝不触发） | 词表在**族**、读取在**动词**：动词不读的 flag 应具名拒绝，或动词必须读它 | 本批次「Found while repairing round 1」 |
 | **I-7（本仓新）** | 「封存期间仓库移动」复查会被**检查自己写又删的临时文件**绊倒 | 封存收尾复查（对比声明面内外内容） | 复查应比较**前后集合**而非采样窗口（写/删之间的时刻被采到），或让在仓库内写临时文件的检查改写到 `tmp/` | 本批次「Found while re-sealing」 |
+| **I-9（本仓新，今日实测）** | 「这一轮审的是哪个 revision」记录的**不是它测量的东西** | `src/workflow/orchestrator.ts:1806`：`reviewedRevisionId` 取自 review 入口写下的 **placeholder** 的 revision；CLI 只有 `--reviewed-path`，**没有** `--reviewed-revision` | 让轮次自己声明它读的 revision（轮次的输入里带着封存 revision），或在记录时校验 placeholder revision 与真正被读的一致 | 第 2 轮实际审 `revision-903e6a28ada6abf2`，记录写的是 `reviewedRevisionId: revision-8295c30cf2691ac6`（我重封之后才记录）；这正是 `unify-…` 的 AC-9 想修的那条，而它的实现目前仍取 placeholder |
 | **I-8（本轮新发现）** | 同一件事（两条命令是否同一条检查）在仓库里有**两套去重判据** | `src/quality/check-resolver.ts:260-267`（`kind+command+args+cwd`）vs `src/quality/project-checks.ts:161-169`（`name+command+args`，无 kind/cwd、分隔符不同） | 一处判据、两处消费者——与 A-5 同批做，否则改了矩阵那套、另一套仍会漂 | 本轮核实下游指针文档时实测 |
 
 ### 1.3 未证实（先做复现实验，再决定改不改）
