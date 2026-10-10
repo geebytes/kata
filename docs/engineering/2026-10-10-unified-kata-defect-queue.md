@@ -17,6 +17,15 @@
    - B-3（证据一致却报 superseded）→ change `the-identity-is-computed-where-the-change-is`：身份改为**在变更所在的工作树**计算（沙箱只跑检查），并把 `superseded` 变成**给得出它比较了什么**的判定。
    两条 change 都在等各自的重封/审查轮。
 
+### 0.1 已定的门禁语义决策（2026-10-10，维护者）
+
+**「在声明闭包内的 major/blocking，仍触发返修。」**
+
+- 因此 `boundary` / `insideDeclaredBoundary` 是**记录**，不是**豁免**：声明闭包说明「这条判据覆盖哪一段决策域」，而一条落在这段域里的 major/blocking **照样进返修轮** —— 门禁强度不动。
+- 它买到的是**可读性**：记录与路由必须同时给出两个出口（「改判据」或「更新声明」），而不是让作者去猜自己的越界算不算缺陷、也不是让出口条件变成「复核者把一切判为 minor」这一不受约束的人为选择。
+- 被这条决策**排除**的做法：把「落在闭包内」当成不返修的通行证（这正是 A-3 描述的病），以及把 `severity` 的自由枚举当作收敛性质的替代品。
+- 配套仍要做（A-3）：`severity` 要写下判据文本（blocking = 机制不成立 / major = 行为或验收被违反 / minor = 声明与见证不准确 / note = 无验收影响），而「严格模式下 major 触发返修」这条**行为保持不变** —— 缺的是判据文本，不是这条规则本身。
+
 ---
 
 ## 1. 统一清单（按「是否需要先做语义决策」分组）
@@ -26,7 +35,7 @@
 | id | 一句话 | 判据位置 | 待定的语义 | 报告 |
 |---|---|---|---|---|
 | **D-1（=A-4）** | seal 要求声明的路径，正是账本拒绝冻结的路径 | `src/core/git.ts:74-94`（rename/copy **同时 push 新旧两个名字**）；`src/cli/ledger.ts` 的 `currentSubject`（声明路径读不到即整体拒绝，`unreadable[]`） | 「**声明了但读不到**」两侧该用哪种语义：现况是 seal 记 sentinel（kind 标记）、账本按名拒绝，而这条**不对称是刻意且已被断言**的（change `a-declared-directory-excludes-its-build-output` 的 C2：sentinel 分不清「故意声明的坏路径」与「声明后被删」）。可选：①两侧统一记 `kind: removed`；②undeclared 前置检查**不为改名推入原名字**。**不放宽账本拒绝**（这与下游报告的推荐 A 一致） | `2026-10-10-declared-path-that-seal-requires-ledger-refuses.md` |
-| **D-2（=A-2+A-3+A-1 余下）** | 有边界却无处声明；计数仍按 revision 清零；`severity` 无 anchor | A-2：全仓无 `declaredBoundary`／`declaredClosure`／`insideDeclaredBoundary`；A-3：`src/kernel/types.ts:178`、`:137`；A-1 余下：`src/workflow/review-read.ts:61/108/151`、`src/quality/repair.ts`（`filter(roundBoundTo(...))`） | 「**判不了的不假装能判**」要在哪儿承载：claim schema 的必填 `boundary` + finding 的 `insideDeclaredBoundary`（本仓已有部分落点：unified change 的 `review-claim.boundary`、本 change 的 plan `defectClasses`），以及**在声明闭包内的 major/blocking 是否仍触发返修**——这是门禁语义决策 | `2026-10-08-review-loop-never-converges.md`（F1/F2/F3/F5/F6） |
+| **D-2（=A-2+A-3+A-1 余下）** | 有边界却无处声明；计数仍按 revision 清零；`severity` 无 anchor | A-2：全仓无 `declaredBoundary`／`declaredClosure`／`insideDeclaredBoundary`；A-3：`src/kernel/types.ts:178`、`:137`；A-1 余下：`src/workflow/review-read.ts:61/108/151`、`src/quality/repair.ts`（`filter(roundBoundTo(...))`） | 「**判不了的不假装能判**」要在哪儿承载：claim schema 的必填 `boundary` + finding 的 `insideDeclaredBoundary`（本仓已有部分落点：unified change 的 `review-claim.boundary`、本 change 的 plan `defectClasses`），且**闭包内的 major/blocking 仍触发返修**（§0.1，2026-10-10 决策：边界是记录而非豁免） | `2026-10-08-review-loop-never-converges.md`（F1/F2/F3/F5/F6） |
 | **D-3（=本仓 #2）** | `changedOutsideOwnership` 是门禁自己的记账，且无人消费 | `src/quality/change-record.ts`；`grep -rn changedOutsideOwnership src/` 只命中它自己 + 一条 eval 语料字符串 | 三选一：**排除**门禁自身机器目录（`.kata/evidence|tasks|wiki`）、**给它一个消费者**、或**删掉**这个字段。实测值 322 = 217 `.kata/evidence` + 104 `.kata/tasks` + 1 `.kata/wiki` + **0 生产代码** | 本批次 §2 |
 | **D-4（=本仓 #1）** | `scope change --remove` 没有可执行出口 | `src/quality/undeclared-changes.ts`（候选集 = `changedGitPaths ∪ previousPathDigests`）+ `src/workflow/seal-preflight.ts:191-199` | 「移除一门声明」应当是**带理由的受管决定**，而候选集应是**内容增量**（现在凡是上一版哈希过的路径都是候选 ⇒ 重封也救不了）。定的是「声明的语义」，不是补一个判断 | 本批次 §1 |
 
@@ -58,7 +67,7 @@
 | 顺序 | 内容 | 为什么这个顺序 | 成本（估） |
 |---|---|---|---|
 | 1 | **先关掉在飞的三条**：本 change（第 2 轮）→ `the-identity-…`（第 9 轮）→ `unify-…`（重封 + 第 2 轮） | U-1/U-2/U-3 与 A-1 读出侧都在它们里面；不关掉就会重复排期，且它们共用 `src/workflow/*`、`src/quality/repair.ts`，无法并行改码 | 各自 1 轮 + 记录 + judge/archive |
-| 2 | **D-2（A-1 余下 + A-2 + A-3）** | 同一个根因；只修 A-1 则 `blockingFindings` 仍每轮归零；只修 A-2/A-3 则计数洞仍在。**需要你先定一条门禁语义**（声明闭包内的 major/blocking 是否仍触发返修） | 1 change / 3–4 AC / 1 设计 + 1 封存 + 1–2 轮 |
+| 2 | **D-2（A-1 余下 + A-2 + A-3）** | 同一个根因；只修 A-1 则 `blockingFindings` 仍每轮归零；只修 A-2/A-3 则计数洞仍在。**门禁语义已定**（§0.1：闭包内的 major/blocking 仍触发返修） | 1 change / 3–4 AC / 1 设计 + 1 封存 + 1–2 轮 |
 | 3 | **D-4 + I-1 + I-2 + I-6 + I-8** | 全是「拒绝/上报的读法不可执行」同族，且都局部；I-8 与 I-1 必须同批 | 1 change / 4–5 AC / 1 轮 |
 | 4 | **D-1（A-4 语义）+ I-4 + I-5 + I-7** | D-1 定完语义后是局部改动；I-4/I-5/I-7 是今天实测到的三处「静默/崩溃/竞态」 | 1 change / 4 AC / 1 轮 |
 | 5 | **D-3 + I-3 + U-* 的复现实验** | D-3 是三选一的决定（排除/消费/删除），I-3 是类级清扫；U-* 只需实验与记录 | 1 change / 2–3 AC |
