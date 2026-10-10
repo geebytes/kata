@@ -105,7 +105,7 @@ describe('evidence verification is serialized per file', () => {
             readText: async (path: string) => (path === file ? await readFile(join(root, file), 'utf8') : null),
             writeText: async (path: string, content: string) => { if (path === file) await writeFile(join(root, file), content); },
         } as unknown as VerifyContext;
-        // Two *different* mutations, so neither run bails out on "the mutation site is gone" and the interleaving is real:
+        // Two *different* mutations, so neither run bails out on an anchor that does not match and the interleaving is real:
         // the first injects `x = 2`, the second is looking for `x = 2` and finds the first's injection.
         const firstItem = { id: 'E1', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 1;', replace: 'const x = 2;' } };
         const secondItem = { id: 'E2', type: 'executable_falsifier' as const, command: 'true', mutation: { file, find: 'const x = 2;', replace: 'const x = 3;' } };

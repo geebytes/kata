@@ -9,6 +9,7 @@
  */
 import type { Evidence, EvidenceVerdict } from '../kernel/types.js';
 import type { CommandOutcome, EvidenceVerifier, VerifyContext } from './port.js';
+import { anchorRefusal, locateAnchor } from '../quality/falsifier-anchors.js';
 import { UnrestoredMutation, VerificationWindowLive, clearMutation, recordMutation, withVerificationWindow } from '../store/verify-context.js';
 
 function makeVerdict(input: {
@@ -135,15 +136,7 @@ const executableFalsifier: EvidenceVerifier = {
                 if (original === null) {
                     return makeVerdict({ evidence, context, verdict: 'inconclusive', observed: `${evidence.mutation.file} does not exist`, verifier: executableFalsifier.verifier });
                 }
-                if (!original.includes(evidence.mutation.find)) {
-                    return makeVerdict({
-                        evidence,
-                        context,
-                        verdict: 'inconclusive',
-                        observed: `the mutation site is gone from ${evidence.mutation.file}, so this check can no longer be reddened`,
-                        verifier: executableFalsifier.verifier,
-                    });
-                }
+
 
                 // **Refuse before the journal and before injection.** A target that was already hard-linked cannot be used as
                 // an evidence mutation: even a perfectly honest check would temporarily rewrite its peer. `writeText` also
@@ -163,7 +156,36 @@ const executableFalsifier: EvidenceVerifier = {
                 // called, so a killed run left a defect with no repair note and the next run waited out the lock instead of
                 // repairing anything (measured by an independent round: `grep -c recordMutation dist/cli.js` = 0). It is
                 // written under the window's own key, so the cycle that clears it is looking under the name it wrote.
+                // **An anchor that cannot carry the meaning produces no verdict, and says which way it failed.** `String.replace`
+                // with a string pattern returns the input unchanged when the anchor is absent, and replaces only the first match
+                // when it is not — so a stale anchor silently runs the check *unmutated* (and a green run reads as `supported`
+                // while nothing was mutated), and an ambiguous one injects the defect at a site the falsifier never named.
+                // Measured on this repository's own instruments: one falsifier reddened because its replacement was a syntax
+                // error, one no-opped after a repair moved its site and was read as a green guard. A mutation that does not
+                // apply is a different fact from a check that does not fail, and neither is a reading about the change.
+                const anchor = locateAnchor(original, evidence.mutation.find);
+                const refusal = anchorRefusal(anchor, evidence.mutation.file, evidence.mutation.find);
+                if (refusal !== undefined) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'inconclusive',
+                        observed: refusal,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
                 const injected = original.replace(evidence.mutation.find, evidence.mutation.replace);
+                // Belt and braces against a future edit of the anchor rule: if the replacement did not change the file, the
+                // mutation did not happen, and the reading below would be about unmutated code.
+                if (injected === original) {
+                    return makeVerdict({
+                        evidence,
+                        context,
+                        verdict: 'inconclusive',
+                        observed: `the mutation on ${evidence.mutation.file} changed nothing, so this falsifier would run against unmutated code`,
+                        verifier: executableFalsifier.verifier,
+                    });
+                }
                 await recordMutation(window, original, injected);
                 let mutated: Awaited<ReturnType<typeof context.run>> | undefined;
                 let failure: unknown;

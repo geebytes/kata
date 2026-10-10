@@ -58,7 +58,9 @@ describe('every evidence type has a verifier, and every verifier can fail', () =
             makeContext({ subject, files: { 'src/a.ts': 'holds\n' } }),
         );
         expect(unsensitive[0]?.verdict).toBe('inconclusive');
-        expect(String(unsensitive[0]?.observed)).toContain('mutation site is gone');
+        // The wording changed with the derivation: one rule now answers both shapes an anchor can fail in, and it names the
+        // anchor and the count so the reader's next act is to look at that line.
+        expect(String(unsensitive[0]?.observed)).toContain('matches 0 times');
     });
 
     it('cross-artifact reddens when the contradiction resolves', async () => {
@@ -94,9 +96,21 @@ describe('every evidence type has a verifier, and every verifier can fail', () =
         expect(reddening[0]?.observed).toContain('"mutated":1');
         expect(reddening[0]?.observed).toContain('"after":0');
 
-        // The same evidence with a mutation that changes nothing: the check stays green, so it is not sensitive and the
-        // verdict says so instead of passing.
-        const insensitive: Evidence = { ...sensitive, mutation: { file: 'src/a.ts', find: 'holds', replace: 'holds' } };
+        // **A declared mutation that changes nothing is an instrument defect, not a reading about the check.** `replace` equal
+        // to `find` leaves the file byte-identical, so the check never ran under a defect and "it did not redden" would be a
+        // claim about a run that could not have reddened. The contract is stronger here than it was (this case used to read
+        // `refuted`); the genuine insensitivity case follows, with a mutation that really applies.
+        const noOp: Evidence = { ...sensitive, mutation: { file: 'src/a.ts', find: 'holds', replace: 'holds' } };
+        const noMutation = await verifyAll([noOp], makeContext({
+            subject,
+            files: { 'src/a.ts': 'holds' },
+            exitRule: () => 0,
+        }));
+        expect(noMutation[0]?.verdict).toBe('inconclusive');
+        expect(noMutation[0]?.observed).toContain('changed nothing');
+
+        // A mutation that applies and a check that stays green: this is the insensitivity the falsifier exists to catch.
+        const insensitive: Evidence = { ...sensitive, mutation: { file: 'src/a.ts', find: 'holds', replace: 'broken' } };
         const noReddening = await verifyAll([insensitive], makeContext({
             subject,
             files: { 'src/a.ts': 'holds' },
@@ -113,7 +127,7 @@ describe('every evidence type has a verifier, and every verifier can fail', () =
         // And a mutation site that has moved away is reported as inconclusive rather than silently skipped.
         const movedSite = await verifyAll([sensitive], makeContext({ subject, files: { 'src/a.ts': 'rewritten' }, exitRule: () => 0 }));
         expect(movedSite[0]?.verdict).toBe('inconclusive');
-        expect(movedSite[0]?.observed).toContain('mutation site is gone');
+        expect(movedSite[0]?.observed).toContain('matches 0 times');
     });
 
     it('concurrence needs an auditable receipt', async () => {
