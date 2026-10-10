@@ -1765,7 +1765,24 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             const answeredSameRequest = typeof existing.record.subjectRevision !== 'string'
                 || currentSubject === undefined
                 || existing.record.subjectRevision === currentSubject;
-            if (!placeholder && Object.keys(existingRecord).length > 0 && bindsToRevision(existingRecord, binding) && answeredSameRequest) {
+            // **The slot is the revision the round reviewed, not the revision in hand when it is recorded.** The record
+            // carries both; the first answers "which content is this bound to" and the second answers "what did this round
+            // read". A stamp taken at record time made a second round over one revision look like the *same* round recorded
+            // again, and the only way out was to move the question — measured by recording round 10 of the defect-classes
+            // change, which required restating a claim for no other reason than to open the slot.
+            const thisRoundReviewed = placeholder && typeof existing.record.revisionId === 'string'
+                ? existing.record.revisionId
+                : binding.revisionId;
+            const previousRoundReviewed = typeof (existing.record as { reviewedRevisionId?: unknown }).reviewedRevisionId === 'string'
+                ? (existing.record as { reviewedRevisionId: string }).reviewedRevisionId
+                : existing.record.revisionId;
+            // The same round recorded twice: same revision read, same request, and the content has not moved. A record with
+            // neither field keeps the old behaviour (it blocks), because we cannot tell what it read.
+            const sameRound = previousRoundReviewed !== undefined
+                && previousRoundReviewed === thisRoundReviewed
+                && bindsToRevision(existingRecord, binding)
+                && answeredSameRequest;
+            if (!placeholder && Object.keys(existingRecord).length > 0 && sameRound) {
                 return {
                     command: 'review', taskId, phase: 'review', success: false,
                     // **The remedy is assembled from the state it fires in.** The previous message named one action for every
@@ -1814,8 +1831,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // **Any recorded round being replaced is archived**, not only one that answered another request: a
                     // record whose content moved is superseded just as surely, and the branch that handles that case wrote
                     // no row at all (measured by an independent round: `success=true history=0`).
-                    if (!placeholder && Object.keys(existingRecord).length > 0
-                        && (!bindsToRevision(existingRecord, binding) || !answeredSameRequest)) {
+                    // **Every replacement archives the round it replaces**, and "replacement" now includes a second round
+                    // over one revision: the moment that round can be recorded, the earlier one must survive in the history,
+                    // or the store loses the round that found the defect. The archive is the load-bearing half of letting a
+                    // second round in.
+                    if (!placeholder && Object.keys(existingRecord).length > 0 && !sameRound) {
                         await appendFile(
                             join(taskDir(root, taskId), 'review-history.jsonl'),
                             JSON.stringify({
@@ -1838,7 +1858,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     lock,
                 );
             });
-            if (committed.kind !== 'committed') {
+        if (committed.kind !== 'committed') {
                 return { command: 'review', taskId, phase: 'review', success: false, error: 'Cannot record a review result because the sealed revision moved or became unavailable while it was being committed. Re-run /kata-review.' };
             }
             return {
@@ -2254,27 +2274,54 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                         status?: string;
                     };
                     const recordBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
-                    if (revisionId && !bindsToRevision(previous, recordBinding)) {
-                        if (!isReviewPlaceholder(previous)) {
-                            const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
-                            const historyEntry = JSON.stringify({
-                                revisionId: previous.revisionId,
-                                ...(typeof (previous as { subjectRevision?: unknown }).subjectRevision === 'string'
-                                    ? { subjectRevision: (previous as { subjectRevision?: string }).subjectRevision }
-                                    : {}),
-                                findings: previous.findings,
-                                status: previous.status ?? 'pending',
-                                // **One row shape for one history file.** The release path names what superseded the row; the
-                                // entry path left those fields out, so a reader could not tell the two apart.
-                                supersededBy: (entryBinding as { subjectRevision?: string }).subjectRevision ?? '',
-                                archivedAt: new Date().toISOString(),
-                            }) + '\n';
-                            await appendFile(historyPath, historyEntry, 'utf8');
-                        }
-                        await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
-                    } else if (isReviewPlaceholder(previous)) {
-                        await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
-                    }                } catch (error) {
+                    // **Entering review opens a round.** A recorded round that is still `pending` belongs to the previous
+                    // round and is archived here, whatever the revision did: the slot a record lands in is "what this round
+                    // read", and the entry is the only moment that identity is established. Without this, a second round
+                    // over one revision had no way in at all — measured by recording round 10 of the defect-classes change,
+                    // which required restating a claim for no reason except to open the slot.
+                    //
+                    // **An approved record is not displaced by entering review.** It answered a question the gate accepted,
+                    // and "I looked again" is not a reason to move it out of the store: the entry refuses instead, and the
+                    // operator decides (a new round on moved content, or a waiver).
+                    // **The refusal is returned as a value, because this callback's return is the command's answer.** A
+                    // refusal returned as an envelope here would be dropped: the caller only inspects `committed.kind`, so
+                    // the command would report success while writing nothing — measured while wiring this guard, and the
+                    // reason it carries a `refused` field instead.
+                    if (!isReviewPlaceholder(previous) && previous.status === 'approved') {
+                        return {
+                            refused: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
+                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
+                        };
+                    }
+                    // A recorded round is archived before the placeholder takes its place, so the round it described stays
+                    // readable: this is the half of "entering review opens a round" that keeps the previous round.
+                    if (!isReviewPlaceholder(previous)) {
+                        const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
+                        const historyEntry = JSON.stringify({
+                            revisionId: previous.revisionId,
+                            ...(typeof (previous as { subjectRevision?: unknown }).subjectRevision === 'string'
+                                ? { subjectRevision: (previous as { subjectRevision?: string }).subjectRevision }
+                                : {}),
+                            ...(typeof (previous as { reviewedRevisionId?: unknown }).reviewedRevisionId === 'string'
+                                ? { reviewedRevisionId: (previous as { reviewedRevisionId?: string }).reviewedRevisionId }
+                                : {}),
+                            // **The declaration travels with the round it belongs to.** Archiving the record without it would
+                            // erase the coverage the round declared — the fact an earlier repair kept by refusing to rewrite
+                            // an empty-but-declared round in place, so the row has to carry it when the rewrite is a move.
+                            ...(Array.isArray((previous as { declaredCoverage?: unknown }).declaredCoverage)
+                                ? { declaredCoverage: (previous as { declaredCoverage?: string[] }).declaredCoverage }
+                                : {}),
+                            findings: previous.findings,
+                            status: previous.status ?? 'pending',
+                            // **One row shape for one history file.** The release path names what superseded the row; the
+                            // entry path left those fields out, so a reader could not tell the two apart.
+                            supersededBy: (entryBinding as { subjectRevision?: string }).subjectRevision ?? '',
+                            archivedAt: new Date().toISOString(),
+                        }) + '\n';
+                        await appendFile(historyPath, historyEntry, 'utf8');
+                    }
+                    await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
+                } catch (error) {
                     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
                     await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                 }
@@ -2288,6 +2335,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 error: `Review could not be entered: ${(error as Error).message}. `
                     + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
             };
+        }
+        // The entry's own refusal — an approved record is not displaced by entering review — comes back as a value from
+        // the lock callback, because that callback's return *is* the command's answer (`commitReviewDecision` wraps it).
+        if (committed.kind === 'committed' && committed.value !== undefined
+            && typeof committed.value === 'object' && typeof (committed.value as { refused?: unknown }).refused === 'string') {
+            return { command: 'review', taskId, phase: state.phase, success: false, error: (committed.value as { refused: string }).refused };
         }
         if (committed.kind !== 'committed') {
             return {

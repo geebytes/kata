@@ -389,10 +389,18 @@ describe('review CLI I/O', () => {
     });
 
 
-    it('never rewrites a recorded empty round back into a placeholder when review is re-entered', async () => {
+    it('archives a recorded empty round, declaration included, when review is re-entered', async () => {
         // F-3: two derivations of "is this a placeholder" disagreed. The result face was tightened, the write face kept
         // "findings is empty", so re-entering review over a legitimately empty *result* silently replaced it with a
         // placeholder — and the `--result-file` guard then allowed a second round over a record that was already recorded.
+        //
+        // **The contract moved (a-replaced-round-is-archived, 2026-10-11).** Re-entering review now *archives* the recorded
+        // round and opens a new one, because the entry is the only moment a round's identity is established: without it a
+        // second round over one revision had no way in, and the way out was to move the question (measured by recording
+        // round 10 of `the-review-loop-carries-its-defect-classes`, which required restating a claim for no other reason).
+        // The protection F-3 bought is preserved in its stronger form: the declaration travels into the history row — the
+        // round is moved, never erased — and an *approved* record refuses re-entry outright.
+        const historyPath = join(root, '.kata', 'tasks', changeId, 'review-history.jsonl');
         await prepareRequest();
         await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
         await writeCurrentState(root, {
@@ -404,16 +412,22 @@ describe('review CLI I/O', () => {
         await writeFile(join(root, 'tmp', 'declared.json'), `${JSON.stringify({ findings: [], declaredCoverage: ['C-1'] })}\n`);
         expect((await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' })).success).toBe(true);
 
-        // Re-enter review. The recorded round must survive: a placeholder rewrite would erase the declaration.
+        // Re-enter review: the entry opens a round, so the recorded round moves to the history with its declaration, and
+        // the store holds the placeholder of the round that is now open.
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
-        const after = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { declaredCoverage?: string[]; reviewRoute?: string };
-        expect(after.declaredCoverage).toEqual(['C-1']);
-        expect(after.reviewRoute).toBe('adversarial');
+        const after = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { declaredCoverage?: string[]; findings?: unknown[]; status?: string };
+        expect(after.findings).toEqual([]);
+        expect(after.status).toBe('pending');
+        const rows = (await readFile(historyPath, 'utf8')).trim().split('\n').filter(Boolean)
+            .map((line) => JSON.parse(line) as { declaredCoverage?: string[]; findings?: unknown[] });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.declaredCoverage, 'the declaration travels with the round it belongs to').toEqual(['C-1']);
+        expect(rows[0]?.findings).toEqual([]);
 
-        // And because the round is still recorded, a third round is refused rather than silently replacing it.
-        const third = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' });
-        expect(third.success).toBe(false);
-        expect(third.error).toContain('already recorded');
+        // And the second round records its own conclusion: the slot is the round, not the revision, so a second round over
+        // one revision is exactly what this contract exists to allow.
+        const second = await runCommand('review', changeId, root, { reviewResultFile: 'tmp/declared.json' });
+        expect(second.success, JSON.stringify(second).slice(0, 200)).toBe(true);
     });
 
 
@@ -565,15 +579,20 @@ describe('review CLI I/O', () => {
             revisionId: sealed.id,
         })}\n`);
 
-        // The recorded round survives re-entering review with the same revision: no archival, because nothing replaced it.
+        // Re-entering review with the same revision now archives the recorded round: the entry opens a round, so the round
+        // it replaces is moved to the history rather than kept as the current record (contract moved, see the case above).
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
-        expect(await readHistory()).toEqual([]);
+        const afterEntry = await readHistory();
+        expect(afterEntry).toHaveLength(1);
+        expect(afterEntry[0]?.findings).toEqual([]);
 
         // Now move the content and re-seal, so the record's revision is no longer the current one.
         await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
         await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
 
+        // **One row, not two**: the round was archived at the re-entry above, and re-entering over a *placeholder* replaces
+        // it silently — a placeholder is not a round, so it leaves no trace.
         const archived = await readHistory();
         expect(archived).toHaveLength(1);
         expect(archived[0]?.findings).toEqual([]);
