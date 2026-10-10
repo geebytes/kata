@@ -186,6 +186,8 @@ export async function instrumentResolves(
     changeId = '<id>',
     /** The covered set, when the caller already derived it — the rule is asked per class, and the walk is not free. */
     covered?: { paths: string[] },
+    /** The class being decided, so a remedy can name it rather than print `<class>` for a value the tool already holds. */
+    forClass = '<class>',
 ): Promise<{ ok: true; path: string } | { ok: false; refusal: InstrumentRefusal }> {
     const candidate = generator.trim();
     if (candidate === '') {
@@ -194,7 +196,7 @@ export async function instrumentResolves(
             refusal: {
                 kind: 'empty',
                 because: 'the generator is empty, so nothing is named to decide this class',
-                remedy: `name the file that would decide it: \`kata-cli ledger plan --classes '<class>:<generator>:<relation>'\``,
+                remedy: `name the file that would decide it: \`kata-cli ledger plan --change ${changeId} --classes '${forClass}:<the file that decides it>:<the relation it asserts>'\``,
             },
         };
     }
@@ -220,7 +222,7 @@ export async function instrumentResolves(
             refusal: {
                 kind: 'unresolvable',
                 because: `the generator \`${candidate}\` does not resolve to a file in this workspace`,
-                remedy: `point it at a file that exists, or correct the spelling in \`kata-cli ledger plan --classes\``,
+                remedy: `point it at a file that exists, or correct the spelling: \`kata-cli ledger plan --change ${changeId} --classes '${forClass}:<the file that decides it>:<the relation it asserts>'\``,
             },
         };
     }
@@ -252,7 +254,7 @@ export async function instrumentResolves(
                     // **A remedy has to be runnable as written.** The first version printed `--change <id> --add <path>`,
                     // two placeholders, and the CLI refuses a literal `<id>` — the refusal-nobody-can-execute class inside
                     // the message that exists to end it (measured by an independent round, R7-F1).
-                    remedy: `declare \`${location.path}\` (\`kata-cli scope change --change ${changeId} --add ${location.path}\`, then \`kata-cli scope apply --change ${changeId}\`), or name a generator inside the declared surface`,
+                    remedy: `declare \`${location.path}\` (\`kata-cli scope change --change ${changeId} --add ${location.path} --reason "<why this path belongs to the change>"\`, then \`kata-cli scope apply --change ${changeId}\`), or name a generator inside the declared surface`,
                 },
             };
         }
@@ -286,7 +288,7 @@ export async function unbackedDefectClasses(
                 class: entry.class,
                 ...(generator === undefined ? {} : { generator }),
                 because: `the plan declares a class the vocabulary does not know (\`${entry.class}\`)`,
-                remedy: 're-run `kata-cli ledger plan --classes` naming a class from `defect-classes.ts`',
+                remedy: `re-run \`kata-cli ledger plan --change ${changeId} --classes '<a class from defect-classes.ts>:<the file that decides it>:<the relation it asserts>'\``,
                 kind: 'damaged-declaration',
             });
             continue;
@@ -295,12 +297,12 @@ export async function unbackedDefectClasses(
             unbacked.push({
                 class: entry.class,
                 because: 'no generator is named, so nothing can decide this class',
-                remedy: `name it with \`kata-cli ledger plan --classes '${entry.class}:<generator>:<relation>'\`, or the class is paid for by independent rounds instead of by a machine`,
+                remedy: `name it with \`kata-cli ledger plan --change ${changeId} --classes '${entry.class}:<the file that decides it>:<the relation it asserts>'\`, or the class is paid for by independent rounds instead of by a machine`,
                 kind: 'missing-instrument',
             });
             continue;
         }
-        const resolved = await instrumentResolves(root, generator, declaredPaths, changeId, covered);
+        const resolved = await instrumentResolves(root, generator, declaredPaths, changeId, covered, entry.class);
         if (!resolved.ok) {
             unbacked.push({
                 class: entry.class,

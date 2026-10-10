@@ -290,6 +290,65 @@ describe('a mechanizable class needs a generator', () => {
         expect(named?.need).not.toMatch(/--change <[a-z-]+>|--add <[a-z-]+>/);
     });
 
+    it('emits no remedy that prints a value the tool already holds', async () => {
+        // **The class, not the instance.** Rounds 7 and 8 each found one refusal text that could not be run as written — a
+        // `--change <id>` for a change the caller holds, a `scope change` without the `--reason` the CLI requires — and each
+        // was fixed at the site that round happened to read. This case is the rule: drive every refusal this file can build,
+        // and for each emitted remedy assert (a) no placeholder stands where a value the tool holds belongs, and (b) a `scope
+        // change` command carries the flags the CLI requires of it.
+        await prepare();
+        await writeFile(join(root, 'outside.ts'), 'export const instrument = true;\n');
+        await symlink(join(root, 'outside.ts'), join(root, 'tmp', 'link-elsewhere.ts'));
+        await mkdir(join(root, 'dist'), { recursive: true });
+        await writeFile(join(root, 'dist', 'inst.ts'), 'export const instrument = true;\n');
+        await declarePathsForTest(['dist']);
+        await ledger([
+            'plan', '--change', changeId, '--classes',
+            [
+                // no generator named at all
+                'instrument-unsound',
+                // names a file that does not resolve
+                'comparison-unnamed:tmp/does-not-exist.ts:reddens',
+                // names a directory
+                'corrupt-read-as-absent:src:two-agree',
+                // names a link whose target is outside the workspace
+                'refusal-cannot-be-executed:tmp/link-elsewhere.ts:reddens',
+                // names a file inside a declaration the change cannot carry
+                'one-fact-derived-twice:dist/inst.ts:two-agree',
+            ].join(';'),
+        ]);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const classDeficits = deficits.filter((deficit) => deficit.need.includes('kata-cli ledger plan') || deficit.need.includes('kata-cli scope'));
+        // Every refusal kind the fixture can build is present, so the rule is applied to all of them rather than to one.
+        expect(classDeficits.length, JSON.stringify(deficits)).toBeGreaterThanOrEqual(4);
+        // **The sixth kind is not reachable through `--classes`** — the CLI refuses an unknown class name — so it is built by
+        // hand, exactly as a hand-repaired plan arrives. The first version of this case left it out, and the `<id>` mutator
+        // survived: a guard that does not carry the kind it names is the pattern this change keeps paying for (MR8-B).
+        const planPath = join(root, '.kata', 'tasks', changeId, 'review', 'plan.json');
+        const stored = JSON.parse(await readFile(planPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(planPath, `${JSON.stringify({ ...stored, defectClasses: [{ class: 'kind-of-racy' }] }, null, 2)}\n`);
+        const damagedDecision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const damaged = ((damagedDecision.deficits ?? []) as Array<{ need: string }>).filter((deficit) => deficit.need.includes('kind-of-racy'));
+        expect(damaged.length, JSON.stringify(damagedDecision.deficits)).toBeGreaterThan(0);
+
+        for (const deficit of [...classDeficits, ...damaged]) {
+            // (a) A placeholder may only stand for something the operator must supply, never for a value already in hand. The
+            // change id and the path are both in hand, so they are asserted everywhere; the *class* is in hand too — except
+            // for a damaged declaration, whose remedy asks the operator to pick a valid name, and that is its whole content.
+            expect(deficit.need, deficit.need).not.toMatch(/--change\s*</);
+            expect(deficit.need, deficit.need).not.toMatch(/--add\s*</);
+            if (classDeficits.includes(deficit)) expect(deficit.need, deficit.need).not.toMatch(/--classes\s*'</);
+            expect(deficit.need, deficit.need).toContain(`--change ${changeId}`);
+            // (b) the scope command it names is one the CLI accepts: `scope change` requires `--reason`.
+            for (const command of deficit.need.match(/kata-cli scope change[^`)（]*/g) ?? []) {
+                expect(command, command).toContain('--change');
+                expect(command, command).toContain('--reason');
+                expect(command, command).not.toMatch(/<[a-z-]*id>/);
+            }
+        }
+    });
+
     it('derives the oracle from the vocabulary, not from the stored field', async () => {
         // **The vocabulary owns the oracle** (R4-F1). Reading the author-supplied field meant a plan whose `oracle` was
         // omitted — or contradicted the vocabulary — flipped the rule: a class the vocabulary calls mechanizable could be

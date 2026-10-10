@@ -33,7 +33,7 @@ export interface LoopReplay {
      * a history made mostly of such findings reported shares computed over almost nothing and said nothing about it. Named
      * here, they are visible instead (measured by an independent round, R7-F3).
      */
-    unclassifiedFindings: Array<{ id: string; class: string }>;
+    unclassifiedFindings: Array<{ id: string; class: unknown }>;
     /** Share of rounds whose findings were all in classes whose oracle is `mechanizable`. */
     mechanizableRoundShare: number;
     /** Share of classified findings that were defects in a previous round's repair. */
@@ -95,9 +95,12 @@ export function replayLoop(rounds: readonly ReviewRound[]): LoopReplay {
         rounds: rounds.length,
         findings: findings.length,
         classified: classified.length,
+        // **Every finding no share speaks for**, whatever its `class` holds: the first version filtered to strings the
+        // vocabulary does not know, so a finding whose class was absent, `null`, a number or an object stayed in neither set
+        // — named by nothing and excluded from every share, which is the hole it was added to close (R8-F2).
         unclassifiedFindings: findings
-            .filter((finding) => typeof finding.class === 'string' && !isDefectClass(finding.class))
-            .map((finding) => ({ id: finding.id, class: finding.class as string })),
+            .filter((finding) => !isDefectClass(finding.class))
+            .map((finding) => ({ id: finding.id, class: finding.class as unknown })),
         mechanizableRoundShare: share(mechanizableRounds.length, withFindings.length),
         repairOriginShare: share(repairOrigin.length, classified.length),
         judgmentShare: share(judgment.length, classified.length),

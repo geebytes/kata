@@ -153,7 +153,7 @@ export async function buildReviewRequest(input: {
             ok: false,
             why: `the frozen subject describes content that has moved since it was frozen`
                 + (moved.length > 0 ? ` (${moved.slice(0, 3).join(', ')}${moved.length > 3 ? ', …' : ''})` : '')
-                + ': the request would brief a reviewer on content that is no longer the change. Re-freeze with `kata-cli ledger freeze --change <id>` first',
+                + ': the request would brief a reviewer on content that is no longer the change. Re-freeze with `kata-cli ledger freeze --change ${input.changeId}` first',
         };
     }
     // The seal has to exist too: a request that speaks for content nobody sealed is a brief for a revision the workflow
@@ -185,7 +185,7 @@ export async function buildReviewRequest(input: {
             ok: false,
             why: `the sealed revision ${sealed.revision.id} is ${sealedStatus.status}: ${because}, `
                 + 'so a request derived now would name content the reviewer could not bind a result to. Re-seal '
-                + '(`kata-cli build --change <id> --seal`) after the content or the declaration is settled',
+                + `(\`kata-cli build --change ${input.changeId} --seal\`) after the content or the declaration is settled`,
         };
     }
     const readingById = new Map((plan.readingSets ?? []).map((set) => [set.claimId, set.paths]));
