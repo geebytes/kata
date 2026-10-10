@@ -407,7 +407,7 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
     // `pathDigests` at seal time, so asking it again is the same question asked of the same function — a second walker here
     // would be a second answer, and this repository deletes those. The manifest hash above is only the *trigger*; this is the
     // fact a reader needs.
-    const observed: Record<string, string> = {};
+    const observed: Record<string, string> = Object.create(null) as Record<string, string>;
     await feedOwnedTree(root, revision.ownedPaths, createContentHasher(), observed);
     const recorded = revision.pathDigests ?? {};
     const differingPaths = [...new Set([...Object.keys(recorded), ...Object.keys(observed)])]
@@ -529,7 +529,12 @@ export async function computeBothOwnedDigests(
   root: string,
   ownedPaths: string[],
 ): Promise<{ manifestHash: string; pathDigests: Record<string, string> }> {
-  const pathDigests: Record<string, string> = {};
+  // **A null-prototype map, because a path is a filename and a filename can be `__proto__`.** On a plain object
+  // `map['__proto__'] = digest` is a silent no-op, so a declared root-level `__proto__` file was dropped from the recorded
+  // set — and the drift comparison, which builds its own plain object, dropped it from the observed side too, so a real move
+  // reported `differingPaths: []`. `computePathDigests` was already fixed this way and guarded; this is the sibling the
+  // guard did not cover (measured by an independent round on `the-recorded-digests-are-the-seals-map`).
+  const pathDigests: Record<string, string> = Object.create(null) as Record<string, string>;
   const manifest = createContentHasher();
   await feedOwnedTree(root, ownedPaths, manifest, pathDigests);
   return { manifestHash: manifest.digest('hex'), pathDigests };
@@ -557,7 +562,10 @@ export async function computeContentDigests(root: string): Promise<Record<string
   // This is the revision's content identity, not the cheap tree fingerprint. It must
   // include every non-ignored file; otherwise an oversized unowned change could reuse
   // the preceding identity.
-  const digests: Record<string, string> = {};
+  // Null-prototype for the same reason as `computeBothOwnedDigests`: a repository-root file named `__proto__` is content,
+  // and on a plain object its digest would be assigned to the prototype slot and vanish — leaving the identity's content
+  // map blind to a file a check can edit (measured by an independent round: editing it left `contentSnapshotHash` unchanged).
+  const digests: Record<string, string> = Object.create(null) as Record<string, string>;
   for await (const file of walkRepositoryEntries(root)) {
     digests[file.path] = hashContent(file.content);
   }

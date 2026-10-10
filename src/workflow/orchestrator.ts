@@ -688,11 +688,14 @@ async function cmdBuild(
     // The sandbox's purpose is that checks cannot write into the author tree (see `execution-sandbox.ts`); computing a hash is
     // not a write, and it needs no isolation. The sandbox's own snapshot is taken **before** the checks run, so this is the
     // same content either way — for every path both walks can see. The one place they differ is the one that mattered.
+    // Read once, and kept: the identity is computed from this snapshot, and the seal compares the same snapshot against the
+    // tree after the checks have run (below), because the sandbox is a rewrite layer rather than a boundary.
+    const identityContent = await computeContentDigests(root);
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
             contentRoot: root,
-            contentDigests: await computeContentDigests(root),
+            contentDigests: identityContent,
             taskId,
             ownedPaths,
             checkIds: checks.map((check) => check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`),
@@ -785,11 +788,12 @@ async function cmdBuild(
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.frozen === true ? { includeFrozen: true } : {}),
         acceptanceByCheckId: acceptanceIdsByCheckId(task.acceptanceMatrix),
-        // **The same derivation as the identity, for the same reason.** This is the content the evidence is *about*, and
-        // `verify` recomputes it from the author tree (`computeDiffHash(root)`) before trusting a freshness match — so a
-        // value taken from the sandbox would make freshness unsatisfiable for exactly the declared paths the sandbox cannot
-        // represent. One tree, one derivation, and the envelope describes what an operator can re-run it against.
-        inputDiffHash: contentSnapshotHash(await computeContentDigests(root)),
+        // **The value `verify` recomputes, not a second derivation of the same idea.** `checkFreshness` falls back to
+        // `evidence.diffHash === computeDiffHash(root)` when an envelope carries no scope, so the stamp has to be that
+        // function's answer; it used to be `contentSnapshotHash(computeContentDigests(root))`, a JSON hash over a
+        // different structure, which no scope-less envelope could ever match. (Measured by an independent round — with the
+        // second half of the same finding: the comment here claimed the two were one derivation while they were two.)
+        inputDiffHash: await computeDiffHash(root),
         // thing. The envelope keeps the reference and the bounded excerpt; a reader who needs the transcript reads the
         // file instead of finding a truncated log and no way to tell.
         checkLogDir: evidenceDir(root),
@@ -798,6 +802,29 @@ async function cmdBuild(
             options.onProgress?.(event);
         },
     });
+    // **The seal re-reads what it is about to certify.** The execution sandbox is a lexical rewrite layer, not a jail
+    // (`execution-sandbox.ts` rewrites the author root's literal occurrences in command, args, cwd and env): a check that
+    // *resolves* the author root still reaches it — the sandbox worktree's git common dir points into it, measured by an
+    // independent round as `dirname $(git rev-parse --git-common-dir)`. That round overwrote a declared file through that
+    // route and the seal reported success, after which `revisionStatus` said `superseded`: a check had manufactured the drift
+    // the seal's own identity refers to, and the seal's report was stale the moment it was written.
+    //
+    // So the content is read again here and compared with what the identity was computed from. This does not pretend the
+    // sandbox is a boundary — it stops the seal from certifying content that no longer exists, and it names the paths.
+    const afterChecks = await computeContentDigests(root);
+    const movedWhileChecking = [...new Set([...Object.keys(identityContent), ...Object.keys(afterChecks)])]
+        .filter((path) => identityContent[path] !== afterChecks[path])
+        .sort();
+    if (movedWhileChecking.length > 0) {
+        return {
+            command: 'build',
+            taskId,
+            phase: 'implement',
+            success: false,
+            error: `The repository moved while the checks ran: ${movedWhileChecking.slice(0, 10).join(', ')}${movedWhileChecking.length > 10 ? ` (+${movedWhileChecking.length - 10} more)` : ''}. A check runs in the execution sandbox and must not write into the repository; the seal refuses rather than certifying content that no longer exists. Re-run after the writer stops.`,
+            diagnostics: { mode: 'seal', reason: 'repository_moved_during_checks', movedWhileChecking },
+        };
+    }
     await progress.finish();
     // **Collected, not swallowed.** A failure to move a superseded revision's set aside used to be silently ignored, and
     // the consequence is invisible: the outgoing set stays under the active names and the next seal writes over it. The
@@ -2458,10 +2485,15 @@ function supersededReadiness(
         // and the map an operator would diff for themselves excludes the declared paths that can move invisibly — measured
         // downstream, where an author who checked every digest in the record concluded the gate was self-refuting. A refusal
         // whose remedy cannot be reached from the artefacts is the defect this change exists for, one layer up.
-        supersededComparison: {
-            revisionId: status.status === 'superseded' ? status.revisionId : revisionId,
-            differingPaths: status.status === 'superseded' ? status.differingPaths : [],
-        },
+        // **The comparison that actually produced this verdict.** `!revisionIsCurrent` is true for two different states, and
+        // the first version of this field recorded both as `content-moved` with an empty path list — so a `declaration-moved`
+        // verdict reached a reviewer as "no path changed" while its real comparison (the declared sets) was discarded.
+        // Measured by an independent round: `added: ["src/b.ts"]` on the status, `differingPaths: []` in the record.
+        supersededComparison: status.status === 'superseded'
+            ? { kind: 'content-moved' as const, revisionId: status.revisionId, differingPaths: status.differingPaths }
+            : status.status === 'declaration-moved'
+            ? { kind: 'declaration-moved' as const, revisionId, added: status.added, removed: status.removed }
+            : undefined,
         acceptance: acceptance.map((criterion) => ({
             id: criterion.id ?? '',
             result: 'FAIL' as const,

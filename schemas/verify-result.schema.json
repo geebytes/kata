@@ -122,20 +122,28 @@
     },
     "supersededComparison": {
       "type": "object",
-      "description": "The comparison behind a `revision_superseded` verdict. Present only for that verdict, because it is otherwise unwitnessable: the scope names no file, and the map an operator can diff (`contentDigests`) is built by the filtered walk and so excludes exactly the declared paths that can move invisibly. Measured downstream: an author checked every digest in the record, found no difference, and reported the gate as self-refuting while three declared paths had moved.",
+      "description": "The comparison behind a drift verdict, as a union of the two states that produce one. `content-moved` names the declared paths whose own digests differ; `declaration-moved` names the declared sets that disagree, and in that state the manifest is equal, so an empty `differingPaths` is the truth rather than a gap. Present only for those two verdicts, because they are otherwise unwitnessable: the scope names no file, and the map an operator can diff (`contentDigests`) is built by the filtered walk and so excludes exactly the declared paths that can move invisibly.",
       "required": [
-        "revisionId",
-        "differingPaths"
+        "kind",
+        "revisionId"
       ],
       "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "content-moved",
+            "declaration-moved"
+          ],
+          "description": "Which comparison produced the verdict. The two are different facts and are kept apart rather than recorded as one with an empty list."
+        },
         "revisionId": {
           "type": "string",
           "minLength": 1,
-          "description": "The revision whose declared content moved."
+          "description": "The revision the comparison is about."
         },
         "differingPaths": {
           "type": "array",
-          "description": "Each declared path whose own digest differs, with both sides of the comparison. Empty when the manifest moved without a per-path difference being derivable (a directory expansion that changed shape, say).",
+          "description": "For `content-moved`: each declared path whose own digest differs, with both sides. Empty when the manifest moved without a per-path difference being derivable.",
           "items": {
             "type": "object",
             "required": [
@@ -164,6 +172,20 @@
               }
             }
           }
+        },
+        "added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "For `declaration-moved`: declared by the task, not carried by the revision."
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "For `declaration-moved`: carried by the revision, no longer declared by the task."
         }
       }
     }

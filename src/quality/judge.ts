@@ -101,6 +101,31 @@ export function repairOwnerFor(scope: RepairScope | undefined): 'build' | undefi
   return scope !== undefined && buildOwnedRepairScopes.includes(scope) ? 'build' : undefined;
 }
 
+/**
+ * Which comparison produced a drift verdict, and its two sides.
+ *
+ * **Two states, two comparisons, and the union keeps them apart.** A revised declaration and revised content are different
+ * facts: `content-moved` names the declared paths whose own digests differ, `declaration-moved` names the paths the task
+ * declares and the revision does not carry (`added`) and the reverse (`removed`) — and in that second case the *manifest is
+ * equal*, so an empty `differingPaths` is the truth rather than a gap. Measured by an independent round before this union
+ * existed: a `declaration-moved` state was recorded as `content-moved` with an empty path list, so the reviewer read "no path
+ * changed" for a verdict whose actual comparison had been discarded.
+ */
+export type SupersededComparison =
+  | {
+      kind: 'content-moved';
+      revisionId: string;
+      differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
+    }
+  | {
+      kind: 'declaration-moved';
+      revisionId: string;
+      /** Declared by the task, not carried by the revision. */
+      added: string[];
+      /** Carried by the revision, no longer declared by the task. */
+      removed: string[];
+    };
+
 export interface JudgeResult {
   taskId: string;
   result: 'PASS' | 'FAIL';
@@ -118,10 +143,7 @@ export interface JudgeResult {
    * can move invisibly. Measured downstream: an author checked all 595 content digests, found no difference, and reported the
    * gate as self-refuting while three declared paths had moved. A verdict has to name what produced it.
    */
-  supersededComparison?: {
-    revisionId: string;
-    differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
-  };
+  supersededComparison?: SupersededComparison;
 }
 
 /**

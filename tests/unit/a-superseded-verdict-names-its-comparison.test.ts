@@ -104,4 +104,65 @@ describe('a superseded verdict names what it compared', () => {
         expect(verdict.supersededComparison?.revisionId).toBeTruthy();
         expect(verdict.supersededComparison?.differingPaths?.map((entry) => entry.path)).toEqual(['src/moved.ts']);
     }, 120_000);
+
+    it('tells the two drift states apart: a moved declaration reports the declaration sets, not an empty path list', async () => {
+        // **`!revisionIsCurrent` is true for two different facts, and the first version of this payload recorded both as
+        // content drift.** Measured by an independent round: for a `declaration-moved` state the record said
+        // `{revisionId, differingPaths: []}` — "no path changed" — while the real comparison (`added: ["src/b.ts"]`) was
+        // discarded, and the manifest was in fact *equal*. A reviewer reading that artefact is told the opposite of the truth.
+        const root = await fixture();
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+
+        // The declaration moves: a fourth path is declared, and no content changes at all. Written to the task record directly,
+        // because the fixture owns that file and the managed route (`kata-cli scope change` + `scope apply`) is exercised by
+        // its own cases — what this one is about is what `revisionStatus` and `verify` report for the state it produces.
+        const taskPath = join(root, '.kata', 'tasks', taskId, 'task.json');
+        const record = JSON.parse(await readFile(taskPath, 'utf8')) as { ownedPaths?: string[] };
+        await writeFile(taskPath, `${JSON.stringify({ ...record, ownedPaths: [...declared, 'src/fourth.ts'] }, null, 2)}\n`);
+        const status = await revisionStatus(root, revision, taskId);
+        expect(status.status, JSON.stringify(status)).toBe('declaration-moved');
+
+        await runCommand('verify', taskId, root);
+        const verdict = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'verify.json'), 'utf8')) as {
+            supersededComparison?: { kind?: string; revisionId?: string; added?: string[]; removed?: string[]; differingPaths?: unknown[] };
+        };
+
+        expect(verdict.supersededComparison?.kind).toBe('declaration-moved');
+        expect(verdict.supersededComparison?.revisionId).toBe(revision.id);
+        expect(verdict.supersededComparison?.added).toEqual(['src/fourth.ts']);
+        expect(verdict.supersededComparison?.removed).toEqual([]);
+        // The content comparison is absent rather than an empty list, because in this state it was not the comparison made.
+        expect(verdict.supersededComparison?.differingPaths).toBeUndefined();
+    }, 120_000);
+
+    it('names a declared path whose key is exactly `__proto__`, rather than reporting no paths at all', async () => {
+        // **A filename can be a prototype key.** On a plain object `map['__proto__'] = digest` is a silent no-op, so a
+        // declared root-level `__proto__` file was dropped from the recorded set and from the observed set alike: a real move
+        // reported `differingPaths: []` while the manifest hashes differed. Measured by an independent round; the sibling
+        // guard (`the-recorded-digests-are-the-seals-map`) covers `computePathDigests`, not the revision's own map, and the
+        // case there had the file *under a directory*, which does not exercise the dangerous key shape.
+        const root = await fixture();
+        await writeFile(join(root, '__proto__'), 'root-level prototype key\n');
+        await git(root, ['add', '-A']);
+        await git(root, ['commit', '-qm', 'add the prototype-key file']);
+        const withProto = [...declared, '__proto__'];
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const first = await runCommand('build', taskId, root, { seal: true, ownedPaths: withProto, checks: [check] });
+        // A second seal over the same declaration, because the fixture's first seal did not know about this path.
+        expect([true, false]).toContain(first.success);
+
+        await writeFile(join(root, '__proto__'), 'root-level prototype key, moved\n');
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        const status = await revisionStatus(root, revision, taskId);
+
+        expect(status.status).toBe('superseded');
+        if (status.status !== 'superseded') return;
+        expect(status.differingPaths.map((entry) => entry.path)).toContain('__proto__');
+    }, 120_000);
 });

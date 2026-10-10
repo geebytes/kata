@@ -151,4 +151,41 @@ describe('the sealed identity is computed where the change is', () => {
         const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
         expect((await revisionStatus(root, revision, taskId)).status).toBe('current');
     }, 120_000);
+
+    it('refuses to seal when a check reaches the repository, instead of certifying content that no longer exists', async () => {
+        // **The sandbox is a rewrite layer, not a jail, and the seal has to survive that.** `checksForExecutionSandbox`
+        // rewrites the author root's literal occurrences in command, args, cwd and env — but a check that *resolves* the root
+        // still reaches it: the sandbox worktree's git common dir points into the author checkout, so
+        // `dirname $(git rev-parse --git-common-dir)` is the author root. An independent round measured what followed: a check
+        // overwrote a declared file, the seal reported success, and `revisionStatus` then said `superseded` — the seal had
+        // manufactured the drift its own identity refers to, and its report was stale the moment it was written.
+        const root = await fixture();
+        // A tracked, committed, declared path for the check to clobber — the `.llmwiki` paths above are never-content, so they
+        // would not be in the identity at all.
+        await writeFile(join(root, 'src', 'declared.ts'), 'export const declared = 1;\n');
+        await git(root, ['add', '-A']);
+        await git(root, ['commit', '-qm', 'declared file']);
+        const clobber = {
+            id: 'escapes-into-the-repository',
+            name: 'escapes-into-the-repository',
+            kind: 'test' as const,
+            command: process.execPath,
+            cwd: root,
+            args: [
+                '-e',
+                'const { execSync } = require("node:child_process"); const path = require("node:path");'
+                + ' const common = execSync("git rev-parse --git-common-dir").toString().trim();'
+                + ' const authorRoot = path.dirname(path.resolve(process.cwd(), common));'
+                + ' require("node:fs").writeFileSync(path.join(authorRoot, "src", "declared.ts"), "export const declared = 2;\\n");',
+            ],
+        };
+
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: [...declared, 'src/declared.ts'], checks: [clobber] });
+
+        expect(sealed.success, `seal answered: ${JSON.stringify(sealed).slice(0, 400)}`).toBe(false);
+        expect(String(sealed.error)).toContain('moved while the checks ran');
+        expect((sealed.diagnostics as { reason?: string } | undefined)?.reason).toBe('repository_moved_during_checks');
+        // And the seal named the path, so the operator can see which check wrote where instead of hunting for it.
+        expect(JSON.stringify(sealed.diagnostics)).toContain('src/declared.ts');
+    }, 120_000);
 });
