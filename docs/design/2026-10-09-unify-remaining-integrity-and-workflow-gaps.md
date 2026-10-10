@@ -95,6 +95,20 @@
 
 这条边界同时决定了这**不是**一次数字守卫的升级：前三轮各加一张名单（`.rs`、`.pyc`、语句形状），每张都被名单之外的种类绕过 —— 而种类无界，所以任何名单都注定失败。真正承重的是「不许第二次派生」这条结构性规则，与「拒绝发生在不知道种类的情况下」这一运行时事实。
 
+### A-4 不在这个 change 里（实测）
+
+A-4（队列 D-1，用户 2026-10-10 选定甲）**不能**作为一个 AC 加进来：`kata-cli tasks declare` 只写
+`upstreamCoverage` 与 `acceptanceMatrix`，并明确拒绝改写验收契约 ——
+
+```
+$ kata-cli tasks declare --change unify-... --field acceptance --file <json> --reason probe
+Unknown declaration field 'acceptance'; this command writes upstreamCoverage or acceptanceMatrix.
+A task's acceptance criteria are its contract and are not rewritten here.
+```
+
+所以它按**独立 change** 走（`a-removed-name-is-not-an-undeclared-change`，设计见
+`docs/design/2026-10-10-a-removed-name-is-not-an-undeclared-change.md`）。本 change 的 23 条 AC 不动。
+
 ## 4. 依赖顺序
 
 A 先建立可表达、可重入的 review 状态；B 阻止失败遗留伪状态；C 消除协议复制；D 统一读取与 transfer 语义；E 最后保护 seal/map 消费点。它们共享部分文件，因此在一个 checkout 中串行实现；每个 slice 内先写最小 RED test、观察预期失败，再做最小 GREEN 实现与定向回归。
@@ -107,5 +121,6 @@ A 先建立可表达、可重入的 review 状态；B 阻止失败遗留伪状�
 - `docs/superpowers/reports/2026-10-09-review-phase-content-move-is-unrecoverable.md`
 - `a-declared-directory-excludes-its-build-output` R13（原结果保存在 `tmp/dd-review-result-r13.json`）
 - 已 `merged_into` 的 one-source、gate-input-integrity、change-lifecycle-reconciliation、finish-the-retired-answer-semantics、publish-every-unreadable-record，以及八个仅缺当前认证的旧 task。
+- A-4（队列 D-1）按独立 change 走，见上面的说明。
 
 关系保留旧工件；本设计不把缺失证书伪造成新的代码 defect，也不以 consolidated review 声称重写旧 revision 的审计结论。
