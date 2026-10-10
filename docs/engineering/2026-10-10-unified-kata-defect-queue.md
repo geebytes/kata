@@ -59,6 +59,7 @@
 | **I-6（本仓新）** | 族级 flag 被动词静默丢弃 | `ledger claim restate --evidence`：`ok: true` 而 `evidenceIds` 不变（`--evidence` 在 `ledgerFamilyFlags` 内，故未知 flag 拒绝不触发） | 词表在**族**、读取在**动词**：动词不读的 flag 应具名拒绝，或动词必须读它 | 本批次「Found while repairing round 1」 |
 | **I-7（本仓新）** | 「封存期间仓库移动」复查会被**检查自己写又删的临时文件**绊倒 | 封存收尾复查（对比声明面内外内容） | 复查应比较**前后集合**而非采样窗口（写/删之间的时刻被采到），或让在仓库内写临时文件的检查改写到 `tmp/` | 本批次「Found while re-sealing」 |
 | **I-9（本仓新，今日实测）** | 「这一轮审的是哪个 revision」记录的**不是它测量的东西** | `src/workflow/orchestrator.ts:1806`：`reviewedRevisionId` 取自 review 入口写下的 **placeholder** 的 revision；CLI 只有 `--reviewed-path`，**没有** `--reviewed-revision` | 让轮次自己声明它读的 revision（轮次的输入里带着封存 revision），或在记录时校验 placeholder revision 与真正被读的一致 | 第 2 轮实际审 `revision-903e6a28ada6abf2`，记录写的是 `reviewedRevisionId: revision-8295c30cf2691ac6`（我重封之后才记录）；这正是 `unify-…` 的 AC-9 想修的那条，而它的实现目前仍取 placeholder |
+| **I-12（本仓新，今日实测，第 10 轮）** | **`ledger plan` 的拒绝里也有一个占位符** | `src/cli/ledger.ts:1228` 印 `.kata/tasks/<id>/revisions/`，而 change id 就在手上 | 与 R9-F4 同一规则的最后一个残留实例（先于本 change，故不在本 change 修） | 第 10 轮 F5 指出；属「补救必须可原样执行」这一族 |
 | **I-11（本仓新，今日实测）** | **`scope` 忽略 `--root`，且不按名拒绝** | `runScopeCommand` 的签名叫 `root`，但只有 CLI 入口解析 `--root`；直接调用/子进程传 `--root` 时它被**静默忽略**，命令于是作用在 cwd 的仓库上（实测：cwd=/tmp、`--root /tmp/scoperoot` ⇒ 它去读 `/tmp/.kata/tasks/x/task.json`）。与 **I-6**（`run --paths` 被接受但被忽略）同一类 | 与 AC-8 同批：要么读它、要么按名拒绝；并让 `scope` 与其它动词共用同一个 root 解析 | 今天在我给「每条补救都必须真能跑」的守卫里踩到它：守卫对 `scope` 那半实际跑在**仓库根**而不是 fixture，所以它验证了「动词/flag 能解析」，但**没有**验证「作用在正确的 workspace」（我在变更记录里如实标注了这个边界） |
 | **I-10（已出设计：`docs/design/2026-10-10-a-repair-revalidates-the-evidence-it-moved.md`）** | **修复会移动 falsifier 的落点，而没有人重新对准** | `ledger evidence verify` 只在被重跑时才发现锚点失效；修复/重封的流程本身不会重跑它，于是盘上的封印 verdict 仍写 `supported` | 让封存（或进入 repair 时）**自动重验受影响的 evidence**，锚点不成立即按名拒绝；或把「锚点仍在唯一匹配」做成封存的前置检查（现在只有人手工核对） | 第 3 轮 blocking 就是它（9 条失配），第 4 轮的修复又产生 3 条（E9/E11/E15）——同一形状两轮各一次 |
 | **I-8（本轮新发现）** | 同一件事（两条命令是否同一条检查）在仓库里有**两套去重判据** | `src/quality/check-resolver.ts:260-267`（`kind+command+args+cwd`）vs `src/quality/project-checks.ts:161-169`（`name+command+args`，无 kind/cwd、分隔符不同） | 一处判据、两处消费者——与 A-5 同批做，否则改了矩阵那套、另一套仍会漂 | 本轮核实下游指针文档时实测 |
@@ -92,3 +93,23 @@
 - 下游页保留：**指针**（指向本仓 `OPEN-DEFECTS.md` 与本页）+ 两条**实操要点**（改名先提交；矩阵每行唯一命令）。
 - 本页新增对其队列的三处**状态更正**（§0）：A-7 已修归档；A-1 读出侧已完成（在审）；B 组三条已实现未封存。
 - 下游 A-5 的最小修复点（执行列表带 `acceptanceIds`）与本页 I-8 是**同一处的两个面**，合并进同一条 change。
+
+
+---
+
+## D. `the-review-loop-carries-its-defect-classes` 的收口（2026-10-10/11，10 轮独立审查）
+
+**结论**：第 7 轮起无 blocking/major；第 8–10 轮共 12 条全部落在**一类**——「守卫弱于它声称的性质」——加上第 10 轮**审查者自己声明为边界**的两条。用户选定路线 **甲**：**记录 + 写明边界 → approve → judge → archive**，不再逐例修复；把这类掐断的机械修法（I-10）另行落地。
+
+被认证的 revision：`revision-5aa5d88be5a48355`（27 条声明路径，含本轮新增的 `tests/unit/every-refusal-names-a-command-the-cli-accepts.test.ts`）。
+
+### 写下来的边界（不假装做到）
+
+| # | 边界 | 来源 |
+|---|---|---|
+| B1 | 补救守卫断言的是**CLI 接受**这条命令，**不**断言它**能清掉**该补救伴随的状态；它的用法拒绝词表就是它列出的那些（第 10 轮指出缺 `unknown action`），因此「动词存在、子动作不存在」这类命令会漏过 | R10-F1、R10-F4（审查者自述为边界） |
+| B2 | 守卫只抽取**反引号内**的 `kata-cli …`；写在正文里的、或用 `;` 与第一条拼在同一个反引号内的第二条命令不会被执行 | R10-F3 |
+| B3 | 守卫的 fixture 覆盖它列出的拒绝种类；「这条拒绝不给命令」的那一种由**另一个**选择器断言（第 10 轮同时指出该用例注释把「目标在工作区内的链接」写成了「工作区外」） | R10-F2 |
+| B4 | 声明面内仍有一个占位符实例：`src/cli/ledger.ts:1228` 的 `.kata/tasks/<id>/revisions/`（先于本 change，故不在此修，已记为 I-12） | R10-F5 |
+| B5 | 本 change 的 19 条 falsifier 锚点在 10 轮里**漂移过 10 次**（第 3 轮 9 条、第 4 轮 3 条、第 5/7/8 轮各 1 条），每次都靠人手工重瞄；机械修法见 I-10（设计已就绪，未实现） | R3-F1 起，逐轮累积 |
+| B6 | 补救守卫里 `scope` 那一半**跑在仓库根**而不是 fixture（因为 `scope` 忽略 `--root`，见 I-11）⇒ 它证明了动词与 flag 能解析，**没有**证明命令作用在正确的 workspace | 今日自测时发现 |
