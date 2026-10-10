@@ -1492,11 +1492,15 @@ async function cmdVerify(
     // line after verifying everything and before writing `verify.json` — the very discard the refusal above was added to
     // prevent. This is the same fix `review-read.ts` needed, and the primitive for it already exists.
     const verifyBinding = await currentRevisionIdentityFrom(verifyRevisionRead, root, taskId);
-    await writeFile(
-        verifyPath(root, taskId),
-        `${JSON.stringify({ ...verifyResult, ...revisionBindingFields(verifyBinding) }, null, 2)}\n`,
-        'utf8',
-    );
+    // **Validated before it is written, because a reader that refuses an artefact the writer produced is a gate that cannot be
+    // satisfied.** The comparison payload in this artefact is schema-constrained (the three drift branches are a `oneOf`, and
+    // each requires the fields that carry its comparison) — and this write was a bare `writeFile`, so a payload the reader
+    // would reject could be persisted and only discovered by whoever read it next (measured by an independent round, which is
+    // how the missing check was found). A failure here is an internal invariant, so it throws with the validator's own message
+    // rather than writing something a reader must then explain.
+    const verifyPayload = { ...verifyResult, ...revisionBindingFields(verifyBinding) };
+    validate('verify-result', verifyPayload);
+    await writeFile(verifyPath(root, taskId), `${JSON.stringify(verifyPayload, null, 2)}\n`, 'utf8');
 
     // Verify does not decide what happens next: it asks the same resolver the dispatcher uses, over the artefacts it
     // just wrote, so both surfaces answer with one ladder, one vocabulary and the priorities the dispatcher shows.
@@ -2535,8 +2539,13 @@ function supersededReadiness(
         // the first version of this field recorded both as `content-moved` with an empty path list — so a `declaration-moved`
         // verdict reached a reviewer as "no path changed" while its real comparison (the declared sets) was discarded.
         // Measured by an independent round: `added: ["src/b.ts"]` on the status, `differingPaths: []` in the record.
+        // Three comparisons, because there are three ways a revision stops describing the tree: content moved, the declaration
+        // moved, or a path changed **kind** with its content unchanged — the last of which the content comparison cannot name,
+        // so the verdict would otherwise say "no path changed" about a real move (measured by an independent round).
         supersededComparison: status.status === 'superseded'
-            ? { kind: 'content-moved' as const, revisionId: status.revisionId, differingPaths: status.differingPaths }
+            ? status.kindChanges
+                ? { kind: 'kind-moved' as const, revisionId: status.revisionId, kindChanges: status.kindChanges }
+                : { kind: 'content-moved' as const, revisionId: status.revisionId, differingPaths: status.differingPaths }
             : status.status === 'declaration-moved'
             ? { kind: 'declaration-moved' as const, revisionId, added: status.added, removed: status.removed }
             : undefined,

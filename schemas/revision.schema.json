@@ -75,6 +75,19 @@
     },
     "ownershipConflictsAcknowledged": {
       "type": "boolean"
+    },
+    "pathKinds": {
+      "type": "object",
+      "description": "What each declared path was at seal time \u2014 `content`, `directory`, `missing` or `unsupported`. The content map is silent when a path keeps its bytes but changes kind, so a drift verdict needs this to name that comparison. Absent on revisions sealed before it existed.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "content",
+          "directory",
+          "missing",
+          "unsupported"
+        ]
+      }
     }
   }
 }

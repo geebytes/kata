@@ -501,7 +501,13 @@ describe('the sealed identity is computed where the change is', () => {
         // … and every shape that reaches the stream, asked of the two functions directly (a second seal in this test would
         // first consume a repair entry, so the property is asserted where it lives rather than through the CLI again): a
         // directory, a declared file, a missing path, and a never-content root.
-        for (const paths of [owned, ['src'], ['src/declared.ts'], ['src/does-not-exist.ts'], ['.llmwiki']]) {
+        // A declared **link** is in the list because that is the shape the two streams disagreed on: only the identity resolved
+        // it, so the scope hash keyed its files under `link-to-notes/…` while the identity recorded `notes/…` (measured by an
+        // independent round, which is how this shape was found). The other shapes are the ones the traversal branches on.
+        await mkdir(join(root, 'notes'), { recursive: true });
+        await writeFile(join(root, 'notes', 'a.md'), '# a note\n');
+        await symlink(join(root, 'notes'), join(root, 'link-to-notes'));
+        for (const paths of [owned, ['src'], ['src/declared.ts'], ['src/does-not-exist.ts'], ['.llmwiki'], ['link-to-notes'], ['notes']]) {
             expect(await computeScopeHash(root, paths), paths.join(',')).toBe((await computeBothOwnedDigests(root, paths)).manifestHash);
         }
     }, 180_000);

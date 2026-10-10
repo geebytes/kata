@@ -124,6 +124,16 @@ export type SupersededComparison =
       added: string[];
       /** Carried by the revision, no longer declared by the task. */
       removed: string[];
+    }
+  | {
+      /**
+       * The move is a change of *kind* with no change of content: a FIFO that becomes a missing path, a file that becomes a
+       * directory. The manifest moved (the traversal tags each entry) and the content comparison names nothing, so this branch
+       * is what keeps a verdict from saying "no path changed" about a real move (measured by an independent round).
+       */
+      kind: 'kind-moved';
+      revisionId: string;
+      kindChanges: Array<{ path: string; recorded: string | null; observed: string | null }>;
     };
 
 export interface JudgeResult {

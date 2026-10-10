@@ -132,9 +132,10 @@
           "type": "string",
           "enum": [
             "content-moved",
-            "declaration-moved"
+            "declaration-moved",
+            "kind-moved"
           ],
-          "description": "Which comparison produced the verdict. The two are different facts and are kept apart rather than recorded as one with an empty list."
+          "description": "Which comparison produced the verdict. The three are different facts and are kept apart rather than recorded as one with an empty list."
         },
         "revisionId": {
           "type": "string",
@@ -187,6 +188,37 @@
             "type": "string"
           },
           "description": "For `declaration-moved`: carried by the revision, no longer declared by the task."
+        },
+        "kindChanges": {
+          "type": "array",
+          "minItems": 1,
+          "description": "For `kind-moved`: the paths whose kind changed while their content did not, each with both sides (`content`/`directory`/`missing`/`unsupported`, or null when the path was not in that side's map).",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "recorded",
+              "observed"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "recorded": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "observed": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
         }
       },
       "oneOf": [
@@ -251,6 +283,38 @@
               }
             }
           ]
+        },
+        {
+          "description": "A move in kind only: the content comparison names nothing, so the kind comparison does.",
+          "required": [
+            "kind",
+            "revisionId",
+            "kindChanges"
+          ],
+          "properties": {
+            "kind": {
+              "const": "kind-moved"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "differingPaths"
+                ]
+              },
+              {
+                "required": [
+                  "added"
+                ]
+              },
+              {
+                "required": [
+                  "removed"
+                ]
+              }
+            ]
+          }
         }
       ]
     }

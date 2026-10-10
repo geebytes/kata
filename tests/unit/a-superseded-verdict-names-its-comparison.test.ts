@@ -218,4 +218,39 @@ describe('a superseded verdict names what it compared', () => {
             expect(() => validate('verify-result', { ...base, supersededComparison: lie }), JSON.stringify(lie)).toThrow();
         }
     }, 30_000);
+
+    it('names a move in KIND, when the content comparison has nothing to name', async () => {
+        // **Round 7's second blocking finding.** The manifest tags each entry's kind, so a path that changes kind with its
+        // content unchanged still moves the manifest — while the content comparison finds nothing, and the verdict then said
+        // `differingPaths: []` about a real move. The revision now records what each declared path *was*, and the payload has a
+        // third branch that names the comparison it actually made.
+        const root = await fixture();
+        // A FIFO is not content and is not missing: at seal time this path is `unsupported`, and deleting it makes it `missing`.
+        await execFileAsync('mkfifo', [join(root, 'src', 'pipe')]);
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: [...declared, 'src/pipe'], checks: [check] });
+        expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
+
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        expect((revision.pathKinds ?? {})['src/pipe']).toBe('unsupported');
+
+        // The kind changes and no content moves: the manifest moves with it.
+        await rm(join(root, 'src', 'pipe'));
+        const status = await revisionStatus(root, revision, taskId);
+        expect(status.status, JSON.stringify(status)).toBe('superseded');
+        if (status.status !== 'superseded') return;
+        expect(status.differingPaths, 'the content comparison has nothing to name here').toEqual([]);
+        expect(status.kindChanges, JSON.stringify(status)).toEqual([{ path: 'src/pipe', recorded: 'unsupported', observed: 'missing' }]);
+
+        // And it reaches the artefact a reviewer reads, as the branch that carries the comparison actually made.
+        await runCommand('verify', taskId, root);
+        const verdict = JSON.parse(await readFile(join(root, '.kata', 'tasks', taskId, 'verify.json'), 'utf8')) as {
+            supersededComparison?: { kind?: string; kindChanges?: Array<{ path: string }> };
+        };
+        expect(verdict.supersededComparison?.kind).toBe('kind-moved');
+        expect(verdict.supersededComparison?.kindChanges?.map((entry) => entry.path)).toEqual(['src/pipe']);
+    }, 120_000);
 });

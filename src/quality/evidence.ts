@@ -584,50 +584,14 @@ export function checkFreshness(
 }
 
 export async function computeScopeHash(root: string, paths: string[]): Promise<string> {
-  const normalizedPaths = [...new Set(paths.map((path) => normalizeScopePath(root, path)))].sort();
-  const hash = createContentHasher();
-  for (const path of normalizedPaths) {
-    hash.update(path);
-    hash.update('\0');
-    const fullPath = join(root, path);
-    let entryStat: Awaited<ReturnType<typeof stat>> | null = null;
-    try {
-      entryStat = await stat(fullPath);
-    } catch {
-      entryStat = null;
-    }
-    // **The same stream the revision manifest writes, kind tags included.** This hash is compared against
-    // `revision.manifestHash` at verify time (`checkFreshness`), so a second stream that agreed only by accident would make
-    // every sealed evidence stale — measured when the tags were added to one side only. The sequence and the tags are
-    // `writeEntryKind`'s, from `workflow/revision.ts`.
-    if (entryStat?.isDirectory()) {
-      writeEntryKind(hash, 'directory');
-      await hashDirectoryRecursive(fullPath, root, hash);
-    } else if (entryStat?.isFile()) {
-      writeEntryKind(hash, 'file');
-      hash.update(await readFile(fullPath));
-    } else if (entryStat) {
-      writeEntryKind(hash, 'sentinel');
-      hash.update('[unsupported]');
-    } else {
-      writeEntryKind(hash, 'sentinel');
-      hash.update('[missing]');
-    }
-    hash.update('\0');
-  }
-  return hash.digest('hex');
-}
-
-/** Directory hashing for a scope shares the repository's ignore policy; only the walk's size budget differs. */
-async function hashDirectoryRecursive(dirPath: string, root: string, hash: Hash): Promise<void> {
-  const relativeDir = relative(root, dirPath).replaceAll('\\', '/');
-  for (const file of await walkRepositoryFiles(root, relativeDir ? { under: relativeDir } : {})) {
-    hash.update(file.path);
-    hash.update('\0');
-    writeEntryKind(hash, 'file');
-    hash.update(file.content);
-    hash.update('\0');
-  }
+  // **One derivation, delegated rather than re-implemented.** This hash is compared against `revision.manifestHash` at verify
+  // time, and it used to be a second stream that agreed only by accident: an independent round measured the two disagreeing
+  // for a **declared link** (this side hashed `link-to-notes/a.md` while the identity recorded `notes/a.md`, since only the
+  // identity resolved the link) and this side reading content **outside the repository** through a link that leaves it. Both
+  // were the same mistake — a second implementation of "what does this scope contain" — so this function no longer has one: it
+  // asks the identity's own traversal, which resolves declared paths and refuses to read outside the tree.
+  const { computeBothOwnedDigests } = await import('../workflow/revision.js');
+  return (await computeBothOwnedDigests(root, paths)).manifestHash;
 }
 
 function normalizeScopePath(root: string, path: string): string {

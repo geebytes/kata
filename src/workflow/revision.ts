@@ -26,6 +26,16 @@ export interface TaskRevision {
    */
   pathDigests?: Record<string, string>;
   /**
+   * **What each declared path *was*** — content, a directory, missing, or something unreadable.
+   *
+   * The content map answers "what did this path contain", which is silent when the answer is "the same bytes under a different
+   * kind": measured by an independent round, a declared path whose kind changed while its content did not moved the manifest
+   * (the traversal tags each entry) while the content comparison named nothing, so the drift verdict reported no path at all.
+   * This map is what lets a verdict name that comparison. Absent on revisions sealed before it existed, in which case the
+   * comparison honestly reports only what it can compare.
+   */
+  pathKinds?: Record<string, 'content' | 'directory' | 'missing' | 'unsupported'>;
+  /**
    * A **declaration-independent** content snapshot of what this revision contained.
    *
    * `pathDigests` is computed over `ownedPaths`, so a change committed outside the declared set is invisible to it — and
@@ -90,6 +100,8 @@ export type RevisionStatus =
       expectedManifestHash: string;
       revisionManifestHash: string;
       differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
+      /** Present when the move is a change of kind rather than of content, so the verdict can name it. */
+      kindChanges?: Array<{ path: string; recorded: string | null; observed: string | null }>;
     };
 
 /**
@@ -111,7 +123,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
   if (ownedPaths.length === 0) throw new Error('A revision requires at least one declared owned path');
   // The identity and owned-manifest facts come from the materialized pre-check
   // snapshot when a seal supplied one. Revision artefacts still live under root.
-  const { manifestHash, pathDigests } = await computeBothOwnedDigests(contentRoot, ownedPaths);
+  const { manifestHash, pathDigests, pathKinds } = await computeBothOwnedDigests(contentRoot, ownedPaths);
   const contentDigests = input.contentDigests ?? await computeContentDigests(contentRoot);
   // The id now covers the content snapshot as well as the owned manifest. The manifest hash field itself is unchanged —
   // every existing binding keeps its meaning — but a revision *exists* for a change outside the declaration, which the
@@ -132,6 +144,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     const revision: TaskRevision = {
       ...existing,
       ...(existing.pathDigests ? {} : { pathDigests }),
+      ...(existing.pathKinds ? {} : { pathKinds }),
       ...(existing.contentDigests ? {} : { contentDigests }),
       ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
       ...(input.ownershipConflictsAcknowledged ? { ownershipConflictsAcknowledged: true } : {}),
@@ -172,6 +185,7 @@ export async function createTaskRevisionIfChanged(input: CreateTaskRevisionInput
     ownedPaths,
     manifestHash,
     pathDigests,
+    pathKinds,
     contentDigests,
     createdAt: new Date().toISOString(),
     ...(input.ownershipConflicts?.length ? { ownershipConflicts: input.ownershipConflicts } : {}),
@@ -408,18 +422,31 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
     // would be a second answer, and this repository deletes those. The manifest hash above is only the *trigger*; this is the
     // fact a reader needs.
     const observed: Record<string, string> = Object.create(null) as Record<string, string>;
-    await feedOwnedTree(root, revision.ownedPaths, createContentHasher(), observed);
+    const observedKinds: Record<string, PathKind> = Object.create(null) as Record<string, PathKind>;
+    await feedOwnedTree(root, revision.ownedPaths, createContentHasher(), observed, observedKinds);
     const recorded = revision.pathDigests ?? {};
     const differingPaths = [...new Set([...Object.keys(recorded), ...Object.keys(observed)])]
       .filter((path) => recorded[path] !== observed[path])
       .sort()
       .map((path) => ({ path, recorded: recorded[path] ?? null, observed: observed[path] ?? null }));
+
+    // **A move with no content difference still has to be named.** The manifest moved — the tag says what each entry is — and
+    // a comparison that comes back empty would say "no path changed" about a real move: measured for a declared path whose
+    // kind changed while its content did not (a FIFO that becomes a missing path, a file that becomes a directory). So when
+    // the content comparison names nothing, the kind comparison answers instead.
+    const recordedKinds = (revision.pathKinds ?? {}) as Record<string, PathKind>;
+    const kindChanges = [...new Set([...Object.keys(recordedKinds), ...Object.keys(observedKinds)])]
+      .filter((path) => (recordedKinds[path] ?? null) !== (observedKinds[path] ?? null))
+      .sort()
+      .map((path) => ({ path, recorded: recordedKinds[path] ?? null, observed: observedKinds[path] ?? null }));
+
     return {
       status: 'superseded',
       revisionId: revision.id,
       expectedManifestHash: manifestHash,
       revisionManifestHash: revision.manifestHash,
       differingPaths,
+      ...(differingPaths.length === 0 && kindChanges.length > 0 ? { kindChanges } : {}),
     };
   }
   // **And the declaration itself can have moved**, which the hash above cannot see because it is taken over the old one. A
@@ -502,11 +529,14 @@ export function writeEntryKind(hash: Hash, kind: TreeEntryKind): void {
     hash.update('\0');
 }
 
+export type PathKind = 'content' | 'directory' | 'missing' | 'unsupported';
+
 async function feedOwnedTree(
   root: string,
   ownedPaths: string[],
   manifest: Hash,
   pathDigests: Record<string, string> | null,
+  pathKinds: Record<string, PathKind> | null = null,
 ): Promise<void> {
   for (const path of normalizeOwnedPaths(root, ownedPaths)) {
     manifest.update(path);
@@ -549,10 +579,16 @@ async function feedOwnedTree(
       manifest.update('\0');
     };
 
+    // **The kind of every declared path is recorded, not only its content.** A path that changes kind without changing content
+    // — a FIFO that becomes a missing path, a file that becomes a directory — moved the manifest while the content comparison
+    // named nothing, so the verdict said `differingPaths: []` about a real move (measured by an independent round). The map
+    // travels beside the digests so a drift verdict can name the comparison it made.
     if (escaping) {
       sentinel('[unsupported]');
+      if (pathKinds) pathKinds[path] = 'unsupported';
     } else if (entry?.isDirectory()) {
       entryTag('directory');
+      if (pathKinds) pathKinds[path] = 'directory';
       const relativeDir = (location ?? path).replace(/\/+$/, '');
       for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
         manifest.update(file.path);
@@ -561,6 +597,7 @@ async function feedOwnedTree(
         manifest.update(file.content);
         manifest.update('\0');
         if (pathDigests) pathDigests[file.path] = hashContent(file.content);
+        if (pathKinds) pathKinds[file.path] = 'content';
       }
       manifest.update('\0');
     } else if (entry?.isFile()) {
@@ -568,11 +605,14 @@ async function feedOwnedTree(
       const content = await readFile(join(root, location ?? path));
       manifest.update(content);
       if (pathDigests) pathDigests[location ?? path] = hashContent(content);
+      if (pathKinds) pathKinds[location ?? path] = 'content';
       manifest.update('\0');
     } else if (entry) {
       sentinel('[unsupported]');
+      if (pathKinds) pathKinds[path] = 'unsupported';
     } else {
       sentinel('[missing]');
+      if (pathKinds) pathKinds[path] = 'missing';
     }
   }
 }
@@ -581,16 +621,17 @@ async function feedOwnedTree(
 export async function computeBothOwnedDigests(
   root: string,
   ownedPaths: string[],
-): Promise<{ manifestHash: string; pathDigests: Record<string, string> }> {
+): Promise<{ manifestHash: string; pathDigests: Record<string, string>; pathKinds: Record<string, PathKind> }> {
   // **A null-prototype map, because a path is a filename and a filename can be `__proto__`.** On a plain object
   // `map['__proto__'] = digest` is a silent no-op, so a declared root-level `__proto__` file was dropped from the recorded
   // set — and the observed map (its own `Object.create(null)` below) dropped it too, so a real move
   // reported `differingPaths: []`. `computePathDigests` was already fixed this way and guarded; this is the sibling the
   // guard did not cover (measured by an independent round on `the-recorded-digests-are-the-seals-map`).
   const pathDigests: Record<string, string> = Object.create(null) as Record<string, string>;
+  const pathKinds: Record<string, PathKind> = Object.create(null) as Record<string, PathKind>;
   const manifest = createContentHasher();
-  await feedOwnedTree(root, ownedPaths, manifest, pathDigests);
-  return { manifestHash: manifest.digest('hex'), pathDigests };
+  await feedOwnedTree(root, ownedPaths, manifest, pathDigests, pathKinds);
+  return { manifestHash: manifest.digest('hex'), pathDigests, pathKinds };
 }
 
 /**
