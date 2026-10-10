@@ -653,15 +653,24 @@ function stripAnsi(value: string): string {
 
 
 
+/**
+ * The waivers recorded for a task: `[]` when the file was never written, a **named refusal** when it cannot be read.
+ *
+ * This used to catch every failure and answer `[]`, so a damaged `waivers.json` read as "no waivers were recorded" — and a
+ * waiver is precisely a recorded decision that the change is otherwise legitimate, so reading it as absent silently drops an
+ * operator's exemption and reports the change as unwaived. The other direction was measured too: the value was dereferenced
+ * without a shape check, so `{"waivers": "AC-1 is fine"}` returned the *string* typed as a list and the seal's validation
+ * then spread it into one phantom waiver per character. Both are the same defect — a reader that does not check what it read.
+ */
 export async function readWaivers(root: string, taskId: string): Promise<Waiver[]> {
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
-    const raw = await readFile(waiversPath(root, taskId), 'utf8');
-    return (JSON.parse(raw) as { waivers: Waiver[] }).waivers;
-  } catch {
-    return [];
+  const { readRecordState } = await import('../core/record-read.js');
+  const read = await readRecordState(waiversPath(root, taskId), (value): value is { waivers: Waiver[] } =>
+    Array.isArray((value as { waivers?: unknown }).waivers));
+  if (read.kind === 'absent') return [];
+  if (read.kind === 'unreadable') {
+    throw new Error(`Cannot read the waivers recorded for ${taskId}: ${read.detail}. Repair or remove the record; a waiver that cannot be read is not the same as one that was never written.`);
   }
+  return read.value.waivers;
 }
 
 export async function writeWaivers(root: string, taskId: string, waivers: Waiver[]): Promise<void> {

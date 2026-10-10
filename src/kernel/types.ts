@@ -100,13 +100,27 @@ export const READABLE_SEVERITIES = ['blocking', 'major', 'minor', 'note', 'nit']
 export type ReadableSeverity = (typeof READABLE_SEVERITIES)[number];
 
 /**
- * **The severities that make a problem merge-blocking**, per mode, in one place.
+ * **The severities that make a problem merge-blocking, for a tier — asked by tier, never by mode.**
  *
  * A merge-blocking severity is the one that refuses an approval, which is why it is also the one that has to carry a basis
  * (see the review-record path): the word has a consequence, so the word has to be checkable.
+ *
+ * **Why this takes a tier and not a mode.** It used to take the mode and parse it (`mode === 'standard' ? …`), which made it a
+ * second, differently-wrong reading of the same field: the canonical spelling is `std`, and an absent mode means the *std*
+ * ladder — so `isMergeBlockingSeverity('major', 'std')` answered `true` while the ladder every other reader uses answered
+ * "not blocking" for the same change, and a legitimate `major` finding was then refused for carrying no basis. Measured by an
+ * independent round on a `std`-mode task: the record was refused with "finding F-1 is major, and a merge-blocking severity
+ * must name its basis". One derivation reads the mode (`reviewTierFor`, in the quality ladder, where the spellings and the
+ * legacy-absent rule live); everything else asks the tier.
  */
-export function isMergeBlockingSeverity(severity: string, mode: string = 'strict'): boolean {
-    return mode === 'standard' ? severity === 'blocking' : severity === 'blocking' || severity === 'major';
+export function mergeBlockingSeveritiesForTier(tier: TierName): readonly ReadableSeverity[] {
+    return tier === 'standard' ? ['blocking'] : ['blocking', 'major'];
+}
+
+
+/** Whether this tier refuses approval for a problem recorded at this severity. */
+export function isMergeBlockingSeverity(severity: string, tier: TierName): boolean {
+    return mergeBlockingSeveritiesForTier(tier).includes(severity as ReadableSeverity);
 }
 
 export type TierName = 'standard' | 'strict' | 'security';

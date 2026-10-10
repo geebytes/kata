@@ -1,4 +1,5 @@
 import { createHash, randomUUID, type Hash } from 'node:crypto';
+import { readDirectoryState } from '../core/record-read.js';
 import { readFile, stat } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -542,12 +543,14 @@ export async function readRecordedEvidence(root: string, taskId: string): Promis
   const { readdir } = await import('node:fs/promises');
   const { readValidated } = await import('../core/schema.js');
   const evidenceDir = layoutEvidenceDir(root);
-  let files: string[] = [];
-  try {
-    files = await readdir(evidenceDir);
-  } catch {
-    return [];
+  // **`ENOENT` is "no evidence directory yet"; anything else is a directory this reader cannot see.** Both used to answer
+  // `[]`, which reported "nothing recorded" for a listing that failed — the same fold as the file-level readers, one level up.
+  const listing = await readDirectoryState(evidenceDir);
+  if (listing.kind === 'absent') return [];
+  if (listing.kind === 'unreadable') {
+    throw new Error(`Cannot read the recorded evidence for ${taskId}: ${listing.detail}. Repair the directory; an evidence store that cannot be listed is not an empty one.`);
   }
+  const files = listing.entries;
 
   const evidence: EvidenceEnvelope[] = [];
   for (const file of files.filter((name) => name.startsWith(`${taskId}-`) && name.endsWith('.json'))) {

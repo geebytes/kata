@@ -7,7 +7,7 @@ import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
 import { findMatrixDeclarationGaps } from '../quality/acceptance-matrix.js';
-import { reviewTierFor } from '../quality/review-ladder.js';
+import { isMergeBlocking, reviewTierFor } from '../quality/review-ladder.js';
 import { readChangeRecord } from '../quality/change-record.js';
 import { type ReviewFinding } from '../quality/reviewer.js';
 import { judge, type JudgeAcceptanceResult, type JudgeResult } from '../quality/judge.js';
@@ -36,7 +36,7 @@ import { answersCurrentQuestion, declaredSubjectRevision, questionBinding, readL
 import type { VerdictBinding } from './verdict-binding.js';
 import { describeBlockingProblems } from '../quality/review-ladder.js';
 import { openLedgerProblems, openProblemsReportFields } from '../store/verdict.js';
-import { isCurrentAssuranceLevel, isMergeBlockingSeverity, READABLE_SEVERITIES } from '../kernel/types.js';
+import { isCurrentAssuranceLevel, READABLE_SEVERITIES } from '../kernel/types.js';
 import { codeGraphInvocation } from '../codegraph/runtime.js';
 import { runProcess } from '../process/run.js';
 import { readValidated, readValidatedOptional, validate, validateArtefact } from '../core/schema.js';
@@ -638,7 +638,21 @@ async function cmdBuild(
         };
     }
 
-    const { waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition } = preflight;
+    const { waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading } = preflight;
+    /**
+     * **The declaration-risk reading the preflight produced, published rather than dropped.**
+     *
+     * It is not a blocker (see the field's doc comment: both anchors for "what did this change commit" include work that is
+     * not this change's, and blocking on it refused 23 legitimate seals). It is also not nothing: a value computed and then
+     * read by nobody is a mechanism without a consumer, and an operator cannot act on a fact they cannot see. So it travels
+     * in the seal's diagnostics, which every caller already receives, and it is named in the human output when it is not
+     * empty. Measured by an independent round before this: `collectSealPreflight` returned
+     * `{ committedOutsideDeclaration: ['.gitignore', 'src/stowaway.ts'], committedReading: 'available', blockers: [] }` and
+     * nothing anywhere read either field.
+     */
+    const declarationRisk = committedReading === 'unavailable'
+        ? { committedOutsideDeclaration: [] as string[], committedReading }
+        : { committedOutsideDeclaration: undeclaredCommittedChanges, committedReading };
     // Reaching here means every blocker was absent; a non-strict task has no waivers to persist.
     if (requiresMatrix(task.workflowProfile)) await writeWaivers(root, taskId, waivers);
 
@@ -698,6 +712,7 @@ async function cmdBuild(
                 success: true,
                 diagnostics: {
                     mode: 'seal',
+                    declarationRisk,
                     reusedRevision: revision.id,
                     reusedEvidence: plan.reusable.length,
                     reusedChecks: plan.reusable.map((entry) => entry.checkId),
@@ -824,6 +839,9 @@ async function cmdBuild(
                 : 'Evidence sealing failed; fix the failing checks before retrying --seal.',
             diagnostics: {
                 mode: 'seal',
+                // Published on the failing path too: a reader asking "what did this change commit outside its declaration"
+                // should not have to have a green seal to find out.
+                declarationRisk,
                 evidenceCount: evidence.length,
                 passing: evidence.filter((item) => isPassing(item)).length,
                 failing: evidence.filter((item) => !isPassing(item)).length,
@@ -889,6 +907,7 @@ async function cmdBuild(
         phase: 'hardVerify',
         success: evidence.every((e) => isPassing(e)),
         diagnostics: {
+            declarationRisk,
             evidenceCount: evidence.length,
             passing: evidence.filter((e) => isPassing(e)).length,
             failing: evidence.filter((e) => !isPassing(e)).length,
@@ -1525,7 +1544,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     ...(severityTask.acceptanceMatrix?.rows ?? []).map((row) => row.acceptanceId),
                 ]);
                 for (const finding of findings) {
-                    if (!isMergeBlockingSeverity(finding.severity, severityTask.workflowProfile?.reviewMode)) continue;
+                    // The mode is read **once**, by the ladder's `reviewTierFor`, inside the ladder's own predicate — a caller
+                    // that parses the mode itself is the second derivation this change removed.
+                    if (!isMergeBlocking(severityTask.workflowProfile?.reviewMode, finding.severity)) continue;
                     const basis = typeof finding.acceptanceId === 'string' ? finding.acceptanceId.trim() : '';
                     const stated = typeof finding.falsifies === 'string' ? finding.falsifies.trim() : '';
                     if (basis !== '') {

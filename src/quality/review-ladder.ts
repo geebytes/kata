@@ -1,3 +1,4 @@
+import { isMergeBlockingSeverity, mergeBlockingSeveritiesForTier } from '../kernel/types.js';
 /**
  * The severity ladder: which severities refuse approval under which review mode, and what "open" means — nothing else.
  *
@@ -69,11 +70,16 @@ export function reviewTierFor(mode: string | undefined): 'standard' | 'strict' |
  * without the ladder saying so.
  */
 export function mergeBlockingSeverities(mode: string | undefined): readonly string[] {
-    return reviewTierFor(mode) === 'standard' ? ['blocking'] : ['blocking', 'major'];
+    // **One derivation, and it lives in the kernel.** This used to compute the set itself while `isMergeBlockingSeverity`
+    // computed it again from the raw mode — two readings of one field, disagreeing on `std` and on an absent mode. The
+    // spelling table and the legacy-absent rule stay here (`reviewTierFor`, above); the set itself is the kernel's, because a
+    // second copy is only ever *accidentally* right: measured, re-adding this copy verbatim leaves every guard green, and the
+    // copy that disagreed is what refused a legitimate round.
+    return mergeBlockingSeveritiesForTier(reviewTierFor(mode));
 }
 
 export function isMergeBlocking(mode: string | undefined, severity: string | undefined): boolean {
-    return severity !== undefined && mergeBlockingSeverities(mode).includes(severity);
+    return severity !== undefined && isMergeBlockingSeverity(severity, reviewTierFor(mode));
 }
 
 /**

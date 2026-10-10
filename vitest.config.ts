@@ -34,5 +34,14 @@ export default defineConfig({
      * does cost is time-to-failure for a case that really hangs — stated here rather than discovered in a seal.
      */
     testTimeout: 30_000,
+    /**
+     * **And the other bound, which was left implicit.** `hookTimeout` resolves to vitest's own 10 s default, and
+     * `afterEach`/`beforeEach` hooks in this suite remove temp roots and lay out fixtures — the same kind of work that took the
+     * motivating case from 3.6 s to 5.0 s under sandbox load. Stating it costs one line and removes the second number nobody
+     * wrote down; an independent round recorded the gap as a note ("the harness states one bound and leaves the other at a
+     * library default") and could not make a declared hook approach it, so this is the same class as the budget above rather
+     * than a reproduced failure.
+     */
+    hookTimeout: 30_000,
   },
 });

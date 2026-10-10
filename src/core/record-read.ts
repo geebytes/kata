@@ -45,6 +45,26 @@ export async function readRecordState<T extends Record<string, unknown>>(path: s
     return { kind: 'usable', value: parsed as T };
 }
 
+/**
+ * The same three-way reading for a **directory**: absent only when it does not exist.
+ *
+ * The file-level rule does not transfer by itself: a reader that lists a directory and answers `[]` for *every* failure makes
+ * EACCES, ENOTDIR and a damaged mount indistinguishable from "there is nothing here", and the callers that did that were
+ * measured in an independent round — `readRecordedEvidence` and `listEvidenceFiles` both fold a listing failure into an empty
+ * set, which reads as "no evidence recorded" for a directory an operator cannot currently see.
+ */
+export type DirectoryRead = { kind: 'absent' } | { kind: 'usable'; entries: string[] } | { kind: 'unreadable'; detail: string };
+
+export async function readDirectoryState(path: string): Promise<DirectoryRead> {
+    try {
+        const { readdir } = await import('node:fs/promises');
+        return { kind: 'usable', entries: await readdir(path) };
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'absent' };
+        return { kind: 'unreadable', detail: `${basename(path)} could not be listed (${(error as Error).message})` };
+    }
+}
+
 /** The value when the record is usable, `null` otherwise — for readers that only need the payload. */
 export function usableOrNull<T>(read: RecordRead<T>): T | null {
     return read.kind === 'usable' ? read.value : null;

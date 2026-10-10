@@ -31,7 +31,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, readReviewRoundsState, recurrenceAcrossRevisions, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
-import { isJsonRecord, readRecordState, usableOrNull } from '../core/record-read.js';
+import { isJsonRecord, readDirectoryState, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
 type AcceptanceItem = { result?: string; repairScope?: string };
@@ -949,9 +949,17 @@ function skillToCliVerb(nextSkill: string): string | null {
 // file an operator had to repair. `readRecordState` (`core/record-read.ts`) is the reader that tells them apart.
 
 async function listEvidenceFiles(root: string, taskId: string): Promise<string[]> {
-  try {
+  {
     const evidenceDirectory = layoutEvidenceDir(root);
-    const candidates = (await readdir(evidenceDirectory))
+    // **The listing is the one thing here that can fail as a whole, and `[]` is a claim about the store.** `ENOENT` means this
+    // task has recorded no evidence yet, which is a state; every other failure means the directory is there and cannot be
+    // listed, which is a refusal that has to name the directory — the per-file reads below already keep their unreadable
+    // entries, so folding only this one into an empty set was the remaining place a reader could not tell the two apart.
+    const listing = await readDirectoryState(evidenceDirectory);
+    if (listing.kind === 'unreadable') {
+      throw new Error(`Cannot list the recorded evidence for ${taskId}: ${listing.detail}. Repair the directory; a store that cannot be listed is not an empty one.`);
+    }
+    const candidates = (listing.kind === 'usable' ? listing.entries : [])
       .filter((file) => file.startsWith(`${taskId}-`) && file.endsWith('.json'));
     const matches = await Promise.all(candidates.map(async (file) => ({
       file,
@@ -964,7 +972,5 @@ async function listEvidenceFiles(root: string, taskId: string): Promise<string[]
       .filter(({ read }) => read.kind === 'unreadable' || (read.kind === 'usable' && read.value.taskId === taskId))
       .map(({ file }) => file)
       .sort();
-  } catch {
-    return [];
   }
 }

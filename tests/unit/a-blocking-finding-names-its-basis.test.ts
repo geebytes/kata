@@ -11,6 +11,7 @@ import { READABLE_SEVERITIES, SEVERITIES } from '../../src/kernel/types.js';
 import { mergeBlockingSeverities } from '../../src/quality/review-ladder.js';
 import type { ReviewSeverity } from '../../src/quality/reviewer.js';
 import { taskRecord } from '../helpers/task-fixture.js';
+import { defaultWorkflowProfile } from '../../src/core/workflow-profile.js';
 
 /**
  * **AC-6 — one severity vocabulary, and a merge-blocking severity carries a basis.**
@@ -49,6 +50,12 @@ async function tempRoot(options: { matrix?: boolean } = {}): Promise<string> {
     // that spreads one into that call writes a record with no matrix at all — silently, because an object spread is not an
     // excess-property error. Measured here first: the case that asserts a citation resolves read "this task's acceptance
     // matrix does not hold AC-1" against a fixture that had declared it.
+    // **The ladder this rule belongs to has to be named, and that is now load-bearing.** The rule is about a *merge-blocking*
+    // severity, and which severities block depends on the change's review mode: `std` blocks only on `blocking`, `strict` and
+    // above block on `major` too. A fixture with no profile was held to the std ladder, so `major` legitimately needed no basis
+    // — measured when the two derivations of that set were unified: the fixture was relying on the divergent one. Naming
+    // `strict` here states which ladder this case is about instead of leaving it to a default.
+    record.workflowProfile = { ...defaultWorkflowProfile(), reviewMode: 'strict' };
     if (options.matrix !== false) {
         record.acceptanceMatrix = {
             version: 1,

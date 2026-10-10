@@ -213,7 +213,11 @@ export async function collectSealPreflight(input: {
             }
             // **And the committed half of the same question, which `git status` cannot answer.** A change could commit content
             // outside its declaration and the working tree would be clean, so the seal saw nothing — measured on this change's
-            // own history. Reported as its own named blocker with its own remedy, because "the tree is dirty" and "the branch
+            // own history. **A report, not a blocker**, for the reason on the field above: both anchors available for "what did
+            // this change commit" include work that is not this change's, and blocking on it refused 23 legitimate seals. A
+            // report that is dropped is the other half of the same defect, so the caller publishes it: the value is returned
+            // here and the seal's own output names it. (This comment used to claim it was "reported as its own named blocker
+            // with its own remedy", which no line here does — the class this change exists to remove, in a comment.)
             // already committed this" ask for different actions.
         },
     ];
