@@ -163,11 +163,16 @@ Before running `kata-cli open`, resolve these three choices in the agent convers
 2. Development mode:
    - `tdd` — write focused failing tests first, then implement.
    - `standard` — implement directly with proportional tests.
-3. Review mode:
-   - `std` — standard independent review.
+3. Review mode — **the lane is a floor, not a preference.** The repository derives a classification from the paths
+   the change touches (`riskFloors`: a path pattern raises the floor, and the floor names the tier) and reports it as
+   `risk` in `kata-cli ledger plan` (`tier`, `floor`, `matched`, `riskClasses`). Choose the lane at or above that
+   classification; a lane above it is fine — say why in one sentence, because that sentence is the record of the decision.
+   Do not open a change below its own classification: the floor exists so a change cannot be talked into a lighter lane,
+   and a change that reaches a gate's meaning, an identity, a schema or an enforced invariant is at least `strict`
+   whatever its size.
+   - `std` — standard independent review; the lane for a change that reaches none of those floors.
    - `strict` — stricter architecture/regression review.
    - `security` — security-focused review.
-
 If the user explicitly provided these choices, use them. If not, present a concise recommendation and wait for confirmation before starting the task. A terse user confirmation such as “确认” may accept the recommended triple.
 
 Then invoke the deterministic layer with explicit flags:

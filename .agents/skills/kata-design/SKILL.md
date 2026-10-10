@@ -149,6 +149,13 @@ Kata does not configure or route host-platform models. If this phase needs a dif
 
 Pi：如需切换模型，先执行 `/model` 完成选择，再运行本次委托的 Kata 命令。
 
+## The lane was chosen at the entry point, and it is a floor
+The review mode is decided where the change is opened (`/kata-open`), and it may not be below the classification the
+repository derives from the paths the change touches — `plan.risk` in `kata-cli ledger plan` carries `tier`, `floor`
+and `matched`. Design is where that classification first becomes readable, so if the plan's tier is higher than the lane
+the change was opened with, say so before going on rather than quietly planning against the weaker one; raising the lane is
+always allowed and needs one sentence of reason.
+
 ## Knowledge capture during design
 
 Design decisions often establish lasting constraints and norms. Capture them as you go:
