@@ -105,7 +105,8 @@ export async function buildReviewRequest(input: {
     // is not an array — this one threw a raw `TypeError` where the decision answered "nothing declared" (measured by an
     // independent round; the defect class is the one this change exists to name).
     const declaredClasses = declaredDefectClasses(stored);
-    const missingGenerators = unbackedDefectClasses(declaredClasses, input.root).map((entry) => entry.class);
+    const declaredForInstruments = await declaredPaths(input.root, input.changeId);
+    const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments)).map((entry) => entry.class);
     // **The request speaks for the sealed revision, or it is not handed to a reviewer at all.** Measured by an independent
     // review on a real flow: this function copied `ledger.subject.revision` straight into the request, and the frozen
     // subject was 20 files behind the sealed revision — so the reviewer was given a brief for content that was no longer

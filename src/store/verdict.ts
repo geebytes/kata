@@ -358,7 +358,8 @@ export async function ledgerVerdict(input: {
     // and the two copies disagreed about a plan whose `defectClasses` is not an array (one answered "nothing declared", the
     // other threw) — which is this change's own subject, measured by an independent round.
     const declaredClasses = declaredDefectClasses(await readStoredPlan(input.root, input.changeId));
-    const missingGenerators = unbackedDefectClasses(declaredClasses, input.root);
+    const declared = await declaredPaths(input.root, input.changeId);
+    const missingGenerators = await unbackedDefectClasses(declaredClasses, input.root, declared);
     const withClassGaps: typeof decision = missingGenerators.length === 0
         ? decision
         : {
