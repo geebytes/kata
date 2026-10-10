@@ -149,6 +149,9 @@ describe('review decision snapshots', () => {
                 manifestHash: sealed.revision.manifestHash,
                 blockingIds: ['F-1'],
                 blockingCount: 1,
+                // A row now says what the round found or why it has none: an id list alone is indistinguishable from a round
+                // whose findings nobody kept, which is how 102 rounds survive here as 56 findings.
+                findings: [{ id: 'F-1', severity: 'blocking' }],
             }, lock);
         });
 

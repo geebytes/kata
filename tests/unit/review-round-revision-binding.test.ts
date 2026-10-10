@@ -42,6 +42,7 @@ describe('revision-bound review rounds', () => {
       manifestHash: 'a'.repeat(64),
       blockingIds: ['F-1'],
       blockingCount: 1,
+      findings: [{ id: 'F-1', severity: 'blocking' }],
     });
 
     const [round] = (await readReviewRoundsState(root, 'binding-task')).rounds;

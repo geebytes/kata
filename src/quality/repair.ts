@@ -141,6 +141,19 @@ export interface RepairPayload {
  * live. Without it nothing could ask whether the repairs were reducing the problems they were opened for, and the loop
  * had no terminal state: review → repair → review could continue indefinitely, each round justified on its own terms.
  */
+/**
+ * The part of a finding a round record keeps: enough to read the class of defect and whether the defect was in the original
+ * code or in a previous repair, without copying the whole message into an append-only file.
+ */
+export interface RoundFinding {
+    id: string;
+    severity: string;
+    /** The defect class (`src/quality/defect-classes.ts`), when the round recorded one. */
+    class?: string;
+    /** `original` or `repair` — whether this defect was found in the code or in a previous round's repair. */
+    origin?: string;
+}
+
 export interface ReviewRound {
     at: string;
     /**
@@ -164,6 +177,19 @@ export interface ReviewRound {
      */
     reviewedRevisionId?: string;
     /** The problems the round was opened for, by id — the escalation names these rather than a count alone. */
+
+    /**
+     * **The round's findings, not only their ids.** The row used to carry `blockingIds` and a count, so the history of 102
+     * rounds in this repository survives as 56 findings: `review.json` is overwritten by the next round and the row kept
+     * nothing else. A reader could see that a round found three blockers and never what they were, which is exactly the
+     * reading that says whether the loop is converging or recycling its own repairs.
+     *
+     * Optional in the type because rows written before the field existed stay readable — and a *new* row is refused by name
+     * when its findings could not be read (see `appendReviewRound`'s caller in the repair entry).
+     */
+    findings?: RoundFinding[];
+    /** Why a round has no findings to record (an approval that measured zero, or a repair admitted for ledger deficits). */
+    noFindings?: string;
     blockingIds: string[];
     /**
      * How many problems blocked when the round was opened.
@@ -432,6 +458,16 @@ export function assessReviewLoop(input: ReviewLoopAssessmentInput): ReviewLoopAs
  * there is no second, unlocked way in.
  */
 export async function appendReviewRound(root: string, taskId: string, round: ReviewRound, lock?: TaskLock): Promise<void> {
+    // **A round that records no findings says so, and is never silently id-only.** The caller has to pass the findings it read
+    // (possibly an empty list — an approval measured zero) or an explicit `noFindings` reason, so "the record could not be
+    // read" cannot arrive here disguised as "the round found nothing". Measured shape this refuses: the old row recorded
+    // `blockingIds` and a count, which is indistinguishable from a round whose findings nobody kept.
+    if (round.findings === undefined && round.noFindings === undefined) {
+        throw new Error(
+            `refusing to record the round at ${round.at}: it carries no findings and no reason for having none, so the history `
+            + 'would say a round happened and not what it found — pass the findings the round recorded, or `noFindings` with the reason',
+        );
+    }
     const path = reviewRoundsPath(root, taskId);
     // The directory before the lock: this is the first write of a round, and a task that has not written anything yet has
     // no directory for the lock's own file to live in.
@@ -473,6 +509,8 @@ function isRoundRecord(value: unknown): value is {
     blockingCount?: unknown;
     revisionId?: unknown;
     manifestHash?: unknown;
+    findings?: unknown;
+    noFindings?: unknown;
 } {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
     const record = value as Record<string, unknown>;
@@ -516,6 +554,23 @@ export async function readReviewRoundsState(root: string, taskId: string): Promi
                 ...(typeof parsed.manifestHash === 'string' ? { manifestHash: parsed.manifestHash } : {}),
                 blockingIds: parsed.blockingIds.filter((id): id is string => typeof id === 'string'),
                 blockingCount: typeof parsed.blockingCount === 'number' ? parsed.blockingCount : null,
+                // **What the round found, when the row kept it.** Rows written before the field existed simply have nothing
+                // here, and that is reported by its absence rather than filled in with a guess: a history that cannot be read
+                // is a worse outcome than an incomplete one.
+                ...(Array.isArray(parsed.findings)
+                    ? {
+                        findings: (parsed.findings as unknown[])
+                            .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+                            .filter((entry) => typeof entry.id === 'string' && typeof entry.severity === 'string')
+                            .map((entry) => ({
+                                id: entry.id as string,
+                                severity: entry.severity as string,
+                                ...(typeof entry.class === 'string' ? { class: entry.class } : {}),
+                                ...(typeof entry.origin === 'string' ? { origin: entry.origin } : {}),
+                            })),
+                    }
+                    : {}),
+                ...(typeof parsed.noFindings === 'string' ? { noFindings: parsed.noFindings } : {}),
             });
         } catch {
             malformedLine ??= lines.filter((candidate) => candidate.trim() !== '').indexOf(line) + 1;

@@ -139,8 +139,8 @@ describe('the review loop has a terminal state', () => {
         roots.push(root);
         await initLayout(root);
 
-        await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T01:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1 });
-        await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T02:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1 });
+        await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T01:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1, findings: [{ id: 'C-1', severity: 'blocking' }] });
+        await appendReviewRound(root, 'rounds-task', { at: '2026-09-28T02:00:00.000Z', blockingIds: ['C-1'], blockingCount: 1, findings: [{ id: 'C-1', severity: 'blocking' }] });
         const rounds = (await readReviewRoundsState(root, 'rounds-task')).rounds;
         expect(rounds.map((entry) => entry.blockingCount)).toEqual([1, 1]);
 

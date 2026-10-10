@@ -130,6 +130,39 @@
     "insideDeclaredBoundary": {
       "type": "boolean",
       "description": "Whether this finding lies inside the boundary the claim it is about declared. A finding past the declaration is still recorded \u2014 the declaration says where the claim stops, not that nothing exists beyond it \u2014 and the two answers are kept apart so the difference is auditable rather than hidden in a severity choice. Absent when the claim declared no boundary."
+    },
+    "class": {
+      "type": "string",
+      "enum": [
+        "one-fact-derived-twice",
+        "refusal-cannot-be-executed",
+        "corrupt-read-as-absent",
+        "comparison-unnamed",
+        "instrument-unsound",
+        "declaration-covers-other",
+        "boundary-on-a-default",
+        "intent-omission",
+        "contract-semantics"
+      ],
+      "description": "Which class of defect this finding is, from the vocabulary in `src/quality/defect-classes.ts`. Every class carries an `oracle` type there, which is what says whether a machine or an independent round is the instrument for it. Optional: records written before the field existed stay readable, and a round that omits it is reported in `findingsWithoutClass`."
+    },
+    "origin": {
+      "type": "string",
+      "enum": [
+        "original",
+        "repair"
+      ],
+      "description": "Whether the defect was found in the original implementation or in a previous round's repair \u2014 the reading that says whether the loop is fixing or recycling."
+    },
+    "axis": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The axis of the input space this finding exercised (for example \"declared link targets\"), so two findings of one class are not counted as two classes."
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What found it (a differential relation, a generated input sweep, a run of the named remedy, reading the statement against the artefacts), so the packet can say which instrument is paying off."
     }
   }
 }

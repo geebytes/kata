@@ -18,6 +18,7 @@ import { assertValidAcceptanceId, assertValidTaskId, requirementIdPattern } from
 import { loadConfig } from '../core/config.js';
 import { resolveBuildChecks } from '../quality/project-checks.js';
 import { describeClaimFailure, evaluateClaims, resolveClaimChecks, validateClaims } from '../quality/claims.js';
+import { requireDefectClass } from '../quality/defect-classes.js';
 import { collectSealPreflight } from './seal-preflight.js';
 import { bindsToRevision, currentRevisionIdentity, currentRevisionIdentityFrom, revisionBindingFields } from './verdict-binding.js';
 import { dependencyRootsFor, matrixChecks, dedupeChecks as dedupeCheckCommands, sanitizeCheckName } from '../quality/check-resolver.js';
@@ -1611,6 +1612,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             }
             let findings: ReviewFinding[];
             let declaredCoverage: string[] | null = null;
+            // The findings that arrived with no defect class: recorded anyway (a payload written before the field existed must
+            // still record) and reported on the record, so the absence is measured rather than silent.
+            const findingsWithoutClass: string[] = [];
             try {
                 const result = JSON.parse(await readFile(resultPath, 'utf8')) as { findings?: unknown; declaredCoverage?: unknown };
                 if (!Array.isArray(result.findings)) throw new Error('the JSON object must contain a findings array');
@@ -1622,6 +1626,16 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 const unreadableSeverity = rawFindings.find((item): boolean => typeof item?.severity !== 'string' || !(READABLE_SEVERITIES as readonly string[]).includes(item.severity));
                 if (unreadableSeverity) {
                     throw new Error(`finding ${String(unreadableSeverity.id ?? '(unnamed)')} carries severity "${String(unreadableSeverity.severity)}", which is not in the severity vocabulary (${READABLE_SEVERITIES.join(', ')}); the record is refused rather than filed under a neighbouring word`);
+                }
+                // **A class that is not in the vocabulary is refused, and the value is named.** The register is only worth
+                // having if a value means one thing; a near-miss filed under a neighbouring word makes the class reading wrong
+                // rather than incomplete, which is worse than an omitted field (that one is reported, below).
+                for (const raw of result.findings as Array<{ id?: unknown; class?: unknown }>) {
+                    if (raw?.class === undefined || raw.class === null) {
+                        findingsWithoutClass.push(String(raw?.id ?? '(unnamed)'));
+                        continue;
+                    }
+                    requireDefectClass(raw.class, `finding ${String(raw?.id ?? '(unnamed)')}`);
                 }
                 findings = validateArtefact<ReviewFinding[]>('review-finding', result.findings);
                 const foreignFinding = findings.find((finding) => finding.taskId !== taskId);
@@ -1820,7 +1834,7 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     root,
                     taskId,
                     recordPath,
-                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
+                    async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...(reviewedRevisionId ? { reviewedRevisionId } : {}), ...revisionBindingFields(binding), ...(currentSubject ? { subjectRevision: currentSubject } : {}), findings, ...(findingsWithoutClass.length > 0 ? { findingsWithoutClass } : {}), ...(declaredCoverage === null ? {} : { declaredCoverage }), status: 'pending', reviewRoute: 'adversarial' }, null, 2)}\n`,
                     lock,
                 );
             });
@@ -2102,6 +2116,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 ...(typeof approvalRecord.record.instrumentManifestHash === 'string' ? { instrumentManifestHash: approvalRecord.record.instrumentManifestHash } : {}),
                 ...(typeof approvalRecord.record.candidateFreezeSha256 === 'string' ? { candidateFreezeSha256: approvalRecord.record.candidateFreezeSha256 } : {}),
             };
+            // The findings this approval cleared, carried onto the round it records — see the append below.
+            const approvedFindings = (approvalRecord.record.findings ?? []) as Array<{ id: string; severity: string; class?: string; origin?: string }>;
             const approveBinding = await currentRevisionIdentityFrom(approvalRevisionRead, root, taskId);
             if (!approveBinding.revisionId || !approveBinding.manifestHash) {
                 return {
@@ -2159,6 +2175,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     ...(approvedReviewedRevisionId ? { reviewedRevisionId: approvedReviewedRevisionId } : {}),
                     blockingIds: [],
                     blockingCount: 0,
+                    // A passing approval measured zero — but "zero" and "nobody kept the findings" must not look alike, so the
+                    // record says which it is. The findings the approval cleared travel with the round when there are any.
+                    ...(approvedFindings.length > 0
+                        ? {
+                            findings: approvedFindings.map((finding) => ({
+                                id: finding.id,
+                                severity: finding.severity,
+                                ...(typeof (finding as { class?: unknown }).class === 'string' ? { class: (finding as { class: string }).class } : {}),
+                                ...(typeof (finding as { origin?: unknown }).origin === 'string' ? { origin: (finding as { origin: string }).origin } : {}),
+                            })),
+                        }
+                        : { noFindings: 'the approval cleared a review that recorded no findings' }),
                 }, lock);
             });
             if (committed.kind !== 'committed') {

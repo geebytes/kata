@@ -337,6 +337,20 @@ export async function authorizeReviewRepair(root: string, taskId: string): Promi
                 manifestHash: revision.manifestHash,
                 blockingIds: reviewBlockingProblems.map((problem) => problem.id),
                 blockingCount: severityAuthorized ? reviewBlockingProblems.length : null,
+                // **The round's findings travel with the round.** The row used to keep ids and a count, so a history of 102
+                // rounds survives in this repository as 56 findings and the one reading that says whether the loop is
+                // converging — which class keeps coming back, and whether it was in the code or in a previous repair — was
+                // unanswerable. `class` and `origin` come from the record; absence is honest (a legacy record has neither).
+                ...(findings.length > 0
+                    ? {
+                        findings: findings.map((finding) => ({
+                            id: finding.id ?? '',
+                            severity: finding.severity ?? '',
+                            ...(typeof (finding as { class?: unknown }).class === 'string' ? { class: (finding as { class: string }).class } : {}),
+                            ...(typeof (finding as { origin?: unknown }).origin === 'string' ? { origin: (finding as { origin: string }).origin } : {}),
+                        })),
+                    }
+                    : { noFindings: severityAuthorized ? 'the repair was admitted without review findings' : 'the repair was admitted for a superseded revision or ledger deficits, and the record holds no findings' }),
             }, lock);
         });
         if (committed.kind !== 'committed') {
