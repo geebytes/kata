@@ -82,7 +82,7 @@ describe('a finding that recurs across revisions is reported', () => {
 describe('the recovery route for a recurring finding', () => {
     async function summaryWith(
         rounds: ReviewRound[] | ((sealed: { revisionId: string; manifestHash: string }) => ReviewRound[]),
-        options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean } = {},
+        options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean; verifyFailed?: boolean; corruptLedger?: boolean } = {},
     ): Promise<{ summary: Awaited<ReturnType<typeof readUpstreamSummary>>; sealedRevisionId: string; sealedManifestHash: string; root: string }> {
         const root = await mkdtemp(join(tmpdir(), 'kata-recurrence-route-'));
         roots.push(root);
@@ -103,6 +103,14 @@ describe('the recovery route for a recurring finding', () => {
         if (options.mixedRevisionEvidence === true) {
             // Two evidence files bound to different revisions: judged together they prove nothing about either.
             await writeFile(join(root, '.kata', 'evidence', `${taskId}-other.json`), `${JSON.stringify({ taskId, kind: 'test', exitCode: 0, revisionId: 'revision-something-else' })}\n`);
+        }
+        if (options.verifyFailed === true) {
+            // **Bound to the sealed revision**: a verify record from another revision is not evidence about this content, and
+            // `onlyCurrentRevision` correctly drops it — which is why the fixture must carry the binding, not just a FAIL.
+            await writeFile(join(root, '.kata', 'tasks', taskId, 'verify.json'), `${JSON.stringify({ result: 'FAIL', revisionId: sealed.revision.id, manifestHash: sealed.revision.manifestHash, acceptance: [] })}\n`);
+        }
+        if (options.corruptLedger === true) {
+            await writeFile(join(root, '.kata', 'tasks', taskId, 'review', 'ledger.json'), '{ not a ledger\n');
         }
         if (options.corruptReviewRecord === true) {
             // A record that exists and cannot be read: the state that must be re-read before anything is concluded about it.
@@ -151,6 +159,43 @@ describe('the recovery route for a recurring finding', () => {
         ]);
         expect(original.summary.reviewLoopClassRecurrence?.every((entry) => !entry.stopLineCandidate)).toBe(true);
         expect(suggestCandidateAction('review', original.summary).reason).not.toBe('review_class_recurring');
+    });
+
+    it('puts every state that invalidates the report above the report', async () => {
+        // **The class, not the instance** (R4-F4). Two rounds fixed one branch each; an independent round then found a third
+        // (`verifyResult: 'FAIL'`, whose own comment says the findings "were formed against content that no longer stands").
+        // This case is table-driven on purpose: the property is "every state that must be repaired before a report about the
+        // change means anything wins over the reports", so a fourth state added below them fails here rather than in a round.
+        const recurring = [
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'instrument-unsound', origin: 'repair' }] },
+        ];
+        const states: Array<{ what: string; options: { corruptReviewRecord?: boolean; mixedRevisionEvidence?: boolean; verifyFailed?: boolean; corruptLedger?: boolean }; expected: string }> = [
+            { what: 'a review record nobody can read', options: { corruptReviewRecord: true }, expected: 'unreadable_review_record' },
+            { what: 'evidence from two revisions', options: { mixedRevisionEvidence: true }, expected: 'repair_mixed_revision_evidence' },
+            { what: 'a verify that failed against this content', options: { verifyFailed: true }, expected: 'repair_failed_verify' },
+        ];
+        for (const state of states) {
+            const built = await summaryWith(recurring, state.options);
+            const action = suggestCandidateAction('review', built.summary);
+            // The recurrence is real in every row: the report exists and must lose to the state.
+            expect(built.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), state.what).toBe(true);
+            expect(action.reason, `${state.what}: ${JSON.stringify(action)}`).toBe(state.expected);
+        }
+    });
+
+    it('publishes the loop replay, so the report is readable and not only testable', async () => {
+        // **A report whose only caller is its own selector reaches nobody** (R4-F5): nothing in `src/` imported `loop-replay`,
+        // so AC-6 produced a value no operator could read. It is published on the summary `kata-cli status` prints, which is
+        // where the decision it exists for is made.
+        const built = await summaryWith([
+            { at: '1', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'comparison-unnamed', origin: 'original' }] },
+            { at: '2', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }] },
+        ]);
+        const replay = built.summary.reviewLoopReplay;
+        expect(replay, 'the summary must carry the replay').toBeTruthy();
+        expect(replay?.stopLineCandidates).toEqual(['comparison-unnamed']);
+        expect(replay?.repairOriginShare).toBe(0.5);
     });
 
     it('sends mixed-revision evidence to the seal that must be redone, not to a mechanization', async () => {

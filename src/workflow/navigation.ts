@@ -31,6 +31,7 @@ import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
 import { assessReviewLoop, classRecurrence, readReviewRoundsState, recurrenceAcrossRevisions, type ClassRecurrence, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
+import { replayLoop, type LoopReplay } from '../quality/loop-replay.js';
 import { isJsonRecord, readDirectoryState, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
@@ -114,6 +115,14 @@ export type UpstreamSummary = {
   reviewLoopRecurrence?: ReviewRecurrence[] | null;
   /** The same recurrence counted by defect class, with the repair-origin count — a report, not a gate. */
   reviewLoopClassRecurrence?: ClassRecurrence[] | null;
+  /**
+   * **The loop's own record, summarised — with a runtime path, not only a test.** An independent round measured that nothing
+   * in `src/` imported `loop-replay`, so AC-6's report reached no surface: the module was exercised by its selector and
+   * produced nothing an operator could read. It is published here, on the summary `kata-cli status` prints, which is where
+   * the decision it exists for is actually made ("is this class worth mechanizing, or should the next change carry it as a
+   * judgment class").
+   */
+  reviewLoopReplay?: LoopReplay | null;
   /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
   /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
@@ -489,6 +498,8 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // ten findings in one change were defects in the previous round's repair, while no id repeated). Reported, never enforced:
     // the operator sees which class is being sampled again and decides.
     reviewLoopClassRecurrence: reviewRounds.kind === 'unreadable' ? null : classRecurrence(reviewRounds.rounds),
+    // The same rounds, reported rather than only counted: a rate is reported only when the history can identify one.
+    reviewLoopReplay: reviewRounds.kind === 'unreadable' ? null : replayLoop(reviewRounds.rounds),
     ...(reviewLoop.kind === 'stalled_current_rounds' ? {
       reviewEscalation: {
         rounds: reviewLoop.rounds,
@@ -666,7 +677,20 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       priority: 2230,
     };
   }
-  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
+  // **Every state that must be repaired before a report about the change means anything precedes the reports.** This is
+  // the third instance an independent round has found of the same thing — the first repair moved one branch, the second
+  // moved two more — so the rule is stated once here: a report is *about* the change, and a state that invalidates what the
+  // report is derived from (a record nobody can read, evidence from two revisions, a ledger nobody can read, a verify that
+  // failed against this content) is repaired first. The verify branch below this line used to sit under the reports while
+  // its own comment said the findings "were formed against content that no longer stands".
+  if (phase === 'review' && upstream.verifyResult === 'FAIL') {
+    return {
+      nextSkill: '/kata-build',
+      role: 'implementer',
+      reason: verifyRepairReason(upstream),
+      priority: 2220 + upstream.failedVerifyAcceptance,
+    };
+  }  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
   // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists
   // to close, measured by an independent round. It sits above the id-based route because a class recurring inside a repair
   // says more than one id repeating: the id view cannot see it at all (no id repeated across the seven rounds that produced
@@ -727,14 +751,7 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
     };
   }
   // A failed verify is repaired before review findings are read: the findings were formed against content that no longer stands.
-  if (phase === 'review' && upstream.verifyResult === 'FAIL') {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: verifyRepairReason(upstream),
-      priority: 1020 + upstream.failedVerifyAcceptance,
-    };
-  }
+
   // **A record nobody can read is not a record that found nothing.** This used to be *reported* on the summary
   // (`reviewRecordUnreadable`) and read by nobody, while the problems list fell back to empty — so a change whose review
   // record was unreadable was routed to the judge exactly as if the review had been clean. An unreadable record is a

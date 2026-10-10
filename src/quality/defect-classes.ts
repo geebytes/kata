@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs';
-import { relative as relativePathOf, resolve, sep } from 'node:path';
-import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
+import { join } from 'node:path';
+import { resolveDeclaredLocation } from '../core/repository-identity.js';
 
 /**
  * **The defect classes this repository's review loop produces, and what kind of oracle each one needs.**
@@ -145,7 +145,12 @@ export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
         .filter((entry) => typeof entry.class === 'string')
         .map((entry) => ({
             class: entry.class as string,
-            oracle: entry.oracle === 'mechanizable' ? 'mechanizable' : 'judgment',
+            // **The vocabulary owns the oracle, not the stored document.** Reading the author-supplied field meant a plan
+            // whose `oracle` was omitted or contradicted the vocabulary flipped AC-3's rule — a class the vocabulary calls
+            // mechanizable could be declared `judgment` and never have to name an instrument (measured by an independent
+            // round). A name the vocabulary does not know can only come from a hand-edited plan, and the fail-closed
+            // direction for a reader is to require the instrument rather than to excuse it.
+            oracle: isDefectClass(entry.class) ? oracleFor(entry.class) : 'mechanizable',
             ...(typeof entry.generator === 'string' ? { generator: entry.generator } : {}),
             ...(typeof entry.relation === 'string' ? { relation: entry.relation } : {}),
         }));
@@ -159,51 +164,59 @@ export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
  * Resolution is against the workspace, and the file must be a regular file: a directory is not an instrument, and neither is
  * a name that resolves nowhere.
  */
-export function instrumentResolves(root: string, generator: string): boolean {
+export async function instrumentResolves(
+    root: string,
+    generator: string,
+    declaredPaths: readonly string[] = [],
+): Promise<{ ok: true; path: string } | { ok: false; because: string }> {
     const candidate = generator.trim();
-    if (candidate === '') return false;
-    const resolved = resolve(root, candidate);
-    // **Inside the workspace, and inside the surface that is sampled.** A file inside `.git/` resolves and is a regular
-    // file, yet it is excluded from the declared/sampled surface, so an instrument living there would be one no change can
-    // carry — measured by an independent round (R3-F4). The policy that says what is content is asked rather than guessed,
-    // so this cannot drift from the walk.
-    const relative = relativePath(root, resolved);
-    if (relative === null) return false;
-    if (isIgnoredRepositoryPath(relative)) return false;
-    try {
-        return statSync(resolved).isFile();
-    } catch {
-        return false;
+    if (candidate === '') return { ok: false, because: 'the generator is empty' };
+    // **The repository's own resolver decides where a declaration points.** Asking it (rather than lexically prefixing the
+    // root) is what makes a link that leaves the workspace — or one that points into a tree no change can carry — answer as
+    // the target's location; a lexical prefix test accepted `tmp/link-outside.ts` and `tmp/link-to-.git.ts` (measured by an
+    // independent round, R4-F3).
+    const location = await resolveDeclaredLocation(root, candidate);
+    if (location.kind === 'outside') {
+        return { ok: false, because: `the generator \`${candidate}\` resolves to a path outside this workspace, so the change cannot carry it` };
     }
-}
-
-/** The workspace-relative path, or `null` when the path is outside the workspace entirely. */
-function relativePath(root: string, path: string): string | null {
-    const rootPrefix = root.endsWith(sep) ? root : root + sep;
-    if (path === root) return '';
-    if (!path.startsWith(rootPrefix)) return null;
-    return path.slice(rootPrefix.length).split(sep).join('/');
+    let stats;
+    try {
+        stats = statSync(join(root, location.path));
+    } catch {
+        return { ok: false, because: `the generator \`${candidate}\` does not resolve to a file in this workspace, so nothing can decide this class` };
+    }
+    if (!stats.isFile()) {
+        return { ok: false, because: `the generator \`${candidate}\` is not a regular file, so nothing can decide this class` };
+    }
+    // **Inside the change's declared surface, or the change cannot carry it.** The first version refused any path with an
+    // ignored segment, which wrongly refused a *declared* file (`dist/gen.ts` is content when declared) and, worse, said it
+    // "does not resolve to a file in this workspace" about a file that does (measured by an independent round, R4-F2). The
+    // declaration is the authority on what the change can carry, so the rule asks it.
+    if (declaredPaths.length > 0 && !declaredPaths.some((declared) => location.path === declared.replace(/^\.\/+/, '') || location.path.startsWith(`${declared.replace(/\/+$/, '')}/`))) {
+        return { ok: false, because: `the generator \`${candidate}\` is outside the change's declared surface (\`${location.path}\` is not covered by any declared path), so the change cannot carry it` };
+    }
+    return { ok: true, path: location.path };
 }
 
 /**
  * The declared mechanizable classes whose instrument is missing or does not resolve, with the reason — one derivation for the
  * deficit (the ledger's decision) and for the brief (the review request's `missingGenerators`).
  */
-export function unbackedDefectClasses(
+export async function unbackedDefectClasses(
     classes: readonly DeclaredDefectClass[],
     root: string,
-): Array<{ class: string; generator?: string; because: string }> {
-    return classes
-        .filter((entry) => entry.oracle === 'mechanizable')
-        .map((entry) => {
-            const generator = entry.generator;
-            if (generator === undefined || generator.trim() === '') {
-                return { class: entry.class, because: 'no generator is named, so nothing can decide this class' };
-            }
-            if (!instrumentResolves(root, generator)) {
-                return { class: entry.class, generator, because: `the generator \`${generator}\` does not resolve to a file in this workspace, so nothing can decide this class` };
-            }
-            return undefined;
-        })
-        .filter((entry): entry is { class: string; generator?: string; because: string } => entry !== undefined);
+    declaredPaths: readonly string[] = [],
+): Promise<Array<{ class: string; generator?: string; because: string }>> {
+    const unbacked: Array<{ class: string; generator?: string; because: string }> = [];
+    for (const entry of classes) {
+        if (entry.oracle !== 'mechanizable') continue;
+        const generator = entry.generator;
+        if (generator === undefined || generator.trim() === '') {
+            unbacked.push({ class: entry.class, because: 'no generator is named, so nothing can decide this class' });
+            continue;
+        }
+        const resolved = await instrumentResolves(root, generator, declaredPaths);
+        if (!resolved.ok) unbacked.push({ class: entry.class, generator, because: resolved.because });
+    }
+    return unbacked;
 }

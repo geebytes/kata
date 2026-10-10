@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,7 +33,7 @@ beforeEach(async () => {
         id: changeId,
         title: 'A mechanizable class needs a generator',
         acceptance: [{ id: 'AC-1', statement: 'The declaration is checked.' }],
-        ownedPaths: ['src/a.ts'],
+        ownedPaths: ['src/a.ts', 'tmp/gen.ts'],
     });
     // The declared path has to exist, or the freeze refuses before anything this suite is about can run.
     await mkdir(join(root, 'src'), { recursive: true });
@@ -74,7 +74,7 @@ async function ledger(argv: string[]): Promise<Record<string, unknown>> {
 
 async function prepare(): Promise<void> {
     await writePolicy(root, changeId, defaultPolicy());
-    const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
+    const frozen = await freezeSubject({ root, paths: ['src/a.ts', 'tmp/gen.ts'] });
     if (!frozen.ok) throw new Error(frozen.error);
     await writeSubject(root, changeId, frozen.subject);
     await appendClaim(root, changeId, {
@@ -94,10 +94,18 @@ async function prepare(): Promise<void> {
     const planned = await ledger(['plan', '--change', changeId]);
     if (planned.ok !== true) throw new Error(`the fixture could not plan: ${JSON.stringify(planned)}`);
     // A request speaks for the sealed revision, so the fixture seals (the freeze above hashes the same content).
-    await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+    await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'tmp/gen.ts'], checkIds: [] });
 }
 
 describe('a mechanizable class needs a generator', () => {
+    /** Declare one more path on the fixture's task: the declaration is the authority the instrument rule asks. */
+    async function declarePathsForTest(paths: string[]): Promise<void> {
+        const taskPath = join(root, '.kata', 'tasks', changeId, 'task.json');
+        const task = JSON.parse(await readFile(taskPath, 'utf8')) as { ownedPaths?: string[] };
+        await writeFile(taskPath, `${JSON.stringify({ ...task, ownedPaths: [...(task.ownedPaths ?? []), ...paths] }, null, 2)}\n`);
+    }
+
+
     it('refuses a class that is not in the vocabulary, by name', async () => {
         await prepare();
         const result = await ledger(['plan', '--change', changeId, '--classes', 'kind-of-racy']);
@@ -152,10 +160,10 @@ describe('a mechanizable class needs a generator', () => {
         expect(absent, JSON.stringify(deficits)).toBeDefined();
         expect(absent?.need).toMatch(/does not resolve to a file/);
         // A directory is not an instrument either: `src` exists, and is not a file.
-        expect(deficits.some((deficit) => deficit.need.includes('`src` does not resolve'))).toBe(true);
+        expect(deficits.some((deficit) => deficit.need.includes('`src` is not a regular file'))).toBe(true);
     });
 
-    it('refuses a generator that lives outside the sampled surface', async () => {
+    it('refuses a generator the change does not declare', async () => {
         // **Inside the workspace is not enough** (R3-F4): `.git/h.ts` resolves and is a regular file, yet `.git` is excluded
         // from the declared/sampled surface, so an instrument living there is one no change can carry. The rule asks the
         // policy that decides what content is, rather than testing for the presence of a path.
@@ -167,7 +175,54 @@ describe('a mechanizable class needs a generator', () => {
         const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
         const named = deficits.find((deficit) => deficit.need.includes('.git/h.ts'));
         expect(named, JSON.stringify(deficits)).toBeDefined();
-        expect(named?.need).toMatch(/does not resolve to a file/);
+        expect(named?.need).toMatch(/is outside the change's declared surface/);
+    });
+
+    it('derives the oracle from the vocabulary, not from the stored field', async () => {
+        // **The vocabulary owns the oracle** (R4-F1). Reading the author-supplied field meant a plan whose `oracle` was
+        // omitted — or contradicted the vocabulary — flipped the rule: a class the vocabulary calls mechanizable could be
+        // declared `judgment` and never have to name an instrument.
+        await prepare();
+        const planPath = join(root, '.kata', 'tasks', changeId, 'review', 'plan.json');
+        const stored = JSON.parse(await readFile(planPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(planPath, `${JSON.stringify({ ...stored, defectClasses: [{ class: 'instrument-unsound', oracle: 'judgment' }] }, null, 2)}\n`);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        expect(deficits.some((deficit) => deficit.need.includes('instrument-unsound')), JSON.stringify(deficits)).toBe(true);
+    });
+
+    it('refuses a generator whose link leaves the workspace even when the link is declared', async () => {
+        // **The resolver decides where a declaration points** (R4-F3): a lexical prefix test accepted `tmp/link-outside.ts`,
+        // because `resolve` normalises `..` and does not follow links while `statSync` does. The link is declared on purpose —
+        // the first version of this case left it undeclared, so the *declared-surface* rule caught it and the case passed for a
+        // reason it did not name (measured by the mutation audit: the lexical version stayed green).
+        await prepare();
+        await writeFile(join(root, 'outside.ts'), 'export const instrument = true;\n');
+        await symlink(join(root, 'outside.ts'), join(root, 'tmp', 'link-outside.ts'));
+        await declarePathsForTest(['tmp/link-outside.ts']);
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/link-outside.ts:reddens']);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const named = deficits.find((deficit) => deficit.need.includes('link-outside.ts'));
+        expect(named, JSON.stringify(deficits)).toBeDefined();
+        // The reason names the **resolved target**, which is the property at stake: a lexical check names the link and
+        // accepts it.
+        expect(named?.need).toMatch(/is outside the change's declared surface \(`outside\.ts`/);
+    });
+
+    it('is refused one layer earlier when a declared generator leaves the workspace', async () => {
+        // **The shape the instrument rule never sees.** A declared link that points outside the workspace cannot be frozen at
+        // all — the ledger refuses it by name (`unreadable`), because the repository's own rule for declarations is that a
+        // declaration is content and a link that leaves the workspace carries none. So the escaping-link attack on
+        // `instrumentResolves` has to come through a link whose *target* is inside the workspace, which is the case above.
+        await prepare();
+        const elsewhere = join(await mkdtemp(join(tmpdir(), 'kata-outside-')), 'instrument.ts');
+        await writeFile(elsewhere, 'export const instrument = true;\n');
+        await symlink(elsewhere, join(root, 'tmp', 'link-away.ts'));
+        await declarePathsForTest(['tmp/link-away.ts']);
+        const planned = await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/link-away.ts:reddens']);
+        expect(String(planned.error ?? '')).toMatch(/cannot be read/);
+        expect((planned.unreadable as string[] | undefined) ?? []).toContain('tmp/link-away.ts');
     });
 
     it('answers a plan whose declaration is not an array the same way in both readers', async () => {
