@@ -24,7 +24,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type TaskRevision, commitReviewDecision, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
+import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeContentDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
@@ -671,11 +671,26 @@ async function cmdBuild(
     // surface the record derives — the half that survives the round committing.
     const baseSnapshot = await readReviewDecisionSnapshot(root, taskId);
     const baseRevision = baseSnapshot.revisionRead.kind === 'current' ? baseSnapshot.revisionRead.revision : null;
+    // **The identity describes the tree the change is in, so it is computed there — not in the sandbox.**
+    //
+    // It used to take `contentRoot: sandbox.root` and `sandbox.contentDigests`. The sandbox is `git worktree add --detach HEAD`
+    // plus an overlay built by `listRepositoryFiles`, and that walk refuses the paths the identity policy calls never-content
+    // (`.llmwiki`, `dist`, caches — `repository-identity.ts`). But `feedOwnedTree` hashes a **declared** path without that
+    // filter, deliberately: the filter is for what a declaration silently pulls in, never for what it states. So for a
+    // declaration naming such a path the identity recorded the sandbox's view — the committed version, or the `[missing]`
+    // sentinel when the file was untracked — while `verify` recomputed the same hash over the author tree
+    // (`revisionStatus`, below in `revision.ts`). Measured downstream on a change declaring three `.llmwiki/**` paths, one of
+    // them recording exactly `sha256('[missing]')`: every run reported `revision_superseded`, and **re-sealing reproduced it**,
+    // because every seal computed the identity the same wrong way. A gate whose named remedy cannot be executed.
+    //
+    // The sandbox's purpose is that checks cannot write into the author tree (see `execution-sandbox.ts`); computing a hash is
+    // not a write, and it needs no isolation. The sandbox's own snapshot is taken **before** the checks run, so this is the
+    // same content either way — for every path both walks can see. The one place they differ is the one that mattered.
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
-            contentRoot: sandbox.root,
-            contentDigests: sandbox.contentDigests,
+            contentRoot: root,
+            contentDigests: await computeContentDigests(root),
             taskId,
             ownedPaths,
             checkIds: checks.map((check) => check.id ?? `${check.kind}:${check.command}:${(check.args ?? []).join(' ')}`),
@@ -768,7 +783,11 @@ async function cmdBuild(
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.frozen === true ? { includeFrozen: true } : {}),
         acceptanceByCheckId: acceptanceIdsByCheckId(task.acceptanceMatrix),
-        inputDiffHash: sandbox.contentDigests ? contentSnapshotHash(sandbox.contentDigests) : undefined,
+        // **The same derivation as the identity, for the same reason.** This is the content the evidence is *about*, and
+        // `verify` recomputes it from the author tree (`computeDiffHash(root)`) before trusting a freshness match — so a
+        // value taken from the sandbox would make freshness unsatisfiable for exactly the declared paths the sandbox cannot
+        // represent. One tree, one derivation, and the envelope describes what an operator can re-run it against.
+        inputDiffHash: contentSnapshotHash(await computeContentDigests(root)),
         // thing. The envelope keeps the reference and the bounded excerpt; a reader who needs the transcript reads the
         // file instead of finding a truncated log and no way to tell.
         checkLogDir: evidenceDir(root),
@@ -1350,7 +1369,9 @@ async function cmdVerify(
     // has outgrown cannot be the basis of an archive. Two answers to one state is the shape this line keeps removing; both
     // consumers now ask `revisionIsCurrent`, so there is one answer, and the diagnostics report which of the two it was.
     const verifyResult = status && !revisionIsCurrent(status)
-        ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id)
+        // The status travels with the verdict: the verdict's own payload is the comparison, so "which revision, which paths"
+        // is answered by the artefact a reviewer reads rather than left to be re-derived.
+        ? supersededReadiness(taskId, task.acceptance, currentDiffHash, revision!.id, status)
         : evaluateReadiness(taskId, task.acceptance, evidence, currentDiffHash, scopeHashes, matrix, task.workflowProfile?.reviewMode);
     if (revisionId) verifyResult.revisionId = revisionId;
     const implementationReady = verifyResult.result === 'PASS';
@@ -2416,12 +2437,21 @@ function supersededReadiness(
     acceptance: Array<{ id?: string; statement: string }>,
     currentDiffHash: string,
     revisionId: string,
+    status: RevisionStatus,
 ): JudgeResult {
     return {
         taskId,
         result: 'FAIL',
         diffHash: currentDiffHash,
         revisionId,
+        // **The comparison that produced this verdict, on the verdict.** `revision_superseded` twelve times over names no file,
+        // and the map an operator would diff for themselves excludes the declared paths that can move invisibly — measured
+        // downstream, where an author who checked every digest in the record concluded the gate was self-refuting. A refusal
+        // whose remedy cannot be reached from the artefacts is the defect this change exists for, one layer up.
+        supersededComparison: {
+            revisionId: status.status === 'superseded' ? status.revisionId : revisionId,
+            differingPaths: status.status === 'superseded' ? status.differingPaths : [],
+        },
         acceptance: acceptance.map((criterion) => ({
             id: criterion.id ?? '',
             result: 'FAIL' as const,

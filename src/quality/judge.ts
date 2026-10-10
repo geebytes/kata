@@ -110,6 +110,18 @@ export interface JudgeResult {
   subjectRevision?: string;
   acceptance: JudgeAcceptanceResult[];
   evidenceIds?: string[];
+  /**
+   * The comparison behind a `revision_superseded` verdict, when that is what this is.
+   *
+   * Present because the verdict is otherwise unwitnessable: `revision_superseded` names no file, and the map an operator can
+   * diff on their own (`contentDigests`) is built by the filtered walk and therefore excludes exactly the declared paths that
+   * can move invisibly. Measured downstream: an author checked all 595 content digests, found no difference, and reported the
+   * gate as self-refuting while three declared paths had moved. A verdict has to name what produced it.
+   */
+  supersededComparison?: {
+    revisionId: string;
+    differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
+  };
 }
 
 /**

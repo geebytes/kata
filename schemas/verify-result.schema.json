@@ -38,15 +38,15 @@
       "type": "string"
     },
     "governanceManifestHash": {
-      "description": "The governance-text surface at the time of this verdict (§22/§24). A text-only edit expires what this surface was verified for, and nothing else.",
+      "description": "The governance-text surface at the time of this verdict (\u00a722/\u00a724). A text-only edit expires what this surface was verified for, and nothing else.",
       "type": "string"
     },
     "instrumentManifestHash": {
-      "description": "The declared-instrument surface at the time of this verdict (§24.4). Editing a declared instrument expires the instrument surface only — not the pass about the deliverable.",
+      "description": "The declared-instrument surface at the time of this verdict (\u00a724.4). Editing a declared instrument expires the instrument surface only \u2014 not the pass about the deliverable.",
       "type": "string"
     },
     "candidateFreezeSha256": {
-      "description": "The frozen candidate this verdict answered (§7.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
+      "description": "The frozen candidate this verdict answered (\u00a77.4). Stamped beside the manifest so the conclusion binds to the reviewed content and semantic contract rather than to the declared owned paths, which cannot see a change committed outside the declaration.",
       "type": "string"
     },
     "evidenceIds": {
@@ -116,6 +116,53 @@
           },
           "reason": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "supersededComparison": {
+      "type": "object",
+      "description": "The comparison behind a `revision_superseded` verdict. Present only for that verdict, because it is otherwise unwitnessable: the scope names no file, and the map an operator can diff (`contentDigests`) is built by the filtered walk and so excludes exactly the declared paths that can move invisibly. Measured downstream: an author checked every digest in the record, found no difference, and reported the gate as self-refuting while three declared paths had moved.",
+      "required": [
+        "revisionId",
+        "differingPaths"
+      ],
+      "properties": {
+        "revisionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The revision whose declared content moved."
+        },
+        "differingPaths": {
+          "type": "array",
+          "description": "Each declared path whose own digest differs, with both sides of the comparison. Empty when the manifest moved without a per-path difference being derivable (a directory expansion that changed shape, say).",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "recorded",
+              "observed"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "recorded": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The digest the seal recorded for this path (`pathDigests`), or null when it recorded none."
+              },
+              "observed": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The digest the same derivation gives now, or null when the path is gone."
+              }
+            }
           }
         }
       }

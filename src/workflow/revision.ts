@@ -74,7 +74,23 @@ export type RevisionStatus =
    * declaration.
    */
   | { status: 'declaration-moved'; revisionOwnedPaths: string[]; taskOwnedPaths: string[]; added: string[]; removed: string[] }
-  | { status: 'superseded'; expectedManifestHash: string; revisionManifestHash: string };
+  /**
+   * The declared content moved after the seal.
+   *
+   * **The payload is the comparison, not two hashes.** `expectedManifestHash` versus `revisionManifestHash` is a true
+   * statement about one number, and an operator cannot act on it: it names no file. Worse, the map they *can* diff
+   * (`contentDigests`) is built by the filtered walk and therefore **excludes exactly the declared paths that can move
+   * invisibly** — measured downstream, where an author checked all 595 content digests, found no difference, and concluded the
+   * gate was self-refuting while three declared paths had moved. So the verdict names the revision, the paths whose own
+   * digests differ, and each side of the comparison.
+   */
+  | {
+      status: 'superseded';
+      revisionId: string;
+      expectedManifestHash: string;
+      revisionManifestHash: string;
+      differingPaths: Array<{ path: string; recorded: string | null; observed: string | null }>;
+    };
 
 /**
  * Mints the revision that identifies this seal, or returns the one that already identifies it.
@@ -387,7 +403,24 @@ export async function revisionStatus(root: string, revision: TaskRevision, taskI
   // snapshot here would make a later unrelated file invalidate valid evidence.
   const manifestHash = await computeManifestHash(root, revision.ownedPaths);
   if (manifestHash !== revision.manifestHash) {
-    return { status: 'superseded', expectedManifestHash: manifestHash, revisionManifestHash: revision.manifestHash };
+    // **The comparison, computed by the derivation that produced the recorded side.** `feedOwnedTree` is what wrote
+    // `pathDigests` at seal time, so asking it again is the same question asked of the same function — a second walker here
+    // would be a second answer, and this repository deletes those. The manifest hash above is only the *trigger*; this is the
+    // fact a reader needs.
+    const observed: Record<string, string> = {};
+    await feedOwnedTree(root, revision.ownedPaths, createContentHasher(), observed);
+    const recorded = revision.pathDigests ?? {};
+    const differingPaths = [...new Set([...Object.keys(recorded), ...Object.keys(observed)])]
+      .filter((path) => recorded[path] !== observed[path])
+      .sort()
+      .map((path) => ({ path, recorded: recorded[path] ?? null, observed: observed[path] ?? null }));
+    return {
+      status: 'superseded',
+      revisionId: revision.id,
+      expectedManifestHash: manifestHash,
+      revisionManifestHash: revision.manifestHash,
+      differingPaths,
+    };
   }
   // **And the declaration itself can have moved**, which the hash above cannot see because it is taken over the old one. A
   // revision whose owned paths are no longer the task's is not about the change's declared surface — and calling that
