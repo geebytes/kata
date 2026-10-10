@@ -217,4 +217,92 @@ describe('the sealed identity is computed where the change is', () => {
         // And the seal named the path, so the operator can see which check wrote where instead of hunting for it.
         expect(JSON.stringify(sealed.diagnostics)).toContain('src/declared.ts');
     }, 120_000);
+
+    it('records a declared never-content DIRECTORY, so a write inside it moves the identity', async () => {
+        // **The hole R2-F1's repair left open, measured by round 3.** A declared *file* under a never-content name was caught
+        // (the case above). A declared *directory* whose name is never-content was not: `listRepositoryFiles` returned `[]` when
+        // the path it was told to descend into was itself policy-ignored, so the identity recorded **nothing** for that
+        // declaration — `pathDigests: {}` — and a check writing into the directory moved neither the declared surface nor the
+        // repository snapshot. The seal reported success, `revisionStatus` said `current`, and the write stayed on disk.
+        //
+        // The rule the filter serves is about what a declaration *pulls in* (the descendants), not about the root the operator
+        // named, which is why `underIsDeclared` exists: a declared root is walked whatever its name.
+        const root = await fixture();
+        const declaredDirectory = ['.llmwiki'];
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+
+        // First: the identity is not empty for this declaration, and the ledger's expansion of the same declaration agrees.
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: declaredDirectory, checks: [check] });
+        expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        // All three files the fixture puts in that directory: one committed, one edited after the commit, one never committed.
+        // A declaration of the directory is a statement about its contents, so the policy's opinion of the *name* does not
+        // shrink what the identity records — only what a declaration silently pulls in is filtered.
+        expect(Object.keys(revision.pathDigests ?? {}).sort()).toEqual(['.llmwiki/committed.md', '.llmwiki/edited.md', '.llmwiki/untracked.md']);
+
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        const ledgerSide = await declaredContentPaths(root, declaredDirectory);
+        expect(ledgerSide.paths, 'the ledger expands the declaration the same way the seal records it').toEqual(Object.keys(revision.pathDigests ?? {}).sort());
+        // It is still *reported* as a never-content name — reported and recorded, which is what the declaration rule says.
+        expect(ledgerSide.neverContent).toEqual(['.llmwiki']);
+
+        // Then: a check that resolves the author root and writes into that directory is caught, rather than leaving the
+        // revision describing content that no longer exists.
+        const clobber = {
+            id: 'clobbers-a-declared-never-content-directory',
+            name: 'clobbers-a-declared-never-content-directory',
+            kind: 'test' as const,
+            command: process.execPath,
+            cwd: root,
+            args: [
+                '-e',
+                'const { execSync } = require("node:child_process"); const path = require("node:path");'
+                + ' const common = execSync("git rev-parse --git-common-dir").toString().trim();'
+                + ' const authorRoot = path.dirname(path.resolve(process.cwd(), common));'
+                + ' require("node:fs").writeFileSync(path.join(authorRoot, ".llmwiki", "sneaked.md"), "# WRITTEN BY CHECK\\n");',
+            ],
+        };
+        const caught = await runCommand('build', taskId, root, { seal: true, ownedPaths: declaredDirectory, checks: [clobber] });
+
+        expect(caught.success, `seal answered: ${JSON.stringify(caught).slice(0, 400)}`).toBe(false);
+        expect((caught.diagnostics as { declaredMoved?: string[] } | undefined)?.declaredMoved).toContain('.llmwiki/sneaked.md');
+    }, 120_000);
+
+    it('catches a check that writes an UNDECLARED path, which the declared comparison cannot see', async () => {
+        // **The repository half of the re-check needs its own witness.** The two comparisons answer two questions — did the
+        // *declared* content move, and did anything else in the repository move — and a case for each keeps them both honest:
+        // measured, removing the repository half from the refusal condition left every case green, because the declared cases
+        // were all satisfied by the other half. This is the escape the sandbox cannot prevent (it rewrites the author root's
+        // literal occurrences; a check that *resolves* the root still reaches it), writing a path nobody declared.
+        const root = await fixture();
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const escapedName = 'escaped-by-check.txt';
+        const escape = {
+            id: 'writes-an-undeclared-path',
+            name: 'writes-an-undeclared-path',
+            kind: 'test' as const,
+            command: process.execPath,
+            cwd: root,
+            args: [
+                '-e',
+                'const { execSync } = require("node:child_process"); const path = require("node:path");'
+                + ' const common = execSync("git rev-parse --git-common-dir").toString().trim();'
+                + ' const authorRoot = path.dirname(path.resolve(process.cwd(), common));'
+                + ` require("node:fs").writeFileSync(path.join(authorRoot, "${escapedName}"), "written by the check\\n");`,
+            ],
+        };
+
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: declared, checks: [check, escape] });
+
+        expect(sealed.success, `seal answered: ${JSON.stringify(sealed).slice(0, 400)}`).toBe(false);
+        const diagnostics = sealed.diagnostics as { reason?: string; declaredMoved?: string[]; repositoryMoved?: string[] } | undefined;
+        expect(diagnostics?.reason).toBe('repository_moved_during_checks');
+        expect(diagnostics?.repositoryMoved).toContain(escapedName);
+        // And it is reported as the repository half rather than the declared half: the write moved a path the declaration
+        // never named, so the two facts stay distinguishable in the payload.
+        expect(diagnostics?.declaredMoved).toEqual([]);
+    }, 120_000);
 });

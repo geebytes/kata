@@ -176,6 +176,11 @@ export interface WalkOptions {
     under?: string;
     /** Skip files larger than this instead of reading them. Defaults to no cap. */
     maxFileBytes?: number;
+    /**
+     * The declared root is the operator's statement, so it is walked even when the policy calls its name never-content.
+     * Only the descendants are filtered. Callers that pass a path to descend into for their own reasons leave this off.
+     */
+    underIsDeclared?: boolean;
 }
 
 /**
@@ -241,7 +246,15 @@ export async function listRepositoryFiles(root: string, options: WalkOptions = {
             if (isIgnoredRepositoryName(entry.name)) continue;
             const absolutePath = join(directory, entry.name);
             const repositoryPath = relative(root, absolutePath).replaceAll('\\', '/');
-            if (isIgnoredRepositoryPath(repositoryPath)) continue;
+            // **Inside a declared root, the policy is asked about the path the declaration pulls in, not about the root's own
+            // name.** A declaration of `.llmwiki/` (or `dist/`, or a cache directory) used to record nothing at all, because
+            // every descendant's repository path carries that never-content segment. Asked relative to the declared root, the
+            // descendants are judged on their own names — so a nested `__pycache__` is still skipped, which is what the
+            // caches-era finding requires, while the declared directory's own contents are recorded.
+            const policyPath = options.underIsDeclared && options.under
+                ? relative(join(root, options.under), absolutePath).replaceAll('\\', '/')
+                : repositoryPath;
+            if (isIgnoredRepositoryPath(policyPath)) continue;
             // git reports an ignored *directory* by its directory path, so matching the entry itself is enough to prune the
             // whole subtree — which is what makes the walk cheap as well as correct.
             if (declaredIgnored.has(repositoryPath)) continue;
@@ -259,7 +272,13 @@ export async function listRepositoryFiles(root: string, options: WalkOptions = {
     }
 
     const start = options.under ? join(root, options.under) : root;
-    if (options.under && isIgnoredRepositoryPath(options.under)) return [];
+    // **A declared root is walked even when the policy calls its name never-content.** The filter is for what a declaration
+    // *pulls in* — the descendants below — not for the root the operator named. Returning `[]` here made the identity record
+    // nothing at all for a declaration like `.llmwiki/` (or `dist/`), which an independent round then showed is a hole rather
+    // than a tidy refusal: a check that resolved the author root and wrote into that directory moved no surface, so the seal
+    // reported success on content it did not describe, and `revisionStatus` still said `current`. Callers that walk the whole
+    // repository (no `under`) are unaffected, and descendants are still filtered by `visit`.
+    if (options.under && !options.underIsDeclared && isIgnoredRepositoryPath(options.under)) return [];
     await visit(start);
     return paths.sort((left, right) => left.localeCompare(right));
 }
@@ -344,7 +363,7 @@ export async function declaredContentPaths(
         if (entry?.isDirectory()) {
             // Reported, not refused: the operator declared this root, and the identity records what it declared.
             if (isIgnoredRepositoryPath(declaration) || await isDeclaredIgnored(root, declaration)) neverContent.push(declaration);
-            for (const path of await listRepositoryFiles(root, { under: declaration })) paths.add(path);
+                    for (const path of await listRepositoryFiles(root, { under: declaration, underIsDeclared: true })) paths.add(path);
         } else if (entry?.isFile()) {
             paths.add(declaration);
         } else {

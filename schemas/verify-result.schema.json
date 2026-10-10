@@ -218,7 +218,7 @@
           }
         },
         {
-          "description": "A moved declaration: the declared sets disagree, so there is no differing path to list.",
+          "description": "A moved declaration: the declared sets disagree, so there is no differing path to list \u2014 and at least one of the two is non-empty, because two equal sets are not a move. An independent round measured the branch accepting `added: []` and `removed: []` together, which is the same empty-list lie the content branch already refuses.",
           "required": [
             "kind",
             "revisionId",
@@ -234,7 +234,23 @@
             "required": [
               "differingPaths"
             ]
-          }
+          },
+          "anyOf": [
+            {
+              "properties": {
+                "added": {
+                  "minItems": 1
+                }
+              }
+            },
+            {
+              "properties": {
+                "removed": {
+                  "minItems": 1
+                }
+              }
+            }
+          ]
         }
       ]
     }

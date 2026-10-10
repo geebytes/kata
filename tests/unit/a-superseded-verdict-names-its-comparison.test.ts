@@ -210,6 +210,9 @@ describe('a superseded verdict names what it compared', () => {
             { kind: 'content-moved', revisionId: 'revision-1', differingPaths: [], added: [], removed: [] },
             { kind: 'declaration-moved', revisionId: 'revision-1' },
             { kind: 'declaration-moved', revisionId: 'revision-1', added: [], removed: [], differingPaths: [] },
+            // Two equal sets are not a move. The content branch refuses an empty path list; the declaration branch refused an
+            // empty *pair* of sets until an independent round measured it accepting exactly this payload.
+            { kind: 'declaration-moved', revisionId: 'revision-1', added: [], removed: [] },
         ];
         for (const lie of lies) {
             expect(() => validate('verify-result', { ...base, supersededComparison: lie }), JSON.stringify(lie)).toThrow();

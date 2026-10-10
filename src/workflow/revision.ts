@@ -502,7 +502,9 @@ async function feedOwnedTree(
 
     if (entry?.isDirectory()) {
       const relativeDir = relative(root, fullPath).replaceAll('\\', '/');
-      for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
+      // `underIsDeclared`: the declaration is the operator's statement, so a declared directory is walked even when the policy
+      // calls its name never-content — the filter applies to what the declaration pulls in, not to what it names.
+      for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir, underIsDeclared: true } : {})) {
         manifest.update(file.path);
         manifest.update('\0');
         manifest.update(file.content);
@@ -531,7 +533,7 @@ export async function computeBothOwnedDigests(
 ): Promise<{ manifestHash: string; pathDigests: Record<string, string> }> {
   // **A null-prototype map, because a path is a filename and a filename can be `__proto__`.** On a plain object
   // `map['__proto__'] = digest` is a silent no-op, so a declared root-level `__proto__` file was dropped from the recorded
-  // set — and the drift comparison, which builds its own plain object, dropped it from the observed side too, so a real move
+  // set — and the observed map (its own `Object.create(null)` below) dropped it too, so a real move
   // reported `differingPaths: []`. `computePathDigests` was already fixed this way and guarded; this is the sibling the
   // guard did not cover (measured by an independent round on `the-recorded-digests-are-the-seals-map`).
   const pathDigests: Record<string, string> = Object.create(null) as Record<string, string>;
