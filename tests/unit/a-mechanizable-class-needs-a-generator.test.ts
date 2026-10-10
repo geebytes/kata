@@ -178,6 +178,72 @@ describe('a mechanizable class needs a generator', () => {
         expect(named?.need).toMatch(/is outside the change's declared surface/);
     });
 
+    it('accepts a generator covered by a declared directory, spelled the way a person writes it', async () => {
+        // **The directory half of the rule, and the spelling half** (R5-F1/R5-F2). Comparing a resolved generator against the
+        // raw spelling of a declaration refused `./src-gen/` and anything covered by a declared directory; and a mutation that
+        // deleted the directory branch stayed green because no case carried a generator inside a declared directory.
+        await prepare();
+        await mkdir(join(root, 'src-gen'), { recursive: true });
+        await writeFile(join(root, 'src-gen', 'instrument.ts'), 'export const instrument = true;\n');
+        await declarePathsForTest(['./src-gen/']);
+        const planned = await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:src-gen/instrument.ts:reddens']);
+        expect(planned.error, JSON.stringify(planned).slice(0, 200)).toBeFalsy();
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        expect(deficits.some((deficit) => deficit.need.includes('src-gen')), JSON.stringify(deficits)).toBe(false);
+    });
+
+    it('says a damaged declaration is damaged, not that it needs an instrument', async () => {
+        // **A deficit whose remedy the CLI refuses is a refusal nobody can act on** (R5-F3): the unknown-class fallback
+        // reported "declare it as --classes '<unknown>:<generator>:<relation>'", while `ledger plan` refuses an unknown class
+        // by name. The reason now names the real problem and a command that works.
+        await prepare();
+        const planPath = join(root, '.kata', 'tasks', changeId, 'review', 'plan.json');
+        const stored = JSON.parse(await readFile(planPath, 'utf8')) as Record<string, unknown>;
+        await writeFile(planPath, `${JSON.stringify({ ...stored, defectClasses: [{ class: 'kind-of-racy' }] }, null, 2)}\n`);
+        const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
+        const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
+        const named = deficits.find((deficit) => deficit.need.includes('kind-of-racy'));
+        expect(named, JSON.stringify(deficits)).toBeDefined();
+        expect(named?.need).toMatch(/vocabulary does not know/);
+        expect(named?.need).not.toMatch(/--classes 'kind-of-racy:/);
+    });
+
+    it('keeps the declaration when the plan is re-run without --classes', async () => {
+        // **The declaration lives on an artefact `plan` rewrites.** Without `--classes` the flag's absence used to delete it —
+        // and because the plan digest is part of the frozen question, the deletion moved the subject and turned every supported
+        // verdict into `evidence_stale_subject` for an operator who merely re-planned (measured by an independent round,
+        // R5-F6). Absent means "leave it as it is".
+        await prepare();
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/gen.ts:reddens']);
+        const before = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { defectClasses?: unknown };
+        expect(before.defectClasses).toEqual([{ class: 'instrument-unsound', oracle: 'mechanizable', generator: 'tmp/gen.ts', relation: 'reddens' }]);
+        await ledger(['plan', '--change', changeId]);
+        const after = JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { defectClasses?: unknown };
+        expect(after.defectClasses, 'a re-plan without the flag must not delete the declaration').toEqual(before.defectClasses);
+    });
+
+    it('hands the loop replay to the round that has to live with it', async () => {
+        // **The replay's real consumer** (R5-F5): it was computed and read by nothing in production — twice measured, once as
+        // "computed, nobody reads it" and once as "published, nobody reads it". The reviewer is the party that needs the
+        // shares and the stop-line classes, so the request carries it.
+        await prepare();
+        await writeFile(
+            join(root, '.kata', 'tasks', changeId, 'review-rounds.jsonl'),
+            [
+                JSON.stringify({ at: '2026-10-10T00:00:00.000Z', blockingIds: ['A-1'], blockingCount: 1, findings: [{ id: 'A-1', severity: 'major', class: 'comparison-unnamed', origin: 'original' }] }),
+                JSON.stringify({ at: '2026-10-10T01:00:00.000Z', blockingIds: ['B-1'], blockingCount: 1, findings: [{ id: 'B-1', severity: 'major', class: 'comparison-unnamed', origin: 'repair' }] }),
+            ].join('\n') + '\n',
+        );
+        await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/gen.ts:reddens']);
+        const request = await ledger(['run', '--change', changeId, '--out', 'tmp/request.json']);
+        expect(request.ok, JSON.stringify(request).slice(0, 200)).toBe(true);
+        const written = JSON.parse(await readFile(join(root, 'tmp', 'request.json'), 'utf8')) as { loopReplay?: { stopLineCandidates?: string[]; repairOriginShare?: number } };
+        expect(written.loopReplay, 'the request must carry the loop record').toBeTruthy();
+        expect(written.loopReplay?.stopLineCandidates).toEqual(['comparison-unnamed']);
+        expect(written.loopReplay?.repairOriginShare).toBe(0.5);
+    });
+
     it('derives the oracle from the vocabulary, not from the stored field', async () => {
         // **The vocabulary owns the oracle** (R4-F1). Reading the author-supplied field meant a plan whose `oracle` was
         // omitted — or contradicted the vocabulary — flipped the rule: a class the vocabulary calls mechanizable could be
@@ -191,22 +257,18 @@ describe('a mechanizable class needs a generator', () => {
         expect(deficits.some((deficit) => deficit.need.includes('instrument-unsound')), JSON.stringify(deficits)).toBe(true);
     });
 
-    it('refuses a generator whose link leaves the workspace even when the link is declared', async () => {
-        // **The resolver decides where a declaration points** (R4-F3): a lexical prefix test accepted `tmp/link-outside.ts`,
-        // because `resolve` normalises `..` and does not follow links while `statSync` does. The link is declared on purpose —
-        // the first version of this case left it undeclared, so the *declared-surface* rule caught it and the case passed for a
-        // reason it did not name (measured by the mutation audit: the lexical version stayed green).
+    it('names the target a link resolves to, not the link, when the target is not declared', async () => {
+        // **The resolver decides where a declaration points** (R4-F3). The generator here is `tmp/link-outside.ts`, a link
+        // whose target `outside.ts` is inside the workspace but not declared; a lexical check would name the *link* (and, if
+        // the link were declared, accept it). The reason names the resolved target, which is the property at stake.
         await prepare();
         await writeFile(join(root, 'outside.ts'), 'export const instrument = true;\n');
         await symlink(join(root, 'outside.ts'), join(root, 'tmp', 'link-outside.ts'));
-        await declarePathsForTest(['tmp/link-outside.ts']);
         await ledger(['plan', '--change', changeId, '--classes', 'instrument-unsound:tmp/link-outside.ts:reddens']);
         const decision = await ledger(['decide', '--change', changeId, '--tier', 'strict']);
         const deficits = (decision.deficits ?? []) as Array<{ need: string }>;
         const named = deficits.find((deficit) => deficit.need.includes('link-outside.ts'));
         expect(named, JSON.stringify(deficits)).toBeDefined();
-        // The reason names the **resolved target**, which is the property at stake: a lexical check names the link and
-        // accepts it.
         expect(named?.need).toMatch(/is outside the change's declared surface \(`outside\.ts`/);
     });
 

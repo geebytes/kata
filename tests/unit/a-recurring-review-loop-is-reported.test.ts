@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { recurrenceAcrossRevisions, reviewRoundsPath, type ReviewRound } from '../../src/quality/repair.js';
+import { invalidatingStates, type UpstreamSummary } from '../../src/workflow/navigation.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
 import { readUpstreamSummary, suggestCandidateAction } from '../../src/workflow/navigation.js';
 
@@ -182,6 +183,46 @@ describe('the recovery route for a recurring finding', () => {
             expect(built.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), state.what).toBe(true);
             expect(action.reason, `${state.what}: ${JSON.stringify(action)}`).toBe(state.expected);
         }
+    });
+
+    it('answers every state that invalidates the report, from one table', async () => {
+        // **The class, not the instance — again, and this time with the enumeration asserted.** The rule was fixed four times
+        // (one branch per round); the table is the fifth answer, and this case checks the two things a table can get wrong: an
+        // entry that does not fire, and a summary field that nobody routed. The second list is written here on purpose: adding
+        // an `*Unreadable` field to `UpstreamSummary` without deciding where it routes fails this case, which is the point.
+        const recurring = {
+            reviewFindings: 1,
+            blockingFindings: 1,
+            majorFindings: 0,
+            failedAcceptance: 0,
+            failedVerifyAcceptance: 0,
+            repairScopes: [],
+            verifyRepairScopes: [],
+            evidenceFiles: [],
+            failingEvidence: 0,
+            reviewLoopClassRecurrence: [
+                { class: 'instrument-unsound', oracle: 'mechanizable', rounds: ['1', '2'], findings: ['A-1', 'B-1'], repairOrigin: 1, stopLineCandidate: true },
+            ],
+        } as unknown as UpstreamSummary;
+
+        const states: Array<{ field: string; summary: UpstreamSummary; expected: string }> = [
+            { field: 'reviewLoop', summary: { ...recurring, reviewLoop: { kind: 'unreadable_current_revision' } } as unknown as UpstreamSummary, expected: 'repair_unreadable_current_revision' },
+            { field: 'reviewRecordUnreadable', summary: { ...recurring, reviewRecordUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'unreadable_review_record' },
+            { field: 'mixedRevisionEvidence', summary: { ...recurring, mixedRevisionEvidence: 'two revisions' } as unknown as UpstreamSummary, expected: 'repair_mixed_revision_evidence' },
+            { field: 'ledger', summary: { ...recurring, ledger: { state: 'unreadable', reason: 'damaged' } } as unknown as UpstreamSummary, expected: 'satisfy_ledger_deficits' },
+            { field: 'judgeUnreadable', summary: { ...recurring, judgeUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { field: 'verifyUnreadable', summary: { ...recurring, verifyUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { field: 'taskUnreadable', summary: { ...recurring, taskUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+            { field: 'evidenceUnreadable', summary: { ...recurring, evidenceUnreadable: 'damaged' } as unknown as UpstreamSummary, expected: 'repair_unreadable_record' },
+        ];
+        for (const state of states) {
+            const action = suggestCandidateAction('review', state.summary);
+            // The recurrence is present in every row: the report exists and must lose to the state.
+            expect(state.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), state.field).toBe(true);
+            expect(action.reason, `${state.field}: ${JSON.stringify(action)}`).toBe(state.expected);
+        }
+        // And the table is the same one the router reads, with one entry per routed field.
+        expect([...new Set(invalidatingStates.map((entry) => entry.field))].sort()).toEqual(states.map((state) => state.field).sort());
     });
 
     it('publishes the loop replay, so the report is readable and not only testable', async () => {

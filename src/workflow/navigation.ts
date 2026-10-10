@@ -221,6 +221,7 @@ export const nextActionReasons = [
   'repair_failed_verify',
   'repair_failing_evidence',
   'repair_mixed_revision_evidence',
+  'repair_unreadable_record',
   'repair_strict_major_findings',
   'repair_unresolved_obligations',
   'satisfy_ledger_deficits',
@@ -616,6 +617,43 @@ export function phaseFallbackAction(phase: Phase): { nextSkill: string; role: st
   return phaseFallback[phase];
 }
 
+/**
+ * **Every state that must be repaired before a report about the change means anything.**
+ *
+ * A report is *about* the change; a state that invalidates what the report is derived from — a record nobody can read, a
+ * current revision that cannot be read, evidence from two revisions, a ledger nobody can read — has to be repaired first,
+ * or the operator is told about a change nobody has established. This was fixed four times, one instance per review round
+ * (the review record, then mixed revisions and the ledger, then a failed verify, then the remaining unreadable records), so
+ * it is a table: the router iterates it above the reports, and `field` names the summary field it is derived from so that
+ * adding a record whose damage nobody routed forces a decision here (the coverage case asserts the set is complete against
+ * the summary's unreadable fields).
+ *
+ * `priority` follows the same reading as before: the more fundamental the artefact, the higher it sits.
+ */
+export const invalidatingStates: ReadonlyArray<{
+    field: string;
+    detect: (upstream: UpstreamSummary) => boolean;
+    nextSkill: string;
+    role: string;
+    reason: NextActionReason;
+    priority: number;
+    /** The phases whose reports this state invalidates; absent means every phase (as these two branches always were). */
+    phases?: readonly string[];
+}> = [
+    { field: 'reviewLoop', detect: (upstream) => upstream.reviewLoop?.kind === 'unreadable_current_revision', nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_current_revision', priority: 2300 , phases: ['review'] },
+    { field: 'reviewLoop', detect: (upstream) => upstream.reviewLoop?.kind === 'unreadable_round_history', nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_round_history', priority: 2290 , phases: ['review'] },
+    { field: 'reviewRecordUnreadable', detect: (upstream) => upstream.reviewRecordUnreadable !== undefined, nextSkill: '/kata-review', role: 'reviewer', reason: 'unreadable_review_record', priority: 2250 , phases: ['review'] },
+    { field: 'mixedRevisionEvidence', detect: (upstream) => upstream.mixedRevisionEvidence !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_mixed_revision_evidence', priority: 2240 },
+    { field: 'ledger', detect: (upstream) => upstream.ledger?.state === 'unreadable', nextSkill: '/kata-build', role: 'implementer', reason: 'satisfy_ledger_deficits', priority: 2230 },
+    // The four records below land in `unreadableProblems` (so they are counted as blocking) and used to be routed by that
+    // count. They are named individually here because the remedy differs from "repair the review findings": the record itself
+    // is what has to be restored, and each one is reported on the summary so the operator sees which.
+    { field: 'judgeUnreadable', detect: (upstream) => upstream.judgeUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2226 , phases: ['review'] },
+    { field: 'verifyUnreadable', detect: (upstream) => upstream.verifyUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2225 , phases: ['review'] },
+    { field: 'taskUnreadable', detect: (upstream) => upstream.taskUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2224 , phases: ['review'] },
+    { field: 'evidenceUnreadable', detect: (upstream) => upstream.evidenceUnreadable !== undefined, nextSkill: '/kata-build', role: 'implementer', reason: 'repair_unreadable_record', priority: 2223 , phases: ['review'] },
+];
+
 export function suggestCandidateAction(phase: string, upstream: UpstreamSummary): SuggestedAction {
   // Nothing routes out of archive: the change is being distilled, and the wiki/archive commands are the operator's.
   if (phase === 'archive') {
@@ -641,48 +679,8 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
         break;
     }
   }
-  // **A record nobody can read outranks every report about the change.** This branch used to sit far below the loop
-  // reports (change `1150`), so when a class recurred *and* the review record was unreadable the operator was sent to
-  // `/kata-build` to mechanize a class instead of to `/kata-review` to re-read the record — measured by an independent
-  // round. The rule the order now states: a refusal that names a precondition (make this readable) precedes any report
-  // about the change, whatever priority the report carries.
-  if (phase === 'review' && upstream.reviewRecordUnreadable) {
-    return {
-      nextSkill: '/kata-review',
-      role: 'reviewer',
-      reason: 'unreadable_review_record',
-      priority: 2250,
-    };
-  }
-  // **Every state that must be repaired before a report about the change means anything precedes the reports.** The
-  // `reviewRecordUnreadable` refusal above was moved first and only that one, and an independent round measured the
-  // remainder: a change with mixed-revision evidence (or an unreadable ledger) *and* a recurring class was sent to
-  // mechanize a class, when the state it had to fix first was the evidence set — the repair routes therefore sit above both
-  // recurrence reports, which are reports and nothing else.
-  if (upstream.mixedRevisionEvidence) {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'repair_mixed_revision_evidence',
-      priority: 2240,
-    };
-  }
-  // A ledger that exists and cannot be read is a refusal, not an absence: falling through would let the round-shaped
-  // branches decide as if nothing were wrong.
-  if (upstream.ledger && upstream.ledger.state === 'unreadable') {
-    return {
-      nextSkill: '/kata-build',
-      role: 'implementer',
-      reason: 'satisfy_ledger_deficits',
-      priority: 2230,
-    };
-  }
-  // **Every state that must be repaired before a report about the change means anything precedes the reports.** This is
-  // the third instance an independent round has found of the same thing — the first repair moved one branch, the second
-  // moved two more — so the rule is stated once here: a report is *about* the change, and a state that invalidates what the
-  // report is derived from (a record nobody can read, evidence from two revisions, a ledger nobody can read, a verify that
-  // failed against this content) is repaired first. The verify branch below this line used to sit under the reports while
-  // its own comment said the findings "were formed against content that no longer stands".
+  // A verify that failed against this content invalidates the findings a report would be built from, so it is answered with
+  // the states above (its reason still comes from the repair scope the failure named).
   if (phase === 'review' && upstream.verifyResult === 'FAIL') {
     return {
       nextSkill: '/kata-build',
@@ -690,7 +688,18 @@ export function suggestCandidateAction(phase: string, upstream: UpstreamSummary)
       reason: verifyRepairReason(upstream),
       priority: 2220 + upstream.failedVerifyAcceptance,
     };
-  }  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
+  }
+  // **The table above the reports.** Every state named there invalidates what a report is derived from, so it is answered
+  // first; the reports below it are *about* the change and only mean something once these are repaired.
+  const invalidating = invalidatingStates.find((entry) => (entry.phases === undefined || entry.phases.includes(phase)) && entry.detect(upstream));
+  // The first state in the table that applies is the answer: it names the repair that has to happen before a report about
+  // the change can mean anything. Each entry decides its own phases, because two of these branches were never phase-guarded
+  // and narrowing them to `review` would have stopped a mixed-revision seal from being repaired outside it (measured by a
+  // pre-existing case after the first version of this table).
+  if (invalidating) {
+    return { nextSkill: invalidating.nextSkill, role: invalidating.role, reason: invalidating.reason, priority: invalidating.priority };
+  }
+  // **A class that came back inside a repair is routed, not merely published.** The first version of this published the
   // class view on the upstream summary and acted on nothing — the "computed, nobody reads it" shape this whole change exists
   // to close, measured by an independent round. It sits above the id-based route because a class recurring inside a repair
   // says more than one id repeating: the id view cannot see it at all (no id repeated across the seven rounds that produced
@@ -976,6 +985,8 @@ const trustBoundaryByReason: Record<NextActionReason, TrustBoundary | null> = {
   repair_failed_verify: null,
   repair_failing_evidence: null,
   repair_mixed_revision_evidence: null,
+  // A damaged record is repaired by an implementer; no gate is crossed by noticing it.
+  repair_unreadable_record: null,
   repair_strict_major_findings: null,
   repair_unresolved_obligations: null,
   resolve_repair_obligations: null,

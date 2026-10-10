@@ -131,6 +131,8 @@ export function requireDefectClass(value: unknown, where: string): DefectClass {
  */
 export interface DeclaredDefectClass {
     class: string;
+    /** Set when the class name is not in the vocabulary — only reachable through a hand-edited plan. */
+    unknown?: boolean;
     oracle: OracleType;
     generator?: string;
     relation?: string;
@@ -151,6 +153,10 @@ export function declaredDefectClasses(plan: unknown): DeclaredDefectClass[] {
             // round). A name the vocabulary does not know can only come from a hand-edited plan, and the fail-closed
             // direction for a reader is to require the instrument rather than to excuse it.
             oracle: isDefectClass(entry.class) ? oracleFor(entry.class) : 'mechanizable',
+            // A name the vocabulary does not know can only come from a hand-edited plan; it is reported as a damaged
+            // declaration rather than as a class with a missing instrument, because the remedy differs (see
+            // `unbackedDefectClasses`) — a deficit whose named remedy the CLI refuses is a refusal nobody can act on.
+            ...(isDefectClass(entry.class) ? {} : { unknown: true }),
             ...(typeof entry.generator === 'string' ? { generator: entry.generator } : {}),
             ...(typeof entry.relation === 'string' ? { relation: entry.relation } : {}),
         }));
@@ -192,7 +198,19 @@ export async function instrumentResolves(
     // ignored segment, which wrongly refused a *declared* file (`dist/gen.ts` is content when declared) and, worse, said it
     // "does not resolve to a file in this workspace" about a file that does (measured by an independent round, R4-F2). The
     // declaration is the authority on what the change can carry, so the rule asks it.
-    if (declaredPaths.length > 0 && !declaredPaths.some((declared) => location.path === declared.replace(/^\.\/+/, '') || location.path.startsWith(`${declared.replace(/\/+$/, '')}/`))) {
+    // **Both sides resolved.** Comparing a resolved path against the *raw spelling* of a declaration refused a declaration
+    // the resolver covers (`./src`, a declared symlink, a declared directory written with a trailing slash) and said
+    // "outside the change's declared surface" about a path that is inside it (measured by an independent round, R5-F1).
+    // The declarations are therefore resolved with the same resolver, once per call.
+    const resolvedDeclarations = (
+        await Promise.all(
+            declaredPaths.map(async (declared) => {
+                const resolved = await resolveDeclaredLocation(root, declared);
+                return resolved.kind === 'inside' ? resolved.path : null;
+            }),
+        )
+    ).filter((entry): entry is string => entry !== null);
+    if (resolvedDeclarations.length > 0 && !resolvedDeclarations.some((declared) => location.path === declared || location.path.startsWith(`${declared.replace(/\/+$/, '')}/`))) {
         return { ok: false, because: `the generator \`${candidate}\` is outside the change's declared surface (\`${location.path}\` is not covered by any declared path), so the change cannot carry it` };
     }
     return { ok: true, path: location.path };
@@ -206,17 +224,30 @@ export async function unbackedDefectClasses(
     classes: readonly DeclaredDefectClass[],
     root: string,
     declaredPaths: readonly string[] = [],
-): Promise<Array<{ class: string; generator?: string; because: string }>> {
-    const unbacked: Array<{ class: string; generator?: string; because: string }> = [];
+): Promise<Array<{ class: string; generator?: string; because: string; kind: 'missing-instrument' | 'damaged-declaration' }>> {
+    const unbacked: Array<{ class: string; generator?: string; because: string; kind: 'missing-instrument' | 'damaged-declaration' }> = [];
     for (const entry of classes) {
         if (entry.oracle !== 'mechanizable') continue;
         const generator = entry.generator;
+        // **A damaged declaration is reported as damaged, before anything is said about instruments.** The remedy differs: an
+        // unknown class name cannot be declared at all (the CLI refuses it by name), so telling the operator to run
+        // `--classes '<unknown>:…'` would name a command that cannot work — the "refusal whose remedy cannot be executed"
+        // class, measured by an independent round (R5-F3).
+        if (entry.unknown === true) {
+            unbacked.push({
+                class: entry.class,
+                ...(generator === undefined ? {} : { generator }),
+                because: `the plan declares a class the vocabulary does not know (\`${entry.class}\`), so this declaration cannot be honoured — re-run \`ledger plan --classes\` naming a class from \`defect-classes.ts\``,
+                kind: 'damaged-declaration',
+            });
+            continue;
+        }
         if (generator === undefined || generator.trim() === '') {
-            unbacked.push({ class: entry.class, because: 'no generator is named, so nothing can decide this class' });
+            unbacked.push({ class: entry.class, because: 'no generator is named, so nothing can decide this class', kind: 'missing-instrument' });
             continue;
         }
         const resolved = await instrumentResolves(root, generator, declaredPaths);
-        if (!resolved.ok) unbacked.push({ class: entry.class, generator, because: resolved.because });
+        if (!resolved.ok) unbacked.push({ class: entry.class, generator, because: resolved.because, kind: 'missing-instrument' });
     }
     return unbacked;
 }

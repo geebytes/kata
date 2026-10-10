@@ -1264,7 +1264,16 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
         // declaration is validated here by name and reported by `decide` as a deficit rather than accepted silently.
         const classesRaw = argValue(argv, '--classes');
         const defectClasses = classesRaw === undefined ? undefined : parseDefectClassDeclaration(classesRaw);
-        const planWithClasses = defectClasses === undefined ? plan : { ...plan, defectClasses };
+        // **A re-plan without `--classes` keeps the declaration.** `plan` rewrites this artefact on every run, so the flag's
+        // absence used to *delete* the change's declared defect classes — and the deletion moves the frozen question (the
+        // plan digest is part of it), which turned nineteen supported verdicts into `evidence_stale_subject` for the
+        // operator who merely re-planned (measured by an independent round, R5-F6). Absent now means "leave the declaration
+        // as it is"; `--classes` replaces it.
+        const storedPlan = await readPlanState(options.root, changeId);
+        const storedClasses = storedPlan.kind === 'usable' ? (storedPlan.value as { defectClasses?: unknown }).defectClasses : undefined;
+        const planWithClasses = defectClasses === undefined
+            ? (storedClasses === undefined ? plan : { ...plan, defectClasses: storedClasses })
+            : { ...plan, defectClasses };
         // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read
         // afterwards is a printout rather than a record.
         await writePlan(options.root, changeId, planWithClasses);

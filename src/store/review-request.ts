@@ -23,6 +23,8 @@
  * they are audit history, and approval must never rest on free text the reviewed party wrote.
  */
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
+import { readReviewRoundsState } from '../quality/repair.js';
+import { replayLoop } from '../quality/loop-replay.js';
 import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
@@ -104,6 +106,12 @@ export async function buildReviewRequest(input: {
     // **The same derivation the decision uses.** These were two copies, and they disagreed on a plan whose `defectClasses`
     // is not an array — this one threw a raw `TypeError` where the decision answered "nothing declared" (measured by an
     // independent round; the defect class is the one this change exists to name).
+    // **The loop's own record, handed to the round that has to live with it.** `replayLoop` was computed and read by nothing
+    // in production (measured twice by independent rounds: first "computed, nobody reads it", then "published, nobody reads
+    // it"). The reviewer is its real consumer — the shares and the stop-line classes are exactly what a round needs to tell
+    // "this loop is recycling its own repairs" from "this class keeps turning up in the original code".
+    const roundsRead = await readReviewRoundsState(input.root, input.changeId);
+    const loopReplay = roundsRead.kind === 'readable' ? replayLoop(roundsRead.rounds) : null;
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
     const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments)).map((entry) => entry.class);
@@ -210,6 +218,9 @@ export async function buildReviewRequest(input: {
             tier: plan.tier ?? 'unknown',
             ...(declaredClasses.length > 0 ? { defectClasses: declaredClasses } : {}),
             ...(missingGenerators.length > 0 ? { missingGenerators } : {}),
+            // The loop's record for this change, so the round can tell "we are fixing our own fixes" from "this class keeps
+            // appearing in the original code" — the reading AC-6 exists to publish, handed to its real consumer.
+            ...(loopReplay === null ? {} : { loopReplay }),
             deadlineToolCalls: plan.discovery?.deadlineToolCalls ?? null,
             // Present only when something could not be read: an absent field means the brief describes a ledger that was
             // fully readable, and a name here means the reviewer is looking at a request built around a hole.

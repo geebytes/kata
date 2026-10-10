@@ -369,7 +369,11 @@ export async function ledgerVerdict(input: {
                 ...decision.deficits,
                 ...missingGenerators.map((entry) => ({
                     claimId: '(defect classes)',
-                    need: `${entry.because}; declare it as \`--classes '${entry.class}:<generator>:<relation>'\` or the class is paid for by independent rounds instead of by a machine`,
+                    // **The remedy must be one the CLI accepts.** For a class the vocabulary does not know, `--classes
+                    // 'unknown:…'` is refused by name, so the damaged declaration's own message is the whole remedy.
+                    need: entry.kind === 'damaged-declaration'
+                        ? entry.because
+                        : `${entry.because}; declare it as \`--classes '${entry.class}:<generator>:<relation>'\` or the class is paid for by independent rounds instead of by a machine`,
                 })),
             ],
         };
