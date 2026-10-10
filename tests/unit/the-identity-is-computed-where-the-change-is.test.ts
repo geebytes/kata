@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -119,5 +119,36 @@ describe('the sealed identity is computed where the change is', () => {
         const status = await revisionStatus(root, revision!, taskId);
 
         expect(status.status).not.toBe('current');
+    }, 120_000);
+
+    it('still runs the declared checks in the sandbox, so a check that writes cannot reach the repository', async () => {
+        // **The claim this change must not have traded away.** Computing the identity from the author tree removed the one
+        // reason the sandbox was under the identity's computation; it must not have removed the sandbox from the *checks*, and
+        // the difference is observable: a check that writes a file into its own working directory leaves the author tree
+        // untouched, and the identity recorded for a declared path is the author's content rather than whatever a check left
+        // behind. (Measured before this case existed: reverting the check mapping so the commands run where the author is did
+        // not redden anything.)
+        const root = await fixture();
+        const writer = {
+            id: 'writes-into-its-cwd',
+            name: 'writes-into-its-cwd',
+            kind: 'test' as const,
+            command: process.execPath,
+            cwd: root,
+            args: ['-e', 'require("node:fs").writeFileSync("check-side-effect.txt", "written by the check")'],
+        };
+
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: declared, checks: [writer] });
+        expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
+
+        // The check's own file is not in the repository.
+        await expect(readFile(join(root, 'check-side-effect.txt'), 'utf8')).rejects.toThrow();
+        // And the identity still describes the author's declared content: the two dirty paths are named with their real
+        // digests, which is what would break if the identity were taken after the checks ran somewhere that saw them.
+        const current = await readCurrentTaskRevisionState(root, taskId);
+        expect(current.kind).toBe('current');
+        if (current.kind !== 'current') return;
+        const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
+        expect((await revisionStatus(root, revision, taskId)).status).toBe('current');
     }, 120_000);
 });
