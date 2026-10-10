@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -218,57 +219,75 @@ describe('the sealed identity is computed where the change is', () => {
         expect(JSON.stringify(sealed.diagnostics)).toContain('src/declared.ts');
     }, 120_000);
 
-    it('records a declared never-content DIRECTORY, so a write inside it moves the identity', async () => {
-        // **The hole R2-F1's repair left open, measured by round 3.** A declared *file* under a never-content name was caught
-        // (the case above). A declared *directory* whose name is never-content was not: `listRepositoryFiles` returned `[]` when
-        // the path it was told to descend into was itself policy-ignored, so the identity recorded **nothing** for that
-        // declaration — `pathDigests: {}` — and a check writing into the directory moved neither the declared surface nor the
-        // repository snapshot. The seal reported success, `revisionStatus` said `current`, and the write stayed on disk.
+    it('refuses a declaration that expands to nothing, instead of minting an identity with no content', async () => {
+        // **The closing half of the hole round 3 measured.** A declared directory whose name the content policy calls
+        // never-content (`.llmwiki/`, `dist/`, a cache) expands to nothing, so the seal used to mint a revision whose
+        // `pathDigests` was empty — and a check that resolved the author root and wrote into that directory moved **no**
+        // surface: `success: true`, `revisionStatus` `current`, the write on disk.
         //
-        // The rule the filter serves is about what a declaration *pulls in* (the descendants), not about the root the operator
-        // named, which is why `underIsDeclared` exists: a declared root is walked whatever its name.
+        // The other candidate repair — recording such a root's contents whatever the policy says — was measured wrong too
+        // (round 4): it made the same physical directory answer differently depending on how the declaration was spelled
+        // (`build/` recorded its contents, while a git-ignored `build/*` inside a declared directory was excluded). So the
+        // rule is one rule — what a declaration names is expanded under the repository's own content policy — and a
+        // declaration that covers nothing is refused with the reason and the way forward.
         const root = await fixture();
-        const declaredDirectory = ['.llmwiki'];
         const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
 
-        // First: the identity is not empty for this declaration, and the ledger's expansion of the same declaration agrees.
-        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: declaredDirectory, checks: [check] });
+        const refused = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['.llmwiki'], checks: [check] });
+
+        expect(refused.success, `seal answered: ${JSON.stringify(refused).slice(0, 300)}`).toBe(false);
+        expect(String(refused.error)).toContain('The declaration covers no files');
+        expect(String(refused.error)).toContain('.llmwiki');
+        expect((refused.diagnostics as { reason?: string } | undefined)?.reason).toBe('declaration_covers_no_content');
+        // No revision was minted for it, so there is nothing whose identity silently covers zero content.
+        expect(existsSync(join(root, '.kata', 'tasks', taskId, 'current-revision.json'))).toBe(false);
+        // And the ledger answers the same way for the same declaration: reported as never-content, refused by name.
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        const ledgerSide = await declaredContentPaths(root, ['.llmwiki']);
+        expect(ledgerSide.paths).toEqual([]);
+        expect(ledgerSide.neverContent).toEqual(['.llmwiki']);
+    }, 120_000);
+
+    it('excludes a git-ignored descendant of a declared directory, and refuses it as a declaration of its own', async () => {
+        // **Both spellings, one answer (round 4's major).** `build/` declared recorded its contents while a git-ignored
+        // `build/*` inside a declared directory was excluded, so the same physical fact had two answers depending on how the
+        // operator spelled the declaration. Under the uniform rule the descendant is not content, and naming it directly is
+        // refused rather than silently recorded.
+        const root = await fixture();
+        await writeFile(join(root, '.gitignore'), '*.log\n');
+        await writeFile(join(root, 'src', 'trace.log'), 'a build artifact\n');
+        await git(root, ['add', '.gitignore']);
+        await git(root, ['commit', '-qm', 'ignore logs']);
+
+        // Declaring the directory records its content files and not the ignored descendant.
+        const check = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: root, args: ['-e', 'process.exit(0)'] };
+        const sealed = await runCommand('build', taskId, root, { seal: true, ownedPaths: ['src'], checks: [check] });
         expect(sealed.success, JSON.stringify(sealed).slice(0, 300)).toBe(true);
         const current = await readCurrentTaskRevisionState(root, taskId);
         expect(current.kind).toBe('current');
         if (current.kind !== 'current') return;
         const revision = (await readTaskRevision(root, taskId, current.revision.id))!;
-        // All three files the fixture puts in that directory: one committed, one edited after the commit, one never committed.
-        // A declaration of the directory is a statement about its contents, so the policy's opinion of the *name* does not
-        // shrink what the identity records — only what a declaration silently pulls in is filtered.
-        expect(Object.keys(revision.pathDigests ?? {}).sort()).toEqual(['.llmwiki/committed.md', '.llmwiki/edited.md', '.llmwiki/untracked.md']);
+        const keys = Object.keys(revision.pathDigests ?? {});
+        expect(keys).toContain('src/declared.ts');
+        expect(keys).not.toContain('src/trace.log');
 
-        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
-        const ledgerSide = await declaredContentPaths(root, declaredDirectory);
-        expect(ledgerSide.paths, 'the ledger expands the declaration the same way the seal records it').toEqual(Object.keys(revision.pathDigests ?? {}).sort());
-        // It is still *reported* as a never-content name — reported and recorded, which is what the declaration rule says.
-        expect(ledgerSide.neverContent).toEqual(['.llmwiki']);
+        // **A *file* is recorded whatever its name; a directory is expanded under the policy.** The same rule, stated for the
+        // other spelling — so the ignored artifact is excluded from a declared directory and recorded when the operator names
+        // it directly. Driven on a second fixture, because a seal adopts the declaration the task already carries.
+        const second = await fixture();
+        await writeFile(join(second, '.gitignore'), '*.log\n');
+        await writeFile(join(second, 'src', 'trace.log'), 'a build artifact\n');
+        await git(second, ['add', '.gitignore']);
+        await git(second, ['commit', '-qm', 'ignore logs']);
+        const trivial = { id: 'trivial', name: 'trivial', kind: 'test' as const, command: process.execPath, cwd: second, args: ['-e', 'process.exit(0)'] };
 
-        // Then: a check that resolves the author root and writes into that directory is caught, rather than leaving the
-        // revision describing content that no longer exists.
-        const clobber = {
-            id: 'clobbers-a-declared-never-content-directory',
-            name: 'clobbers-a-declared-never-content-directory',
-            kind: 'test' as const,
-            command: process.execPath,
-            cwd: root,
-            args: [
-                '-e',
-                'const { execSync } = require("node:child_process"); const path = require("node:path");'
-                + ' const common = execSync("git rev-parse --git-common-dir").toString().trim();'
-                + ' const authorRoot = path.dirname(path.resolve(process.cwd(), common));'
-                + ' require("node:fs").writeFileSync(path.join(authorRoot, ".llmwiki", "sneaked.md"), "# WRITTEN BY CHECK\\n");',
-            ],
-        };
-        const caught = await runCommand('build', taskId, root, { seal: true, ownedPaths: declaredDirectory, checks: [clobber] });
-
-        expect(caught.success, `seal answered: ${JSON.stringify(caught).slice(0, 400)}`).toBe(false);
-        expect((caught.diagnostics as { declaredMoved?: string[] } | undefined)?.declaredMoved).toContain('.llmwiki/sneaked.md');
+        const named = await runCommand('build', taskId, second, { seal: true, ownedPaths: ['src/trace.log'], checks: [trivial] });
+        expect(named.success, JSON.stringify(named).slice(0, 300)).toBe(true);
+        const namedCurrent = await readCurrentTaskRevisionState(second, taskId);
+        expect(namedCurrent.kind).toBe('current');
+        if (namedCurrent.kind !== 'current') return;
+        const namedRevision = (await readTaskRevision(second, taskId, namedCurrent.revision.id))!;
+        expect(Object.keys(namedRevision.pathDigests ?? {})).toEqual(['src/trace.log']);
     }, 120_000);
 
     it('catches a check that writes an UNDECLARED path, which the declared comparison cannot see', async () => {

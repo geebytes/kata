@@ -7,6 +7,7 @@ import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger } from '../../src/store/ledger.js';
 import { computePathDigests } from '../../src/workflow/revision.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
+import { runCommand } from '../../src/workflow/orchestrator.js';
 
 /**
  * **Declaring a directory declares the source in it.**
@@ -117,31 +118,33 @@ describe('a declared directory excludes what is not content', () => {
         expect((await readLedger(root, changeId)).subject?.revision).not.toBe(before);
     });
 
-    it('says the declaration covered nothing instead of failing on the record schema', async () => {
+    it('says the declaration covered nothing, and the seal refuses the same declaration', async () => {
         // Measured: declaring `dist` expanded to no paths and the operator was told `$.pathDigests must NOT have fewer than
         // 1 properties` — a message about the record, naming nothing about the declaration that produced it.
         //
         // **The seal's answer for the same declaration is asserted here too.** This is the *second* shape where the ledger
         // and the seal deliberately differ (the first being a sentinel declaration), and an independent round measured that
         // only the ledger's side of it was ever exercised — so the difference was stated in the design and asserted nowhere.
-        // **This contract changed, and the reason is measured rather than a preference.** It used to be: the seal answers with
-        // no paths at all and the ledger refuses by name — "a declaration root that is never content covers nothing". An
-        // independent round then showed what that left open: with the identity recording **nothing** for such a declaration,
-        // a check that resolved the author root and wrote into that directory moved no surface at all, so the seal reported
-        // success on content it did not describe and `revisionStatus` still said `current`. The rule now is the one the
-        // declaration rule always implied — the declaration is the operator's statement, so a declared root is walked
-        // whatever the policy calls its name, and only what it *pulls in* is filtered.
+        // **The contract was strengthened, and both halves are measured.** It used to be: the seal answers with no paths at
+        // all and the ledger refuses by name. An independent round showed what the seal's half left open — with a revision
+        // whose identity had no content, a check that resolved the author root and wrote into that directory moved no surface:
+        // `success: true`, `revisionStatus` `current`, the write on disk. The other candidate repair (record such a root's
+        // contents whatever the policy says) was measured wrong too: it made the same physical directory answer differently
+        // depending on how the declaration was spelled. So the rule is uniform — a declared path is expanded under the
+        // repository's content policy — and a declaration that covers nothing is refused *by both readers*.
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/dist'] });
 
         const result = await ledger(['freeze']);
         const sealed = await computePathDigests(root, ['src/pkg/dist']);
 
-        // The build output under the declared root is recorded (it is what the operator named) …
-        expect(Object.keys(sealed)).toContain('src/pkg/dist/bundle.js');
-        expect(result.ok).toBe(true);
-        // … and the name is still reported as never-content for the repository walk, so an operator learns that build output
-        // will move their subject.
-        expect(result.neverContent).toEqual(['src/pkg/dist']);
+        expect(Object.keys(sealed)).toEqual([]); // the expansion is still empty …
+        expect(result.ok).toBe(false); // … and the ledger refuses by name
+        expect(String(result.error)).toContain('the declaration covers no files');
+        expect(String(result.error)).toContain('src/pkg/dist');
+        // **The seal's half of the same contract lives in the change that closed it** (it needs a full task record, which
+        // this fixture deliberately does not build): `tests/unit/the-identity-is-computed-where-the-change-is.test.ts`, "refuses
+        // a declaration that expands to nothing". Before that change the seal minted a revision whose identity had no content,
+        // and a check writing into such a directory moved no surface.
     });
 
     it('names a declaration root that is itself never content, instead of honouring it silently', async () => {
@@ -155,11 +158,11 @@ describe('a declared directory excludes what is not content', () => {
 
         const result = await ledger(['freeze']);
 
+        // The declaration mixes a root that expands to nothing with a file that does not, so the freeze proceeds on the file
+        // and the never-content root is reported rather than honoured — which is what makes an operator able to see that the
+        // build output they named will not move the subject.
         expect(result.ok).toBe(true);
-        // The declared root's own contents are recorded beside the declared file, and the report still names the never-content
-        // root — reported *and* recorded, which is what "the declaration is the statement" means (the contract this case
-        // asserted before the change is recorded in the case above).
-        expect(await digests()).toEqual(['src/pkg/dist/bundle.js', 'src/pkg/mod.ts']);
+        expect(await digests()).toEqual(['src/pkg/mod.ts']);
         expect(result.neverContent).toEqual(['src/pkg/dist']);
     });
 

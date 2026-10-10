@@ -502,9 +502,7 @@ async function feedOwnedTree(
 
     if (entry?.isDirectory()) {
       const relativeDir = relative(root, fullPath).replaceAll('\\', '/');
-      // `underIsDeclared`: the declaration is the operator's statement, so a declared directory is walked even when the policy
-      // calls its name never-content — the filter applies to what the declaration pulls in, not to what it names.
-      for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir, underIsDeclared: true } : {})) {
+      for await (const file of walkRepositoryEntries(root, relativeDir ? { under: relativeDir } : {})) {
         manifest.update(file.path);
         manifest.update('\0');
         manifest.update(file.content);

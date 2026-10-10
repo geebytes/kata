@@ -24,7 +24,7 @@ import { acknowledgeCometOpen, defaultWorkflowProfile, isWorkflowProfile, type W
 import { ensureWikiClosure, evaluateWikiClosure, wikiClosureRemedy } from '../wiki/closure.js';
 import { distillPassedTaskKnowledge } from '../wiki/provenance.js';
 import { nextActionForTask, readUpstreamSummary, suggestCandidateAction } from './navigation.js';
-import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
+import { type RevisionStatus, type TaskRevision, commitReviewDecision, computeBothOwnedDigests, computeContentDigests, computePathDigests, computeManifestHash, contentSnapshotHash, createTaskRevisionIfChanged, findOwnershipConflicts, inferOwnedPathsFromWorkspace, normalizeOwnedPaths, readReviewDecisionSnapshot, readTaskRevision, revisionIsCurrent, revisionStatus, workspaceDrift } from './revision.js';
 import { checksForExecutionSandbox, createExecutionSandbox } from './execution-sandbox.js';
 import { classifyCodeGraphCandidates, discoverCodeGraphCandidates, readWaivers, validateMatrix, validatePathCoverage, validateUpstreamCoverage, findRequirementsWithoutEvidence, findOrphanAcs, validateWaivers, writeWaivers, requiresMatrix, requiresUpstreamCoverage, getMatrixRowForAc, acceptanceIdsByCheckId, evidenceMatchesRow, isEntrypointEvidenceKind, type CodeGraphCandidate, type CodeGraphCandidateDisposition, type Waiver } from '../quality/acceptance-matrix.js';
 import { outOfScopeRepairPaths, repairScopePaths, type RepairReason, type RepairRecordShape, appendReviewRound } from '../quality/repair.js';
@@ -694,6 +694,26 @@ async function cmdBuild(
     // below walks it once more (both ~1 s on a 1000-file tree here). The alternative — reading only what the checks claim to
     // have touched — is what the defected version did, and it certified content it did not hold.
     const identityContent = await computeContentDigests(root);
+    // **A declaration that covers no content refuses by name, rather than minting an identity with no content.** This is the
+    // closing half of a measured hole: a declared `.llmwiki/` (a build directory, a cache — any name the content policy calls
+    // never-content) expanded to nothing, the seal minted a revision whose `pathDigests` was empty, and a check that resolved
+    // the author root and wrote into that directory moved **no** surface: `success: true`, and `revisionStatus` still said
+    // `current`. Recording such a directory's contents instead was the other wrong answer — it made the same physical
+    // directory answer differently depending on how the declaration was spelled (`build/` recorded, `build/*` did not). The
+    // declaration is the operator's statement, so it is refused with the reason and the way forward.
+    if (ownedPaths.length > 0) {
+        const declaredContent = await computePathDigests(root, ownedPaths);
+        if (Object.keys(declaredContent).length === 0) {
+            return {
+                command: 'build',
+                taskId,
+                phase: 'implement',
+                success: false,
+                error: `The declaration covers no files: ${ownedPaths.join(', ')} expand to nothing under the content policy (a build directory, a cache, or a name the repository treats as non-content). Declare the files you mean — a declared *file* is recorded whatever its name — because an identity with no content cannot answer whether the change moved.`,
+                diagnostics: { mode: 'seal', reason: 'declaration_covers_no_content', declaredPaths: ownedPaths },
+            };
+        }
+    }
     const sealed = ownedPaths.length
         ? await createTaskRevisionIfChanged({
             root,
@@ -841,7 +861,7 @@ async function cmdBuild(
             taskId,
             phase: 'implement',
             success: false,
-            error: `The repository moved while the checks ran: ${which}. A check runs in the execution sandbox and must not write into the repository; the seal refuses rather than certifying content that no longer exists. Re-run after the writer stops.`,
+            error: `The repository moved while the checks ran: ${which}. A check runs in the execution sandbox and must not write into the repository; the seal refuses rather than certifying content it has just seen move. (This is a sample taken once, after the checks return: a write that lands later — a background process a check spawned, say — is not caught here, and is closed by the next revision status, which applies the same derivation. Stated because the first version of this message over-claimed.) Re-run after the writer stops.`,
             diagnostics: { mode: 'seal', reason: 'repository_moved_during_checks', declaredMoved, repositoryMoved },
         };
     }
