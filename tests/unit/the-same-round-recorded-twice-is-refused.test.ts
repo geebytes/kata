@@ -102,9 +102,19 @@ describe('only the same round is refused', () => {
         const record1 = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { status?: string };
         expect(record1.status).toBe('approved');
 
+        // **Nothing moves on a refusal** (R1-F3): the state the entry would have transitioned is read before and after, and
+        // it is byte-identical — the guard used to run after the transition, so the refusal was emitted with the task already
+        // re-entered (measured by the round that found it).
+        // The phase is staged back to `hardVerify` so a transition would be *visible*: with the task already in `review`,
+        // re-entering writes the same phase and the assertion below could not tell a moved state from an unmoved one — the
+        // first version of this case was green under the mutation for exactly that reason (measured while re-aiming E5).
+        await writeCurrentState(root, { taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-10-11T00:00:00.000Z' });
+        const stateFile = join(root, '.kata', 'tasks', changeId, 'current-state.json');
+        const beforeRefusal = await readFile(stateFile, 'utf8');
         const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
         expect(reentry.success, JSON.stringify(reentry).slice(0, 220)).toBe(false);
         expect(reentry.error).toMatch(/approved review record/);
+        expect(await readFile(stateFile, 'utf8'), 'a refused entry must not move the task').toBe(beforeRefusal);
         // And the accepted conclusion is still where it was: the refusal writes nothing.
         const record2 = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as { status?: string; findings?: Array<{ id?: string }> };
         expect(record2.status).toBe('approved');

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initLayout, taskDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
-import { appendClaim, freezeSubject, restateClaim, writePlan, writePolicy, writeSubject } from '../../src/store/ledger.js';
+import { appendClaim, restateClaim, writePlan, writePolicy } from '../../src/store/ledger.js';
+import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
@@ -30,9 +31,6 @@ beforeEach(async () => {
     await mkdir(join(root, '.kata', 'evidence'), { recursive: true });
     await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
     await writePolicy(root, changeId, defaultPolicy());
-    const frozen = await freezeSubject({ root, paths: ['src/a.ts'] });
-    if (!frozen.ok) throw new Error(frozen.error);
-    await writeSubject(root, changeId, frozen.subject);
     await appendClaim(root, changeId, {
         id: 'C-1', statement: 'The export is present.', riskClass: 'consistency', severity: 'major',
         dependsOn: ['path:src/a.ts'], evidenceIds: [], challengeIds: [], status: 'open', at: '2026-10-11T00:00:00.000Z', reopens: 0,
@@ -43,6 +41,14 @@ beforeEach(async () => {
         requiredEvidence: [{ claimId: 'C-1', types: [], minimumStrength: 0 }],
         discovery: { deadlineToolCalls: null },
     });
+    // **Frozen through the real verbs**, because the frozen subject has to carry the question: a hand-frozen subject with no
+    // `claimsDigest` leaves `subjectAsDeclared` underivable, so a recorded round carries no `subjectRevision`, and the
+    // request-move road cannot be reached at all — the fixture would be testing its own shortcut (measured by an independent
+    // round, and the same trap this repository has hit twice: a fixture that skips the path under test).
+    const planned = await ledgerJson(['plan', '--change', changeId]);
+    expect(planned.ok, JSON.stringify(planned).slice(0, 200)).toBe(true);
+    const frozen = await ledgerJson(['freeze', '--change', changeId]);
+    expect(frozen.ok, JSON.stringify(frozen).slice(0, 200)).toBe(true);
     await writeCurrentState(root, { taskId: changeId, phase: 'hardVerify', actor: { id: 'kata-agent', role: 'implementer' }, updatedAt: '2026-10-11T00:00:00.000Z' });
 });
 
@@ -50,6 +56,24 @@ afterEach(async () => {
     vi.restoreAllMocks();
     await rm(root, { recursive: true, force: true });
 });
+
+/** A ledger verb's own envelope: the command prints its answer, so the answer is what is read. */
+async function ledgerJson(argv: string[]): Promise<{ ok?: boolean; error?: string; revision?: string }> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
+    try {
+        await runLedgerCommand(argv, { root, changeId });
+    } finally {
+        stdout.mockRestore();
+        process.exitCode = previousExitCode;
+    }
+    const line = chunks.join('').trim().split('\n').filter((entry) => entry.trim().startsWith('{')).at(-1);
+    return line ? (JSON.parse(line) as { ok?: boolean; error?: string; revision?: string }) : {};
+}
 
 async function seal(): Promise<string> {
     await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
@@ -106,18 +130,41 @@ describe('a replaced round is archived', () => {
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
     });
 
-    it('archives when the request moved between the rounds, and names what superseded it', async () => {
+    it('archives through the result path when the request moved, and names what superseded it', async () => {
         await seal();
         await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
         await waitFor('record round 1', record('F-1', 'round-1.json'));
-        // The question moves: the same code answers a different request, which is the road the record's binding cannot see.
+        // **The road this case names is the result path** (an earlier version drove the entry, which archives
+        // unconditionally and so proved nothing about the request move — measured by an independent round). The question
+        // moves, no new entry happens, and the next result lands on the record that answered the old question.
+        await restateClaim(root, changeId, 'C-1', 'The export is present, and stays present.');
+        await waitFor('record round 2 without a new entry', record('F-2', 'round-2.json'));
+        const archived = await rows();
+        expect(archived).toHaveLength(1);
+        expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
+        // **The row says what superseded it, and the name is non-empty** — the entry road wrote an empty string on every
+        // row because it read a field the identity does not carry (measured by the same round).
+        expect(typeof archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe('string');
+        expect(archived[0]?.supersededBy).not.toBe('');
+        expect(typeof archived[0]?.archivedAt).toBe('string');
+        // And the declaration travels on this road too, not only on the entry road (the same round measured that the result
+        // path dropped it).
+        expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
+    });
+
+    it('archives through the entry when the request moved, and names the revision it opens against', async () => {
+        await seal();
+        await waitFor('enter review', runCommand('review', changeId, root, { confirmHostModel: true }));
+        await waitFor('record round 1', record('F-1', 'round-1.json'));
         await restateClaim(root, changeId, 'C-1', 'The export is present, and stays present.');
         await waitFor('enter review after the restatement', runCommand('review', changeId, root, { confirmHostModel: true }));
         const archived = await rows();
         expect(archived).toHaveLength(1);
         expect((archived[0]?.findings as Array<{ id?: string }> | undefined)?.map((finding) => finding.id)).toEqual(['F-1']);
-        // The row says what superseded it, so a reader can tell a replacement from a discard.
-        expect(typeof archived[0]?.supersededBy).toBe('string');
-        expect(typeof archived[0]?.archivedAt).toBe('string');
+        expect(archived[0]?.supersededBy, JSON.stringify(archived[0])).toBe(
+            JSON.parse(await readFile(join(root, '.kata', 'tasks', changeId, 'current-revision.json'), 'utf8')).id as string,
+        );
+        expect(archived[0]?.declaredCoverage).toEqual(['C-1']);
+        expect(typeof archived[0]?.reviewedRevisionId).toBe('string');
     });
 });

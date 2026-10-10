@@ -141,6 +141,28 @@ async function guardTransition(
     }
 }
 
+/**
+ * **One row shape, derived once, for both roads that archive a round.**
+ *
+ * The entry and the result path each built their own row, and they drifted: the result road dropped `declaredCoverage` and
+ * `reviewedRevisionId`, so an empty-but-declared round archived by a result carried its declaration nowhere — reachable from
+ * neither the store nor the history (measured by an independent round). A row is written by this function or not at all, and
+ * `supersededBy` is a real name: the entry's first version read `subjectRevision` off a `RevisionIdentity`, which has no such
+ * field, so it wrote an empty string on every row (measured by the same round).
+ */
+function supersededRoundRow(record: Record<string, unknown>, supersededBy: string | null | undefined): string {
+    return `${JSON.stringify({
+        revisionId: record.revisionId,
+        ...(typeof record.subjectRevision === 'string' ? { subjectRevision: record.subjectRevision } : {}),
+        ...(typeof record.reviewedRevisionId === 'string' ? { reviewedRevisionId: record.reviewedRevisionId } : {}),
+        ...(Array.isArray(record.declaredCoverage) ? { declaredCoverage: record.declaredCoverage } : {}),
+        findings: record.findings,
+        status: typeof record.status === 'string' ? record.status : 'pending',
+        supersededBy: supersededBy ?? '',
+        archivedAt: new Date().toISOString(),
+    })}\n`;
+}
+
 export async function runCommand(
     command: KataCommand,
     taskId: string,
@@ -1838,14 +1860,9 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     if (!placeholder && Object.keys(existingRecord).length > 0 && !sameRound) {
                         await appendFile(
                             join(taskDir(root, taskId), 'review-history.jsonl'),
-                            JSON.stringify({
-                                revisionId: existing.record.revisionId,
-                                ...(typeof existing.record.subjectRevision === 'string' ? { subjectRevision: existing.record.subjectRevision } : {}),
-                                findings: existing.record.findings,
-                                status: existing.record.status ?? 'pending',
-                                supersededBy: currentSubject,
-                                archivedAt: new Date().toISOString(),
-                            }) + '\n',
+                            // The successor is the question that moved when there is one, and the revision being recorded
+                            // against otherwise — never a field the identity does not carry.
+                            supersededRoundRow(existing.record as Record<string, unknown>, currentSubject ?? binding.revisionId),
                             'utf8',
                         );
                     }
@@ -2236,6 +2253,33 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
             };
         }
 
+        // **A refusal must not move the task, so it is decided before anything is written.** This check used to live inside
+        // the lock callback, which runs after `guardTransition` and `transition` have already put the task in `review`: the
+        // refusal was emitted with the phase already changed, so "refused" and "re-entered review" happened together
+        // (measured by an independent round). The record is read here, before the transition, and an accepted conclusion
+        // stops the entry with nothing moved — the assertion in `the-same-round-recorded-twice-is-refused.test.ts` holds
+        // that, and it reddens if this moves back below the transition.
+        {
+            const standing = await readFile(layoutReviewPath(root, taskId), 'utf8').catch(() => '');
+            if (standing) {
+                try {
+                    const record = JSON.parse(standing) as { status?: string; findings?: unknown[] };
+                    if (record.status === 'approved' && Array.isArray(record.findings) && record.findings.length > 0) {
+                        return {
+                            command: 'review',
+                            taskId,
+                            phase: (await readCurrentState(root, taskId)).phase,
+                            success: false,
+                            error: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
+                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
+                        };
+                    }
+                } catch {
+                    // A record that cannot be parsed is refused by the entry's own reader below, with its own words: this
+                    // check is only about a conclusion the gate already accepted.
+                }
+            }
+        }
         if (!options.confirmHostModel) {
             // **The phase the task holds, not the phase this branch assumed.** Reported from another checkout: the refusal
             // said `hardVerify` while `current-state.json` said `review`, so the operator's next step (the remedy for a
@@ -2283,7 +2327,11 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // **An approved record is not displaced by entering review.** It answered a question the gate accepted,
                     // and "I looked again" is not a reason to move it out of the store: the entry refuses instead, and the
                     // operator decides (a new round on moved content, or a waiver).
-                    // **The refusal is returned as a value, because this callback's return is the command's answer.** A
+                    // **Belt, not the guard.** The state this refuses was already refused before the transition moved the
+                    // task (the check above), so reaching here means the record became approved between that read and this
+                    // lock — which the lock exists to sequence. Kept because the dead branch is cheaper than the assumption.
+                    //
+                    // The refusal is returned as a value, because this callback's return is the command's answer. A
                     // refusal returned as an envelope here would be dropped: the caller only inspects `committed.kind`, so
                     // the command would report success while writing nothing — measured while wiring this guard, and the
                     // reason it carries a `refused` field instead.
@@ -2296,29 +2344,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     // A recorded round is archived before the placeholder takes its place, so the round it described stays
                     // readable: this is the half of "entering review opens a round" that keeps the previous round.
                     if (!isReviewPlaceholder(previous)) {
-                        const historyPath = join(taskDir(root, taskId), 'review-history.jsonl');
-                        const historyEntry = JSON.stringify({
-                            revisionId: previous.revisionId,
-                            ...(typeof (previous as { subjectRevision?: unknown }).subjectRevision === 'string'
-                                ? { subjectRevision: (previous as { subjectRevision?: string }).subjectRevision }
-                                : {}),
-                            ...(typeof (previous as { reviewedRevisionId?: unknown }).reviewedRevisionId === 'string'
-                                ? { reviewedRevisionId: (previous as { reviewedRevisionId?: string }).reviewedRevisionId }
-                                : {}),
-                            // **The declaration travels with the round it belongs to.** Archiving the record without it would
-                            // erase the coverage the round declared — the fact an earlier repair kept by refusing to rewrite
-                            // an empty-but-declared round in place, so the row has to carry it when the rewrite is a move.
-                            ...(Array.isArray((previous as { declaredCoverage?: unknown }).declaredCoverage)
-                                ? { declaredCoverage: (previous as { declaredCoverage?: string[] }).declaredCoverage }
-                                : {}),
-                            findings: previous.findings,
-                            status: previous.status ?? 'pending',
-                            // **One row shape for one history file.** The release path names what superseded the row; the
-                            // entry path left those fields out, so a reader could not tell the two apart.
-                            supersededBy: (entryBinding as { subjectRevision?: string }).subjectRevision ?? '',
-                            archivedAt: new Date().toISOString(),
-                        }) + '\n';
-                        await appendFile(historyPath, historyEntry, 'utf8');
+                        // The successor is the revision this new round is bound to: the entry replaces the round, so the
+                        // revision it opens against is what moved the store on.
+                        await appendFile(
+                            join(taskDir(root, taskId), 'review-history.jsonl'),
+                            supersededRoundRow(previous as Record<string, unknown>, entryBinding.revisionId),
+                            'utf8',
+                        );
                     }
                     await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                 } catch (error) {
