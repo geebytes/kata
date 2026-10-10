@@ -4,6 +4,7 @@ import { taskDir } from '../core/layout.js';
 import { assertTaskLock, withTaskLock, type TaskLock } from '../core/state.js';
 import type { Phase } from '../core/state.js';
 import type { ReviewSeverity } from './reviewer.js';
+import { isDefectClass, oracleFor } from './defect-classes.js';
 import type { AcceptanceMatrix } from '../core/task.js';
 export interface Finding {
   taskId: string;
@@ -333,6 +334,65 @@ export interface ReviewRecurrence {
  * called `unnamed revision`, which is what it is: history that cannot say which content it read, and recurrence against it
  * is still recurrence (the problem outlived a repair either way).
  */
+/**
+ * **The same recurrence, counted by defect class instead of by finding id — and split by what it says about the process.**
+ *
+ * Counting by id answers "has this exact finding come back", which is almost never: a repair rewrites a defect and the next
+ * round finds a *different* one of the *same class*. Measured on one change: seven rounds, ten findings, and seven of those
+ * ten were defects in the previous round's repair (rounds 4, 6 and 7 each found one in the round before them) — while the
+ * id-based view reported nothing recurring, because no id repeated.
+ *
+ * Two refinements carry the signal, both required:
+ *
+ * - **`mechanizable` only.** A `judgment` class recurring is normal — two independent rounds can each find a distinct intent
+ *   omission, which is the instrument working. Escalating on that would be a false stop.
+ * - **`origin: repair` required.** The bad shape is not "the class appeared again" but "the class appeared again inside a
+ *   previous repair" — that is the loop recycling its own fixes instead of converging.
+ *
+ * `stopLineCandidate` is a *report*: neither this function nor its caller refuses a round (that would change what a gate
+ * permits). It names the class, the rounds and the repair-origin count so the operator can decide.
+ */
+export interface ClassRecurrence {
+    class: string;
+    oracle: 'mechanizable' | 'judgment';
+    /** The `at` of every round this class appeared in, oldest first. */
+    rounds: string[];
+    /** The ids of the findings, so the class view never hides the instances it is made of. */
+    findings: string[];
+    /** How many of those findings were defects in a previous round's repair. */
+    repairOrigin: number;
+    /** A mechanizable class that came back inside a repair: the shape worth stopping for, reported and not enforced. */
+    stopLineCandidate: boolean;
+}
+
+export function classRecurrence(rounds: readonly ReviewRound[]): ClassRecurrence[] {
+    const byClass = new Map<string, { rounds: string[]; findings: string[]; repairOrigin: number }>();
+    for (const round of rounds) {
+        for (const finding of round.findings ?? []) {
+            if (typeof finding.class !== 'string' || finding.class === '') continue;
+            const entry = byClass.get(finding.class) ?? { rounds: [], findings: [], repairOrigin: 0 };
+            if (!entry.rounds.includes(round.at)) entry.rounds.push(round.at);
+            if (!entry.findings.includes(finding.id)) entry.findings.push(finding.id);
+            if (finding.origin === 'repair') entry.repairOrigin += 1;
+            byClass.set(finding.class, entry);
+        }
+    }
+    return [...byClass.entries()]
+        .filter(([, entry]) => entry.rounds.length > 1)
+        .map(([name, entry]) => {
+            const oracle = isDefectClass(name) ? oracleFor(name) : 'judgment';
+            return {
+                class: name,
+                oracle,
+                rounds: [...entry.rounds].sort(),
+                findings: [...entry.findings].sort(),
+                repairOrigin: entry.repairOrigin,
+                stopLineCandidate: oracle === 'mechanizable' && entry.repairOrigin > 0 && entry.rounds.length > 1,
+            };
+        })
+        .sort((left, right) => Number(right.stopLineCandidate) - Number(left.stopLineCandidate) || left.class.localeCompare(right.class));
+}
+
 export function recurrenceAcrossRevisions(rounds: readonly ReviewRound[]): ReviewRecurrence[] {
     const revisionsById = new Map<string, Set<string>>();
     for (const round of rounds) {

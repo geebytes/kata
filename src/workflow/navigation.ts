@@ -30,7 +30,7 @@ import { orderedPhases } from '../core/state.js';
 import { ledgerVerdict } from '../store/verdict.js';
 import { readBlockingProblems } from './review-read.js';
 import { countFindingsBySeverity, mergeBlockingSeverities, type MergeBlockingProblem } from '../quality/review-ladder.js';
-import { assessReviewLoop, readReviewRoundsState, recurrenceAcrossRevisions, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
+import { assessReviewLoop, classRecurrence, readReviewRoundsState, recurrenceAcrossRevisions, type ClassRecurrence, type ReviewLoopAssessment, type ReviewRecurrence } from '../quality/repair.js';
 import { isJsonRecord, readDirectoryState, readRecordState, usableOrNull } from '../core/record-read.js';
 
 
@@ -112,6 +112,8 @@ export type UpstreamSummary = {
    * current-revision count cannot do. `null` when the round history could not be read (that state routes on its own).
    */
   reviewLoopRecurrence?: ReviewRecurrence[] | null;
+  /** The same recurrence counted by defect class, with the repair-origin count — a report, not a gate. */
+  reviewLoopClassRecurrence?: ClassRecurrence[] | null;
   /** @deprecated Projection of `reviewLoop.stalled_current_rounds`; routing never reads it. */
   reviewEscalation?: { rounds: number; noProgressRounds: number; blockingIds: readonly string[]; unmeasurable?: boolean };
   /** @deprecated Projection of `reviewLoop.unreadable_round_history`; routing never reads it. */
@@ -479,6 +481,11 @@ export async function readUpstreamSummary(root: string, taskId: string): Promise
     // the current one; `null` when the history is unreadable — that state has its own route, and reporting `[]` there would
     // be a claim about a file nobody could read.
     reviewLoopRecurrence: reviewRounds.kind === 'unreadable' ? null : recurrenceAcrossRevisions(reviewRounds.rounds),
+    // **The class view travels beside the id view, because they answer different questions.** An id that comes back is almost
+    // never; a *class* that comes back inside a previous repair is the shape this loop keeps paying for (measured: seven of
+    // ten findings in one change were defects in the previous round's repair, while no id repeated). Reported, never enforced:
+    // the operator sees which class is being sampled again and decides.
+    reviewLoopClassRecurrence: reviewRounds.kind === 'unreadable' ? null : classRecurrence(reviewRounds.rounds),
     ...(reviewLoop.kind === 'stalled_current_rounds' ? {
       reviewEscalation: {
         rounds: reviewLoop.rounds,
