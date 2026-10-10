@@ -124,15 +124,24 @@ describe('a declared directory excludes what is not content', () => {
         // **The seal's answer for the same declaration is asserted here too.** This is the *second* shape where the ledger
         // and the seal deliberately differ (the first being a sentinel declaration), and an independent round measured that
         // only the ledger's side of it was ever exercised — so the difference was stated in the design and asserted nowhere.
+        // **This contract changed, and the reason is measured rather than a preference.** It used to be: the seal answers with
+        // no paths at all and the ledger refuses by name — "a declaration root that is never content covers nothing". An
+        // independent round then showed what that left open: with the identity recording **nothing** for such a declaration,
+        // a check that resolved the author root and wrote into that directory moved no surface at all, so the seal reported
+        // success on content it did not describe and `revisionStatus` still said `current`. The rule now is the one the
+        // declaration rule always implied — the declaration is the operator's statement, so a declared root is walked
+        // whatever the policy calls its name, and only what it *pulls in* is filtered.
         await writeTaskRecord(root, { id: changeId, phase: 'implement', ownedPaths: ['src/pkg/dist'] });
 
         const result = await ledger(['freeze']);
         const sealed = await computePathDigests(root, ['src/pkg/dist']);
 
-        expect(Object.keys(sealed)).toEqual([]); // the seal answers with no paths at all …
-        expect(result.ok).toBe(false); // … and the ledger refuses by name, which is the stated difference
-        expect(String(result.error)).toContain('the declaration covers no files');
-        expect(String(result.error)).toContain('src/pkg/dist');
+        // The build output under the declared root is recorded (it is what the operator named) …
+        expect(Object.keys(sealed)).toContain('src/pkg/dist/bundle.js');
+        expect(result.ok).toBe(true);
+        // … and the name is still reported as never-content for the repository walk, so an operator learns that build output
+        // will move their subject.
+        expect(result.neverContent).toEqual(['src/pkg/dist']);
     });
 
     it('names a declaration root that is itself never content, instead of honouring it silently', async () => {
@@ -147,7 +156,10 @@ describe('a declared directory excludes what is not content', () => {
         const result = await ledger(['freeze']);
 
         expect(result.ok).toBe(true);
-        expect(await digests()).toEqual(['src/pkg/mod.ts']);
+        // The declared root's own contents are recorded beside the declared file, and the report still names the never-content
+        // root — reported *and* recorded, which is what "the declaration is the statement" means (the contract this case
+        // asserted before the change is recorded in the case above).
+        expect(await digests()).toEqual(['src/pkg/dist/bundle.js', 'src/pkg/mod.ts']);
         expect(result.neverContent).toEqual(['src/pkg/dist']);
     });
 
