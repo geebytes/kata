@@ -34,6 +34,27 @@
 > **2026-10-10 追加**：同一条判据不止挡住 `freeze` —— `ledger plan` 与 `ledger run` 也从声明取路径，
 > 且**没有** `--paths` 逃生口 ⇒ 计划与 ReviewRequest 都生成不出来（实测：本轮人手装配请求才派得出复核）。
 > 详见 `2026-10-10-declared-path-that-seal-requires-ledger-refuses.md` 的「追加」一节。
+>
+> **2026-10-10 独立复算（kata 侧，树外 fixture `/tmp/delcheck`，未改本仓源码）**：
+>
+> 1. seal 侧机制：`git mv src/keep.ts src/moved.ts` 后，`git status --porcelain=v1 -z --untracked-files=all`
+>    给出 `RM src/moved.ts` **与** `src/keep.ts` 两个 token ⇒ `changedGitPaths` 把两个名字都算成变更 ✔（与报告源码引用一致）。
+> 2. 账本侧：声明含被删除的 `src/keep.ts` 时 ——
+>    * `ledger freeze` → `{"ok":false,... "these declared paths cannot be read, so they cannot be frozen: src/keep.ts"}` ✔
+>    * **`ledger plan` 同样拒绝**（新增测量，报告只说「plan 也从声明取路径」）：同一句错误、同一个 `unreadable`
+>      列表 ⇒ 不只是 freeze/run，**plan 也过不去**。
+>    * `ledger run` 因此永远走不到（计划不存在：`no plan has been stored`），即复核请求无法生成 ✔。
+> 3. **不对称比报告写的更糟**：`ledger freeze --paths <存在的路径>` 确实能绕过（实测冻结成功 `rev:fefc6a5758b91233`，
+>    `paths:1`）；而 `ledger run --paths <路径>` **被接受但被静默忽略**（没有未知 flag 拒绝，仍旧读声明）——
+>    这正是本队列 **I-6** 那一条（动词不读的族级 flag 被静默丢弃），所以它不只是「没有逃生口」，而是
+>    **看起来有、实际没有**。
+> 4. 因此**纯删除**（无改名）同样死锁：` D src/gone.ts` 也进 `changedGitPaths`，声明它 ⇒ 账本拒绝，
+>    不声明 ⇒ seal 报「未覆盖」，与改名是同一形状 ⇒ 修法必须一条规则同时覆盖「改名」与「删除」。
+>
+> **修法（推荐，两条一起）**：①「未覆盖」读数改为**内容增量**——已被删除的名字不是「未声明的变更」，
+> 它们是**已声明内容的移除**（账本的 drift 读数已经报这一件事）；声明面**不因改名或删除而扩张**。
+> ② 账本的拒绝**保持不变**（它区分「声明后被删」与「故意声明的坏路径」，是 caches change 的 C2 断言）；
+> ③ 顺带修 `run` 的 `--paths` 静默忽略（属 I-6，同批）。
 
 * **影响**：中高。改文件名的 change 无法完成 freeze / run（生成不出 ReviewRequest），能否避开取决于**操作顺序**（先提交改名即可）。
 * **判据位置**：`src/core/git.ts:82-91`（rename 时把原路径也 push）、`src/cli/ledger.ts:186-217`（`currentSubject` 从声明取路径、读不到即拒绝）。
