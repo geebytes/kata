@@ -317,14 +317,19 @@ export async function collectSealPreflight(input: {
     // match, no test run, no verdict — while `ledger evidence verify` remains the one that asks "does it still redden".
     const anchors = await declaredAnchorProblems(root, taskId);
     if (anchors.unreadable !== undefined) {
-        deny('falsifierAnchorsUnreadable', `${anchors.unreadable}, so nothing here can say whether they still point at their sites. Repair the evidence document and seal again.`, { unreadable: anchors.unreadable });
+        deny(
+            'falsifierAnchorsUnreadable',
+            `${anchors.unreadable}, so nothing here can say whether they still point at their sites. Read what the ledger holds with `
+                + `\`kata-cli ledger evidence list --change ${taskId}\`, repair that document, and seal again.`,
+            { unreadable: anchors.unreadable, readCommand: `kata-cli ledger evidence list --change ${taskId}` },
+        );
         return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
     }
     for (const problem of anchors.problems) {
         deny(
             'falsifierAnchorUnusable',
             `${problem.evidenceId}: ${problem.message}. Re-aim the anchor in your evidence submission and rewrite the set: `
-                + `kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"`,
+                + `\`kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"\``,
             { evidenceId: problem.evidenceId, file: problem.file, problem: problem.message, reaimCommand: `kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"` },
         );
     }
