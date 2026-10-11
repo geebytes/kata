@@ -110,6 +110,11 @@ describe('only the same round is refused', () => {
         const reentry = await runCommand('review', changeId, root, { confirmHostModel: true });
         expect(reentry.success, JSON.stringify(reentry).slice(0, 220)).toBe(false);
         expect(reentry.error).toMatch(/approved review record/);
+        // **R9-F2**: this refusal used to offer "or archive the change", and `archive` cannot run from `review` — the state
+        // it fires in (`Archive cannot run from review`). A refusal may only name roads that work where it fires; that is
+        // the class the result-path branch texts were fixed for, and it was present here too (measured by an independent round).
+        expect(String(reentry.error)).not.toContain('or archive the change');
+        expect(String(reentry.error)).toContain('Archiving is not available from this state');
         expect(await readFile(stateFile, 'utf8'), 'a refused entry must not move the task').toBe(before);
     });
 

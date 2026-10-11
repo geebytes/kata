@@ -142,7 +142,30 @@ describe('a refusal names the road that works', () => {
         expect(rows[0]?.status, 'the accepted conclusion is archived, not erased').toBe('approved');
     });
 
-    it('does not name a re-seal that does not happen from this state (a legacy record)', async () => {
+    it('says what is true of the shape it actually fires for (a legacy record the entry does not accept)', async () => {
+        // **R9-F1**: branch 4 fires for a *pending* legacy record too — one the entry does **not** treat as accepted — and
+        // its absolute clause ("no verb available in this state clears that by itself") was false there: re-entry does clear
+        // it. The branch now asks the entry's predicate and says what holds per shape; this case follows the pending one.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        delete recorded.subjectRevision;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'pending' }, null, 2)}\n`);
+
+        const second = await record('F-2', 'round-2.json');
+        expect(second.success).toBe(false);
+        const message = String(second.error);
+        expect(message, 'the pending shape is not an accepted conclusion').toContain('does not treat it as an accepted conclusion');
+        expect(message, 'and the road for it is re-entry, not the repair entry').toContain(`kata-cli review --change ${changeId}`);
+        // **Follow it**: re-entry archives the pending record and the new round lands.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-3', 'round-3.json')).success, 'the road the message names must land').toBe(true);
+        const rows = await historyRows();
+        expect(rows.map((row) => (row.findings ?? []).map((finding) => finding.id))).toEqual([['F-1']]);
+    });
+
+    it('does not name a re-seal that does not happen from this state (an accepted legacy record)', async () => {
         // **R8-F1**: the branch for a record with no `subjectRevision` named `kata-cli build --seal` as the re-seal road —
         // while its sibling branch states, as a reason, that from `review` that command does not re-seal at all. Same
         // defect, one branch over. The text now names the route that exists (the repair entry) and says what the seal costs.
@@ -151,7 +174,9 @@ describe('a refusal names the road that works', () => {
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
         const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
         delete recorded.subjectRevision;
-        await writeFile(reviewPath(root, changeId), `${JSON.stringify(recorded, null, 2)}\n`);
+        // **The shape this case is about is the one the entry treats as accepted** — round 9 measured that a *pending*
+        // legacy record has a different true road (re-entry, held by the next case), so this one carries the acceptance.
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'accepted for this content' }, null, 2)}\n`);
 
         const second = await record('F-2', 'round-2.json');
         expect(second.success).toBe(false);

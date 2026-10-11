@@ -156,15 +156,27 @@ describe('the refusal names a reachable remedy', () => {
         expect(String(recorded.error)).toContain('kata-cli ledger freeze');
     });
 
-    it('names re-sealing when the record predates the request binding', async () => {
+    it('names a road that exists when the record predates the request binding', async () => {
         // The other measured state: a record with no subjectRevision, where no comparison can say what it answered.
+        // **The contract moved (a-replaced-round-is-archived, 2026-10-11).** This case used to require the word
+        // "re-seal", and the branch printed `kata-cli build --seal` as the re-seal road — which does not re-seal from
+        // `review` at all (it stops at the repair entry). Two independent rounds measured that, and the branch now splits:
+        // an accepted legacy record gets the route that exists (`build --change` → repair entry → seal → re-enter), a
+        // pending one gets re-entry, which the entry really does accept for it. The case pins the reachability property
+        // instead of a word: whatever road the refusal names has to be one this state allows.
         await freezeWithQuestion();
         await recordedRound();
 
         const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
         expect(recorded.success).toBe(false);
-        expect(String(recorded.error)).toContain('predates the request binding');
-        expect(String(recorded.error)).toContain('re-seal');
+        const message = String(recorded.error);
+        expect(message).toContain('predates the request binding');
+        // This fixture's record is a **pending** legacy round, which the entry does not treat as accepted — so the road the
+        // entry really accepts for it is re-entry, and the absolute claim ("no verb available in this state clears that by
+        // itself") is false here. The accepted legacy shape has its own case in the sibling selector.
+        expect(message, 'the road this shape allows is re-entry').toContain(`kata-cli review --change ${taskId}`);
+        expect(message, 'and the message does not over-claim about this shape')
+            .not.toContain('no verb available in this state clears that by itself');
     });
 
     it('still refuses a second result for the same request, so a recorded round is not silently replaced', async () => {

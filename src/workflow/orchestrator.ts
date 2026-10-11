@@ -1875,7 +1875,14 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                                 // stated as a reason in the accepted branch below). This branch named it as the re-seal road,
                                 // which is the same defect one branch over. What is true here is the *route*: `build --change`
                                 // goes to the repair entry; the seal happens from there; the entry then opens a round.
-                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered, and no verb available in this state clears that by itself: `kata-cli build --change ' + taskId + '` takes you to the repair entry at `implement` (from `review`, `build --seal` does not re-seal — it stops there, measured). Seal from the repair entry once the content has moved (`kata-cli build --seal`), re-enter review — the entry archives the old record into review-history.jsonl and opens the new round — and record the new round against it.'
+                                // **Two shapes, two truths.** This branch fires for any recorded round that lacks `subjectRevision`
+                                // and binds the content — including a *pending* record, which the entry does **not** treat as
+                                // accepted. Saying "no verb available in this state clears that by itself" was therefore false
+                                // for the pending shape, where re-entering review does clear it (measured by an independent
+                                // round). The branch asks the same predicate the entry asks, and says what holds for each shape.
+                                ? (isAcceptedReviewRecord(existing.record as { status?: unknown; reviewEvidence?: unknown })
+                                    ? 'This recorded result predates the request binding, so nothing can tell which question it answered — and because the entry treats it as an accepted conclusion, no verb available in this state clears that by itself: `kata-cli build --change ' + taskId + '` takes you to the repair entry at `implement` (from `review`, `build --seal` does not re-seal — it stops there, measured). Seal from the repair entry once the content has moved, re-enter review — the entry archives the old record into review-history.jsonl and opens the new round — and record the new round against it.'
+                                    : 'This recorded result predates the request binding, so nothing can tell which question it answered, but the entry does not treat it as an accepted conclusion: entering review again (`kata-cli review --change ' + taskId + '`) archives it into review-history.jsonl and opens a new round, which records against the revision in hand.')
                                 // **The remedy has to be the one that works, and the text has to be true.** This message used to
                                 // end "Re-entering review does not clear a recorded round, so it is not offered as a remedy here"
                                 // and to send the operator to `ledger claim restate` alone. Both statements were overtaken by
@@ -2389,7 +2396,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             phase: (await readCurrentState(root, taskId)).phase,
                             success: false,
                             error: 'This change has an approved review record for exactly this content, so entering review again would move an accepted conclusion out of the store. '
-                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
+                                // **`archive` is not a road from here**: it runs from judge, distill or archive, and this refusal fires in `review` (`Archive cannot run from review`). Offering it was the same defect as the branch texts this change has spent rounds on, in the entry's own message — and it appeared in both copies of that message, which is why both are fixed (measured by an independent round).
+                                + 'Change the content (which supersedes it through a re-seal) and record the new round. Archiving is not available from this state — `archive` runs from judge, distill or archive.',
                         };
                     }
                 } catch {
@@ -2442,7 +2450,8 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                     if (isAcceptedReviewRecordFor(previous, recordBinding)) {
                         return {
                             refused: 'This change has an approved review record, so entering review again would move an accepted conclusion out of the store. '
-                                + 'Change the content (which supersedes it through a re-seal) and record the new round, or archive the change.',
+                                // **`archive` is not a road from here**: it runs from judge, distill or archive, and this refusal fires in `review` (`Archive cannot run from review`). Offering it was the same defect as the branch texts this change has spent rounds on, in the entry's own message — and it appeared in both copies of that message, which is why both are fixed (measured by an independent round).
+                                + 'Change the content (which supersedes it through a re-seal) and record the new round. Archiving is not available from this state — `archive` runs from judge, distill or archive.',
                         };
                     }
                     // A recorded round is archived before the placeholder takes its place, so the round it described stays
