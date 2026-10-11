@@ -181,7 +181,13 @@ describe('the refusal names a reachable remedy', () => {
         // (verify → gate approve → re-enter) was inert: re-entry deliberately preserves a recorded round (F-3), so the
         // refusal repeated verbatim after an operator ran it — measured by an independent round.
         expect(String(recorded.error)).toContain('restate a claim');
-        expect(String(recorded.error)).toContain('does not clear a recorded round');
+        // **The contract moved (`a-replaced-round-is-archived`, 2026-10-11).** This assertion pinned "re-entering review
+        // does not clear a recorded round", which was true while re-entry deliberately preserved a recorded round (F-3).
+        // The entry now *archives* the pending record and opens a new round — measured by replaying four historical rounds,
+        // where only the first could be filed until the round was re-opened — so that sentence became a false statement
+        // about the mechanism. The refusal names re-entry as the road that works, and stops asserting the opposite.
+        expect(String(recorded.error)).toContain(`kata-cli review --change ${taskId}`);
+        expect(String(recorded.error)).not.toContain('does not clear a recorded round');
         expect(String(recorded.error)).not.toContain('--confirm-host-model');
     });
 

@@ -1871,7 +1871,13 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'
                                 ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review (which supersedes the old record) and record the new round — the record path archives it when it replaces it.'
-                                : 'A second round needs a different request: restate a claim (`kata-cli ledger claim restate`) or change the plan, then re-freeze (`kata-cli ledger freeze`) so the request is built from the new question. Re-entering review does not clear a recorded round, so it is not offered as a remedy here.'
+                                // **The remedy has to be the one that works, and the text has to be true.** This message used to
+                                // end "Re-entering review does not clear a recorded round, so it is not offered as a remedy here"
+                                // and to send the operator to `ledger claim restate` alone. Both statements were overtaken by
+                                // this change: entering review *does* archive the record standing now and open a new round, and
+                                // that is the direct road for a second result over one revision — measured by replaying four
+                                // historical rounds, where only the first could be filed until the round was re-opened.
+                                : 'A review result is already recorded for this revision, for this request, and the store cannot tell a second result for the same round from recording the same round twice. Enter review again (`kata-cli review --change ' + taskId + '`) to open a new round: that archives the record standing now into review-history.jsonl and binds the new round to the revision in hand. If the question itself is what should move, restate a claim (`kata-cli ledger claim restate`) and re-freeze (`kata-cli ledger freeze`) instead.'
                     }`,
                 };
             }
