@@ -27,9 +27,11 @@
 |---|---|---|
 | **AC-1** | 仅**包含**仓库根作为子串的参数不被改写：`tests/application`、`packages/x/src/x/application`、`application` 原样到达（`command`/`args`/`env` 三处都断言） | `tests/unit/a-check-argument-is-not-rewritten-by-substring.test.ts` |
 | **AC-2** | **正对照仍在**：`=/` 等于根、或以 `root/` 开头时仍被改写（`/app`、`/app/`、`/app/tests/support`、`/app/.venv/bin/ruff`）；相对值不动 | `tests/unit/a-check-argument-that-points-inside-is-rewritten.test.ts` |
-| **AC-3** | **一处判定**：沙箱执行的参数 = 声明里写的参数，走 `cwd` 已在用的同一谓词；端到端覆盖 `build --seal` 与 `verify` | `tests/unit/the-executed-argument-is-the-one-the-check-declared.test.ts` |
+| **AC-3** | **一处判定**：沙箱执行的参数 = 声明里写的参数（**引用**被映射、**长名字**原样通过），与 `cwd` 问同一个"是不是路径段"的问题；端到端跑一条真命令由**检查自己**判定收到的是什么 | `tests/unit/the-executed-argument-is-the-one-the-check-declared.test.ts` |
 
-**边界**：`--flag=/app/x` 这种"根不在开头"的值**不再改写**——这是刻意的：未改写是**响亮的失败**（日志里出现绝对路径、在沙箱里不存在、检查失败并留证），而猜着改写是**静默的错误**。
+**规则（实现时按实测定稿，并更正过一次）**：**路径段**，不是整值、也不是子串——根的某次出现，**后面紧跟分隔符或字符串结束**才算引用（`/app/tests/support` 被映射；脚本参数里嵌的 `…file='/app/second-started'…` 也被映射，因为它的快照里存在同一路径）；**后面紧跟其它字符的不算**（`tests/application` 原样通过——`application` 不是 `app`）。
+
+我第一版把"嵌入但不在开头"的值一律不改写（`--flag=/app/x`），**被既有 e2e 当场证伪**：`seal-cost-and-revision-identity` 的两条用例依赖"脚本参数里嵌的根路径被映射到快照"来串行/并发地对齐两个检查，我的版本让它们再也碰不到一起。两半都承重：去掉后者是报告实测的缺陷，去掉前者会破坏隔离。**AC-3 的措辞**（"以及 `verify`"）也是我写错的一半：`checksForExecutionSandbox` 只有**一个**调用者（封存的证据收集），`verify` 什么都不执行、只读已记录的读数——冻结的契约不能改写，所以这条边界写在选择器、本文档与 change 的 claim 里，而不去断言那一半。
 
 ### B 组 falsifier 的读数（I-10）
 

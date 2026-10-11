@@ -45,11 +45,11 @@ afterEach(async () => {
 /**
  * **The argument the sandbox executes is the argument the check declared.**
  *
- * The corruption the substring rewrite caused is invisible in the exit code of a check that ignores its arguments and only
- * appears in the log, so this case makes the argument itself decide the outcome: the check compares the value it received
- * with the literal value the declaration wrote (read from a file outside the repository, so the expected value is not itself
- * rewritten), and exits non-zero when they differ. Under `value.replaceAll(authorRoot, sandboxRoot)` the check fails; with the
- * whole-value rule it passes — so the seal's own success is the evidence that a check really ran with its declared argument.
+ * The corruption the substring rewrite caused is invisible in the exit code of a check that ignores its arguments and shows up
+ * only in the log, so this case makes the arguments themselves decide the outcome: the check insists that the reference it was
+ * given exists in the snapshot it is running in, and that the longer name it was given is byte-for-byte what the declaration
+ * wrote. Under `value.replaceAll(authorRoot, sandboxRoot)` the second assertion fails; with the path-segment rule both hold —
+ * so the seal's own success is the evidence that a check ran with the arguments its declaration named.
  *
  * **Boundary (measured at implementation time).** Only the seal executes checks through the sandbox mapping: the single caller
  * is `collectEvidence(checksForExecutionSandbox(checksToRun, root, sandbox.root), …)` (`src/workflow/orchestrator.ts`).
@@ -58,25 +58,34 @@ afterEach(async () => {
  * rather than asserted here.
  */
 describe('the executed argument is the one the check declared', () => {
-    it('runs a check with the argument the declaration wrote, not with a substring rewrite of it', async () => {
+    it('runs a check with the arguments the declaration wrote: the reference mapped, the longer name untouched', async () => {
         const taskId = 'the-executed-argument';
         const root = await repositoryWithTask(taskId);
 
-        // The declared argument embeds the repository root but does not begin with it — the shape the substring rewrite used to
-        // corrupt. Its expected value lives in a file outside the repository, written before the check runs, because a value
-        // written *inside* the repository would be rewritten by the same rule and the comparison would agree by accident.
+        // Two arguments, one property each. The **reference** embeds the root as a path segment and must arrive mapped, pointing
+        // at the snapshot copy of the same path (`src/thing.ts` is committed, so it exists there); the **longer name** merely
+        // continues after the root and must arrive exactly as written — its expected value is read from a file outside the
+        // repository, because a literal written inside it would be mapped by the same rule and the comparison would agree by
+        // accident.
         const expectedPath = join(tmpdir(), `kata-expected-arg-${taskId}.txt`);
         roots.push(expectedPath);
-        // A value that embeds the root without beginning with it, and that `node` does not mistake for one of its own options.
-        const declaredArgument = `root=${root}/src`;
-        await writeFile(expectedPath, declaredArgument, 'utf8');
+        const longerName = `${root}backup/application`;
+        await writeFile(expectedPath, longerName, 'utf8');
 
-        const script = 'const fs=require("fs");const got=process.argv[1];const want=fs.readFileSync(process.argv[2],"utf8");'
-            + 'if(got!==want){console.error(`the check received ${got}, the declaration wrote ${want}`);process.exit(1)}';
+        const script = 'const fs=require("fs");'
+            + 'const mapped=process.argv[1].slice("key=".length);'
+            + 'if(!fs.existsSync(mapped)){console.error(`the reference did not point at the snapshot: ${mapped}`);process.exit(1)}'
+            + 'const want=fs.readFileSync(process.argv[3],"utf8");'
+            + 'if(process.argv[2]!==want){console.error(`the longer name arrived as ${process.argv[2]}, the declaration wrote ${want}`);process.exit(1)}';
         const sealed = await runCommand('build', taskId, root, {
             seal: true,
             ownedPaths: ['src/thing.ts'],
-            checks: [{ kind: 'test', command: process.execPath, args: ['-e', script, declaredArgument, expectedPath], cwd: root }],
+            checks: [{
+                kind: 'test',
+                command: process.execPath,
+                args: ['-e', script, `key=${root}/src`, longerName, expectedPath],
+                cwd: root,
+            }],
         } as never);
 
         expect(sealed.success, JSON.stringify(sealed).slice(0, 400)).toBe(true);
