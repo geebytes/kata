@@ -1883,7 +1883,14 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                                 // looking again), so the message named a road that refuses in exactly the state it fires from
                                 // (measured by an independent round). An accepted record therefore gets the roads that do work:
                                 // move the content so the acceptance no longer binds, or archive the change.
-                                : existing.record.status === 'approved'
+                                // **The branch asks the same question the entry asks.** Keying it on `status === 'approved'`
+                                // alone made it fire for a record the entry does *not* treat as accepted (an approval with no
+                                // `reviewEvidence` — the shape every reader calls invalid, and which the entry will happily
+                                // re-open), so in that shape the message claimed an acceptance that does not exist and called
+                                // re-entry refused when the entry accepts it (measured by an independent round). The shared
+                                // predicate is the answer: `isAcceptedReviewRecord` is `approved` **with the evidence it was
+                                // accepted with**, which is what the entry's own refusal is built on.
+                                : isAcceptedReviewRecord(existing.record as { status?: unknown; reviewEvidence?: unknown })
                                     // **Only roads measured to work from this state.** This sentence has been wrong in two
                                     // consecutive rounds, always the same way: it named a road that refuses where it fires.
                                     // Measured from `review` with an accepted record that binds the content: re-entering review

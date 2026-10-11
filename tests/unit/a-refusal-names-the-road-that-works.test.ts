@@ -142,6 +142,30 @@ describe('a refusal names the road that works', () => {
         expect(rows[0]?.status, 'the accepted conclusion is archived, not erased').toBe('approved');
     });
 
+    it('does not claim an acceptance the entry itself would not treat as one', async () => {
+        // **R7-F1's shape**: `approved` **without** the evidence it was accepted with. Every reader calls that invalid
+        // (`navigation.ts` answers `invalidReviewApproval`), the entry does *not* refuse re-entry over it — and a branch keyed
+        // on the status alone therefore claimed an acceptance that does not exist and called re-entry refused when the entry
+        // accepts it. The refusal and the entry now ask one predicate, and this case follows the road that answer implies.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved' }, null, 2)}\n`);
+
+        const second = await record('F-2', 'round-2.json');
+        expect(second.success).toBe(false);
+        const message = String(second.error);
+        expect(message, 'no acceptance exists in this shape').not.toContain('it was accepted');
+        expect(message, 'and the entry does accept re-entry here, so the road is re-entry').toContain(`kata-cli review --change ${changeId}`);
+
+        // **Follow it**: the entry succeeds, and the second round lands with the first archived.
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-3', 'round-3.json')).success, 'the road the message names must land').toBe(true);
+        const rows = await historyRows();
+        expect(rows.map((row) => (row.findings ?? []).map((finding) => finding.id))).toEqual([['F-1']]);
+    });
+
     it('lands: following the printed remedy files the next round and archives the first', async () => {
         await seal();
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
