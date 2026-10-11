@@ -188,6 +188,31 @@ describe('a refusal names the road that works', () => {
         expect(message, 'the entry is named as the archiver').toContain('the entry archives the old record');
     });
 
+    it('refuses before the guard runs, so an accepted record leaves no side effect', async () => {
+        // **Why the prologue check is not a duplicate of the belt.** Both ask the same question, but the prologue asks it
+        // *before* the caller-supplied guard runs: a guard with a side effect (here, a marker file) must not have run when
+        // the record already stands accepted. Without that property the prologue would be a second copy of the belt for no
+        // reason — which is exactly what the falsifier audit measured after the sequencing repair: disabling the prologue no
+        // longer changed any outcome, because the belt caught the state anyway.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'accepted for this content' }, null, 2)}\n`);
+
+        const marker = join(root, 'tmp', 'guard-ran.txt');
+        const guard = new CometGuard(async (action, _change, phase) => {
+            if (action === 'check' && phase === 'review') await writeFile(marker, 'the guard ran\n');
+            return { passed: true, phase };
+        });
+
+        const refused = await runCommand('review', changeId, root, { guard, confirmHostModel: true }) as { success?: boolean; error?: string };
+        expect(refused.success, 'an accepted record stops the entry').toBe(false);
+        expect(String(refused.error), 'with the accepted-record refusal').toContain('approved review record');
+        const ran = await readFile(marker, 'utf8').catch(() => null);
+        expect(ran, 'and the guard never ran, because the refusal is decided before it').toBe(null);
+    });
+
     it('the in-lock belt names a road too, and a selector can reach it', async () => {
         // **R10-F1 falsified a boundary I had recorded**: I wrote that the belt's copy of the entry message "has no selector
         // that can observe it", and that is false — `options.guard` runs its `check` inside `cmdReview` **after** the
