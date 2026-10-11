@@ -111,6 +111,27 @@ describe('a refusal names the road that works', () => {
         expect(message).toMatch(/If the question itself is what should move/i);
     });
 
+    it('names a road this state allows, when the standing record was accepted', async () => {
+        // **The major an independent round found**: the message named re-entry unconditionally, but the entry refuses
+        // re-entry over an approved record that still binds the current content — so in *this* state the printed road
+        // refuses, which is the class this whole file is about, one layer deeper.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...recorded, status: 'approved', reviewEvidence: 'accepted for this content' }, null, 2)}\n`);
+
+        const second = await record('F-2', 'round-2.json');
+        expect(second.success).toBe(false);
+        const message = String(second.error);
+        // The road it must not offer …
+        expect(message, 're-entry is refused in this state, so it cannot be the named road').toContain('would move an accepted conclusion');
+        // … and the roads that do work here.
+        expect(message).toMatch(/build --seal/);
+        expect(message).toMatch(/kata-cli archive --change/);
+        expect(message, 'a changed question is a new request, and its round may be recorded').toMatch(/restate a claim/);
+    });
+
     it('lands: following the printed remedy files the next round and archives the first', async () => {
         await seal();
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);

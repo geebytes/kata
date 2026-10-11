@@ -178,8 +178,10 @@ describe('the refusal names a reachable remedy', () => {
         const recorded = await runCommand('review', taskId, root, { reviewResultFile: await writeResultFile() });
         expect(recorded.success).toBe(false);
         // And the refusal names a remedy that works in the state it fires from. The chain this used to print
-        // (verify → gate approve → re-enter) was inert: re-entry deliberately preserves a recorded round (F-3), so the
-        // refusal repeated verbatim after an operator ran it — measured by an independent round.
+        // (verify → gate approve → re-enter) was inert **under the behaviour then in force**: re-entry preserved a recorded
+        // round, so the refusal repeated verbatim after an operator ran it — measured by an independent round. That
+        // behaviour was itself superseded (see the note below the assertions), which is why the road named here is the
+        // entry rather than the ledger verb alone.
         expect(String(recorded.error)).toContain('restate a claim');
         // **The contract moved (`a-replaced-round-is-archived`, 2026-10-11).** This assertion pinned "re-entering review
         // does not clear a recorded round", which was true while re-entry deliberately preserved a recorded round (F-3).
