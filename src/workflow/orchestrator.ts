@@ -1870,7 +1870,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                             : ledgerNow?.subject?.claimsDigest === undefined
                             ? 'The frozen subject does not carry the question, so restating a claim cannot move it: run `kata-cli ledger freeze --change ' + taskId + '` to freeze the question into the identity, then restate a claim if the question changed.'
                             : typeof existing.record.subjectRevision !== 'string'
-                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered: move the content and re-seal (`kata-cli build --seal`), then re-enter review — the **entry** archives the old record into review-history.jsonl and opens the new round — and record the new round against it. (The result path replaces a placeholder and archives nothing: measured, the history row appears at the entry, before any result is recorded.)'
+                                // **The last branch, and the same fact as its sibling**: from `review`, `build --seal` does not
+                                // re-seal — it enters the repair entry and stops at `implement` (measured in rounds 6 and 8, and
+                                // stated as a reason in the accepted branch below). This branch named it as the re-seal road,
+                                // which is the same defect one branch over. What is true here is the *route*: `build --change`
+                                // goes to the repair entry; the seal happens from there; the entry then opens a round.
+                                ? 'This recorded result predates the request binding, so nothing can tell which question it answered, and no verb available in this state clears that by itself: `kata-cli build --change ' + taskId + '` takes you to the repair entry at `implement` (from `review`, `build --seal` does not re-seal — it stops there, measured). Seal from the repair entry once the content has moved (`kata-cli build --seal`), re-enter review — the entry archives the old record into review-history.jsonl and opens the new round — and record the new round against it.'
                                 // **The remedy has to be the one that works, and the text has to be true.** This message used to
                                 // end "Re-entering review does not clear a recorded round, so it is not offered as a remedy here"
                                 // and to send the operator to `ledger claim restate` alone. Both statements were overtaken by

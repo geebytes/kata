@@ -142,6 +142,26 @@ describe('a refusal names the road that works', () => {
         expect(rows[0]?.status, 'the accepted conclusion is archived, not erased').toBe('approved');
     });
 
+    it('does not name a re-seal that does not happen from this state (a legacy record)', async () => {
+        // **R8-F1**: the branch for a record with no `subjectRevision` named `kata-cli build --seal` as the re-seal road —
+        // while its sibling branch states, as a reason, that from `review` that command does not re-seal at all. Same
+        // defect, one branch over. The text now names the route that exists (the repair entry) and says what the seal costs.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+        const recorded = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+        delete recorded.subjectRevision;
+        await writeFile(reviewPath(root, changeId), `${JSON.stringify(recorded, null, 2)}\n`);
+
+        const second = await record('F-2', 'round-2.json');
+        expect(second.success).toBe(false);
+        const message = String(second.error);
+        expect(message, 'a legacy record is the shape that fires').toContain('predates the request binding');
+        expect(message, 'the route that exists is the repair entry').toContain(`kata-cli build --change ${changeId}`);
+        expect(message, 'and the claim about `build --seal` from here is the measured one').toContain('does not re-seal');
+        expect(message, 'the entry is named as the archiver').toContain('the entry archives the old record');
+    });
+
     it('does not claim an acceptance the entry itself would not treat as one', async () => {
         // **R7-F1's shape**: `approved` **without** the evidence it was accepted with. Every reader calls that invalid
         // (`navigation.ts` answers `invalidReviewApproval`), the entry does *not* refuse re-entry over it — and a branch keyed
