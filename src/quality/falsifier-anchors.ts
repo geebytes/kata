@@ -16,6 +16,9 @@
  * "an instrument must be able to fail": a mutation that does not apply proves nothing, which is a different fact from a check
  * that does not fail.
  */
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 export type AnchorLocation =
     | { kind: 'unique' }
     | { kind: 'absent' }
@@ -55,4 +58,73 @@ function countOccurrences(haystack: string, needle: string): number {
         index = haystack.indexOf(needle, index + needle.length);
     }
     return count;
+}
+
+/** One declared falsifier whose anchor no longer names a place in the file it points at. */
+export interface AnchorProblem {
+    evidenceId: string;
+    file: string;
+    message: string;
+}
+
+/**
+ * **Every declared falsifier's anchor, checked read-only — the check the seal was missing.**
+ *
+ * The anchors were only ever checked when a reading was written (`ledger evidence verify` runs the mutation, so it fails by
+ * name when the anchor does not apply). A repair moves code, so an anchor that was unique when its verdict was written can
+ * stop matching afterwards — and the verdict on disk keeps saying `supported`, because a reading is a fact about the revision
+ * it was taken against. Measured in this repository: eleven anchors across ten review rounds of one change stopped matching,
+ * every one of them found by hand, and the ledger could have been asked "is this still aimed at something" at any point.
+ *
+ * The division of labour is deliberate and stated in the design document: **the seal asks whether the anchor still points at
+ * something** (necessary, and cheap — a string match, no tests, no ledger dependency beyond reading the declaration), while
+ * **`ledger evidence verify` asks whether it still reddens** (sufficient, and expensive). Neither replaces the other, and a
+ * seal that could not seal without a readable ledger would make the ledger a gate on the change rather than a record of it.
+ */
+export async function declaredAnchorProblems(
+    root: string,
+    taskId: string,
+): Promise<{ problems: AnchorProblem[]; unreadable?: string }> {
+    const path = join(root, '.kata', 'tasks', taskId, 'review', 'evidence.json');
+    let raw: string;
+    try {
+        raw = await readFile(path, 'utf8');
+    } catch (error) {
+        // **Absent and unreadable are different facts.** No ledger means nothing was declared here to check, which is not a
+        // problem; a declaration that cannot be read means the check could not run, and reporting that as "nothing to check"
+        // would be the corrupt-reads-as-absent shape the readers in this repository are built to refuse.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { problems: [] };
+        return { problems: [], unreadable: `the declared falsifiers could not be read (${(error as Error).message})` };
+    }
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw) as unknown;
+    } catch (error) {
+        return { problems: [], unreadable: `the declared falsifiers are not readable JSON (${(error as Error).message})` };
+    }
+    const items = Array.isArray(parsed) ? parsed : (parsed as { evidence?: unknown } | null)?.evidence;
+    if (!Array.isArray(items)) return { problems: [], unreadable: 'the declared falsifiers are not a list of declarations' };
+
+    const problems: AnchorProblem[] = [];
+    for (const item of items) {
+        const record = item as { id?: unknown; type?: unknown; mutation?: { file?: unknown; find?: unknown } };
+        if (record?.type !== 'executable_falsifier' || record.mutation === undefined) continue;
+        const evidenceId = typeof record.id === 'string' ? record.id : '(unnamed falsifier)';
+        const file = typeof record.mutation.file === 'string' ? record.mutation.file : undefined;
+        const find = typeof record.mutation.find === 'string' ? record.mutation.find : undefined;
+        if (file === undefined || find === undefined) {
+            problems.push({ evidenceId, file: file ?? '(no file)', message: 'this falsifier declares no file and anchor for its mutation, so it could never be re-aimed or run' });
+            continue;
+        }
+        let source: string;
+        try {
+            source = await readFile(join(root, file), 'utf8');
+        } catch {
+            problems.push({ evidenceId, file, message: `the file this falsifier mutates does not exist (${file}), so its anchor names no place and the mutation can never apply` });
+            continue;
+        }
+        const refusal = anchorRefusal(locateAnchor(source, find), file, find);
+        if (refusal !== undefined) problems.push({ evidenceId, file, message: refusal });
+    }
+    return { problems };
 }

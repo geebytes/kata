@@ -13,6 +13,7 @@ import {
     type CodeGraphCandidateDisposition,
     type Waiver,
 } from '../quality/acceptance-matrix.js';
+import { declaredAnchorProblems } from '../quality/falsifier-anchors.js';
 import { outOfScopeRepairPaths, repairScopePaths } from '../quality/repair.js';
 import { undeclaredChanges } from '../quality/undeclared-changes.js';
 import { computeManifestHash } from './revision.js';
@@ -305,6 +306,27 @@ export async function collectSealPreflight(input: {
                 },
             );
         }
+    }
+
+    // 13. The declared instruments, checked read-only: **an anchor that no longer names a place in its file.**
+    //
+    // This is the seal asking the question only a reading used to ask, and it is asked where the cost is visible: an anchor
+    // stops matching when a repair moves the code it pointed at, and the verdict on disk keeps saying `supported` because a
+    // reading is a fact about the revision it was taken against (measured: eleven anchors across ten review rounds of one
+    // change, every one of them found by hand). The question here is only "does it still point at something" — a string
+    // match, no test run, no verdict — while `ledger evidence verify` remains the one that asks "does it still redden".
+    const anchors = await declaredAnchorProblems(root, taskId);
+    if (anchors.unreadable !== undefined) {
+        deny('falsifierAnchorsUnreadable', `${anchors.unreadable}, so nothing here can say whether they still point at their sites. Repair the evidence document and seal again.`, { unreadable: anchors.unreadable });
+        return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
+    }
+    for (const problem of anchors.problems) {
+        deny(
+            'falsifierAnchorUnusable',
+            `${problem.evidenceId}: ${problem.message}. Re-aim the anchor in your evidence submission and rewrite the set: `
+                + `kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"`,
+            { evidenceId: problem.evidenceId, file: problem.file, problem: problem.message, reaimCommand: `kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"` },
+        );
     }
 
     return { blockers, waivers, ownershipConflicts, codeGraphCandidates, codeGraphDisposition, undeclaredCommittedChanges, committedReading };
