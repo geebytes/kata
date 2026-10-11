@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { containedPath } from '../store/verify-context.js';
 import { hashContent } from '../core/hash.js';
 import { createTask, type AcceptanceMatrix, type ClaimDeclaration, type CreateTaskInput, type TaskRecord, type UpstreamCoverage } from '../core/task.js';
-import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor } from '../core/state.js';
+import { readCurrentState, appendStateEvent, mutateTaskArtefact, transition, transitionLocked, transitionForRepair, withTaskLock, writeCurrentState, type Phase, type Actor, type StateRecord } from '../core/state.js';
 import { buildContextManifest, type ContextManifest } from '../core/context.js';
 import { checkFreshness, collectEvidence, computeDiffHash, isPassing, readRecordedEvidence, type CheckCommand, type EvidenceEnvelope } from '../quality/evidence.js';
 import { planCheckReuse, type CheckReusePlan } from '../quality/check-reuse.js';
@@ -2406,9 +2406,12 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                 }
             }
         }
-        await guardTransition(options.guard, 'check', taskId, 'review');
-        const state = await transition(taskId, 'review', actorFor(reviewerActor, options.platform), { root });
-        await guardTransition(options.guard, 'apply', taskId, 'review');
+        // **The move happens inside the decision's lock, not before it.** It used to sit here, above
+        // `commitReviewDecision`, so the in-lock belt below ran *after* the task had already been moved into `review`:
+        // a refusal there left the phase moved, while this same entry asserts for its pre-transition copy that a refusal
+        // must not move the task (measured by an independent round, on the path a caller-supplied `guard` makes reachable).
+        // `transitionLocked` is the same transition, for a caller that already holds the lock, so there is one derivation
+        // and the check and the move are one step instead of two adjacent ones.
         const reviewRecordPath = layoutReviewPath(root, taskId);
         const revisionId = revisionIdForEvidence(await readTaskEvidence(root, taskId, options));
         // **The placeholder is bound, because that is what makes it invalidatable.** Measured with a probe: this branch
@@ -2420,28 +2423,29 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         // overwrite/archive decision below — and the pointer is written non-atomically, so a seal landing between the two
         // left the record stamped from one revision while the decision to replace it rested on another (measured by an
         // independent review; same invariant as the round writer in `repair-entry.ts`).
+        let state: StateRecord | undefined;
         let committed;
         try {
             committed = await commitReviewDecision(root, taskId, entrySnapshot, async (lock) => {
-                try {
-                    const previous = JSON.parse(await readFile(reviewRecordPath, 'utf8')) as {
-                        revisionId?: string;
-                        findings?: ReviewFinding[];
-                        status?: string;
-                    };
+                // **In this order, on purpose: guard, then the check that can refuse, then the move.** The guard sees the
+                // task before it moves and whatever it leaves behind is what the check judges; and because the move comes
+                // last, a refusal here writes nothing — this entry's own invariant ("a refusal must not move the task"),
+                // which was false on this path while the move sat above this callback (measured by an independent round,
+                // on a path a caller-supplied `guard` makes reachable). `transitionLocked` is the same transition the
+                // wrapper runs, for a caller that already holds the lock, so the check and the move are one step.
+                await guardTransition(options.guard, 'check', taskId, 'review');
+                // The record, read once. Absence is not an error here — the placeholder write below is what creates it —
+                // so the read tolerates ENOENT instead of driving a second branch that would have to repeat the move.
+                const standing = await readFile(reviewRecordPath, 'utf8').catch(() => '');
+                let previous: { revisionId?: string; findings?: ReviewFinding[]; status?: string } | null = null;
+                if (standing) {
+                    previous = JSON.parse(standing) as { revisionId?: string; findings?: ReviewFinding[]; status?: string };
                     const recordBinding = await currentRevisionIdentityFrom(entryRevisionRead, root, taskId);
-                    // **Entering review opens a round.** A recorded round that is still `pending` belongs to the previous
-                    // round and is archived here, whatever the revision did: the slot a record lands in is "what this round
-                    // read", and the entry is the only moment that identity is established. Without this, a second round
-                    // over one revision had no way in at all — measured by recording round 10 of the defect-classes change,
-                    // which required restating a claim for no reason except to open the slot.
-                    //
                     // **An approved record is not displaced by entering review.** It answered a question the gate accepted,
                     // and "I looked again" is not a reason to move it out of the store: the entry refuses instead, and the
-                    // operator decides (a new round on moved content, or a waiver).
-                    // **Belt, not the guard.** The state this refuses was already refused before the transition moved the
-                    // task (the check above), so reaching here means the record became approved between that read and this
-                    // lock — which the lock exists to sequence. Kept because the dead branch is cheaper than the assumption.
+                    // operator decides (a new round on moved content, or a waiver). The prologue refuses the common case
+                    // with the same question before the guard runs; this is the belt under the lock, and it is now the
+                    // primary check rather than a second one after the move.
                     //
                     // The refusal is returned as a value, because this callback's return is the command's answer. A
                     // refusal returned as an envelope here would be dropped: the caller only inspects `committed.kind`, so
@@ -2454,28 +2458,31 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
                                 + 'Change the content (which supersedes it through a re-seal) and record the new round. Archiving is not available from this state — `archive` runs from judge, distill or archive.',
                         };
                     }
-                    // A recorded round is archived before the placeholder takes its place, so the round it described stays
-                    // readable: this is the half of "entering review opens a round" that keeps the previous round.
-                    if (!isReviewPlaceholder(previous)) {
-                        // The successor is the revision this new round is bound to: the entry replaces the round, so the
-                        // revision it opens against is what moved the store on.
-                        await appendFile(
-                            join(taskDir(root, taskId), 'review-history.jsonl'),
-                            supersededRoundRow(previous as Record<string, unknown>, { revision: entryBinding.revisionId }),
-                            'utf8',
-                        );
-                    }
-                    await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
-                } catch (error) {
-                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-                    await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
                 }
+                state = await transitionLocked(root, taskId, 'review', actorFor(reviewerActor, options.platform), { root });
+                await guardTransition(options.guard, 'apply', taskId, 'review');
+                // **Entering review opens a round.** A recorded round that is still `pending` belongs to the previous
+                // round and is archived here, whatever the revision did: the slot a record lands in is "what this round
+                // read", and the entry is the only moment that identity is established. Without this, a second round
+                // over one revision had no way in at all — measured by recording round 10 of the defect-classes change,
+                // which required restating a claim for no reason except to open the slot. A recorded round is archived
+                // before the placeholder takes its place, so the round it described stays readable.
+                if (previous !== null && !isReviewPlaceholder(previous)) {
+                    // The successor is the revision this new round is bound to: the entry replaces the round, so the
+                    // revision it opens against is what moved the store on.
+                    await appendFile(
+                        join(taskDir(root, taskId), 'review-history.jsonl'),
+                        supersededRoundRow(previous as Record<string, unknown>, { revision: entryBinding.revisionId }),
+                        'utf8',
+                    );
+                }
+                await mutateTaskArtefact(root, taskId, reviewRecordPath, async () => `${JSON.stringify({ ...(revisionId ? { revisionId } : {}), ...revisionBindingFields(entryBinding), findings: [], status: 'pending' }, null, 2)}\n`, lock);
             });
         } catch (error) {
             return {
                 command: 'review',
                 taskId,
-                phase: state.phase,
+                phase: state?.phase ?? (await readCurrentState(root, taskId)).phase,
                 success: false,
                 error: `Review could not be entered: ${(error as Error).message}. `
                     + `The review record is at ${layoutReviewPath(root, taskId)}; repair or remove it and retry.`,
@@ -2485,18 +2492,18 @@ async function cmdReview(taskId: string, root: string, options: CommandOptions =
         // the lock callback, because that callback's return *is* the command's answer (`commitReviewDecision` wraps it).
         if (committed.kind === 'committed' && committed.value !== undefined
             && typeof committed.value === 'object' && typeof (committed.value as { refused?: unknown }).refused === 'string') {
-            return { command: 'review', taskId, phase: state.phase, success: false, error: (committed.value as { refused: string }).refused };
+            return { command: 'review', taskId, phase: state?.phase ?? (await readCurrentState(root, taskId)).phase, success: false, error: (committed.value as { refused: string }).refused };
         }
         if (committed.kind !== 'committed') {
             return {
                 command: 'review',
                 taskId,
-                phase: state.phase,
+                phase: state?.phase ?? (await readCurrentState(root, taskId)).phase,
                 success: false,
                 error: 'Review could not be entered because the sealed revision moved or became unavailable while the placeholder was being committed. Re-run /kata-review.',
             };
         }
-        return { command: 'review', taskId, phase: state.phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
+        return { command: 'review', taskId, phase: state?.phase ?? (await readCurrentState(root, taskId)).phase, success: true, diagnostics: { role: 'reviewer', ...(revisionId ? { revisionId } : {}) } };
     } catch (error) { return { command: 'review', taskId, phase: (await readCurrentState(root, taskId)).phase, success: false, error: `Review transition failed: ${(error as Error).message}` }; }
 }
 

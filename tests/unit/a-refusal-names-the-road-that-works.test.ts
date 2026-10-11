@@ -209,11 +209,18 @@ describe('a refusal names the road that works', () => {
 
         // **The entry path, not the result path**: the belt lives in the entry's lock callback, so the command that reaches
         // it is `review` without a result file (with one, the result path refuses first, with its own text).
+        const stateBefore = await readFile(join(root, '.kata', 'tasks', changeId, 'current-state.json'));
         const belt = await runCommand('review', changeId, root, { guard, confirmHostModel: true }) as { success?: boolean; error?: string };
         expect(belt.success, 'the belt refuses when the record became accepted inside the lock').toBe(false);
         const message = String(belt.error);
         expect(message, 'and its text holds the same rule as the other copy').toContain('Archiving is not available from this state');
         expect(message, 'the belt copy must not offer the road that refuses either').not.toContain('or archive the change');
+        // **And the refusal wrote nothing.** The move used to happen above this callback, so the belt's refusal left the
+        // task in `review` — the invariant this entry asserts for its other copy, false on this path. Round 11's major was
+        // exactly that, and it became reachable only once round 10 made this copy observable. The transition now runs
+        // inside the same lock, after this check, so the state file is untouched.
+        const stateAfter = await readFile(join(root, '.kata', 'tasks', changeId, 'current-state.json'));
+        expect(stateAfter.equals(stateBefore), 'a refusal must not move the task, on either copy').toBe(true);
     });
 
     it('does not claim an acceptance the entry itself would not treat as one', async () => {

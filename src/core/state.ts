@@ -107,15 +107,24 @@ export function isReplayableTransition(from: Phase, to: Phase): boolean {
     return isLegalPhaseTransition(from, to) || isRepairReturn(from, to);
 }
 
-export async function transition(
+/**
+ * The transition itself, for a caller that already holds the task lock.
+ *
+ * **One derivation, two callers.** The review entry has to decide "is this acceptance still standing" and move the task in
+ * one atomic step: its check ran *after* `transition()` had already put the task in `review`, so a refusal there left the
+ * phase moved — the invariant the same entry asserts for its pre-transition copy ("a refusal must not move the task") was
+ * false on that path (measured by an independent round, once the path became reachable). `transition()` is now this
+ * function wrapped in the lock, and the entry calls this one from inside the lock it already holds, so the check and the
+ * move are sequenced rather than adjacent.
+ */
+export async function transitionLocked(
+    root: string,
     taskId: string,
     to: Phase,
     actor: Actor,
     options: TransitionOptions = {},
 ): Promise<StateRecord> {
-    const root = options.root ?? process.cwd();
-    assertValidTaskId(taskId);
-    return withTaskLock(root, taskId, async () => {
+    {
         const current = await readCurrentState(root, taskId);
 
         if (isIdempotentPhaseEntry(current.phase, to)) {
@@ -154,7 +163,18 @@ export async function transition(
         await stampEngineUnlocked(root, taskId);
 
         return next;
-    });
+    }
+}
+
+export async function transition(
+    taskId: string,
+    to: Phase,
+    actor: Actor,
+    options: TransitionOptions = {},
+): Promise<StateRecord> {
+    const root = options.root ?? process.cwd();
+    assertValidTaskId(taskId);
+    return withTaskLock(root, taskId, () => transitionLocked(root, taskId, to, actor, options));
 }
 
 /**
