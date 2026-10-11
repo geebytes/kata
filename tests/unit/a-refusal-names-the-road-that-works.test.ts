@@ -10,6 +10,7 @@ import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
 import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+import { CometGuard } from '../../src/comet/guard.js';
 
 /**
  * **A refusal has to name the road that works — and its claims about the mechanism have to be true.**
@@ -185,6 +186,34 @@ describe('a refusal names the road that works', () => {
         expect(message, 'the route that exists is the repair entry').toContain(`kata-cli build --change ${changeId}`);
         expect(message, 'and the claim about `build --seal` from here is the measured one').toContain('does not re-seal');
         expect(message, 'the entry is named as the archiver').toContain('the entry archives the old record');
+    });
+
+    it('the in-lock belt names a road too, and a selector can reach it', async () => {
+        // **R10-F1 falsified a boundary I had recorded**: I wrote that the belt's copy of the entry message "has no selector
+        // that can observe it", and that is false — `options.guard` runs its `check` inside `cmdReview` **after** the
+        // pre-transition refusal and **before** the lock, so a guard can accept the standing record on the way through and
+        // the belt then fires where a reader can see it. A recorded boundary that is reachable, with an instrument that
+        // covers only the other copy, is exactly the kind of claim this change exists to refuse.
+        await seal();
+        expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
+        expect((await record('F-1', 'round-1.json')).success).toBe(true);
+
+        // The guard accepts the record mid-flight, after the pre-transition check has already passed.
+        const guard = new CometGuard(async (action, _change, phase) => {
+            if (action === 'check' && phase === 'review') {
+                const standing = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
+                await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...standing, status: 'approved', reviewEvidence: 'accepted in flight' }, null, 2)}\n`);
+            }
+            return { passed: true, phase };
+        });
+
+        // **The entry path, not the result path**: the belt lives in the entry's lock callback, so the command that reaches
+        // it is `review` without a result file (with one, the result path refuses first, with its own text).
+        const belt = await runCommand('review', changeId, root, { guard, confirmHostModel: true }) as { success?: boolean; error?: string };
+        expect(belt.success, 'the belt refuses when the record became accepted inside the lock').toBe(false);
+        const message = String(belt.error);
+        expect(message, 'and its text holds the same rule as the other copy').toContain('Archiving is not available from this state');
+        expect(message, 'the belt copy must not offer the road that refuses either').not.toContain('or archive the change');
     });
 
     it('does not claim an acceptance the entry itself would not treat as one', async () => {
