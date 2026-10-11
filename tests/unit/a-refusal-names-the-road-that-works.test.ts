@@ -9,7 +9,8 @@ import { appendClaim, restateClaim, writePlan, writePolicy } from '../../src/sto
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
-import { createTaskRevisionIfChanged } from '../../src/workflow/revision.js';
+import { createTaskRevisionIfChanged, readReviewDecisionSnapshot } from '../../src/workflow/revision.js';
+import { currentRevisionIdentityFrom, revisionBindingFields } from '../../src/workflow/verdict-binding.js';
 import { CometGuard } from '../../src/comet/guard.js';
 
 /**
@@ -213,38 +214,51 @@ describe('a refusal names the road that works', () => {
         expect(ran, 'and the guard never ran, because the refusal is decided before it').toBe(null);
     });
 
-    it('the in-lock belt names a road too, and a selector can reach it', async () => {
+    it('the in-lock belt names a road too, and its refusal does not move the task', async () => {
         // **R10-F1 falsified a boundary I had recorded**: I wrote that the belt's copy of the entry message "has no selector
-        // that can observe it", and that is false — `options.guard` runs its `check` inside `cmdReview` **after** the
-        // pre-transition refusal and **before** the lock, so a guard can accept the standing record on the way through and
-        // the belt then fires where a reader can see it. A recorded boundary that is reachable, with an instrument that
-        // covers only the other copy, is exactly the kind of claim this change exists to refuse.
+        // that can observe it", and that is false — `options.guard` runs its `check` inside `cmdReview`, so a guard can
+        // accept the standing record on the way through and the belt then fires where a reader can see it. **R12-F1 then
+        // falsified the witness I wrote for it**: driving the refusal from `review` proves nothing about "a refusal must not
+        // move the task", because `review` -> `review` is an idempotent no-op — that case passed on the unfixed code too.
+        // The state that measures the property is `hardVerify`, where a refusal would otherwise move the task.
         await seal();
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
 
-        // The guard accepts the record mid-flight, after the pre-transition check has already passed.
+        // **Reach `hardVerify` the way a repair does**: the repair entry takes the task back to `implement`, and the seal
+        // advances it again. The content does not change, so the pending round stays bound to the same revision.
+        const checks = [{ kind: 'test' as const, command: process.execPath, args: ['-e', 'process.exit(0)'], cwd: root }];
+        expect((await runCommand('build', changeId, root, { seal: true, ownedPaths: ['src/a.ts'], checks })).success).toBe(true);
+        expect((await runCommand('build', changeId, root, { seal: true, ownedPaths: ['src/a.ts'], checks })).success).toBe(true);
+        const statePath = join(root, '.kata', 'tasks', changeId, 'current-state.json');
+        const phaseNow = JSON.parse(await readFile(statePath, 'utf8')).phase as string;
+        expect(phaseNow, 'the guarded run has to start where a refusal could otherwise move the task').toBe('hardVerify');
+
         const guard = new CometGuard(async (action, _change, phase) => {
             if (action === 'check' && phase === 'review') {
+                // **Bound to the revision that stands now**, through the same helpers the entry uses: the repair and the
+                // re-seal above added evidence outside the declaration, so the round's recorded freeze hash no longer
+                // describes the content — exactly the drift an approval re-bound to the current identity answers for.
+                const snapshot = await readReviewDecisionSnapshot(root, changeId);
+                const identity = await currentRevisionIdentityFrom(snapshot.revisionRead, root, changeId);
                 const standing = JSON.parse(await readFile(reviewPath(root, changeId), 'utf8')) as Record<string, unknown>;
-                await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...standing, status: 'approved', reviewEvidence: 'accepted in flight' }, null, 2)}\n`);
+                await writeFile(reviewPath(root, changeId), `${JSON.stringify({ ...standing, ...revisionBindingFields(identity), status: 'approved', reviewEvidence: 'accepted in flight' }, null, 2)}\n`);
             }
             return { passed: true, phase };
         });
 
         // **The entry path, not the result path**: the belt lives in the entry's lock callback, so the command that reaches
         // it is `review` without a result file (with one, the result path refuses first, with its own text).
-        const stateBefore = await readFile(join(root, '.kata', 'tasks', changeId, 'current-state.json'));
+        const stateBefore = await readFile(statePath);
         const belt = await runCommand('review', changeId, root, { guard, confirmHostModel: true }) as { success?: boolean; error?: string };
         expect(belt.success, 'the belt refuses when the record became accepted inside the lock').toBe(false);
         const message = String(belt.error);
         expect(message, 'and its text holds the same rule as the other copy').toContain('Archiving is not available from this state');
         expect(message, 'the belt copy must not offer the road that refuses either').not.toContain('or archive the change');
-        // **And the refusal wrote nothing.** The move used to happen above this callback, so the belt's refusal left the
-        // task in `review` — the invariant this entry asserts for its other copy, false on this path. Round 11's major was
-        // exactly that, and it became reachable only once round 10 made this copy observable. The transition now runs
-        // inside the same lock, after this check, so the state file is untouched.
-        const stateAfter = await readFile(join(root, '.kata', 'tasks', changeId, 'current-state.json'));
+        // **And the refusal wrote nothing.** The move used to happen above this callback, so a belt refusal left the task in
+        // `review` — the invariant this entry asserts for its other copy, false on this path (round 11's major, reachable
+        // only once this copy became observable). The transition now runs inside the same lock, after this check.
+        const stateAfter = await readFile(statePath);
         expect(stateAfter.equals(stateBefore), 'a refusal must not move the task, on either copy').toBe(true);
     });
 
