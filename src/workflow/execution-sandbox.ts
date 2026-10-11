@@ -155,11 +155,43 @@ async function assertRuntimeLinksContained(directory: string, runtimeRoot = dire
 }
 
 function mapRepositoryPath(path: string, authorRoot: string, sandboxRoot: string): string | null {
+  // An absolute path is answered by the shared predicate first, so `cwd` and the executed arguments cannot disagree about what
+  // counts as a repository reference; a relative path is resolved against the author root, which is what a `cwd` means.
+  if (path.startsWith('/') && !insideAuthorRoot(path, authorRoot)) return null;
   const relativePath = relative(authorRoot, resolve(authorRoot, path));
   if (relativePath === '' || relativePath === '..' || relativePath.startsWith('../')) return relativePath === '' ? sandboxRoot : null;
   return join(sandboxRoot, relativePath);
 }
 
+/**
+ * Whether a value *is* the author root, or sits under it as a path segment.
+ *
+ * **The question both `cwd` and the executed arguments ask.** It is one predicate so the two cannot disagree: a value that is
+ * the root, or begins with the root followed by a separator, is a repository reference; anything else — a different absolute
+ * path, a relative value, or a string that merely *contains* the root — is not.
+ */
+function insideAuthorRoot(value: string, authorRoot: string): boolean {
+  if (value === authorRoot) return true;
+  const prefix = authorRoot.endsWith('/') ? authorRoot : `${authorRoot}/`;
+  return value.startsWith(prefix);
+}
+
+/**
+ * Map a value the declaration wrote into the snapshot, **only when the value is a reference to the repository**.
+ *
+ * This used to be `value.replaceAll(authorRoot, sandboxRoot)`: a substring replacement, so with the author root `/app` the
+ * argument `tests/application` reached the command as `tests/tmp/kata-seal-execution-XXXXlication` — the argument the check
+ * declared was not the argument the sandbox ran, and the corruption was only visible in the log
+ * (`docs/superpowers/reports/2026-10-10-workspace-root-substitution-corrupts-check-arguments.md`). The same file already
+ * answered the neighbouring question correctly for `cwd`, which is why this is a rule change rather than a new invention: the
+ * two now ask `insideAuthorRoot` and differ only in what they do with the answer.
+ *
+ * **A value that embeds the root without beginning with it is deliberately left alone** (`--flag=/app/x`): an unreplaced
+ * absolute path is a loud failure — it does not exist in the snapshot, so the check fails and its log shows the value — while a
+ * guessed rewrite is a silent wrong answer.
+ */
 function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: string): string {
-  return value.replaceAll(authorRoot, sandboxRoot);
+  if (!insideAuthorRoot(value, authorRoot)) return value;
+  const prefix = authorRoot.endsWith('/') ? authorRoot : `${authorRoot}/`;
+  return value === authorRoot ? sandboxRoot : join(sandboxRoot, value.slice(prefix.length));
 }
