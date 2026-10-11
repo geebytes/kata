@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initLayout, reviewPath, taskDir } from '../../src/core/layout.js';
 import { createTask } from '../../src/core/task.js';
 import { writeCurrentState } from '../../src/core/state.js';
-import { appendClaim, writePlan, writePolicy } from '../../src/store/ledger.js';
+import { appendClaim, restateClaim, writePlan, writePolicy } from '../../src/store/ledger.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { runCommand } from '../../src/workflow/orchestrator.js';
@@ -91,9 +91,9 @@ async function record(id: string, file: string): Promise<{ success?: boolean; er
     return runCommand('review', changeId, root, { reviewResultFile: `tmp/${file}` }) as Promise<{ success?: boolean; error?: string }>;
 }
 
-const historyRows = async (): Promise<Array<{ findings?: Array<{ id?: string }> }>> =>
+const historyRows = async (): Promise<Array<{ findings?: Array<{ id?: string }>; status?: string }>> =>
     (await readFile(join(taskDir(root, changeId), 'review-history.jsonl'), 'utf8')).trim().split('\n').filter(Boolean)
-        .map((line) => JSON.parse(line) as { findings?: Array<{ id?: string }> });
+        .map((line) => JSON.parse(line) as { findings?: Array<{ id?: string }>; status?: string });
 
 describe('a refusal names the road that works', () => {
     it('sends the operator to re-entering review, and no longer claims re-entry is inert', async () => {
@@ -111,10 +111,11 @@ describe('a refusal names the road that works', () => {
         expect(message).toMatch(/If the question itself is what should move/i);
     });
 
-    it('names a road this state allows, when the standing record was accepted', async () => {
-        // **The major an independent round found**: the message named re-entry unconditionally, but the entry refuses
-        // re-entry over an approved record that still binds the current content — so in *this* state the printed road
-        // refuses, which is the class this whole file is about, one layer deeper.
+    it('names a road this state allows, and the named road actually lands', async () => {
+        // **Two majors in two rounds, one shape**: the message named a road that refuses where it fires (`kata-cli archive`
+        // cannot run from `review`; `build --seal` enters the repair entry and stops at `implement`). An independent round
+        // also made the sharper point about the *selector*: asserting that the string appears certifies nothing, because a
+        // road that refuses satisfies a presence check. So this case follows the named road and asserts where it lands.
         await seal();
         expect((await runCommand('review', changeId, root, { confirmHostModel: true })).success).toBe(true);
         expect((await record('F-1', 'round-1.json')).success).toBe(true);
@@ -124,12 +125,21 @@ describe('a refusal names the road that works', () => {
         const second = await record('F-2', 'round-2.json');
         expect(second.success).toBe(false);
         const message = String(second.error);
-        // The road it must not offer …
-        expect(message, 're-entry is refused in this state, so it cannot be the named road').toContain('would move an accepted conclusion');
-        // … and the roads that do work here.
-        expect(message).toMatch(/build --seal/);
-        expect(message).toMatch(/kata-cli archive --change/);
-        expect(message, 'a changed question is a new request, and its round may be recorded').toMatch(/restate a claim/);
+        // The branch that fires is the accepted-record one, and it says what it will not do as well as what it will.
+        expect(message, 'the accepted branch is the one that fires here').toContain('it was accepted');
+        expect(message, 'the named road is the one this state allows').toContain('--result-file');
+        expect(message, 'and the roads that refuse are named as refusing, not offered').toContain('do **not** work from this state');
+
+        // **Follow it, literally.** Move the question (the road's first half), then record the result directly.
+        await restateClaim(root, changeId, 'C-1', 'The export is present, and stays present.');
+        expect((await ledgerJson(['freeze', '--change', changeId])).ok, 'the re-freeze the message names').toBe(true);
+        const landed = await record('F-3', 'round-3.json');
+        expect(landed.success, JSON.stringify(landed).slice(0, 240)).toBe(true);
+
+        // And the acceptance was archived by that road — the fact the message and the design doc (B14) now state.
+        const rows = await historyRows();
+        expect(rows.map((row) => (row.findings ?? []).map((finding) => finding.id))).toEqual([['F-1']]);
+        expect(rows[0]?.status, 'the accepted conclusion is archived, not erased').toBe('approved');
     });
 
     it('lands: following the printed remedy files the next round and archives the first', async () => {
