@@ -205,6 +205,27 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         expect(revalidated.map((entry) => entry.id)).toEqual(['rule-page']);
     });
 
+    it('looks at a declared source with no recorded hash, rather than calling the record intact', async () => {
+        // **The walk and the refusal answered "what are this record's sources" with different sets.** `verifySources`
+        // iterated `sourceHashes` while `revalidateWikiRecord` iterates `sourceRefs`, so a path declared with no recorded hash
+        // was never examined by the walk — it reported the record intact while the refusal path refused exactly that shape. The
+        // walk iterates the union now, and this case is what makes that load-bearing: with the old iteration the record is
+        // `intact` and this assertion fails.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        await mkdir(join(root, 'docs'), { recursive: true });
+        await writeFile(join(root, 'docs/second.md'), '# Second\n\nBody.\n', 'utf8');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        record.sourceRefs = ['docs/rule.md', 'docs/second.md'];
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+        const report = await verifySources(root);
+
+        expect(report.intact).toEqual([]);
+        expect(report.stale.map((entry) => entry.id)).toEqual(['rule-page']);
+        expect(report.stale[0]?.changedSources).toContain('docs/second.md');
+    });
+
     it('reports an unreadable store as unreadable, not as an empty one', async () => {
         // **The reader mapped "a store I could not read" onto "a store with nothing in it".** Everything except `ENOENT` was
         // swallowed, so a record directory that cannot be read (a file in its place is an `ENOTDIR`, which unlike a permission
