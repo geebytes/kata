@@ -120,7 +120,7 @@ describe('an out-of-vocabulary gate choice is refused', () => {
         mkdirSync(outside, { recursive: true });
         writeFileSync(join(outside, 'a.json'), '{}\n');
 
-        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: '../../src/a' as never, reason: 'x' })).rejects.toThrow(/Unknown gate boundary/u);
+        await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: '../../src/a' as never, reason: 'x' })).rejects.toThrow(/Unknown gate boundary/u);
         expect(existsSync(join(outside, 'a.json'))).toBe(true);
         await expect(readGateState(root, 'held', '../held/user-choice-archive_gate' as never)).rejects.toThrow(/Unknown gate boundary/u);
     });
