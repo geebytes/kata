@@ -76,6 +76,9 @@
 
 
 - **R1-F1 / R2-F1 repair — tier/quorum 是同一个 declared-subject 的事实**：高风险路径即使本轮未改动，只要仍在 normalized declared paths 中，也必须同时抬高 plan、ReviewRequest 和最终 verdict；`changedPaths` 只用于确定 reviewer 的 focus，绝不能用来降低 gate tier。三处通过同一个 resolver 得到 classification、tier 与 reviewer quorum。显式 `--tier` 是可审计的请求：它可以把 tier 上调，却**不能**降低 complete declared surface 或 policy ceiling 的 floor；较低请求保留在 `tierOverride`，而实际 `plan.tier`、request 与 verdict 都报告提升后的 tier。request 会重算并拒绝不一致的 plan，而不是把弱合同交给 reviewer。
+
+- **R2-F1（独立复核，major）— 一份 plan 只发布一个 classification**：`plan.tier` 已由完整声明面派生，但同级的 `plan.risk` 仍是 `classifyRisk({ paths: changedPaths })`（`src/producers/planner.ts:78`）。当本轮 diff 没碰某个仍在声明里的 high-floor 路径时，同一份 plan.json 会同时写出 `tier: security` 与 `risk.tier: standard / floor: low / matched: []`。这个字段是**读者面**：`kata-design` 的 lane 规则正是让操作者去看 `plan.risk` 的 `tier`/`floor`/`matched`（`src/adapters/phase-guidance.ts:112`），而 review mode 决定 merge-blocking severity 集合与是否要 matrix——所以「changed paths 只决定 focus」这句话当时是假的。**决定**：plan 不再自行分类；调用方把 `ledgerTierForDeclaredPaths` 已经算出的 `classification` 传进来（该 resolver 的返回值此前被丢弃），`changedPaths` 只保留给抽样审计 `sampling.promoted`。无 resolver 的 fixture 退化为对**它声明的**路径集分类，而不是对 diff 分类。
+- **R2-F2（独立复核，minor）— 同一个 flag 在两个命令上必须给同一个答案**：`plan --tier garbage` 按名拒绝，而 `decide --tier garbage` 把拼写直接交给 `resolveTier`，未知名字没有 rank，于是「要求提高档位」被静默丢弃且命令以 0 退出。**决定**：两个命令都问同一个 `tierOverrideFromPlan`；拒绝语句同时点出**操作者给的值**与**policy 自己声明的词表**（从 `Object.keys(policy.tiers)` 派生，不写第二份清单），并且不再声称这个值来自「stored plan」——因为操作者可能是敲了一个 flag。
 **RED 证据：** 伪造 parent/child、缺 revision、迁移后 stale impact、空事实/错误 id、嵌套 malformed JSON 各有最小失败测试。
 
 ### Slice E — seal 内容确实属于该 declaration

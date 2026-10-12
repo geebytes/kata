@@ -31,7 +31,7 @@ import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
 import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
-import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
+import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
 
@@ -1245,7 +1245,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
         }
         // **Gate tier is a declaration fact, not a delta fact.** The changed set below still scopes review focus, while
         // this shared resolver includes every declared high-floor path and is also used by request construction and decide.
-        const { tier: plannedTier } = await ledgerTierForDeclaredPaths({
+        const { tier: plannedTier, classification } = await ledgerTierForDeclaredPaths({
             root: options.root,
             changeId,
             policy: ledger.policy,
@@ -1261,6 +1261,11 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             // The seed's material is the declared path set: the diff against the frozen snapshot is what moved, not what the
             // sampling is over.
             contentPaths: Object.keys(current.pathDigests),
+            // **The plan publishes the resolver's classification, not a second one of its own.** The resolver already
+            // classified the complete declared surface to derive the tier; classifying the diff here produced a plan that
+            // reported `risk.tier: standard` beside `tier: security` whenever this round's diff omitted an unchanged
+            // declared high-floor path (measured, R2-F1).
+            classification,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
         });
         // **Which defect classes this change touches, and — for a mechanizable one — the machine that decides it.** A class
@@ -1360,6 +1365,16 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
     if (sub === 'decide') {
         const c0Raw = argValue(argv, '--c0');
         const tierFlag = argValue(argv, '--tier');
+        // **The same flag answers the same question here as on `plan`.** `decide` passed the spelling straight to the
+        // resolver, where an unknown name has no rank, so the request to raise the gate was dropped without notice and the
+        // command exited 0 (measured by an independent round, R2-F2). One validator, one refusal.
+        const tierRead = tierFlag === undefined
+            ? { ok: true as const, override: undefined }
+            : tierOverrideFromPlan({ tierOverride: tierFlag }, ledger.policy);
+        if (!tierRead.ok) {
+            fail({ command: 'ledger decide', error: tierRead.why });
+            return;
+        }
         const assuranceFlag = argValue(argv, '--assurance');
         if (assuranceFlag !== undefined && !isCurrentAssuranceLevel(assuranceFlag)) {
             fail({
@@ -1384,7 +1399,7 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
             root: options.root,
             changeId,
             c0Tokens: c0Raw === undefined ? null : Number(c0Raw),
-            ...(tierFlag === undefined ? {} : { tier: tierFlag as TierName }),
+            ...(tierRead.override === undefined ? {} : { tier: tierRead.override }),
             ...(assuranceFlag === undefined ? {} : { assurance: assuranceFlag as CurrentAssuranceLevel }),
             ...(decidingActor === undefined || decidingActor === '' ? {} : { actor: decidingActor }),
         });

@@ -204,6 +204,26 @@ describe('the ledger verbs', () => {
         expect((await ledger(['decide', '--tier', 'security'])).tier).toBe('security');
     });
 
+    it('refuses an unknown tier name on both commands, rather than dropping the request to raise the gate', async () => {
+        // **The same flag, one answer.** `plan --tier garbage` refused by name, while `decide --tier garbage` passed the
+        // spelling straight to `resolveTier`, where an unknown name has no rank so `undefined > floor` is false — the
+        // request to raise the gate was dropped without notice and the command exited 0 (measured by an independent round,
+        // R2-F2). A refusal a script cannot see is not a refusal.
+        await ledger(['policy', '--init']);
+        await ledger(['freeze']);
+        await ledger(claimArgv());
+
+        process.exitCode = 0;
+        const planned = await ledger(['plan', '--tier', 'garbage']);
+        expect(String(planned.error ?? '')).toMatch(/not one the policy declares/i);
+        expect(process.exitCode).toBe(1);
+
+        process.exitCode = 0;
+        const decided = await ledger(['decide', '--tier', 'garbage']);
+        expect(String(decided.error ?? '')).toMatch(/not one the policy declares/i);
+        expect(process.exitCode).toBe(1);
+    });
+
     it('carries a change from freeze to a pass, and reports what refused it along the way', async () => {
         await ledger(['policy', '--init']);
         await ledger(['freeze']);

@@ -72,10 +72,19 @@ export function planReview(input: {
      * The seed is about the content the sampling is over, so it is derived from the path set and never from the diff.
      */
     contentPaths?: readonly string[];
+    /**
+     * **The classification the resolver derived from the complete declared surface.** A plan publishes one classification
+     * of a change, so a caller that already asked `ledgerTierForDeclaredPaths` passes its answer rather than classifying
+     * again from the diff. Measured by an independent round (R2-F1): a re-plan whose diff omitted an unchanged declared
+     * high-floor path published `plan.risk.tier: standard` beside `plan.tier: security`, and `plan.risk` is the field the
+     * lane rule points the operator at (`kata-design`), so the lane could be chosen against the weaker number. A caller
+     * with no resolver falls back to the path set it declared.
+     */
+    classification?: RiskClassification;
     c0Tokens?: number | null;
 }): ReviewPlan {
     const tierInfo = tierPolicy(input.policy, input.tier);
-    const risk = classifyRisk({ paths: input.changedPaths, policy: input.policy });
+    const risk = input.classification ?? classifyRisk({ paths: input.contentPaths ?? input.changedPaths, policy: input.policy });
     const deadline = deriveDeadline({ policy: input.policy, c0Tokens: input.c0Tokens ?? null });
 
     const requiredEvidence = input.claims.map((claim) => {

@@ -229,11 +229,19 @@ describe('the request hands over the values it names', () => {
         expect((await ledger(root, ['freeze'])).ok).toBe(true);
         await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'], checkIds: [] });
 
-        const plan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string };
+        const plan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string; risk: { tier: string; floor: string; matched: Array<{ path: string }> } };
         const request = await buildReviewRequest({ root, changeId });
         const verdict = await ledgerVerdict({ root, changeId });
 
         expect(plan.tier).toBe('security');
+        // **One plan, one classification.** `plan.risk` is what the lane rule points the operator at (`kata-design`:
+        // "`plan.risk` in `kata-cli ledger plan` carries `tier`, `floor`, `matched`"), and this fixture changes only
+        // `src/a.ts` while the declaration still holds `src/kernel/decide.ts` — so a risk field derived from the diff
+        // would report `standard`/`low` beside a `security` tier, and the lane would be chosen against the weaker number.
+        // Measured by an independent round (R2-F1); the assertion it named as missing is this one.
+        expect(plan.risk.tier).toBe('security');
+        expect(plan.risk.floor).toBe('high');
+        expect(plan.risk.matched.map((entry) => entry.path)).toContain('src/kernel/decide.ts');
         expect(request.ok, JSON.stringify(request)).toBe(true);
         if (!request.ok || verdict.kind !== 'decided') return;
         expect(request.request.tier).toBe(plan.tier);

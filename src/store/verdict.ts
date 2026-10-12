@@ -177,7 +177,15 @@ export type LedgerVerdict =
     | { kind: 'decided'; tier: TierName; claims: number; assurance: AssuranceLevel; subjectRevision: string; decision: Decision };
 
 
-/** Read the explicit tier decision stored by `ledger plan`, refusing an unknown spelling rather than silently weakening a gate. */
+/**
+ * Read an explicit tier name — from a stored plan field or from the command-line flag — refusing an unknown spelling.
+ *
+ * **The refusal names the value the operator gave and the vocabulary the policy holds, and claims nothing about where the
+ * value came from.** `ledger plan --tier` refused an unknown name while `ledger decide --tier` passed the spelling to
+ * `resolveTier`, where an unknown name has no rank so the request to raise the gate was dropped without notice and the
+ * command exited 0 (measured by an independent round, R2-F2). Both commands ask this one question now, so the sentence
+ * cannot say "the stored plan carries" to an operator who typed a flag.
+ */
 export function tierOverrideFromPlan(plan: unknown, policy: Ledger['policy']):
     | { ok: true; override: TierName | undefined }
     | { ok: false; why: string } {
@@ -186,7 +194,7 @@ export function tierOverrideFromPlan(plan: unknown, policy: Ledger['policy']):
     }
     const override = (plan as { tierOverride?: unknown }).tierOverride;
     if (typeof override !== 'string' || !Object.hasOwn(policy.tiers, override)) {
-        return { ok: false, why: 'the stored plan carries an unknown tier override, so the gate tier cannot be derived' };
+        return { ok: false, why: `the tier name ${JSON.stringify(override)} is not one the policy declares (${Object.keys(policy.tiers).join(', ')}), so the gate tier cannot be derived` };
     }
     return { ok: true, override: override as TierName };
 }
