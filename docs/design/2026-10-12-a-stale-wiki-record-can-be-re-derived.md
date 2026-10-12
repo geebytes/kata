@@ -29,6 +29,10 @@
 - **帮助清单与调度器同派生**（同一处表面，同一个根因）：`wiki --help` 的 `help.commands` 与 `help.withheld` 合起来必须覆盖调度器接受的每个动词。实测这条断言**当场又抓到第二个实例**：`rebuild` 也不在清单里（它是有意不摆在第一排的破坏性命令）⇒ 它现在以 `withheld: { rebuild: '<reason>' }` **具名held**，而不是**静默缺失**。**边界披露**：这一条**不在**任何冻结 AC 的字面范围内（AC-4 管的是"补救里出现的命令"），我按"同一根因"在实现里一并修并把断言写进 AC-4 的选择器，理由写在用例注释里。
 - **`statement` 只在该 statement 确实来自页面时才重算**（AC-1 的措辞比这更宽，这里写明真实的规则）：`ingested` 记录的 statement 就是页面的摘要 ⇒ 跟着页面重算；`distilled` 记录的 statement 是**变更自己的结论**，任何文件里都没有它 ⇒ 只刷新 hash、**不动 statement**。判定问 `inferProvenance`（既有的那一处派生），不从 `sourceRefs` 的形状猜。这条**反向情形也写成用例**（AC-1 的选择器里），免得日后有人顺手开始覆盖 distilled 的文字。
 - **批量路径收集拒绝而不是抛出**：`revalidateStaleRecords` 原本在遇到拒绝时会**中途抛出**（前面几条已刷新、后面的丢失、调用者拿不到账）⇒ 改为 `{ revalidated, refused }`，CLI 把两者都印出来。用例在 AC-2 的选择器里（混合仓库：一条可再派生 + 一条来源已失）。
+- **第 2 轮的一条 major（F1）改变了"每条路"的含义**：`writeWikiRecord` 是**替换**（不合并），而 `ingest` 只守页面不守记录 ⇒ 页面不在时重新 ingest 会**把 candidate 写进一条已批准的记录**，作者自己却报 `refused: []`。守卫因此放在**每个写者都经过的那一个卡口**（store 内部、锁内、按磁盘上的内容判断），拒绝文点名状态与出路。**边界**：这让"重写一条已批准/已拒绝的记录"必须显式先 reject/retire 或 `wiki rebuild` 清库——是刻意的（替换是一次决定）。
+- **同轮 F2/F3/F5 三处措辞与身份的精修**：重复来源**按重复具名**（旧的排序拼接比较会把它报成"声明了却没记 hash"，那是**假陈述**）；写者资格**连它产出的形状一起检查**（`llmwiki-register` + 单一来源且位于 `.llmwiki/` 下），回答里陈述真正检查过的事实；不可读记录的查找**按 store 自己派生的文件名精确比对**（`endsWith` 会让 `bca.json` 替 `a` 作答）。
+- **F4 是一次被独立复核抓住的假声明**：`854f303` 的提交信息写"AC-2 的 fixture 时间戳已钉住"，而该提交只改了一行 import ⇒ 声明是**假的**（我的写入脚本当年无条件打印成功）。现在时间戳真的钉住，并用 `grep` 证明；教训写进本文件：**提交信息只能陈述被测过的差异**。
+- **F7：`acceptanceMatrix` 被重新派生**——它此前仍指向计划里的路径（`record.ts`、AC-3 指向 `cli/wiki.ts`），而行为落在 `drift.ts` 与 store ⇒ 现在四行的 `implementationPaths`/`testPaths` 与实现一致（受管的 `tasks declare --field acceptanceMatrix`）。
 - **声明面追加两条**（原本承诺不动 `llmwiki.ts`，实现时发现做不到而不假装）：`src/wiki/llmwiki.ts`（`statementForPage` 的唯一派生必须由 register 与 revalidate 共用，否则就是第二份实现）与 `tests/unit/wiki-revalidation.test.ts`（它钉的是被本 change 改掉的旧契约）。**冲突已披露**：`src/wiki/llmwiki.ts` 被 `enrich-packet-outside-the-task-store`（review 中、已 approved）声明 ⇒ 那个任务的 revision 会因本 change 而 supersede。
 
 ## 3. 验收（4 条，各一个独立选择器）
