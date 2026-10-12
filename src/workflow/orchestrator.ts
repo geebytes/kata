@@ -2817,8 +2817,9 @@ async function currentScopeHashes(root: string, evidence: EvidenceEnvelope[]): P
  * directory name differs from the task it holds is then never looked at, and the guard it feeds is handed the same
  * derivation for `path` and `taskId` — so the guard judges the right kind of object, just not this one.
  *
- * A model that cannot answer is **not** an empty answer here either: the archive keeps every candidate rather than
- * guessing, because a guess in this direction deletes records.
+ * A model that cannot answer is **not** an empty answer here either: this form returns no targets and the caller must
+ * report the undetermined state (`archiveRemovalOutcome` carries it) — the archive removes nothing rather than guessing,
+ * because a guess in this direction deletes records.
  */
 export async function archiveRemovalTargets(root: string, taskId: string): Promise<string[]> {
     return (await archiveRemovalOutcome(root, taskId)).targets;

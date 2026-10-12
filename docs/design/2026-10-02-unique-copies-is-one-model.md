@@ -201,6 +201,30 @@ by round 1's repairs:
   archive reported nothing, so its result did not distinguish "no worktree" from "the enumeration could not answer".
   **Repair:** `archiveRemovalOutcome` carries the reason; the archive removes nothing and reports it.
 
+## Round 3 of independent review (2026-10-12): six findings, repaired by class
+
+Round 3 read `revision-78a4bbb3693fe07c` and returned **1 blocking + 1 major + 4 minor/note** — all `origin: repair`, i.e.
+produced by round 2's repairs:
+
+- **uc-r3-F1 (blocking) — the evidence surface was still answered by two rules.** The id list read the record's `taskId` while
+  the file rule used the file *name* prefix, so a record named `held-AC-1.json` declaring `taskId: 'held-extra'` was reported
+  for `held` by the scoped form and for `held-extra` by the unscoped one — and because the removal guard asks the unscoped
+  form, nothing was protected and the only copy was deleted. **Repair:** one derivation (`recordsHeldBySync`) returns the
+  tasks *and* their files together; `taskIdsWithRecords`, `recordFilesOfSync` and `uniqueCopies` are projections of it. An
+  evidence record is attributed by its own `taskId`; a record that cannot be read is attributed **conservatively** — to every
+  known task whose name prefixes it (the vocabulary is repository-wide, because a worktree's own task directory can be empty),
+  and failing that by the product's own file convention (`-AC<n>-E<n>.json` is the marker, so the id is what precedes it).
+  Naming a task that does not exist is a report; losing a file is the failure this model exists to prevent.
+- **uc-r3-F3 (major) — the ownership predicate folded "unreadable" into "no owner".** `hasTaskDir` caught everything, so an
+  unreadable task directory answered "no checkout holds this task" — the answer `recordsRoot` writes through. **Repair:** the
+  rule's failure travels; `findOwningCheckout` collects unreadable candidates and, when no candidate holds the task, answers
+  that it could not be determined rather than "no owner".
+- **uc-r3-F2/F4/F5/F6 (minor) — declarations and dead code.** The prefix-collision shape (`some-task` vs `some-task-extra`) is
+  gone with the one derivation; `archiveRemovalTargets`' docstring now says what the code does (it returns no targets and the
+  caller reports the undetermined state); three walks with no caller (`tasksHeldByWorktree`, `relativeFilesUnder`,
+  `directoryExists`) are deleted, along with the comment that named one of them as the live reader; and one falsifier that
+  reddened for a property its claim does not state was re-aimed.
+
 **Boundaries written down, not claimed away:** the model still cannot see a linked checkout that neither `git worktree list`
 nor `.kata/worktrees/` names (a directory that is not a linked checkout is not a holder — the guard case builds a real
 `git worktree add` for that reason); the `ENOENT`-versus-unreadable distinction is made at the **directory** level, so a file

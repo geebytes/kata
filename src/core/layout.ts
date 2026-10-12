@@ -237,16 +237,13 @@ export function resolveWorkspaceRootForTask(taskId: string, from?: string): stri
  * and so does any other file under it — the question is whether there is anything at all, not which file.
  */
 function hasTaskDir(root: string, taskId: string): boolean {
-  // **The same rule the enumeration asks.** This predicate answered "a direct file entry in `.kata/tasks/<id>`" while the
-  // enumeration answered "a record on either surface, recursively" — so a worktree whose task directory held
-  // `handoffs/x.json` was named by the model as holding that task's only copy while `recordOwner` answered "no checkout holds
-  // this task" (measured by an independent review). An entry that is not a file is not a record (the subdirectory shape), and
-  // a record under a subdirectory is one (the depth shape): both fall out of asking the one rule.
-  try {
-    return recordFilesOfSync(root, taskId).length > 0;
-  } catch {
-    return false;
-  }
+  // **The same rule the enumeration asks, and the same failure answer.** This predicate answered "a direct file entry in
+  // `.kata/tasks/<id>`" while the enumeration answered "a record on either surface, recursively" — so a worktree whose task
+  // directory held `handoffs/x.json` was named by the model as holding that task's only copy while `recordOwner` answered "no
+  // checkout holds this task" (measured by an independent review). It also caught everything, so an unreadable task directory
+  // answered "no owner" — the fold AC-4 exists to refuse, and the answer `recordsRoot` writes through (measured by a later
+  // round). The rule is asked once and its failure travels: "I could not look" is not "not here".
+  return recordFilesOfSync(root, taskId).length > 0;
 }
 
 function findDescendantTaskRoots(taskId: string, root: string): string[] {
@@ -492,17 +489,6 @@ export async function worktreeOnlyRecords(root: string): Promise<WorktreeOnlyRec
         .sort((left, right) => left.worktree.localeCompare(right.worktree) || left.taskId.localeCompare(right.taskId));
 }
 
-/** The task ids a linked worktree carries records for, by reading its own record directory. */
-async function tasksHeldByWorktree(worktree: string): Promise<string[]> {
-    try {
-        const entries = await readdir(join(worktree, '.kata', 'tasks'), { withFileTypes: true });
-        return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).map((entry) => entry.name);
-    } catch {
-        // A worktree with no `.kata/tasks` holds no task records; the caller falls back to the directory name so a
-        // leftover copy of something else is still reported rather than silently skipped.
-        return [];
-    }
-}
 
 /**
  * Where a task's records live, as `[surface, taskRelativePath]` pairs.
@@ -517,45 +503,7 @@ function recordSurfaces(taskId: string): Array<[string, string]> {
     ];
 }
 
-/**
- * Every file under `dir`, as paths relative to it, recursively.
- *
- * The relative form is what makes the comparison meaningful across the two roots: `revisions/rev1.json` on one side and
- * `revisions/rev1.json` on the other are the same record, while a bare `revisions` on each side says nothing about what
- * is inside them.
- */
-async function relativeFilesUnder(dir: string): Promise<string[]> {
-    const found: string[] = [];
-    async function walk(current: string, prefix: string): Promise<void> {
-        let entries: Dirent[] = [];
-        try {
-            entries = await readdir(current, { withFileTypes: true });
-        } catch {
-            // A root without this directory has no records under it; an unreadable one is treated the same way because
-            // this reports a difference and cannot resolve it.
-            return;
-        }
-        for (const entry of entries) {
-            const relative = prefix === '' ? entry.name : join(prefix, entry.name);
-            if (entry.isDirectory()) {
-                await walk(join(current, entry.name), relative);
-            } else {
-                found.push(relative);
-            }
-        }
-    }
-    await walk(dir, '');
-    return found;
-}
 
-/** True when `dir` exists and is a directory, without throwing on a missing path. */
-async function directoryExists(dir: string): Promise<boolean> {
-    try {
-        return (await stat(dir)).isDirectory();
-    } catch {
-        return false;
-    }
-}
 
 /**
  * **The root that owns a task's records.**
@@ -857,9 +805,9 @@ function worktreeOwnerHoldingTask(worktree: string, taskId: string): string | un
  *   1. **The path shape decides the worktree.** A path inside `.kata/worktrees/<dir>/` is in that worktree; nothing else
  *      is, so a `--path` worktree (which lives wherever the operator put it) is recognised by its own path, not by
  *      living under `.kata/`.
- *   2. **The task id comes from the record directory, not from a directory name.** A worktree created with `--path` is
- *      called whatever the operator typed, so `tasksHeldByWorktree` reads `.kata/tasks/<id>/` and the id is the
- *      directory name *there*.
+ *   2. **The task id comes from the records, not from a directory name.** A worktree created with `--path` is called
+ *      whatever the operator typed, so the reader that answers (`taskIdsWithRecords`) enumerates the records a checkout
+ *      holds — and a record declares its own `taskId`.
  *   3. **The owner is the nearest checkout that holds the task and is not a linked worktree.** `.kata/worktrees/` is
  *      excluded by construction — a worktree is a copy of the code, not a second owner of the records.
  *
@@ -986,12 +934,24 @@ function taskIdInPath(candidate: string): string | undefined {
 /** The nearest ancestor-or-self that holds `taskId` as a task directory and is not a linked worktree. */
 function findOwningCheckout(from: string, taskId: string): string | undefined {
     let directory = resolve(from);
+    const unreadable: RecordSourceUnreadable[] = [];
     while (true) {
-        if (!worktreeContaining(directory) && hasTaskDir(directory, taskId)) {
-            return directory;
+        if (!worktreeContaining(directory)) {
+            try {
+                if (hasTaskDir(directory, taskId)) return directory;
+            } catch (error) {
+                // **A candidate that could not be read is not a candidate that holds nothing.** The walk continues — a
+                // nearer or farther checkout may hold the task — but if none does, the answer is "could not determine"
+                // rather than "no checkout holds it" (AC-4; measured by an independent round).
+                if (error instanceof RecordSourceUnreadable) unreadable.push(error);
+                else throw error;
+            }
         }
         const parent = resolve(directory, '..');
-        if (parent === directory) return undefined;
+        if (parent === directory) {
+            if (unreadable.length > 0) throw unreadable[0]!;
+            return undefined;
+        }
         directory = parent;
     }
 }
@@ -1072,10 +1032,14 @@ export async function uniqueCopies(input: { root: string; taskId?: string }): Pr
     // What each holder has, per task, per surface.
     const held = new Map<string, Map<string, Set<string>>>();
     try {
+        // The vocabulary an ambiguous record is attributed with is the whole repository's, because a worktree's own task
+        // directory can be empty while the task it holds records of lives in the primary checkout.
+        const vocabulary = [...new Set(holders.flatMap((holder) => knownTaskIdsSync(holder.worktreeRoot)))];
         for (const holder of holders) {
-            const taskIds = input.taskId !== undefined ? [input.taskId] : await taskIdsWithRecords(holder.worktreeRoot);
+            const byId = recordsHeldBySync(holder.worktreeRoot, vocabulary);
+            const taskIds = input.taskId !== undefined ? [input.taskId] : [...byId.keys()].sort();
             for (const taskId of taskIds) {
-                const files = await recordFilesOf(holder.worktreeRoot, taskId);
+                const files = byId.get(taskId) ?? [];
                 if (files.length === 0) continue;
                 const byTask = held.get(taskId) ?? new Map<string, Set<string>>();
                 byTask.set(holder.worktreeRoot, new Set(files));
@@ -1159,38 +1123,8 @@ async function directoryWorktrees(root: string): Promise<{ ok: true; paths: stri
  * disagreeing, which is the class this change exists to remove (measured by an independent review).
  */
 async function taskIdsWithRecords(worktreeRoot: string): Promise<string[]> {
-    const ids = new Set<string>();
-    const tasksRoot = join(worktreeRoot, '.kata', 'tasks');
-    let entries: Dirent[];
-    try {
-        entries = await readdir(tasksRoot, { withFileTypes: true });
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new RecordSourceUnreadable(tasksRoot, error as Error);
-        entries = [];
-    }
-    for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-        if ((await recordFilesOf(worktreeRoot, entry.name)).length > 0) ids.add(entry.name);
-    }
-    // The evidence store is flat and keys its files by `<taskId>-`: a task with records there and no task directory is a
-    // holder too.
-    const evidenceRoot = join(worktreeRoot, '.kata', 'evidence');
-    let evidenceFiles: string[];
-    try {
-        evidenceFiles = (await readdir(evidenceRoot, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => entry.name);
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new RecordSourceUnreadable(evidenceRoot, error as Error);
-        evidenceFiles = [];
-    }
-    // **The task id is the record's own field, not a split of the file name.** Splitting at the first hyphen truncated
-    // every hyphenated id — `some-task-AC-1.json` was answered as the task `some`, and a file of a task that also had a
-    // directory was reported under two ids at once (measured by an independent review; hyphenated ids are the norm in this
-    // repository). The evidence record carries `taskId`; asking it is one derivation and it cannot invent an id.
-    for (const file of evidenceFiles) {
-        const taskId = readEvidenceTaskId(join(evidenceRoot, file));
-        if (taskId !== undefined) ids.add(taskId);
-    }
-    return [...ids].sort();
+    // A projection of the one derivation above: the ids are its keys.
+    return [...recordsHeldBySync(worktreeRoot).keys()].sort();
 }
 
 /**
@@ -1218,39 +1152,94 @@ export async function tasksWithRecords(worktreeRoot: string): Promise<string[]> 
 }
 
 /**
- * The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths.
+ * **What one checkout holds, derived once: the tasks and their record files together.**
  *
- * **The rule is written once, synchronously, because two callers cannot both be asynchronous.** The enumeration is async and
- * the ownership predicate (`hasTaskDir`) is sync, and each had its own answer to "does this checkout hold records of this
- * task": the enumeration looked at both surfaces recursively, the predicate at a direct file entry in `.kata/tasks/<id>` only
- * — so a worktree whose task directory held `handoffs/x.json` was named by the model as holding that task's only copy while
- * `recordOwner` answered "no checkout holds this task" (measured by an independent review). The async wrapper below exists for
- * its callers' signatures, not for a second rule.
+ * "Which task does this file belong to" and "which files does this task have" are the same question, and answering them in two
+ * places is what three independent rounds kept measuring: the id list read the record's `taskId` while the file rule used the
+ * file *name* prefix, so a record named `held-AC-1.json` declaring `taskId: 'held-extra'` was reported under one id by the
+ * scoped form and the other by the unscoped form — and because the removal guard asks the unscoped form, the only copy was
+ * deleted. The pair is derived together here, and the readers below are projections of it.
+ *
+ * Two surfaces, one rule each:
+ *
+ *   1. **The task directory** — `.kata/tasks/<id>` recursively; a directory with no file in it is not a holder.
+ *   2. **The evidence store** — the record's own `taskId` field decides, which is also what the product's reader
+ *      (`readRecordedEvidence`) asks. A record that cannot be read declares nothing, so it is attributed **conservatively**:
+ *      to every known task whose name prefixes it, and failing that to its name up to the last hyphen. The direction is
+ *      deliberate — such a file is reported, so a removal is refused rather than deleting a possible only copy, at the cost of
+ *      possibly naming a task that does not exist. Losing a file is the failure this model exists to prevent; naming a task
+ *      that does not exist is a report the operator can read.
  */
-function recordFilesOfSync(worktreeRoot: string, taskId: string): string[] {
-    const files: string[] = [];
-    for (const surface of ['tasks', 'evidence'] as const) {
-        const base = join(worktreeRoot, '.kata', surface);
-        if (surface === 'tasks') {
-            // (2) A task directory with no record in it is not a holder.
-            files.push(...filesUnderSync(join(base, taskId)).map((file) => `tasks/${file}`));
-        } else {
-            // The evidence store is flat and keys files by a `<taskId>-` prefix.
-            files.push(
-                ...filesUnderSync(base)
-                    .filter((file) => !file.includes('/') && file.startsWith(`${taskId}-`))
-                    .map((file) => `evidence/${file}`),
-            );
-        }
+function recordsHeldBySync(worktreeRoot: string, knownIds: readonly string[] = []): Map<string, string[]> {
+    const held = new Map<string, string[]>();
+    const add = (taskId: string, file: string): void => {
+        held.set(taskId, [...(held.get(taskId) ?? []), file]);
+    };
+    const tasksRoot = join(worktreeRoot, '.kata', 'tasks');
+    for (const directory of directoriesUnderSync(tasksRoot)) {
+        for (const file of filesUnderSync(join(tasksRoot, directory))) add(directory, `tasks/${file}`);
     }
-    return files;
+    const evidenceRoot = join(worktreeRoot, '.kata', 'evidence');
+    const evidenceFiles = filesUnderSync(evidenceRoot).filter((file) => !file.includes('/'));
+    const unreadable: string[] = [];
+    for (const file of evidenceFiles) {
+        const declared = readEvidenceTaskId(join(evidenceRoot, file));
+        if (declared !== undefined) add(declared, `evidence/${file}`);
+        else unreadable.push(file);
+    }
+    const known = [...new Set([...held.keys(), ...knownIds])];
+    for (const file of unreadable) {
+        // Every known id the name prefixes (there may be several: `some-task` and `some-task-extra` both prefix
+        // `some-task-extra-AC-1.json`), and the **caller's** known ids too — the id vocabulary is a repository fact, so a
+        // worktree whose own task directory is empty still attributes its evidence files to the task that owns them
+        // elsewhere. Failing both, the product's own file convention is read: `-AC<n>-E<n>.json` is the evidence marker, so
+        // the id is the part before it. Nothing is truncated at a hyphen.
+        const prefixed = known.filter((taskId) => file.startsWith(`${taskId}-`));
+        const fromConvention = file.replace(/-(?:AC-?\d+)?-?E\d+\.json$/iu, '').replace(/\.json$/u, '');
+        const candidates = prefixed.length > 0 ? prefixed : [fromConvention.length > 0 ? fromConvention : file];
+        for (const taskId of candidates) add(taskId, `evidence/${file}`);
+    }
+    return held;
+}
+
+/**
+ * The ids a checkout knows without attributing anything ambiguous: its task directories and the ids its readable evidence
+ * records declare. Used to give the conservative attribution above a repository-wide vocabulary.
+ */
+function knownTaskIdsSync(worktreeRoot: string): string[] {
+    const ids = new Set<string>(directoriesUnderSync(join(worktreeRoot, '.kata', 'tasks')));
+    const evidenceRoot = join(worktreeRoot, '.kata', 'evidence');
+    for (const file of filesUnderSync(evidenceRoot).filter((entry) => !entry.includes('/'))) {
+        const declared = readEvidenceTaskId(join(evidenceRoot, file));
+        if (declared !== undefined) ids.add(declared);
+    }
+    return [...ids];
+}
+
+/** The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths. */
+function recordFilesOfSync(worktreeRoot: string, taskId: string): string[] {
+    return recordsHeldBySync(worktreeRoot).get(taskId) ?? [];
 }
 
 async function recordFilesOf(worktreeRoot: string, taskId: string): Promise<string[]> {
     return recordFilesOfSync(worktreeRoot, taskId);
 }
 
-/** The synchronous form of `filesUnder`: same rule, for the callers that cannot await. */
+
+/** The directories directly under a root, with `ENOENT` as the only absence. */
+function directoriesUnderSync(directory: string): string[] {
+    try {
+        return readdirSync(directory, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+            .map((entry) => entry.name)
+            .sort();
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw new RecordSourceUnreadable(directory, error as Error);
+    }
+}
+
+/** The directory walk the record rule is built on: files, recursively, with `ENOENT` as the only absence. */
 function filesUnderSync(directory: string): string[] {
     const found: string[] = [];
     const walk = (current: string, prefix: string): void => {

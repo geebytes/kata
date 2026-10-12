@@ -72,6 +72,25 @@ describe('cannot determine is not empty', () => {
         }
     });
 
+    it('answers "could not determine" from the ownership predicate, not "no owner"', async () => {
+        // **The fold AC-4 refuses, one surface further.** The predicate asked the content rule and caught everything, so an
+        // unreadable task directory answered "no checkout holds this task" — the answer `recordsRoot` writes through (measured
+        // by an independent review). The failure travels now: a candidate that could not be read is not a candidate that holds
+        // nothing, and when no candidate does hold the task, the answer is that it could not be determined.
+        const primary = repo('owner-undetermined');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        const taskDir = join(worktree, '.kata', 'tasks', 'held');
+        mkdirSync(taskDir, { recursive: true });
+        writeFileSync(join(taskDir, 'judge.json'), '{}\n');
+        chmodSync(taskDir, 0o000);
+        try {
+            const { recordOwner } = await import('../../src/core/layout.js');
+            expect(() => recordOwner({ root: join(worktree, 'src'), taskId: 'held' })).toThrow(/cannot be read/iu);
+        } finally {
+            chmodSync(taskDir, 0o755);
+        }
+    });
+
     it('hands the reason to the archive, which removes nothing and reports it', async () => {
         // **"Could not answer" must reach the caller, not become a silent skip.** `archiveRemovalTargets` returned `[]` in
         // this state while its docstring claimed the archive kept every candidate, so the archive's result could not

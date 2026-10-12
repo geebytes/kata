@@ -149,6 +149,65 @@ describe('unique copies is one derivation', () => {
         expect(recordOwner({ root: join(worktree, 'src'), taskId: 'held' }).ownerRoot).toBe(worktree);
     });
 
+    it('attributes an evidence record to the task the record declares, in both forms and in the guard', async () => {
+        // **One rule for the evidence surface, in the file set as well as in the id list.** The file set used the name
+        // prefix while the id list read the record's own `taskId`, and nothing required them to agree: a record named
+        // `held-AC-1.json` declaring `taskId: 'held-extra'` was reported for `held` by the scoped form, for `held-extra` by
+        // the unscoped form, and the removal guard (which asks the unscoped form) protected nothing — the only copy was
+        // deleted (measured by an independent review, blocking).
+        const primary = repo('evidence-field');
+        const outside = join(dirname(primary), `${basename(primary)}-field`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'field-branch'], { cwd: primary });
+        mkdirSync(join(outside, '.kata', 'evidence'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'evidence', 'held-AC-1.json'), `${JSON.stringify({ taskId: 'held-extra', id: 'AC-1-E1' })}\n`);
+
+        const scoped = await uniqueCopies({ root: primary, taskId: 'held' });
+        const unscoped = await uniqueCopies({ root: primary });
+        const { removeWorktreeSafely } = await import('../../src/workflow/worktree.js');
+        const removal = await removeWorktreeSafely({ root: primary, path: outside, taskId: 'held' });
+
+        expect(scoped).toEqual([]);
+        expect(unscoped.map((copy) => [copy.taskId, copy.path])).toEqual([['held-extra', 'evidence/held-AC-1.json']]);
+        expect(removal.refusedBecause).toBe('worktree-only-records');
+    });
+
+    it('attributes a record that cannot be read conservatively, so the guard refuses instead of deleting it', async () => {
+        // The other direction of the same rule: a truncated record declares nothing, so it is reported for every task whose
+        // name prefixes it — the answer that loses nothing — while the guard is what refuses the removal.
+        const primary = repo('evidence-truncated');
+        const outside = join(dirname(primary), `${basename(primary)}-trunc`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'trunc-branch'], { cwd: primary });
+        mkdirSync(join(outside, '.kata', 'evidence'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'evidence', 'held-AC-1.json'), '{"taskId": "hel');
+
+        const { removeWorktreeSafely } = await import('../../src/workflow/worktree.js');
+        const removal = await removeWorktreeSafely({ root: primary, path: outside, taskId: 'held' });
+
+        expect(removal.refusedBecause).toBe('worktree-only-records');
+        expect(removal.worktreeOnlyRecords).toContain('evidence/held-AC-1.json');
+    });
+
+    it('uses the repository id vocabulary for a record whose name does not spell its task', async () => {
+        // **Why the vocabulary is repository-wide.** An evidence record that cannot be read declares nothing, and its name
+        // need not spell the id it belongs to (`<id>-v2-AC-1-E1.json` is the product's own naming habit for a second round of
+        // evidence). The ids known from the whole repository — here the primary checkout's task directory — attribute it, and
+        // without them the file would be reported under an id no task has while the guard saw nothing to protect.
+        const primary = repo('vocabulary');
+        const { createTask } = await import('../../src/core/task.js');
+        await createTask({ root: primary, id: 'held', title: 'Held', acceptance: [{ id: 'AC-1', statement: 'x' }], ownedPaths: ['src/a.ts'] });
+        const outside = join(dirname(primary), `${basename(primary)}-vocab`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'vocab-branch'], { cwd: primary });
+        mkdirSync(join(outside, '.kata', 'evidence'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'evidence', 'held-v2-AC-1-E1.json'), '{"taskId": "hel');
+
+        const copies = await uniqueCopies({ root: primary });
+
+        expect(copies.map((copy) => [copy.taskId, copy.path])).toEqual([['held', 'evidence/held-v2-AC-1-E1.json']]);
+    });
+
     it('asks the model for the guard, so a worktree outside the root is not removed with its only copy', async () => {
         // **The removal guard is a consumer of the answer, and it asked a second derivation.** `worktreeOnlyRecords` had
         // its own enumeration and comparison; on an outside-root worktree holding the only copy of a record it answered
