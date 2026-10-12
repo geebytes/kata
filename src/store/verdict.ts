@@ -11,6 +11,7 @@
  * that exists and cannot be parsed must not be indistinguishable from one that was never written.
  */
 import { readLedger, declaredPaths, type Ledger, declaredSubjectRevision, readPlanState } from './ledger.js';
+import { declaredContentPaths } from '../core/repository-identity.js';
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
 import { decide, evaluateClaim, type ClaimEvaluation, type QuorumReport } from '../kernel/decide.js';
 import { readingsForRevision } from '../kernel/evidence.js';
@@ -200,9 +201,17 @@ export function tierOverrideFromPlan(plan: unknown, policy: Ledger['policy']):
 }
 
 /**
- * The one derivation of a ledger gate tier: its full declared content surface, not only the paths changed in this plan.
- * `changedPaths` still scopes reviewer focus; it cannot lower the tier or its quorum when an unchanged declared path
- * is high risk.
+ * The one derivation of a ledger gate tier: its full declared **content** surface, not the declaration's spelling and not
+ * only the paths changed in this plan. `changedPaths` still scopes reviewer focus; it cannot lower the tier or its quorum
+ * when an unchanged declared path is high risk.
+ *
+ * **It asks the canonical enumeration, not the raw declaration.** Measured by an independent round (R3d-F1): the resolver
+ * classified `ownedPaths` verbatim, so a task declaring the directory `src/kernel` matched no risk pattern at all — the
+ * subject recorded its two `high`-floor files while `plan` published `tier: strict, reviewers: 1, risk.tier: standard,
+ * matched: []`, so a `security`-floor change was gated at `strict` and its two-reviewer quorum was never demanded. A
+ * non-canonical spelling (`./src/kernel/decide.ts`) behaved the same. How a declaration is spelled is not a fact about how
+ * risky the change is: `declaredContentPaths` answers which content the declaration covers, and it is the function the
+ * freeze path asks, so the two cannot answer differently.
  */
 export async function ledgerTierForDeclaredPaths(input: {
     root: string;
@@ -211,8 +220,9 @@ export async function ledgerTierForDeclaredPaths(input: {
     override?: TierName;
     paths?: readonly string[];
 }): Promise<{ classification: ReturnType<typeof classifyRisk>; tier: TierName }> {
+    const declaredContent = input.paths ?? (await declaredContentPaths(input.root, await declaredPaths(input.root, input.changeId))).paths;
     const classification = classifyRisk({
-        paths: input.paths ?? await declaredPaths(input.root, input.changeId),
+        paths: declaredContent,
         policy: input.policy,
     });
     return {

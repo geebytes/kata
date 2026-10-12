@@ -84,7 +84,12 @@ export function planReview(input: {
     c0Tokens?: number | null;
 }): ReviewPlan {
     const tierInfo = tierPolicy(input.policy, input.tier);
-    const risk = input.classification ?? classifyRisk({ paths: input.contentPaths ?? input.changedPaths, policy: input.policy });
+    // **The diff is never the change's risk.** The fallback used to be `contentPaths ?? changedPaths`, so a caller that
+    // supplied only a diff got the plan's published classification derived from what this round happened to touch — the
+    // R2-F1 shape, measured again by an independent round (R3d-F2) which noted the parameter's own doc claimed the
+    // opposite. A caller with no classification and no declared set gets an empty classification rather than a diff one:
+    // `changedPaths` scopes reviewer focus and the sampled audit, and nothing else.
+    const risk = input.classification ?? classifyRisk({ paths: input.contentPaths ?? [], policy: input.policy });
     const deadline = deriveDeadline({ policy: input.policy, c0Tokens: input.c0Tokens ?? null });
 
     const requiredEvidence = input.claims.map((claim) => {
