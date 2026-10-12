@@ -112,8 +112,13 @@ export function gateConsumedInstruction(boundary: UserChoiceBoundary): string {
     }
     const next = GATE_CREATED_BY[entry.next];
     const nextCommand = entry.next === 'judge_gate' ? 'kata-cli review --approve' : `kata-cli ${next.command}`;
+    // **"Concludes in phase X", not "runs in phase X".** The phase in the table is the phase the creating command *reports* on
+    // success, and a command runs from a different phase than it concludes in — measured: `kata-cli judge` is refused from
+    // phase `judge` ("Judge requires review phase"), so "which runs in phase judge" was a false statement about the very
+    // command the sentence names (round 3's F1; the same correction had been made in `gateRebuildInstruction` one function
+    // over, and leaving it here is exactly the half-fix this repository keeps measuring).
     return `This boundary was already crossed by \`${entry.command}\`, so there is nothing to approve here. The next boundary `
-        + `(\`${entry.next}\`) gets its gate from \`${nextCommand}\`${next.phase ? `, which runs in phase \`${next.phase}\`` : ''}.`;
+        + `(\`${entry.next}\`) gets its gate from \`${nextCommand}\`${next.phase ? ` when it concludes in phase \`${next.phase}\`` : ''}.`;
 }
 
 /** How an operator rebuilds a gate that no longer speaks for the current content. */
@@ -201,6 +206,41 @@ export async function recordTaskChoice(input: {
  * all produced the identical "requires an explicit user choice" refusal, so a damaged file sent the operator to answer a
  * boundary whose reuse was sitting there unreadable).
  */
+/** The first free audit path: `<record>.removed.json`, then `.removed.2.json`, … so an earlier audit is never lost. */
+async function freeAuditPathFor(base: string): Promise<string> {
+  for (let index = 1; index < 100; index += 1) {
+    const candidate = index === 1 ? base : base.replace(/\.json$/u, `.${index}.json`);
+    try {
+      await readFile(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return candidate;
+      throw error;
+    }
+  }
+  throw new Error(`No free audit path beside ${base}: 99 removals are already recorded there.`);
+}
+
+/**
+ * The state a record path's **shape** implies, before any read: `undefined` when it is a regular file (or absent), and a
+ * `damaged` answer otherwise.
+ *
+ * A record that is not a regular file cannot be read as one: a directory, a symlink, a FIFO, a socket or an unreadable file
+ * each get their own sentence, so the operator is told which shape is there instead of waiting on a `readFile` that never
+ * returns (round 3's F2 measured the hang through the CLI, for both `gate reset` and `gate approve`).
+ */
+function recordShape(path: string): GateState | undefined {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    return { kind: 'damaged', why: `the record at ${path} cannot be examined (${(error as Error).message})` };
+  }
+  if (stat.isFile()) return undefined;
+  const shape = stat.isSymbolicLink() ? 'a symbolic link' : stat.isDirectory() ? 'a directory' : 'not a regular file';
+  return { kind: 'damaged', why: `the record at ${path} is ${shape}, not a regular file, so it cannot be read as a record` };
+}
+
 /** A boundary the caller must supply, refused by name when it is missing. */
 function requireBoundary(boundary: UserChoiceBoundary | undefined): UserChoiceBoundary {
   if (boundary === undefined) throw new Error('A boundary record needs --boundary; only the task-level choice is addressed without one.');
@@ -418,6 +458,12 @@ export type GateState =
 
 export async function readGateState(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<GateState> {
   assertValidTaskId(taskId);
+  // **The shape is asked before the file is opened.** A FIFO at the record path makes `readFile` block forever: measured
+  // through the CLI, `gate reset` and `gate approve` both hung until they were killed, printing nothing (round 3's F2). The
+  // round-2 repair put this check in the reset, but *after* the reader had already opened the file, so the hang remained —
+  // the check belongs on the read path, which is where every consumer goes.
+  const shape = recordShape(pathFor(root, taskId, boundary));
+  if (shape !== undefined) return shape;
   try {
     return { kind: 'usable', gate: await readValidated<UserChoiceGate>('user-choice-gate', pathFor(root, taskId, boundary)) };
   } catch (error) {
@@ -478,17 +524,21 @@ export async function resetUserChoiceGate(input: {
       + `If it no longer speaks for the content, the road is to recreate it${input.boundary ? ` (${gateRebuildInstruction(input.boundary)})` : ''}.`,
     );
   }
-  // **Only a regular file is a record.** A symlink, a directory, a FIFO or an unreadable file is not one: a symlink made the
-  // audit's digest describe the target while the removal took the link, a FIFO made the reader block forever, and an
-  // unreadable file threw a raw EACCES out of the command (all three measured by the second round). Each is refused by name,
-  // and the shape is checked before anything is read so a reader cannot block on it either.
+  // **Only a regular file is a record, and the shape is asked before anything is read.** A symlink made the audit's digest
+  // describe the target while the removal took the link, a FIFO made the reader block, an unreadable file threw a raw EACCES
+  // (rounds 2 and 3). `assertResettableRecord` is the same question `recordShape` answers, asked here so the removal cannot
+  // proceed on a shape the reader would have refused.
   assertResettableRecord(path, what);
   const removedSha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+  // **A previous removal's audit must not block this one.** `{ flag: 'wx' }` refuses to overwrite, so a record reset twice
+  // left the second reset permanently refused — a new deadlock created by the repair (measured by round 3). The audit is
+  // written to the first free name instead, so both removals stay readable and no state is unreachable.
+  const freeAuditPath = await freeAuditPathFor(auditPath);
   // **The audit is written before the removal.** Written after, a failure left the record gone with no trace and a raw
   // filesystem error out of the command (measured by the second round: a directory at the audit path did exactly that). If
   // this write fails, nothing has been removed yet, so the state is unchanged and the operator sees a refusal.
   try {
-    await writeFile(auditPath, `${JSON.stringify({
+    await writeFile(freeAuditPath, `${JSON.stringify({
       taskId: input.taskId,
       record: input.record,
       ...(input.boundary ? { boundary: input.boundary } : {}),
@@ -498,12 +548,12 @@ export async function resetUserChoiceGate(input: {
     }, null, 2)}\n`, { flag: 'wx' });
   } catch (error) {
     throw new Error(
-      `The removal was not performed because its audit record could not be written at ${auditPath} `
+      `The removal was not performed because its audit record could not be written at ${freeAuditPath} `
       + `(${(error as Error).message}). Nothing was removed.`,
     );
   }
   await rm(path, { force: true });
-  return { removed: true, path, auditPath, removedBecause: state.why };
+  return { removed: true, path, auditPath: freeAuditPath, removedBecause: state.why };
 }
 
 async function readGate(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<UserChoiceGate> {

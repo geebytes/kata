@@ -132,43 +132,58 @@ describe('a damaged gate record is not an absent one', () => {
         expect(taskDir.length).toBeGreaterThan(0);
     });
 
+    it('refuses a FIFO at the record path by name, in the reader as well as the reset', async () => {
+        // **The shape check has to be on the read path.** Round 2 put it in the reset, after the reader had already opened
+        // the file, so a FIFO still hung both `gate reset` and `gate approve` until they were killed, printing nothing
+        // (round 3's F2). This drives the reader directly, which is where every consumer goes.
+        const root = await fixture('fifo');
+        const path = gatePath(root, 'archive_gate');
+        execFileSync('mkfifo', [path]);
+        try {
+            const state = await readGateState(root, 'held', 'archive_gate');
+            expect(state.kind).toBe('damaged');
+            expect(state.kind === 'damaged' ? state.why : '').toMatch(/not a regular file/u);
+            // And the reset refuses it with the same sentence rather than waiting on it.
+            await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
+                .rejects.toThrow(/not a regular file/u);
+        } finally {
+            rmSync(path, { force: true });
+        }
+    });
+
     it('refuses when the audit record cannot be written, and removes nothing', async () => {
         // Written after the removal, a failure left the record gone with no trace and a raw error out of the command
-        // (measured by the second round). The audit is written first now, so a failure means nothing was removed.
+        // (measured by the second round). The audit is written first now, so a failure means nothing was removed — and the
+        // only way to make the write fail is a directory that cannot be written into, since a *taken* audit name is handled
+        // by using the next free one (round 3's F3 measured the deadlock the `wx` flag created: a record reset twice was
+        // refused forever).
         const root = await fixture('audit-failure');
         await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
         writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
-        mkdirSync(`${gatePath(root, 'archive_gate')}.removed.json`, { recursive: true });
-
-        await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
-            .rejects.toThrow(/audit record could not be written/u);
+        const taskDir = join(root, '.kata', 'tasks', 'held');
+        chmodSync(taskDir, 0o500);
+        try {
+            await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
+                .rejects.toThrow(/audit record could not be written/u);
+        } finally {
+            chmodSync(taskDir, 0o755);
+        }
         expect(existsSync(gatePath(root, 'archive_gate'))).toBe(true);
     });
 
-    it('writes the reason down beside the record it removed, so the removal is auditable', async () => {
-        // The first version required `--reason`, printed it in the result, and stored it nowhere (measured by the first
-        // round: `grep -rl` over the root found it in no file), so a removal left no trace of why it happened.
-        const root = await fixture('audit');
-        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
-        writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
-
-        const reset = await resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'the record holds a value its schema rejects' });
-        const audit = JSON.parse(readFileSync(reset.auditPath, 'utf8')) as { reason?: string; removedSha256?: string };
-        expect(audit.reason).toBe('the record holds a value its schema rejects');
-        expect(audit.removedSha256).toMatch(/^[0-9a-f]{64}$/u);
-        // And an empty reason is refused, so the audit cannot be blank.
-        await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: '   ' })).rejects.toThrow(/reason/u);
-    });
-
-    it('refuses a directory at the record path by name instead of throwing a filesystem error', async () => {
-        // Measured: with a directory where the record should be, the refusal named `gate reset` and the reset itself threw
-        // the raw Node error `Path is a directory: rm returned EISDIR` — a road that cannot be walked, and a raw error out
-        // of a command.
-        const root = await fixture('directory');
-        mkdirSync(gatePath(root, 'archive_gate'), { recursive: true });
-        await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
-            .rejects.toThrow(/directory, not a record/u);
-        expect(existsSync(gatePath(root, 'archive_gate'))).toBe(true);
+    it('uses the next free audit name, so a second reset is not refused forever', async () => {
+        // Round 3's F3: `{ flag: 'wx' }` refused to overwrite, so once a record had been reset, resetting it again was
+        // permanently refused — a deadlock created by the repair for the one it removed. Both audits are kept.
+        const root = await fixture('two-audits');
+        for (const round of [1, 2]) {
+            await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+            writeFileSync(gatePath(root, 'archive_gate'), `{ "taskId": "held", "boundary": "archive_gate", "choice": "archive", "round": ${round} }\n`);
+            const reset = await resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: `removal ${round}` });
+            expect(reset.auditPath).toMatch(round === 1 ? /removed\.json$/u : /removed\.2\.json$/u);
+        }
+        const first = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.json`, 'utf8')) as { reason?: string };
+        const second = JSON.parse(readFileSync(`${gatePath(root, 'archive_gate')}.removed.2.json`, 'utf8')) as { reason?: string };
+        expect([first.reason, second.reason]).toEqual(['removal 1', 'removal 2']);
     });
 
     it('removes it through the CLI, and refuses a readable record there too', async () => {

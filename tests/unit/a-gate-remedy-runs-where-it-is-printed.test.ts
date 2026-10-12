@@ -105,6 +105,18 @@ describe('a gate remedy runs where it is printed', () => {
         }
     });
 
+    it('says "concludes in", never "runs in", because a command runs from another phase', () => {
+        // Round 3's F1: `kata-cli judge` is refused from phase `judge` ("Judge requires review phase"), so a sentence saying
+        // the creating command "runs in phase judge" was false about the command it named — and my round-2 correction had
+        // been applied to `gateRebuildInstruction` only, leaving the same claim in the consumed sentence.
+        for (const boundary of Object.keys(GATE_CREATED_BY) as Array<keyof typeof GATE_CREATED_BY>) {
+            for (const sentence of [gateConsumedInstruction(boundary), gateRebuildInstruction(boundary)]) {
+                expect(sentence, boundary).not.toMatch(/runs in phase/u);
+                if (/phase/u.test(sentence)) expect(sentence, boundary).toMatch(/concludes in phase/u);
+            }
+        }
+    });
+
     it('orders the ladder consistently, so a row that skips or repeats a boundary is red', () => {
         // **What this case does NOT assert, deliberately.** It cannot assert that the named command runs in the phase the
         // refusal is printed from: the module does not know the phase the task is in, and a road's runnability depends on it

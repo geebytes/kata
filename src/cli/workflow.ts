@@ -357,6 +357,9 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
         if (record !== undefined && record !== 'task-choice') {
             throw new Error(`kata gate reset --record takes "task-choice" (the task-level choice) or nothing at all: "${record}" is not a record this command knows.`);
         }
+        if (record === 'task-choice' && resetBoundary !== undefined) {
+            throw new Error(`kata gate reset names one record: --record task-choice and --boundary ${resetBoundary} are two, so nothing was removed.`);
+        }
         if (record === undefined && resetBoundary === undefined) {
             throw new Error('Usage: kata gate reset --task <id> (--boundary <implementation_gate|review_gate|judge_gate|archive_gate> | --record task-choice) --reason <why>');
         }
