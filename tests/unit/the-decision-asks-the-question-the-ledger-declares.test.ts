@@ -3,13 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
+import { defaultPolicy } from '../../src/kernel/policy.js';
+import { writePolicy } from '../../src/store/ledger.js';
 import { writeTaskRecord } from '../helpers/task-fixture.js';
 
 /**
  * **One question, one answer — including in the decision.**
  *
  * An independent round measured the disagreement this file pins: `ledger status --cost` reported the claim `stale` while
- * `ledger decide --tier standard` reported `pass, reasons: []` for the same ledger, because the decision handed the kernel
+ * `ledger decide --tier standard` (a flag that today can only raise the gate tier — R2-F1) reported `pass, reasons: []` for the same ledger, because the decision handed the kernel
  * the subject **as frozen** (`ledgerVerdict`: `subject: ledger.subject`) while the claim projection and the discovery
  * projection compared against the subject **as declared** (`subjectAsDeclared`). A reading that answered a question the
  * ledger no longer asks was therefore credited below the discovery floor, in the one direction a gate must never take.
@@ -49,9 +51,14 @@ const claimReport = (result: Record<string, unknown>) =>
 /** A ledger with one reading, taken against the question as it stood at the freeze and linked to the claim. */
 async function ledgerWithOneReading(): Promise<void> {
     await ledger(['policy', '--init']);
+    // **The tier this fixture decides at is policy data, not an operator flag.** These cases used `decide --tier standard`
+    // to sit below the strict ceiling; since R2-F1 a named tier can only raise the gate, so the fixture declares the ceiling
+    // it means instead. What these cases are about is the question, not the tier.
+    await writePolicy(root, changeId, { ...defaultPolicy(), ledgerTierCeiling: 'standard' });
     await ledger(['plan']);
     await ledger(['claim', 'add', '--id', 'C1', '--statement', 'the export holds', '--risk-class', 'consistency', '--severity', 'major', '--depends-on', 'path:src/a.ts']);
     await ledger(['freeze']);
+
     const file = join(root, 'submission.json');
     await writeFile(file, `${JSON.stringify({
         claims: [{
@@ -99,9 +106,9 @@ describe('the decision asks the question the ledger declares', () => {
         // cannot pass for some other reason.
         await ledgerWithOneReading();
 
-        const decision = await ledger(['decide', '--tier', 'standard']);
+        const decision = await ledger(['decide']);
 
-        expect(decision.verdict).toBe('pass');
+        expect(decision.verdict, JSON.stringify(decision)).toBe('pass');
         expect(reasonsOf(decision)).not.toContain('evidence_stale_subject');
     });
 
@@ -115,7 +122,7 @@ describe('the decision asks the question the ledger declares', () => {
         expect(report.bySupport?.stale).toBe(1);
         expect(report.derived?.find((entry) => entry.claimId === 'C1')?.state).toBe('stale');
 
-        const decision = await ledger(['decide', '--tier', 'standard']);
+        const decision = await ledger(['decide']);
         expect(decision.verdict).not.toBe('pass');
         expect(reasonsOf(decision)).toContain('evidence_stale_subject');
     });
@@ -130,7 +137,7 @@ describe('the decision asks the question the ledger declares', () => {
         const report = claimReport(await ledger(['status', '--cost']));
         expect(report.bySupport?.stale).toBe(1);
 
-        const decision = await ledger(['decide', '--tier', 'standard']);
+        const decision = await ledger(['decide']);
         expect(decision.verdict).not.toBe('pass');
         expect(reasonsOf(decision)).toContain('evidence_stale_subject');
     });

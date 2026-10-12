@@ -73,8 +73,8 @@ async function declaredRoot(): Promise<string> {
     // generated plan every field held the default the builder would have produced anyway — measured: mutating the builder to
     // return a constant tier did not redden this case, which makes it decorative. These values appear nowhere else.
     await writePlan(root, changeId, {
-        tier: 'standard',
-        tierOverride: 'standard',
+        tier: 'security',
+        tierOverride: 'security',
         readingSets: [{ claimId: 'C-1', paths: ['src/a.ts', 'src/b.ts'], truncated: false }, { claimId: 'C-2', paths: ['src/b.ts'], truncated: false }],
         // The requirement is real, so the gap reporting below has something to report: with an empty requirement set the
         // request is satisfied by construction and the "every gap names its claim" case would be vacuous (measured while
@@ -108,7 +108,7 @@ describe('the request hands over the values it names', () => {
         // Values, compared against the artefact they come from — a tier the plan does not name would pass an existence check.
         expect(built.request.tier).toBe(plan.tier);
         // And the plan really holds the distinctive values, so these assertions are not comparing two defaults.
-        expect(plan.tier).toBe('standard');
+        expect(plan.tier).toBe('security');
         expect(built.request.deadlineToolCalls).toBe(7);
         expect(built.request.deadlineToolCalls).toBe(plan.discovery?.deadlineToolCalls ?? null);
         for (const entry of built.request.claims) {
@@ -246,7 +246,7 @@ describe('the request hands over the values it names', () => {
         const overriddenPlan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string; tierOverride?: string };
         const overriddenRequest = await buildReviewRequest({ root, changeId });
         const overriddenVerdict = await ledgerVerdict({ root, changeId });
-        expect(overriddenPlan).toMatchObject({ tier: 'standard', tierOverride: 'standard' });
+        expect(overriddenPlan).toMatchObject({ tier: 'security', tierOverride: 'standard' });
         expect(overriddenRequest.ok, JSON.stringify(overriddenRequest)).toBe(true);
         if (!overriddenRequest.ok || overriddenVerdict.kind !== 'decided') return;
         expect(overriddenRequest.request.tier).toBe(overriddenPlan.tier);

@@ -57,16 +57,21 @@ export type RiskClassification = {
  * names — so the command that ignored it was computing the plan's required evidence and risk classes for a weaker tier than
  * the one the decision would enforce. A plan weaker than its gate is worse than no plan: it looks like a specification.
  *
- * An explicit override still wins: naming a tier is the operator making the decision the ceiling exists to keep honest.
+ * An explicit override can raise that floor but cannot lower it: a named lower tier is retained as the operator's
+ * auditable request, while the gate reports the stronger tier the complete declaration requires.
  */
 export function resolveTier(input: {
     classification: RiskClassification;
     policy: Policy;
     override?: TierName;
 }): TierName {
-    if (input.override !== undefined) return input.override;
     const ceiling = input.policy.ledgerTierCeiling;
-    return TIER_RANK[input.classification.tier] >= TIER_RANK[ceiling] ? input.classification.tier : ceiling;
+    const floor = TIER_RANK[input.classification.tier] >= TIER_RANK[ceiling]
+        ? input.classification.tier
+        : ceiling;
+    return input.override !== undefined && TIER_RANK[input.override] > TIER_RANK[floor]
+        ? input.override
+        : floor;
 }
 
 export function classifyRisk(input: {

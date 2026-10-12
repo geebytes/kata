@@ -197,8 +197,11 @@ describe('the ledger verbs', () => {
         await ledger(claimArgv());
         expect((await ledger(['decide'])).tier).toBe('strict');
 
-        // And an operator who names a tier still wins: the bound is on the automatic path, not on a person.
-        expect((await ledger(['decide', '--tier', 'standard'])).tier).toBe('standard');
+        // And a named tier is a request rather than an exemption: naming a *lower* one is recorded and the gate still
+        // decides at the floor — R2-F1 measured `--tier standard` lowering a declaration that holds `src/kernel/**` — while
+        // naming a higher one does raise it.
+        expect((await ledger(['decide', '--tier', 'standard'])).tier).toBe('strict');
+        expect((await ledger(['decide', '--tier', 'security'])).tier).toBe('security');
     });
 
     it('carries a change from freeze to a pass, and reports what refused it along the way', async () => {

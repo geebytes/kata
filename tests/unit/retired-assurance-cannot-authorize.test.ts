@@ -159,8 +159,9 @@ describe('a retired assurance value cannot authorise a decision', () => {
         // The guard downstream of the verdict check refuses a retired value by name. Reaching it needs the ledger to
         // *pass*, which needs a tier whose floor the retired rank satisfies (`none`, i.e. `standard`) — but
         // `policy.ledgerTierCeiling: 'strict'` means `resolveTier` never returns below `strict` on the ledger route, and
-        // the `--tier` override exists only on `ledger decide`, not on `review --approve`. So a retired value is always
-        // stopped *earlier*, by `assurance_below_tier`, and the guard is unreachable from the CLI.
+        // the `--tier` override exists only on `ledger decide`, not on `review --approve` — and since R2-F1 it can only
+        // raise the tier, so the floor the retired rank would have to satisfy is out of reach by any route. A retired value
+        // is always stopped *earlier*, by `assurance_below_tier`, and the guard is unreachable from the CLI.
         //
         // The two facts are pinned separately so neither can drift silently: the floor refuses the value (asserted in the
         // case above), and the ceiling keeps the guard out of reach (asserted here). If a later change lowers the ceiling

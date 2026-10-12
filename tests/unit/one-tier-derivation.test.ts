@@ -27,9 +27,10 @@ describe('the tier is derived once', () => {
         expect(resolveTier({ classification, policy })).toBe('security');
     });
 
-    it('lets an explicit override win in both directions', () => {
-        const classification = classifyRisk({ paths: ['src/wiki/llmwiki.ts'], policy });
-        expect(resolveTier({ classification, policy, override: 'standard' })).toBe('standard');
-        expect(resolveTier({ classification, policy, override: 'security' })).toBe('security');
+    it('lets an explicit override raise a tier but never lower the complete-surface floor', () => {
+        const lowClassification = classifyRisk({ paths: ['src/wiki/llmwiki.ts'], policy });
+        const highClassification = classifyRisk({ paths: ['src/kernel/decide.ts'], policy });
+        expect(resolveTier({ classification: lowClassification, policy, override: 'security' })).toBe('security');
+        expect(resolveTier({ classification: highClassification, policy, override: 'standard' })).toBe('security');
     });
 });
