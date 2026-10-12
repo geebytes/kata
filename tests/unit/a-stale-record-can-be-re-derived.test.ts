@@ -89,6 +89,28 @@ describe('re-deriving a stale record recomputes what the record says about its s
         expect(after.stale[0]?.reason).toBe('source_changed');
     });
 
+    it('follows the frontmatter too, which is the other branch of the derivation', async () => {
+        // **Both branches of `statementForPage` are exercised, not only the summary one.** A page with the frontmatter the
+        // repository's own pages carry takes the `frontmatter ? … : …` branch, where the statement is the header rather than
+        // the first line — so a re-derivation that only handled the summary branch would leave a record describing the
+        // previous header while looking recomputed.
+        // The fields `parsePageFrontmatter` requires, and no others: without all six it returns null and the summary branch is
+        // taken instead, which is how the first version of this fixture managed to assert nothing about frontmatter.
+        const header = (title: string): string =>
+            `---\ntitle: ${title}\ncreated: 2026-10-12\nupdated: 2026-10-12\ntype: concept\ntags: wiki\nsources:\n  - .llmwiki/concepts/rule.md\n---\n\n# Body\n\nProse.\n`;
+        const page = header('First title');
+        const root = await seeded(page);
+        const edited = header('Second title');
+        await writeFile(join(root, '.llmwiki/concepts/rule.md'), edited, 'utf8');
+        await verifySources(root);
+
+        await revalidateWikiRecord(root, 'rule-page');
+        const record = await findWikiRecord(root, 'rule-page');
+
+        expect(record?.statement).toBe(statementForPage(edited));
+        expect(record?.statement).toContain('Second title');
+    });
+
     it('refreshes the hash of a distilled record but leaves its statement, which its file does not contain', async () => {
         // **The boundary, asserted rather than only written down.** "The statement is the page's summary" holds for an
         // ingested record. A distilled record's statement is the change's own finding: recomputing it here would replace
