@@ -301,6 +301,40 @@ describe('the request hands over the values it names', () => {
         expect(request.why).toMatch(/outside\.ts/);
     });
 
+    it('answers with an unreadable verdict when the declaration cannot be resolved, rather than throwing out of decide', async () => {
+        // **The sibling route to the request path.** `ledgerVerdict` called the resolver bare, so a declaration the
+        // normaliser refuses (a path outside the repository, or the repository root) threw out of `decide` — a bare stderr
+        // line, no envelope — and out of the three workflow callers that already handle the `unreadable` kind that exists
+        // for exactly this state (measured by an independent round, R6-F3). Wrapping it is the fix; this case is its
+        // instrument, and it is in this file because the fixture that reaches the state is already here.
+        const root = await tempRoot();
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['src/a.ts'],
+        });
+        await writePolicy(root, changeId, defaultPolicy());
+        expect((await ledger(root, ['claim', 'add', '--id', 'C-1', '--statement', 'a.ts holds', '--risk-class', 'consistency', '--severity', 'major', '--depends-on', 'path:src/a.ts'])).ok).toBe(true);
+        expect((await ledger(root, ['plan'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['../outside.ts'],
+        });
+
+        const verdict = await ledgerVerdict({ root, changeId });
+        expect(verdict.kind, 'an unresolvable declaration is a verdict, not an exception').toBe('unreadable');
+        if (verdict.kind !== 'unreadable') return;
+        expect(verdict.detail).toMatch(/outside\.ts/);
+    });
+
     it('answers the request from the declared surface even when the declaration names a directory', async () => {
         // **The shape the previous repair missed.** Canonicalising only the resolver's absent-paths branch left the
         // production call site here — `buildReviewRequest` passes the task's raw declaration as `paths` — classifying the
