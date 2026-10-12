@@ -356,13 +356,14 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
         if (reason === undefined || reason.trim() === '') {
             throw new Error('kata gate reset requires --reason: a record is removed only with a stated reason, so the removal is auditable.');
         }
-        const reset = await resetUserChoiceGate({ root, taskId: resetTask, boundary: resetBoundary });
+        const reset = await resetUserChoiceGate({ root, taskId: resetTask, boundary: resetBoundary, reason });
         return {
             command: 'gate reset',
             taskId: resetTask,
             boundary: resetBoundary,
             removed: reset.removed,
             path: reset.path,
+            auditPath: reset.auditPath,
             reason,
         };
     }

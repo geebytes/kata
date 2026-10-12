@@ -59,15 +59,16 @@ Three consequences, one per defect:
    read side already validates; the asymmetry is what produced a deadlock.)
 2. **A remedy must run where it is printed.** The table that says which command creates a boundary is checked against the
    phases that command accepts, so a refusal cannot name a road that is closed in the state that prints it.
-3. **A disposition is derived, never asserted.** `disposition: 'fixed'` is written by the mechanism when it records the
-   fact that closes a finding — a review round bound to a **newer revision** than the one that produced it, which is the
-   same fact `bindsToRevision` already answers for the ladder. There is **no command that lets an operator close a
-   finding**: the disposition follows from the repair being recorded, so this does not weaken a gate — it makes the gate
-   able to see a repair that already happened.
+3. **A declaration must not name a mechanism that is not there.** `schemas/review-finding.schema.json` described a
+   `findings defer|accept|rout` command that the dispatcher does not have, and its vocabulary was a second copy of the
+   ladder's. The vocabulary is one value now, shared by both artefacts and compared by a selector.
 
-Point 3 is deliberately the narrow form. A free-form `findings dispose` command would let an operator close a blocking
-finding by assertion, which is exactly the gate-strength change this repository refuses to make unilaterally (memory
-#1036/#1285). If the narrower form turns out to be insufficient, the wider one is a separate decision for the user.
+Point 3 was first written as "a disposition is derived from the recorded repair", and **that premise was refuted by the
+code before anything was implemented** (§3, AC-4): what refuses approval after a repair is the record's binding, not an
+undisposed finding, and `openFindings` has no gate consumer. The wider form stays queued as part of I-35, to be
+implemented only after a reproduction shows a gate that refuses on it. A free-form `findings dispose` command would let
+an operator close a blocking finding by assertion, which is exactly the gate-strength change this repository refuses to
+make unilaterally (memory #1036/#1285).
 
 ## 3. Acceptance criteria
 
@@ -141,20 +142,19 @@ of I-35, to be implemented only after a reproduction shows a gate that refuses o
   boundary.
 - **A consumed gate is not damage.** AC-2's "damaged" is a record that fails its schema; a valid, consumed record is the
   normal state after a phase command and keeps its own remedy (AC-3).
-- **The disposition is written on the repair path only.** Historical records without a disposition keep reading as open
-  (the schema's "Absent means open"), so this change does not retroactively close anything: it closes what a round bound
-  to a newer revision has answered, from the moment that round is recorded.
-- **`schemas/review-finding.schema.json`'s sentence about a `findings` command** stays true only if such a command exists;
-  this change does not add one, so the schema's description is corrected to name the mechanism that actually writes the
-  field.
+- **Nothing closes a finding here.** The disposition vocabulary is compared between the schema and the ladder and no
+  write site is added: `disposition: 'fixed'` still has no writer in `src/`, which is recorded as I-35's remaining half.
+- **The schema's description** now says what the code does — the value is written by whoever records the finding, there is
+  no separate disposition command, and absent means open.
 - **Out of scope, queued:** I-38 (the loop's escalation routes back to another round) is a routing decision, not a
   validation defect, and needs the user's choice.
 
 ## 6. Cost
 
-Four ACs, four selectors, ~10 declared paths, one repair path in the review-record writer. Estimated 4–6 h of
-implementation plus one independent round (≈15–20 min / ≈250k tokens). The falsifier set will grow by one instrument per
-AC, each re-aimed against the line it mutates.
+Four ACs, four selectors, 12 declared paths. Measured: implementation ≈3 h (including the correction of AC-4 after its
+premise was refuted), one independent round ≈29 min / ≈721k tokens. The declared falsifier set has seven instruments,
+each re-aimed against the line it mutates; the round-1 repairs added five more (the boundary vocabulary, the reuse path's
+choice, the stored reset reason, the directory refusal and the property sweep).
 
 ## 7. Why this is first
 

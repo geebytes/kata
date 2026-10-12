@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTask } from '../../src/core/task.js';
 import { initLayout } from '../../src/core/layout.js';
-import { GATE_CONSUMED_BY, GATE_CREATED_BY, approveUserChoiceGate, createUserChoiceGate, gateConsumedInstruction } from '../../src/workflow/user-choice-gate.js';
+import { GATE_CONSUMED_BY, GATE_CREATED_BY, approveUserChoiceGate, createUserChoiceGate, gateConsumedInstruction, gateRebuildInstruction } from '../../src/workflow/user-choice-gate.js';
 
 /**
  * AC-3 — every boundary's remedy runs in the phase that prints it.
@@ -79,28 +79,43 @@ describe('a gate remedy runs where it is printed', () => {
         expect(gateConsumedInstruction('judge_gate')).not.toMatch(/review --approve/u);
     });
 
-    it('names a command the CLI accepts, for every boundary, in the consumed state', () => {
-        // The property, swept over the table: every consumed-state instruction names at least one command, and each verb
-        // it names is one the CLI knows — so "the road is a command that exists" is mechanical rather than read.
-        const cli = join(process.cwd(), 'dist', 'cli.js');
+    it('states the consumer, the next boundary and where that boundary gets its gate — from its own tables', () => {
+        // **The first version of this case asked only whether the CLI knew the verb** — and an independent round measured a
+        // mutation that replaced a road with `kata-cli archive` (a verb the CLI knows and refuses from phase `review`) and
+        // left it green: an instrument that cannot redden for the property it names. The properties here are read from the
+        // tables, so a table that loses an entry, or a row whose `next` names a boundary with no creating entry, is red.
         for (const boundary of Object.keys(GATE_CREATED_BY) as Array<keyof typeof GATE_CREATED_BY>) {
+            const entry = GATE_CONSUMED_BY[boundary];
             const instruction = gateConsumedInstruction(boundary);
-            const named = [...instruction.matchAll(/kata-cli ([a-z-]+)/gu)].map((match) => match[1]!);
-            expect(named.length, `${boundary}: ${instruction}`).toBeGreaterThan(0);
-            if (!existsSync(cli)) continue;
-            for (const verb of named) {
-                let accepted = true;
-                try {
-                    // No arguments: a verb the CLI does not know fails with `Unknown command`; one it knows reports its own
-                    // usage. Both exit non-zero, so the signal is the message, not the code.
-                    execFileSync('node', [cli, verb, '--help'], { cwd: process.cwd(), encoding: 'utf8', stdio: 'pipe' });
-                } catch (error) {
-                    const output = `${(error as { stdout?: string }).stdout ?? ''}${(error as { stderr?: string }).stderr ?? ''}`;
-                    accepted = !/Unknown command/iu.test(output);
-                }
-                expect(accepted, `${boundary} names kata-cli ${verb}, which the CLI does not know`).toBe(true);
+            // The consumer is stated, from the table.
+            expect(instruction, boundary).toContain(entry.command);
+            if (entry.next === undefined) {
+                // The last boundary says so rather than promising a step that does not exist.
+                expect(instruction, boundary).toMatch(/ladder ends/u);
+                continue;
             }
+            // The next boundary is named, and it has a creating entry — so the ladder this sentence describes is total.
+            expect(instruction, boundary).toContain(entry.next);
+            const created = GATE_CREATED_BY[entry.next];
+            expect(created, `${boundary} -> ${entry.next}`).toBeDefined();
+            const creator = entry.next === 'judge_gate' ? 'kata-cli review --approve' : `kata-cli ${created.command}`;
+            expect(instruction, boundary).toContain(creator);
+            // And the phase is stated whenever the table has one, because that is what makes the sentence checkable.
+            if (created.phase !== undefined) expect(instruction, boundary).toContain(created.phase);
         }
+    });
+
+    it('does not claim a road runs now: it states what happened and where the next gate comes from', async () => {
+        // The sentence the first round measured as inert named `kata-cli archive` for a consumed `judge_gate`, and `archive`
+        // is refused from phase `judge` because its own gate is not approved. The instruction therefore contains no promise
+        // about what will run; this asserts the shape rather than the wording.
+        const instruction = gateConsumedInstruction('judge_gate');
+        expect(instruction).not.toMatch(/Continue with/u);
+        expect(instruction).toMatch(/already crossed/u);
+        expect(instruction).toMatch(/archive_gate/u);
+        // The rebuild sentence names the phase its command runs in, so a boundary whose entry has no phase says so.
+        expect(gateRebuildInstruction('judge_gate')).toContain('review');
+        expect(gateRebuildInstruction('implementation_gate')).toContain('plan');
     });
 
     it('says the state instead of asking for a decision that was already made', async () => {

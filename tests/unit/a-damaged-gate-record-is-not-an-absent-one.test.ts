@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,7 +75,7 @@ describe('a damaged gate record is not an absent one', () => {
         await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
         writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
 
-        const reset = await resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        const reset = await resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', reason: 'the record holds a value its schema rejects' });
         expect(reset.removed).toBe(true);
         expect(existsSync(gatePath(root, 'archive_gate'))).toBe(false);
 
@@ -83,6 +83,32 @@ describe('a damaged gate record is not an absent one', () => {
         await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
         await approveUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', choice: 'continue_current' });
         expect((await requireUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' })).choice).toBe('continue_current');
+    });
+
+    it('writes the reason down beside the record it removed, so the removal is auditable', async () => {
+        // The first version required `--reason`, printed it in the result, and stored it nowhere (measured by the first
+        // round: `grep -rl` over the root found it in no file), so a removal left no trace of why it happened.
+        const root = await fixture('audit');
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
+
+        const reset = await resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', reason: 'the record holds a value its schema rejects' });
+        const audit = JSON.parse(readFileSync(reset.auditPath, 'utf8')) as { reason?: string; removedSha256?: string };
+        expect(audit.reason).toBe('the record holds a value its schema rejects');
+        expect(audit.removedSha256).toMatch(/^[0-9a-f]{64}$/u);
+        // And an empty reason is refused, so the audit cannot be blank.
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', reason: '   ' })).rejects.toThrow(/reason/u);
+    });
+
+    it('refuses a directory at the record path by name instead of throwing a filesystem error', async () => {
+        // Measured: with a directory where the record should be, the refusal named `gate reset` and the reset itself threw
+        // the raw Node error `Path is a directory: rm returned EISDIR` — a road that cannot be walked, and a raw error out
+        // of a command.
+        const root = await fixture('directory');
+        mkdirSync(gatePath(root, 'archive_gate'), { recursive: true });
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', reason: 'x' }))
+            .rejects.toThrow(/directory, not a record/u);
+        expect(existsSync(gatePath(root, 'archive_gate'))).toBe(true);
     });
 
     it('removes it through the CLI, and refuses a readable record there too', async () => {
@@ -119,8 +145,8 @@ describe('a damaged gate record is not an absent one', () => {
         await approveUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate', choice: 'switched' });
         const before = readFileSync(gatePath(root, 'review_gate'), 'utf8');
 
-        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate' })).rejects.toThrow(/readable|valid|refuses/u);
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate', reason: 'x' })).rejects.toThrow(/readable|valid|refuses/u);
         expect(readFileSync(gatePath(root, 'review_gate'), 'utf8')).toBe(before);
-        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'judge_gate' })).rejects.toThrow();
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'judge_gate', reason: 'x' })).rejects.toThrow();
     });
 });

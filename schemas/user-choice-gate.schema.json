@@ -10,6 +10,10 @@
   ],
   "additionalProperties": false,
   "properties": {
+      "reusedFromTaskChoice": {
+        "type": "boolean",
+        "description": "Set when this boundary reused the task-level choice instead of asking again. The reuse path materialises the record at the boundary, so this field is the audit trail for it — and it was missing from this schema while the writer wrote it, which made the record unreadable to its own reader."
+      },
     "taskId": {
       "type": "string",
       "minLength": 1

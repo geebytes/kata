@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTask } from '../../src/core/task.js';
@@ -67,6 +67,62 @@ describe('an out-of-vocabulary gate choice is refused', () => {
             const written = JSON.parse(readFileSync(join(root, '.kata', 'tasks', 'held', 'user-choice-review_gate.json'), 'utf8')) as { choice?: string };
             expect(written.choice).toBe(choice);
         }
+    });
+
+    it('lists the same choices the gate schema allows, so neither side can drift', async () => {
+        // **The writer's vocabulary and the reader's are two artefacts.** The first version of this selector iterated a fixed
+        // illegal list and round-tripped the writer's own values through the reader, which catches a writer *narrower* than
+        // the schema and misses a writer *wider* than it — the direction that produced the deadlock (measured by the first
+        // round). Reading both is what makes the comparison real.
+        const schema = JSON.parse(readFileSync(join(process.cwd(), 'schemas', 'user-choice-gate.schema.json'), 'utf8')) as {
+            properties: { choice: { enum: string[] } };
+        };
+        expect([...USER_CHOICES].sort()).toEqual([...schema.properties.choice.enum].sort());
+        // And the task-choice record carries the same vocabulary, since a reused choice is materialised into a gate record.
+        const taskChoice = JSON.parse(readFileSync(join(process.cwd(), 'schemas', 'task-choice.schema.json'), 'utf8')) as {
+            properties: { choice: { enum: string[] } };
+        };
+        expect([...USER_CHOICES].sort()).toEqual([...taskChoice.properties.choice.enum].sort());
+    });
+
+    it('materialises the task-level choice into a record its own reader accepts', async () => {
+        // **The reuse path is a second writer of the gate record, and its record was unreadable.** It writes
+        // `reusedFromTaskChoice` (the audit trail for "this boundary reused the task choice"), a field the gate schema did
+        // not list while `additionalProperties` is false — so the record it produced failed the schema its own reader
+        // enforces, which is the round-1 blocking finding. This case is that finding's instrument: it materialises the
+        // record and reads it back through the reader, so removing the field from the schema reddens it.
+        const root = await fixture('reuse');
+        mkdirSync(join(root, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(root, '.kata', 'tasks', 'held', 'user-choice-task.json'), `${JSON.stringify({
+            taskId: 'held', choice: 'switched', createdAt: new Date().toISOString(), approvedAt: new Date().toISOString(),
+        })}\n`);
+
+        const { requireUserChoiceGate, readGateState } = await import('../../src/workflow/user-choice-gate.js');
+        const reused = await requireUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate' });
+        expect(reused.choice).toBe('switched');
+        expect(reused.reusedFromTaskChoice).toBe(true);
+        // Read back: the record on disk is usable, not damaged.
+        const state = await readGateState(root, 'held', 'review_gate');
+        expect(state.kind).toBe('usable');
+        // And a task-choice record that cannot be read is named as damaged rather than answered with "no choice yet".
+        writeFileSync(join(root, '.kata', 'tasks', 'held', 'user-choice-task.json'), '{"taskId": "held", "choice": "archive"}\n');
+        await expect(requireUserChoiceGate({ root, taskId: 'held', boundary: 'judge_gate' })).rejects.toThrow(/damaged/u);
+    });
+
+    it('refuses a boundary name that is not one of the four, so a cast cannot reach a path', async () => {
+        // **The reset verb cast the boundary and built a path from it.** `--boundary ../../src/a` cancelled the first
+        // segment of `path.join(taskDir, 'user-choice-' + boundary + '.json')` and `rm` removed whatever it resolved to
+        // (measured by the first round, a path traversal out of a read-only-looking command). The vocabulary is enforced
+        // where the path is built, so every reader and writer is covered by the one check.
+        const root = await fixture('boundary');
+        const { resetUserChoiceGate, readGateState } = await import('../../src/workflow/user-choice-gate.js');
+        const outside = join(root, 'src');
+        mkdirSync(outside, { recursive: true });
+        writeFileSync(join(outside, 'a.json'), '{}\n');
+
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: '../../src/a' as never, reason: 'x' })).rejects.toThrow(/Unknown gate boundary/u);
+        expect(existsSync(join(outside, 'a.json'))).toBe(true);
+        await expect(readGateState(root, 'held', '../held/user-choice-archive_gate' as never)).rejects.toThrow(/Unknown gate boundary/u);
     });
 
     it('refuses the same vocabulary the reader validates, so the two cannot drift', async () => {
