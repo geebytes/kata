@@ -113,14 +113,14 @@ export async function undeclaredChanges(input: {
     const coveredSet = new Set(covered?.paths ?? []);
     const directoryPrefixes: string[] = [];
     for (const declaration of declared) {
-        // **A declaration written as a pattern is a prefix by construction.** The first version of this repair dropped the
-        // `/**` branch with the spelling heuristic, so a declaration `src/**` — which `scope change --add` accepts — stopped
-        // covering anything, because `stat` cannot see a glob. The wildcard's meaning is not a guess about the name.
-        const pattern = declaration.replace(/\/\*\*$/, '');
-        if (pattern !== declaration) {
-            directoryPrefixes.push(pattern);
-            continue;
-        }
+        // **A glob declaration is not given a private meaning here.** One version of this repair read a trailing `/**` as
+        // a subtree prefix, which put a second answer to "what does this declaration cover" beside the walk's: measured, a
+        // declaration `src/**` covered every path under `src` *here* while `declaredContentPaths` answered `{paths: [],
+        // unreadable: ['src/**']}` and the tier resolver published `strict` with no match — so the permissive reading sat on
+        // the seal's undeclared gate and the strict one on the tier, and only two unrelated refusals kept that apart
+        // (measured by an independent round, R7-F1). Coverage is the walk's answer; a glob names something the walk cannot
+        // find, which the seal refuses by name (`declaration_covers_no_content`) rather than silently reading it as a
+        // subtree. This reader therefore agrees with `declaredContentPaths`, `ownedCovers` and `digestKeysFor`.
         try {
             if ((await stat(join(input.root, declaration))).isDirectory()) directoryPrefixes.push(declaration);
         } catch {

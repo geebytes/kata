@@ -19,11 +19,12 @@ import { join, relative } from 'node:path';
  * appears below with a stated answer, so a new one cannot be added without deciding what it does with a declaration it
  * cannot read.
  *
- * **Boundary (written down rather than claimed).** The scan reads import statements, so an aliased import, a namespace
- * import and a re-export are all seen; a reader that reaches the function through a *dynamic* property access
- * (`module['declaredContentPaths'](…)`) or through a variable holding the function is invisible to any static scan, and is
- * only caught by a reviewer reading the diff. That is the limit of this instrument, stated so that a green case is not read
- * as a proof of completeness.
+ * **Boundary (written down rather than claimed).** The scan reads *this file's own* `import`/`export … from` statements
+ * naming the module, so a named import, an aliased import and a namespace import are all seen. Three shapes are beyond any
+ * per-file scan and are therefore stated rather than implied: a **transitive** re-export (the file imports the name from an
+ * intermediate module, not from `repository-identity`), a **dynamic** property access
+ * (`module['declaredContentPaths'](…)`), and a binding stored in a variable. Those are caught only by a reviewer reading the
+ * diff — which is why the case below asserts what the scan can see instead of claiming completeness.
  */
 const ROOT = process.cwd();
 
@@ -50,7 +51,8 @@ const CONSUMERS: Record<string, { reads: 'refuses-on-unreadable' | 'classifies-t
 /** Local names bound to `declaredContentPaths` by this file's own imports, aliases and namespaces included. */
 function importedNames(text: string): string[] {
     const names: string[] = [];
-    for (const match of text.matchAll(/import\s+(?:type\s+)?([^'"]+?)\s+from\s+['"]([^'"]*repository-identity[^'"]*)['"]/g)) {
+    // Both statements that can bind the name from this module: an import, and a re-export of it.
+    for (const match of text.matchAll(/(?:import|export)\s+(?:type\s+)?([^'"]+?)\s+from\s+['"]([^'"]*repository-identity[^'"]*)['"]/g)) {
         const clause = match[1];
         const braced = clause.match(/\{([^}]*)\}/);
         if (braced) {
@@ -100,6 +102,10 @@ describe('every reader of the declared surface says what it does with an unreada
         expect(importedNames("import { declaredContentPaths as dcp } from '../core/repository-identity.js';")).toEqual(['dcp']);
         expect(importedNames("import * as identity from '../core/repository-identity.js';")).toEqual(['identity.declaredContentPaths']);
         expect(importedNames("import { isIgnoredRepositoryPath } from '../core/repository-identity.js';")).toEqual([]);
+        // A re-export binds the name just as an import does, and the first version of this scan missed it while its own doc
+        // claimed it was seen (measured by an independent round, R7-F3).
+        expect(importedNames("export { declaredContentPaths } from '../core/repository-identity.js';")).toEqual(['declaredContentPaths']);
+        expect(importedNames("export { declaredContentPaths as passthrough } from '../core/repository-identity.js';")).toEqual(['passthrough']);
     });
 
     it('requires an answer that is one of the three recorded shapes, and a reason', () => {

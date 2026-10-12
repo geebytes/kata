@@ -61,13 +61,20 @@ describe('a declared directory covers what is under it, whatever the directory i
         expect(await repo(['src'])).toEqual([]);
     });
 
-    it('covers what a declared pattern names, including a path that no longer exists', async () => {
-        // A declaration written as `src/**` is a prefix by construction: `stat` cannot see a glob, so the pattern has to be
-        // read as one rather than asked of the filesystem. Both halves are asserted because the walk cannot cover a deletion.
-        await rm(join(root, 'src', 'declared.ts'));
-        expect(await repo(['src/**'])).toEqual([]);
-        await writeFile(join(root, 'src', 'declared.ts'), 'export const declared = 3;\n');
-        expect(await repo(['src/**'])).toEqual([]);
+    it('reads a glob declaration the way every other reader does — as a name that covers nothing', async () => {
+        // **One fact, one answer.** A previous version of this repair read a trailing `/**` as a subtree prefix, so a
+        // declaration `src/**` covered every path under `src` *here* while `declaredContentPaths` answered `{paths: [],
+        // unreadable: ['src/**']}` and the tier resolver published `strict`, `matched: []` — the permissive reading on the
+        // seal's undeclared gate, the strict one on the tier (measured by an independent round, R7-F1). Coverage is the
+        // walk's answer; a glob names something the walk cannot find, and the seal refuses such a declaration by name
+        // (`declaration_covers_no_content`) instead of silently reading it as a subtree. This case is the agreement the
+        // divergence broke: the undeclared reading and the walk must give the same answer for the same declaration.
+        const { declaredContentPaths } = await import('../../src/core/repository-identity.js');
+        const walk = await declaredContentPaths(root, ['src/**']);
+        expect(walk.paths).toEqual([]);
+        expect(walk.unreadable).toEqual(['src/**']);
+        await writeFile(join(root, 'src', 'declared.ts'), 'export const declared = 9;\n');
+        expect(await repo(['src/**'])).toEqual(['src/declared.ts']);
     });
 
     it('still names a changed file that neither the declaration nor a declared directory covers', async () => {
