@@ -91,13 +91,32 @@ mechanical: the table is walked and each entry's command is asked whether it run
 adding a boundary without a runnable remedy is red.
 Selector: `tests/unit/a-gate-remedy-runs-where-it-is-printed.test.ts`.
 
-**AC-4 — a repaired finding is closed by the fact that repaired it.**
-When a review round is recorded against a revision newer than the one a finding was recorded on, that finding's
-disposition becomes `fixed` with the reason naming the round and revision that closed it, so `openFindings` falls and
-`review --approve` stops refusing on repairs that already happened. A control asserts the opposite direction: a round
-bound to the **same** revision does not close the finding, and an open finding at or above the mode's bar still refuses
-approval. No command accepts a disposition as an argument.
-Selector: `tests/unit/a-finding-is-closed-by-the-round-that-closed-it.test.ts`.
+**AC-4 — the disposition vocabulary has one derivation, and the schema names no mechanism that is not there.**
+`schemas/review-finding.schema.json` allows `open | fixed | deferred | accepted | routed` and states that the value is
+"set by a disposition command (`findings defer|accept|rout`) or by the closure rule marking a finding fixed"; the ladder
+closes a finding only on `fixed`. The two are one vocabulary in two artefacts, and the schema names a command that does
+not exist. The criterion: the schema's enum and the ladder's own vocabulary are the same set (checked by reading both, so
+a value added to one side and not the other is red), and the schema's description names only mechanisms that exist.
+Selector: `tests/unit/a-disposition-has-one-vocabulary.test.ts`.
+
+**Amended 2026-10-13, after measuring the original premise.** This AC was first written as "a repaired finding is closed
+by the round that repaired it, so `review --approve` stops refusing on repairs that already happened". That premise is
+**refuted by the code**, and the correction is recorded here rather than quietly implemented:
+
+- what refuses approval after a repair is the record's **binding**, not a finding's disposition —
+  `src/workflow/orchestrator.ts:2262`: `if (revisionId && !bindsToRevision(existing, approveBinding))` refuses with
+  "Review approval requires findings recorded for the same sealed revision (or the same content) as current evidence.
+  Re-run /kata-review before approving." That refusal is correct (a review of old content is not evidence about new
+  content), and its printed road is executable;
+- `openFindings` has **no gate consumer** — `grep -rn "openFindings" src/` reaches only the change record itself and the
+  ladder's comment, so a finding nothing disposes of is a *reporting* hole, not a gate;
+- and `readBlockingProblems` drops the findings of an unbound record (`src/workflow/review-read.ts:226`), so a repaired
+  finding cannot refuse the approval in the first place.
+
+The three rounds that this change was meant to stop buying came from I-21 (a claim with no reading set), I-36 and I-37 —
+not from an undisposable finding. So the AC is narrowed to what is measured: one vocabulary, and a schema that does not
+describe a command nobody can run. The wider form (a disposition written from a recorded fact) stays in the queue as part
+of I-35, to be implemented only after a reproduction shows a gate that refuses on it.
 
 ## 4. Declared surface
 
@@ -111,7 +130,8 @@ Selector: `tests/unit/a-finding-is-closed-by-the-round-that-closed-it.test.ts`.
 | `tests/unit/an-out-of-vocabulary-gate-choice-is-refused.test.ts` | AC-1 |
 | `tests/unit/a-damaged-gate-record-is-not-an-absent-one.test.ts` | AC-2 |
 | `tests/unit/a-gate-remedy-runs-where-it-is-printed.test.ts` | AC-3 |
-| `tests/unit/a-finding-is-closed-by-the-round-that-closed-it.test.ts` | AC-4 |
+| `tests/unit/a-disposition-has-one-vocabulary.test.ts` | AC-4 |
+| `schemas/review-finding.schema.json` | AC-4: the vocabulary the ladder must agree with |
 | `docs/design/2026-10-13-the-gates-can-be-repaired.md` | this document |
 
 ## 5. Boundaries
