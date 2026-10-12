@@ -58,8 +58,35 @@ export async function writeWikiRecord(root: string, record: WikiRecord): Promise
   const validatedWithId = { ...validated, id };
   // L3-04: validation happens before the write (it already did) and the write is now atomic, so a crash mid-write leaves
   // the previous record readable instead of a truncated file that every reader then has to report as invalid.
-  await withRepositoryArtefactLock(root, `wiki-${id}`, join(wikiDir, `${id}.json`), async () =>
-    `${JSON.stringify(validatedWithId, null, 2)}\n`);
+  await withRepositoryArtefactLock(root, `wiki-${id}`, join(wikiDir, `${id}.json`), async (current) => {
+    // **This writer replaces, and a replacement must not destroy a decision.**
+    //
+    // `writeWikiRecord` overwrites the file it names — unlike `updateWikiRecord`, which merges — so any writer that hands it
+    // a fresh record silently discards whatever the previous one carried. `ingestLlmWiki` guards the *page* and not the
+    // record, so re-ingesting a source whose page is gone wrote a new `candidate` over an approved record: an approval became
+    // the status the closure gate accepts, with the writer reporting the id as newly governed and `refused: []` (measured by
+    // an independent round). The guard belongs at the one choke point every writer passes through rather than at the three
+    // callers, and it is judged **inside the lock**, against the content actually on disk.
+    //
+    // The refusal names the state and the roads: a replacement is a decision, so the operator retires or rejects the record
+    // first, or clears the store with `wiki rebuild`, which says what it removes.
+    try {
+      const existing = current.trim().length > 0 ? (JSON.parse(current) as { status?: string }) : undefined;
+      if (existing?.status === 'verified' || existing?.status === 'rejected') {
+        throw new Error(
+          `Wiki record ${id} is ${existing.status}, and writing a new record over it would discard that decision; retire or reject it first, or clear the store with \`kata-cli wiki rebuild\` if the whole store is being replaced`,
+        );
+      }
+    } catch (error) {
+      // A file this writer cannot parse is not a reason to skip the guard's *other* duty: report it rather than overwrite it,
+      // because the content it cannot read may be exactly the decision it must not destroy.
+      if (error instanceof SyntaxError) {
+        throw new Error(`Wiki record ${id} cannot be replaced because the record already on disk cannot be parsed: ${error.message}`);
+      }
+      throw error;
+    }
+    return `${JSON.stringify(validatedWithId, null, 2)}\n`;
+  });
 }
 
 export async function updateWikiRecord(root: string, id: string, update: Partial<WikiRecord>): Promise<WikiRecord> {

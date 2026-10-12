@@ -4,6 +4,7 @@ import { computeFileHash } from './record.js';
 import { statementForPage } from './llmwiki.js';
 import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
+import { llmwikiDirName } from '../core/repository-identity.js';
 
 export interface DriftEntry {
   id: string;
@@ -139,7 +140,11 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   const { records, invalid: invalidRecords } = await readWikiRecordsWithIssues(root);
   const record = records.find((entry) => entry.id === normalizeId(id));
   if (!record) {
-    const invalid = invalidRecords.find((entry) => entry.path.endsWith(`${normalizeId(id)}.json`));
+    // **A suffix test is not an identity test.** `path.endsWith('a.json')` also matches `bca.json`, so an invalid record in a
+    // file whose name merely ends the same way was reported as the requested id's damage. The comparison is on the filename
+    // the store actually writes, which is derived by one function (`normalizeId`).
+    const wanted = `${normalizeId(id)}.json`;
+    const invalid = invalidRecords.find((entry) => entry.path.split(/[\\/]/).pop() === wanted);
     throw new Error(
       invalid
         ? `Wiki record ${id} cannot be revalidated because it does not match its schema: ${invalid.message}`
@@ -171,6 +176,18 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   // `sourceHashes` while this function iterates `sourceRefs`, so a file named only by the hash map was refused by neither —
   // and the recomputation, which writes the map it built, would have dropped it silently. A record whose two halves disagree
   // is corrupt, so it is refused by name and left exactly as it was rather than repaired into agreement.
+  // **A repeated source is its own fact, because the two halves then describe different things.** The schema allows
+  // `sourceRefs: ['a','a']` (no `uniqueItems`), so a record can declare one file twice while recording one hash for it — and a
+  // set comparison would call that consistent. The first version compared sorted joins, which made the pair a mismatch and
+  // then reported it as `declared but not hashed: a`, which is false: `a` is hashed. Naming the repetition is the honest
+  // answer, and it is a refusal rather than a repair because which of the two the record meant is not knowable here.
+  const repeated = record.sourceRefs.filter((path, index) => record.sourceRefs.indexOf(path) !== index);
+  if (repeated.length > 0) {
+    throw new Error(
+      `Wiki record ${id} cannot be re-derived because it declares the same source more than once (${[...new Set(repeated)].join(', ')}): which declaration the recorded hash belongs to is not knowable, so it needs to be re-ingested rather than refreshed`,
+    );
+  }
+
   const declared = [...record.sourceRefs].sort();
   const hashed = Object.keys(record.sourceHashes).sort();
   if (declared.join('\u0000') !== hashed.join('\u0000')) {
@@ -213,7 +230,15 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   // raw import, not the page, and the derivation is not this one (measured by an independent round). The question is not
   // "is this record ingested" but "did the writer that produced it compose the statement this way", and the record carries
   // that writer's identity.
-  const statementIsThePageSummary = record.validationTaskId === 'llmwiki-register' && record.sourceRefs.length === 1;
+  // The eligibility test is the writer **and the shape that writer produces**: one source, and it is a page under the wiki
+  // directory (the ref `registerWikiPages` builds, from the same constant it uses). A record carrying the registration id
+  // whose single source is some other file — hand-made, or edited later — was previously recomputed from that file, replacing
+  // its prose with that file's first line while the reply repeated the id as if that were evidence (measured by an
+  // independent round).
+  const statementIsThePageSummary =
+    record.validationTaskId === 'llmwiki-register' &&
+    record.sourceRefs.length === 1 &&
+    (record.sourceRefs[0] ?? '').startsWith(`${llmwikiDirName}/`);
   const statement = statementIsThePageSummary && summaries.length > 0 ? summaries[0]! : record.statement;
 
   const updated = await updateWikiRecord(root, record.id, {
@@ -226,7 +251,10 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
     status: updated.status,
     refreshed: [...new Set(refreshed)].sort(),
     statement: statementIsThePageSummary
-      ? { recomputed: true, why: `written by ${record.validationTaskId}, whose statement is this page's own summary` }
+      ? {
+          recomputed: true,
+          why: `written by ${record.validationTaskId} with one source under ${llmwikiDirName}/, which is the shape whose statement is this page's own summary`,
+        }
       : {
           recomputed: false,
           why: `written by ${record.validationTaskId} with ${record.sourceRefs.length} source(s), so its statement is not this page's summary and the recorded prose is left as it is`,

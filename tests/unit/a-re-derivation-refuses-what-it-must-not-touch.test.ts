@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
+import { writeWikiRecord } from '../../src/wiki/store.js';
 import { computeFileHash } from '../../src/wiki/record.js';
 
 /**
@@ -115,6 +116,45 @@ describe('re-deriving refuses what it must not touch', () => {
         const after = JSON.parse(await readFile(path, 'utf8')) as { status: string; approvalEvent?: unknown };
         expect(after.status).toBe('stale');
         expect(after.approvalEvent).toBeTruthy();
+    });
+
+    it('refuses, in the store, to write a new record over one that carries a decision', async () => {
+        // **The route the phrase "every route" missed.** `writeWikiRecord` replaces the file it names (unlike
+        // `updateWikiRecord`, which merges), and `ingestLlmWiki` guards the *page* rather than the record — so re-ingesting a
+        // source whose page is gone wrote a fresh `candidate` over an approved record, discarding the approval and the prose,
+        // and reporting the id as newly governed (measured by an independent round). The guard is at the one choke point every
+        // writer passes through, and it is judged inside the lock against the content actually on disk.
+        const root = await seeded('verified');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const before = await readFile(path, 'utf8');
+        const fresh = JSON.parse(before) as Record<string, unknown>;
+        delete fresh.approvalEvent;
+        fresh.status = 'candidate';
+        fresh.statement = 'A stub the writer generated.';
+
+        await expect(writeWikiRecord(root, fresh as never)).rejects.toThrow(/verified/);
+        expect(await readFile(path, 'utf8')).toBe(before);
+
+        // …and the rejected end of the ladder, for the same reason.
+        const rejected = await seeded('rejected');
+        const rejectedPath = join(rejected, '.kata/wiki/rule-page.json');
+        const rejectedBefore = await readFile(rejectedPath, 'utf8');
+        const rejectedReplacement = JSON.parse(rejectedBefore) as Record<string, unknown>;
+        rejectedReplacement.status = 'candidate';
+        await expect(writeWikiRecord(rejected, rejectedReplacement as never)).rejects.toThrow(/rejected/);
+        expect(await readFile(rejectedPath, 'utf8')).toBe(rejectedBefore);
+    });
+
+    it('still replaces a record that carries no decision, so the guard is about decisions', async () => {
+        // The control: a store rule that refused every replacement would pass the case above and make re-ingest impossible.
+        const root = await seeded('candidate');
+        const replacement = { ...(JSON.parse(await readFile(join(root, '.kata/wiki/rule-page.json'), 'utf8')) as Record<string, unknown>) };
+        replacement.statement = 'Rewritten.';
+
+        await writeWikiRecord(root, replacement as never);
+
+        const after = JSON.parse(await readFile(join(root, '.kata/wiki/rule-page.json'), 'utf8')) as { statement: string };
+        expect(after.statement).toBe('Rewritten.');
     });
 
     it('still moves a stale record, so the refusal is about the two states and not about refusing everything', async () => {

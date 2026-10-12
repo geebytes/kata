@@ -62,7 +62,7 @@ export function wikiClosureRemedy(reason: WikiClosureFailureReason, taskId: stri
     case 'candidate_required':
       return `Record the candidate this task captured: \`kata-cli wiki closure --task ${taskId} --decision captured --candidate <wiki-record-id> --reason "<what it taught>"\` (register the page first with \`kata-cli wiki register\`).`;
     case 'candidate_missing':
-      return `The closure names a record the store does not offer: \`kata-cli wiki candidate\` lists the records a closure may name. If the record exists but its page has moved since it was written, re-derive it first — \`kata-cli wiki revalidate --record <wiki-id>\` — and then re-record the closure: \`kata-cli wiki closure --task ${taskId} --decision captured --candidate <wiki-record-id> --reason "<what it taught>"\`.`;
+      return `The closure names a record the store does not offer: \`kata-cli wiki candidate\` lists the records whose status is \`candidate\` (a closure may also name a \`verified\` one). If the record exists but its page has moved since it was written, re-derive it first — \`kata-cli wiki revalidate --record <wiki-id>\` — and then re-record the closure: \`kata-cli wiki closure --task ${taskId} --decision captured --candidate <wiki-record-id> --reason "<what it taught>"\`.`;
     case 'reason_required':
       return `Record why: \`kata-cli wiki closure --task ${taskId} --decision <captured|not_applicable|deferred> --reason "<why>"\`.`;
     case 'deferred':

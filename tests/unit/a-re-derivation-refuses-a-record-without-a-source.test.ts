@@ -44,9 +44,11 @@ async function seeded(page: string): Promise<string> {
             validationTaskId: 'task-1',
             evidenceIds: ['evidence-1'],
             status: 'stale',
-            lastVerifiedAt: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            // Pinned, not `new Date()`: the bulk-route case asserts that the walk moved exactly `updatedAt`, and a fixture
+            // stamped in the same millisecond as the walk's own write would make that assertion depend on elapsed wall clock.
+            lastVerifiedAt: '2026-01-01T00:00:00.000Z',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
         }, null, 2)}\n`,
         'utf8',
     );
@@ -152,6 +154,33 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         expect(revalidated.map((entry) => entry.id)).toEqual(['other-page']);
         expect(refused.map((entry) => entry.id)).toEqual(['rule-page']);
         expect(refused[0]?.reason).toMatch(/docs\/rule\.md/);
+    });
+
+    it('names a repeated source as a repetition, not as a hash that is missing', async () => {
+        // **The refusal vocabulary could not express what the check found.** Comparing sorted joins made a record that declares
+        // one file twice a mismatch, and the message then said `declared but not hashed: docs/rule.md` — false, that path IS
+        // hashed. The schema allows the repetition (`sourceRefs` has no `uniqueItems`), so it is a shape the store can hold,
+        // and which declaration the single hash belongs to is not knowable here: named, and refused rather than repaired.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        record.sourceRefs = ['docs/rule.md', 'docs/rule.md'];
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+        const before = readFileSync(path, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/more than once/);
+        expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+
+    it('answers about the record it was asked for, not about a file whose name merely ends the same way', async () => {
+        // **A suffix test is not an identity test.** The lookup for an unreadable record was `path.endsWith(`${id}.json`)`, so
+        // `.kata/wiki/bca.json` was reported as the damage behind the id `a` — a refusal that answers about a different record
+        // than the one asked for (measured by an independent round; the line predates this change and sits in the function the
+        // change repairs). The comparison is on the filename the store derives with `normalizeId`.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        await writeFile(join(root, '.kata/wiki/bca.json'), '{ this is not json\n', 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'a')).rejects.toThrow(/was not found/);
     });
 
     it('still reports the gap to the drift walk, so the missing source stays visible', async () => {
