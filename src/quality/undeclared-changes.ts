@@ -1,5 +1,7 @@
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { changedGitPaths, changedPathsSinceBranchPoint } from '../core/git.js';
-import { isIgnoredRepositoryPath } from '../core/repository-identity.js';
+import { declaredContentPaths, isIgnoredRepositoryPath } from '../core/repository-identity.js';
 
 /**
  * **The difference between what changed and what was declared — before the seal freezes anything.**
@@ -96,11 +98,38 @@ export async function undeclaredChanges(input: {
     const normalize = (path: string): string => path.replaceAll('\\', '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
     const declared = [...new Set(input.declaredPaths.map(normalize).filter(Boolean))].sort();
     const declaredSet = new Set(declared);
-    // A path is covered when it is declared, or when it sits inside a declared directory. A declaration of `src/quality`
-    // covers `src/quality/x.ts`; a declaration of `src/quality/x.ts` covers nothing but itself.
-    const directoryPrefixes = declared.filter((path) => !path.includes('.') || path.endsWith('/**')).map((path) => path.replace(/\/\*\*$/, ''));
-    const isCovered = (path: string): boolean => declaredSet.has(path) || directoryPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
-
+    // A path is covered when it is declared, when the declaration's own walk covers it, or when it sits inside a declared
+    // directory. A declaration of `src/quality` covers `src/quality/x.ts`; a declaration of `src/quality/x.ts` covers
+    // nothing but itself.
+    //
+    // **"Is this a directory" is asked of the filesystem, never of the spelling.** The rule was
+    // `!path.includes('.') || path.endsWith('/**')`, so a *dotted directory* — `.agents/skills`, `.github/workflows`,
+    // `src/v1.0` — read as a file: every path under it then read as undeclared and the seal refused content the declaration
+    // already named, which is the same defect the tier resolver had (the spelling deciding the gate); the opposite arm read
+    // a dotless *file* (`LICENSE`, `Makefile`) as a directory prefix. Measured by an independent round (R6-F2), and latent
+    // because this repository has never declared a directory: 0 of 881 recorded `ownedPaths` entries name one, so the
+    // route in is `scope change --add <dir>`.
+    const covered = declared.length === 0 ? undefined : await declaredContentPaths(input.root, declared);
+    const coveredSet = new Set(covered?.paths ?? []);
+    const directoryPrefixes: string[] = [];
+    for (const declaration of declared) {
+        try {
+            if ((await stat(join(input.root, declaration))).isDirectory()) directoryPrefixes.push(declaration);
+        } catch {
+            // Gone from the working tree. A deletion still needs its files to read as covered, and what it *was* is recorded:
+            // the previous revision's hashed paths answer it from data rather than from a guess about the name.
+            const carried = (input.previousPathDigests ?? [])
+                .map(normalize)
+                .some((previous) => previous.startsWith(`${declaration}/`));
+            if (carried) directoryPrefixes.push(declaration);
+        }
+    }
+    const isCovered = (path: string): boolean => {
+        const candidate = normalize(path);
+        return declaredSet.has(candidate)
+            || coveredSet.has(candidate)
+            || directoryPrefixes.some((prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`));
+    };
     // What git reports, plus what the previous revision hashed, plus what this branch committed — the second reports a
     // declaration that lost a path it used to carry, and the third closes the gap `git status` cannot see.
     const committed = changedPathsSinceBranchPoint(input.root, input.sinceCommitted === undefined ? {} : { since: input.sinceCommitted });

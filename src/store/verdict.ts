@@ -241,10 +241,17 @@ export async function ledgerTierForDeclaredPaths(input: {
     // (measured by an independent round, R5-F1; before this canonicalisation existed the raw name still matched). The
     // surface is therefore the **union** of what the declaration names and what it covers. The union can only raise a tier:
     // a name the policy does not recognise contributes no match, and an unreadable name contributes the floor its spelling
-    // implies, which is exactly the path the operator still believes the change carries.
+    // implies — and it must be the walk's **canonical** spelling of it, which is the third reading of this line. The union
+    // was built from the recorded spelling (`declared`), while the very same call had already canonicalised it: for a
+    // declaration `./src/kernel/decide.ts` whose file becomes unreadable, `floorMatches` needs exact equality, so the
+    // recorded spelling matched no floor and `ledger decide` still answered `strict` with one reviewer while `ledger plan`
+    // refused the same declaration by name (measured by an independent round, R6-F1). The surface is therefore exactly what
+    // the walk **accounted for**, in the spelling it accounted for it: the canonical names of everything the declaration
+    // points at, whether it could be read or is never content. Rebuilding it from the recorded spelling was the second
+    // derivation.
     const declared = input.paths ?? await declaredPaths(input.root, input.changeId);
     const covered = await declaredContentPaths(input.root, declared);
-    const declaredContent = [...new Set([...declared, ...covered.paths])];
+    const declaredContent = [...new Set([...covered.paths, ...covered.unreadable, ...covered.neverContent])];
     const classification = classifyRisk({
         paths: declaredContent,
         policy: input.policy,
@@ -370,12 +377,26 @@ export async function ledgerVerdict(input: {
         ? tierOverrideFromPlan(storedPlan.value, ledger.policy)
         : { ok: true as const, override: undefined };
     if (!persistedOverride.ok) return { kind: 'unreadable', detail: persistedOverride.why };
-    const { classification, tier } = await ledgerTierForDeclaredPaths({
-        root: input.root,
-        changeId: input.changeId,
-        policy: ledger.policy,
-        override: input.tier ?? persistedOverride.override,
-    });
+    // **The refusal is a value here too.** The request path was wrapped when its sibling was found throwing out of the
+    // command (R5-F2); this route was left bare, so a declaration the normaliser refuses — a path outside the repository, or
+    // the repository root — reached it and threw out of `ledger decide` (a bare stderr line, no envelope) and out of the
+    // three workflow callers (`navigation.ts`, `distill-gates.ts`, `repair-entry.ts`), all of which already handle the
+    // `unreadable` kind that exists for exactly this state (measured by an independent round, R6-F3).
+    let tierResolution: Awaited<ReturnType<typeof ledgerTierForDeclaredPaths>>;
+    try {
+        tierResolution = await ledgerTierForDeclaredPaths({
+            root: input.root,
+            changeId: input.changeId,
+            policy: ledger.policy,
+            override: input.tier ?? persistedOverride.override,
+        });
+    } catch (error) {
+        return {
+            kind: 'unreadable',
+            detail: `the declared surface cannot be resolved, so the gate tier cannot be derived: ${(error as Error).message}`,
+        };
+    }
+    const { classification, tier } = tierResolution;
     // **The quorum is assembled from independent readings, not from reviewer names.** `groupByProducer` groups verdicts by
     // the run that decided them, so two runs are two observations and one run reported twice is one. The old shape handed
     // every producer the ledger's whole verdict list, which made `disputed` unreachable (one verdict per item) and made

@@ -144,6 +144,31 @@ describe('the tier classifies the declared content surface', () => {
         expect(unreadable.classification.matched.map((entry) => entry.path)).toContain('src/kernel/decide.ts');
     });
 
+    it('keeps the floor of an unreadable declared path whose recorded spelling is not canonical', async () => {
+        // **The union must be built from the walk's spelling, not the recorded one.** The first version of the union used
+        // the declaration as written, so `./src/kernel/decide.ts` — exactly the spelling `normalizeDeclaredPaths` exists to
+        // accept — matched no exact floor pattern once its file was unreadable, and the tier fell to `strict` with one
+        // reviewer while `ledger plan` refused the same declaration by name (measured by an independent round, R6-F1). The
+        // canonical name was already computed and discarded in `covered.unreadable`.
+        const root = await mkdtemp(join(tmpdir(), 'kata-tier-'));
+        roots.push(root);
+        await mkdir(join(root, '.kata', 'tasks', 't'), { recursive: true });
+        await mkdir(join(root, 'src', 'kernel'), { recursive: true });
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
+        await writeFile(join(root, 'src', 'kernel', 'decide.ts'), 'export const gate = true;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', 't', 'task.json'),
+            `${JSON.stringify({ id: 't', ownedPaths: ['src/a.ts', './src/kernel/decide.ts'] }, null, 2)}\n`,
+        );
+        expect((await ledgerTierForDeclaredPaths({ root, changeId: 't', policy })).tier).toBe('security');
+
+        await rm(join(root, 'src', 'kernel', 'decide.ts'));
+
+        const unreadable = await ledgerTierForDeclaredPaths({ root, changeId: 't', policy });
+        expect(unreadable.tier, 'the canonical spelling of an unreadable declaration keeps its floor').toBe('security');
+        expect(unreadable.classification.matched.map((entry) => entry.path)).toContain('src/kernel/decide.ts');
+    });
+
     it('never classifies the diff as the change risk when a caller omits the classification', () => {
         // The planner's own fallback used to be `contentPaths ?? changedPaths`, so a caller passing only a diff got the
         // R2-F1 shape back — the plan's published classification derived from what this round happened to touch (measured
