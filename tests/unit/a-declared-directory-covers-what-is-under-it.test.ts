@@ -61,6 +61,15 @@ describe('a declared directory covers what is under it, whatever the directory i
         expect(await repo(['src'])).toEqual([]);
     });
 
+    it('covers what a declared pattern names, including a path that no longer exists', async () => {
+        // A declaration written as `src/**` is a prefix by construction: `stat` cannot see a glob, so the pattern has to be
+        // read as one rather than asked of the filesystem. Both halves are asserted because the walk cannot cover a deletion.
+        await rm(join(root, 'src', 'declared.ts'));
+        expect(await repo(['src/**'])).toEqual([]);
+        await writeFile(join(root, 'src', 'declared.ts'), 'export const declared = 3;\n');
+        expect(await repo(['src/**'])).toEqual([]);
+    });
+
     it('still names a changed file that neither the declaration nor a declared directory covers', async () => {
         // The control: a fix that widened coverage into "everything is declared" would pass the two cases above.
         await writeFile(join(root, 'src', 'undeclared.ts'), 'export const undeclared = 1;\n');

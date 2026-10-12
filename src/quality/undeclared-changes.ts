@@ -113,6 +113,14 @@ export async function undeclaredChanges(input: {
     const coveredSet = new Set(covered?.paths ?? []);
     const directoryPrefixes: string[] = [];
     for (const declaration of declared) {
+        // **A declaration written as a pattern is a prefix by construction.** The first version of this repair dropped the
+        // `/**` branch with the spelling heuristic, so a declaration `src/**` — which `scope change --add` accepts — stopped
+        // covering anything, because `stat` cannot see a glob. The wildcard's meaning is not a guess about the name.
+        const pattern = declaration.replace(/\/\*\*$/, '');
+        if (pattern !== declaration) {
+            directoryPrefixes.push(pattern);
+            continue;
+        }
         try {
             if ((await stat(join(input.root, declaration))).isDirectory()) directoryPrefixes.push(declaration);
         } catch {
