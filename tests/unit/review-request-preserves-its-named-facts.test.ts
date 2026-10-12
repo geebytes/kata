@@ -267,4 +267,39 @@ describe('the request hands over the values it names', () => {
         expect(mismatchedRequest.ok).toBe(false);
         if (!mismatchedRequest.ok) expect(mismatchedRequest.why).toMatch(/stored plan tier strict.*security/i);
     });
+
+    it('answers the request from the declared surface even when the declaration names a directory', async () => {
+        // **The shape the previous repair missed.** Canonicalising only the resolver's absent-paths branch left the
+        // production call site here — `buildReviewRequest` passes the task's raw declaration as `paths` — classifying the
+        // declaration's spelling: a task declaring the directory `src/kernel` answered `strict` on this side and
+        // `security` on the plan's, so the request refused with a remedy ("re-run ledger plan") that could not change the
+        // answer, and the two-reviewer quorum the security floor demands was unreachable (measured by an independent
+        // round, R4-F1). Every asserted number below comes from one declaration of one directory.
+        const root = await tempRoot();
+        await mkdir(join(root, 'src', 'kernel'), { recursive: true });
+        await writeFile(join(root, 'src', 'kernel', 'decide.ts'), 'export const tierGate = true;\n');
+        await writeFile(join(root, 'src', 'kernel', 'policy.ts'), 'export const p = 1;\n');
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['src/kernel'],
+        });
+        await writePolicy(root, changeId, defaultPolicy());
+        expect((await ledger(root, ['claim', 'add', '--id', 'C-1', '--statement', 'the kernel holds', '--risk-class', 'consistency', '--severity', 'major', '--depends-on', 'path:src/kernel/decide.ts'])).ok).toBe(true);
+
+        expect((await ledger(root, ['plan'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/kernel'], checkIds: [] });
+
+        const plan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string; risk: { matched: Array<{ path: string }> } };
+        const request = await buildReviewRequest({ root, changeId });
+
+        expect(plan.tier).toBe('security');
+        expect(plan.risk.matched.map((entry) => entry.path).sort()).toEqual(['src/kernel/decide.ts', 'src/kernel/policy.ts']);
+        expect(request.ok, JSON.stringify(request)).toBe(true);
+        if (!request.ok) return;
+        expect(request.request.tier).toBe(plan.tier);
+    });
 });

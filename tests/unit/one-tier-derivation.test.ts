@@ -91,6 +91,33 @@ describe('the tier classifies the declared content surface', () => {
         expect(tier).toBe('security');
     });
 
+    it('canonicalises even when a caller supplies paths, so no caller can bypass the content surface', async () => {
+        // **There is no bypass branch.** The first version of this repair canonicalised only when `paths` was absent, and
+        // the production ReviewRequest call site (`src/store/review-request.ts:130`) passes the task's raw declaration —
+        // so a change declaring a directory produced `strict` from the request and `security` from the plan, and the
+        // request refused with a remedy that could not change the answer (measured by an independent round, R4-F1). A
+        // supplied set is canonicalised again rather than trusted: for an already-canonical set that is an identity, and
+        // for a directory or a `./`-prefixed spelling it is the expansion the subject will record.
+        const root = await mkdtemp(join(tmpdir(), 'kata-tier-'));
+        roots.push(root);
+        await mkdir(join(root, '.kata', 'tasks', 't'), { recursive: true });
+        await mkdir(join(root, 'src', 'kernel'), { recursive: true });
+        await writeFile(join(root, 'src', 'kernel', 'decide.ts'), 'export const a = 1;\n');
+        await writeFile(join(root, 'src', 'kernel', 'policy.ts'), 'export const b = 1;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', 't', 'task.json'),
+            `${JSON.stringify({ id: 't', ownedPaths: ['src/kernel'] }, null, 2)}\n`,
+        );
+
+        const withDeclaration = await ledgerTierForDeclaredPaths({ root, changeId: 't', policy });
+        const withSuppliedRawPaths = await ledgerTierForDeclaredPaths({ root, changeId: 't', policy, paths: ['src/kernel'] });
+        expect(withSuppliedRawPaths.tier).toBe(withDeclaration.tier);
+        expect(withSuppliedRawPaths.classification.matched.map((entry) => entry.path).sort()).toEqual([
+            'src/kernel/decide.ts',
+            'src/kernel/policy.ts',
+        ]);
+    });
+
     it('never classifies the diff as the change risk when a caller omits the classification', () => {
         // The planner's own fallback used to be `contentPaths ?? changedPaths`, so a caller passing only a diff got the
         // R2-F1 shape back — the plan's published classification derived from what this round happened to touch (measured

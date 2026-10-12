@@ -210,8 +210,14 @@ export function tierOverrideFromPlan(plan: unknown, policy: Ledger['policy']):
  * subject recorded its two `high`-floor files while `plan` published `tier: strict, reviewers: 1, risk.tier: standard,
  * matched: []`, so a `security`-floor change was gated at `strict` and its two-reviewer quorum was never demanded. A
  * non-canonical spelling (`./src/kernel/decide.ts`) behaved the same. How a declaration is spelled is not a fact about how
- * risky the change is: `declaredContentPaths` answers which content the declaration covers, and it is the function the
- * freeze path asks, so the two cannot answer differently.
+ * risky the change is: `declaredContentPaths` answers which content the declaration covers.
+ *
+ * **The relationship to the subject's own set, stated as measured rather than promised.** The subject's summary is
+ * `Object.keys(subject.pathDigests)`, produced by `computePathDigests` → `feedOwnedTree`, while this resolver asks
+ * `declaredContentPaths`: two wrappers over the same walk. An independent round measured them equal across seven
+ * declaration shapes (directory, file, `./` prefix, git-ignored directory, git-ignored file, trailing slash, nonexistent),
+ * so this is not a live defect — but they are not literally one function, and a one-sided change to the walk is the shape
+ * that would reopen exactly what this repair closes (R4-F3).
  */
 export async function ledgerTierForDeclaredPaths(input: {
     root: string;
@@ -220,7 +226,16 @@ export async function ledgerTierForDeclaredPaths(input: {
     override?: TierName;
     paths?: readonly string[];
 }): Promise<{ classification: ReturnType<typeof classifyRisk>; tier: TierName }> {
-    const declaredContent = input.paths ?? (await declaredContentPaths(input.root, await declaredPaths(input.root, input.changeId))).paths;
+    // **Every caller's path set goes through the same canonicalisation, a supplied one included.** The first version of
+    // this repair canonicalised only the absent case, and the production ReviewRequest call site
+    // (`src/store/review-request.ts:130`) passes the task's raw declaration — so a declaration naming a directory answered
+    // `strict` there while the plan answered `security`, and the request refused with a remedy that could not change the
+    // answer (measured by an independent round, R4-F1). A supplied set is not trusted: for an already-canonical set the
+    // expansion is an identity, and for a directory or a `./`-prefixed spelling it is the set the subject records.
+    const declaredContent = (await declaredContentPaths(
+        input.root,
+        input.paths ?? await declaredPaths(input.root, input.changeId),
+    )).paths;
     const classification = classifyRisk({
         paths: declaredContent,
         policy: input.policy,
