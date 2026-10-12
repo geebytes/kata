@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -199,6 +199,31 @@ describe('unique copies is one derivation', () => {
         ]);
         expect(removal.remedy).toContain('--change aaa');
         expect(removal.remedy).toContain('--change zzz');
+    });
+
+    it('names a remedy that runs in the state it prints in, when the enumeration cannot answer', async () => {
+        // **A refusal whose road is closed.** The undetermined refusal named `kata-cli worktree list`, and in that very state
+        // that command throws the same `RecordSourceUnreadable` (measured by an independent review). No kata command can
+        // repair an unreadable directory, so the refusal says that and names the retry command instead.
+        const primary = repo('guard-undetermined');
+        const outside = join(dirname(primary), `${basename(primary)}-undet`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'undet-branch'], { cwd: primary });
+        const taskDir = join(outside, '.kata', 'tasks', 'held');
+        mkdirSync(taskDir, { recursive: true });
+        writeFileSync(join(taskDir, 'judge.json'), '{}\n');
+        chmodSync(taskDir, 0o000);
+        try {
+            const { removeWorktreeSafely } = await import('../../src/workflow/worktree.js');
+            const removal = await removeWorktreeSafely({ root: primary, path: outside, taskId: 'held' });
+
+            expect(removal.refusedBecause).toBe('worktree-only-records');
+            expect(removal.remedy).not.toContain('worktree list');
+            expect(removal.remedy).toContain('worktree remove');
+            expect(removal.remedyDetail).toMatch(/no kata command can repair/iu);
+        } finally {
+            chmodSync(taskDir, 0o755);
+        }
     });
 
     it('asks the content reader for the tasks a checkout holds, so a state file is not the test', async () => {

@@ -1272,29 +1272,6 @@ function filesUnderSync(directory: string): string[] {
 }
 
 /** Every file under a directory, relative to it, recursive. A missing directory is no files. */
-async function filesUnder(directory: string): Promise<string[]> {
-    const found: string[] = [];
-    async function walk(current: string, prefix: string): Promise<void> {
-        let entries: Dirent[];
-        try {
-            entries = await readdir(current, { withFileTypes: true });
-        } catch (error) {
-            // Absence is not unreadability (see `RecordSourceUnreadable`).
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-            throw new RecordSourceUnreadable(current, error as Error);
-        }
-        for (const entry of entries) {
-            const next = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
-            if (entry.isDirectory()) {
-                await walk(join(current, entry.name), next);
-            } else if (entry.isFile()) {
-                found.push(next);
-            }
-        }
-    }
-    await walk(directory, '');
-    return found;
-}
 
 /** Where a superseded revision's evidence is kept, so a seal never destroys what a previous one proved. */
 export function evidenceArchiveDir(root: string, revisionId: string): string {

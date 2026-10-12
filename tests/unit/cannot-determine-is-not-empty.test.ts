@@ -72,6 +72,27 @@ describe('cannot determine is not empty', () => {
         }
     });
 
+    it('hands the reason to the archive, which removes nothing and reports it', async () => {
+        // **"Could not answer" must reach the caller, not become a silent skip.** `archiveRemovalTargets` returned `[]` in
+        // this state while its docstring claimed the archive kept every candidate, so the archive's result could not
+        // distinguish "there was no worktree" from "the enumeration could not answer" — the distinction AC-8 exists to keep
+        // (measured by an independent review).
+        const primary = repo('archive-undetermined');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
+        chmodSync(join(worktree, '.kata', 'tasks', 'held'), 0o000);
+        try {
+            const { archiveRemovalOutcome } = await import('../../src/workflow/orchestrator.js');
+            const outcome = await archiveRemovalOutcome(primary, 'held');
+
+            expect(outcome.targets).toEqual([]);
+            expect(outcome.undetermined).toMatch(/could not be determined/u);
+        } finally {
+            chmodSync(join(worktree, '.kata', 'tasks', 'held'), 0o755);
+        }
+    });
+
     it('names what it could not determine', async () => {
         const primary = repo('named');
         const worktrees = join(primary, '.kata', 'worktrees');

@@ -183,7 +183,9 @@ by round 1's repairs:
 - **uc-r2-F2 (major) — "does this checkout hold records of T" still had two answers.** The enumeration asked across both
   surfaces recursively while the ownership predicate asked for a direct file entry, so a worktree holding `handoffs/x.json` was
   named by the model as holding the only copy while `recordOwner` said no checkout held it. **Repair:** one synchronous content
-  rule (`recordFilesOfSync`, with the async wrapper kept for its callers' signatures) asked by both.
+  rule (`recordFilesOfSync`) asked by both — and the async walk it replaced was **deleted**, because with the sync rule in place
+  it had no caller left: two walks over the same directory would have been the same defect one level down (measured: the
+  falsifier aimed at the async walk stopped reddening anything, which is how the dead twin was found).
 - **uc-r2-F3 (minor) — the undetermined refusal's road was closed.** It named `kata-cli worktree list`, which throws the same
   `RecordSourceUnreadable` in that state. **Repair:** the refusal states that no kata command can repair it, names the retry
   command, and says what the operator has to do.
