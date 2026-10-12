@@ -268,6 +268,39 @@ describe('the request hands over the values it names', () => {
         if (!mismatchedRequest.ok) expect(mismatchedRequest.why).toMatch(/stored plan tier strict.*security/i);
     });
 
+    it('refuses by name when the declaration cannot be resolved, rather than throwing out of the command', async () => {
+        // **The refusal stays a value.** Canonicalising a supplied `paths` set meant this call could reach the normaliser,
+        // which refuses a declaration that resolves outside the repository -- and nothing here wrapped it, so
+        // `ledger run` / `ledger request-check` threw (stderr from the bare handler, no envelope) where they used to answer
+        // `{ok:false}` with a reason (measured by an independent round, R5-F2).
+        const root = await tempRoot();
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['src/a.ts'],
+        });
+        await writePolicy(root, changeId, defaultPolicy());
+        expect((await ledger(root, ['claim', 'add', '--id', 'C-1', '--statement', 'a.ts holds', '--risk-class', 'consistency', '--severity', 'major', '--depends-on', 'path:src/a.ts'])).ok).toBe(true);
+        expect((await ledger(root, ['plan'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts'], checkIds: [] });
+
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['../outside.ts'],
+        });
+
+        const request = await buildReviewRequest({ root, changeId });
+        expect(request.ok, 'a declaration outside the repository is refused, not thrown').toBe(false);
+        if (request.ok) return;
+        expect(request.why).toMatch(/outside\.ts/);
+    });
+
     it('answers the request from the declared surface even when the declaration names a directory', async () => {
         // **The shape the previous repair missed.** Canonicalising only the resolver's absent-paths branch left the
         // production call site here — `buildReviewRequest` passes the task's raw declaration as `paths` — classifying the

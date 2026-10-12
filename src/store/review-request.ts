@@ -24,7 +24,7 @@
  */
 import { declaredDefectClasses, unbackedDefectClasses } from '../quality/defect-classes.js';
 import { readLoopReplay, type LoopReplay } from '../quality/loop-replay.js';
-import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
+import { planDigestOf, questionForComparison, declaredPaths, declaredSubjectRevision, freezeSubject, readLedger, readPlanState, readProbesState } from './ledger.js';
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
@@ -127,13 +127,27 @@ export async function buildReviewRequest(input: {
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
     const planOverride = tierOverrideFromPlan(stored, ledger.policy);
     if (!planOverride.ok) return { ok: false, why: planOverride.why };
-    const tierResolution = await ledgerTierForDeclaredPaths({
-        root: input.root,
-        changeId: input.changeId,
-        policy: ledger.policy,
-        override: planOverride.override,
-        paths: declaredForInstruments,
-    });
+    // **The refusal stays a value, not an exception.** Making the resolver canonicalise a supplied `paths` set meant this
+    // call could reach `declaredContentPaths`'s normaliser, which throws for a declaration that resolves outside the
+    // repository — and nothing here wrapped it, so `ledger run` / `ledger request-check` began throwing out of the command
+    // (printed to stderr by the bare handler, no envelope) where they used to return a named refusal (measured by an
+    // independent round, R5-F2). The paths are the task's own declaration, so the operator can fix it; the refusal has to
+    // arrive as something a script can read.
+    let tierResolution: Awaited<ReturnType<typeof ledgerTierForDeclaredPaths>>;
+    try {
+        tierResolution = await ledgerTierForDeclaredPaths({
+            root: input.root,
+            changeId: input.changeId,
+            policy: ledger.policy,
+            override: planOverride.override,
+            paths: declaredForInstruments,
+        });
+    } catch (error) {
+        return {
+            ok: false,
+            why: `the declared surface cannot be resolved, so this change's gate tier cannot be derived: ${(error as Error).message}`,
+        };
+    }
     if (plan.tier !== tierResolution.tier) {
         return {
             ok: false,
@@ -240,7 +254,7 @@ export async function buildReviewRequest(input: {
         request: {
             version: 1,
             changeId: input.changeId,
-            subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
+            subjectRevision: declaredSubjectRevision(ledger) ?? ledger.subject.revision,
             tier: tierResolution.tier,
             ...(declaredClasses.length > 0 ? { defectClasses: declaredClasses } : {}),
             ...(missingGenerators.length > 0 ? { missingGenerators } : {}),

@@ -118,6 +118,32 @@ describe('the tier classifies the declared content surface', () => {
         ]);
     });
 
+    it('keeps a declared high-floor path in the classification even when it cannot be read', async () => {
+        // **A named path that has become unreadable is still named by the declaration.** Keeping only the covered content
+        // dropped it the moment it was deleted, so `ledger decide` published the policy ceiling -- `strict` and one
+        // reviewer -- while `ledger plan` refused the very same declaration by name: the security floor's two-reviewer
+        // quorum became unreachable through a state the operator had not declared (measured by an independent round,
+        // R5-F1). The surface is the union of the names and the covered content, so the floor the spelling implies stays.
+        const root = await mkdtemp(join(tmpdir(), 'kata-tier-'));
+        roots.push(root);
+        await mkdir(join(root, '.kata', 'tasks', 't'), { recursive: true });
+        await mkdir(join(root, 'src', 'kernel'), { recursive: true });
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = true;\n');
+        await writeFile(join(root, 'src', 'kernel', 'decide.ts'), 'export const gate = true;\n');
+        await writeFile(
+            join(root, '.kata', 'tasks', 't', 'task.json'),
+            `${JSON.stringify({ id: 't', ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'] }, null, 2)}\n`,
+        );
+        const readable = await ledgerTierForDeclaredPaths({ root, changeId: 't', policy });
+        expect(readable.tier).toBe('security');
+
+        await rm(join(root, 'src', 'kernel', 'decide.ts'));
+
+        const unreadable = await ledgerTierForDeclaredPaths({ root, changeId: 't', policy });
+        expect(unreadable.tier, 'the unreadable declared path keeps its floor').toBe('security');
+        expect(unreadable.classification.matched.map((entry) => entry.path)).toContain('src/kernel/decide.ts');
+    });
+
     it('never classifies the diff as the change risk when a caller omits the classification', () => {
         // The planner's own fallback used to be `contentPaths ?? changedPaths`, so a caller passing only a diff got the
         // R2-F1 shape back — the plan's published classification derived from what this round happened to touch (measured

@@ -144,7 +144,9 @@ export function claimDecisions(ledger: Ledger): ClaimDecision[] {
             reusedEvidence: new Set(),
             policy: ledger.policy,
             challenges: ledger.challenges,
-            subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject?.revision ?? '',
+            // Asked of the one function that owns it. The inline form was repeated at four sites while that function's own
+            // doc claimed to be the only answer (measured by an independent round, R5-F3).
+            subjectRevision: declaredSubjectRevision(ledger) ?? '',
         }),
         severity: claim.severity,
         statement: claim.statement,
@@ -232,10 +234,17 @@ export async function ledgerTierForDeclaredPaths(input: {
     // `strict` there while the plan answered `security`, and the request refused with a remedy that could not change the
     // answer (measured by an independent round, R4-F1). A supplied set is not trusted: for an already-canonical set the
     // expansion is an identity, and for a directory or a `./`-prefixed spelling it is the set the subject records.
-    const declaredContent = (await declaredContentPaths(
-        input.root,
-        input.paths ?? await declaredPaths(input.root, input.changeId),
-    )).paths;
+    // **A declaration that names a path which cannot be read is still a declaration about it.** Keeping only
+    // `covered.paths` dropped a named path the moment it became unreadable (a deleted file, a FIFO): `ledger plan` refused
+    // that same declaration by name while `ledger decide` published the policy ceiling — `tier: strict` and one reviewer
+    // instead of the `security` floor's two — because the high-floor path had vanished from the classification surface
+    // (measured by an independent round, R5-F1; before this canonicalisation existed the raw name still matched). The
+    // surface is therefore the **union** of what the declaration names and what it covers. The union can only raise a tier:
+    // a name the policy does not recognise contributes no match, and an unreadable name contributes the floor its spelling
+    // implies, which is exactly the path the operator still believes the change carries.
+    const declared = input.paths ?? await declaredPaths(input.root, input.changeId);
+    const covered = await declaredContentPaths(input.root, declared);
+    const declaredContent = [...new Set([...declared, ...covered.paths])];
     const classification = classifyRisk({
         paths: declaredContent,
         policy: input.policy,
@@ -463,7 +472,7 @@ export async function ledgerVerdict(input: {
         tier,
         claims: ledger.claims.length,
         assurance: input.assurance ?? (ledger.assurance as AssuranceLevel),
-        subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
+        subjectRevision: declaredSubjectRevision(ledger) ?? ledger.subject.revision,
         decision: withClassGaps,
     };
 }
