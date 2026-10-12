@@ -89,6 +89,45 @@ describe('re-deriving a stale record recomputes what the record says about its s
         expect(after.stale[0]?.reason).toBe('source_changed');
     });
 
+    it('refreshes hashes for a record another writer composed, and says the statement was not recomputed', async () => {
+        // **The rule is "did this writer compose the statement out of the page", not "is this record ingested".** `wiki
+        // ingest` writes `sourceRefs: [raw, page]` with `statement: oneLineSummary(external body)`, so its first ref is the
+        // raw import rather than the page, and its statement is not this composition at all. Taking `summaries[0]` there
+        // (the first version did) would have rewritten the prose of every ingested record from the wrong file. Both halves
+        // are asserted: the hash moves, the statement does not, and the answer says which happened.
+        const raw = '# Alpha\n\nImported body.\n';
+        const page = '# Alpha page\n\nBody.\n';
+        const root = await seeded(page, 'distilled');
+        await mkdir(join(root, '.llmwiki/raw'), { recursive: true });
+        await writeFile(join(root, '.llmwiki/raw/alpha.md'), raw, 'utf8');
+        await writeFile(
+            join(root, '.kata/wiki/rule-page.json'),
+            `${JSON.stringify({
+                id: 'rule-page', statement: 'Imported body.', scope: ['.llmwiki/concepts/rule.md'], kind: 'llmwiki-summary',
+                sourceRefs: ['.llmwiki/raw/alpha.md', '.llmwiki/concepts/rule.md'],
+                sourceHashes: {
+                    '.llmwiki/raw/alpha.md': computeFileHash(raw),
+                    '.llmwiki/concepts/rule.md': computeFileHash(page),
+                },
+                validationTaskId: 'llmwiki-ingest', provenance: 'ingested', evidenceIds: ['e1'], status: 'candidate',
+                lastVerifiedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+            }, null, 2)}\n`,
+            'utf8',
+        );
+        await writeFile(join(root, '.llmwiki/raw/alpha.md'), `${raw}\nSecond edition.\n`, 'utf8');
+        await verifySources(root);
+
+        const result = await revalidateWikiRecord(root, 'rule-page');
+        const record = await findWikiRecord(root, 'rule-page');
+
+        expect(result.refreshed).toEqual(['.llmwiki/raw/alpha.md']);
+        expect(record?.sourceHashes['.llmwiki/raw/alpha.md']).toBe(computeFileHash(`${raw}\nSecond edition.\n`));
+        expect(record?.sourceHashes['.llmwiki/concepts/rule.md']).toBe(computeFileHash(page));
+        expect(record?.statement).toBe('Imported body.');
+        expect(result.statement).toMatchObject({ recomputed: false });
+        expect(result.statement.why).toContain('llmwiki-ingest');
+    });
+
     it('follows the frontmatter too, which is the other branch of the derivation', async () => {
         // **Both branches of `statementForPage` are exercised, not only the summary one.** A page with the frontmatter the
         // repository's own pages carry takes the `frontmatter ? … : …` branch, where the statement is the header rather than

@@ -1,3 +1,4 @@
+import type { DriftEntry } from './drift.js';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { lintLlmWiki } from './llmwiki.js';
@@ -85,7 +86,7 @@ async function countPages(root: string): Promise<number> { try { const entries =
 function lifecycleActions(
   records: WikiRecord[],
   context: {
-    sourceDrift: Array<{ id: string; reason: 'source_changed' | 'source_missing'; changedSources: string[] }>;
+    sourceDrift: Array<Pick<DriftEntry, 'id' | 'reason' | 'changedSources' | 'approvalWithdrawn'>>;
     reviewDueIds: string[];
     duplicateGroups: string[][];
     overBudgetTaskIds: Set<string>;
@@ -94,6 +95,8 @@ function lifecycleActions(
 ): WikiLifecycleAction[] {
   const actions = new Map<string, WikiLifecycleAction>();
   const driftById = new Map(context.sourceDrift.map((entry) => [entry.id, entry]));
+  // A withdrawn approval is a fact about authority, carried on the drift entry; it changes exactly one recommendation.
+  const approvalWithdrawnIds = new Set(context.sourceDrift.filter((entry) => entry.approvalWithdrawn).map((entry) => entry.id));
   const duplicateIds = new Set(context.duplicateGroups.flat());
   const reviewDueIds = new Set(context.reviewDueIds);
 
@@ -135,7 +138,7 @@ function lifecycleActions(
       id: record.id,
       status: record.status,
       reasons: uniqueReasons,
-      recommendedAction: chooseAction(record, uniqueReasons, successors),
+      recommendedAction: chooseAction(record, uniqueReasons, successors, approvalWithdrawnIds.has(record.id)),
       confidence: confidence(uniqueReasons, successors),
       successorIds: successors,
       changedSources: [...new Set(changedSources)].sort(),
@@ -145,12 +148,21 @@ function lifecycleActions(
   return [...actions.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function chooseAction(record: WikiRecord, reasons: LifecycleReason[], successors: string[]): RecommendedAction {
+/**
+ * The next step for one record.
+ *
+ * `approvalWithdrawn` changes exactly one branch — the one that would otherwise send the operator to re-derive a record whose
+ * approval the drift walk just took away. `revalidateWikiRecord` refuses that by name (handing back a `candidate` would put
+ * the approval's loss beyond sight), so recommending `revalidate` would name a closed road. It deliberately does **not**
+ * override the stronger recommendations: a record with a successor is still a `retire`, and a conflict is still a
+ * `review_conflict` — an approval being withdrawn does not make a better-aimed action worse.
+ */
+function chooseAction(record: WikiRecord, reasons: LifecycleReason[], successors: string[], approvalWithdrawn = false): RecommendedAction {
   if (reasons.includes('semantic_superseded') && successors.length > 0) return 'retire';
   if (reasons.includes('conflict')) return 'review_conflict';
   if (reasons.includes('source_missing') && record.status !== 'verified') return 'retire';
   if (reasons.includes('duplicate') && record.status === 'candidate') return reasons.includes('candidate_over_budget') ? 'merge' : 'retire_duplicate';
-  if (reasons.includes('source_changed') || reasons.includes('scope_changed')) return 'revalidate';
+  if (reasons.includes('source_changed') || reasons.includes('scope_changed')) return approvalWithdrawn ? 'review' : 'revalidate';
   return 'review';
 }
 

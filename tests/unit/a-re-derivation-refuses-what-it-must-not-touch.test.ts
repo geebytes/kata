@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
-import { revalidateWikiRecord } from '../../src/wiki/drift.js';
+import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
 import { computeFileHash } from '../../src/wiki/record.js';
 
 /**
@@ -24,7 +24,7 @@ afterEach(async () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function seeded(status: 'candidate' | 'verified' | 'stale'): Promise<string> {
+async function seeded(status: 'candidate' | 'verified' | 'stale' | 'rejected'): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), 'kata-wiki-refuse-'));
     roots.push(root);
     await initLayout(root);
@@ -45,6 +45,9 @@ async function seeded(status: 'candidate' | 'verified' | 'stale'): Promise<strin
             status,
             ...(status === 'verified'
                 ? { approvalEvent: { approvedBy: 'a-reviewer', role: 'reviewer', approvedAt: new Date().toISOString() } }
+                : {}),
+            ...(status === 'rejected'
+                ? { rejectionEvent: { rejectedBy: 'a-reviewer', role: 'reviewer', rejectedAt: new Date().toISOString(), reason: 'not durable enough' } }
                 : {}),
             lastVerifiedAt: new Date().toISOString(),
             createdAt: new Date().toISOString(),
@@ -69,6 +72,49 @@ describe('re-deriving refuses what it must not touch', () => {
         const root = await seeded('stale');
 
         await expect(revalidateWikiRecord(root, 'no-such-record')).rejects.toThrow(/no-such-record/);
+    });
+
+    it('refuses a rejected record by name: a refusal is a decision, not a hash to refresh', async () => {
+        // **The bottom of the ladder was open.** The guard covered `verified` and nothing else, so a record a person had
+        // rejected was re-derived straight back to `candidate` — the status the closure gate accepts (measured by an
+        // independent round). "Re-derivation is the transition out of `stale`" is the rule that closes it: the other states
+        // are decisions, and a refreshed hash is not one.
+        const root = await seeded('rejected');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const before = await readFile(path, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/rejected/);
+        expect(await readFile(path, 'utf8')).toBe(before);
+    });
+
+    it('refuses, on the bulk route too, a record whose approval the drift walk just withdrew', async () => {
+        // **The guard was on one side of the walk.** `revalidateStaleRecords` calls `verifySources` first, which demotes a
+        // `verified` record whose sources moved — so by the time the single-record guard ran, the record read as an ordinary
+        // stale one and was re-derived into a `candidate`. The approval came back weaker than it went in, through the bulk
+        // door, and the report named it only as `source_changed`. Now the walk says `verified_source_changed` and the bulk
+        // route refuses on that name.
+        const root = await seeded('verified');
+        const path = join(root, '.kata/wiki/rule-page.json');
+
+        const first = await revalidateStaleRecords(root);
+
+        expect(first.report.stale).toHaveLength(1);
+        // The cause is the ordinary one; the withdrawal is its own field, so a reader that only cares why the sources stopped
+        // matching is unaffected by it.
+        expect(first.report.stale[0]?.reason).toBe('source_changed');
+        expect(first.report.stale[0]?.approvalWithdrawn).toBe(true);
+        expect(first.revalidated).toEqual([]);
+        expect(first.refused.map((entry) => entry.id)).toEqual(['rule-page']);
+        // The approval is still on the record, and the status is `stale` — never `candidate`: the state the closure gate
+        // accepts. Asserted after a SECOND run as well, because "the run that noticed is the only one that refuses" would
+        // reopen the hole one call later.
+        const second = await revalidateStaleRecords(root);
+
+        expect(second.revalidated).toEqual([]);
+        expect(second.refused.map((entry) => entry.id)).toEqual(['rule-page']);
+        const after = JSON.parse(await readFile(path, 'utf8')) as { status: string; approvalEvent?: unknown };
+        expect(after.status).toBe('stale');
+        expect(after.approvalEvent).toBeTruthy();
     });
 
     it('still moves a stale record, so the refusal is about the two states and not about refusing everything', async () => {

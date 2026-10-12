@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
+import { readFileSync } from 'node:fs';
 import { readWikiRecords } from '../../src/wiki/store.js';
 import { computeFileHash } from '../../src/wiki/record.js';
 
@@ -71,6 +72,59 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         expect(after).toEqual(before);
         expect(after[0]?.status).toBe('stale');
         expect(after[0]?.sourceHashes['docs/rule.md']).toBe(computeFileHash('# Rule\n\nFirst version.\n'));
+    });
+
+    it('refuses a record whose recorded hashes do not describe its declared sources', async () => {
+        // **Two sets answered "what are this record's sources".** The drift walk iterates `sourceHashes`; the refusal and the
+        // recomputation iterate `sourceRefs`. A file named only by the hash map was therefore refused by neither — and the
+        // recomputation, which writes the map it built, would have dropped that entry silently. A record whose halves
+        // disagree is corrupt, so it is refused by name and left as it was rather than repaired into agreement (measured by
+        // an independent round).
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        const hashes = record.sourceHashes as Record<string, string>;
+        // Both directions of the mismatch, and the digest is a real one: the first version of this case used `deadbeef`,
+        // which the record schema rejects for being eight hex characters, so it was green on the schema branch while reading
+        // as though it tested the correspondence (measured — the mutation that disables the check left it passing).
+        record.sourceHashes = { ...hashes, 'docs/ghost.md': computeFileHash('ghost') };
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+        const before = readFileSync(path, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/ghost\.md/);
+        expect(readFileSync(path, 'utf8')).toBe(before);
+
+        // The other direction: a declared source with no recorded hash. The schema cannot require a property per array item,
+        // so this shape is legal — and without the check the recomputation fills it in, repairing a corrupt record silently.
+        record.sourceHashes = hashes;
+        record.sourceRefs = ['docs/rule.md', 'docs/second.md'];
+        await writeFile(join(root, 'docs/second.md'), '# Second\n\nBody.\n', 'utf8');
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/second\.md/);
+    });
+
+    it('reports what the bulk route moved, so its byte-identity claim is not wider than its behaviour', async () => {
+        // **The claim has an edge, and the edge is a field.** On the single route a refusal changes nothing; on the bulk
+        // route the drift walk has already rewritten the record it is about to refuse — through `updateWikiRecord`, which
+        // stamps `updatedAt`. The honest assertion is the measured one: the status and the sources are untouched, and
+        // `updatedAt` is the only field the walk moved. Written down rather than left out, because "the record is untouched"
+        // is exactly the sentence an independent round would (and did) test.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const before = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        await rm(join(root, 'docs/rule.md'));
+
+        const { refused } = await revalidateStaleRecords(root);
+        const after = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+
+        expect(refused.map((entry) => entry.id)).toEqual(['rule-page']);
+        expect(after.status).toBe(before.status);
+        expect(after.sourceHashes).toEqual(before.sourceHashes);
+        expect(after.statement).toBe(before.statement);
+        expect(after.updatedAt).not.toBe(before.updatedAt);
+        const moved = Object.keys(after).filter((key) => JSON.stringify(after[key]) !== JSON.stringify(before[key]));
+        expect(moved).toEqual(['updatedAt']);
     });
 
     it('reports the refused record beside the ones it could re-derive, losing neither', async () => {

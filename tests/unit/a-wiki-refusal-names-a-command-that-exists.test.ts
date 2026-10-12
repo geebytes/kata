@@ -113,15 +113,19 @@ describe('every road a Wiki closure refusal prints is a road the CLI accepts', (
         const source = await readFile(join(process.cwd(), 'src/cli/wiki.ts'), 'utf8');
         const dispatched = [...new Set([...source.matchAll(/subcommand === '([a-z][a-z-]*)'/g)].map((match) => match[1]!))]
             .filter((verb) => verb !== 'help');
-        const help = (await runWikiCommand([])) as { commands: string[]; withheld?: Record<string, string> };
+        const help = (await runWikiCommand([])) as { commands: string[]; withheld?: Record<string, string>; aliases?: Record<string, string> };
         const displayed = new Set(help.commands.map((entry) => entry.split(' ')[0]!));
         // A verb may be withheld from the list **with a reason** (`rebuild` removes the whole store), which is a different
         // fact from being absent: the first tells a reader the road exists and why it is not offered, the second made this
         // very list lie about two verbs.
         const withheld = new Set(Object.keys(help.withheld ?? {}));
+        // …and an alias is the third way a verb is reachable. This was a name exemption (`verb !== 'propose'`) until an
+        // independent round pointed out that the guard then kept its own exception list in the one place where the surfaces
+        // are derived: emptying `help.aliases` left the check green while a reader lost the road.
+        const aliases = new Set(Object.keys(help.aliases ?? {}));
 
-        const missing = dispatched.filter((verb) => !displayed.has(verb) && !withheld.has(verb) && verb !== 'propose');
-        expect(missing, 'the help list must offer every verb the dispatcher accepts, or name it as withheld').toEqual([]);
+        const missing = dispatched.filter((verb) => !displayed.has(verb) && !withheld.has(verb) && !aliases.has(verb));
+        expect(missing, 'the help list must offer every verb the dispatcher accepts, name it as withheld, or alias it').toEqual([]);
     });
 
     it('names the road that actually resolves a stale record', async () => {

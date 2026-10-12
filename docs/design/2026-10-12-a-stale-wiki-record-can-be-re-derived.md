@@ -52,6 +52,22 @@
 - 再派生**不提升权威性**：结果只是 `candidate`，不代替 `promote`（后者要求 Judge 过的任务与一致的来源哈希）。
 - 不解决「闭包是否应绑定它 capture **当时**的页面 hash」这一语义问题 —— 记为后继项（今天的语义是「闭包 named 一条当时可读的记录」）。
 
-## 5. 声明面（写入 ownedPaths 的路径）
+## 5. 声明面（实际写入 ownedPaths 的 11 条路径）
 
-`src/wiki/drift.ts`、`src/wiki/record.ts`、`src/cli/wiki.ts`、`src/wiki/closure.ts`（仅补救文案）、4 个选择器文件、本设计文档。**刻意不动** `src/wiki/llmwiki.ts`（避开在飞 change 的 revision）。
+实现结束时**实际**声明的路径（本节先前写的是初版计划，与第 2 节的披露和 `current-revision.json` 不一致——这正是本 change 自己那一类"两处各说一套"）：
+
+| 路径 | 为什么在里面 |
+|---|---|
+| `src/wiki/drift.ts` | 三个 fail-open 行为的修复点；sourceRefs/sourceHashes 一致性的唯一判定 |
+| `src/wiki/closure.ts` | 闭包补救文案点名的真路 |
+| `src/cli/wiki.ts` | 帮助清单（含 `withheld`）、`revalidate` 的 CLI 面 |
+| `src/wiki/llmwiki.ts` | `statementForPage` 的唯一派生（`register` 也改用它）——**原计划写明"刻意不动"，实现时发现做不到**，第 2 节已披露 |
+| `src/wiki/lifecycle.ts` | `DriftEntry` 增加 `approvalWithdrawn` 字段后，生命周期**只在这一条分支上**改推荐：授权被撤回的记录不再推荐已被工具关闭的 `revalidate`，而改为 `review`（`retire`/`merge` 等更强的建议不受影响） |
+| `tests/unit/a-stale-record-can-be-re-derived.test.ts` | AC-1 |
+| `tests/unit/a-re-derivation-refuses-a-record-without-a-source.test.ts` | AC-2 |
+| `tests/unit/a-re-derivation-refuses-what-it-must-not-touch.test.ts` | AC-3 |
+| `tests/unit/a-wiki-refusal-names-a-command-that-exists.test.ts` | AC-4 |
+| `tests/unit/wiki-revalidation.test.ts` | 它钉的旧契约被本 change 有意翻转（用例内写明理由） |
+| `docs/design/2026-10-12-a-stale-wiki-record-can-be-re-derived.md` | 本文档 |
+
+**未声明**：`.llmwiki/concepts/a-capability-a-reader-cannot-find.md` 与 `.llmwiki/index.md`（Wiki 页面属于知识闭环，不是被本 change 修改的代码内容；`.llmwiki` 属于仓库的 never-content 策略名）。`src/wiki/record.ts` 曾出现在初版计划里但**本 change 未改动它**——它留在声明面里是"声明覆盖了它没碰的东西"，这一条由独立复核记录为 limitation（`ownedPaths` 是 revision 的摘要面，而 `changedPaths` 才是"什么动了"的声明，后者不含它）。
