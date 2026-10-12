@@ -1,0 +1,126 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createTask } from '../../src/core/task.js';
+import { initLayout } from '../../src/core/layout.js';
+import {
+    createUserChoiceGate,
+    approveUserChoiceGate,
+    requireUserChoiceGate,
+    readGateState,
+    resetUserChoiceGate,
+} from '../../src/workflow/user-choice-gate.js';
+
+/**
+ * AC-2 — a gate record the mechanism cannot read is reported as damaged, not as absent.
+ *
+ * The measured state (I-36, the second half): the record written by the CLI held a `choice` its own schema rejects, so
+ * every read failed — and `requireUserChoiceGate` answered `requires an explicit user choice before continuing`, i.e. the
+ * message for **no gate at all**. The operator's next move was therefore to approve a gate, which failed on the same
+ * schema error, and the record could not be deleted by any command. "I cannot read this" and "there is nothing here" have
+ * different remedies, and the reader answered the second about the first.
+ *
+ * The repair is deliberately narrow: `gate reset` removes a record the mechanism cannot read, and **refuses** one it can —
+ * a valid, consumed or approved record is a decision somebody made, and no command in this change may erase a decision.
+ */
+const roots: string[] = [];
+
+async function fixture(name: string): Promise<string> {
+    const root = mkdtempSync(join(tmpdir(), `kata-gate-damaged-${name}-`));
+    roots.push(root);
+    await initLayout(root);
+    await createTask({
+        root,
+        id: 'held',
+        title: 'Held',
+        acceptance: [{ id: 'AC-1', statement: 'x' }],
+        ownedPaths: ['src/a.ts'],
+    });
+    return root;
+}
+
+function gatePath(root: string, boundary: string): string {
+    return join(root, '.kata', 'tasks', 'held', `user-choice-${boundary}.json`);
+}
+
+afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('a damaged gate record is not an absent one', () => {
+    it('names the record as damaged rather than as a missing decision', async () => {
+        const root = await fixture('damaged');
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        // Exactly the state the CLI produced: a value the schema refuses.
+        writeFileSync(gatePath(root, 'archive_gate'), `${JSON.stringify({ taskId: 'held', boundary: 'archive_gate', createdAt: new Date().toISOString(), choice: 'archive' }, null, 2)}\n`);
+
+        const state = await readGateState(root, 'held', 'archive_gate');
+        expect(state.kind).toBe('damaged');
+
+        // The refusal says what is wrong and where the road is, instead of asking for a decision that is already there.
+        await expect(requireUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' })).rejects.toThrow(/damaged|unreadable/u);
+        await expect(requireUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' })).rejects.toThrow(/gate reset/u);
+    });
+
+    it('still reads an absent record as an absent decision, so the two states stay apart', async () => {
+        const root = await fixture('absent');
+        expect((await readGateState(root, 'held', 'judge_gate')).kind).toBe('absent');
+        await expect(requireUserChoiceGate({ root, taskId: 'held', boundary: 'judge_gate' })).rejects.toThrow(/explicit user choice/u);
+    });
+
+    it('repairs a damaged record and leaves the boundary answerable again', async () => {
+        const root = await fixture('reset');
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
+
+        const reset = await resetUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        expect(reset.removed).toBe(true);
+        expect(existsSync(gatePath(root, 'archive_gate'))).toBe(false);
+
+        // And the boundary can be answered: the road out of the deadlock, driven end to end.
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        await approveUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', choice: 'continue_current' });
+        expect((await requireUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' })).choice).toBe('continue_current');
+    });
+
+    it('removes it through the CLI, and refuses a readable record there too', async () => {
+        // **The road has to exist as a command**, not only as a function: the measured state had no command at all, and a
+        // refusal that names one that does not exist is the defect class this change is about.
+        const root = await fixture('cli');
+        const cli = join(process.cwd(), 'dist', 'cli.js');
+        if (!existsSync(cli)) return;
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        writeFileSync(gatePath(root, 'archive_gate'), '{ "taskId": "held", "boundary": "archive_gate", "choice": "archive" }\n');
+
+        const reset = execFileSync('node', [cli, 'gate', 'reset', '--task', 'held', '--boundary', 'archive_gate', '--reason', 'the record holds a value its schema rejects'], { cwd: root, encoding: 'utf8' });
+        expect(JSON.parse(reset)).toMatchObject({ command: 'gate reset', removed: true });
+        expect(existsSync(gatePath(root, 'archive_gate'))).toBe(false);
+
+        // The other direction through the same command: a readable record is not removable.
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate' });
+        await approveUserChoiceGate({ root, taskId: 'held', boundary: 'archive_gate', choice: 'continue_current' });
+        let refused = false;
+        try {
+            execFileSync('node', [cli, 'gate', 'reset', '--task', 'held', '--boundary', 'archive_gate', '--reason', 'x'], { cwd: root, stdio: 'pipe' });
+        } catch {
+            refused = true;
+        }
+        expect(refused).toBe(true);
+        expect(existsSync(gatePath(root, 'archive_gate'))).toBe(true);
+    });
+
+    it('refuses to reset a record it can read, and one that is not there', async () => {
+        // **The direction that protects the decision.** A reset that also removed valid records would be a way to erase a
+        // human's answer — the gate-strength change this change must not make.
+        const root = await fixture('refuses');
+        await createUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate' });
+        await approveUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate', choice: 'switched' });
+        const before = readFileSync(gatePath(root, 'review_gate'), 'utf8');
+
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'review_gate' })).rejects.toThrow(/readable|valid|refuses/u);
+        expect(readFileSync(gatePath(root, 'review_gate'), 'utf8')).toBe(before);
+        await expect(resetUserChoiceGate({ root, taskId: 'held', boundary: 'judge_gate' })).rejects.toThrow();
+    });
+});

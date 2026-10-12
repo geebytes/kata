@@ -23,6 +23,21 @@ import { isMergeBlockingSeverity, mergeBlockingSeveritiesForTier } from '../kern
  * keeps refusing a gate, keeps authorising a repair, and keeps being named in a refusal — one lifecycle field, several
  * readers, the class this module exists to remove.
  */
+/**
+ * **The disposition vocabulary, as a value — because it lived in two artefacts that were never compared.**
+ *
+ * `schemas/review-finding.schema.json` allows `open | fixed | deferred | accepted | routed`; this module closes a finding on
+ * `fixed` alone. Both are right, and nothing checked that they were the same set: the schema could grow a value this
+ * predicate reads as open (a finding nobody can close) or as closed (a finding that closes by accident), and the schema's
+ * own description named a `findings defer|accept|rout` command that the dispatcher does not have. The vocabulary is
+ * exported here so one selector can compare the two, and `CLOSING_DISPOSITIONS` names which values close a finding rather
+ * than leaving it to be read out of the predicate's body.
+ */
+export const DISPOSITIONS = ['open', 'fixed', 'deferred', 'accepted', 'routed'] as const;
+export type Disposition = (typeof DISPOSITIONS)[number];
+/** The values that close a finding: the problem was repaired **in this change**. The others mean it is still here. */
+export const CLOSING_DISPOSITIONS: readonly string[] = ['fixed'];
+
 export function isOpenFinding(finding: { disposition?: string }): boolean {
     // **Only `fixed` closes a finding.** `deferred`, `accepted` and `routed` all mean "this problem is still here": it
     // was not repaired in this change. The first version of this predicate closed all three, which made the gate *weaker*

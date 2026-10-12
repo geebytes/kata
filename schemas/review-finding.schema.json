@@ -93,7 +93,7 @@
         "accepted",
         "routed"
       ],
-      "description": "Set by a disposition command (`findings defer|accept|rout`) or by the closure rule marking a finding fixed. Absent means open \u2014 a record that carries no disposition has not been decided, which is different from one disposed of as nothing."
+      "description": "The reading of this finding: `fixed` means it was repaired in this change, and every other value means the problem is still here (a report counts them as open). It is written by whoever records the finding — there is no separate disposition command — and absent means open: a record that carries no disposition has not been decided, which is different from one disposed of as nothing."
     },
     "dispositionReason": {
       "type": "string",

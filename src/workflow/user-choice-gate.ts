@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import { readValidated } from '../core/schema.js';
@@ -47,6 +47,32 @@ export function boundaryCreatedBy(phase: string, command: string, approving = fa
         return boundary;
     }
     return null;
+}
+
+/**
+ * **What consumes each boundary, and what the operator runs after it — one table, for the same reason `GATE_CREATED_BY` exists.**
+ *
+ * Measured (I-37): a consumed `judge_gate` printed the command that *creates* it (`kata-cli review --approve`), which
+ * requires the phase to be `review` — while a task whose `judge` succeeded sits in `judge`. So the refusal named a road that
+ * is closed in exactly the state that printed it, `gate approve` refuses a consumed gate, and `judge` refuses without a fresh
+ * choice: three roads, all closed, and the task was unlocked by hand-writing the record.
+ *
+ * The road for a consumed boundary is therefore not "recreate it": the boundary was **crossed**, and what comes next is the
+ * next step of the ladder. Naming that step from a table is what makes the sentence checkable — the selector walks this table
+ * and asserts every named verb is one the CLI knows.
+ */
+export const GATE_CONSUMED_BY: Record<UserChoiceBoundary, { command: string; road: string }> = {
+    implementation_gate: { command: 'kata-cli build', road: 'kata-cli verify' },
+    review_gate: { command: 'kata-cli review', road: 'kata-cli review --approve' },
+    judge_gate: { command: 'kata-cli judge', road: 'kata-cli archive' },
+    archive_gate: { command: 'kata-cli archive', road: 'kata-cli status' },
+};
+
+/** What an operator does when the boundary they are trying to approve was already crossed. */
+export function gateConsumedInstruction(boundary: UserChoiceBoundary): string {
+    const entry = GATE_CONSUMED_BY[boundary];
+    return `This boundary was already crossed by \`${entry.command}\`, so there is nothing to approve here. `
+        + `Continue with \`${entry.road}\` — the ladder's next step, which asks for its own boundary if it needs one.`;
 }
 
 /** How an operator rebuilds a gate that no longer speaks for the current content. */
@@ -140,15 +166,47 @@ export async function createUserChoiceGate(input: { root: string; taskId: string
   await writeFile(pathFor(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}\n`);
 }
 
+/**
+ * **The write side asks the same vocabulary the read side enforces — because it did not, and that asymmetry deadlocked a
+ * task.**
+ *
+ * Measured (I-36): `kata-cli gate approve --boundary archive_gate --choice archive` returned `approved: true` and wrote the
+ * record, and the schema rejects `archive` — so every later read of that record failed (`$.choice must be one of …`),
+ * `gate approve` refused, the phase command refused ("requires an explicit user choice"), a missing file did not read as
+ * "no gate" either, and no command removed or rewrote it. The task was stuck on that boundary until the record was restored
+ * to its creation-time shape by hand.
+ *
+ * The refusal names the value and the vocabulary, and it happens **before anything is read or written**, so a rejected
+ * value cannot leave a record behind. `asserts` narrows the caller's string to the union in the same step, which is why
+ * the CLI can pass what the operator typed instead of casting it.
+ */
+export function assertUserChoice(choice: string): asserts choice is UserChoice {
+  if (!(USER_CHOICES as readonly string[]).includes(choice)) {
+    throw new Error(
+      `User choice gate refuses the choice "${choice}": it is not one of ${USER_CHOICES.join(', ')}. Nothing was written.`,
+    );
+  }
+}
+
 export async function approveUserChoiceGate(input: {
   root: string;
   taskId: string;
   boundary: UserChoiceBoundary;
-  choice: UserChoice;
+  /**
+   * **What the operator typed, not a narrowed type.** The parameter used to be `UserChoice`, so the only way the CLI could
+   * pass a string was a cast — and the cast is what let `--choice archive` reach the record. Accepting the string and
+   * narrowing it here keeps the validation in exactly one place: a second assertion in the CLI would be one rule in two
+   * places, which is the class this repository keeps measuring (and the mutation audit proved it: removing the CLI's copy
+   * changed nothing, because the writer's copy was still there).
+   */
+  choice: string;
   revisionId?: string;
   /** Record the choice for the whole task as well, so later boundaries reuse it instead of asking again. */
   forTask?: boolean;
 }): Promise<void> {
+  // **Before the read**, so a refused value cannot be recorded even when the record on disk is damaged or absent. This is
+  // the only place the vocabulary is enforced on the write side.
+  assertUserChoice(input.choice);
   const gate = await readGate(input.root, input.taskId, input.boundary);
   const identity = await currentRevisionIdentity(input.root, input.taskId);
   // The caller's id when it names one; otherwise the sealed revision, so "current" means the same thing here as it does
@@ -159,7 +217,7 @@ export async function approveUserChoiceGate(input: {
   // this boundary. Reported from another checkout: this branch answered "has already been consumed" and stopped, so the
   // operator had nothing to act on.
   if (gate.consumedAt) {
-    throw new Error(`User choice gate ${input.boundary} has already been consumed. ${gateRebuildInstruction(input.boundary)}`);
+    throw new Error(`User choice gate ${input.boundary} has already been consumed. ${gateConsumedInstruction(input.boundary)}`);
   }
   gate.choice = input.choice;
   gate.approvedAt = new Date().toISOString();
@@ -175,7 +233,16 @@ export async function approveUserChoiceGate(input: {
 }
 
 export async function requireUserChoiceGate(input: { root: string; taskId: string; boundary: UserChoiceBoundary; revisionId?: string }): Promise<UserChoiceGate> {
-  const gate = await readGate(input.root, input.taskId, input.boundary).catch(() => undefined);
+  // **Absence is not damage.** The read used to swallow every failure, so a damaged record answered the message for a
+  // boundary nobody had answered — and the operator's next move was to approve it, which failed on the same schema error.
+  const state = await readGateState(input.root, input.taskId, input.boundary);
+  if (state.kind === 'damaged') {
+    throw new Error(
+      `The ${input.boundary} record is damaged and cannot be read (${state.why}). Remove it with `
+      + `\`kata-cli gate reset --task ${input.taskId} --boundary ${input.boundary} --reason <why>\`, then answer this boundary again.`,
+    );
+  }
+  const gate = state.kind === 'usable' ? state.gate : undefined;
   const identity = await currentRevisionIdentity(input.root, input.taskId);
   if (gate?.choice && !gate.consumedAt) {
     assertRevision(gate, input.revisionId, identity);
@@ -211,9 +278,80 @@ export async function consumeUserChoiceGate(input: { root: string; taskId: strin
   await writeFile(pathFor(input.root, input.taskId, input.boundary), `${JSON.stringify(gate, null, 2)}\n`);
 }
 
-async function readGate(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<UserChoiceGate> {
+/**
+ * **The three states of a boundary's record, told apart.** `absent` (nothing was ever answered here), `damaged` (a record
+ * exists and cannot be read) and `usable`.
+ *
+ * The reader used to collapse the first two: every failure became "no gate", so a record whose `choice` its own schema
+ * rejects answered `requires an explicit user choice before continuing` — the message for a boundary nobody has answered
+ * (measured, I-36). The two have different remedies, and the road for `damaged` is `gate reset`, which is why the state has
+ * to be nameable rather than inferred from an exception.
+ */
+export type GateState =
+  | { kind: 'absent' }
+  | { kind: 'damaged'; why: string }
+  | { kind: 'usable'; gate: UserChoiceGate };
+
+export async function readGateState(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<GateState> {
   assertValidTaskId(taskId);
-  return readValidated<UserChoiceGate>('user-choice-gate', pathFor(root, taskId, boundary));
+  try {
+    return { kind: 'usable', gate: await readValidated<UserChoiceGate>('user-choice-gate', pathFor(root, taskId, boundary)) };
+  } catch (error) {
+    // Only "the file is not there" is absence — read the way `readValidatedOptional` reads it, from the cause, because
+    // `readValidated` wraps the filesystem error in a message of its own. A parse or schema failure is a damaged record,
+    // and answering "no decision" about one is the fold this change exists to refuse.
+    const cause = (error as { cause?: unknown }).cause;
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
+      || (typeof cause === 'object' && cause !== null && (cause as NodeJS.ErrnoException).code === 'ENOENT');
+    if (missing) return { kind: 'absent' };
+    return { kind: 'damaged', why: (error as Error).message };
+  }
+}
+
+/**
+ * **Remove a gate record the mechanism cannot read — and nothing else.**
+ *
+ * The measured deadlock had no road at all: the damaged record failed every read, `gate approve` refused it, the phase
+ * command refused for want of a choice, and no command removed or rewrote it, so the task was stuck until the record was
+ * restored by hand. This is the narrow repair: it acts **only** on `damaged`, so a valid record — approved, consumed, or
+ * waiting to be answered — is a decision somebody made and cannot be erased by a command in this change.
+ */
+export async function resetUserChoiceGate(input: {
+  root: string;
+  taskId: string;
+  boundary: UserChoiceBoundary;
+}): Promise<{ removed: boolean; path: string; removedBecause?: string }> {
+  const path = pathFor(input.root, input.taskId, input.boundary);
+  const state = await readGateState(input.root, input.taskId, input.boundary);
+  if (state.kind === 'absent') {
+    throw new Error(`There is no ${input.boundary} record to reset: nothing was ever answered at this boundary.`);
+  }
+  if (state.kind === 'usable') {
+    throw new Error(
+      `The ${input.boundary} record is readable, so it is a decision rather than damage, and this command refuses to remove `
+      + `one: a readable record is ${state.gate.consumedAt ? 'already consumed' : state.gate.choice ? 'approved' : 'waiting to be answered'}. `
+      + `If it no longer speaks for the content, the road is to recreate it (${gateRebuildInstruction(input.boundary)}).`,
+    );
+  }
+  await rm(path, { force: true });
+  return { removed: true, path, removedBecause: state.why };
+}
+
+async function readGate(root: string, taskId: string, boundary: UserChoiceBoundary): Promise<UserChoiceGate> {
+  const state = await readGateState(root, taskId, boundary);
+  if (state.kind === 'usable') return state.gate;
+  if (state.kind === 'absent') {
+    // The caller distinguishes absence by the code, so the error keeps it: `requireUserChoiceGate` answers "no decision
+    // yet" from it, and every other reader reports it as an unreadable record.
+    const missing = new Error(`No ${boundary} record exists at ${pathFor(root, taskId, boundary)}.`) as NodeJS.ErrnoException;
+    missing.code = 'ENOENT';
+    throw missing;
+  }
+  throw new Error(
+    `The ${boundary} record is damaged and cannot be read (${state.why}). Nothing that reads it can proceed, and no decision `
+    + `can be recorded over it: remove the damaged record with \`kata-cli gate reset --task ${taskId} --boundary ${boundary} --reason <why>\`, `
+    + `then answer this boundary again.`,
+  );
 }
 
 /**

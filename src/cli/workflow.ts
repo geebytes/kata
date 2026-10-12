@@ -15,6 +15,7 @@ import {
 } from '../core/workflow-profile.js';
 import {
     approveUserChoiceGate,
+    resetUserChoiceGate,
     boundaryCreatedBy,
     consumeUserChoiceGate,
     createUserChoiceGate,
@@ -341,14 +342,43 @@ export function boundaryForCommand(
 }
 
 export async function runGateCommand(argv: string[], root: string): Promise<Record<string, unknown>> {
-    if (argv[0] !== 'approve') throw new Error('Usage: kata gate approve --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated> [--for-task]');
+    if (argv[0] === 'reset') {
+        // **The road out of a damaged record.** Measured (I-36): a record whose `choice` its own schema rejects failed
+        // every read, `gate approve` refused it, the phase command refused for want of a choice, and no command removed or
+        // rewrote it — so the task was stuck until the record was restored by hand. This verb removes **only** a record the
+        // mechanism cannot read; a readable one is a decision somebody made and is refused.
+        const resetTask = argValue(argv, '--task');
+        const resetBoundary = argValue(argv, '--boundary') as UserChoiceBoundary | undefined;
+        const reason = argValue(argv, '--reason');
+        if (!resetTask || !resetBoundary) {
+            throw new Error('Usage: kata gate reset --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --reason <why>');
+        }
+        if (reason === undefined || reason.trim() === '') {
+            throw new Error('kata gate reset requires --reason: a record is removed only with a stated reason, so the removal is auditable.');
+        }
+        const reset = await resetUserChoiceGate({ root, taskId: resetTask, boundary: resetBoundary });
+        return {
+            command: 'gate reset',
+            taskId: resetTask,
+            boundary: resetBoundary,
+            removed: reset.removed,
+            path: reset.path,
+            reason,
+        };
+    }
+    if (argv[0] !== 'approve') throw new Error('Usage: kata gate <approve|reset> --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --choice <continue_current|switched|delegated> [--for-task]');
     const task = argValue(argv, '--task');
     const boundary = argValue(argv, '--boundary') as UserChoiceBoundary | undefined;
-    const choice = argValue(argv, '--choice') as 'continue_current' | 'switched' | 'delegated' | undefined;
+    // The value the operator typed, validated by the writer against the one vocabulary the reader enforces (AC-1 of
+    // `the-gates-can-be-repaired`). It used to be cast here, so the CLI reported `approved: true` for a value the schema
+    // refuses and every later read of the record failed.
+    const choice = argValue(argv, '--choice');
     if (!task || !boundary || !choice) throw new Error('kata gate approve requires --task, --boundary, and --choice');
     // --for-task records the same answer for the whole task: the boundaries still exist and are still recorded, they
     // just stop asking the same human the same question (and they report when they reuse the answer).
     const forTask = switchPresent(argv, '--for-task');
+    // **The value is passed as it was typed and validated by the writer.** A second assertion here would be the same rule
+    // in two places; the cast it replaced is what let `--choice archive` reach the record.
     await approveUserChoiceGate({ root, taskId: task, boundary, choice, forTask });
     return {
         command: 'gate approve',

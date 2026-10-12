@@ -125,12 +125,12 @@ of I-35, to be implemented only after a reproduction shows a gate that refuses o
 | `src/cli/workflow.ts` | the gate command's write-side validation and the damaged-record refusal |
 | `src/workflow/user-choice-gate.ts` | the vocabulary, the creation table, the readability of a damaged record |
 | `src/workflow/review-read.ts` | where a recorded round's binding to a revision is already derived |
-| `src/store/review-record.ts` | the review-record writer, where the disposition is written from that fact |
 | `src/quality/review-ladder.ts` | `isOpenFinding` and the approval bar this change must not weaken |
 | `tests/unit/an-out-of-vocabulary-gate-choice-is-refused.test.ts` | AC-1 |
 | `tests/unit/a-damaged-gate-record-is-not-an-absent-one.test.ts` | AC-2 |
 | `tests/unit/a-gate-remedy-runs-where-it-is-printed.test.ts` | AC-3 |
 | `tests/unit/a-disposition-has-one-vocabulary.test.ts` | AC-4 |
+| `tests/unit/gate-refusal-names-the-remedy.test.ts` | the case that pinned the inert consumed-gate remedy, moved to the property |
 | `schemas/review-finding.schema.json` | AC-4: the vocabulary the ladder must agree with |
 | `docs/design/2026-10-13-the-gates-can-be-repaired.md` | this document |
 
