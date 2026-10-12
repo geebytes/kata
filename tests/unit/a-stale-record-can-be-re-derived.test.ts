@@ -128,6 +128,34 @@ describe('re-deriving a stale record recomputes what the record says about its s
         expect(result.statement.why).toContain('llmwiki-ingest');
     });
 
+    it('names the source count as the clause that failed when the registration writer has two sources', async () => {
+        // **The clause no fixture reached.** The reply names which of the three clauses decided it, and the middle one
+        // (`!singleSource`) needs a record with the registration id and more than one source — a shape nothing built (measured
+        // by an independent round). Without this case that clause's text can be wrong with every selector green.
+        const root = await seeded('# Rule\n\nFirst version.\n', 'distilled');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        await mkdir(join(root, 'docs'), { recursive: true });
+        await writeFile(join(root, 'docs/rule.md'), '# Rule\n\nFirst version.\n', 'utf8');
+        await writeFile(join(root, 'docs/other.md'), '# Other\n\nFirst version.\n', 'utf8');
+        const record = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+        record.validationTaskId = 'llmwiki-register';
+        record.statement = 'Prose a person wrote.';
+        record.sourceRefs = ['.llmwiki/concepts/rule.md', 'docs/other.md'];
+        record.sourceHashes = {
+            '.llmwiki/concepts/rule.md': computeFileHash('# Rule\n\nFirst version.\n'),
+            'docs/other.md': computeFileHash('# Other\n\nFirst version.\n'),
+        };
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+        await verifySources(root);
+
+        const result = await revalidateWikiRecord(root, 'rule-page');
+
+        expect(result.statement.recomputed).toBe(false);
+        expect(result.statement.why).toContain('2 sources');
+        expect(result.statement.why).not.toContain('is not a page under');
+        expect((await findWikiRecord(root, 'rule-page'))?.statement).toBe('Prose a person wrote.');
+    });
+
     it('does not trust the writer id alone: a record claiming it with a non-page source keeps its prose', async () => {
         // **The eligibility test is the writer AND the shape that writer produces.** A record carrying `llmwiki-register`
         // whose single source is some other file (hand-made, or its ref edited later) was recomputed from that file — its

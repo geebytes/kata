@@ -27,8 +27,13 @@
   - `stale` 记录 ⇒ 照旧回到 `candidate`（唯一被允许的转移）。
 - **同一批修掉那句补救文案**：`candidate_missing` 的补救改成**真实**的路（`kata-cli wiki candidate` 列候选；记录存在、页面已动过就先 `kata-cli wiki revalidate --record <wiki-id>` 再重记闭包），使读者照着做**真的能收敛**。
 - **帮助清单与调度器同派生**（同一处表面，同一个根因）：`wiki --help` 的 `help.commands` 与 `help.withheld` 合起来必须覆盖调度器接受的每个动词。实测这条断言**当场又抓到第二个实例**：`rebuild` 也不在清单里（它是有意不摆在第一排的破坏性命令）⇒ 它现在以 `withheld: { rebuild: '<reason>' }` **具名held**，而不是**静默缺失**。**边界披露**：这一条**不在**任何冻结 AC 的字面范围内（AC-4 管的是"补救里出现的命令"），我按"同一根因"在实现里一并修并把断言写进 AC-4 的选择器，理由写在用例注释里。
-- **`statement` 只在该 statement 确实来自页面时才重算**（AC-1 的措辞比这更宽，这里写明真实的规则）：`ingested` 记录的 statement 就是页面的摘要 ⇒ 跟着页面重算；`distilled` 记录的 statement 是**变更自己的结论**，任何文件里都没有它 ⇒ 只刷新 hash、**不动 statement**。判定问 `inferProvenance`（既有的那一处派生），不从 `sourceRefs` 的形状猜。这条**反向情形也写成用例**（AC-1 的选择器里），免得日后有人顺手开始覆盖 distilled 的文字。
+- **`statement` 只在该 statement 确实来自页面时才重算**（AC-1 的措辞比这更宽，这里写明真实的规则）：判据是**写者与它产出的形状**——`validationTaskId === 'llmwiki-register'`**且**只有一个来源**且**该来源位于 `.llmwiki/` 下（`isWikiPageRef`，与写者共用同一常量）；`distilled` 记录（以及任何别的写者写的记录）的 statement 是**变更自己的结论**，任何文件里都没有它 ⇒ 只刷新 hash、**不动 statement**。三个子句**各有用例**（AC-1 的选择器里），免得日后有人顺手开始覆盖别人的文字。
 - **批量路径收集拒绝而不是抛出**：`revalidateStaleRecords` 原本在遇到拒绝时会**中途抛出**（前面几条已刷新、后面的丢失、调用者拿不到账）⇒ 改为 `{ revalidated, refused }`，CLI 把两者都印出来。用例在 AC-2 的选择器里（混合仓库：一条可再派生 + 一条来源已失）。
+- **第 4 轮的九条：两条 major 是"我自己的文字"，不是机制**
+  - **F7（major）**：我在第 3 轮**声称**修掉了 F9（设计文档里的旧规则），而**那一行没动**——我的改法替换了另一段，而留着的那一句仍写着 `inferProvenance`。**这是第三次"声明了没做到"**（第 2 轮 F4 是提交信息、第 3 轮是我自己发现的假成功写入），所以本轮起我把规则写在这里：**提交信息里的每一句断言都要先用 `grep`/`git show --stat` 或运行证明**，本轮提交前逐条实测过（见提交前的检查输出）。
+  - **F1（major）**：批量拒绝让操作者"review it, then promote it again"——而 `promote` 要求 `candidate`，拒绝**只在 `stale` 上触发** ⇒ 这句话在它出现的每一个状态下都不可执行。改成点名 `retire`（该状态接受）并**用用例真的走一遍**，同时断言句子不再包含 `promote it again`（falsifier E20）。
+  - F2/F4/F5/F6/F9 是**同类残留**（一处事实两处派生）与新出现的**空肢/空手守卫**：`wikiRecordFileName` 现在被 store 与漂移检查共用（此前只在漂移检查里用了一次，注释却声称"已一处派生"）；漂移走查改为**遍历 `sourceHashes ∪ sourceRefs`**（否则"声明了却没记 hash"的路径永不进入走查，而再派生的拒绝正对着它）；**不可读的 store 不再被读成空 store**（reader 只把 `ENOENT` 当缺席，其余经 `invalid` 通道上报，闭包据此回答 `unevaluatable_records` 而不是 `candidate_missing`）；帮助守卫的**下限改由答复自身派生**（不再是手写的 15 而扫描看到 20）；回答的**中间子句**（注册写者+两个来源）补了形状。
+  - **边界（写下、不声称更多）**：① `--wiki <path>` 非默认时，`register` 读页面的根与它写进 ref 的 `.llmwiki/` 仍可能指向不同的目录——**预存在的语义问题**，需要先决定"自定义 wiki 根到底意味着什么"，本 change 不擅自改（记入队列）；② 帮助守卫的动词集合仍来自**源码文本扫描**：能看见行为保持的重命名造成的**集合缩小**（新下限会打红），但看不见**数量相同**的重命名——这条写在用例注释里；③ 记录文件的**写入路径**（`layoutWikiRecordPath`）与 `wikiRecordFileName` 仍是两处（一个产出路径、一个产出名字），二者由同一 `normalizeId` 决定；本 change 只统一了名字那半边。
 - **第 2 轮的一条 major（F1）改变了"每条路"的含义**：`writeWikiRecord` 是**替换**（不合并），而 `ingest` 只守页面不守记录 ⇒ 页面不在时重新 ingest 会**把 candidate 写进一条已批准的记录**，作者自己却报 `refused: []`。守卫因此放在**每个写者都经过的那一个卡口**（store 内部、锁内、按磁盘上的内容判断），拒绝文点名状态与出路。**边界**：这让"重写一条已批准/已拒绝的记录"必须显式先 reject/retire 或 `wiki rebuild` 清库——是刻意的（替换是一次决定）。
 - **同轮 F2/F3/F5 三处措辞与身份的精修**：重复来源**按重复具名**（旧的排序拼接比较会把它报成"声明了却没记 hash"，那是**假陈述**）；写者资格**连它产出的形状一起检查**（`llmwiki-register` + 单一来源且位于 `.llmwiki/` 下），回答里陈述真正检查过的事实；不可读记录的查找**按 store 自己派生的文件名精确比对**（`endsWith` 会让 `bca.json` 替 `a` 作答）。
 - **F4 是一次被独立复核抓住的假声明**：`854f303` 的提交信息写"AC-2 的 fixture 时间戳已钉住"，而该提交只改了一行 import ⇒ 声明是**假的**（我的写入脚本当年无条件打印成功）。现在时间戳真的钉住，并用 `grep` 证明；教训写进本文件：**提交信息只能陈述被测过的差异**。
@@ -76,4 +81,4 @@
 | `tests/unit/a-wiki-refusal-names-a-command-that-exists.test.ts` | |
 | `tests/unit/wiki-revalidation.test.ts` | |
 
-**未声明**：`.llmwiki/concepts/a-capability-a-reader-cannot-find.md` 与 `.llmwiki/index.md`（Wiki 页面属于知识闭环，不是被本 change 修改的代码内容；`.llmwiki` 属于仓库的 never-content 策略名）。`src/wiki/record.ts` 曾出现在初版计划里但**本 change 未改动它**——它留在声明面里是"声明覆盖了它没碰的东西"，这一条由独立复核记录为 limitation（`ownedPaths` 是 revision 的摘要面，而 `changedPaths` 才是"什么动了"的声明，后者不含它）。
+**未声明**：`.llmwiki/concepts/a-capability-a-reader-cannot-find.md` 与 `.llmwiki/index.md`（Wiki 页面属于知识闭环，不是被本 change 修改的代码内容；`.llmwiki` 属于仓库的 never-content 策略名）。`src/wiki/record.ts` 在本 change 里**被改动了**（`carriesDecision`、`isWikiPageRef`、`wikiRecordFileName`——第 2/3 轮修复引入的三处共享派生都住在它里面），所以它在声明面里是诚实的；本节早先的版本曾写它"未被改动"，那是第 3 轮修复时留下的假陈述，第 4 轮独立复核 F8 实测指出。

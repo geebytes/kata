@@ -123,6 +123,26 @@ describe('re-deriving refuses what it must not touch', () => {
         expect(await readFile(path, 'utf8')).toBe(before);
     });
 
+    it('drives the road its bulk refusal names, so the sentence is measured and not asserted', async () => {
+        // **The sentence is a road, and a road is only true if it is walked.** The first version said "review it, then promote
+        // it again if it still holds" — `promote` requires a `candidate` and this refusal only ever fires on a record whose
+        // status is `stale`, so the instruction failed in every state that printed it (measured by an independent round). The
+        // road it names now is `retire`, which accepts a stale record; this case walks it.
+        const root = await seeded('verified');
+        const { refused } = await revalidateStaleRecords(root);
+        expect(refused.map((entry) => entry.id)).toEqual(['rule-page']);
+        // The sentence names `retire` (which this state accepts) and not `promote` (which requires a candidate).
+        expect(refused[0]?.reason).toMatch(/wiki retire/);
+        expect(refused[0]?.reason).not.toMatch(/promote it again/);
+
+        const { retireWikiRecord } = await import('../../src/wiki/promotion.js');
+        const retired = await retireWikiRecord(root, 'rule-page', {
+            rejectedBy: 'a-reviewer', role: 'reviewer', rejectedAt: new Date().toISOString(), reason: 'superseded',
+        });
+
+        expect(retired.status).toBe('rejected');
+    });
+
     it('refuses, on the bulk route too, a record whose approval the drift walk just withdrew', async () => {
         // **The guard was on one side of the walk.** `revalidateStaleRecords` calls `verifySources` first, which demotes a
         // `verified` record whose sources moved — so by the time the single-record guard ran, the record read as an ordinary

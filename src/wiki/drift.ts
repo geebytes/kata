@@ -43,7 +43,12 @@ export async function verifySources(root: string): Promise<DriftReport> {
     }
 
     const changedSources: string[] = [];
-    const sourceHashEntries = Object.entries(record.sourceHashes);
+    // **The walk looks at every source the record names, not only the ones it has a hash for.** Iterating `sourceHashes` alone
+    // meant a path declared in `sourceRefs` with no recorded hash was never examined — while the re-derivation path refuses
+    // exactly that shape, so the two answers to "what are this record's sources" disagreed on a record reachable from the CLI
+    // (measured by an independent round). The union is iterated, and a declared ref with no hash is reported as changed.
+    const declaredSources = [...new Set([...Object.keys(record.sourceHashes), ...record.sourceRefs])];
+    const sourceHashEntries = declaredSources.map((path) => [path, record.sourceHashes[path] ?? ''] as const);
 
     if (record.sourceRefs.length > 0 && sourceHashEntries.length === 0) {
       stale.push({
@@ -300,7 +305,7 @@ export async function revalidateStaleRecords(root: string): Promise<{
         id: record.id,
         reason: `Wiki record ${record.id} carries a decision that re-derivation does not overturn${
           withdrawnThisRun.has(record.id) ? ' — this run withdrew its approval because its sources moved' : ''
-        }: review it, then promote it again if it still holds`,
+        }: retire it if it does not hold any more (\`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` works from this state), or clear the store with \`kata-cli wiki rebuild\`; promoting it again is not available here because \`promote\` requires a candidate and this record is ${record.status}`,
       });
       continue;
     }

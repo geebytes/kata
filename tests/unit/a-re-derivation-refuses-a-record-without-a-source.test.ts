@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { revalidateStaleRecords, revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
 import { readFileSync } from 'node:fs';
-import { readWikiRecords } from '../../src/wiki/store.js';
+import { readWikiRecords, readWikiRecordsWithIssues } from '../../src/wiki/store.js';
 import { computeFileHash } from '../../src/wiki/record.js';
 
 /**
@@ -203,6 +203,23 @@ describe('a record whose source is gone is refused by name, and left alone', () 
 
         expect(refused).toEqual([]);
         expect(revalidated.map((entry) => entry.id)).toEqual(['rule-page']);
+    });
+
+    it('reports an unreadable store as unreadable, not as an empty one', async () => {
+        // **The reader mapped "a store I could not read" onto "a store with nothing in it".** Everything except `ENOENT` was
+        // swallowed, so a record directory that cannot be read (a file in its place is an `ENOTDIR`, which unlike a permission
+        // bit is not defeated by running as root) answered the closure gate's question with "the record is not offered"
+        // (measured by an independent round). The reader now reports it through the channel it already has, and the gate asks
+        // whether the store it just read was readable.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const wikiDir = join(root, '.kata/wiki');
+        await rm(wikiDir, { recursive: true, force: true });
+        await writeFile(wikiDir, 'not a directory', 'utf8');
+
+        const { invalid } = await readWikiRecordsWithIssues(root);
+
+        expect(invalid).toHaveLength(1);
+        expect(invalid[0]?.message).toMatch(/cannot be read/);
     });
 
     it('still reports the gap to the drift walk, so the missing source stays visible', async () => {

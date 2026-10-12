@@ -8,7 +8,7 @@ export function normalizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-// The file name is derived once (`wikiRecordFileName`); `normalizeId` remains the reader-facing name normaliser.
+
 
 /**
  * The one reader of the Wiki store. Records are validated against `wiki-record.schema.json` where they are read: a
@@ -28,11 +28,16 @@ export async function readWikiRecordsWithIssues(root: string): Promise<{
   invalid: Array<{ path: string; message: string }>;
 }> {
   const wikiDir = layoutWikiDir(root);
+  // **An unreadable store is not an empty one.** Catching every error here made `EACCES`/`ENOTDIR` on the record directory
+  // indistinguishable from a store with nothing in it, so the closure gate answered "the record is not offered" about a store
+  // it could not read at all (measured by an independent round). Only absence means absence; anything else is reported as an
+  // unreadable artefact, which is the state every reader of this function already has a word for.
   let files: string[];
   try {
     files = await readdir(wikiDir);
-  } catch {
-    return { records: [], invalid: [] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { records: [], invalid: [] };
+    return { records: [], invalid: [{ path: wikiDir, message: `the record store cannot be read: ${(error as Error).message}` }] };
   }
   const records: WikiRecord[] = [];
   const invalid: Array<{ path: string; message: string }> = [];
@@ -60,7 +65,7 @@ export async function writeWikiRecord(root: string, record: WikiRecord): Promise
   const validatedWithId = { ...validated, id };
   // L3-04: validation happens before the write (it already did) and the write is now atomic, so a crash mid-write leaves
   // the previous record readable instead of a truncated file that every reader then has to report as invalid.
-  const recordPath = join(wikiDir, `${id}.json`);
+  const recordPath = join(wikiDir, wikiRecordFileName(id));
   await withRepositoryArtefactLock(root, `wiki-${id}`, recordPath, async (current) => {
     // **This writer replaces, and a replacement must not destroy a decision.**
     //

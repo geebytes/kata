@@ -2,7 +2,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readWikiRecordsWithIssues } from './store.js';
 import { mutateTaskArtefact } from '../core/state.js';
-import { wikiClosurePath as layoutWikiClosurePath, taskDir } from '../core/layout.js';
+import { wikiClosurePath as layoutWikiClosurePath, wikiDir as layoutWikiDir, taskDir } from '../core/layout.js';
 
 export type WikiClosureDecision = 'captured' | 'not_applicable' | 'deferred';
 
@@ -86,6 +86,11 @@ export async function evaluateWikiClosure(root: string, taskId: string): Promise
   // Tolerant read: an unrelated invalid record must not decide this task's closure, but a candidate the closure names
   // that cannot be read is a real gap and fails closed.
   const { records, invalid } = await readWikiRecordsWithIssues(root);
+  // **A store the gate could not read is not a store without the record.** The reader reports an unreadable record directory as
+  // an invalid artefact naming that directory; without asking, the gate would answer `candidate_missing` — "the store does not
+  // offer it" — about a store nobody could read (measured by an independent round). The question is asked of the same reading,
+  // so there is no second walk of the store.
+  if (invalid.some((entry) => entry.path === layoutWikiDir(root))) return { valid: false, reason: 'unevaluatable_records', closure };
   const validIds = new Set(records.filter((record) => record.status === 'candidate' || record.status === 'verified').map((record) => record.id));
   const unreadableIds = new Set(invalid.map((entry) => entry.path.replace(/^.*\//, '').replace(/\.json$/, '')));
   if (closure.candidateIds.some((id) => unreadableIds.has(id))) return { valid: false, reason: 'unevaluatable_records', closure };
