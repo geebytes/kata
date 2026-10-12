@@ -13,9 +13,10 @@ const maxCandidatesPerTask = 2;
 type LifecycleReason =
   | 'source_changed'
   | 'source_missing'
-  // The record never recorded a hash for one of its sources: nothing moved, the record is incomplete. `revalidate` cannot
-  // repair it (the refusal names exactly this shape), so the recommendation for it is a person's review.
+  // The record's two halves do not describe the same sources — in either direction. `revalidate` cannot repair that (the
+  // refusal names exactly these shapes), so the recommendation is a person's review.
   | 'source_unrecorded'
+  | 'source_undeclared'
   | 'semantic_superseded'
   | 'scope_changed'
   | 'conflict'
@@ -165,10 +166,10 @@ function chooseAction(record: WikiRecord, reasons: LifecycleReason[], successors
   if (reasons.includes('conflict')) return 'review_conflict';
   if (reasons.includes('source_missing') && record.status !== 'verified') return 'retire';
   if (reasons.includes('duplicate') && record.status === 'candidate') return reasons.includes('candidate_over_budget') ? 'merge' : 'retire_duplicate';
-  // Named explicitly even though the fall-through below also answers `review` for this reason alone: the mapping is a
-  // decision about a cause, and a later edit that adds `source_unrecorded` to the `revalidate` line would otherwise make the
-  // wrong road the recommendation without touching this function's intent.
-  if (reasons.includes('source_unrecorded')) return 'review';
+  // Named explicitly even though the fall-through below also answers `review` for these reasons alone: the mapping is a
+  // decision about a cause, and a later edit that adds either word to the `revalidate` line would otherwise make the wrong
+  // road the recommendation without touching this function's intent.
+  if (reasons.includes('source_unrecorded') || reasons.includes('source_undeclared')) return 'review';
   if (reasons.includes('source_changed') || reasons.includes('scope_changed')) return approvalWithdrawn ? 'review' : 'revalidate';
   return 'review';
 }

@@ -110,6 +110,30 @@ describe('re-deriving refuses what it must not touch', () => {
         expect(await readFile(path, 'utf8')).toBe(before);
     });
 
+    it('names roads valid in the state it fires in, and this case walks each state', async () => {
+        // **A refusal prints a road; the road is only true if the refused state can take it.** Measured by independent
+        // rounds, twice: the sentence offered `retire` to a `rejected` record (`retireWikiRecord` refuses it — already
+        // retired) and `promote` to a `stale` one (requires a candidate). The roads are derived from the state now, and this
+        // case asks each state's sentence to be walkable — including the one where the answer is "there is no road from this
+        // state", which is a fact a refusal may state plainly.
+        const verified = await seeded('verified');
+        const verifiedRefusal = await revalidateWikiRecord(verified, 'rule-page').then(() => '', (error: Error) => error.message);
+        expect(verifiedRefusal).toMatch(/wiki retire/);
+        expect(verifiedRefusal).not.toMatch(/wiki promote <wiki-id> --by/);
+
+        const rejected = await seeded('rejected');
+        const rejectedRefusal = await revalidateWikiRecord(rejected, 'rule-page').then(() => '', (error: Error) => error.message);
+        expect(rejectedRefusal).toMatch(/no road from this state/);
+        expect(rejectedRefusal).toMatch(/already retired/);
+
+        // …and the road the verified sentence names really runs.
+        const { retireWikiRecord } = await import('../../src/wiki/promotion.js');
+        const retired = await retireWikiRecord(verified, 'rule-page', {
+            rejectedBy: 'a-reviewer', role: 'reviewer', rejectedAt: new Date().toISOString(), reason: 'superseded',
+        });
+        expect(retired.status).toBe('rejected');
+    });
+
     it('refuses a rejected record by name: a refusal is a decision, not a hash to refresh', async () => {
         // **The bottom of the ladder was open.** The guard covered `verified` and nothing else, so a record a person had
         // rejected was re-derived straight back to `candidate` — the status the closure gate accepts (measured by an
@@ -147,8 +171,9 @@ describe('re-deriving refuses what it must not touch', () => {
         // **The guard was on one side of the walk.** `revalidateStaleRecords` calls `verifySources` first, which demotes a
         // `verified` record whose sources moved — so by the time the single-record guard ran, the record read as an ordinary
         // stale one and was re-derived into a `candidate`. The approval came back weaker than it went in, through the bulk
-        // door, and the report named it only as `source_changed`. Now the walk says `verified_source_changed` and the bulk
-        // route refuses on that name.
+        // door, and the report said only that the source had changed. The walk now carries the withdrawal on the drift entry
+        // (`approvalWithdrawn`) and the bulk route refuses on that fact — while the refusal's own guard reads the record itself
+        // (`carriesDecision`), so a later run refuses it too.
         const root = await seeded('verified');
         const path = join(root, '.kata/wiki/rule-page.json');
 

@@ -1,6 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { carriesDecision, computeFileHash, isWikiPageRef, wikiRecordFileName, type WikiRecord, type WikiStatus } from './record.js';
+import {
+  carriesDecision,
+  computeFileHash,
+  isWikiPageRef,
+  sourceHalvesAgreement,
+  sourceHalvesDisagreement,
+  wikiRecordFileName,
+  type WikiRecord,
+  type WikiStatus,
+} from './record.js';
 import { statementForPage } from './llmwiki.js';
 import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
@@ -9,16 +18,20 @@ import { llmwikiDirName } from '../core/repository-identity.js';
 export interface DriftEntry {
   id: string;
   /**
-   * Why the record is no longer consistent with its sources — the *cause*, in three words because there are three:
-   * a file's content moved, a file is gone, or the record never recorded what one of its sources hashes to.
+   * Why the record is no longer consistent with its sources — the *cause*, in four words because there are four.
    *
-   * The third word exists because the first two were false for that shape: a declared source with no recorded hash is not
-   * "a file moved" (we do not know what it should hash to) and not "a file is gone" (it is there). The walk said
-   * `source_changed` and the lifecycle therefore recommended `revalidate` — a road `revalidateWikiRecord` closes by name for
-   * exactly this record (measured by an independent round). A reason that names a cause that did not happen also sent the
-   * operator to the wrong command, which is the same defect wearing the enum's clothes.
+   * Three of them are about files: a file's content moved, a file is gone, a file's content is there but the record's other
+   * half never said what it should hash to. The fourth is its mirror: the record's hash map lists a path its refs do not
+   * declare, which is the same defect seen from the other side. Both of those mean **the record cannot be re-derived** — which
+   * digest belongs to which declaration is not knowable — so naming them `source_changed` sent the operator to `revalidate`,
+   * a road `revalidateWikiRecord` closes by name for exactly that record (measured by two independent rounds, one direction
+   * each). A cause that names something that did not happen is the same defect wearing the enum's clothes.
+   *
+   * **What these two words do not claim:** they say nothing about whether the file is there. A source can be unrecorded *and*
+   * absent (the first version's sentence claimed "it is there", which a reachable record contradicts — measured by an
+   * independent round); the file facts travel in `changedSources` and `missing`.
    */
-  reason: 'source_changed' | 'source_missing' | 'source_unrecorded';
+  reason: 'source_changed' | 'source_missing' | 'source_unrecorded' | 'source_undeclared';
   changedSources: string[];
   /**
    * Whether the walk took an approval away with it, which is a second fact about the same record.
@@ -58,21 +71,11 @@ export async function verifySources(root: string): Promise<DriftReport> {
     // (measured by an independent round). The union is iterated, and a declared ref with no hash is reported as changed.
     const declaredSources = [...new Set([...Object.keys(record.sourceHashes), ...record.sourceRefs])];
     const sourceHashEntries = declaredSources.map((path) => [path, record.sourceHashes[path] ?? ''] as const);
-    // A declared source with no recorded hash: named as its own cause rather than folded into "the content moved", because
-    // which command may act on it differs (the record has to be corrected, not re-derived).
-    const unrecorded = declaredSources.filter((path) => record.sourceHashes[path] === undefined);
-
-    if (record.sourceRefs.length > 0 && sourceHashEntries.length === 0) {
-      stale.push({
-        id: record.id,
-        reason: 'source_missing',
-        changedSources: [...record.sourceRefs],
-        ...(withdrawingAuthority(record) ? { approvalWithdrawn: true } : {}),
-      });
-      for (const sourceRef of record.sourceRefs) missingSources.add(sourceRef);
-      await markRecordStale(root, record.id);
-      continue;
-    }
+    // **The record's own completeness is asked of one predicate, in both directions.** Which command may act on the record
+    // differs for a record whose halves disagree (the record has to be corrected, not re-derived), so it is named as its own
+    // cause — and the mirror direction is the same question, answered by the same function (an independent round measured the
+    // first repair closing one direction only).
+    const agreement = sourceHalvesAgreement(record);
 
     for (const [sourcePath, expectedHash] of sourceHashEntries) {
       try {
@@ -89,11 +92,15 @@ export async function verifySources(root: string): Promise<DriftReport> {
     }
 
     if (changedSources.length > 0) {
-      const reason = unrecorded.length > 0
+      // A record whose halves disagree cannot be re-derived whatever the files did, so that cause wins: it is about the
+      // record, the others are about the files. The file facts are still reported (`changedSources`, `missing`).
+      const reason = agreement === 'declared-not-hashed'
         ? 'source_unrecorded'
-        : changedSources.some((s) => missingSources.has(s))
-          ? 'source_missing'
-          : 'source_changed';
+        : agreement === 'hashed-not-declared'
+          ? 'source_undeclared'
+          : changedSources.some((s) => missingSources.has(s))
+            ? 'source_missing'
+            : 'source_changed';
       stale.push({ id: record.id, reason, changedSources, ...(withdrawingAuthority(record) ? { approvalWithdrawn: true } : {}) });
       await markRecordStale(root, record.id);
     } else {
@@ -191,7 +198,7 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
         ? `is ${record.status}`
         : 'carries an approval that was withdrawn when its sources moved';
     throw new Error(
-      `Wiki record ${id} ${why}, and re-derivation never turns an approved or retired record into a candidate: it is the transition out of \`stale\`, so this needs a decision — \`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` retires it, and promoting a record again goes through \`kata-cli wiki promote\` — rather than a refreshed hash`,
+      `Wiki record ${id} ${why}, and re-derivation never turns an approved or retired record into a candidate: it is the transition out of \`stale\` — ${decisionRoads(record)}`,
     );
   }
 
@@ -211,15 +218,15 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
     );
   }
 
-  const declared = [...record.sourceRefs].sort();
-  const hashed = Object.keys(record.sourceHashes).sort();
-  if (declared.join('\u0000') !== hashed.join('\u0000')) {
-    const extra = hashed.filter((path) => !declared.includes(path));
-    const missing = declared.filter((path) => !hashed.includes(path));
+  // **The agreement question is asked of the same function the walk asks**, so a direction cannot be known to one side and
+  // unknown to the other (that asymmetry is what an independent round measured in this change's own history).
+  const agreement = sourceHalvesAgreement(record);
+  if (agreement !== 'agree') {
+    const disagreement = sourceHalvesDisagreement(record);
     throw new Error(
       `Wiki record ${id} cannot be re-derived because its recorded hashes do not describe its declared sources: ${
-        extra.length > 0 ? `hashed but not declared: ${extra.join(', ')}` : `declared but not hashed: ${missing.join(', ')}`
-      }`,
+        agreement === 'hashed-not-declared' ? 'hashed but not declared' : 'declared but not hashed'
+      }: ${disagreement.join(', ')}`,
     );
   }
 
@@ -295,6 +302,28 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
 }
 
 /**
+ * **The roads out of a record that carries a decision, for the state the record is actually in.**
+ *
+ * Both refusals below used to spell their roads in prose, and two independent rounds measured the same defect in them: a
+ * sentence offering `retire` to a `rejected` record (which `retireWikiRecord` refuses — it is already retired), offering
+ * `promote` to a `stale` one (which requires a candidate), or disclaiming `wiki rebuild` for a precondition that holds in a
+ * different state than the one it prints in. The roads are a fact about the state, so they are derived from it once and the
+ * sentences are built from the result.
+ */
+function decisionRoads(record: Pick<WikiRecord, 'status' | 'approvalEvent'>): string {
+  const closed: string[] = [];
+  if (record.status === 'rejected') {
+    closed.push('`kata-cli wiki promote` (it requires a candidate) and `kata-cli wiki retire` (the record is already retired)');
+  } else {
+    closed.push('`kata-cli wiki promote` (it requires a candidate)');
+  }
+  const road = record.status === 'rejected'
+    ? 'there is no road from this state that keeps the store: only clearing it (`kata-cli wiki rebuild`) and ingesting the sources again'
+    : `retire it if it does not hold any more (\`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` works from this state), or clear the store as a whole (\`kata-cli wiki rebuild\` — it removes every page and governed record, so it is the road for a store being replaced rather than for one record)`;
+  return `${road}; ${closed.join(' and ')} ${closed.length > 1 ? 'are' : 'is'} refused from here`;
+}
+
+/**
  * Revalidates every stale record in the store, reporting what each refresh found.
  *
  * The walk iterates the records whose **status** is `stale`, not the ones the drift check happens to report: the drift check
@@ -321,7 +350,7 @@ export async function revalidateStaleRecords(root: string): Promise<{
         id: record.id,
         reason: `Wiki record ${record.id} carries a decision that re-derivation does not overturn${
           withdrawnThisRun.has(record.id) ? ' — this run withdrew its approval because its sources moved' : ''
-        }: retire it if it does not hold any more (\`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` works from this state); promoting it again is not available here because \`promote\` requires a candidate and this record is ${record.status}, and clearing the store is not offered because \`kata-cli wiki rebuild\` needs an initialised wiki (it appends to \`.llmwiki/log.md\` and fails when the store has no pages)`,
+        }: ${decisionRoads(record)}`,
       });
       continue;
     }

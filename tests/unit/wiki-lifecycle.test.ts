@@ -116,6 +116,34 @@ describe('Wiki lifecycle recommendations', () => {
     );
   });
 
+  it('recommends a review for the mirror direction too, where a hash names a path the record does not declare', async () => {
+    // **The other half of the same question.** A record whose `sourceHashes` lists a path its `sourceRefs` do not declare was
+    // reported `source_changed` and recommended `revalidate`, which refuses it by name (measured by an independent round after
+    // the first repair closed only one direction). One predicate now answers both, and this case pins the action for the
+    // mirror direction so a later edit cannot map one of them to the wrong road.
+    const root = await tempRoot();
+    await writeFile(join(root, 'docs-declared.md'), 'declared\n', 'utf8');
+    await writeFile(join(root, 'docs-extra.md'), 'extra\n', 'utf8');
+    await writeRecord(root, {
+      id: 'wiki-half-undeclared',
+      statement: 'A record with a hash for a path it does not declare.',
+      scope: ['docs-declared.md'],
+      kind: 'implementation-note',
+      sourceRefs: ['docs-declared.md'],
+      sourceHashes: { 'docs-declared.md': computeFileHash('declared\n'), 'docs-extra.md': computeFileHash('other\n') },
+      validationTaskId: 'a-task',
+      status: 'candidate',
+    });
+
+    const audit = await auditWiki(root);
+
+    expect(audit.recommendedActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'wiki-half-undeclared', reasons: expect.arrayContaining(['source_undeclared']), recommendedAction: 'review' }),
+      ]),
+    );
+  });
+
   it('recommends a review, not a re-derivation, for a record whose source was never recorded', async () => {
     // **The recommendation follows the cause.** A record declaring a source it has no hash for was reported `source_changed`,
     // which `chooseAction` maps to `revalidate` — a command that refuses that record by name (measured by an independent

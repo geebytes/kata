@@ -85,6 +85,36 @@ export function carriesDecision(record: Pick<WikiRecord, 'status' | 'approvalEve
   );
 }
 
+/**
+ * **Whether a record's two halves describe the same set of sources — one derivation, asked by the walk and by the refusal.**
+ *
+ * A record says what it came from twice: `sourceRefs` (the paths) and `sourceHashes` (the digests). They are written together
+ * and must agree; when they do not, the record cannot be re-derived, because which file a digest belongs to is not knowable.
+ *
+ * The two directions are one question with three answers, and this is the third round in which they were treated separately:
+ * the walk named only the `declared-not-hashed` direction (round 5) and the refusal named both, so a record whose hash map
+ * lists a path its refs do not declare was reported `source_changed` and the lifecycle recommended `revalidate` — the command
+ * that refuses that record by name (measured by an independent round). One predicate, so neither side can answer only half of
+ * it again.
+ */
+export type SourceHalvesAgreement = 'agree' | 'declared-not-hashed' | 'hashed-not-declared';
+
+export function sourceHalvesAgreement(record: Pick<WikiRecord, 'sourceRefs' | 'sourceHashes'>): SourceHalvesAgreement {
+  const declaredNotHashed = record.sourceRefs.filter((path) => record.sourceHashes[path] === undefined);
+  const hashedNotDeclared = Object.keys(record.sourceHashes).filter((path) => !record.sourceRefs.includes(path));
+  if (declaredNotHashed.length > 0) return 'declared-not-hashed';
+  if (hashedNotDeclared.length > 0) return 'hashed-not-declared';
+  return 'agree';
+}
+
+/** The paths a disagreement is about, in the direction it found. */
+export function sourceHalvesDisagreement(record: Pick<WikiRecord, 'sourceRefs' | 'sourceHashes'>): string[] {
+  const agreement = sourceHalvesAgreement(record);
+  if (agreement === 'declared-not-hashed') return record.sourceRefs.filter((path) => record.sourceHashes[path] === undefined);
+  if (agreement === 'hashed-not-declared') return Object.keys(record.sourceHashes).filter((path) => !record.sourceRefs.includes(path));
+  return [];
+}
+
 /** The file a record id lives in, derived once — the drift check asks the same question the store answers. */
 export function wikiRecordFileName(id: string): string {
   return `${id.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`;

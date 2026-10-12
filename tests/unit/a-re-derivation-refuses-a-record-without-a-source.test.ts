@@ -229,6 +229,44 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         expect(report.stale[0]?.reason).toBe('source_unrecorded');
     });
 
+    it('names the mirror direction too: a hash for a path the record does not declare', async () => {
+        // **One question, two directions, and the first repair answered only one of them.** A record whose `sourceHashes` lists
+        // a path `sourceRefs` does not declare is the mirror of the shape the previous round fixed: the walk reported
+        // `source_changed` (a file moved — which may be true, but it is not why the record cannot be re-derived) and the
+        // lifecycle recommended `revalidate`, the command that refuses this record by name (measured by an independent round).
+        // The agreement predicate is asked in both directions now.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        const hashes = record.sourceHashes as Record<string, string>;
+        await mkdir(join(root, 'docs'), { recursive: true });
+        await writeFile(join(root, 'docs/extra.md'), 'extra\n', 'utf8');
+        record.sourceHashes = { ...hashes, 'docs/extra.md': computeFileHash('other\n') };
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+        const report = await verifySources(root);
+
+        expect(report.stale.map((entry) => entry.id)).toEqual(['rule-page']);
+        expect(report.stale[0]?.reason).toBe('source_undeclared');
+    });
+
+    it('does not claim an unrecorded source is present, because a reachable record names one that is gone', async () => {
+        // **The cause is about the record, not about the file.** The first version's justification said an unrecorded source is
+        // "there" — while a record can declare a hash for one path and name another that does not exist, where the unrecorded
+        // source is exactly the missing one (measured by an independent round). The file facts travel beside the cause.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        record.sourceRefs = ['docs/rule.md', 'docs/gone.md'];
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+        const report = await verifySources(root);
+
+        expect(report.stale[0]?.reason).toBe('source_unrecorded');
+        expect(report.stale[0]?.changedSources).toContain('docs/gone.md');
+        expect(report.missing).toContain('docs/gone.md');
+    });
+
     it('reports an unreadable store as unreadable, not as an empty one', async () => {
         // **The reader mapped "a store I could not read" onto "a store with nothing in it".** Everything except `ENOENT` was
         // swallowed, so a record directory that cannot be read (a file in its place is an `ENOTDIR`, which unlike a permission
