@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { computeFileHash } from './record.js';
+import { computeFileHash, inferProvenance } from './record.js';
+import { statementForPage } from './llmwiki.js';
 import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
 
@@ -112,34 +113,76 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
     );
   }
 
-  const refreshed: string[] = [];
-  const sourceHashes: Record<string, string> = {};
-  for (const sourceRef of record.sourceRefs) {
-    try {
-      const content = await readFile(join(root, sourceRef), 'utf8');
-      const hash = computeFileHash(content);
-      sourceHashes[sourceRef] = hash;
-      if (record.sourceHashes[sourceRef] !== hash) refreshed.push(sourceRef);
-    } catch {
-      // A source that no longer exists is reported rather than silently dropped: the record keeps the ref so the gap
-      // stays visible, and the next drift check will say so again.
-      refreshed.push(sourceRef);
-    }
+  // **An approved record is not re-derived.** The first version set `status: 'candidate'` unconditionally, so calling this
+  // on a `verified` record silently demoted the strongest state the store has — a strength change with no decision behind
+  // it, made worse by the fact that `verified` is what `promote` (and its passing validation task) exists to confer.
+  // Measured by an independent round: the demotion was reachable from the CLI with one word.
+  if (record.status === 'verified') {
+    throw new Error(
+      `Wiki record ${id} is verified, and re-derivation never demotes an approved record: retire or reject it instead of refreshing its sources`,
+    );
   }
 
+  const sourceHashes: Record<string, string> = {};
+  const refreshed: string[] = [];
+  const summaries: string[] = [];
+  for (const sourceRef of record.sourceRefs) {
+    let content: string;
+    try {
+      content = await readFile(join(root, sourceRef), 'utf8');
+    } catch {
+      // **A record whose source is gone cannot be re-derived, and saying it was is the fail-open direction.** The first
+      // version kept the old hashes, pushed the ref into `refreshed` (a field that means "this hash was recomputed"), and
+      // returned the record to `candidate` — which the closure gate accepts. So a record describing a page that no longer
+      // exists became acceptable while its hashes still named a file that is gone. The ref stays on the record either way,
+      // so the drift walk keeps reporting the gap; the status must not move.
+      throw new Error(
+        `Wiki record ${id} cannot be re-derived because its source ${sourceRef} cannot be read; the record keeps the reference so the drift check keeps reporting the gap`,
+      );
+    }
+    const hash = computeFileHash(content);
+    sourceHashes[sourceRef] = hash;
+    if (record.sourceHashes[sourceRef] !== hash) refreshed.push(sourceRef);
+    summaries.push(statementForPage(content));
+  }
+
+  // **The statement is recomputed only where the statement *is* the page's.** For an ingested record the statement is the
+  // page's own summary, so leaving it behind makes the record describe a version that no longer exists. For a distilled
+  // record the statement is the change's finding and is not derivable from a file at all — recomputing it there would
+  // overwrite knowledge with the first line of whatever it cites. One question ("was this statement derived from the
+  // page?"), asked of the provenance dimension rather than guessed from the shape of the refs.
+  const statement = inferProvenance(record) === 'ingested' && summaries.length > 0 ? summaries[0]! : record.statement;
+
   const updated = await updateWikiRecord(root, record.id, {
-    sourceHashes: Object.keys(sourceHashes).length > 0 ? sourceHashes : record.sourceHashes,
+    ...(Object.keys(sourceHashes).length > 0 ? { sourceHashes } : {}),
+    ...(statement === record.statement ? {} : { statement }),
     status: 'candidate',
   });
   return { id: updated.id, status: updated.status, refreshed: [...new Set(refreshed)].sort() };
 }
 
-/** Revalidates every stale record in the store, reporting what each refresh found. */
-export async function revalidateStaleRecords(root: string): Promise<{ report: DriftReport; revalidated: RevalidationResult[] }> {
+/**
+ * Revalidates every stale record in the store, reporting what each refresh found.
+ *
+ * **A refusal is collected, not thrown.** Re-deriving now refuses a record whose source is gone (and one that is verified),
+ * and this walk used to let that refusal escape: one unrecoverable record aborted the command *after* the earlier records
+ * had already been refreshed, so the caller lost both the rest of the work and the list of what had happened. The refusal is
+ * a fact about one record; the walk reports it beside the successes.
+ */
+export async function revalidateStaleRecords(root: string): Promise<{
+  report: DriftReport;
+  revalidated: RevalidationResult[];
+  refused: Array<{ id: string; reason: string }>;
+}> {
   const report = await verifySources(root);
   const revalidated: RevalidationResult[] = [];
+  const refused: Array<{ id: string; reason: string }> = [];
   for (const entry of report.stale) {
-    revalidated.push(await revalidateWikiRecord(root, entry.id));
+    try {
+      revalidated.push(await revalidateWikiRecord(root, entry.id));
+    } catch (error) {
+      refused.push({ id: entry.id, reason: error instanceof Error ? error.message : String(error) });
+    }
   }
-  return { report, revalidated };
+  return { report, revalidated, refused };
 }

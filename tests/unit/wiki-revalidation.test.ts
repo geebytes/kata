@@ -80,14 +80,16 @@ describe('revalidating a stale Wiki record', () => {
         await expect(verifySources(root)).resolves.toMatchObject({ stale: [] });
     });
 
-    it('reports a missing source instead of hiding it', async () => {
+    it('refuses a record whose source is gone instead of hiding the gap behind a usable status', async () => {
         const root = await seeded();
         await rm(join(root, 'docs/rule.md'));
 
-        const result = await revalidateWikiRecord(root, 'rule-page');
-
+        // **This case used to pin the opposite, and it was half a rule.** Re-derivation succeeded, kept the old hashes, and
+        // set the record back to `candidate` — a status the closure gate accepts — so a record whose page no longer existed
+        // read as usable while its hashes named a file that is gone. The gap was visible to the drift walk and invisible to
+        // every reader of the status; that is what "reports a missing source instead of hiding it" has to mean.
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/docs\/rule\.md/);
         // The ref stays on the record: the gap is visible, and the next drift check says so again.
-        expect(result.refreshed).toEqual(['docs/rule.md']);
         await expect(verifySources(root)).resolves.toMatchObject({ stale: [{ id: 'rule-page', reason: 'source_missing' }] });
     });
 });

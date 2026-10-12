@@ -38,8 +38,13 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
     if (!subcommand || subcommand === '--help' || subcommand === '-h') {
         return {
             command: 'wiki help',
-            commands: ['init --from <path>', 'orient', 'ingest --from <path>', 'query --q <question>', 'lint', 'verify', 'task --kind enrich', 'register', 'candidate', 'closure --task <task-id> --decision <captured|not_applicable|deferred> --reason <text>', 'audit', 'lifecycle', 'refresh --task <task-id>', 'relevance --task <task-id>', 'promote <wiki-id> --by <actor> --role <role>', 'reject <wiki-id> --by <actor> --role <role> --reason <reason>', 'retire <wiki-id> --by <actor> --role <role> --reason <reason>'],
+            commands: ['init --from <path>', 'orient', 'ingest --from <path>', 'query --q <question>', 'lint', 'verify', 'task --kind enrich', 'register', 'candidate', 'closure --task <task-id> --decision <captured|not_applicable|deferred> --reason <text>', 'audit', 'lifecycle', 'refresh --task <task-id>', 'relevance --task <task-id>', 'revalidate --record <wiki-id> | --all', 'promote <wiki-id> --by <actor> --role <role>', 'reject <wiki-id> --by <actor> --role <role> --reason <reason>', 'retire <wiki-id> --by <actor> --role <role> --reason <reason>'],
             aliases: { propose: 'task --kind enrich' },
+            // **A verb withheld on purpose is still named.** `rebuild` removes every page and governed record, so it is not
+            // offered as a first-line command — but leaving it out of this list silently made the list disagree with the
+            // dispatcher, and a reader enumerating the verbs concluded the verb did not exist (that is how the sibling verb
+            // `revalidate` was missing too). Withheld-with-a-reason says both things at once.
+            withheld: { rebuild: 'removes every page and governed record, so it is not offered as a first-line command' },
             examples: ['kata-cli wiki task --kind enrich --from docs', 'kata-cli wiki propose --task <task-id> --from docs', 'kata-cli wiki candidate'],
         };
     }
@@ -105,11 +110,12 @@ export async function runWikiCommand(argv: string[]): Promise<Record<string, unk
         if (!rest.includes('--all')) {
             throw new Error('Usage: kata-cli wiki revalidate --record <wiki-id> | --all [--root <path>]');
         }
-        const { report, revalidated } = await revalidateStaleRecords(args.root ?? resolveWorkspaceRoot());
+        const { report, revalidated, refused } = await revalidateStaleRecords(args.root ?? resolveWorkspaceRoot());
         return {
             command: 'wiki revalidate',
             stale: report.stale.length,
             revalidated: revalidated.map((entry) => ({ id: entry.id, refreshed: entry.refreshed })),
+            refused,
         };
     }
 

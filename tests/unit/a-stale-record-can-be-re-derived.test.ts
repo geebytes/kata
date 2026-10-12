@@ -1,0 +1,107 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { initLayout } from '../../src/core/layout.js';
+import { revalidateWikiRecord, verifySources } from '../../src/wiki/drift.js';
+import { findWikiRecord } from '../../src/wiki/store.js';
+import { computeFileHash } from '../../src/wiki/record.js';
+import { statementForPage } from '../../src/wiki/llmwiki.js';
+
+/**
+ * **Re-derivation recomputes; it does not flip a status.**
+ *
+ * `revalidateWikiRecord` refreshed `sourceHashes` and set `status: 'candidate'` — but the record's `statement` was left as
+ * the text derived from the page **as it was when the record was written**. So a record could be "re-derived" while still
+ * describing an older page: the closure gate and every reader then treat prose about a version that no longer exists as the
+ * current summary.
+ *
+ * The composition that turns a page into a statement is `register`'s (`frontmatter ? … : oneLineSummary`), so it lives once
+ * (`statementForPage`) and both callers ask it — this case asserts the record against that same function rather than
+ * against a second copy of the rule.
+ */
+const roots: string[] = [];
+
+afterEach(async () => {
+    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function seeded(page: string, shape: 'ingested' | 'distilled' = 'ingested'): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'kata-wiki-rederive-'));
+    roots.push(root);
+    await initLayout(root);
+    await mkdir(join(root, '.llmwiki/concepts'), { recursive: true });
+    const pagePath = '.llmwiki/concepts/rule.md';
+    await writeFile(join(root, pagePath), page, 'utf8');
+    await writeFile(
+        join(root, '.kata/wiki/rule-page.json'),
+        `${JSON.stringify({
+            id: 'rule-page',
+            statement: shape === 'ingested' ? statementForPage(page) : 'A durable finding of the change.',
+            scope: [pagePath],
+            kind: shape === 'ingested' ? 'llmwiki-summary' : 'convention',
+            sourceRefs: [pagePath],
+            sourceHashes: { [pagePath]: computeFileHash(page) },
+            validationTaskId: shape === 'ingested' ? 'llmwiki-register' : 'some-change',
+            // Declared, because the fixture cites a `.llmwiki/` path and `inferProvenance` reads that as ingested — the rule
+            // is about what the record is, and a distilled record that happens to cite a page is still a distillation.
+            ...(shape === 'distilled' ? { provenance: 'distilled' as const } : {}),
+            evidenceIds: ['evidence-1'],
+            status: 'candidate',
+            lastVerifiedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        }, null, 2)}\n`,
+        'utf8',
+    );
+    return root;
+}
+
+describe('re-deriving a stale record recomputes what the record says about its source', () => {
+    it('recomputes the recorded hash and the statement from the page as it is now', async () => {
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        await writeFile(join(root, '.llmwiki/concepts/rule.md'), '# Second rule\n\nSecond version.\n', 'utf8');
+        await verifySources(root);
+
+        const result = await revalidateWikiRecord(root, 'rule-page');
+        const record = await findWikiRecord(root, 'rule-page');
+
+        expect(result).toMatchObject({ id: 'rule-page', status: 'candidate', refreshed: ['.llmwiki/concepts/rule.md'] });
+        expect(record?.sourceHashes['.llmwiki/concepts/rule.md']).toBe(computeFileHash('# Second rule\n\nSecond version.\n'));
+        // The statement follows the page: the same derivation registration uses, against the current content.
+        expect(record?.statement).toBe(statementForPage('# Second rule\n\nSecond version.\n'));
+        expect(record?.statement).toBe('Second rule');
+    });
+
+    it('is a recomputation, so a later edit of the page marks the record stale again', async () => {
+        // **The half that separates a recomputation from a status flip.** An implementation that only sets the status would
+        // pass the case above if the hash happened to match, and would then report a record as derivable while its recorded
+        // hash still describes an older page — which is the state the drift check exists to catch.
+        const root = await seeded('# First rule\n\nFirst version.\n');
+        await writeFile(join(root, '.llmwiki/concepts/rule.md'), '# Second rule\n\nSecond version.\n', 'utf8');
+        await verifySources(root);
+        await revalidateWikiRecord(root, 'rule-page');
+
+        await writeFile(join(root, '.llmwiki/concepts/rule.md'), '# Third rule\n\nThird version.\n', 'utf8');
+        const after = await verifySources(root);
+
+        expect(after.stale.map((entry) => entry.id)).toEqual(['rule-page']);
+        expect(after.stale[0]?.reason).toBe('source_changed');
+    });
+
+    it('refreshes the hash of a distilled record but leaves its statement, which its file does not contain', async () => {
+        // **The boundary, asserted rather than only written down.** "The statement is the page's summary" holds for an
+        // ingested record. A distilled record's statement is the change's own finding: recomputing it here would replace
+        // knowledge with the first line of whatever the record happens to cite. AC-1's wording is about the page case; this
+        // case pins the other direction so a later edit cannot quietly start overwriting distilled prose.
+        const root = await seeded('# First rule\n\nFirst version.\n', 'distilled');
+        await writeFile(join(root, '.llmwiki/concepts/rule.md'), '# Second rule\n\nSecond version.\n', 'utf8');
+        await verifySources(root);
+
+        await revalidateWikiRecord(root, 'rule-page');
+        const record = await findWikiRecord(root, 'rule-page');
+
+        expect(record?.sourceHashes['.llmwiki/concepts/rule.md']).toBe(computeFileHash('# Second rule\n\nSecond version.\n'));
+        expect(record?.statement).toBe('A durable finding of the change.');
+    });
+});

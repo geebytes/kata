@@ -360,8 +360,7 @@ export async function registerWikiPages(input: LlmWikiInput = {}): Promise<LlmWi
         continue;
       }
       const content = await readFile(file, 'utf8');
-      const frontmatter = parsePageFrontmatter(content);
-      const statement = frontmatter ? Object.values(frontmatter).join('; ') : oneLineSummary(content);
+      const statement = statementForPage(content);
       await writeWikiRecord(root, {
         id: recordId,
         statement,
@@ -851,6 +850,18 @@ function titleFromMarkdown(body: string): string | null {
 
 function titleFromSlug(slug: string): string {
   return slug.split('-').filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ') || 'Untitled';
+}
+
+/**
+ * **What a page says, in one line — the derivation registration uses, exported so re-derivation can ask the same question.**
+ *
+ * `registerWikiPages` composed this inline (`frontmatter ? Object.values(frontmatter).join('; ') : oneLineSummary(content)`),
+ * so re-deriving a record's statement had no function to call and could only have been written a second time — the class this
+ * repository removes everywhere else. The composition is one rule about one page, so it lives here once.
+ */
+export function statementForPage(content: string): string {
+  const frontmatter = parsePageFrontmatter(content);
+  return frontmatter ? Object.values(frontmatter).join('; ') : oneLineSummary(content);
 }
 
 function oneLineSummary(body: string): string {
