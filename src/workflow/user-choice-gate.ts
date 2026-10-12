@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertValidTaskId } from '../core/ids.js';
 import { readValidated } from '../core/schema.js';
@@ -129,8 +129,12 @@ export function gateConsumedInstruction(boundary: UserChoiceBoundary): string {
 export function gateRebuildInstruction(boundary: UserChoiceBoundary): string {
     const entry = GATE_CREATED_BY[boundary];
     const command = boundary === 'judge_gate' ? 'kata-cli review --approve' : `kata-cli ${entry.command}`;
+    // **"Creates this boundary when it concludes in phase X", not "runs in phase X".** The phase in the table is the phase a
+    // command *reports* when its success creates the boundary, and a command can report another phase when it concludes
+    // differently (`judge` reports `review` on a FAIL and creates no archive gate) — so "runs in phase judge" was a claim the
+    // table cannot support (measured by the second round).
     return `This boundary's gate is created by \`${command}\``
-        + `${entry.phase ? `, which runs in phase \`${entry.phase}\`` : ' (whichever phase it is run from)'}`
+        + `${entry.phase ? ` when it concludes in phase \`${entry.phase}\`` : ''}`
         + `; run it against the current content and approve the gate again.`;
 }
 export type UserChoice = 'continue_current' | 'switched' | 'delegated';
@@ -197,6 +201,43 @@ export async function recordTaskChoice(input: {
  * all produced the identical "requires an explicit user choice" refusal, so a damaged file sent the operator to answer a
  * boundary whose reuse was sitting there unreadable).
  */
+/** A boundary the caller must supply, refused by name when it is missing. */
+function requireBoundary(boundary: UserChoiceBoundary | undefined): UserChoiceBoundary {
+  if (boundary === undefined) throw new Error('A boundary record needs --boundary; only the task-level choice is addressed without one.');
+  assertUserChoiceBoundary(boundary);
+  return boundary;
+}
+
+/** The task-level choice in the three states, read for the reset verb (which must not go through the binding logic). */
+async function readTaskChoiceStateForReset(root: string, taskId: string): Promise<TaskChoiceState> {
+  return readTaskChoice(root, taskId);
+}
+
+/**
+ * A record that may be removed is a **regular file**: anything else is refused by name, before it is read.
+ *
+ * Measured by the second round, one errno apart each time: a directory threw a raw EISDIR; a symlink made the audit's digest
+ * describe the *target* while the removal took the link (so the audit and the tree disagreed about what was removed); a FIFO
+ * made the reader block forever; and a mode-000 file threw a raw EACCES. The check happens before the read, so no shape can
+ * hang or throw out of the command.
+ */
+function assertResettableRecord(path: string, what: string): void {
+  // **`lstat`, not `stat`.** `stat` follows a link, so a symlink to a file answered `isFile()` and the removal took the link
+  // while the audit described the target — measured, and the same distinction an earlier change in this repository paid for.
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw new Error(`The ${what} record cannot be examined at ${path} (${(error as Error).message}), so nothing was removed.`);
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    const shape = stat.isSymbolicLink() ? 'a symbolic link' : stat.isDirectory() ? 'a directory' : 'not a regular file';
+    throw new Error(
+      `The ${what} path is ${shape}, not a record: ${path}. This command removes records only, so nothing was removed.`,
+    );
+  }
+}
+
 /** The task-level choice in three states, the shape `GateState` has for a boundary's record. */
 type TaskChoiceState =
   | { kind: 'absent' }
@@ -324,7 +365,7 @@ export async function requireUserChoiceGate(input: { root: string; taskId: strin
     // use, and the road is to remove it (`gate reset`), not to answer the boundary again and again.
     throw new Error(
       `The task-level choice record is damaged and cannot be read (${taskChoiceState.why}). Remove it with `
-      + `\`kata-cli gate reset --task ${input.taskId} --boundary ${input.boundary} --reason <why>\`, then answer this boundary again.`,
+      + `\`kata-cli gate reset --task ${input.taskId} --record task-choice --reason <why>\`, then answer this boundary again.`,
     );
   }
   const taskChoice = taskChoiceState.kind === 'usable' ? taskChoiceState.choice : null;
@@ -406,47 +447,62 @@ export async function readGateState(root: string, taskId: string, boundary: User
 export async function resetUserChoiceGate(input: {
   root: string;
   taskId: string;
-  boundary: UserChoiceBoundary;
+  /**
+   * Which record to reset: a boundary's gate, or the task-level choice the boundaries reuse.
+   *
+   * **The task-level record needed this road, and the refusal printed a command that could not walk it.** A damaged
+   * `user-choice-task.json` was answered with `gate reset --boundary <boundary>`, and the reset acts on
+   * `user-choice-<boundary>.json` — so the file the refusal named was never touched (measured by the second round: the
+   * shape of the first round's F3, one function over).
+   */
+  record: 'boundary' | 'task-choice';
+  boundary?: UserChoiceBoundary;
   /** Why the record is being removed. Stored beside it: a removal without a recorded reason is not auditable. */
   reason: string;
 }): Promise<{ removed: boolean; path: string; auditPath: string; removedBecause?: string }> {
   if (input.reason.trim() === '') {
     throw new Error('A gate record is removed only with a stated reason, so the removal can be read back.');
   }
-  const path = pathFor(input.root, input.taskId, input.boundary);
-  const state = await readGateState(input.root, input.taskId, input.boundary);
+  const path = input.record === 'task-choice' ? taskChoicePath(input.root, input.taskId) : pathFor(input.root, input.taskId, requireBoundary(input.boundary));
+  const auditPath = `${path}.removed.json`;
+  const state = input.record === 'task-choice'
+    ? await readTaskChoiceStateForReset(input.root, input.taskId)
+    : await readGateState(input.root, input.taskId, requireBoundary(input.boundary));
+  const what = input.record === 'task-choice' ? 'task-level choice' : `${input.boundary}`;
   if (state.kind === 'absent') {
-    throw new Error(`There is no ${input.boundary} record to reset: nothing was ever answered at this boundary.`);
+    throw new Error(`There is no ${what} record to reset: nothing was ever answered there.`);
   }
   if (state.kind === 'usable') {
     throw new Error(
-      `The ${input.boundary} record is readable, so it is a decision rather than damage, and this command refuses to remove `
-      + `one: a readable record is ${state.gate.consumedAt ? 'already consumed' : state.gate.choice ? 'approved' : 'waiting to be answered'}. `
-      + `If it no longer speaks for the content, the road is to recreate it (${gateRebuildInstruction(input.boundary)}).`,
+      `The ${what} record is readable, so it is a decision rather than damage, and this command refuses to remove one. `
+      + `If it no longer speaks for the content, the road is to recreate it${input.boundary ? ` (${gateRebuildInstruction(input.boundary)})` : ''}.`,
     );
   }
-  // A directory where a record should be is not a record, and removing it recursively would delete a tree this command has
-  // no business touching (measured by the first round: `rm` without `recursive` threw a raw EISDIR out of the command).
-  if (statSync(path).isDirectory()) {
-    throw new Error(
-      `The ${input.boundary} path is a directory, not a record: ${path}. This command removes records only, so nothing was removed.`,
-    );
-  }
-  const auditPath = `${path}.removed.json`;
-  // **Read what is being removed before removing it.** The digest is taken from the bytes on disk, and the first version
-  // took it after the `rm`, so the command threw ENOENT on the file it had just deleted (measured by its own case).
+  // **Only a regular file is a record.** A symlink, a directory, a FIFO or an unreadable file is not one: a symlink made the
+  // audit's digest describe the target while the removal took the link, a FIFO made the reader block forever, and an
+  // unreadable file threw a raw EACCES out of the command (all three measured by the second round). Each is refused by name,
+  // and the shape is checked before anything is read so a reader cannot block on it either.
+  assertResettableRecord(path, what);
   const removedSha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+  // **The audit is written before the removal.** Written after, a failure left the record gone with no trace and a raw
+  // filesystem error out of the command (measured by the second round: a directory at the audit path did exactly that). If
+  // this write fails, nothing has been removed yet, so the state is unchanged and the operator sees a refusal.
+  try {
+    await writeFile(auditPath, `${JSON.stringify({
+      taskId: input.taskId,
+      record: input.record,
+      ...(input.boundary ? { boundary: input.boundary } : {}),
+      removedAt: new Date().toISOString(),
+      reason: input.reason,
+      removedSha256,
+    }, null, 2)}\n`, { flag: 'wx' });
+  } catch (error) {
+    throw new Error(
+      `The removal was not performed because its audit record could not be written at ${auditPath} `
+      + `(${(error as Error).message}). Nothing was removed.`,
+    );
+  }
   await rm(path, { force: true });
-  // **The reason is written down, not echoed.** The first version required `--reason`, printed it, and dropped it, so the
-  // removal left no trace of why (measured by the first round). The digest of what was removed goes with it, so the record
-  // that could not be read is still identifiable.
-  await writeFile(auditPath, `${JSON.stringify({
-    taskId: input.taskId,
-    boundary: input.boundary,
-    removedAt: new Date().toISOString(),
-    reason: input.reason,
-    removedSha256,
-  }, null, 2)}\n`);
   return { removed: true, path, auditPath, removedBecause: state.why };
 }
 

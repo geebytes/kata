@@ -73,8 +73,8 @@ make unilaterally (memory #1036/#1285).
 ## 3. Acceptance criteria
 
 **AC-1 — an out-of-vocabulary gate choice is refused by name, and nothing is written.**
-`kata-cli gate approve --boundary <b> --choice <c>` validates `c` against the gate vocabulary and the boundary's own
-allowable answers; a refusal names the value and lists the vocabulary. A control asserts the three legal values still
+`kata-cli gate approve --boundary <b> --choice <c>` validates `c` against the gate vocabulary — **one global vocabulary**, the same set every boundary accepts, because the
+schema declares one `choice` enum and no boundary-scoped rule exists; a refusal names the value and lists the vocabulary. A control asserts the three legal values still
 approve, and a second control asserts that the *same* validation is what the reader applies (so write and read cannot
 drift again).
 Selector: `tests/unit/an-out-of-vocabulary-gate-choice-is-refused.test.ts`.
@@ -151,7 +151,7 @@ of I-35, to be implemented only after a reproduction shows a gate that refuses o
 
 ## 6. Cost
 
-Four ACs, four selectors, 12 declared paths. Measured: implementation ≈3 h (including the correction of AC-4 after its
+Four ACs, five selectors (AC-3 has two: the property sweep and the case that pinned the old remedy), 12 declared paths. Measured: implementation ≈3 h (including the correction of AC-4 after its
 premise was refuted), one independent round ≈29 min / ≈721k tokens. The declared falsifier set has seven instruments,
 each re-aimed against the line it mutates; the round-1 repairs added five more (the boundary vocabulary, the reuse path's
 choice, the stored reset reason, the directory refusal and the property sweep).

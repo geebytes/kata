@@ -349,18 +349,32 @@ export async function runGateCommand(argv: string[], root: string): Promise<Reco
         // mechanism cannot read; a readable one is a decision somebody made and is refused.
         const resetTask = argValue(argv, '--task');
         const resetBoundary = argValue(argv, '--boundary') as UserChoiceBoundary | undefined;
+        const record = argValue(argv, '--record');
         const reason = argValue(argv, '--reason');
-        if (!resetTask || !resetBoundary) {
-            throw new Error('Usage: kata gate reset --task <id> --boundary <implementation_gate|review_gate|judge_gate|archive_gate> --reason <why>');
+        if (!resetTask) {
+            throw new Error('Usage: kata gate reset --task <id> (--boundary <implementation_gate|review_gate|judge_gate|archive_gate> | --record task-choice) --reason <why>');
+        }
+        if (record !== undefined && record !== 'task-choice') {
+            throw new Error(`kata gate reset --record takes "task-choice" (the task-level choice) or nothing at all: "${record}" is not a record this command knows.`);
+        }
+        if (record === undefined && resetBoundary === undefined) {
+            throw new Error('Usage: kata gate reset --task <id> (--boundary <implementation_gate|review_gate|judge_gate|archive_gate> | --record task-choice) --reason <why>');
         }
         if (reason === undefined || reason.trim() === '') {
             throw new Error('kata gate reset requires --reason: a record is removed only with a stated reason, so the removal is auditable.');
         }
-        const reset = await resetUserChoiceGate({ root, taskId: resetTask, boundary: resetBoundary, reason });
+        const reset = await resetUserChoiceGate({
+            root,
+            taskId: resetTask,
+            record: record === 'task-choice' ? 'task-choice' : 'boundary',
+            ...(resetBoundary !== undefined ? { boundary: resetBoundary } : {}),
+            reason,
+        });
         return {
             command: 'gate reset',
             taskId: resetTask,
-            boundary: resetBoundary,
+            record: record === 'task-choice' ? 'task-choice' : 'boundary',
+            ...(resetBoundary !== undefined ? { boundary: resetBoundary } : {}),
             removed: reset.removed,
             path: reset.path,
             auditPath: reset.auditPath,

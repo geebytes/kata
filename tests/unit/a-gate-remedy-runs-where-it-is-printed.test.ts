@@ -105,6 +105,31 @@ describe('a gate remedy runs where it is printed', () => {
         }
     });
 
+    it('orders the ladder consistently, so a row that skips or repeats a boundary is red', () => {
+        // **What this case does NOT assert, deliberately.** It cannot assert that the named command runs in the phase the
+        // refusal is printed from: the module does not know the phase the task is in, and a road's runnability depends on it
+        // (a consumed `review_gate` needs a fresh one, a consumed `judge_gate` needs an approved `archive_gate`). The second
+        // round measured that a mutation replacing a command with a verb the CLI knows but refuses stays green, which is true
+        // and is why the sentence promises nothing — it states facts from the tables.
+        //
+        // What it *does* assert, and what can redden: the ladder the sentence describes is total and ordered. Each row's
+        // `next` is the boundary whose creating entry exists, no row is its own successor, and every boundary is reachable
+        // from the first — so a row that skips or repeats a boundary fails here rather than only reading oddly.
+        const order: Array<keyof typeof GATE_CREATED_BY> = ['implementation_gate', 'review_gate', 'judge_gate', 'archive_gate'];
+        const seen: string[] = [];
+        let current: keyof typeof GATE_CREATED_BY | undefined = order[0];
+        while (current !== undefined) {
+            expect(seen, `the ladder repeats ${current}`).not.toContain(current);
+            seen.push(current);
+            const next: keyof typeof GATE_CREATED_BY | undefined = GATE_CONSUMED_BY[current].next;
+            if (next === undefined) break;
+            expect(next, `${current} -> ${next} is not a boundary`).toContain(next);
+            expect(GATE_CREATED_BY[next], `${current} -> ${next} has no creating entry`).toBeDefined();
+            current = next;
+        }
+        expect(seen).toEqual(order);
+    });
+
     it('does not claim a road runs now: it states what happened and where the next gate comes from', async () => {
         // The sentence the first round measured as inert named `kata-cli archive` for a consumed `judge_gate`, and `archive`
         // is refused from phase `judge` because its own gate is not approved. The instruction therefore contains no promise
