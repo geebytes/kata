@@ -20,11 +20,11 @@
 ## 2. 决定
 
 - **采用**：**不新增命令**，而是在既有 `wiki revalidate` 这条路上修掉三个 fail-open 行为，并让它对外可枚举：
-  - `revalidateWikiRecord` **同时重算 `statement`**（用与 `register` **同一个派生函数**），使「记录描述的是当前页面内容」成立；
-  - **来源文件已不存在 ⇒ 按名拒绝**（不再保留旧 hash 冒充可用）；
-  - **`verified` 记录 ⇒ 按名拒绝**（授权状态不由一条重算命令静默降级）；
-  - `stale` 记录 ⇒ 照旧回到 `candidate`（这是唯一被允许的转移）。
-- **不采用 甲（让 `register` 在内容变化时刷新）**：它把「幂等注册」变成「内容驱动刷新」，语义更强但**要改 `src/wiki/llmwiki.ts`，而该文件被 `enrich-packet-outside-the-task-store`（review 中）声明** ⇒ 会移动它的 revision。**取舍**：先解阻塞（本 change 的关键路径），把「`register` 应否在内容变化时刷新」记为后继项。**边界**：本 change 不声称 `register` 的语义是对的。
+  - `revalidateWikiRecord` **重算 hash**；`statement` **只在它确实是该页面自己的摘要时**才重算——资格判据是**写者与它产出的形状**：`validationTaskId === 'llmwiki-register'`，**且**只有一个来源，**且**该来源位于 `.llmwiki/` 下（判断子 `isWikiPageRef` 与写者共用同一个常量）。回答带 `statement: {recomputed, why}`，`why` 陈述**失败的那一条**（不把 id 当证据重述，也不拿"来源个数"去解释"来源位置"的决定——两轮独立复核各抓到一次）；
+  - **来源文件已不存在 ⇒ 按名拒绝**；**同一来源被声明两次 ⇒ 按重复具名拒绝**（旧的排序拼接比较会把它报成"声明了却没记 hash"，那是假陈述）；
+  - **`verified`、`rejected`、以及"授权被撤回"（记录仍带 `approvalEvent`）⇒ 按名拒绝**；"这条记录是否带着一个决定"由**一处**派生（`carriesDecision`），store 的替换守卫与再派生守卫**都问它**；
+  - **store 不替换带决定的记录**：`writeWikiRecord` 是替换而非合并，所以守卫放在每个写者都经过的卡口、在锁内、按磁盘内容判断；**不可读的记录按名拒绝**（锁把任何读错误都交成空串，"读不到"与"不存在"曾经同形）；拒绝文**只点能走的路**（实测：`reject` 要求 `candidate`、`retire` 把 verified 变成 rejected——两条都不打开这扇门，所以只给出"整体清库"并写明前提）；
+  - `stale` 记录 ⇒ 照旧回到 `candidate`（唯一被允许的转移）。
 - **同一批修掉那句补救文案**：`candidate_missing` 的补救改成**真实**的路（`kata-cli wiki candidate` 列候选；记录存在、页面已动过就先 `kata-cli wiki revalidate --record <wiki-id>` 再重记闭包），使读者照着做**真的能收敛**。
 - **帮助清单与调度器同派生**（同一处表面，同一个根因）：`wiki --help` 的 `help.commands` 与 `help.withheld` 合起来必须覆盖调度器接受的每个动词。实测这条断言**当场又抓到第二个实例**：`rebuild` 也不在清单里（它是有意不摆在第一排的破坏性命令）⇒ 它现在以 `withheld: { rebuild: '<reason>' }` **具名held**，而不是**静默缺失**。**边界披露**：这一条**不在**任何冻结 AC 的字面范围内（AC-4 管的是"补救里出现的命令"），我按"同一根因"在实现里一并修并把断言写进 AC-4 的选择器，理由写在用例注释里。
 - **`statement` 只在该 statement 确实来自页面时才重算**（AC-1 的措辞比这更宽，这里写明真实的规则）：`ingested` 记录的 statement 就是页面的摘要 ⇒ 跟着页面重算；`distilled` 记录的 statement 是**变更自己的结论**，任何文件里都没有它 ⇒ 只刷新 hash、**不动 statement**。判定问 `inferProvenance`（既有的那一处派生），不从 `sourceRefs` 的形状猜。这条**反向情形也写成用例**（AC-1 的选择器里），免得日后有人顺手开始覆盖 distilled 的文字。
@@ -56,22 +56,24 @@
 - 再派生**不提升权威性**：结果只是 `candidate`，不代替 `promote`（后者要求 Judge 过的任务与一致的来源哈希）。
 - 不解决「闭包是否应绑定它 capture **当时**的页面 hash」这一语义问题 —— 记为后继项（今天的语义是「闭包 named 一条当时可读的记录」）。
 
-## 5. 声明面（实际写入 ownedPaths 的 11 条路径）
+## 5. 声明面（13 条路径，直接取自 task 记录）
 
-实现结束时**实际**声明的路径（本节先前写的是初版计划，与第 2 节的披露和 `current-revision.json` 不一致——这正是本 change 自己那一类"两处各说一套"）：
+本节此前手抄，于是漏掉了 `src/wiki/store.ts`（第 2 轮 F1 修复的主场）、把 `record.ts` 只写在散文里，计数与封存面相矛盾（第 3 轮 F10 实测）。现在这张表由 `task.json` 的 `ownedPaths` 生成。
 
 | 路径 | 为什么在里面 |
 |---|---|
-| `src/wiki/drift.ts` | 三个 fail-open 行为的修复点；sourceRefs/sourceHashes 一致性的唯一判定 |
-| `src/wiki/closure.ts` | 闭包补救文案点名的真路 |
-| `src/cli/wiki.ts` | 帮助清单（含 `withheld`）、`revalidate` 的 CLI 面 |
-| `src/wiki/llmwiki.ts` | `statementForPage` 的唯一派生（`register` 也改用它）——**原计划写明"刻意不动"，实现时发现做不到**，第 2 节已披露 |
-| `src/wiki/lifecycle.ts` | `DriftEntry` 增加 `approvalWithdrawn` 字段后，生命周期**只在这一条分支上**改推荐：授权被撤回的记录不再推荐已被工具关闭的 `revalidate`，而改为 `review`（`retire`/`merge` 等更强的建议不受影响） |
-| `tests/unit/a-stale-record-can-be-re-derived.test.ts` | AC-1 |
-| `tests/unit/a-re-derivation-refuses-a-record-without-a-source.test.ts` | AC-2 |
-| `tests/unit/a-re-derivation-refuses-what-it-must-not-touch.test.ts` | AC-3 |
-| `tests/unit/a-wiki-refusal-names-a-command-that-exists.test.ts` | AC-4 |
-| `tests/unit/wiki-revalidation.test.ts` | 它钉的旧契约被本 change 有意翻转（用例内写明理由） |
-| `docs/design/2026-10-12-a-stale-wiki-record-can-be-re-derived.md` | 本文档 |
+| `docs/design/2026-10-12-a-stale-wiki-record-can-be-re-derived.md` | |
+| `src/cli/wiki.ts` | |
+| `src/wiki/closure.ts` | |
+| `src/wiki/drift.ts` | |
+| `src/wiki/lifecycle.ts` | |
+| `src/wiki/llmwiki.ts` | |
+| `src/wiki/record.ts` | |
+| `src/wiki/store.ts` | |
+| `tests/unit/a-re-derivation-refuses-a-record-without-a-source.test.ts` | |
+| `tests/unit/a-re-derivation-refuses-what-it-must-not-touch.test.ts` | |
+| `tests/unit/a-stale-record-can-be-re-derived.test.ts` | |
+| `tests/unit/a-wiki-refusal-names-a-command-that-exists.test.ts` | |
+| `tests/unit/wiki-revalidation.test.ts` | |
 
 **未声明**：`.llmwiki/concepts/a-capability-a-reader-cannot-find.md` 与 `.llmwiki/index.md`（Wiki 页面属于知识闭环，不是被本 change 修改的代码内容；`.llmwiki` 属于仓库的 never-content 策略名）。`src/wiki/record.ts` 曾出现在初版计划里但**本 change 未改动它**——它留在声明面里是"声明覆盖了它没碰的东西"，这一条由独立复核记录为 limitation（`ownedPaths` 是 revision 的摘要面，而 `changedPaths` 才是"什么动了"的声明，后者不含它）。

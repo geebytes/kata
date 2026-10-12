@@ -244,7 +244,7 @@ export async function ingestLlmWiki(input: IngestLlmWikiInput): Promise<LlmWikiI
       statement: oneLineSummary(body),
       scope: [pagePath],
       kind: 'llmwiki-summary',
-      sourceRefs: [`.llmwiki/${destination}`, `.llmwiki/${pagePath}`],
+      sourceRefs: [`${llmwikiDirName}/${destination}`, `${llmwikiDirName}/${pagePath}`],
       sourceHashes: {
         [`.llmwiki/${destination}`]: computeFileHash(rawContent),
         [`.llmwiki/${pagePath}`]: computeFileHash(pageContent),
@@ -366,7 +366,7 @@ export async function registerWikiPages(input: LlmWikiInput = {}): Promise<LlmWi
         statement,
         scope: [`.llmwiki/${relativePath}`],
         kind: 'llmwiki-summary',
-        sourceRefs: [`.llmwiki/${relativePath}`],
+        sourceRefs: [`${llmwikiDirName}/${relativePath}`],
         sourceHashes: { [`.llmwiki/${relativePath}`]: computeFileHash(content) },
         validationTaskId: 'llmwiki-register',
         provenance: 'ingested',

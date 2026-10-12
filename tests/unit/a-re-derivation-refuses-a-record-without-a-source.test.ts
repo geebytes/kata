@@ -183,6 +183,28 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         await expect(revalidateWikiRecord(root, 'a')).rejects.toThrow(/was not found/);
     });
 
+    it('reaches a record whose status is stale even when its sources match again', async () => {
+        // **The bulk route was scoped to the drift check's classification, not to the store's status.** `verifySources`
+        // classifies by sources alone, so a record left `stale` by an earlier drift whose source was afterwards restored to
+        // its recorded content reads as `intact` — and was therefore neither revalidated nor refused: it stayed stale with no
+        // road named to the operator (measured by an independent round). The walk now iterates the records whose status is
+        // `stale`, which is what its name and its answer are about.
+        const root = await seeded('# Rule\n\nFirst version.\n');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+        record.status = 'stale';
+        await writeFile(path, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+
+        // The source matches what is recorded, so the drift check calls this record intact.
+        const drifted = await verifySources(root);
+        expect(drifted.intact).toEqual(['rule-page']);
+
+        const { revalidated, refused } = await revalidateStaleRecords(root);
+
+        expect(refused).toEqual([]);
+        expect(revalidated.map((entry) => entry.id)).toEqual(['rule-page']);
+    });
+
     it('still reports the gap to the drift walk, so the missing source stays visible', async () => {
         const root = await seeded('# Rule\n\nFirst version.\n');
         await rm(join(root, 'docs/rule.md'));

@@ -1,12 +1,14 @@
-import { mkdir, readFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { validateWikiRecord, type WikiRecord } from './record.js';
+import { carriesDecision, validateWikiRecord, wikiRecordFileName, type WikiRecord } from './record.js';
 import { withRepositoryArtefactLock } from '../core/locks.js';
 import { wikiDir as layoutWikiDir, wikiRecordPath as layoutWikiRecordPath } from '../core/layout.js';
 
 export function normalizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
+
+// The file name is derived once (`wikiRecordFileName`); `normalizeId` remains the reader-facing name normaliser.
 
 /**
  * The one reader of the Wiki store. Records are validated against `wiki-record.schema.json` where they are read: a
@@ -58,7 +60,8 @@ export async function writeWikiRecord(root: string, record: WikiRecord): Promise
   const validatedWithId = { ...validated, id };
   // L3-04: validation happens before the write (it already did) and the write is now atomic, so a crash mid-write leaves
   // the previous record readable instead of a truncated file that every reader then has to report as invalid.
-  await withRepositoryArtefactLock(root, `wiki-${id}`, join(wikiDir, `${id}.json`), async (current) => {
+  const recordPath = join(wikiDir, `${id}.json`);
+  await withRepositoryArtefactLock(root, `wiki-${id}`, recordPath, async (current) => {
     // **This writer replaces, and a replacement must not destroy a decision.**
     //
     // `writeWikiRecord` overwrites the file it names — unlike `updateWikiRecord`, which merges — so any writer that hands it
@@ -66,24 +69,50 @@ export async function writeWikiRecord(root: string, record: WikiRecord): Promise
     // record, so re-ingesting a source whose page is gone wrote a new `candidate` over an approved record: an approval became
     // the status the closure gate accepts, with the writer reporting the id as newly governed and `refused: []` (measured by
     // an independent round). The guard belongs at the one choke point every writer passes through rather than at the three
-    // callers, and it is judged **inside the lock**, against the content actually on disk.
+    // callers, and it is judged **inside the lock**, against the content on disk.
     //
-    // The refusal names the state and the roads: a replacement is a decision, so the operator retires or rejects the record
-    // first, or clears the store with `wiki rebuild`, which says what it removes.
-    try {
-      const existing = current.trim().length > 0 ? (JSON.parse(current) as { status?: string }) : undefined;
-      if (existing?.status === 'verified' || existing?.status === 'rejected') {
+    // Whether that content carries a decision is asked of `carriesDecision`, the same derivation the re-derivation guard
+    // asks: the first version counted only `verified`/`rejected` statuses, so a record whose approval the drift walk had
+    // withdrawn (status `stale` with an `approvalEvent`) read as undecided and could be replaced — the defect this guard
+    // exists to prevent, reopened one call later (measured by an independent round).
+    //
+    // **An unreadable record is not an absent one.** The lock reads the file and hands over the empty string for *any* read
+    // error, so `EACCES`/`EISDIR` used to look identical to "nothing here" while the replacement itself only needs write
+    // permission on the directory. A file that exists and cannot be read is therefore refused by name: what it holds may be
+    // exactly the decision that must not be destroyed.
+    if (current.trim().length === 0) {
+      let exists = false;
+      try {
+        await stat(recordPath);
+        exists = true;
+      } catch {
+        exists = false;
+      }
+      if (exists) {
         throw new Error(
-          `Wiki record ${id} is ${existing.status}, and writing a new record over it would discard that decision; retire or reject it first, or clear the store with \`kata-cli wiki rebuild\` if the whole store is being replaced`,
+          `Wiki record ${id} cannot be replaced because the file at its path cannot be read; refusing to write over content this store could not inspect`,
         );
       }
+      return `${JSON.stringify(validatedWithId, null, 2)}\n`;
+    }
+
+    let existing: WikiRecord;
+    try {
+      existing = validateWikiRecord(JSON.parse(current));
     } catch (error) {
-      // A file this writer cannot parse is not a reason to skip the guard's *other* duty: report it rather than overwrite it,
-      // because the content it cannot read may be exactly the decision it must not destroy.
-      if (error instanceof SyntaxError) {
-        throw new Error(`Wiki record ${id} cannot be replaced because the record already on disk cannot be parsed: ${error.message}`);
-      }
-      throw error;
+      throw new Error(
+        `Wiki record ${id} cannot be replaced because the record already on disk cannot be read as one: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (carriesDecision(existing)) {
+      // **The refusal names only roads that work in this state, and there is exactly one.** `retire` and `reject` do not open
+      // the door: `rejectCandidate` requires `candidate`, and `retireWikiRecord` moves a verified record *to* `rejected`,
+      // which this guard also refuses — so a sentence offering "retire it first" would name a road that leaves the operator in
+      // the same state (measured: retire, then write, still refuses). The one road is clearing the store, and its
+      // precondition is named with it: `wiki rebuild` removes every page and governed record and needs an initialised wiki.
+      throw new Error(
+        `Wiki record ${id} carries a decision (status ${existing.status}${existing.approvalEvent ? ', approved' : ''}${existing.rejectionEvent ? ', retired' : ''}), and this store never replaces a decided record: reject, retire and promote all refuse to move it out of that state, so the only road is clearing the store as a whole — \`kata-cli wiki rebuild\` removes every page and governed record (and needs an initialised wiki) — and ingesting the sources again. If the record should stand, there is nothing to do here`,
+      );
     }
     return `${JSON.stringify(validatedWithId, null, 2)}\n`;
   });

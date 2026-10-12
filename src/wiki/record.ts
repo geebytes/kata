@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { validate } from '../core/schema.js';
 import { hashContent } from '../core/hash.js';
+import { llmwikiDirName } from '../core/repository-identity.js';
 
 export type WikiStatus = 'candidate' | 'verified' | 'stale' | 'rejected';
 
@@ -66,8 +67,41 @@ export function validateWikiRecord(value: unknown): WikiRecord {
  * task's distillation. This is deliberately a **reader**, not a migration: no record is rewritten, and a record that
  * declares its provenance is believed.
  */
+/**
+ * **Whether a record carries a decision — the one derivation both guards ask.**
+ *
+ * Two guards need this fact: the store's replacement guard and the re-derivation guard. They were written separately, and
+ * they disagreed on exactly the state the tool itself produces: the drift walk withdraws a `verified` record's approval by
+ * demoting it, leaving `status: 'stale'` with an `approvalEvent`, which the store's predicate read as "no decision" while the
+ * re-derivation predicate read as "decided" (measured by an independent round). "Does this record carry a decision" is one
+ * question about one record, so it is answered here and asked by both.
+ */
+export function carriesDecision(record: Pick<WikiRecord, 'status' | 'approvalEvent' | 'rejectionEvent'>): boolean {
+  return (
+    record.status === 'verified' ||
+    record.status === 'rejected' ||
+    record.approvalEvent !== undefined ||
+    record.rejectionEvent !== undefined
+  );
+}
+
+/** The file a record id lives in, derived once — the drift check asks the same question the store answers. */
+export function wikiRecordFileName(id: string): string {
+  return `${id.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`;
+}
+
+/**
+ * Whether a source reference points at a page under the Wiki directory.
+ *
+ * The name comes from the policy constant, and the writers that build these refs use the same constant, so "is this a page"
+ * is not a shape guess in several places that can drift apart.
+ */
+export function isWikiPageRef(ref: string): boolean {
+  return ref.startsWith(`${llmwikiDirName}/`);
+}
+
 export function inferProvenance(record: Pick<WikiRecord, 'provenance' | 'validationTaskId' | 'sourceRefs'>): WikiProvenance {
   if (record.provenance) return record.provenance;
   if (record.validationTaskId.startsWith('llmwiki-')) return 'ingested';
-  return record.sourceRefs.some((ref) => ref.startsWith('.llmwiki/')) ? 'ingested' : 'distilled';
+  return record.sourceRefs.some((ref) => isWikiPageRef(ref)) ? 'ingested' : 'distilled';
 }

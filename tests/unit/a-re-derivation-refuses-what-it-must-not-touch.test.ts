@@ -75,6 +75,41 @@ describe('re-deriving refuses what it must not touch', () => {
         await expect(revalidateWikiRecord(root, 'no-such-record')).rejects.toThrow(/no-such-record/);
     });
 
+    it('treats a rejected status with no rejection event as a decision too', async () => {
+        // **The other limb no fixture reached.** Nothing requires a `rejectionEvent` when `status` is `rejected` (the schema has
+        // no conditional), so a record can be rejected with only the status to say so — hand-written, or written by an older
+        // tool. A predicate reading only the events would call it undecided and let it be re-derived, or replaced. Both guards
+        // are checked on that shape, which is what makes that limb load-bearing.
+        const root = await seeded('candidate');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const bare = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+        bare.status = 'rejected';
+        delete bare.rejectionEvent;
+        await writeFile(path, `${JSON.stringify(bare, null, 2)}\n`, 'utf8');
+        const before = await readFile(path, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/is rejected/);
+        await expect(writeWikiRecord(root, bare as never)).rejects.toThrow(/carries a decision/);
+        expect(await readFile(path, 'utf8')).toBe(before);
+    });
+
+    it('refuses, on the single-record route, a record whose approval was withdrawn earlier', async () => {
+        // **The limb no selector reached.** The shared predicate's `approvalEvent !== undefined` clause is what keeps a record
+        // whose approval the drift walk withdrew (status `stale`, approval still on the record) from being re-derived into a
+        // `candidate` — but every case reaching the bulk route short-circuits on the drift entry's own field, and every fixture
+        // paired an approvalEvent with `status: 'verified'`, so deleting that limb was invisible (measured by an independent
+        // round). This drives the single-record route on exactly that shape.
+        const root = await seeded('verified');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const withdrawn = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+        withdrawn.status = 'stale';
+        await writeFile(path, `${JSON.stringify(withdrawn, null, 2)}\n`, 'utf8');
+        const before = await readFile(path, 'utf8');
+
+        await expect(revalidateWikiRecord(root, 'rule-page')).rejects.toThrow(/approval that was withdrawn/);
+        expect(await readFile(path, 'utf8')).toBe(before);
+    });
+
     it('refuses a rejected record by name: a refusal is a decision, not a hash to refresh', async () => {
         // **The bottom of the ladder was open.** The guard covered `verified` and nothing else, so a record a person had
         // rejected was re-derived straight back to `candidate` — the status the closure gate accepts (measured by an
@@ -143,6 +178,48 @@ describe('re-deriving refuses what it must not touch', () => {
         rejectedReplacement.status = 'candidate';
         await expect(writeWikiRecord(rejected, rejectedReplacement as never)).rejects.toThrow(/rejected/);
         expect(await readFile(rejectedPath, 'utf8')).toBe(rejectedBefore);
+    });
+
+    it('names only roads that work in the state the store refusal fires in', async () => {
+        // **A refusal that prints a closed road is this repository's most expensive recurring defect, and this sentence is
+        // measured rather than written from memory.** `rejectCandidate` requires `candidate` and `retireWikiRecord` moves a
+        // verified record *to* `rejected` — which this guard also refuses — so "retire it first" would name a road that leaves
+        // the operator exactly where they started. Both are driven below: the store still refuses after a retire, which is
+        // why the sentence offers only the store-wide road.
+        const root = await seeded('verified');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        const before = await readFile(path, 'utf8');
+
+        const refusal = await writeWikiRecord(root, JSON.parse(before) as never).then(() => '', (error: Error) => error.message);
+        expect(refusal).toMatch(/carries a decision/);
+        expect(refusal).toMatch(/wiki rebuild/);
+        expect(refusal, 'the sentence must not offer a road that leaves the state the same').not.toMatch(/retire it first|reject it first/);
+
+        const { retireWikiRecord } = await import('../../src/wiki/promotion.js');
+        await retireWikiRecord(root, 'rule-page', { rejectedBy: 'a-reviewer', role: 'reviewer', rejectedAt: new Date().toISOString(), reason: 'superseded' });
+        const afterRetire = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+        afterRetire.statement = 'Written after the decision was closed.';
+        await expect(writeWikiRecord(root, afterRetire as never)).rejects.toThrow(/carries a decision/);
+    });
+
+    it('refuses to replace a record whose file exists but cannot be read', async () => {
+        // **The other unreached limb, and the reason it matters.** The lock reads the record file and hands the mutator the
+        // empty string for *any* read error, so an unreadable record used to look exactly like an absent one while the
+        // replacement itself only needs write permission on the directory — the content it cannot inspect is precisely what it
+        // must not overwrite. A directory in the record's place is an `EISDIR` read error that behaves the same way as an
+        // unreadable file, and unlike a permission bit (`chmod 000`) it is not defeated by running as root.
+        const root = await seeded('candidate');
+        const path = join(root, '.kata/wiki/rule-page.json');
+        await rm(path);
+        await mkdir(path, { recursive: true });
+
+        await expect(
+            writeWikiRecord(root, {
+                id: 'rule-page', statement: 'x', scope: ['docs/rule.md'], kind: 'k', sourceRefs: ['docs/rule.md'],
+                sourceHashes: { 'docs/rule.md': 'a'.repeat(64) }, validationTaskId: 't', evidenceIds: ['e'], status: 'candidate',
+                lastVerifiedAt: '2026-01-01T00:00:00.000Z', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+            } as never),
+        ).rejects.toThrow(/cannot be read/);
     });
 
     it('still replaces a record that carries no decision, so the guard is about decisions', async () => {

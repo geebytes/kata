@@ -124,6 +124,13 @@ describe('every road a Wiki closure refusal prints is a road the CLI accepts', (
         // are derived: emptying `help.aliases` left the check green while a reader lost the road.
         const aliases = new Set(Object.keys(help.aliases ?? {}));
 
+        // **A scan that finds nothing must not read as a clean scan.** The dispatcher's verbs are read from its own source
+        // text, so a behaviour-preserving rename of the local (`const cmd = subcommand`) would empty the set and make this
+        // comparison pass for any help list at all (measured by an independent round). The floor is the measured count of
+        // dispatched verbs; a smaller set means the scan stopped seeing the dispatcher and the case says so instead of
+        // passing. A rename that keeps the count is beyond any static scan and is written down as the boundary of this check.
+        expect(dispatched.length, 'the verb scan must see the whole dispatcher, not an empty set').toBeGreaterThanOrEqual(15);
+
         const missing = dispatched.filter((verb) => !displayed.has(verb) && !withheld.has(verb) && !aliases.has(verb));
         expect(missing, 'the help list must offer every verb the dispatcher accepts, name it as withheld, or alias it').toEqual([]);
     });

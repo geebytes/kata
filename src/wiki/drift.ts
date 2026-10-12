@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { computeFileHash } from './record.js';
+import { carriesDecision, computeFileHash, isWikiPageRef, wikiRecordFileName, type WikiRecord, type WikiStatus } from './record.js';
 import { statementForPage } from './llmwiki.js';
 import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
@@ -105,8 +105,10 @@ export async function markRecordStale(root: string, id: string): Promise<void> {
  * Read before the write, because the write is what removes the evidence: after `markRecordStale` the record is `stale` and
  * nobody can tell whether an approval was withdrawn.
  */
-function withdrawingAuthority(record: { status: string; approvalEvent?: unknown }): boolean {
-  return record.status === 'verified' || record.approvalEvent !== undefined;
+function withdrawingAuthority(record: Pick<WikiRecord, 'status' | 'approvalEvent' | 'rejectionEvent'>): boolean {
+  // "The walk is taking a decision away" — asked of the same predicate the guards ask, so the store and the re-derivation
+  // cannot disagree about what a decided record is.
+  return carriesDecision(record) && record.status !== 'rejected';
 }
 
 export interface RevalidationResult {
@@ -143,7 +145,7 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
     // **A suffix test is not an identity test.** `path.endsWith('a.json')` also matches `bca.json`, so an invalid record in a
     // file whose name merely ends the same way was reported as the requested id's damage. The comparison is on the filename
     // the store actually writes, which is derived by one function (`normalizeId`).
-    const wanted = `${normalizeId(id)}.json`;
+    const wanted = wikiRecordFileName(id);
     const invalid = invalidRecords.find((entry) => entry.path.split(/[\\/]/).pop() === wanted);
     throw new Error(
       invalid
@@ -162,13 +164,13 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   // withdrawn (the drift walk demotes a verified record whose sources moved). Refreshing its hashes would hand back a
   // `candidate`, which the closure gate accepts — the approval would come back weaker than it went in. The fact lives in
   // the record itself, so this holds on every route and on every later run, not only in the run that noticed the drift.
-  if (record.status === 'verified' || record.status === 'rejected' || record.approvalEvent !== undefined) {
+  if (carriesDecision(record)) {
     const why =
       record.status === 'verified' || record.status === 'rejected'
         ? `is ${record.status}`
         : 'carries an approval that was withdrawn when its sources moved';
     throw new Error(
-      `Wiki record ${id} ${why}, and re-derivation never turns an approved or rejected record into a candidate: it is the transition out of \`stale\`, so this needs a decision (promote, reject, retire or re-ingest) rather than a refreshed hash`,
+      `Wiki record ${id} ${why}, and re-derivation never turns an approved or retired record into a candidate: it is the transition out of \`stale\`, so this needs a decision — \`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` retires it, and promoting a record again goes through \`kata-cli wiki promote\` — rather than a refreshed hash`,
     );
   }
 
@@ -184,7 +186,7 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   const repeated = record.sourceRefs.filter((path, index) => record.sourceRefs.indexOf(path) !== index);
   if (repeated.length > 0) {
     throw new Error(
-      `Wiki record ${id} cannot be re-derived because it declares the same source more than once (${[...new Set(repeated)].join(', ')}): which declaration the recorded hash belongs to is not knowable, so it needs to be re-ingested rather than refreshed`,
+      `Wiki record ${id} cannot be re-derived because it declares the same source more than once (${[...new Set(repeated)].join(', ')}): which declaration the recorded hash belongs to is not knowable, and nothing here can repair it — the road is the record file itself (correct its \`sourceRefs\`) or clearing the store as a whole (\`kata-cli wiki rebuild\`, which removes every page and governed record) and ingesting the source again — \`kata-cli wiki ingest\` is not the road from here because it refuses while the page exists`,
     );
   }
 
@@ -235,10 +237,19 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
   // whose single source is some other file — hand-made, or edited later — was previously recomputed from that file, replacing
   // its prose with that file's first line while the reply repeated the id as if that were evidence (measured by an
   // independent round).
-  const statementIsThePageSummary =
-    record.validationTaskId === 'llmwiki-register' &&
-    record.sourceRefs.length === 1 &&
-    (record.sourceRefs[0] ?? '').startsWith(`${llmwikiDirName}/`);
+  const writerIsRegister = record.validationTaskId === 'llmwiki-register';
+  const singleSource = record.sourceRefs.length === 1;
+  const sourceIsAPage = isWikiPageRef(record.sourceRefs[0] ?? '');
+  const statementIsThePageSummary = writerIsRegister && singleSource && sourceIsAPage;
+  // The answer names the clause that decided it: the first version said "written by X with 1 source(s), so its statement is
+  // not this page's summary", which blamed the count for a decision the source's *location* made — false in exactly the shape
+  // the clause was added for (measured by an independent round).
+  const ineligible =
+    !writerIsRegister
+      ? `written by ${record.validationTaskId}, which is not the page-registration writer`
+      : !singleSource
+        ? `written by ${record.validationTaskId} with ${record.sourceRefs.length} sources, not the single page it registers`
+        : `written by ${record.validationTaskId} with one source, but ${record.sourceRefs[0]} is not a page under ${llmwikiDirName}/`;
   const statement = statementIsThePageSummary && summaries.length > 0 ? summaries[0]! : record.statement;
 
   const updated = await updateWikiRecord(root, record.id, {
@@ -257,7 +268,7 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
         }
       : {
           recomputed: false,
-          why: `written by ${record.validationTaskId} with ${record.sourceRefs.length} source(s), so its statement is not this page's summary and the recorded prose is left as it is`,
+          why: `${ineligible}, so its statement is not this page's own summary and the recorded prose is left as it is`,
         },
   };
 }
@@ -265,10 +276,10 @@ export async function revalidateWikiRecord(root: string, id: string): Promise<Re
 /**
  * Revalidates every stale record in the store, reporting what each refresh found.
  *
- * **A refusal is collected, not thrown.** Re-deriving now refuses a record whose source is gone (and one that is verified),
- * and this walk used to let that refusal escape: one unrecoverable record aborted the command *after* the earlier records
- * had already been refreshed, so the caller lost both the rest of the work and the list of what had happened. The refusal is
- * a fact about one record; the walk reports it beside the successes.
+ * The walk iterates the records whose **status** is `stale`, not the ones the drift check happens to report: the drift check
+ * classifies a record by its sources alone, so a record left `stale` by an earlier drift whose source was afterwards restored
+ * to its recorded content reads as intact — and was therefore neither revalidated nor refused, silently. A refusal is
+ * collected rather than thrown, so one unrecoverable record does not abort the pass after the earlier records were refreshed.
  */
 export async function revalidateStaleRecords(root: string): Promise<{
   report: DriftReport;
@@ -276,24 +287,27 @@ export async function revalidateStaleRecords(root: string): Promise<{
   refused: Array<{ id: string; reason: string }>;
 }> {
   const report = await verifySources(root);
+  const withdrawnThisRun = new Set(report.stale.filter((entry) => entry.approvalWithdrawn).map((entry) => entry.id));
   const revalidated: RevalidationResult[] = [];
   const refused: Array<{ id: string; reason: string }> = [];
-  for (const entry of report.stale) {
+  for (const record of (await readWikiRecords(root)).filter((entry) => entry.status === 'stale')) {
     // **A withdrawn approval is not re-derived here.** The drift walk demotes a `verified` record whose sources moved before
     // this loop sees it, so the record reads as an ordinary `stale` one — and re-deriving it would hand back a `candidate`,
-    // which the closure gate accepts. That is the approval silently downgraded through the bulk door, with the guard on the
-    // single-record route unable to see it. The walk already named the withdrawal, so this refuses by that name.
-    if (entry.approvalWithdrawn) {
+    // which the closure gate accepts. That is the approval silently downgraded through the bulk door. The carrier of the
+    // decision is the record itself (`carriesDecision`), so this holds on later runs too, not only in the run that noticed.
+    if (carriesDecision(record)) {
       refused.push({
-        id: entry.id,
-        reason: `Wiki record ${entry.id} lost its verified status in this run: its sources moved, so its approval was withdrawn and re-deriving it would return a candidate. Review it, then promote it again if it still holds`,
+        id: record.id,
+        reason: `Wiki record ${record.id} carries a decision that re-derivation does not overturn${
+          withdrawnThisRun.has(record.id) ? ' — this run withdrew its approval because its sources moved' : ''
+        }: review it, then promote it again if it still holds`,
       });
       continue;
     }
     try {
-      revalidated.push(await revalidateWikiRecord(root, entry.id));
+      revalidated.push(await revalidateWikiRecord(root, record.id));
     } catch (error) {
-      refused.push({ id: entry.id, reason: error instanceof Error ? error.message : String(error) });
+      refused.push({ id: record.id, reason: error instanceof Error ? error.message : String(error) });
     }
   }
   return { report, revalidated, refused };
