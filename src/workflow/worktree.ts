@@ -254,6 +254,13 @@ export interface GuardedRemoval extends Partial<RemoveWorktreeResult> {
     refusedBecause?: 'worktree-only-records';
     /** The records that exist only under the worktree, when that is why the removal was refused. */
     worktreeOnlyRecords?: string[];
+    /**
+     * The same files, attributed to the task that holds each — **additive, because the flat list is a contract** another
+     * change's case pins (`guard-judges-the-path-not-the-task-id` asserts the paths). The refusal used to report the first
+     * task's remedy with a flat list, so a worktree holding two tasks' records named one task's road and the reader could not
+     * tell which file belonged to which task (measured by an independent review).
+     */
+    worktreeOnlyRecordsByTask?: Array<{ taskId: string; files: string[] }>;
     /** The command that resolves the refusal, so the operator is not left to invent one. */
     remedy?: string;
     /** What the remedy does, in one line. */
@@ -299,8 +306,13 @@ export async function removeWorktreeSafely(input: {
                 removed: false,
                 refusedBecause: 'worktree-only-records',
                 worktreeOnlyRecords: [],
-                remedy: 'kata-cli worktree list',
-                remedyDetail: `The records this worktree holds could not be enumerated (${error.message}), so the removal is refused rather than guessed at.`,
+                // **No kata command resolves this state, and the refusal says so instead of naming one that fails.** The
+                // previous remedy was `kata-cli worktree list`, which throws the same `RecordSourceUnreadable` here (measured
+                // by an independent review) — a refusal whose road is closed, which is the defect this change exists to
+                // remove. The road is outside the tool: make the record source named in the message readable. The retry
+                // command is named so the operator has somewhere to come back to.
+                remedy: `kata-cli worktree remove ${input.path}`,
+                remedyDetail: `The records this worktree holds could not be enumerated (${error.message}). No kata command can repair that: make the record source named in the message readable, then run this again. The removal is refused rather than guessed at.`,
             };
         }
         throw error;
@@ -314,18 +326,27 @@ export async function removeWorktreeSafely(input: {
     // whole reason it is not the guard's input any more. It stays accepted for compatibility, and is not consulted.
     const target = resolve(input.root, input.path);
     const forThisPath = copies.filter((copy) => resolve(input.root, copy.worktreeRoot) === target);
-    const files = forThisPath.map((copy) => copy.path);
-    if (files.length > 0) {
-        const forThisTask = { taskId: forThisPath[0]!.taskId, files };
+    if (forThisPath.length > 0) {
+        // **Every file is attributed to the task that holds it, and every task gets its remedy.** The refusal reported the
+        // first task's remedy with a flat file list, so a worktree holding two tasks' records named one task's road and left
+        // the reader unable to tell which file belonged to which task (measured by an independent review). A file that cannot
+        // be attributed is still listed — by its path, with no task — rather than dropped.
+        const byTask = new Map<string, string[]>();
+        for (const copy of forThisPath) {
+            byTask.set(copy.taskId, [...(byTask.get(copy.taskId) ?? []), copy.path]);
+        }
+        const tasks = [...byTask.keys()].sort();
+        const remedies = tasks.map((taskId) => `kata-cli worktree recover --change ${taskId}`);
         return {
             path: resolve(input.root, input.path),
             removed: false,
             refusedBecause: 'worktree-only-records',
-            worktreeOnlyRecords: forThisTask.files,
-            remedy: `kata-cli worktree recover --change ${forThisTask.taskId}`,
+            worktreeOnlyRecords: forThisPath.map((copy) => copy.path).sort(),
+            worktreeOnlyRecordsByTask: tasks.map((taskId) => ({ taskId, files: [...byTask.get(taskId)!].sort() })),
+            remedy: remedies.join(' && '),
             remedyDetail:
                 'Copies the records the owner does not have, never overwrites one it has, and reports what moved. '
-                + 'Run it, then remove the worktree.',
+                + `Run it for each task named above (${tasks.join(', ')}), then remove the worktree.`,
         };
     }
     return removeWorktree(input);

@@ -171,8 +171,37 @@ The change was re-sealed (its declared paths had been moved by other changes' co
   existed, and `worktreeOwner` fell back to the first directory name under `.kata/tasks` with no content check. **Repair:** both
   ask the exported content reader `tasksWithRecords` (E13).
 
+## Round 2 of independent review (2026-10-12): seven findings, repaired by class
+
+Round 2 read `revision-920f8bbdc9ce0835` and returned **2 major + 5 minor/note** — five of them `origin: repair`, i.e. produced
+by round 1's repairs:
+
+- **uc-r2-F1 (major) — the task id was split out of an evidence file name.** Splitting at the first hyphen truncated every
+  hyphenated id (`some-task-AC-1.json` answered as the task `some`, which does not exist) and reported one file under two ids
+  when the task also had a directory. **Repair:** the id comes from the record's own `taskId` field; a file that cannot be read
+  or parsed contributes no id rather than an invented one.
+- **uc-r2-F2 (major) — "does this checkout hold records of T" still had two answers.** The enumeration asked across both
+  surfaces recursively while the ownership predicate asked for a direct file entry, so a worktree holding `handoffs/x.json` was
+  named by the model as holding the only copy while `recordOwner` said no checkout held it. **Repair:** one synchronous content
+  rule (`recordFilesOfSync`, with the async wrapper kept for its callers' signatures) asked by both.
+- **uc-r2-F3 (minor) — the undetermined refusal's road was closed.** It named `kata-cli worktree list`, which throws the same
+  `RecordSourceUnreadable` in that state. **Repair:** the refusal states that no kata command can repair it, names the retry
+  command, and says what the operator has to do.
+- **uc-r2-F4 (minor) — a boundary sentence was false.** Corrected above.
+- **uc-r2-F5 (minor) — the document's uniqueness rule was content identity.** §3.1(3) said a `(taskId, path)` is not unique
+  only when the copies are byte-identical, while the code compares **path names**. The code's rule is the conservative one —
+  two holders of one path means the record is not unique to either, so nothing is moved, which is what keeps recovery from
+  overwriting a copy — and the document now states that rule. The difference is a boundary, not an oversight.
+- **uc-r2-F6 (minor) — the refusal could not be read back.** It reported the first task's remedy with a flat file list.
+  **Repair:** the flat list keeps its contract (another change's case pins it) and the attribution is additive
+  (`worktreeOnlyRecordsByTask`), with every task's recover command named.
+- **uc-r2-F7 (minor) — "could not answer" was a silent skip in the archive.** `archiveRemovalTargets` returned `[]` and the
+  archive reported nothing, so its result did not distinguish "no worktree" from "the enumeration could not answer".
+  **Repair:** `archiveRemovalOutcome` carries the reason; the archive removes nothing and reports it.
+
 **Boundaries written down, not claimed away:** the model still cannot see a linked checkout that neither `git worktree list`
 nor `.kata/worktrees/` names (a directory that is not a linked checkout is not a holder — the guard case builds a real
-`git worktree add` for that reason); an unreadable *file* (as opposed to directory) is reported as absent, because the record
-reader's `ENOENT`/other distinction is made at the directory level; and the ownership predicate reads the task directory one
-level deep, so a record nested deeper is not a record.
+`git worktree add` for that reason); the `ENOENT`-versus-unreadable distinction is made at the **directory** level, so a file
+whose own permissions forbid reading is still *listed* as a record (round 2 measured that this boundary sentence said the
+opposite); and the ownership predicate asks the same content rule as the enumeration, so a record under a subdirectory counts
+for both.

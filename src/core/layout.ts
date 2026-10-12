@@ -237,13 +237,13 @@ export function resolveWorkspaceRootForTask(taskId: string, from?: string): stri
  * and so does any other file under it — the question is whether there is anything at all, not which file.
  */
 function hasTaskDir(root: string, taskId: string): boolean {
-  const taskDir = join(root, '.kata', 'tasks', taskId);
+  // **The same rule the enumeration asks.** This predicate answered "a direct file entry in `.kata/tasks/<id>`" while the
+  // enumeration answered "a record on either surface, recursively" — so a worktree whose task directory held
+  // `handoffs/x.json` was named by the model as holding that task's only copy while `recordOwner` answered "no checkout holds
+  // this task" (measured by an independent review). An entry that is not a file is not a record (the subdirectory shape), and
+  // a record under a subdirectory is one (the depth shape): both fall out of asking the one rule.
   try {
-    // **An entry is not a record.** Counting entries made a *subdirectory* a record: `mkdir -p <anywhere>/.kata/tasks/<id>/sub`
-    // — no file written — granted ownership, which is the one-command hijack this predicate exists to refuse, with one more
-    // path segment (measured by an independent review; the declared instrument covered only the empty-directory shape). A
-    // record is a file.
-    return readdirSync(taskDir, { withFileTypes: true }).some((entry) => entry.isFile());
+    return recordFilesOfSync(root, taskId).length > 0;
   } catch {
     return false;
   }
@@ -1182,11 +1182,31 @@ async function taskIdsWithRecords(worktreeRoot: string): Promise<string[]> {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new RecordSourceUnreadable(evidenceRoot, error as Error);
         evidenceFiles = [];
     }
+    // **The task id is the record's own field, not a split of the file name.** Splitting at the first hyphen truncated
+    // every hyphenated id — `some-task-AC-1.json` was answered as the task `some`, and a file of a task that also had a
+    // directory was reported under two ids at once (measured by an independent review; hyphenated ids are the norm in this
+    // repository). The evidence record carries `taskId`; asking it is one derivation and it cannot invent an id.
     for (const file of evidenceFiles) {
-        const separator = file.indexOf('-');
-        if (separator > 0) ids.add(file.slice(0, separator));
+        const taskId = readEvidenceTaskId(join(evidenceRoot, file));
+        if (taskId !== undefined) ids.add(taskId);
     }
     return [...ids].sort();
+}
+
+/**
+ * The task an evidence record names, read from the record itself.
+ *
+ * A file that cannot be read or parsed contributes no id: the model attributes a record to the task the record declares, and
+ * inventing one from a file name is what produced the truncated ids. (The file is still enumerated for the task that does
+ * declare it, so a corrupt record is not silently dropped from a known task's set.)
+ */
+function readEvidenceTaskId(file: string): string | undefined {
+    try {
+        const parsed = JSON.parse(readFileSync(file, 'utf8')) as { taskId?: unknown };
+        return typeof parsed.taskId === 'string' && parsed.taskId.length > 0 ? parsed.taskId : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -1197,25 +1217,58 @@ export async function tasksWithRecords(worktreeRoot: string): Promise<string[]> 
     return taskIdsWithRecords(resolve(worktreeRoot));
 }
 
-/** The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths. */
-async function recordFilesOf(worktreeRoot: string, taskId: string): Promise<string[]> {
+/**
+ * The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths.
+ *
+ * **The rule is written once, synchronously, because two callers cannot both be asynchronous.** The enumeration is async and
+ * the ownership predicate (`hasTaskDir`) is sync, and each had its own answer to "does this checkout hold records of this
+ * task": the enumeration looked at both surfaces recursively, the predicate at a direct file entry in `.kata/tasks/<id>` only
+ * — so a worktree whose task directory held `handoffs/x.json` was named by the model as holding that task's only copy while
+ * `recordOwner` answered "no checkout holds this task" (measured by an independent review). The async wrapper below exists for
+ * its callers' signatures, not for a second rule.
+ */
+function recordFilesOfSync(worktreeRoot: string, taskId: string): string[] {
     const files: string[] = [];
     for (const surface of ['tasks', 'evidence'] as const) {
         const base = join(worktreeRoot, '.kata', surface);
         if (surface === 'tasks') {
-            const taskDir = join(base, taskId);
             // (2) A task directory with no record in it is not a holder.
-            files.push(...(await filesUnder(taskDir)).map((file) => `tasks/${file}`));
+            files.push(...filesUnderSync(join(base, taskId)).map((file) => `tasks/${file}`));
         } else {
             // The evidence store is flat and keys files by a `<taskId>-` prefix.
             files.push(
-                ...(await filesUnder(base))
+                ...filesUnderSync(base)
                     .filter((file) => !file.includes('/') && file.startsWith(`${taskId}-`))
                     .map((file) => `evidence/${file}`),
             );
         }
     }
     return files;
+}
+
+async function recordFilesOf(worktreeRoot: string, taskId: string): Promise<string[]> {
+    return recordFilesOfSync(worktreeRoot, taskId);
+}
+
+/** The synchronous form of `filesUnder`: same rule, for the callers that cannot await. */
+function filesUnderSync(directory: string): string[] {
+    const found: string[] = [];
+    const walk = (current: string, prefix: string): void => {
+        let entries: Dirent[];
+        try {
+            entries = readdirSync(current, { withFileTypes: true });
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+            throw new RecordSourceUnreadable(current, error as Error);
+        }
+        for (const entry of entries) {
+            const next = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+            if (entry.isDirectory()) walk(join(current, entry.name), next);
+            else if (entry.isFile()) found.push(next);
+        }
+    };
+    walk(directory, '');
+    return found.sort();
 }
 
 /** Every file under a directory, relative to it, recursive. A missing directory is no files. */

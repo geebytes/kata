@@ -102,13 +102,51 @@ describe('unique copies is one derivation', () => {
         const primary = repo('evidence-only');
         const worktree = join(primary, '.kata', 'worktrees', 'held');
         mkdirSync(join(worktree, '.kata', 'evidence'), { recursive: true });
-        writeFileSync(join(worktree, '.kata', 'evidence', 'held-AC-1.json'), '{}\n');
+        // A realistic record: the evidence schema requires `taskId`, and **that field is how the task is known** — the id is
+        // never split out of the file name (a hyphenated id truncated at its first hyphen is what an independent review
+        // measured, and hyphenated ids are the norm here).
+        writeFileSync(join(worktree, '.kata', 'evidence', 'held-AC-1.json'), `${JSON.stringify({ taskId: 'held', id: 'AC-1-E1' })}\n`);
 
         const unscoped = (await uniqueCopies({ root: primary })).filter((copy) => copy.taskId === 'held');
         const scoped = await uniqueCopies({ root: primary, taskId: 'held' });
 
         expect(scoped.map((copy) => copy.path)).toEqual(['evidence/held-AC-1.json']);
         expect(unscoped.map((copy) => copy.path)).toEqual(scoped.map((copy) => copy.path));
+    });
+
+    it('answers a hyphenated task id whole, and does not report one file under two tasks', async () => {
+        // **The truncation the content-derived id replaces.** Splitting the evidence file name at its first hyphen answered
+        // `some-task-AC-1.json` as the task `some` (which does not exist) and reported one file under two ids when the task
+        // also had a directory — measured by an independent review, and every id in this repository is hyphenated.
+        const primary = repo('hyphenated');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'some-task'), { recursive: true });
+        mkdirSync(join(worktree, '.kata', 'evidence'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'some-task', 'judge.json'), '{}\n');
+        writeFileSync(join(worktree, '.kata', 'evidence', 'some-task-AC-1.json'), `${JSON.stringify({ taskId: 'some-task', id: 'AC-1-E1' })}\n`);
+
+        const copies = await uniqueCopies({ root: primary });
+        const taskIds = [...new Set(copies.map((copy) => copy.taskId))].sort();
+
+        expect(taskIds).toEqual(['some-task']);
+        expect(copies.map((copy) => copy.path).sort()).toEqual(['evidence/some-task-AC-1.json', 'tasks/judge.json']);
+    });
+
+    it('answers ownership with the same rule the enumeration uses, including a record under a subdirectory', async () => {
+        // **Two answers to "does this checkout hold records of this task".** The predicate asked for a direct file entry
+        // while the enumeration asked across both surfaces recursively, so a worktree whose task directory held
+        // `handoffs/x.json` was named by the model as holding the only copy while `recordOwner` said no checkout held it
+        // (measured by an independent review). The predicate asks the one rule now, so depth is a record here too.
+        const primary = repo('ownership-depth');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held', 'handoffs'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'held', 'handoffs', 'x.json'), '{}\n');
+
+        const { recordOwner } = await import('../../src/core/layout.js');
+        const copies = await uniqueCopies({ root: primary });
+
+        expect(copies.map((copy) => copy.path)).toEqual(['tasks/handoffs/x.json']);
+        expect(recordOwner({ root: join(worktree, 'src'), taskId: 'held' }).ownerRoot).toBe(worktree);
     });
 
     it('asks the model for the guard, so a worktree outside the root is not removed with its only copy', async () => {
@@ -130,7 +168,37 @@ describe('unique copies is one derivation', () => {
 
         expect(removal.refusedBecause).toBe('worktree-only-records');
         expect(removal.removed).toBe(false);
+        // The flat list keeps its contract, the attribution is additive, and the remedy names the task's own road
+        // (round 2's F6: the refusal reported the first task's remedy with a flat list, so a two-task worktree named one
+        // task's road and the reader could not tell which file belonged to which task).
         expect(removal.worktreeOnlyRecords).toContain('tasks/judge.json');
+        expect(removal.worktreeOnlyRecordsByTask).toEqual([{ taskId: 'held', files: ['tasks/judge.json'] }]);
+        expect(removal.remedy).toContain('worktree recover --change held');
+    });
+
+    it('names every task the worktree holds, not only the first, when it refuses', async () => {
+        // **A refusal has to be readable back to the state.** A worktree holding unique records of two tasks reported one
+        // task's remedy and a flat file list, so the operator could not tell which road belonged to which task (measured by an
+        // independent review). Every task is named, and every file is attributed.
+        const primary = repo('two-tasks');
+        const outside = join(dirname(primary), `${basename(primary)}-two`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'two-branch'], { cwd: primary });
+        for (const taskId of ['aaa', 'zzz']) {
+            mkdirSync(join(outside, '.kata', 'tasks', taskId), { recursive: true });
+            writeFileSync(join(outside, '.kata', 'tasks', taskId, 'judge.json'), '{}\n');
+        }
+
+        const { removeWorktreeSafely } = await import('../../src/workflow/worktree.js');
+        const removal = await removeWorktreeSafely({ root: primary, path: outside, taskId: 'aaa' });
+
+        expect(removal.refusedBecause).toBe('worktree-only-records');
+        expect(removal.worktreeOnlyRecordsByTask).toEqual([
+            { taskId: 'aaa', files: ['tasks/judge.json'] },
+            { taskId: 'zzz', files: ['tasks/judge.json'] },
+        ]);
+        expect(removal.remedy).toContain('--change aaa');
+        expect(removal.remedy).toContain('--change zzz');
     });
 
     it('asks the content reader for the tasks a checkout holds, so a state file is not the test', async () => {

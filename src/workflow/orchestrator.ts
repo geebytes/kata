@@ -2821,19 +2821,37 @@ async function currentScopeHashes(root: string, evidence: EvidenceEnvelope[]): P
  * guessing, because a guess in this direction deletes records.
  */
 export async function archiveRemovalTargets(root: string, taskId: string): Promise<string[]> {
+    return (await archiveRemovalOutcome(root, taskId)).targets;
+}
+
+/**
+ * **The same answer, with "I could not look" as its own case** — because the caller has to report it.
+ *
+ * The previous form returned `[]` when the model could not answer, and the docstring claimed the archive "keeps every
+ * candidate rather than guessing". Nothing was removed (so no loss), but the archive then reported nothing at all: its result
+ * carried no field distinguishing "there was no worktree" from "the enumeration could not answer", which is the distinction
+ * AC-8 exists to keep (measured by an independent review). The targets stay empty in that case — nothing may be guessed about
+ * what to delete — and the reason travels to the caller.
+ */
+export async function archiveRemovalOutcome(
+    root: string,
+    taskId: string,
+): Promise<{ targets: string[]; undetermined?: string }> {
     const { existsSync } = await import('node:fs');
     const { worktreesDir } = await import('./worktree.js');
-    const { uniqueCopies } = await import('../core/layout.js');
+    const { uniqueCopies, UniqueCopiesUndetermined } = await import('../core/layout.js');
     const named = join(worktreesDir(root), taskId);
-    const holding = await uniqueCopies({ root, taskId }).catch(() => undefined);
-    if (holding === undefined) {
-        // Undetermined: only the named directory is even a candidate, and the guard inside the removal is what refuses.
-        return [];
+    let holding: Awaited<ReturnType<typeof uniqueCopies>>;
+    try {
+        holding = await uniqueCopies({ root, taskId });
+    } catch (error) {
+        if (error instanceof UniqueCopiesUndetermined) return { targets: [], undetermined: error.message };
+        throw error;
     }
     const fromModel = [...new Set(holding.map((copy) => copy.worktreeRelative))].map((relative) => join(root, relative));
-    if (fromModel.length > 0) return fromModel;
+    if (fromModel.length > 0) return { targets: fromModel };
     // Nothing is unique to a worktree, so the ordinary case applies: the worktree named after the task, if it exists.
-    return existsSync(named) ? [named] : [];
+    return { targets: existsSync(named) ? [named] : [] };
 }
 
 async function cmdArchive(taskId: string, root: string, options: CommandOptions = {}): Promise<CommandResult> {
@@ -3022,7 +3040,15 @@ async function cmdArchive(taskId: string, root: string, options: CommandOptions 
         // the task it holds was never looked at — and it then passed the same derivation for `path` and `taskId`, so the
         // guard judged the right kind of object, just not this one. Measured on the frozen revision restored with
         // `git archive`: the removal returned `{"removed":true}` and the only copy was gone.
-        const targets = await archiveRemovalTargets(root, taskId);
+        const { targets, undetermined } = await archiveRemovalOutcome(root, taskId);
+        if (undetermined !== undefined) {
+            // **Reported, not silent.** Nothing is removed (a guess in this direction deletes records), and the result says
+            // which of the two states this was — the distinction the empty answer alone could not carry.
+            worktreeCleanup = {
+                kept: join(worktreesDir(root), taskId),
+                reason: `the worktree records could not be enumerated, so nothing was removed: ${undetermined}`,
+            };
+        }
         for (const linked of targets) {
         if (archivePhase === 'archive' && existsSync(linked)) {
             try {
