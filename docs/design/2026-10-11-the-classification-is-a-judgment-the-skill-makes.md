@@ -3,6 +3,20 @@
 **日期**：2026-10-11 ｜ **来源**：用户指令「分类判定应该遵循 skill + agent 优先」
 **profile**：待定（见 §6；建议 `current_worktree / tdd / strict`）
 
+
+> **状态：已并入后继 change，本文档不再是独立交付物（2026-10-12 实测）。**
+>
+> - 本文档 §5 的 4 条 AC（`the-classification-questions-are-asked`、`a-classification-below-its-floor-is-raised`、
+>   `the-review-request-carries-the-classification`、`the-classification-needs-no-model`）**从未创建选择器**——
+>   四条选择器文件在盘上全部不存在。
+> - 它们被**重新表达**为 `the-workflow-layer-checks-what-it-claims`（`docs/design/2026-10-11-the-workflow-layer-checks-what-it-claims.md`）
+>   的 **AC-6（分类与车道并列呈现、低于下界具名）/ AC-7（分类落盘并进 ReviewRequest）/ AC-8（车道文案只点名存在的路）**，
+>   对应的实现（`src/quality/classification.ts`、`src/core/task.ts`、`src/store/review-request.ts` 的改动）与四条选择器
+>   **已经写好但被 park**：不在盘上、只存在于 `stash@{0}`（`park workflow-layer change while closing existing owners`），
+>   备份见 `tmp/stash-park-backup/`（`tracked-modifications.patch` + `untracked/` 6 个新文件、共 527 行）。
+> - 载体的落法见该 change 的记录：`the-workflow-layer-checks-what-it-claims` phase `implement`，AC-1..AC-5 已提交
+>   （`cec3955`、`423aed0`、`aa39e8c`、`cd713f2`），AC-6..9 待 `unify-…` 与 `unique-copies-is-one-model` 收口后恢复。
+> - 保留原文，不改写：它是当时的判断依据与边界（§7 的"判断被记录 ≠ 判断被验证"仍然成立）。
 ---
 
 ## 1. 今天是谁在决定（实测）
