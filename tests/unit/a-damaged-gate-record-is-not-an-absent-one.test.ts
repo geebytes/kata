@@ -139,13 +139,26 @@ describe('a damaged gate record is not an absent one', () => {
         const root = await fixture('fifo');
         const path = gatePath(root, 'archive_gate');
         execFileSync('mkfifo', [path]);
+        // **The read is bounded, so this case reddens instead of hanging.** Without the shape check the reader waits on the
+        // FIFO forever, and an unbounded assertion would leave the mutation harness (and this suite) stuck rather than red —
+        // measured: the first version of this case hung `ledger evidence verify` past its own wall-clock budget, with the
+        // mutation still applied to the working tree.
+        const bounded = await Promise.race([
+            readGateState(root, 'held', 'archive_gate'),
+            new Promise<'timed-out'>((resolve) => { setTimeout(() => resolve('timed-out'), 2000).unref(); }),
+        ]);
         try {
-            const state = await readGateState(root, 'held', 'archive_gate');
+            expect(bounded).not.toBe('timed-out');
+            const state = bounded as Awaited<ReturnType<typeof readGateState>>;
             expect(state.kind).toBe('damaged');
             expect(state.kind === 'damaged' ? state.why : '').toMatch(/not a regular file/u);
             // And the reset refuses it with the same sentence rather than waiting on it.
-            await expect(resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }))
-                .rejects.toThrow(/not a regular file/u);
+            const reset = await Promise.race([
+                resetUserChoiceGate({ root, taskId: 'held', record: 'boundary', boundary: 'archive_gate', reason: 'x' }).then(() => 'removed' as const).catch((error: Error) => error.message),
+                new Promise<'timed-out'>((resolve) => { setTimeout(() => resolve('timed-out'), 2000).unref(); }),
+            ]);
+            expect(reset).not.toBe('timed-out');
+            expect(String(reset)).toMatch(/not a regular file/u);
         } finally {
             rmSync(path, { force: true });
         }
