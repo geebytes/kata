@@ -8,8 +8,17 @@ import { llmwikiDirName } from '../core/repository-identity.js';
 
 export interface DriftEntry {
   id: string;
-  /** Why the record is no longer consistent with its sources. The *cause*: a file moved, or is gone. */
-  reason: 'source_changed' | 'source_missing';
+  /**
+   * Why the record is no longer consistent with its sources — the *cause*, in three words because there are three:
+   * a file's content moved, a file is gone, or the record never recorded what one of its sources hashes to.
+   *
+   * The third word exists because the first two were false for that shape: a declared source with no recorded hash is not
+   * "a file moved" (we do not know what it should hash to) and not "a file is gone" (it is there). The walk said
+   * `source_changed` and the lifecycle therefore recommended `revalidate` — a road `revalidateWikiRecord` closes by name for
+   * exactly this record (measured by an independent round). A reason that names a cause that did not happen also sent the
+   * operator to the wrong command, which is the same defect wearing the enum's clothes.
+   */
+  reason: 'source_changed' | 'source_missing' | 'source_unrecorded';
   changedSources: string[];
   /**
    * Whether the walk took an approval away with it, which is a second fact about the same record.
@@ -49,6 +58,9 @@ export async function verifySources(root: string): Promise<DriftReport> {
     // (measured by an independent round). The union is iterated, and a declared ref with no hash is reported as changed.
     const declaredSources = [...new Set([...Object.keys(record.sourceHashes), ...record.sourceRefs])];
     const sourceHashEntries = declaredSources.map((path) => [path, record.sourceHashes[path] ?? ''] as const);
+    // A declared source with no recorded hash: named as its own cause rather than folded into "the content moved", because
+    // which command may act on it differs (the record has to be corrected, not re-derived).
+    const unrecorded = declaredSources.filter((path) => record.sourceHashes[path] === undefined);
 
     if (record.sourceRefs.length > 0 && sourceHashEntries.length === 0) {
       stale.push({
@@ -77,7 +89,11 @@ export async function verifySources(root: string): Promise<DriftReport> {
     }
 
     if (changedSources.length > 0) {
-      const reason = changedSources.some((s) => missingSources.has(s)) ? 'source_missing' : 'source_changed';
+      const reason = unrecorded.length > 0
+        ? 'source_unrecorded'
+        : changedSources.some((s) => missingSources.has(s))
+          ? 'source_missing'
+          : 'source_changed';
       stale.push({ id: record.id, reason, changedSources, ...(withdrawingAuthority(record) ? { approvalWithdrawn: true } : {}) });
       await markRecordStale(root, record.id);
     } else {
@@ -305,7 +321,7 @@ export async function revalidateStaleRecords(root: string): Promise<{
         id: record.id,
         reason: `Wiki record ${record.id} carries a decision that re-derivation does not overturn${
           withdrawnThisRun.has(record.id) ? ' — this run withdrew its approval because its sources moved' : ''
-        }: retire it if it does not hold any more (\`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` works from this state), or clear the store with \`kata-cli wiki rebuild\`; promoting it again is not available here because \`promote\` requires a candidate and this record is ${record.status}`,
+        }: retire it if it does not hold any more (\`kata-cli wiki retire <wiki-id> --by <actor> --role <role> --reason <why>\` works from this state); promoting it again is not available here because \`promote\` requires a candidate and this record is ${record.status}, and clearing the store is not offered because \`kata-cli wiki rebuild\` needs an initialised wiki (it appends to \`.llmwiki/log.md\` and fails when the store has no pages)`,
       });
       continue;
     }

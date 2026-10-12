@@ -116,6 +116,36 @@ describe('Wiki lifecycle recommendations', () => {
     );
   });
 
+  it('recommends a review, not a re-derivation, for a record whose source was never recorded', async () => {
+    // **The recommendation follows the cause.** A record declaring a source it has no hash for was reported `source_changed`,
+    // which `chooseAction` maps to `revalidate` — a command that refuses that record by name (measured by an independent
+    // round). The cause has its own word now, and the load-bearing half of this case is that word: with it folded back into
+    // `source_changed` the outcome below becomes `revalidate` again (falsifier E23). The explicit mapping line in
+    // `chooseAction` is a statement of the decision rather than the only thing producing `review` — the fall-through yields
+    // it too — and it is written that way so a later edit cannot attach the wrong road to this cause.
+    const root = await tempRoot();
+    await writeFile(join(root, 'docs-second.md'), 'second\n', 'utf8');
+    await writeRecord(root, {
+      id: 'wiki-half-recorded',
+      statement: 'A record with a source it never hashed.',
+      scope: ['docs-first.md', 'docs-second.md'],
+      kind: 'implementation-note',
+      sourceRefs: ['docs-first.md', 'docs-second.md'],
+      sourceHashes: { 'docs-first.md': computeFileHash('first\n') },
+      validationTaskId: 'a-task',
+      status: 'candidate',
+    });
+    await writeFile(join(root, 'docs-first.md'), 'first\n', 'utf8');
+
+    const audit = await auditWiki(root);
+
+    expect(audit.recommendedActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'wiki-half-recorded', reasons: expect.arrayContaining(['source_unrecorded']), recommendedAction: 'review' }),
+      ]),
+    );
+  });
+
   it('retires a governed record without deleting its .llmwiki page', async () => {
     const root = await tempRoot();
     await writeFile(join(root, '.llmwiki', 'concepts', 'old-rule.md'), '# Old Rule\n', 'utf8');

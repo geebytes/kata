@@ -224,6 +224,9 @@ describe('a record whose source is gone is refused by name, and left alone', () 
         expect(report.intact).toEqual([]);
         expect(report.stale.map((entry) => entry.id)).toEqual(['rule-page']);
         expect(report.stale[0]?.changedSources).toContain('docs/second.md');
+        // **The cause is named as its own.** Borrowing `source_changed` made the walk describe a file that did not move, and
+        // sent the operator to `revalidate`, which refuses exactly this record (measured by an independent round).
+        expect(report.stale[0]?.reason).toBe('source_unrecorded');
     });
 
     it('reports an unreadable store as unreadable, not as an empty one', async () => {
