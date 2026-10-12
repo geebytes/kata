@@ -265,7 +265,7 @@ export async function ledgerVerdict(input: {
     changeId: string;
     /** The recorded baseline, so a `0.6*C0` budget can be resolved. `null` leaves it unknown rather than satisfied. */
     c0Tokens?: number | null;
-    /** An explicit tier overrides the classification; the classification is what a caller normally wants. */
+    /** A named tier can raise the gate tier but never lower it below the classification or the policy ceiling (R2-F1). */
     tier?: TierName;
     /** An explicit assurance override, for the case where the operator knows what the round's provenance was. */
     assurance?: AssuranceLevel;
@@ -317,8 +317,9 @@ export async function ledgerVerdict(input: {
     for (const claim of ledger.claims) for (const evidenceId of claim.evidenceIds) evidenceToClaim[evidenceId] = claim.id;
     // **The ceiling, applied at the boundary rather than left to the classification.** A floor is only as good as its
     // patterns, and the classification reads paths; a change to what evidence is accepted can sit under a pattern no rule
-    // names. So the ledger route never decides below the policy's declared floor — an explicit `--tier` still wins,
-    // because an operator who names a tier is making the decision this bound exists to keep honest.
+    // names. So the ledger route never decides below the policy's declared floor, and a named `--tier` may only raise it:
+    // R2-F1 measured `--tier standard` lowering a declaration that holds `src/kernel/**` to `standard`, which is the one
+    // direction a gate must never take.
     const storedPlan = await readPlanState(input.root, input.changeId);
     if (storedPlan.kind === 'unreadable') {
         return { kind: 'unreadable', detail: `plan.json exists and cannot be read (${storedPlan.detail})` };
