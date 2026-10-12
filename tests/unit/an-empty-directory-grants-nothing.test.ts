@@ -55,6 +55,19 @@ describe('an empty directory grants nothing', () => {
         expect(copies.filter((copy) => copy.taskId === 'held')).toHaveLength(1);
     });
 
+    it('a task directory holding only a subdirectory grants nothing', async () => {
+        // **The shape the declared instrument missed.** Counting *entries* made a subdirectory a record: one more path
+        // segment than the empty-directory hijack this criterion names — `mkdir -p <anywhere>/.kata/tasks/<id>/sub`, no file
+        // written — and ownership moved (measured by an independent review; the AC-3 case and its falsifier covered only the
+        // empty directory, so the mutation that made the predicate require a file left every selector green).
+        const primary = repo('subdirectory');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held', 'sub'), { recursive: true });
+
+        expect(await uniqueCopies({ root: primary })).toEqual([]);
+        expect(recordOwner({ root: join(worktree, 'src'), taskId: 'held' })).toMatchObject({ ownerRoot: undefined });
+    });
+
     it('recordsRoot does not hand ownership to an empty directory either', () => {
         // **The consumer, not only the model.** The first version of this criterion fixed the ownership predicate and
         // left `recordsRoot` reading the old one — measured: `recordOwner` answered `undefined` while

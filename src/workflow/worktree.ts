@@ -45,17 +45,12 @@ export async function listWorktrees(root: string): Promise<WorktreeEntry[]> {
 }
 
 async function tasksInWorktree(path: string): Promise<string[]> {
-    try {
-        const entries = await readdir(tasksDir(path));
-        const withState = await Promise.all(entries
-            .filter((entry) => !entry.startsWith('.'))
-            .map(async (entry) => (await stat(join(tasksDir(path), entry, 'current-state.json')).then(() => true).catch(() => false))
-                ? entry
-                : null));
-        return withState.filter((entry): entry is string => entry !== null).sort();
-    } catch {
-        return [];
-    }
+    // **The same reader every other surface asks.** This answered "the tasks present here" by the existence of
+    // `current-state.json` alone, while the record model enumerates a task's records across every surface — so a worktree
+    // holding review records and no state file read as holding nothing (measured by an independent review, alongside the
+    // ownership predicate's directory fallback).
+    const { tasksWithRecords } = await import('../core/layout.js');
+    return tasksWithRecords(path);
 }
 
 export interface CreateWorktreeResult {
@@ -287,8 +282,29 @@ export async function removeWorktreeSafely(input: {
     taskId: string;
     force?: boolean;
 }): Promise<GuardedRemoval> {
-    const { worktreeOnlyRecords } = await import('../core/layout.js');
-    const report = await worktreeOnlyRecords(input.root);
+    // **The guard asks the model, not a projection of it.** It asked `worktreeOnlyRecords`, which had its own enumeration
+    // and its own comparison rule — and on an outside-root worktree holding the only copy of a record the projection
+    // answered `[]` while `uniqueCopies` named the file, so the guard let the removal through and the only copy was deleted
+    // (measured by an independent review; the projection is now derived from the model, and the guard still asks the model
+    // directly so no later edit can put a second rule between the deletion and the fact).
+    const { uniqueCopies, UniqueCopiesUndetermined } = await import('../core/layout.js');
+    let copies: Awaited<ReturnType<typeof uniqueCopies>>;
+    try {
+        copies = await uniqueCopies({ root: input.root });
+    } catch (error) {
+        // An enumeration that could not answer refuses the removal: "I could not look" is not "nothing would be lost".
+        if (error instanceof UniqueCopiesUndetermined) {
+            return {
+                path: resolve(input.root, input.path),
+                removed: false,
+                refusedBecause: 'worktree-only-records',
+                worktreeOnlyRecords: [],
+                remedy: 'kata-cli worktree list',
+                remedyDetail: `The records this worktree holds could not be enumerated (${error.message}), so the removal is refused rather than guessed at.`,
+            };
+        }
+        throw error;
+    }
     // **The guard judges the path, not the task id it was handed.** It used to ask
     // `report.find((entry) => entry.taskId === input.taskId)`, so a worktree called `T` holding `U`'s records produced a
     // report entry for `U`, the lookup for `T` found nothing, and the removal proceeded — deleting `U`'s only copy and
@@ -297,8 +313,8 @@ export async function removeWorktreeSafely(input: {
     // The caller's id is a *claim about the worktree*, and the guard exists because that claim can be wrong; that is the
     // whole reason it is not the guard's input any more. It stays accepted for compatibility, and is not consulted.
     const target = resolve(input.root, input.path);
-    const forThisPath = report.filter((entry) => resolve(input.root, entry.worktree) === target);
-    const files = forThisPath.flatMap((entry) => entry.files);
+    const forThisPath = copies.filter((copy) => resolve(input.root, copy.worktreeRoot) === target);
+    const files = forThisPath.map((copy) => copy.path);
     if (files.length > 0) {
         const forThisTask = { taskId: forThisPath[0]!.taskId, files };
         return {

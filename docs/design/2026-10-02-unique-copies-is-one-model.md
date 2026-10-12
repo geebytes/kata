@@ -141,3 +141,38 @@ export async function uniqueCopies(input: {
 | 检测器的 `git worktree list` ∪ 目录**两源合并**（③ 扩展为含 root 外） | 位置参数的形态判据（③ 取代为顺序无关） |
 | `looksLikeAPath`（③ 保留，改为顺序无关解析） | `worktree recover` 的零结果语义（③ 取代） |
 | `recoverWorktreeRecords` 的逐条隔离 | — |
+
+## Round 1 of independent review (2026-10-12): six findings, repaired by class
+
+The change was re-sealed (its declared paths had been moved by other changes' commits) and its first independent round read
+`revision-0edb3452ecf555d2`. It returned **1 blocking + 4 major + 1 minor**, all `origin: original` — the content, not a repair:
+
+- **uc-r1-F1 (blocking) — the guard asked a second derivation, in the data-loss direction.** `worktreeOnlyRecords` had its own
+  enumeration and comparison; on an outside-root worktree holding the only copy of a record it answered `[]` while
+  `uniqueCopies` named the file, and `removeWorktreeSafely` asked *it* — so the removal proceeded and the only copy was
+  deleted. **Repair:** `worktreeOnlyRecords` is now a **projection** of the model (grouped by worktree *and* task — grouping by
+  worktree alone attributed a second task's files to the first, caught by this change's own report case), and the guard asks
+  `uniqueCopies` directly; an undetermined enumeration refuses the removal.
+- **uc-r1-F2 (major) — ownership by an entry, not by a record.** `hasTaskDir` counted `readdirSync(taskDir).length > 0`, so a
+  *subdirectory* granted ownership: `mkdir -p <anywhere>/.kata/tasks/<id>/sub` was enough. **Repair:** the predicate asks
+  whether an entry is a **file**; the subdirectory shape has its own case (E10).
+- **uc-r1-F3 (major) — an unreadable record source answered as empty.** `filesUnder`/`taskIdsWithRecords` swallowed every
+  error, so a worktree whose task directory was mode 000 produced `[]` — "nothing would be lost" about records nobody could
+  read, and `worktree recover` then reported `foundNothing: true` for a worktree that held the only copy. **Repair:** a typed
+  `RecordSourceUnreadable` for everything but `ENOENT`, rethrown by the model as `UniqueCopiesUndetermined`; E11 pins it.
+- **uc-r1-F4 (major) — the AC-4 instrument was unsound.** E4 mutated the class *name*, so it reddened because the identifier
+  disappeared, not because an unanswerable source became an empty set. **Repair:** E4 now makes the undetermined branch
+  `return []` — the property the claim names.
+- **uc-r1-F5 (major) — the two halves of the unscoped answer.** The task list came from `.kata/tasks/<id>` directories while the
+  record surfaces are enumerated from content, so a task whose records exist only in the evidence store was invisible to the
+  unscoped form while the scoped form reported its files. **Repair:** the unscoped list is the union of the task directories and
+  the evidence store's `<taskId>-` prefixes (E12).
+- **uc-r1-F6 (minor) — two more readers answering by the wrong fact.** `tasksInWorktree` asked whether `current-state.json`
+  existed, and `worktreeOwner` fell back to the first directory name under `.kata/tasks` with no content check. **Repair:** both
+  ask the exported content reader `tasksWithRecords` (E13).
+
+**Boundaries written down, not claimed away:** the model still cannot see a linked checkout that neither `git worktree list`
+nor `.kata/worktrees/` names (a directory that is not a linked checkout is not a holder — the guard case builds a real
+`git worktree add` for that reason); an unreadable *file* (as opposed to directory) is reported as absent, because the record
+reader's `ENOENT`/other distinction is made at the directory level; and the ownership predicate reads the task directory one
+level deep, so a record nested deeper is not a record.

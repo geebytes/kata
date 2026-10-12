@@ -239,8 +239,11 @@ export function resolveWorkspaceRootForTask(taskId: string, from?: string): stri
 function hasTaskDir(root: string, taskId: string): boolean {
   const taskDir = join(root, '.kata', 'tasks', taskId);
   try {
-    // A file where the task directory should be is not a task record either, and `readdirSync` says so.
-    return readdirSync(taskDir).length > 0;
+    // **An entry is not a record.** Counting entries made a *subdirectory* a record: `mkdir -p <anywhere>/.kata/tasks/<id>/sub`
+    // — no file written — granted ownership, which is the one-command hijack this predicate exists to refuse, with one more
+    // path segment (measured by an independent review; the declared instrument covered only the empty-directory shape). A
+    // record is a file.
+    return readdirSync(taskDir, { withFileTypes: true }).some((entry) => entry.isFile());
   } catch {
     return false;
   }
@@ -468,72 +471,25 @@ export interface WorktreeOnlyRecords {
  * differently.
  */
 export async function worktreeOnlyRecords(root: string): Promise<WorktreeOnlyRecords[]> {
-    const worktrees = join(kataDir(root), 'worktrees');
-    // **Every worktree, not only the ones under `.kata/worktrees/`.** `worktree create --path` puts the checkout wherever
-    // the operator asked, and `git worktree add` can be run by hand — in both shapes a scan of `.kata/worktrees/` finds
-    // nothing, so the detector reported `[]` for a worktree holding the only copy of a record. Measured by this change's
-    // own independent challenge: a worktree under `elsewhere/checkout` was invisible to the detector while `recordOwner`
-    // recognised it, i.e. the ownership function and one of its consumers disagreed — the defect this change exists to
-    // remove, reproduced inside it.
-    // **Two sources, unioned.** `git worktree list` is the authority on linked checkouts and is the only source that sees
-    // a `--path` one; `.kata/worktrees/` is the directory this repository creates them in and is what a fixture (or a
-    // repository where git cannot answer) has. Taking either alone loses a shape: git alone missed the fixtures that
-    // build the directory without a real linked checkout, and the directory alone missed every `--path` worktree.
-    const candidates = new Set<string>();
-    for (const worktree of await gitWorktreeList(root)) {
-        const relativePath = relative(root, worktree.path);
-        // The main checkout is not a worktree to compare against itself.
-        if (relativePath !== '' && !relativePath.startsWith('..')) candidates.add(relativePath);
+    // **A projection of the one model, not a second enumeration.** This function used to walk `git worktree list` and
+    // `.kata/worktrees/` itself and compare the two copies with its own rule — and it disagreed with `uniqueCopies` in the
+    // data-loss direction on an outside-root worktree holding the only copy of a record: the model named the file, this
+    // answered `[]`, and the removal guard asked *this* (measured by an independent review). The facts come from
+    // `uniqueCopies`; this only groups them by worktree for the report and the guard.
+    const copies = await uniqueCopies({ root });
+    // **One entry per worktree *and* task.** Grouping by worktree alone attributed a second task's files to the first task's
+    // entry — caught by this change's own report case, which is what a projection of a model has to preserve: the model's
+    // answers are keyed by (worktree, task), so the grouping key is too.
+    const byWorktreeAndTask = new Map<string, WorktreeOnlyRecords>();
+    for (const copy of copies) {
+        const key = `${copy.worktreeRelative}\u0000${copy.taskId}`;
+        const entry = byWorktreeAndTask.get(key) ?? { worktree: copy.worktreeRelative, taskId: copy.taskId, files: [] };
+        entry.files.push(copy.path);
+        byWorktreeAndTask.set(key, entry);
     }
-    try {
-        const entries = await readdir(worktrees, { withFileTypes: true });
-        for (const entry of entries) {
-            if (entry.isDirectory() && !entry.name.startsWith('.')) candidates.add(join('.kata', 'worktrees', entry.name));
-        }
-    } catch {
-        // No `.kata/worktrees` here: the git listing above is the whole answer.
-    }
-    const reported: WorktreeOnlyRecords[] = [];
-    for (const relativeWorktree of candidates) {
-        const entry = { name: basename(relativeWorktree) };
-        // **The task is derived from what the worktree holds, not from its directory name.** `worktree create --path`
-        // (and a hand-made `git worktree add`) puts the checkout somewhere the name says nothing about: measured with a
-        // custom path, the detector returned `[]` for a worktree holding the only copy of a record, the guard let the
-        // removal through, and the remedy reported a `movedCount: 0` success. The directory name is a hint; the task
-        // directories inside the worktree are the fact.
-        const directoryName = entry.name;
-        const worktreeRoot = resolve(root, relativeWorktree);
-        const taskIds = await tasksHeldByWorktree(worktreeRoot);
-        const taskCandidates = taskIds.length > 0 ? taskIds : [directoryName];
-        for (const taskId of taskCandidates) {
-        // **Every record surface, not just `.kata/tasks`.** The detector used to look at one directory, so the evidence
-        // store was outside it: measured on this repository, **1053 evidence files existed only under worktrees** while
-        // the report said `[]` and the removal guard therefore let `archive` delete the only copy. A surface that is
-        // derived per-owner has to be enumerated per-owner, or the enumeration is a claim about a subset.
-        const pairs = await Promise.all(
-            recordSurfaces(taskId).map(async ([surface, taskRelative]) => {
-                const primarySurface = join(kataDir(root), surface, taskRelative);
-                const worktreeSurface = join(worktreeRoot, '.kata', surface, taskRelative);
-                const primaryFiles = new Set(await relativeFilesUnder(primarySurface));
-                const allWorktreeFiles = await relativeFilesUnder(worktreeSurface);
-                // **The evidence store is shared and flat.** It keys its files by `<taskId>-`, and it belongs to the
-                // checkout rather than to one worktree, so a file written there by *another* task must not be attributed
-                // to this one — and it must not be counted twice when both worktrees hold a copy.
-                const worktreeFiles =
-                    surface === 'evidence' ? allWorktreeFiles.filter((file) => file.startsWith(`${taskId}-`)) : allWorktreeFiles;
-                // **The path carries its surface.** A bare relative name would be ambiguous — `judge.json` under the
-                // task directory and a same-named evidence file are different records — and the recovery needs to know
-                // which store to write into.
-                return worktreeFiles.filter((file) => !primaryFiles.has(file)).map((file) => `${surface}/${file}`);
-            }),
-        );
-        const onlyHere = pairs.flat().sort();
-        if (onlyHere.length > 0) {
-            reported.push({ taskId, worktree: relativeWorktree, files: onlyHere });
-        }
-        }
-    }
-    return reported;
+    return [...byWorktreeAndTask.values()]
+        .map((entry) => ({ ...entry, files: [...entry.files].sort() }))
+        .sort((left, right) => left.worktree.localeCompare(right.worktree) || left.taskId.localeCompare(right.taskId));
 }
 
 /** The task ids a linked worktree carries records for, by reading its own record directory. */
@@ -1053,6 +1009,21 @@ export interface UniqueCopy {
     worktreeRelative: string;
 }
 
+/**
+ * **A record source that could not be read.** Not an empty result: the model's contract is that an unanswerable source is
+ * distinguished from an empty set, because the empty set is the answer that means nothing would be lost.
+ *
+ * The readers below used to swallow every error, so a record directory that could not be read answered `[]` and the whole
+ * enumeration answered "nothing is at risk" for a worktree whose records were unreachable (measured by an independent review,
+ * on a worktree whose task directory was mode 000). Only `ENOENT` means absence.
+ */
+export class RecordSourceUnreadable extends Error {
+    constructor(readonly directory: string, cause: Error) {
+        super(`the record source ${directory} cannot be read: ${cause.message}`);
+        this.name = 'RecordSourceUnreadable';
+    }
+}
+
 /** Thrown when the enumeration cannot answer. **Not** an empty result: an empty set means nothing would be lost. */
 export class UniqueCopiesUndetermined extends Error {
     constructor(reason: string) {
@@ -1100,15 +1071,22 @@ export async function uniqueCopies(input: { root: string; taskId?: string }): Pr
 
     // What each holder has, per task, per surface.
     const held = new Map<string, Map<string, Set<string>>>();
-    for (const holder of holders) {
-        const taskIds = input.taskId !== undefined ? [input.taskId] : await taskIdsWithRecords(holder.worktreeRoot);
-        for (const taskId of taskIds) {
-            const files = await recordFilesOf(holder.worktreeRoot, taskId);
-            if (files.length === 0) continue;
-            const byTask = held.get(taskId) ?? new Map<string, Set<string>>();
-            byTask.set(holder.worktreeRoot, new Set(files));
-            held.set(taskId, byTask);
+    try {
+        for (const holder of holders) {
+            const taskIds = input.taskId !== undefined ? [input.taskId] : await taskIdsWithRecords(holder.worktreeRoot);
+            for (const taskId of taskIds) {
+                const files = await recordFilesOf(holder.worktreeRoot, taskId);
+                if (files.length === 0) continue;
+                const byTask = held.get(taskId) ?? new Map<string, Set<string>>();
+                byTask.set(holder.worktreeRoot, new Set(files));
+                held.set(taskId, byTask);
+            }
         }
+    } catch (error) {
+        // **A record source that cannot be read is an undetermined answer, not an empty set.** The empty set means nothing
+        // would be lost, which is exactly what a caller must not be told when a directory was unreadable (AC-4).
+        if (error instanceof RecordSourceUnreadable) throw new UniqueCopiesUndetermined(error.message);
+        throw error;
     }
 
     const reported: UniqueCopy[] = [];
@@ -1171,19 +1149,52 @@ async function directoryWorktrees(root: string): Promise<{ ok: true; paths: stri
     }
 }
 
-/** The tasks a checkout holds **records** of — content, not the existence of a directory. */
+/**
+ * The tasks a checkout holds **records** of — content, not the existence of a directory.
+ *
+ * **Both halves of the question, not one.** The task list used to come from `.kata/tasks/<id>` directories only, while the
+ * record surfaces a task has are enumerated from content (the task directory plus the flat evidence store's `<taskId>-`
+ * prefix). So a task whose records exist *only* on the evidence surface — no task directory at all — was invisible in the
+ * unscoped form while the scoped form (`uniqueCopies({taskId})`) reported its files: the two halves of one enumeration
+ * disagreeing, which is the class this change exists to remove (measured by an independent review).
+ */
 async function taskIdsWithRecords(worktreeRoot: string): Promise<string[]> {
+    const ids = new Set<string>();
+    const tasksRoot = join(worktreeRoot, '.kata', 'tasks');
+    let entries: Dirent[];
     try {
-        const entries = await readdir(join(worktreeRoot, '.kata', 'tasks'), { withFileTypes: true });
-        const ids: string[] = [];
-        for (const entry of entries) {
-            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-            if ((await recordFilesOf(worktreeRoot, entry.name)).length > 0) ids.push(entry.name);
-        }
-        return ids;
-    } catch {
-        return [];
+        entries = await readdir(tasksRoot, { withFileTypes: true });
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new RecordSourceUnreadable(tasksRoot, error as Error);
+        entries = [];
     }
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        if ((await recordFilesOf(worktreeRoot, entry.name)).length > 0) ids.add(entry.name);
+    }
+    // The evidence store is flat and keys its files by `<taskId>-`: a task with records there and no task directory is a
+    // holder too.
+    const evidenceRoot = join(worktreeRoot, '.kata', 'evidence');
+    let evidenceFiles: string[];
+    try {
+        evidenceFiles = (await readdir(evidenceRoot, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => entry.name);
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new RecordSourceUnreadable(evidenceRoot, error as Error);
+        evidenceFiles = [];
+    }
+    for (const file of evidenceFiles) {
+        const separator = file.indexOf('-');
+        if (separator > 0) ids.add(file.slice(0, separator));
+    }
+    return [...ids].sort();
+}
+
+/**
+ * **The tasks a checkout holds records of — the reader other surfaces ask**, so "which tasks does this checkout have
+ * records for" is answered in one place instead of once per consumer.
+ */
+export async function tasksWithRecords(worktreeRoot: string): Promise<string[]> {
+    return taskIdsWithRecords(resolve(worktreeRoot));
 }
 
 /** The record files a checkout holds for a task, across every surface, as `<surface>/<file>` paths. */
@@ -1214,8 +1225,10 @@ async function filesUnder(directory: string): Promise<string[]> {
         let entries: Dirent[];
         try {
             entries = await readdir(current, { withFileTypes: true });
-        } catch {
-            return;
+        } catch (error) {
+            // Absence is not unreadability (see `RecordSourceUnreadable`).
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+            throw new RecordSourceUnreadable(current, error as Error);
         }
         for (const entry of entries) {
             const next = prefix === '' ? entry.name : `${prefix}/${entry.name}`;

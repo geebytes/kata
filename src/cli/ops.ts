@@ -285,14 +285,13 @@ async function worktreeOwner(root: string, path: string): Promise<string | undef
     const entries = await listWorktrees(root);
     const match = entries.find((entry) => resolve(entry.path) === target);
     if (match && match.tasks.length > 0) return match.tasks[0];
-    // A worktree git does not list (a fixture, or a path that is not a linked checkout yet) still carries its task
-    // directory, and reading it directly keeps the guard reachable for those paths too.
-    try {
-        const candidates = await readdir(join(target, '.kata', 'tasks'));
-        return candidates.filter((name) => !name.startsWith('.')).sort()[0];
-    } catch {
-        return undefined;
-    }
+    // A worktree git does not list (a fixture, or a path that is not a linked checkout yet) still carries records, and the
+    // same content reader answers for it — **not a directory name**. The fallback used to take the first name under
+    // `.kata/tasks` with no content check, so a stray directory named anything made this report a task the worktree does
+    // not hold (measured by an independent review).
+    const { tasksWithRecords } = await import('../core/layout.js');
+    const held = await tasksWithRecords(target);
+    return held[0];
 }
 
 // **`RETIRED_TELEMETRY_FLAGS` and `RETIRED_TELEMETRY_FIELDS` were deleted with the command that enforced them.** They were

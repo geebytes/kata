@@ -28,10 +28,12 @@ function repo(name: string): string {
 afterEach(() => {
     for (const root of roots.splice(0)) {
         // A case may have removed read permission; restore it so the cleanup can run.
-        try {
-            chmodSync(join(root, '.kata', 'worktrees'), 0o755);
-        } catch {
-            // Nothing to restore.
+        for (const path of [join(root, '.kata', 'worktrees'), join(root, '.kata', 'worktrees', 'held', '.kata', 'tasks', 'held')]) {
+            try {
+                chmodSync(path, 0o755);
+            } catch {
+                // Nothing to restore.
+            }
         }
         rmSync(root, { recursive: true, force: true });
     }
@@ -52,6 +54,22 @@ describe('cannot determine is not empty', () => {
         // answer rather than an error — otherwise every archive on a clean change would refuse.
         const primary = repo('none');
         expect(await uniqueCopies({ root: primary })).toEqual([]);
+    });
+
+    it('raises when a worktree record directory cannot be read, not only when .kata/worktrees cannot', async () => {
+        // **The other source of the same question.** The distinction was pinned for the worktrees directory and not for a
+        // record directory: `filesUnder` swallowed every error, so a worktree whose task directory was mode 000 answered `[]`
+        // — "nothing would be lost" about records nobody could read (measured by an independent review). Both sources raise.
+        const primary = repo('records-unreadable');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
+        chmodSync(join(worktree, '.kata', 'tasks', 'held'), 0o000);
+        try {
+            await expect(uniqueCopies({ root: primary })).rejects.toBeInstanceOf(UniqueCopiesUndetermined);
+        } finally {
+            chmodSync(join(worktree, '.kata', 'tasks', 'held'), 0o755);
+        }
     });
 
     it('names what it could not determine', async () => {

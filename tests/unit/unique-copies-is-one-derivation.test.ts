@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { uniqueCopies } from '../../src/core/layout.js';
 
@@ -92,6 +92,60 @@ describe('unique copies is one derivation', () => {
         const { recordsRoot } = await import('../../src/core/layout.js');
         // From inside the worktree, both readers must name the same place.
         expect(recordsRoot(worktree, 'held')).toBe(primary);
+    });
+
+    it('finds a task whose records exist only on the evidence surface, with no task directory at all', async () => {
+        // **The two halves of one enumeration.** The task list came from `.kata/tasks/<id>` directories while the record
+        // surfaces are enumerated from content (the task directory plus the evidence store's `<taskId>-` prefix), so a task
+        // with records only in the evidence store was invisible to the unscoped form while the scoped form reported its
+        // files (measured by an independent review). Both forms must answer the same question.
+        const primary = repo('evidence-only');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'evidence'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'evidence', 'held-AC-1.json'), '{}\n');
+
+        const unscoped = (await uniqueCopies({ root: primary })).filter((copy) => copy.taskId === 'held');
+        const scoped = await uniqueCopies({ root: primary, taskId: 'held' });
+
+        expect(scoped.map((copy) => copy.path)).toEqual(['evidence/held-AC-1.json']);
+        expect(unscoped.map((copy) => copy.path)).toEqual(scoped.map((copy) => copy.path));
+    });
+
+    it('asks the model for the guard, so a worktree outside the root is not removed with its only copy', async () => {
+        // **The removal guard is a consumer of the answer, and it asked a second derivation.** `worktreeOnlyRecords` had
+        // its own enumeration and comparison; on an outside-root worktree holding the only copy of a record it answered
+        // `[]` while the model named the file, so the guard let the removal through and the only copy was deleted
+        // (measured by an independent review, in the data-loss direction). This drives the guard, not the report.
+        const primary = repo('guard');
+        // A **real** linked checkout, outside the root: that is the shape `worktree create --path` produces, and the shape
+        // the model keeps (a directory that is not a linked checkout is not a holder at all).
+        const outside = join(dirname(primary), `${basename(primary)}-outside`);
+        roots.push(outside);
+        execFileSync('git', ['worktree', 'add', '-q', outside, '-b', 'outside-branch'], { cwd: primary });
+        mkdirSync(join(outside, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(outside, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
+
+        const { removeWorktreeSafely } = await import('../../src/workflow/worktree.js');
+        const removal = await removeWorktreeSafely({ root: primary, path: outside, taskId: 'held' });
+
+        expect(removal.refusedBecause).toBe('worktree-only-records');
+        expect(removal.removed).toBe(false);
+        expect(removal.worktreeOnlyRecords).toContain('tasks/judge.json');
+    });
+
+    it('asks the content reader for the tasks a checkout holds, so a state file is not the test', async () => {
+        // **The same question, one more surface.** The worktree listing answered "which tasks are here" by the existence of
+        // `current-state.json`, and `worktreeOwner` fell back to the first directory name under `.kata/tasks` with no content
+        // check — so a worktree holding review records and no state file read as holding nothing, and a stray directory made
+        // it report a task it does not hold (both measured by an independent review).
+        const primary = repo('listing');
+        const worktree = join(primary, '.kata', 'worktrees', 'held');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'held'), { recursive: true });
+        writeFileSync(join(worktree, '.kata', 'tasks', 'held', 'judge.json'), '{}\n');
+        mkdirSync(join(worktree, '.kata', 'tasks', 'stray'), { recursive: true });
+
+        const { tasksWithRecords } = await import('../../src/core/layout.js');
+        expect(await tasksWithRecords(worktree)).toEqual(['held']);
     });
 
     it('an absent task yields an empty answer, and a task with nothing yields the same', async () => {
