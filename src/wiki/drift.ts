@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { computeFileHash, inferProvenance } from './record.js';
+import { computeFileHash } from './record.js';
 import { statementForPage } from './llmwiki.js';
 import { normalizeId, readWikiRecords, readWikiRecordsWithIssues, updateWikiRecord } from './store.js';
 import type { WikiStatus as WikiRecordStatus } from './record.js';
