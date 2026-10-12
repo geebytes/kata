@@ -16,7 +16,7 @@ import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
 import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
-import { ledgerVerdict } from '../store/verdict.js';
+import { ledgerTierForDeclaredPaths, ledgerVerdict, tierOverrideFromPlan } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
 import { readSubmission } from '../producers/submission.js';
 import { verifyAll } from '../producers/verifiers.js';
@@ -30,7 +30,7 @@ import { probesFor } from '../kernel/discovery.js';
 import { defaultPolicy, loadPolicy } from '../kernel/policy.js';
 import { diffSubjects, subjectOf } from '../kernel/subject.js';
 import { validateArtefact } from '../core/schema.js';
-import { classifyRisk, policyFloorChangeClaims, resolveTier } from '../kernel/risk.js';
+import { classifyRisk, policyFloorChangeClaims } from '../kernel/risk.js';
 import { ASSURANCE_LEVELS, LEGACY_ASSURANCE_LEVELS, RISK_CLASSES, SEVERITIES, isCurrentAssuranceLevel, type Challenge, type CurrentAssuranceLevel, type Claim, type RiskClass, type Severity, type TierName, type VerdictProducer } from '../kernel/types.js';
 
 export type LedgerCommandOptions = { root: string; changeId: string };
@@ -1235,16 +1235,21 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
                 const diff = diffSubjects({ revision: 'rev:reference', pathDigests: referenceRead.digests }, current);
                 return [...diff.changed, ...diff.added, ...diff.removed];
             })();
-        const risk = classifyRisk({ paths: changed.length > 0 ? changed : Object.keys(current.pathDigests), policy: ledger.policy });
-        // **The tier the decision will use, not the classification alone.** These differed on a real change — the plan said
-        // `standard`, the decision said `strict` — because only one of them applied the policy's ceiling, so the plan's
-        // required evidence and risk classes were computed for a weaker tier than its own gate. `resolveTier` is that rule
-        // in one place, and `--tier` still wins.
         const tierFlagPlan = argValue(argv, '--tier');
-        const plannedTier = resolveTier({
-            classification: risk,
+        const overrideRead = tierFlagPlan === undefined
+            ? { ok: true as const, override: undefined }
+            : tierOverrideFromPlan({ tierOverride: tierFlagPlan }, ledger.policy);
+        if (!overrideRead.ok) {
+            fail({ command: 'ledger plan', error: overrideRead.why });
+            return;
+        }
+        // **Gate tier is a declaration fact, not a delta fact.** The changed set below still scopes review focus, while
+        // this shared resolver includes every declared high-floor path and is also used by request construction and decide.
+        const { tier: plannedTier } = await ledgerTierForDeclaredPaths({
+            root: options.root,
+            changeId,
             policy: ledger.policy,
-            ...(tierFlagPlan === undefined ? {} : { override: tierFlagPlan as TierName }),
+            override: overrideRead.override,
         });
         const c0Raw = argValue(argv, '--c0');
         const plan = planReview({
@@ -1274,15 +1279,20 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
         const planWithClasses = defectClasses === undefined
             ? (storedClasses === undefined ? plan : { ...plan, defectClasses: storedClasses })
             : { ...plan, defectClasses };
+        // The override is part of the frozen planning input. Without it, a direct `ledger decide --tier` is a different
+        // command from the request the reviewer receives, which recreates the split this resolver removes.
+        const persistedPlan = tierFlagPlan === undefined
+            ? planWithClasses
+            : { ...planWithClasses, tierOverride: overrideRead.override };
         // Written down as well as printed: the reading sets are the input `focus` narrows, and a plan nobody can read
         // afterwards is a printout rather than a record.
-        await writePlan(options.root, changeId, planWithClasses);
+        await writePlan(options.root, changeId, persistedPlan);
         // The envelope is reported where the operator looks, and it comes from the policy rather than a second derivation:
         // a plan that says what a review must produce is incomplete without the limits it must produce it within.
         emit({
             ok: true,
             command: 'ledger plan',
-            plan,
+            plan: persistedPlan,
             stored: 'plan.json',
             envelope: envelopeFor(ledger.policy),
             // The plan is half of the question, so a re-plan can move it on its own — and it did, silently, until an

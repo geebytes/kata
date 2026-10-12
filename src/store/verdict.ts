@@ -176,6 +176,46 @@ export type LedgerVerdict =
     | { kind: 'unreadable'; detail: string }
     | { kind: 'decided'; tier: TierName; claims: number; assurance: AssuranceLevel; subjectRevision: string; decision: Decision };
 
+
+/** Read the explicit tier decision stored by `ledger plan`, refusing an unknown spelling rather than silently weakening a gate. */
+export function tierOverrideFromPlan(plan: unknown, policy: Ledger['policy']):
+    | { ok: true; override: TierName | undefined }
+    | { ok: false; why: string } {
+    if (typeof plan !== 'object' || plan === null || !Object.hasOwn(plan, 'tierOverride')) {
+        return { ok: true, override: undefined };
+    }
+    const override = (plan as { tierOverride?: unknown }).tierOverride;
+    if (typeof override !== 'string' || !Object.hasOwn(policy.tiers, override)) {
+        return { ok: false, why: 'the stored plan carries an unknown tier override, so the gate tier cannot be derived' };
+    }
+    return { ok: true, override: override as TierName };
+}
+
+/**
+ * The one derivation of a ledger gate tier: its full declared content surface, not only the paths changed in this plan.
+ * `changedPaths` still scopes reviewer focus; it cannot lower the tier or its quorum when an unchanged declared path
+ * is high risk.
+ */
+export async function ledgerTierForDeclaredPaths(input: {
+    root: string;
+    changeId: string;
+    policy: Ledger['policy'];
+    override?: TierName;
+    paths?: readonly string[];
+}): Promise<{ classification: ReturnType<typeof classifyRisk>; tier: TierName }> {
+    const classification = classifyRisk({
+        paths: input.paths ?? await declaredPaths(input.root, input.changeId),
+        policy: input.policy,
+    });
+    return {
+        classification,
+        tier: resolveTier({
+            classification,
+            policy: input.policy,
+            ...(input.override === undefined ? {} : { override: input.override }),
+        }),
+    };
+}
 /**
  * **Can this ledger be read as a decision?** — a pure question about a ledger, so the two surfaces that ask it cannot
  * answer differently.
@@ -279,13 +319,20 @@ export async function ledgerVerdict(input: {
     // patterns, and the classification reads paths; a change to what evidence is accepted can sit under a pattern no rule
     // names. So the ledger route never decides below the policy's declared floor — an explicit `--tier` still wins,
     // because an operator who names a tier is making the decision this bound exists to keep honest.
-    const classification = classifyRisk({
-        paths: await declaredPaths(input.root, input.changeId),
+    const storedPlan = await readPlanState(input.root, input.changeId);
+    if (storedPlan.kind === 'unreadable') {
+        return { kind: 'unreadable', detail: `plan.json exists and cannot be read (${storedPlan.detail})` };
+    }
+    const persistedOverride = storedPlan.kind === 'usable'
+        ? tierOverrideFromPlan(storedPlan.value, ledger.policy)
+        : { ok: true as const, override: undefined };
+    if (!persistedOverride.ok) return { kind: 'unreadable', detail: persistedOverride.why };
+    const { classification, tier } = await ledgerTierForDeclaredPaths({
+        root: input.root,
+        changeId: input.changeId,
         policy: ledger.policy,
+        override: input.tier ?? persistedOverride.override,
     });
-    // One derivation for the tier, shared with `ledger plan`: the ceiling is a rule about the tier, and a command that
-    // ignored it reported a weaker tier than the one being enforced.
-    const tier: TierName = resolveTier({ classification, policy: ledger.policy, ...(input.tier === undefined ? {} : { override: input.tier }) });
     // **The quorum is assembled from independent readings, not from reviewer names.** `groupByProducer` groups verdicts by
     // the run that decided them, so two runs are two observations and one run reported twice is one. The old shape handed
     // every producer the ledger's whole verdict list, which made `disputed` unreachable (one verdict per item) and made

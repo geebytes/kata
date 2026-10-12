@@ -74,6 +74,8 @@
 - 所有嵌套 record reader 遵循 `absent | usable | unreadable`：只有 ENOENT 是 absent；parse/schema 失败永远具名 unreadable。
 - policy/never-content/statement-in-subject 的保留行为在设计和测试中写明边界，不用缩窄断言掩盖。
 
+
+- **R1-F1 repair — tier/quorum 是同一个 declared-subject 的事实**：高风险路径即使本轮未改动，只要仍在 normalized declared paths 中，也必须同时抬高 plan、ReviewRequest 和最终 verdict；`changedPaths` 只用于确定 reviewer 的 focus，绝不能用来降低 gate tier。三处通过同一个 resolver 得到 classification、tier 与 reviewer quorum；plan 若携带显式 `--tier` override，就把该 override 与 tier 一同持久化，后续消费者使用同一输入。request 会重算并拒绝不一致的 plan，而不是把弱合同交给 reviewer。
 **RED 证据：** 伪造 parent/child、缺 revision、迁移后 stale impact、空事实/错误 id、嵌套 malformed JSON 各有最小失败测试。
 
 ### Slice E — seal 内容确实属于该 declaration

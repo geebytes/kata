@@ -28,6 +28,7 @@ import { planDigestOf, questionForComparison, declaredPaths, freezeSubject, read
 import { strengthOf } from '../kernel/evidence.js';
 import { diffSubjects } from '../kernel/subject.js';
 import { readCurrentTaskRevisionState, revisionIsCurrent, revisionStatus } from '../workflow/revision.js';
+import { ledgerTierForDeclaredPaths, tierOverrideFromPlan } from './verdict.js';
 import type { EvidenceType } from '../kernel/types.js';
 
 export type ClaimRequest = {
@@ -102,6 +103,7 @@ export async function buildReviewRequest(input: {
     const stored = storedPlan.value;
     const plan = stored as {
         tier?: string;
+        tierOverride?: unknown;
         readingSets?: Array<{ claimId: string; paths: string[] }>;
         requiredEvidence?: Array<{ claimId: string; types: EvidenceType[]; minimumStrength: number }>;
         discovery?: { deadlineToolCalls: number | null };
@@ -123,6 +125,21 @@ export async function buildReviewRequest(input: {
     const loopReplay = await readLoopReplay(input.root, input.changeId);
     const declaredClasses = declaredDefectClasses(stored);
     const declaredForInstruments = await declaredPaths(input.root, input.changeId);
+    const planOverride = tierOverrideFromPlan(stored, ledger.policy);
+    if (!planOverride.ok) return { ok: false, why: planOverride.why };
+    const tierResolution = await ledgerTierForDeclaredPaths({
+        root: input.root,
+        changeId: input.changeId,
+        policy: ledger.policy,
+        override: planOverride.override,
+        paths: declaredForInstruments,
+    });
+    if (plan.tier !== tierResolution.tier) {
+        return {
+            ok: false,
+            why: `the stored plan tier ${String(plan.tier)} does not match the current declared-surface tier ${tierResolution.tier}; re-run \`kata-cli ledger plan --change ${input.changeId}\` and freeze the new subject before requesting review`,
+        };
+    }
     const missingGenerators = (await unbackedDefectClasses(declaredClasses, input.root, declaredForInstruments, input.changeId)).map((entry) => entry.class);
     // **The request speaks for the sealed revision, or it is not handed to a reviewer at all.** Measured by an independent
     // review on a real flow: this function copied `ledger.subject.revision` straight into the request, and the frozen
@@ -140,7 +157,7 @@ export async function buildReviewRequest(input: {
     const ledgerForDrift = await readLedger(input.root, input.changeId);
     const current = await freezeSubject({
         root: input.root,
-        paths: await declaredPaths(input.root, input.changeId),
+        paths: declaredForInstruments,
         ...questionForComparison(ledgerForDrift.subject, ledgerForDrift.claims, await planDigestOf(input.root, input.changeId)),
     });
     if (!current.ok) {
@@ -224,7 +241,7 @@ export async function buildReviewRequest(input: {
             version: 1,
             changeId: input.changeId,
             subjectRevision: ledger.subjectAsDeclared?.revision ?? ledger.subject.revision,
-            tier: plan.tier ?? 'unknown',
+            tier: tierResolution.tier,
             ...(declaredClasses.length > 0 ? { defectClasses: declaredClasses } : {}),
             ...(missingGenerators.length > 0 ? { missingGenerators } : {}),
             // The loop's record for this change, so the round can tell "we are fixing our own fixes" from "this class keeps

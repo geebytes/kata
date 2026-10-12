@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initLayout } from '../../src/core/layout.js';
 import { runLedgerCommand } from '../../src/cli/ledger.js';
 import { readLedger, writePlan, writePolicy } from '../../src/store/ledger.js';
+import { ledgerVerdict } from '../../src/store/verdict.js';
 import { buildReviewRequest, verifyAgainstRequest } from '../../src/store/review-request.js';
 import { defaultPolicy } from '../../src/kernel/policy.js';
 import { MIN_STRENGTH_BY_SEVERITY } from '../../src/kernel/evidence.js';
@@ -73,6 +74,7 @@ async function declaredRoot(): Promise<string> {
     // return a constant tier did not redden this case, which makes it decorative. These values appear nowhere else.
     await writePlan(root, changeId, {
         tier: 'standard',
+        tierOverride: 'standard',
         readingSets: [{ claimId: 'C-1', paths: ['src/a.ts', 'src/b.ts'], truncated: false }, { claimId: 'C-2', paths: ['src/b.ts'], truncated: false }],
         // The requirement is real, so the gap reporting below has something to report: with an empty requirement set the
         // request is satisfied by construction and the "every gap names its claim" case would be vacuous (measured while
@@ -202,5 +204,59 @@ describe('the request hands over the values it names', () => {
         } else {
             throw new Error('the moved subject kept the old question in the request without withholding it');
         }
+    });
+
+    it('derives the plan, request, and final quorum from the same complete declared surface', async () => {
+        const root = await tempRoot();
+        await mkdir(join(root, 'src', 'kernel'), { recursive: true });
+        await writeFile(join(root, 'src', 'kernel', 'decide.ts'), 'export const tierGate = true;\n');
+        await writeTaskRecord(root, {
+            id: changeId,
+            phase: 'hardVerify',
+            acceptance: [{ id: 'AC-1', statement: 'The thing holds.' }],
+            ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'],
+        });
+        await writePolicy(root, changeId, defaultPolicy());
+        expect((await ledger(root, ['claim', 'add', '--id', 'C-1', '--statement', 'a.ts holds', '--risk-class', 'consistency', '--severity', 'major', '--depends-on', 'path:src/a.ts'])).ok).toBe(true);
+
+        // Establish a sealed baseline containing the high-floor path, then change only the ordinary path.
+        expect((await ledger(root, ['plan'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        const { createTaskRevisionIfChanged } = await import('../../src/workflow/revision.js');
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'], checkIds: [] });
+        await writeFile(join(root, 'src', 'a.ts'), 'export const holds = false;\n');
+        expect((await ledger(root, ['plan'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'], checkIds: [] });
+
+        const plan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string };
+        const request = await buildReviewRequest({ root, changeId });
+        const verdict = await ledgerVerdict({ root, changeId });
+
+        expect(plan.tier).toBe('security');
+        expect(request.ok, JSON.stringify(request)).toBe(true);
+        if (!request.ok || verdict.kind !== 'decided') return;
+        expect(request.request.tier).toBe(plan.tier);
+        expect(verdict.tier).toBe(plan.tier);
+        expect(defaultPolicy().tiers[verdict.tier].reviewers).toBe(2);
+
+        expect((await ledger(root, ['plan', '--tier', 'standard'])).ok).toBe(true);
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'], checkIds: [] });
+        const overriddenPlan = JSON.parse(await (await import('node:fs/promises')).readFile(join(root, '.kata', 'tasks', changeId, 'review', 'plan.json'), 'utf8')) as { tier: string; tierOverride?: string };
+        const overriddenRequest = await buildReviewRequest({ root, changeId });
+        const overriddenVerdict = await ledgerVerdict({ root, changeId });
+        expect(overriddenPlan).toMatchObject({ tier: 'standard', tierOverride: 'standard' });
+        expect(overriddenRequest.ok, JSON.stringify(overriddenRequest)).toBe(true);
+        if (!overriddenRequest.ok || overriddenVerdict.kind !== 'decided') return;
+        expect(overriddenRequest.request.tier).toBe(overriddenPlan.tier);
+        expect(overriddenVerdict.tier).toBe(overriddenPlan.tier);
+
+        await writePlan(root, changeId, { ...plan, tier: 'strict' });
+        expect((await ledger(root, ['freeze'])).ok).toBe(true);
+        await createTaskRevisionIfChanged({ root, taskId: changeId, ownedPaths: ['src/a.ts', 'src/kernel/decide.ts'], checkIds: [] });
+        const mismatchedRequest = await buildReviewRequest({ root, changeId });
+        expect(mismatchedRequest.ok).toBe(false);
+        if (!mismatchedRequest.ok) expect(mismatchedRequest.why).toMatch(/stored plan tier strict.*security/i);
     });
 });

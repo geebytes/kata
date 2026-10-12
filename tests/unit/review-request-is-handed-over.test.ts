@@ -96,6 +96,7 @@ async function planned(): Promise<{ subjectRevision: string }> {
     });
     await writePlan(dir, changeId, {
         tier: 'standard',
+        tierOverride: 'standard',
         readingSets: [{ claimId: 'C1', paths: ['src/a.ts'], truncated: false }],
         requiredEvidence: [{ claimId: 'C1', types: ['executable_falsifier'], minimumStrength: 3 }],
         discovery: { deadlineToolCalls: 200 },
@@ -219,6 +220,7 @@ describe('a review request is handed over and checked, rather than hoped for', (
         const dir = root;
         await writePlan(dir, changeId, {
             tier: 'standard',
+            tierOverride: 'standard',
             readingSets: [{ claimId: 'C1', paths: ['src/a.ts'], truncated: false }],
             requiredEvidence: [{ claimId: 'C1', types: ['executable_falsifier'], minimumStrength: 3 }],
             discovery: { deadlineToolCalls: 200 },
