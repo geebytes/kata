@@ -130,9 +130,17 @@ describe('a recurrence report does not override the ladder', () => {
     it('AC-4: still speaks where the ladder admits a repair, and the repair entry agrees with it', async () => {
         // The control: with a blocking finding bound to the current revision the same diagnostic still routes, because the
         // repair it names is one Build admits. Deleting the route outright would fail here.
+        //
+        // **Both halves of that sentence are asserted.** An independent review round found that this comment claimed the
+        // positive pairing while the case only asserted the router's route plus the entry's *refusal* in the empty state —
+        // so "the repair it names is one Build admits" was asserted nowhere here, and the pairing is the property this change
+        // exists to hold: a route whose destination refuses is the defect, and a route is only fixed when the door opens.
         const admitting = await fixtureWith({ reviewRecord: 'blocking-finding' });
         expect(admitting.summary.blockingFindings).toBeGreaterThan(0);
         expect(suggestCandidateAction('review', admitting.summary)).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
+
+        const admitted = await authorizeRepair('review', admitting.root, taskId);
+        expect(admitted.authorized, admitted.denial).toBe(true);
 
         // And the refusal the router now agrees with: in the state with nothing at the bar, the repair entry refuses.
         const refusing = await fixtureWith();
@@ -251,11 +259,15 @@ describe('a recurrence report does not override the ladder', () => {
 
         expect(suggestCandidateAction('review', summary)).toMatchObject({ nextSkill: '/kata-build', reason: 'review_class_recurring' });
 
-        // **The published ordering, not the arithmetic.** The two routes carry a priority (`2150 + candidates.length` against
-        // `2100 + …`) which `listTaskCandidates` sorts by, so the sharper reading is the one an operator sees first. A third
-        // verifier measured that dropping the class route's priority below the id route's base stayed green: the ordering the
-        // numbers exist for was asserted nowhere. The absolute value is deliberately not pinned — it is a published hint, and
-        // pinning it would fail on an unrelated task count.
+        // **The published ordering, at equal counts — and its boundary, stated rather than assumed.** The two routes carry a
+        // priority whose *base* differs (`2150 + candidates.length` against `2100 + ids`), which `listTaskCandidates` sorts
+        // descending by. A third verifier measured that dropping the class route's priority below the id route's base stayed
+        // green: the ordering the numbers exist for was asserted nowhere. An independent review round then measured that the
+        // sentence this comment used to carry ("so the sharper reading is the one an operator sees first") was false in a
+        // regime this case cannot see: the class count is bounded by the number of stop-line classes while the id count is
+        // unbounded, so a change carrying 51 or more recurring ids publishes the higher number and sorts first. The claim and
+        // this comment now state the measured regime (equal counts) and its boundary; the absolute value is still not pinned,
+        // because it is a published hint and pinning it would fail on an unrelated task count.
         const classAction = suggestCandidateAction('review', summary);
         const idOnly = await fixtureWith({
             rounds: [
@@ -267,6 +279,25 @@ describe('a recurrence report does not override the ladder', () => {
         const idAction = suggestCandidateAction('review', idOnly.summary);
         expect(idAction.reason, JSON.stringify(idAction)).toBe('review_loop_recurring');
         expect(classAction.priority, `${classAction.priority} vs ${idAction.priority}`).toBeGreaterThan(idAction.priority!);
+    });
+
+    it('AC-4: a live class reading that is not a stop-line candidate leaves the id route to speak', async () => {
+        // **An independent review round's finding: C8's first clause needed a qualifier it omitted.** The class route fires only
+        // for a *stop-line* class, so a class reading that is present but not a candidate — a judgment class, or a mechanizable
+        // one that never recurred inside a repair — does not answer for the change; if an id reading is live too, that route
+        // answers instead. Without this case the qualifier was carried by prose alone, and the change's own origin-half case
+        // already demonstrates the shape (its live class reading carries `stopLineCandidate === false`).
+        const notACandidate = [
+            { at: '1', revisionId: 'rev-a', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+            { at: '2', revisionId: 'rev-b', blockingIds: ['F-1'], blockingCount: 1, findings: [{ id: 'F-1', severity: 'major', class: 'instrument-unsound', origin: 'original' }] },
+        ];
+        const { summary } = await fixtureWith({ rounds: notACandidate, reviewRecord: 'blocking-finding' });
+        const reading = (summary.reviewLoopClassRecurrence ?? []).find((entry) => entry.class === 'instrument-unsound');
+        expect(reading, 'the class reading must be live').toBeDefined();
+        expect(reading!.stopLineCandidate, 'and it must not be a stop-line candidate, or this case tests nothing').toBe(false);
+        expect(summary.reviewLoopRecurrence?.length, 'the id reading must be live as well').toBeGreaterThan(0);
+
+        expect(suggestCandidateAction('review', summary)).toMatchObject({ nextSkill: '/kata-build', reason: 'review_loop_recurring' });
     });
 
     it('AC-4: a class recurrence the design calls normal is not routed to a repair', async () => {
