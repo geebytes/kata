@@ -499,10 +499,11 @@ describe('a recurrence report does not override the ladder', () => {
         expect(stalled.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
         expect(suggestCandidateAction('review', stalled.summary)).toMatchObject({ nextSkill: '/kata-review', reason: 'escalate_review_without_progress' });
 
-        // (3) A state the invariants table owns — asserted because round 4 measured that the claims' clauses are conditional
-        //     on it, and that this entry's own route is one `kata-cli build` *refuses* (authorizeReviewRepair admits only a
-        //     finding at the bar, a superseded seal or a ledger deficit), which is this change's defect one layer up. The
-        //     table is consulted before any recurrence branch, so the recurrence route must stay silent here.
+        // (3) A state the invariants table owns: this entry's own route is one `kata-cli build` refuses for the same reason the
+        //     recurrence routes' was refused — the entry admits a finding at the bar, a ledger deficit or a superseded seal, and
+        //     none of those holds in a plain failed verify. It is asserted here as a neighbouring state of the acceptance
+        //     criteria, not as a claim about which branch answers which state: the claims in the ledger no longer describe the
+        //     router's output, and this fixture is what keeps that neighbouring behaviour pinned.
         const failedVerify = await fixtureWith({ reviewRecord: 'blocking-finding', verifyFailed: true });
         expect(failedVerify.summary.verifyResult, 'the failed verify must be readable and current').toBe('FAIL');
         expect(failedVerify.summary.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
@@ -511,15 +512,18 @@ describe('a recurrence report does not override the ladder', () => {
         expect(verifyAction.reason, JSON.stringify(verifyAction)).toBe('repair_failed_verify');
         expect(verifyAction.reason).not.toBe('review_class_recurring');
 
-        // (4) A ledger that has decided anything but `pass`: this branch sits *below* the recurrence routes (measured by round 4,
-        //     which found the design doc had the order backwards), so it answers because they are silent — the ladder admits
-        //     nothing in this state — not before them.
+        // (4) A ledger that has decided anything but `pass`, with a live stop-line class recurrence and nothing at the bar.
+        //     **The premise is asserted rather than assumed**, because a round measured that without it this block passes under
+        //     either branch order and therefore measures nothing: with the ladder admitting nothing the recurrence routes are
+        //     silent, so `satisfy_ledger_deficits` answers either way. What the block asserts is the state and its answer, not an
+        //     ordering.
         const failing = await fixtureWith();
         await seedFailingLedger(failing.root);
         const withLedger = await readUpstreamSummary(failing.root, taskId);
         expect(withLedger.ledger?.state, 'the ledger must have decided').toBe('decided');
         expect(withLedger.ledger?.verdict, 'and not have passed').not.toBe('pass');
         expect(withLedger.reviewLoopClassRecurrence?.some((entry) => entry.stopLineCandidate), 'with the class reading still live').toBe(true);
+        expect(withLedger.blockingFindings + withLedger.majorFindings, 'and nothing at the bar, or the recurrence routes would speak instead').toBe(0);
         const ledgerAction = suggestCandidateAction('review', withLedger);
         expect(ledgerAction.reason, JSON.stringify(ledgerAction)).toBe('satisfy_ledger_deficits');
         expect(ledgerAction.nextSkill).toBe('/kata-build');
