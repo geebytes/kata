@@ -328,9 +328,18 @@ export async function collectSealPreflight(input: {
     for (const problem of anchors.problems) {
         deny(
             'falsifierAnchorUnusable',
-            `${problem.evidenceId}: ${problem.message}. Re-aim the anchor in your evidence submission and rewrite the set: `
-                + `\`kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"\``,
-            { evidenceId: problem.evidenceId, file: problem.file, problem: problem.message, reaimCommand: `kata-cli ledger evidence replace --change ${taskId} --file <your evidence submission> --reason "<why the anchor moved>"` },
+            `${problem.evidenceId}: ${problem.message}. Re-aim that one item: `
+                + `\`kata-cli ledger evidence replace --change ${taskId} --id ${problem.evidenceId} --file <item.json> --reason "<why the anchor moved>"\``,
+            {
+                evidenceId: problem.evidenceId,
+                file: problem.file,
+                problem: problem.message,
+                // **The narrow form, because the wide one loses evidence.** The refusal used to print
+                // `ledger evidence replace --file <set>`: replacing the set with what the author re-typed is how this
+                // repository lost items twice (measured 2026-10-12/13), and a refusal must not name a road that costs
+                // something the road is not about.
+                reaimCommand: `kata-cli ledger evidence replace --change ${taskId} --id ${problem.evidenceId} --file <item.json> --reason "<why the anchor moved>"`,
+            },
         );
     }
 

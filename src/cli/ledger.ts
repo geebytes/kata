@@ -14,7 +14,7 @@ import { oracleFor, requireDefectClass } from '../quality/defect-classes.js';
 import { argValue, switchPresent, flagPresent } from './invocation.js';
 import { outputResult } from './output.js';
 import { runProcess } from '../process/run.js';
-import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, replaceEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
+import { planDigestOf, questionForComparison, readLedger, reviewDir, declaredPaths, freezeSubject, writeSubject, writePolicy, appendClaim, appendEvidence, evidenceWriteConflict, replaceEvidence, replaceOneEvidence, recordVerdicts, restateClaim, recordChallenge, resolveChallenge, amendChallenge, challengeExists, ensureAssurance, setUsage, appendRun, ledgerReport, writePlan, readPlanState, appendProbe, readProbesState, answerProbe, frozenQuestionState, questionMovedRefusal, declaredSubjectRevision } from '../store/ledger.js';
 import { buildContext, containedPath } from '../store/verify-context.js';
 import { ledgerTierForDeclaredPaths, ledgerVerdict, tierOverrideFromPlan } from '../store/verdict.js';
 import { planReview } from '../producers/planner.js';
@@ -782,9 +782,45 @@ async function dispatchLedgerCommand(argv: string[], options: LedgerCommandOptio
         }
         if (action === 'replace') {
             const file = argValue(argv, '--file');
+            const oneId = argValue(argv, '--id');
             const reason = argValue(argv, '--reason');
-            if (file === undefined || reason === undefined || reason.trim() === '') {
-                fail({ command: 'ledger evidence replace', error: '--file <set.json> and --reason <why> are required: the one operation that may rewrite evidence must say why.' });
+            // **Two forms, one operation.** `--id` re-aims a single item and leaves every other item's binding byte-identical;
+            // `--file` replaces the whole set. The narrow form exists because the seal's own refusal used to print the wide
+            // one, and re-typing the set is how this repository lost evidence twice (measured 2026-10-12/13).
+            if (reason === undefined || reason.trim() === '') {
+                fail({ command: 'ledger evidence replace', error: '--reason <why> is required: the one operation that may rewrite evidence must say why.' });
+                return;
+            }
+            if (file === undefined) {
+                fail({ command: 'ledger evidence replace', error: '--file <set.json> (the wide form) or --file <item.json> with --id <evidence-id> (the narrow form) is required.' });
+                return;
+            }
+            if (oneId !== undefined) {
+                const one = readSubmission(JSON.parse(await readFile(file, 'utf8')) as unknown);
+                if (!one.ok) {
+                    fail({ command: 'ledger evidence replace', errors: one.errors });
+                    return;
+                }
+                const item = one.submission.evidence.find((entry) => entry.id === oneId);
+                if (item === undefined) {
+                    fail({
+                        command: 'ledger evidence replace',
+                        error: `--file holds no item with id ${oneId}, so there is nothing to re-aim: it holds ${one.submission.evidence.map((entry) => entry.id).join(', ') || '(nothing)'}.`,
+                    });
+                    return;
+                }
+                const narrow = await replaceOneEvidence(options.root, changeId, item, reason.trim());
+                emit({
+                    ok: true,
+                    command: 'ledger evidence replace',
+                    change: changeId,
+                    replaced: narrow.replaced,
+                    evidenceId: oneId,
+                    untouched: narrow.untouched,
+                    droppedVerdicts: narrow.droppedVerdicts,
+                    citationsWhoseReadingWasDropped: narrow.citationsWhoseReadingWasDropped,
+                    note: 'the narrow form: every item other than this one kept its binding byte-identical',
+                });
                 return;
             }
             const read = readSubmission(JSON.parse(await readFile(file, 'utf8')) as unknown);

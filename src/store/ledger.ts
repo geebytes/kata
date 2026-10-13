@@ -1398,6 +1398,46 @@ export async function appendEvidence(
  * command). Verdicts for replaced items are dropped with them: a verdict is a reading of content, and content that changed
  * has no reading. The reason travels in the run ledger, so a reader sees the correction and why it happened.
  */
+/**
+ * **Re-aim one recorded item, without handing over the whole set.**
+ *
+ * The reason this exists is the shape the seal's own refusal used to print: `ledger evidence replace --file <set>` replaces
+ * the set with what the author submits, so re-aiming a single anchor required re-typing every other item — and this repository
+ * lost evidence to that twice (measured 2026-10-12/13). The full-set form stays as it is (it is the one that may rewrite
+ * anything, and its invariants are valuable); this is the narrow door beside it: one id, one item, everything else untouched.
+ *
+ * It delegates to `replaceEvidence` with the assembled set rather than writing the file itself, so the invariants are one
+ * derivation — the dropped verdict for the changed item, the orphan check over claims, the run that records the reason, the
+ * challenges whose binding the change invalidates. An id the ledger does not hold is refused **by name**, because a re-aim
+ * that silently appends a new item would leave the old one in place with a stale anchor.
+ */
+export async function replaceOneEvidence(
+    root: string,
+    changeId: string,
+    item: Evidence,
+    reason: string,
+): Promise<{
+    replaced: number;
+    droppedVerdicts: string[];
+    reboundClaims: Array<{ claimId: string; evidenceIds: string[] }>;
+    citationsWhoseReadingWasDropped: Array<{ claimId: string; evidenceId: string }>;
+    /** The items this write left byte-identical, so the caller can see that nothing else moved. */
+    untouched: string[];
+}> {
+    const stored = (await readDocumentForWrite<Evidence[]>(root, changeId, FILES.evidence)) ?? [];
+    if (!stored.some((entry) => entry.id === item.id)) {
+        const held = stored.map((entry) => entry.id).sort();
+        throw new Error(
+            `the ledger holds no evidence item ${item.id}, so there is nothing to re-aim. `
+            + `It holds: ${held.length === 0 ? '(nothing)' : held.join(', ')}. Use \`ledger evidence add\` to record a new item.`,
+        );
+    }
+    const next = stored.map((entry) => (entry.id === item.id ? item : entry));
+    const untouched = stored.filter((entry) => entry.id !== item.id).map((entry) => entry.id);
+    const outcome = await replaceEvidence(root, changeId, next, reason);
+    return { ...outcome, untouched };
+}
+
 export async function replaceEvidence(
     root: string,
     changeId: string,
