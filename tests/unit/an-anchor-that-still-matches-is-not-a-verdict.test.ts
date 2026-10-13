@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as ts from 'typescript';
 import { anchorRefusal, locateAnchor } from '../../src/quality/falsifier-anchors.js';
 
 /**
@@ -25,13 +26,35 @@ describe('an anchor that still matches is not a verdict', () => {
     });
 
     it('reads no verdict: the seal path holds no verdict reader', () => {
-        // The property, stated as what the code may reach: the anchor half of the preflight reads files and counts, and the
-        // words it uses about its own scope say so. A later edit that imported the verdict reader into this path would redden
-        // the second assertion.
-        const functionStart = preflight.indexOf('export async function collectSealPreflight');
-        const nextExport = preflight.indexOf('\nexport ', functionStart + 1);
-        const scope = preflight.slice(functionStart, nextExport === -1 ? undefined : nextExport);
-        expect(scope).not.toMatch(/verdicts\.json|readVerdicts|recordVerdicts/u);
+        // Check the syntax rather than a few reader spellings: aliases, bracket access, and destructuring still read the
+        // forbidden property even when no particular helper name is present.
+        const source = ts.createSourceFile('seal-preflight.ts', preflight, ts.ScriptTarget.Latest, true);
+        const collect = source.statements.find(
+            (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && statement.name?.text === 'collectSealPreflight',
+        );
+        expect(collect).toBeDefined();
+
+        const propertyName = (node: ts.Node): string | undefined => {
+            if (ts.isPropertyAccessExpression(node)) return node.name.text;
+            if (ts.isElementAccessExpression(node)) {
+                const argument = node.argumentExpression;
+                return argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) ? argument.text : undefined;
+            }
+            if (ts.isBindingElement(node)) {
+                const name = node.propertyName ?? node.name;
+                return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+            }
+            return undefined;
+        };
+        const isVerdictsProperty = (name: string | undefined): boolean => name?.normalize('NFKC').replace(/[^a-z]/giu, '').toLowerCase() === 'verdicts';
+        const verdictReaders: string[] = [];
+        const visit = (node: ts.Node): void => {
+            if (isVerdictsProperty(propertyName(node))) verdictReaders.push(node.getText(source));
+            ts.forEachChild(node, visit);
+        };
+        visit(collect!);
+
+        expect(verdictReaders).toEqual([]);
         expect(preflight).toMatch(/no test run, no verdict/u);
     });
 
