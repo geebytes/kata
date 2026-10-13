@@ -206,7 +206,7 @@ export async function collectSealPreflight(input: {
                     'undeclaredChanges',
                     `The working tree holds ${undeclared.paths.length} change(s) the declared surface does not cover, so a revision frozen `
                     + `now would not be about them: ${undeclared.paths.join(', ')}. `
-                    + `Declare them (\`kata-cli scope change --change ${taskId} --add <path>\`, then \`kata-cli scope apply\`), or revert `
+                    + `Declare them (\`kata-cli scope change --change ${taskId} --add <path> --reason "<why it belongs to this change>"\`, then \`kata-cli scope apply --change ${taskId}\`), or revert `
                     + 'them, and seal again.',
                     { undeclaredChanges: undeclared.paths },
                 );

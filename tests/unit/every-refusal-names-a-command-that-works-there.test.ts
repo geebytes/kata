@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -37,6 +37,39 @@ const roots: string[] = [];
  * belongs here; the case below fails if one of the known sentences stops matching, so the vocabulary cannot rot silently.
  */
 const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|unknown action|unknown subcommand|unknown scope|requires --reason|is not a known|^usage:|not a function|Cannot read|is required|must be one of|requires a workspace-relative/i;
+
+/**
+ * **A refusal that names a flag is a refusal about arguments, and the sentence list is not the instrument.**
+ *
+ * Three review rounds measured this vocabulary missing parser sentences (`is required`, then `unknown action` / `must be one
+ * of` / `requires a workspace-relative`, then nine more: `--id and --statement are both required`, `a waiver needs --reason`,
+ * `--boundary must state the domain this claim closes over`, `no paths to freeze: ... pass --paths`, …). A hand list of
+ * sentences cannot be complete, and it rots: the parser's next refusal sentence passes the guard while its road may be
+ * unrunnable. The parser's refusals that are *about the arguments* all name a flag; the ones about the domain do not (they
+ * name the state: "the subject is not frozen", "the ledger holds no evidence item E1"). So the signal is the flag, and the
+ * case below derives its completeness from the family's own source instead of from this list.
+ */
+function namesAFlag(text: string): boolean {
+    return /--[a-z][a-z-]*/u.test(text);
+}
+
+/**
+ * The classifier the guard and the completeness case share. Both halves are load-bearing: the sentence list covers the
+ * parser's phrasings that name no flag (`unknown verb`, `not a function`), and the flag rule covers the sentences a list kept
+ * missing. Narrowing this back to the list alone fails the completeness case below, which is why the case exists.
+ */
+function isArgumentRefusal(text: string): boolean {
+    return USAGE_REFUSAL.test(text) || namesAFlag(text);
+}
+
+/** The family the entry point dispatches a printed road to, so an unrunnable road is run rather than described. */
+async function drivePrintedAny(root: string, changeId: string, command: string): Promise<string> {
+    const argv = argvOf(command);
+    if (argv[0] === 'ledger') return ledgerReply(root, changeId, argv.slice(1));
+    if (argv[0] === 'scope') return scopeReply(root, changeId, argv.slice(1));
+    throw new Error(`this guard drives the ledger and scope families; it does not know how to run: ${command}`);
+}
+
 
 async function git(root: string, args: string[]): Promise<void> {
     await run('git', args, { cwd: root });
@@ -116,10 +149,25 @@ function argvOf(command: string): string[] {
  * helper stripped no more than the entry point's name and handed `ledger …` to the ledger dispatcher, which answered
  * `unknown verb "ledger"` — a usage refusal manufactured by the harness, not by the refusal under test.
  */
-async function drivePrinted(root: string, changeId: string, command: string): Promise<string> {
-    const argv = argvOf(command);
-    if (argv[0] === 'ledger') return ledgerReply(root, changeId, argv.slice(1));
-    throw new Error(`this guard drives the ledger family; it does not know how to run: ${command}`);
+async function scopeReply(root: string, changeId: string, argv: string[]): Promise<string> {
+    const chunks: string[] = [];
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+        chunks.push(String(chunk));
+        return true;
+    });
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+        const { runScopeCommand } = await import('../../src/cli/scope.js');
+        const withChange = argv.includes('--change') ? argv : [...argv, '--change', changeId];
+        await runScopeCommand(withChange, root);
+        return chunks.join('');
+    } catch (error) {
+        return `${chunks.join('')}\n${(error as Error).message}`;
+    } finally {
+        stdout.mockRestore();
+        process.exitCode = previousExitCode;
+    }
 }
 
 const seal = (root: string, taskId: string) => runCommand('build', taskId, root, {
@@ -141,8 +189,9 @@ describe('every refusal this change adds names a command that works there', () =
 
         for (const command of commands) {
             expect(command, 'the change id is in hand, so it must not be a placeholder').not.toMatch(/--change </);
-            const reply = await drivePrinted(root, taskId, command);
+            const reply = await drivePrintedAny(root, taskId, command);
             expect(reply, `the printed road must be a command the CLI accepts: ${command} -> ${reply}`).not.toMatch(USAGE_REFUSAL);
+            expect(isArgumentRefusal(reply), `the printed road must not come back as a refusal about the arguments: ${command} -> ${reply}`).toBe(false);
         }
     });
 
@@ -158,7 +207,7 @@ describe('every refusal this change adds names a command that works there', () =
         expect(commands.length, 'this refusal must name a road as well').toBeGreaterThan(0);
         for (const command of commands) {
             expect(command).not.toMatch(/--change </);
-            expect(await drivePrinted(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);
+            expect(await drivePrintedAny(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);
         }
     });
 
@@ -176,7 +225,7 @@ describe('every refusal this change adds names a command that works there', () =
         expect(commands.length, 'the anchor refusal must name a road').toBeGreaterThan(0);
         for (const command of commands) {
             expect(command).not.toMatch(/--change </);
-            expect(await drivePrinted(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);
+            expect(await drivePrintedAny(root, taskId, command), `printed road: ${command}`).not.toMatch(USAGE_REFUSAL);
         }
     });
 
@@ -205,5 +254,63 @@ describe('every refusal this change adds names a command that works there', () =
         for (const sentence of parserSentences) {
             expect(sentence, `this parser refusal must be recognised as a usage refusal: ${sentence}`).toMatch(USAGE_REFUSAL);
         }
+    });
+
+    it('covers every argument refusal the family\'s own source produces, so the list cannot rot', async () => {
+        // **Completeness derived from the source, not asserted by hand.** The parser refuses in two kinds of sentence: the ones
+        // about the arguments (they name a flag) and the ones about the domain (they name the state). This reads the family's
+        // own `fail({ ... error: ... })` sentences and requires the guard's predicate to recognise every flag-naming one, so a
+        // new argument refusal in `src/cli/ledger.ts` fails here until the vocabulary covers it — which is what three review
+        // rounds had to find by hand instead.
+        const source = await readFile(join(process.cwd(), 'src', 'cli', 'ledger.ts'), 'utf8');
+        const sentences: string[] = [];
+        for (const match of source.matchAll(/fail\(\{([\s\S]{0,400}?)\}\)/gu)) {
+            const body = match[1];
+            const error = /error:\s*(?:'((?:\\.|[^'\\])*)'|`((?:\\.|[^`\\])*)`)/u.exec(body);
+            if (!error) continue;
+            const text = (error[1] ?? error[2] ?? '').replace(/\$\{[^}]*\}/gu, 'X').replace(/\\`/gu, '`');
+            if (text) sentences.push(text);
+        }
+        expect(sentences.length, 'the scan must find the parser\'s refusals, or it proves nothing').toBeGreaterThan(20);
+        const flagRefusals = sentences.filter((text) => namesAFlag(text));
+        expect(flagRefusals.length, 'the parser refuses about arguments in many places').toBeGreaterThan(5);
+        for (const text of flagRefusals) {
+            expect(isArgumentRefusal(text), `the guard's classifier must accept this parser refusal, or a road that meets it passes: ${text}`).toBe(true);
+        }
+        // And the sentences the earlier rounds each found missing are checked by name, because they are the ones that were
+        // wrong while the guard was green.
+        for (const known of [
+            '--id and --statement are both required',
+            '--statement, --risk-class and --severity are all required',
+            'a waiver needs --reason',
+            '--boundary must state the domain this claim closes over',
+        ]) {
+            expect(sentences.join('\n'), `the parser still refuses in this sentence: ${known}`).toContain(known);
+            expect(isArgumentRefusal(known), `and the guard recognises it as an argument refusal: ${known}`).toBe(true);
+        }
+    });
+
+    it('the seal\'s undeclared-changes refusal prints a road the family accepts, with every flag it needs', async () => {
+        // **A review round measured this road unrunnable**: it printed `kata-cli scope change --change <id> --add <path>` while
+        // `scope change` requires `--reason`, and the guard never reached the block (it drove the ledger family only and threw
+        // for anything else). The fixture leaves one undeclared file in the tree so the refusal really fires.
+        const taskId = 'road-undeclared-change';
+        const root = await fixture(taskId);
+        await writeFile(join(root, 'src', 'extra.ts'), 'export const extra = 1;\n', 'utf8');
+
+        const sealed = await seal(root, taskId);
+        expect(sealed.success, 'an undeclared file must be refused').toBe(false);
+        const message = String(sealed.error);
+        expect(message, 'the refusal is the one under test').toMatch(/undeclared|does not cover/i);
+        const commands = printedCommands(message);
+        expect(commands.length, 'this refusal must name a road').toBeGreaterThan(0);
+        const scopeRoad = commands.find((command) => command.startsWith('kata-cli scope change'));
+        expect(scopeRoad, 'and the road is the one that declares the file').toBeDefined();
+        expect(scopeRoad, 'with the reason the command requires, or the road cannot be walked').toMatch(/--reason/);
+        // `<path>` is the operator's input here, like `<item.json>` in the anchor road — the files are named in the message
+        // above it — so it is not a placeholder defect. What must be in hand is the change id and every flag the family needs.
+        // The road runs: the flags it prints are the flags the family accepts.
+        const answer = await drivePrintedAny(root, taskId, scopeRoad!.replace('<path>', 'src/extra.ts'));
+        expect(isArgumentRefusal(answer), `the printed road must not be refused for its arguments: ${scopeRoad} -> ${answer}`).toBe(false);
     });
 });

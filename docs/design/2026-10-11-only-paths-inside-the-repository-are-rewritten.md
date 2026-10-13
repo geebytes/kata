@@ -28,7 +28,7 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 
 ⇒ 报告成立，且**同一文件里已经有正确的做法**：旁边的 `mapRepositoryPath`（`:157`）用 `relative`/`resolve` 做**前缀**判定，只有 `cwd` 用了它。**同一个问题（"这个字符串指向仓库里吗"）在一处文件里有两套处理，其中一套是错的。**
 
-**报告里已满足的一条**：证据日志记录的就是**实际执行**的参数（`runBoundedCommand` 用 `check.execution ?? …`，日志由同一份数据渲染，`evidence.ts:688`），所以被改坏的参数**在日志里看得见**——报告正是这样发现的。
+**报告里已满足的一条**：证据日志记录的就是**实际执行**的参数（`runBoundedCommand` 用 `check.execution ?? …`，日志由同一份数据渲染，`evidence.ts:619-625`（`runBoundedCommand` 的 `check.execution ?? {…}`，日志记下的是**实际执行**的参数；`:688` 的 `renderCommand` 渲染的是**计划**里声明的命令）），所以被改坏的参数**在日志里看得见**——报告正是这样发现的。
 
 **未复现的一条**（报告 §6）：沙箱里被 `.gitignore` 排除的测试素材缺失（`tests/assets/`、`tmp/`）。本仓早已记过同形（"判据沙箱里没有 gitignore 的素材"）。它是**独立**问题：本 change 不修，按报告建议落到文档与队列。
 
