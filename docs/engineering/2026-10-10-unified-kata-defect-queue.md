@@ -141,3 +141,9 @@
 | B4 | 声明面内仍有一个占位符实例：`src/cli/ledger.ts:1228` 的 `.kata/tasks/<id>/revisions/`（先于本 change，故不在此修，已记为 I-12） | R10-F5 |
 | B5 | 本 change 的 19 条 falsifier 锚点在 10 轮里**漂移过 10 次**（第 3 轮 9 条、第 4 轮 3 条、第 5/7/8 轮各 1 条），每次都靠人手工重瞄；机械修法见 I-10（设计已就绪，未实现） | R3-F1 起，逐轮累积 |
 | B6 | 补救守卫里 `scope` 那一半**跑在仓库根**而不是 fixture（因为 `scope` 忽略 `--root`，见 I-11）⇒ 它证明了动词与 flag 能解析，**没有**证明命令作用在正确的 workspace | 今日自测时发现 |
+
+## 已修缺陷的实测效果（真实工作流，非用例）
+
+| 日期 | 缺陷 | 实测 |
+|---|---|---|
+| 2026-10-13 | recurrence 路由指向不可达的 `/kata-build`（`a-recurrence-report-does-not-override-the-ladder` 修复后 judge PASS） | **修复前**：`a-repair-revalidates-the-evidence-it-moved` 的路由答 `/kata-build` `reason: review_class_recurring`，而 `kata-cli build` 以「Build cannot run from review without a problem the strict ladder blocks on」拒绝 ⇒ 该任务既不能修也不能审。**修复后**（同一任务、同一命令）：`nextAction.nextSkill: /kata-review`、`reason: complete_review_conclusion`，`kata-cli review` 正常进入并要求门禁选择（不再指向 Build）。这条是「先在真实流程里复现原故障、再接受修复」的实测记录：原故障已不再出现。 |
