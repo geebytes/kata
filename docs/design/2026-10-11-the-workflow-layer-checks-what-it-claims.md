@@ -37,9 +37,11 @@
 
 | AC | 属性 | 选择器 |
 |---|---|---|
-| **AC-4** | **封存时只读校验锚点唯一**：每条 falsifier 的 `find` 必须在文件里恰好匹配一次，否则**按名拒绝**并给出重瞄命令（毫秒级、不跑测试、不让封存依赖账本） | `tests/unit/a-falsifier-anchor-is-checked-at-seal-time.test.ts` |
+| **AC-4** | **封存时只读校验锚点唯一**：每条 falsifier 的 `find` 必须在文件里恰好匹配一次，否则**按名拒绝**并给出重瞄命令（毫秒级、不跑测试、不做账本**判定**） | `tests/unit/a-falsifier-anchor-is-checked-at-seal-time.test.ts` |
 
 **边界**：封存保证"锚点还指着东西"（必要），`evidence verify` 保证"它确实会红"（充分），互不替代；锚点唯一但被测代码被改写，机械检查看不出。
+
+**实测更正（复核第 1 轮）**：本节早先写「不让封存依赖账本」，读起来像「账本坏了也能封存」，而实现是：检查**读**声明，声明读不出来时封存**按名拒绝**（`falsifierAnchorsUnreadable`，`src/workflow/seal-preflight.ts:318-330`），因为它说不出这些锚点还指着哪里。不依赖的是账本的**判定**（`decide` 的结论），不是它记录的那份声明。
 
 ### C 组 拒绝的出路（I-17 / I-20 / I-21）
 

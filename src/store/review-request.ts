@@ -215,7 +215,7 @@ export async function buildReviewRequest(input: {
         return { ok: false, why: `the sealed revision cannot be read (${sealed.detail}); a request has to speak for the content under review` };
     }
     if (sealed.kind === 'absent') {
-        return { ok: false, why: 'nothing is sealed for this change, so there is no revision the request can speak for: run `kata-cli build --seal` first' };
+        return { ok: false, why: `nothing is sealed for this change, so there is no revision the request can speak for: run \`kata-cli build --change ${input.changeId} --seal\` first` };
     }
     // **The seal's own content, compared too.** F-2: the two checks above were independent facts — "the subject matches the
     // content" and "a seal exists" — so freeze(A) → seal(revA) → edit a file → freeze(revB) → run passed and produced

@@ -34,19 +34,27 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 
 ## 2. 修法（取报告的 A，并写成"一处判定"）
 
-`rewriteAuthorReference` 改为：**只当整个值就是作者根，或以 `作者根 + '/'` 开头**时才替换；其余原样通过。
+`rewriteAuthorReference` 改为：**只有当作者根的出现位置以 `/` 或值尾结束时**才替换那一次出现；其余出现原样通过。
 
 ```
-'/app'            → sandboxRoot
-'/app/tests/x'    → sandboxRoot + '/tests/x'
-'tests/application' → 原样
-'--flag=/app/x'   → 原样   ← 边界，见 §4
+'/app'              → sandboxRoot
+'/app/tests/x'      → sandboxRoot + '/tests/x'
+'/app/tests/application' → sandboxRoot + '/tests/application'
+'tests/application' → 原样            ← 'application' 不是 'app'
+"--flag='/app/second-started'" → "--flag=sandboxRoot/second-started'"  ← 内嵌但成段的出现也映射
 ```
+
+> **一处实现与本文早先写法的差别（复核第 1 轮实测）**：本节曾把规则写成「整个值就是作者根或以其 + `/`
+> 开头」，并据此声明「值内嵌的出现不再被替换」。落地的规则是**逐次出现**的边界判定，所以脚本参数
+> 里的内嵌段（`--flag='/app/second-started'`）**会被**映射 —— 而且必须被映射：serial 与 concurrent 的
+> 两次检查要指向同一份快照，`tests/unit/a-check-argument-that-points-inside-is-rewritten.test.ts` 的正
+> 对照就断言这一点。§4 的边界因此只覆盖「出现之后还跟着字符」的那种（`tests/application`），不覆盖
+> 内嵌段。
 
 实现要点（防止"改完又长出一套新规则"）：
 - 与 `mapRepositoryPath` 的判定**同源**：同一个「值是否就在仓库内」的谓词，路径版与字符串版各用一次；
 - 处理尾斜杠（`/app/` 与值以 `/` 结尾）不产生 `//`；
-- 只改这一个函数，`checksForExecutionSandbox` 的四个调用点（command / args / env / cwd）都经它 ⇒ `build --seal` 与 `verify` 一并覆盖（它们共用这条解析）。
+- 只改这一个函数，`checksForExecutionSandbox` 的四个调用点（command / args / env / cwd）都经它。**实测更正**：该函数只有**一个**调用者（`src/workflow/orchestrator.ts` 的封存路径），所以本节早先写的「`build --seal` 与 `verify` 共用这条解析」不成立 —— `verify` 读的是既有证据，不执行新的沙箱命令。
 
 ## 3. 验收项（各配独立选择器文件）
 
@@ -54,7 +62,7 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 |---|---|---|
 | **AC-1** | **子串不受影响**：参数 `tests/application`、`packages/x/src/x/application`、`application` 原样传入 | `tests/unit/a-check-argument-is-not-rewritten-by-substring.test.ts` |
 | **AC-2** | **正对照仍在**：`/app` 与 `/app/packages/x` 仍被替换成沙箱根与沙箱内路径（这条防止"修成什么都不替换"） | `tests/unit/a-check-argument-that-points-inside-is-rewritten.test.ts` |
-| **AC-3** | **两条路都覆盖**：`build --seal` 与 `verify` 走的检查解析是同一处 ⇒ 用一次端到端断言（沙箱执行时参数原文出现在证据日志里） | `tests/unit/the-executed-argument-is-the-one-the-check-declared.test.ts` |
+| **AC-3** | **执行的就是声明里写的那一个**：沙箱执行时参数被映射进快照（`mapped.startsWith(process.cwd())` —— 检查自己的 cwd 就是快照根），而内嵌的长名原样到达 | `tests/unit/the-executed-argument-is-the-one-the-check-declared.test.ts` |
 
 **单点变异**（每条先确认落上再采信读数）：
 1. 还原成 `replaceAll` ⇒ AC-1 红；
@@ -63,7 +71,7 @@ function rewriteAuthorReference(value: string, authorRoot: string, sandboxRoot: 
 
 ## 4. 边界（写清楚，不假装全覆盖）
 
-- 值**内嵌**作者根而不在开头（`--root=/app/x`、`A=/app/x:B`）**不再被替换**。这是本 change 的刻意选择：字符串里的位置无法可靠判定，而"看不出来就没换"是**响亮**的失败（日志里会显示原始绝对路径，且沙箱里该路径不存在 ⇒ 判据失败并留下证据），比"猜着换"好。
+- **出现之后还跟着字符**的（`tests/application`、`packages/x/src/x/application`）**不被替换**：`application` 不是 `app`。这是本 change 的刻意选择（修法与边界以实现为准，见 §2 的更正）。"是**响亮**的失败（日志里会显示原始绝对路径，且沙箱里该路径不存在 ⇒ 判据失败并留下证据），比"猜着换"好。
 - 报告 §6 的 gitignore 素材缺失**不在本 change 范围**（另记队列，并在文档里写一句）。
 - 本 change 不动沙箱的其它部分（内容同步、依赖符号链接、身份计算）。
 

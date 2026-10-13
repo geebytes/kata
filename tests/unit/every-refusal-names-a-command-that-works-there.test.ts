@@ -26,10 +26,17 @@ const roots: string[] = [];
  *
  * **A missing required flag is a usage refusal too**, and it was missing from this vocabulary until a falsifier's own mutation
  * measured it: a road printed without `--file` came back as "... is required." from the parser, which no pattern here
- * matched, so the guard stayed green with an unrunnable road in the message. The parser's required-flag sentence is the
- * phrase `is required`, and it is in the vocabulary now.
+ * matched, so the guard stayed green with an unrunnable road in the message. A review round then measured the same hole
+ * three more times — a nested action that does not exist (`unknown action "..."`), an enum flag given a value outside its
+ * vocabulary (`must be one of ...`), and a flag with a shape requirement (`requires a workspace-relative ...`) — so the
+ * vocabulary now carries every refusal sentence the family's parser produces.
+ *
+ * **Boundary: this is a list of the parser's sentences, not a structural property.** The family answers every refusal with
+ * the same shape (`{ok:false, command, error}`) and exit code, so nothing in the reply distinguishes "the arguments were
+ * wrong" from "the domain said no" — the sentences are the only signal. When the parser grows a refusal sentence, it
+ * belongs here; the case below fails if one of the known sentences stops matching, so the vocabulary cannot rot silently.
  */
-const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|requires --reason|is not a known|^usage:|unknown scope|unknown subcommand|not a function|Cannot read|is required/i;
+const USAGE_REFUSAL = /is not a flag the ledger family reads|unknown ledger flag|unknown verb|unknown action|unknown subcommand|unknown scope|requires --reason|is not a known|^usage:|not a function|Cannot read|is required|must be one of|requires a workspace-relative/i;
 
 async function git(root: string, args: string[]): Promise<void> {
     await run('git', args, { cwd: root });
@@ -180,5 +187,23 @@ describe('every refusal this change adds names a command that works there', () =
         const root = await fixture(taskId);
         const reply = await ledgerReply(root, taskId, ['evidence', 'list', '--klasses', 'x']);
         expect(reply).toMatch(USAGE_REFUSAL);
+    });
+
+    it('the vocabulary covers every refusal sentence the family\'s parser produces', async () => {
+        // **The guard's own vocabulary, checked rather than assumed.** A review round measured three parser sentences missing
+        // from it (a nested action that does not exist, an enum flag outside its vocabulary, and a flag with a shape
+        // requirement), each of which let an unrunnable road pass. These are the parser's own sentences, taken from
+        // `src/cli/ledger.ts`; the case fails if one stops matching, so the vocabulary cannot rot while the guard stays green.
+        const parserSentences = [
+            '--klasses is not a flag the ledger family reads, so it would have been silently discarded and the command would have run without it.',
+            'unknown action "lst"',
+            '--risk-class must be one of failure_mode, boundary, state_transition, privilege',
+            '--out requires a workspace-relative file path, because the record it writes has to be inside the repository',
+            '--file <set.json> (the wide form) or --file <item.json> with --id <evidence-id> (the narrow form) is required.',
+            '--reason <why> is required: the one operation that may rewrite evidence must say why.',
+        ];
+        for (const sentence of parserSentences) {
+            expect(sentence, `this parser refusal must be recognised as a usage refusal: ${sentence}`).toMatch(USAGE_REFUSAL);
+        }
     });
 });

@@ -206,7 +206,12 @@ describe('review CLI I/O', () => {
 
         const refusal = await ledger(['run', '--out', 'tmp/unsealed.json']);
         expect(refusal.ok).toBe(false);
-        expect(String(refusal.error)).toContain('build --seal');
+        // **The road must carry the change it is about**, or the operator follows it into whatever task the current branch
+        // resolves to. The assertion was a substring (`build --seal`) and passed while the printed road omitted `--change`;
+        // `tests/unit/every-refusal-names-a-command-that-works-there.test.ts` owns the family-wide property.
+        expect(String(refusal.error)).toContain('build --change');
+        expect(String(refusal.error)).toContain('--seal');
+        expect(String(refusal.error)).toContain(changeId);
     });
 
     it('takes a structured subagent result through the CLI and binds its findings to the review record', async () => {

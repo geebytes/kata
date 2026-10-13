@@ -72,8 +72,16 @@ describe('the executed argument is the one the check declared', () => {
         const longerName = `${root}backup/application`;
         await writeFile(expectedPath, longerName, 'utf8');
 
+        // **The discriminator is the sandbox, not existence.** The author path exists on the same filesystem while the seal
+        // runs, so `existsSync(mapped)` alone passed even with the rewrite skipped — a review round measured that, and that
+        // the recorded falsifier then reddened only through the unrelated cwd throw. The check's own cwd *is* the snapshot
+        // root (the declaration's `cwd: root` is mapped by the same predicate), so a mapped argument is under it and an
+        // unmapped one is not.
         const script = 'const fs=require("fs");'
             + 'const mapped=process.argv[1].slice("key=".length);'
+            + 'const path=require("path");'
+            + 'if(path.resolve(mapped)!==mapped){console.error(`the argument is not an absolute path: ${mapped}`);process.exit(1)}'
+            + 'if(!mapped.startsWith(process.cwd()+"/")){console.error(`the argument was not mapped into the snapshot the check runs in: ${mapped} (cwd ${process.cwd()})`);process.exit(1)}'
             + 'if(!fs.existsSync(mapped)){console.error(`the reference did not point at the snapshot: ${mapped}`);process.exit(1)}'
             + 'const want=fs.readFileSync(process.argv[3],"utf8");'
             + 'if(process.argv[2]!==want){console.error(`the longer name arrived as ${process.argv[2]}, the declaration wrote ${want}`);process.exit(1)}';
